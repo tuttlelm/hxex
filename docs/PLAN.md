@@ -492,7 +492,7 @@ Not done:
 
 ## Phase 1 status: `hxex.chem`
 
-Implemented 2026-10-09 (not committed at the time of writing): `modifications` (private,
+Implemented 2026-10-09 (commits a9973ea, c1496d9): `modifications` (private,
 immutable `ModificationRegistry`, `acK`/`pS`/`pT`/`pY` built in, `parse_sequence` tokeniser,
 error classes), `ions` (ion types are pyteomics' `std_ion_comp`), `amides` (`count_amides`;
 `exchangeable_sites` = amides plus the user's `Hex`, any `namide_scale` is left to the fitter),
@@ -535,7 +535,7 @@ compare against whichever is installed). Not done in `chem`: fragment-table gene
 
 ## Phase 1 status: readers (`hxex.io`, `hxex.spectra`, `hxex.hooks`)
 
-Implemented 2026-10-09 (uncommitted at the time of writing). Readers return raw spectra only;
+Implemented 2026-10-09 (commits 4ec4ed3, 3a0e5ed). Readers return raw spectra only;
 peak picking is a separate stage (next).
 
 - `hxex.spectra`: `PeptideEntry` (a row of pyHXExpress's `metadf`: file, sample, peptide, range,
@@ -609,6 +609,19 @@ Deliberate differences from `hxex_updating.py`:
 
 Kept from the reference, on purpose: digits after the decimal point of an HX-Express time of 1
 or more are replicate markers (`1.2 min` is 60 s, second replicate), not fractions.
+
+## Next steps (Phase 1)
+
+1. **Peak picker** (`hxex.picking`): `SpectrumSet` to binned sticks (the `alldeutdata` columns).
+   Read `peak_picker` in `hxex_updating.py` closely first, as the chemistry and readers turned up
+   several reference bugs. It uses `chem.mz`, `exchangeable_sites` and `natural_abundance`, the
+   ExMS spacing, a ppm window, shoulder rejection, a noise threshold and zero-filling, taking
+   an explicit config object. Test against `alldeutdata_19Feb2024.csv` (Bimodal test set).
+2. Dropping spectra whose picked intensity is all zero, and the `time_idx` column, are done by
+   the reference readers and still have to be placed (picker or run stage).
+3. Unverified: fragment-ion amide counts (see "Risks and open decisions").
+4. CI has not yet run on the readers; check the Windows and macOS jobs and the minimum-versions
+   job (the `openpyxl` lower bound was tested locally on Python 3.11 only).
 
 ## Risks and open decisions
 
