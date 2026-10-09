@@ -121,6 +121,10 @@ Reader and picker behaviour (from reading the code, not yet ported):
 - Reproducible: every run records its configuration and package versions.
 - Pure functions with explicit config objects, no global state.
 - Documented and tested, with example data.
+- **GUI-ready from the start** (the GUI itself comes later; see "GUI"): serialisable
+  configuration, progress and cancellation hooks on long operations, `logging` and structured
+  exceptions instead of `print`, plot functions that return figures, and lazy loading of
+  results.
 
 ## Architecture
 
@@ -182,7 +186,10 @@ Design for the new package:
     bootstrap samples; the individual bootstrap fits are an option (see "Saving all fits");
   - the natural-abundance shape used for each measurement (small), so replotting does not
     depend on the chemistry code version;
-  - the configuration and package versions.
+  - the configuration and package versions;
+  - a **review layer**: per-spectrum flags and notes (accept or reject, comments, manual
+    overrides such as a chosen K) that are stored with the bundle and need no refitting; see
+    "GUI".
 - A **loader** returns the same in-memory objects the fit produces, and the **`report`
   module plots from those objects only**, so a fresh fit and a loaded bundle give identical
   plots. Options include per-sample or per-spectrum selection, raw spectrum versus binned
@@ -377,6 +384,53 @@ Open chemistry questions for the domain owner:
    interval calibration. If the CIs are right, replicate means should agree within them
    about 95% of the time.
 
+## GUI
+
+A GUI is wanted at some point. Decision (recommendation, to be revisited): **build the library
+and the command-line tool first and add the GUI later**, as another client of the same
+library. The stages already have stable data contracts (spectra, binned table, results bundle,
+a `report` module that plots from loaded results only), and the hard parts of the project are
+the chemistry, picking and fitting engine, which do not depend on a GUI. Starting from a GUI
+would slow that work and tends to bake interface assumptions into the data model.
+
+Rules adopted now so that adding a GUI later is easy:
+
+1. No global state; explicit config objects (already planned).
+2. A serialisable configuration (TOML or JSON, generated from dataclasses) that a GUI can edit
+   and save (already planned).
+3. **Progress and cancellation hooks** on every long operation (a callback or iterator with a
+   cancel flag). A GUI cannot freeze for many minutes with no stop button, and retrofitting
+   hooks later means touching every long-running function.
+4. Logging through the `logging` module and structured exceptions; no bare `print`.
+5. Plot functions return figures and never call `show()`, so they embed in any window or save
+   headless (already planned for `report`).
+6. Lazy loading of results (Parquet row groups) so a GUI can browse thousands of fits without
+   loading everything.
+
+**Review layer.** In HDX-MS the main value of a GUI is usually interactive review and
+curation. The results bundle therefore carries per-spectrum flags and notes (accept or
+reject, comments, manual overrides such as a chosen K) that need no refitting. The
+command-line tool and notebooks use the same layer, and it is cheap to add to the schema now
+and awkward to retrofit.
+
+Technology options, to be decided when the GUI starts (general trade-offs, not tested here):
+
+- **Qt desktop (PySide6):** the best interactivity (zooming, picking, linked plots). Qt for
+  Python is available under the LGPL, which fits GPL v3. It is a large dependency, so it would
+  be an optional extra (`pip install hxex[gui]`).
+- **Browser-based (Panel, NiceGUI, Streamlit and similar):** faster to build and well suited to
+  running on a remote GPU machine.
+- **Notebook widgets:** the lightest option and the closest to the existing notebook workflow.
+
+Sequence: the first GUI is a **results viewer and review tool** (open a bundle, browse spectra
+and fits, set review flags), after Phase 4. A run launcher (choose files, set the configuration,
+start and monitor a run) comes after that.
+
+Integrating the GUI from the start would be better only if the primary workflow is interactive
+manual curation during analysis (for example hand-placing peaks or re-picking controls); then
+the review state would shape the core. If most users run batch analyses and then inspect the
+results, library-first is right.
+
 ## Phases
 
 | Phase | Deliverable | Exit criterion |
@@ -388,6 +442,7 @@ Open chemistry questions for the domain owner:
 | 4. Scale and reporting | Chunking by device, bootstrap, plots from saved results, tables | A 10,000-fit run within a measured time on stated hardware; replots from a saved bundle match direct plots |
 | 5. Validation and release | Real-data replicate check, docs, examples | Release 0.1 |
 | 6. Extra input | Fragment-table generation, mzML, then Thermo raw; better peak picking | Each has golden tests |
+| 7. GUI (after Phase 4) | Results viewer and review tool; later a run launcher | Opens a saved bundle, browses fits, saves review flags without refitting |
 
 ## Phase 0 status
 
