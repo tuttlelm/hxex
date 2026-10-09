@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Smoke tests for the scaffold: the package installs, imports and runs on CPU."""
 
 import importlib

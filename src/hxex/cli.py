@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Command-line entry point (`hxex`).
 
 Only `--version` exists so far; the real commands arrive with the pipeline stages.

@@ -8,9 +8,9 @@ version = "0.0.1.dev0"
 description = "Multimodal binomial-mixture analysis of HDX-MS spectra"
 readme = "README.md"
 requires-python = ">=3.11"
-# SPDX identifier chosen to match pyHXExpress, whose repository declares "GPL-3.0"
-# (the deprecated alias of GPL-3.0-only). Confirm "only" versus "or later".
-license = "GPL-3.0-only"
+# GNU GPL version 3 or (at your option) any later version. pyHXExpress's repository declares
+# plain GPL-3.0 without "or later" wording; hxex deliberately adds it.
+license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Lisa M Tuttle" }]
 keywords = ["HDX-MS", "mass spectrometry", "hydrogen deuterium exchange", "binomial mixture"]

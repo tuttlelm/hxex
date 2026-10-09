@@ -38,4 +38,6 @@ These wheels are several gigabytes; on a slow connection add `--default-timeout=
 
 ## License
 
-GNU General Public License v3 (see [`LICENSE`](LICENSE)), the same license as pyHXExpress.
+GNU General Public License, version 3 or (at your option) any later version
+(`GPL-3.0-or-later`; see [`LICENSE`](LICENSE) for the version 3 text). pyHXExpress's repository
+declares GPL-3.0 without the "or later" option.

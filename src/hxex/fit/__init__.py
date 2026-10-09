@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Fitting: initialisation, optimiser, K selection and non-finite protection.
 
 Planned; not implemented yet (Phase 2).

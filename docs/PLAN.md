@@ -37,15 +37,14 @@ replace pyHXExpress for new users while staying comparable with it.
 - **Raw spectrum storage:** Parquet (zstd), one row per spectrum with list columns, with flat
   NumPy arrays plus a typed index in memory and no pandas DataFrames in the core. `pyarrow`
   is the dependency for the bundle (see "Raw spectrum storage").
-- **License: GNU GPL v3,** the same as pyHXExpress (`LICENSE.txt` in
-  github.com/tuttlelm/pyHXExpress, standard GPL v3 text of 29 June 2007). Phase 0 must (a)
-  match the SPDX identifier and file headers to pyHXExpress's convention, since the README
-  says only "GPL-3.0" and does not settle "only" versus "or later", and (b) check each
-  dependency's license for compatibility. The Apache-2.0 and BSD libraries expected here
-  (pyteomics, pyarrow, NumPy, pandas, PyTorch) are compatible with GPL v3; the
-  isotope-distribution library is still to be checked. Thermo's raw-file reader, if added
-  later, is under Thermo's own license terms, which need review before it is bundled or
-  required.
+- **License: GNU GPL v3 or later (`GPL-3.0-or-later`).** The `LICENSE` file is the standard
+  GPL v3 text of 29 June 2007, copied from pyHXExpress's `LICENSE.txt`. pyHXExpress itself
+  declares plain GPL-3.0 (its README makes no statement and it has no per-file headers), so
+  hxex differs from it by the author's choice: the "or later" option is added in
+  `pyproject.toml`, the README and an SPDX header in every source file. Every runtime
+  dependency was checked and is compatible with GPL v3 (see "Phase 0 status"). Thermo's
+  raw-file reader, if added later, is under Thermo's own license terms, which need review
+  before it is bundled or required.
 - **Minimum Python version: 3.11** (`requires-python = ">=3.11"`), with CI on 3.11 to 3.14
   (and 3.15 once it is final). Python 3.10 reaches end of life in October 2026, and PyTorch
   2.15 (scheduled for late October 2026) requires 3.11 or newer. Phase 0 must confirm that
@@ -394,7 +393,7 @@ Open chemistry questions for the domain owner:
 
 Created 2026-10-09 (branch `main`; public at github.com/tuttlelm/hxex, first commit `a2c0ce7`):
 source layout (`src/hxex` with a placeholder for each planned module), `pyproject.toml`
-(hatchling, Python >= 3.11, GPL-3.0-only), `LICENSE` (the GPL v3 text from pyHXExpress's
+(hatchling, Python >= 3.11, GPL-3.0-or-later), `LICENSE` (the GPL v3 text from pyHXExpress's
 `LICENSE.txt`), `README.md`, `.gitignore`, smoke tests, a CI workflow and this plan.
 
 Verified:
@@ -416,9 +415,9 @@ Verified:
 - **Licenses:** every runtime dependency is permissive and compatible with GPL v3: NumPy
   (BSD-3-Clause), SciPy (BSD), PyTorch (BSD-style), pyarrow (Apache-2.0), pyteomics (Apache-2.0),
   brain-isotopic-distribution (Apache-2.0, from its license text), matplotlib (PSF).
-- **SPDX identifier decided: `GPL-3.0-only`,** to match pyHXExpress, whose only license
-  declaration is the standard GPL v3 text in `LICENSE.txt` (its README makes no statement and
-  there are no per-file headers, so there is no "or later" wording).
+- **SPDX identifier decided: `GPL-3.0-or-later`** (changed from an initial `GPL-3.0-only`, which
+  matched pyHXExpress's plain GPL-3.0 declaration). It is stated in `pyproject.toml`, the
+  README and a `SPDX-License-Identifier` header in every source and test file.
 - **Packaging:** the sdist and wheel build and pass `twine check`; the wheel contains the
   package and the license, with the intended metadata.
 - **GPU:** a separate `.venv-gpu` (PyTorch 2.14.1 with CUDA 12.6) sees the RTX A4500 on this

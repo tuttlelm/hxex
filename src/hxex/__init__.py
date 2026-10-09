@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """hxex: multimodal binomial-mixture analysis of HDX-MS spectra.
 
 Early development: see docs/PLAN.md.  The subpackages are placeholders for the planned

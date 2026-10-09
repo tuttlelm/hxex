@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Bootstrap uncertainties on population means, fractions and amplitudes.
 
 Planned; not implemented yet (Phase 4).

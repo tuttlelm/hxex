@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Chemistry: m/z, composition, exchangeable amide count and natural-abundance shape.
 
 Planned; not implemented yet (Phase 1).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Result tables and plots, drawn from loaded results only.
 
 Planned; not implemented yet (Phase 4).

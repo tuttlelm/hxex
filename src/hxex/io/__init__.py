@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Readers (HDExaminer SpecExport, HX-Express; later mzML, Thermo raw) and the results bundle.
 
 Planned; not implemented yet (Phases 1 and 2).
