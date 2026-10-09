@@ -392,7 +392,7 @@ Open chemistry questions for the domain owner:
 
 ## Phase 0 status
 
-Created 2026-10-09 as a local git repository (branch `main`):
+Created 2026-10-09 (branch `main`; public at github.com/tuttlelm/hxex, first commit `a2c0ce7`):
 source layout (`src/hxex` with a placeholder for each planned module), `pyproject.toml`
 (hatchling, Python >= 3.11, GPL-3.0-only), `LICENSE` (the GPL v3 text from pyHXExpress's
 `LICENSE.txt`), `README.md`, `.gitignore`, smoke tests, a CI workflow and this plan.
@@ -402,21 +402,41 @@ Verified:
 - The package installs and the 17 smoke tests and `ruff check` pass on Python 3.11, 3.12, 3.13
   and 3.14 (Linux x86-64, CPU-only PyTorch 2.14.1, NumPy 2.4.6, SciPy 1.17.1, pyarrow 26.0.0,
   pyteomics 5.0.1, brain-isotopic-distribution 1.5.19, matplotlib 3.11.2), using `uv`-managed
-  interpreters.
-- `hxex --version` works.
+  interpreters. `hxex --version` works.
+- **GitHub Actions CI passed on all six jobs** on the first commit: Linux on Python 3.11, 3.12,
+  3.13 and 3.14, and Windows and macOS on Python 3.12 (CPU PyTorch on Linux from the PyTorch CPU
+  index, from PyPI on Windows and macOS).
+- The repository is public and GitHub detects the license as GPL-3.0. The history contains one
+  commit, authored with the GitHub no-reply address, and no local paths or private contact
+  details.
+- **Dependency lower bounds:** installing the lowest allowed version of every dependency (NumPy
+  1.26.0, SciPy 1.11.1, PyTorch 2.5.0, pyarrow 15.0.0, pyteomics 4.7, brain-isotopic-distribution
+  1.5.1, matplotlib 3.8.0) works on Python 3.11 and the smoke tests pass. This checks installation
+  and imports only; it becomes meaningful as code starts using these libraries' APIs.
+- **Licenses:** every runtime dependency is permissive and compatible with GPL v3: NumPy
+  (BSD-3-Clause), SciPy (BSD), PyTorch (BSD-style), pyarrow (Apache-2.0), pyteomics (Apache-2.0),
+  brain-isotopic-distribution (Apache-2.0, from its license text), matplotlib (PSF).
+- **SPDX identifier decided: `GPL-3.0-only`,** to match pyHXExpress, whose only license
+  declaration is the standard GPL v3 text in `LICENSE.txt` (its README makes no statement and
+  there are no per-file headers, so there is no "or later" wording).
+- **Packaging:** the sdist and wheel build and pass `twine check`; the wheel contains the
+  package and the license, with the intended metadata.
+- **GPU:** a separate `.venv-gpu` (PyTorch 2.14.1 with CUDA 12.6) sees the RTX A4500 on this
+  machine (driver 535), runs float32 and float64 GPU operations, and the smoke tests and lint pass
+  in it. `.venv` stays CPU-only to match CI. The README documents the GPU install.
 
-Not done or not verified:
+Prepared but not yet run:
 
-- The GitHub repository does not exist yet, nothing has been pushed, the CI workflow has never
-  run, and Windows and macOS installs are untested.
-- The PyPI name `hxex` is not reserved.
-- Dependency lower bounds in `pyproject.toml` are the prototype's versions and are not yet
-  validated by a minimum-versions job.
-- The SPDX identifier (`GPL-3.0-only` versus `GPL-3.0-or-later`) is to be confirmed, and the
-  license of the isotope-distribution library is unchecked.
-- The development environment uses the CPU-only PyTorch build; a GPU build is needed to use the
-  GPU on the development machine.
-- No initial commit has been made.
+- CI now also has a minimum-versions job (Python 3.11, lowest allowed versions) and Windows and
+  macOS jobs on Python 3.11, 3.12 and 3.14. They have not run on GitHub yet.
+- `.github/workflows/publish.yml` (PyPI trusted publishing, checks that the release tag matches
+  the version) and `docs/RELEASING.md` (the setup steps) are written but have never run.
+
+Not done:
+
+- The PyPI name `hxex` is not reserved. This needs a PyPI account; the steps are in
+  `docs/RELEASING.md`. A name is only held once a first release is uploaded.
+- Only the Python 3.12 jobs have run on Windows and macOS so far.
 
 ## Risks and open decisions
 
