@@ -533,6 +533,74 @@ bound in `pyproject.toml` is 4.7, so those ion types differ between pyteomics ve
 compare against whichever is installed). Not done in `chem`: fragment-table generation (Phase
 6), peak picking (next in Phase 1).
 
+## Phase 1 status: readers (`hxex.io`, `hxex.spectra`, `hxex.hooks`)
+
+Implemented 2026-10-09 (uncommitted at the time of writing). Readers return raw spectra only;
+peak picking is a separate stage (next).
+
+- `hxex.spectra`: `PeptideEntry` (a row of pyHXExpress's `metadf`: file, sample, peptide, range,
+  charge, `modification`, other columns kept in `extra`), `Spectrum`, and `SpectrumSet` (flat
+  NumPy `mz`/`intensity` plus `offsets` and parallel index arrays; no pandas).
+- `hxex.hooks`: `progress(done, total)` and `cancel() -> bool` hooks and `Cancelled`; used by
+  `read_spectra`.
+- `hxex.io`: `scan(data_dir, fmt)` lists entries, `read_spectra(entries, data_dir, fmt)` reads
+  them, `read_peptide_table` reads a `metadf` CSV. Format-specific functions are in
+  `io.hxexpress` (`.xlsx` or `.csv`, one file per sample, peptide and charge, one time label per
+  column pair) and `io.specexport` (`SAMPLE/START-END-SEQ/TIME-REP-zCHARGE.csv` plus
+  `SAMPLE.fasta`). Time labels are parsed in `io.times`. The fully deuterated time is a user
+  argument (`fulldeut_time`, default 1e6 s).
+- New dependency, agreed with the owner: `openpyxl>=3.1` (MIT; its only dependency `et-xmlfile`
+  is MIT). The lower bound 3.1.0 was tested on Python 3.11.
+
+- **Pooled folders** (`hxex_pooled_utils.py`): a SpecExport folder holding peptides from more
+  than one protein, `DATA_DIR/START-END-SEQUENCE/...`, with no sample level and no FASTA file to
+  cut from (a residue range is ambiguous when proteins share the folder). `scan(dir, "pooled",
+  sample=...)` takes the sequence from the directory name, tokenised with the `chem` registry so
+  modX labels work. `match_candidates(entries, pooled_fasta, classes=[...])` returns, for each
+  entry, the FASTA records containing its peptide (modifications ignored) and the requested
+  class labels that appear in those record ids. Not ported from that file: `update_datafits`
+  (resets D-uptake to the fitted n x mu and adds a dummy total-deuteration row; it reads fit
+  output and belongs to Phase 3, controls and results).
+
+Verified: on the Bimodal_HDX_Data test set the 24 spreadsheets give 566 spectra and 496,708
+points, **identical** (m/z, intensity, time, replicate) to pyHXExpress's `allrawdata`. On the
+Chris_B4 SpecExport example the entries (sample, range, charge, sequence from the FASTA) equal
+pyHXExpress's `metadf_asrun`, and the (time, replicate) set equals its `alldeutdata`. On two
+real pooled folders (tubulin, 318 entries each) the entries, candidate lists and classes equal
+pyHXExpress's `metadf` columns `sample_matches` and `tub_class`. Those three tests read their
+data from `HXEX_BIMODAL_DATA`, `HXEX_SPECEXPORT_EXAMPLE` and `HXEX_POOLED_EXAMPLE` and are
+skipped without them; the other tests use generated files.
+
+Deliberate differences from `hxex_updating.py`:
+
+1. Readers do not pick peaks and do not contain the `Test_Data` branch (reading
+   `bimodal_solutions2.txt`); that belongs to the test code.
+2. An unknown or missing time unit raises `ReadError`. The reference computes
+   `60 ** ('smh'.find(unit))`, so a label such as `60` or `5 x` silently becomes 1/60 of its
+   value. Units and the `undeut`/`TD` prefixes are case-insensitive here.
+3. SpecExport charges of 10 or more are read (the reference reads only a single digit), and
+   spectra are ordered by time, replicate and file name (the reference uses `os.listdir` order).
+4. Filters on sample and peptide range are exact matches (the reference's HX-Express filter on
+   peptides is a substring match). Files whose names do not parse, and directories that are not
+   `START-END-SEQ`, are skipped with a warning or debug message instead of stopping the scan.
+   `.xls` is not read (the reference scanned only `.xlsx`).
+5. The spectrum for a label is read from the label's own column and the next, not from column
+   `2 * i` (identical for the standard layout). With several FASTA records the last is used,
+   as in the reference, with a warning.
+
+6. Pooled matching: a class is reported if its text appears in any single matching record id (the
+   reference searched the `;`-joined string, so a label could match across two ids), and the
+   `class_suffix` argument is not ported (matches and classes are returned as tuples, not
+   joined strings). Sequences in pooled directory names that do not parse are skipped with a
+   warning.
+
+7. Times are computed as decimals and rounded once, so `4.1m` is exactly 246 s (the reference's
+   `4.1 * 60` gives 245.99999999999997) and equal times written differently, such as `4.1m` and
+   `246s`, compare equal. Values that are exact in floating point are unchanged.
+
+Kept from the reference, on purpose: digits after the decimal point of an HX-Express time of 1
+or more are replicate markers (`1.2 min` is 60 s, second replicate), not fractions.
+
 ## Risks and open decisions
 
 - **UNVERIFIED: exchangeable amide count for fragment ions.** Every ion type uses the pyHXExpress
