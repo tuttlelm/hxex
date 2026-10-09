@@ -1,0 +1,62 @@
+# hxex
+
+Standalone Python package for multimodal binomial-mixture analysis of HDX-MS spectra: spectra
+to binned deuterium sticks to fitted populations with uncertainties and plots. Successor to
+pyHXExpress (it does not depend on it). Early development: Phase 0 is done, Phase 1 (chemistry
+and readers) is next.
+
+The plan, decisions and phases are in `docs/PLAN.md`. Read it before designing anything, and
+do not copy it here. Release steps are in `docs/RELEASING.md`.
+
+## Setup and commands
+
+Python 3.11 or newer (CI runs 3.11 to 3.14 on Linux, Windows and macOS).
+
+```bash
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python .venv/bin/python -e ".[dev]"
+.venv/bin/pytest            # tests
+.venv/bin/ruff check .      # lint; must pass
+```
+
+`.venv` is the CPU-only PyTorch build and matches CI. A GPU build lives in a separate,
+git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
+
+## Conventions (already decided; the reasons are in docs/PLAN.md)
+
+- Every `.py` file starts with `# SPDX-License-Identifier: GPL-3.0-or-later`.
+- Sequences use modX labels (`acK`, `pS`, `pT`, `pY`). Tokenise into residues; never count or
+  slice a sequence by characters. Modifications go in a private registry passed to pyteomics
+  through `aa_comp`; never edit pyteomics' global tables.
+- Chemistry takes an ion type (default `M`).
+- No global state. Behaviour is configured by explicit, serialisable config objects.
+- No pandas DataFrames in the core: NumPy arrays plus a typed index in memory, Parquet
+  (pyarrow) on disk, one row per spectrum for raw spectra.
+- Long operations take progress and cancellation hooks. Use `logging`, never `print`. Plot
+  functions return figures and never call `show()`.
+- Controls are identified by user-set times (undeuterated and fully deuterated), with replicates
+  averaged and flagged fallbacks for missing or bad controls.
+- Match the behaviour of pyHXExpress's `hxex_updating.py` unless `docs/PLAN.md` lists the
+  difference as deliberate. Document any new difference there.
+
+## Working rules
+
+- Run `pytest` and `ruff check .` before saying work is done, and report failures with their
+  output.
+- Do not add a dependency without discussing it. Its license must be compatible with GPL v3, and
+  the lower bounds in `pyproject.toml` are tested by the minimum-versions CI job (keep the
+  `torch==2.5.0` pin in `.github/workflows/ci.yml` equal to the torch lower bound).
+- Commit only when asked. The repository is configured to commit with the GitHub no-reply
+  address; do not change git configuration or use a private email. Do not push; the owner pushes.
+- Do not publish to PyPI or change repository settings.
+
+## Layout
+
+- `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,
+  `fit`, `report`, `noise`, `controls`, `bootstrap`, `run`, `cli`). Each docstring says what
+  it will contain and in which phase.
+- `tests/`, `docs/`, `.github/workflows/` (`ci.yml`, `publish.yml`).
+
+Machine-specific notes (local paths to the pyHXExpress reference code and test data, tooling
+quirks) are in `CLAUDE.local.md`, which is not committed.

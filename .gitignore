@@ -23,6 +23,9 @@ htmlcov/
 # Notebooks
 .ipynb_checkpoints/
 
+# Personal, machine-specific Claude Code notes
+CLAUDE.local.md
+
 # Editor and OS
 .vscode/
 .idea/
