@@ -530,8 +530,10 @@ by default, so every ion type uses the pyHXExpress rule until offsets are set; w
 modifications are needed; whether modified residues should change the amide count. Note:
 pyteomics 5.0 changed the `z+1`, `z+2`, `z+3` compositions and warns on access, and the lower
 bound in `pyproject.toml` is 4.7, so those ion types differ between pyteomics versions (tests
-compare against whichever is installed). Not done in `chem`: fragment-table generation (Phase
-6), peak picking (next in Phase 1).
+compare against whichever is installed). pyteomics 4.7 (the lower bound) cannot compute
+`calculate_mass(composition=..., charge=...)` (a keyword clash inside pyteomics), so `chem` uses
+`Composition(...).mass(charge=...)`, which works on 4.7 and 5.x. Not done in `chem`:
+fragment-table generation (Phase 6), peak picking (next in Phase 1).
 
 ## Phase 1 status: readers (`hxex.io`, `hxex.spectra`, `hxex.hooks`)
 

@@ -171,9 +171,7 @@ def test_modification_composition_is_additive_in_mz():
     """pyHXExpress adds the modification's mass plus charge protons again (an extra ~1.007);
     here m/z is the m/z of the modified ion. Deliberate difference (docs/PLAN.md)."""
     mod = chem.parse_modification("H:1")
-    expected = mass.calculate_mass(
-        composition=mass.Composition("PEPTIDEK") + mass.Composition({"H": 1}), charge=2
-    )
+    expected = (mass.Composition("PEPTIDEK") + mass.Composition({"H": 1})).mass(charge=2)
     assert chem.mz("PEPTIDEK", 2, mod=mod) == pytest.approx(expected, abs=1e-9)
 
 

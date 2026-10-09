@@ -48,7 +48,7 @@ def neutral_mass(
 ) -> float:
     """Monoisotopic neutral mass of :func:`composition`."""
     comp = composition(sequence, ion_type, mod=mod, registry=registry)
-    return mass.calculate_mass(composition=comp)
+    return mass.Composition(comp).mass()
 
 
 def mz(
@@ -68,7 +68,8 @@ def mz(
     if mod is not None and mod.undeut_mz is not None:
         return mod.undeut_mz
     comp = composition(sequence, ion_type, mod=mod, registry=registry)
-    return mass.calculate_mass(composition=comp, charge=charge)
+    # Composition.mass, not calculate_mass(composition=...), which fails in pyteomics 4.7
+    return mass.Composition(comp).mass(charge=charge)
 
 
 def natural_abundance(
