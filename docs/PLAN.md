@@ -402,9 +402,10 @@ Verified:
   and 3.14 (Linux x86-64, CPU-only PyTorch 2.14.1, NumPy 2.4.6, SciPy 1.17.1, pyarrow 26.0.0,
   pyteomics 5.0.1, brain-isotopic-distribution 1.5.19, matplotlib 3.11.2), using `uv`-managed
   interpreters. `hxex --version` works.
-- **GitHub Actions CI passed on all six jobs** on the first commit: Linux on Python 3.11, 3.12,
-  3.13 and 3.14, and Windows and macOS on Python 3.12 (CPU PyTorch on Linux from the PyTorch CPU
-  index, from PyPI on Windows and macOS).
+- **GitHub Actions CI passes on all 11 jobs** (commit `5c3c50d`): Linux on Python 3.11, 3.12,
+  3.13 and 3.14; Windows and macOS on Python 3.11, 3.12 and 3.14; and the minimum-versions job
+  (Python 3.11, lowest allowed dependency versions). CPU PyTorch comes from the PyTorch CPU
+  index on Linux and from PyPI on Windows and macOS.
 - The repository is public and GitHub detects the license as GPL-3.0. The history contains one
   commit, authored with the GitHub no-reply address, and no local paths or private contact
   details.
@@ -426,8 +427,6 @@ Verified:
 
 Prepared but not yet run:
 
-- CI now also has a minimum-versions job (Python 3.11, lowest allowed versions) and Windows and
-  macOS jobs on Python 3.11, 3.12 and 3.14. They have not run on GitHub yet.
 - `.github/workflows/publish.yml` (PyPI trusted publishing, checks that the release tag matches
   the version) and `docs/RELEASING.md` (the setup steps) are written but have never run.
 
@@ -435,7 +434,6 @@ Not done:
 
 - The PyPI name `hxex` is not reserved. This needs a PyPI account; the steps are in
   `docs/RELEASING.md`. A name is only held once a first release is uploaded.
-- Only the Python 3.12 jobs have run on Windows and macOS so far.
 
 ## Risks and open decisions
 
