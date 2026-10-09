@@ -7,7 +7,7 @@ import numpy as np
 from brainpy import isotopic_variants
 from pyteomics import mass
 
-from .amides import exchangeable_sites
+from .amides import DEFAULT_AMIDE_RULES, AmideRules, exchangeable_sites
 from .ions import check_ion_type
 from .modifications import (
     DEFAULT_MODIFICATIONS,
@@ -78,6 +78,7 @@ def natural_abundance(
     mod: ModificationSpec | None = None,
     nterm_subtract: int = 1,
     npeaks: int | None = None,
+    rules: AmideRules = DEFAULT_AMIDE_RULES,
     registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
 ) -> np.ndarray:
     """Natural-abundance isotope shape (sums to 1) with the exchangeable hydrogens removed.
@@ -88,7 +89,12 @@ def natural_abundance(
     """
     comp = composition(sequence, ion_type, mod=mod, registry=registry)
     n_ex = exchangeable_sites(
-        sequence, mod=mod, ion_type=ion_type, nterm_subtract=nterm_subtract, registry=registry
+        sequence,
+        mod=mod,
+        ion_type=ion_type,
+        nterm_subtract=nterm_subtract,
+        rules=rules,
+        registry=registry,
     )
     if comp.get("H", 0) < n_ex:
         raise ChemistryError(f"{n_ex} exchangeable sites exceed the {comp.get('H', 0)} hydrogens")

@@ -212,3 +212,41 @@ def test_exchangeable_sites_adds_hex():
     assert chem.exchangeable_sites("PEPTIDEK") == chem.count_amides("PEPTIDEK")
     assert chem.exchangeable_sites("PEPTIDEK", mod=spec) == chem.count_amides("PEPTIDEK") + 3
     assert chem.exchangeable_sites("acKPEPTIDE", mod=spec, nterm_subtract=2) == 5 + 3
+
+
+def test_amide_rules_default_is_pyhxexpress_rule_for_every_ion_type():
+    for ion_type in chem.ion_types():
+        assert chem.count_amides("PEPTIDEK", ion_type=ion_type) == chem.count_amides("PEPTIDEK")
+
+
+def test_amide_rules_offset_applies_only_to_its_ion_type():
+    rules = chem.AmideRules.from_dict({"c": 1, "z": -1})
+    base = chem.count_amides("PEPTIDEK")
+    assert chem.count_amides("PEPTIDEK", ion_type="c", rules=rules) == base + 1
+    assert chem.count_amides("PEPTIDEK", ion_type="z", rules=rules) == base - 1
+    assert chem.count_amides("PEPTIDEK", ion_type="y", rules=rules) == base
+    assert chem.count_amides("PEPTIDEK", rules=rules) == base
+    assert chem.count_amides("PE", ion_type="z", rules=chem.AmideRules({"z": -5})) == 0
+
+
+def test_amide_rules_flow_into_sites_and_shape():
+    rules = chem.AmideRules({"c": 2})
+    spec = chem.parse_modification("Hex:1")
+    assert chem.exchangeable_sites("PEPTIDEK", mod=spec, ion_type="c", rules=rules) == (
+        chem.count_amides("PEPTIDEK") + 2 + 1
+    )
+    default = chem.natural_abundance("PEPTIDEK", "c")
+    shifted = chem.natural_abundance("PEPTIDEK", "c", rules=rules)
+    assert not np.allclose(default, shifted[: len(default)])
+
+
+def test_amide_rules_validation_and_serialisation():
+    rules = chem.AmideRules().with_offset("c", 1)
+    assert chem.AmideRules.from_dict(rules.to_dict()) == rules
+    assert chem.DEFAULT_AMIDE_RULES.to_dict() == {}
+    with pytest.raises(chem.IonTypeError):
+        chem.AmideRules({"q": 1})
+    with pytest.raises(chem.ChemistryError):
+        chem.AmideRules({"c": 1.5})
+    with pytest.raises(chem.IonTypeError):
+        chem.count_amides("PEPTIDE", ion_type="q")

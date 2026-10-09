@@ -6,7 +6,12 @@ Sequences use pyteomics modX labels (acK, pS, pT, pY built in, plus a user-exten
 tokenised, not counted as characters. Every function takes an ion type (default ``'M'``).
 """
 
-from .amides import count_amides, exchangeable_sites
+from .amides import (
+    DEFAULT_AMIDE_RULES,
+    AmideRules,
+    count_amides,
+    exchangeable_sites,
+)
 from .composition import composition, mz, natural_abundance, neutral_mass
 from .ions import check_ion_type, ion_types
 from .modifications import (
@@ -20,7 +25,9 @@ from .modifications import (
 from .spec import ModificationSpec, parse_modification
 
 __all__ = [
+    "DEFAULT_AMIDE_RULES",
     "DEFAULT_MODIFICATIONS",
+    "AmideRules",
     "ChemistryError",
     "IonTypeError",
     "ModificationRegistry",
