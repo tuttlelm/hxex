@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from ..spectra import PeptideEntry, Spectrum, SpectrumSet
+from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
 from .entries import filter_entries
 from .hxexpress import read_hxexpress_file, scan_hxexpress
 from .pooled import scan_specexport_pooled
@@ -48,6 +49,7 @@ def read_spectra(
     data_dir: str | Path,
     fmt: Format,
     *,
+    project: str,
     fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
@@ -56,12 +58,16 @@ def read_spectra(
 ) -> SpectrumSet:
     """Read the raw spectra of ``entries`` into one :class:`SpectrumSet`.
 
+    ``project`` names the data set (non-empty, no ``:``); it prefixes every ``spectrum_id``
+    (``PROJECT:LOCAL_ID``) so ids stay unique when sets from different directories are combined.
+
     ``data_id`` is each entry's position in ``entries`` (before filtering by ``samples`` and
     ``peptide_ranges``, so ids stay stable when a filter is applied). Raises
     :class:`~hxex.hooks.Cancelled` if ``cancel`` returns True between entries.
     """
     if fmt not in ("hxexpress", "specexport", "pooled"):
         raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
+    qualify_spectrum_id(project, "")  # validate the name before any reading
     root = Path(data_dir)
     kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges)
     wanted = {id(e) for e in kept}
@@ -75,9 +81,11 @@ def read_spectra(
                 root / entry.file, entry, data_id=data_id, fulldeut_time=fulldeut_time
             )
         else:
-            spec_dir = root / entry.file if fmt == "pooled" else root / entry.sample / entry.file
+            rel = entry.file if fmt == "pooled" else f"{entry.sample}/{entry.file}"
             spectra += read_specexport_dir(
-                spec_dir, entry, data_id=data_id, fulldeut_time=fulldeut_time
+                root / rel, entry, data_id=data_id, fulldeut_time=fulldeut_time, id_prefix=rel
             )
         report(progress, done + 1, len(jobs))
-    return SpectrumSet.from_spectra(spectra)
+    return SpectrumSet.from_spectra(
+        replace(s, spectrum_id=qualify_spectrum_id(project, s.spectrum_id)) for s in spectra
+    )

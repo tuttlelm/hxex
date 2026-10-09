@@ -322,7 +322,7 @@ def hxdir(tmp_path):
 
 def test_read_spectra_set(hxdir):
     entries = hio.scan(hxdir, "hxexpress")
-    s = hio.read_spectra(entries, hxdir, "hxexpress")
+    s = hio.read_spectra(entries, hxdir, "hxexpress", project="proj")
     assert isinstance(s, SpectrumSet) and len(s) == 8
     assert list(s.data_id) == [0] * 4 + [1] * 4
     assert list(s.sample) == ["A"] * 4 + ["B"] * 4
@@ -336,27 +336,29 @@ def test_read_spectra_set(hxdir):
 
 def test_read_spectra_filter_keeps_data_ids(hxdir):
     entries = hio.scan(hxdir, "hxexpress")
-    s = hio.read_spectra(entries, hxdir, "hxexpress", samples=["B"])
+    s = hio.read_spectra(entries, hxdir, "hxexpress", project="proj", samples=["B"])
     assert set(s.sample) == {"B"} and set(s.data_id) == {1}
 
 
 def test_read_spectra_progress_and_cancel(hxdir):
     entries = hio.scan(hxdir, "hxexpress")
     calls = []
-    hio.read_spectra(entries, hxdir, "hxexpress", progress=lambda d, t: calls.append((d, t)))
+    hio.read_spectra(
+        entries, hxdir, "hxexpress", project="proj", progress=lambda d, t: calls.append((d, t))
+    )
     assert calls == [(1, 2), (2, 2)]
     flags = iter([False, True])
     with pytest.raises(Cancelled):
-        hio.read_spectra(entries, hxdir, "hxexpress", cancel=lambda: next(flags))
+        hio.read_spectra(entries, hxdir, "hxexpress", project="proj", cancel=lambda: next(flags))
     with pytest.raises(ValueError, match="unknown format"):
-        hio.read_spectra(entries, hxdir, "mzml")
+        hio.read_spectra(entries, hxdir, "mzml", project="proj")
     with pytest.raises(ValueError, match="unknown format"):
         hio.scan(hxdir, "mzml")
 
 
 def test_read_spectra_specexport(specroot):
     entries = hio.scan(specroot, "specexport")
-    s = hio.read_spectra(entries, specroot, "specexport", fulldeut_time=500.0)
+    s = hio.read_spectra(entries, specroot, "specexport", project="proj", fulldeut_time=500.0)
     assert len(s) == 5
     assert sorted(set(s.time)) == [0.0, 60.0, 240.0, 500.0]
     assert list(s.time_idx()[s.data_id == 0]) == [0, 1, 1, 2]
@@ -377,7 +379,7 @@ SPECEXPORT = os.environ.get("HXEX_SPECEXPORT_EXAMPLE")
 def test_bimodal_raw_spectra_match_pyhxexpress_exactly():
     root = Path(BIMODAL)
     entries = hio.read_peptide_table(root / "hdxms_testsets_metadf.csv")
-    s = hio.read_spectra(entries, root, "hxexpress")
+    s = hio.read_spectra(entries, root, "hxexpress", project="proj")
     zpath = root / "output_fixed1pop_19Feb2024" / "allrawdata_19Feb2024.zip"
     with zipfile.ZipFile(zpath) as z:
         text = z.read(z.namelist()[0]).decode()
@@ -406,7 +408,7 @@ def test_specexport_example_matches_pyhxexpress_run():
         for r in csv.DictReader(metadf.open())
     }
     assert {(e.sample, e.peptide_range, e.charge, e.peptide) for e in entries} == ref
-    s = hio.read_spectra(entries, root, "specexport")
+    s = hio.read_spectra(entries, root, "specexport", project="proj")
     mine = {
         (str(s.sample[i]), str(s.peptide_range[i]), int(s.charge[i]),
          float(s.time[i]), int(s.rep[i]))
@@ -465,7 +467,7 @@ def test_scan_pooled_warns_on_residue_count_mismatch(pooldir, caplog):
 
 def test_read_spectra_pooled(pooldir):
     entries = hio.scan(pooldir, "pooled", sample="mix")
-    s = hio.read_spectra(entries, pooldir, "pooled")
+    s = hio.read_spectra(entries, pooldir, "pooled", project="proj")
     assert set(s.sample) == {"mix"}
     assert len(s) == 3 + 1 + 1 + 1
     assert 246.0 in s.time  # 4.1m
@@ -523,3 +525,68 @@ def test_pooled_example_matches_pyhxexpress_metadf():
         matches, cls = ref[(m.entry.file, m.entry.charge)]
         assert ";".join(m.matches) == matches
         assert ";".join(m.classes) == cls.split("_")[0]
+
+
+# --- spectrum ids ---------------------------------------------------------------------------
+
+def test_spectrum_ids_hxexpress(tmp_path):
+    header = ["undeut", None, "1 min", None, "1 min", None]
+    write_xlsx(tmp_path / "a.xlsx", header=header, body=[[1, 2, 3, 4, 5, 6]])
+    sp = hio.read_hxexpress_file(tmp_path / "a.xlsx", ENTRY)
+    # the two "1 min" columns have the same label, time and (different) rep, and distinct ids
+    assert [s.spectrum_id for s in sp] == ["f.xlsx#1", "f.xlsx#3", "f.xlsx#5"]
+    assert [s.rep for s in sp] == [1, 1, 2]
+
+
+def test_spectrum_ids_specexport_and_pooled(specroot, pooldir):
+    s = hio.read_spectra(hio.scan(specroot, "specexport"), specroot, "specexport", project="proj")
+    assert "proj:S1/0002-0005-KVLA/60s-2-z2.csv" in s.spectrum_id
+    p = hio.read_spectra(
+        hio.scan(pooldir, "pooled", sample="mix"), pooldir, "pooled", project="proj"
+    )
+    assert "proj:0001-0004-MKVL/60s-2-z2.csv" in p.spectrum_id  # the sample label is not in the id
+
+
+def test_spectrum_ids_are_unique_and_stable(hxdir, specroot):
+    for root, fmt in [(hxdir, "hxexpress"), (specroot, "specexport")]:
+        entries = hio.scan(root, fmt)
+        s = hio.read_spectra(entries, root, fmt, project="proj")
+        assert len(set(s.spectrum_id)) == len(s)
+        again = hio.read_spectra(entries[::-1], root, fmt, project="proj", fulldeut_time=7.0)
+        assert set(again.spectrum_id) == set(s.spectrum_id)  # independent of order and times
+        i = s.find(str(s.spectrum_id[3]))
+        assert i == 3
+    with pytest.raises(KeyError):
+        s.find("nope")
+
+
+def test_project_name_qualifies_ids(hxdir):
+    from hxex.spectra import qualify_spectrum_id, split_spectrum_id
+
+    entries = hio.scan(hxdir, "hxexpress")
+    a = hio.read_spectra(entries, hxdir, "hxexpress", project="alpha")
+    b = hio.read_spectra(entries, hxdir, "hxexpress", project="beta")
+    assert a.spectrum_id[0] == "alpha:A_0001-0005-ABCDE-z2-x.xlsx#1"
+    assert not set(a.spectrum_id) & set(b.spectrum_id)
+    assert split_spectrum_id(str(a.spectrum_id[0])) == ("alpha", "A_0001-0005-ABCDE-z2-x.xlsx#1")
+    assert split_spectrum_id(qualify_spectrum_id("p", "a:b/c")) == ("p", "a:b/c")
+    assert a.find("alpha:A_0001-0005-ABCDE-z2-x.xlsx#3") == 1
+
+
+@pytest.mark.parametrize("project", ["", "a:b"])
+def test_bad_project_names(hxdir, project):
+    with pytest.raises(ValueError, match="project name"):
+        hio.read_spectra(hio.scan(hxdir, "hxexpress"), hxdir, "hxexpress", project=project)
+
+
+def test_project_is_required(hxdir):
+    with pytest.raises(TypeError):
+        hio.read_spectra(hio.scan(hxdir, "hxexpress"), hxdir, "hxexpress")
+
+
+@pytest.mark.parametrize("bad", ["", ":x", "noseparator"])
+def test_split_spectrum_id_errors(bad):
+    from hxex.spectra import split_spectrum_id
+
+    with pytest.raises(ValueError):
+        split_spectrum_id(bad)

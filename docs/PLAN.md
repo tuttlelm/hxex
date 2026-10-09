@@ -541,6 +541,15 @@ peak picking is a separate stage (next).
 - `hxex.spectra`: `PeptideEntry` (a row of pyHXExpress's `metadf`: file, sample, peptide, range,
   charge, `modification`, other columns kept in `extra`), `Spectrum`, and `SpectrumSet` (flat
   NumPy `mz`/`intensity` plus `offsets` and parallel index arrays; no pandas).
+- **Spectrum identity:** every spectrum has a `spectrum_id` built from where it was read, so it
+  is unique within a data directory and independent of read order, filtering and the fully
+  deuterated time: `FILE#COLUMN` (1-based column of the label) for HX-Express,
+  `SAMPLE/PEPTIDE_DIR/FILE` for SpecExport, `PEPTIDE_DIR/FILE` for pooled folders.
+  `read_spectra` requires an explicit `project` name (non-empty, no `:`) and prefixes it, giving
+  `PROJECT:LOCAL_ID`, so ids stay unique when sets from different directories are combined;
+  `split_spectrum_id` takes it apart. `SpectrumSet.find(id)` gives the position. Replicate numbers may have gaps (SpecExport takes
+  them from the file name); (data set, time, rep) is not assumed unique, the id is. The ids
+  are meant to key the results bundle and the review layer.
 - `hxex.hooks`: `progress(done, total)` and `cancel() -> bool` hooks and `Cancelled`; used by
   `read_spectra`.
 - `hxex.io`: `scan(data_dir, fmt)` lists entries, `read_spectra(entries, data_dir, fmt)` reads

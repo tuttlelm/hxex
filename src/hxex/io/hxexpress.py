@@ -133,6 +133,9 @@ def read_hxexpress_file(
             [to_number(c, where) for c in mz_col], [to_number(c, where) for c in in_col]
         )
         spectra.append(
-            Spectrum(mz, intensity, entry, time, seen[time], data_id=data_id, label=label)
+            Spectrum(
+                mz, intensity, entry, time, seen[time],
+                data_id=data_id, label=label, spectrum_id=f"{entry.file}#{col + 1}",
+            )
         )
     return spectra

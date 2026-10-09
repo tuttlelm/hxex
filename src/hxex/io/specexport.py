@@ -113,11 +113,15 @@ def read_specexport_dir(
     *,
     data_id: int = 0,
     fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
+    id_prefix: str | None = None,
 ) -> list[Spectrum]:
     """Read every spectrum of ``entry``'s charge in one peptide directory.
 
-    Spectra are ordered by time, then replicate, then file name.
+    Spectra are ordered by time, then replicate, then file name. ``spectrum_id`` is
+    ``id_prefix/FILE``, with ``id_prefix`` defaulting to ``SAMPLE/PEPTIDE_DIR``.
     """
+    if id_prefix is None:
+        id_prefix = f"{entry.sample}/{entry.file}"
     spec_dir = Path(spec_dir)
     found = []
     for path in spec_dir.glob("*.csv"):
@@ -129,5 +133,10 @@ def read_specexport_dir(
     spectra = []
     for time, rep, path in sorted(found, key=lambda t: (t[0], t[1], t[2].name)):
         mz, intensity = clean_spectrum(*_read_two_columns(path))
-        spectra.append(Spectrum(mz, intensity, entry, time, rep, data_id=data_id, label=path.name))
+        spectra.append(
+            Spectrum(
+                mz, intensity, entry, time, rep,
+                data_id=data_id, label=path.name, spectrum_id=f"{id_prefix}/{path.name}",
+            )
+        )
     return spectra

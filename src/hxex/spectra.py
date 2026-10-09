@@ -10,6 +10,21 @@ from types import MappingProxyType
 import numpy as np
 
 
+def qualify_spectrum_id(project: str, local_id: str) -> str:
+    """``PROJECT:LOCAL_ID``. The project name must be non-empty and contain no ``:``."""
+    if not project or ":" in project:
+        raise ValueError(f"project name {project!r} must be non-empty and contain no ':'")
+    return f"{project}:{local_id}"
+
+
+def split_spectrum_id(spectrum_id: str) -> tuple[str, str]:
+    """``(project, local_id)`` from an id made by :func:`qualify_spectrum_id`."""
+    project, sep, local_id = spectrum_id.partition(":")
+    if not sep or not project:
+        raise ValueError(f"{spectrum_id!r} is not a PROJECT:ID spectrum id")
+    return project, local_id
+
+
 @dataclass(frozen=True)
 class PeptideEntry:
     """One peptide/charge/sample to analyse: a row of pyHXExpress's ``metadf``.
@@ -39,8 +54,16 @@ class Spectrum:
 
     ``time`` is in seconds (0 for the undeuterated control, the user-set time for the fully
     deuterated one); ``rep`` counts spectra with the same time within a data set; ``data_id`` is
-    the position of the entry in the list that was read; ``label`` names the source (a column
-    label or file name).
+    the position of the entry in the list that was read; ``label`` names the source for display
+    (a column label or file name).
+
+    ``spectrum_id`` identifies the spectrum for later reference. The file readers set the local
+    part, built from where the spectrum was read, so it is unique within a data directory and
+    does not depend on read order, filtering or the fully deuterated time: ``FILE#COLUMN``
+    (1-based column of the label) for HX-Express, ``SAMPLE/PEPTIDE_DIR/FILE`` for SpecExport and
+    ``PEPTIDE_DIR/FILE`` for pooled folders. :func:`hxex.io.read_spectra` prefixes the
+    user-chosen project name (``PROJECT:LOCAL``, see :func:`qualify_spectrum_id`) so ids stay
+    unique when data from several directories are combined.
     """
 
     mz: np.ndarray
@@ -50,6 +73,7 @@ class Spectrum:
     rep: int
     data_id: int = 0
     label: str = ""
+    spectrum_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,6 +92,7 @@ class SpectrumSet:
     peptide_range: np.ndarray
     file: np.ndarray
     label: np.ndarray
+    spectrum_id: np.ndarray
     start_seq: np.ndarray
     end_seq: np.ndarray
     charge: np.ndarray
@@ -82,6 +107,13 @@ class SpectrumSet:
         """(m/z, intensity) views for spectrum ``i``."""
         lo, hi = self.offsets[i], self.offsets[i + 1]
         return self.mz[lo:hi], self.intensity[lo:hi]
+
+    def find(self, spectrum_id: str) -> int:
+        """Position of the spectrum with this ``spectrum_id``; raises KeyError if absent."""
+        hits = np.flatnonzero(self.spectrum_id == spectrum_id)
+        if len(hits) == 0:
+            raise KeyError(spectrum_id)
+        return int(hits[0])
 
     def time_idx(self) -> np.ndarray:
         """Index of each spectrum's time among the sorted distinct times of its data set."""
@@ -106,6 +138,7 @@ class SpectrumSet:
             peptide_range=np.array([s.entry.peptide_range for s in spectra], dtype=str),
             file=np.array([s.entry.file for s in spectra], dtype=str),
             label=np.array([s.label for s in spectra], dtype=str),
+            spectrum_id=np.array([s.spectrum_id for s in spectra], dtype=str),
             start_seq=np.array([s.entry.start_seq for s in spectra], dtype=np.int64),
             end_seq=np.array([s.entry.end_seq for s in spectra], dtype=np.int64),
             charge=np.array([s.entry.charge for s in spectra], dtype=np.int64),
