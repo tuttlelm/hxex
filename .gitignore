@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Tooling caches and reports
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editor and OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+
+# Run outputs and local data (keep example data under tests/data or docs explicitly)
+/runs/
+/output/
+*.pkl

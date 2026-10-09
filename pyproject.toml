@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hxex"
+version = "0.0.1.dev0"
+description = "Multimodal binomial-mixture analysis of HDX-MS spectra"
+readme = "README.md"
+requires-python = ">=3.11"
+# SPDX identifier chosen to match pyHXExpress, whose repository declares "GPL-3.0"
+# (the deprecated alias of GPL-3.0-only). Confirm "only" versus "or later".
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "Lisa M Tuttle" }]
+keywords = ["HDX-MS", "mass spectrometry", "hydrogen deuterium exchange", "binomial mixture"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+# Lower bounds are the versions the prototype was developed with; they are to be validated
+# by a minimum-versions CI job (see docs/PLAN.md, Phase 0).
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "torch>=2.5",
+    "pyarrow>=15",
+    "pyteomics>=4.7",
+    "brain-isotopic-distribution>=1.5",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+hxex = "hxex.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tuttlelm/hxex"
+Source = "https://github.com/tuttlelm/hxex"
+Issues = "https://github.com/tuttlelm/hxex/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hxex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
