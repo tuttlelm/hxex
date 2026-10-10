@@ -257,6 +257,24 @@ The bundle supports an option to save **all** fits:
 
 - A loader for pyHXExpress's own outputs (`alldeutdata`, `allrawdata`, `data_fits`,
   `fitparamsAll`, `metadf`), so older results can be plotted with the new plotting.
+- **HX-Express output** (`hxex.io`): a writer for the HX-Express format, as in pyHXExpress's
+  `export_to_hxexpress(rawdata, metadf, save_xls, removeUNTDreps)`. For this output the spectra
+  written are the **peak-picked** spectra (a `BinnedSet`: the predicted m/z and intensity of
+  each bin); that is a property of this format's output, not a rule for exports in general
+  (other outputs are defined separately). pyHXExpress's function has the layout but writes the
+  raw spectra. One spreadsheet per sample, peptide and charge, with an (m/z, intensity) column
+  pair per spectrum, labelled `undeut<rep>`, `TD<rep>` and `<time> sec`, where a replicate is
+  encoded as +0.01 s per replicate (`1.01 sec` is the second spectrum at 1 s); columns are
+  ordered undeuterated, then times, then fully deuterated, and a `removeUNTDreps` option keeps
+  only the first undeuterated and fully deuterated spectrum (HX-Express does not use the
+  replicates). pyHXExpress writes the file name `SAMPLE` + range + `-PEPTIDE` + `z` + charge,
+  which is not the name its own HX-Express reader expects
+  (`SAMPLE_START-END-PEPTIDE-zCHARGE-text.xlsx`); the new writer should use the name
+  `read_hxexpress_file` and `scan_hxexpress` read, so a round trip works and is tested. The
+  fully deuterated time comes from the user's setting. Flagged or dropped spectra are not
+  written (drop them with `BinnedSet.select` first). Writing the fitted results in
+  pyHXExpress's CSV layouts (`data_fits`, `fitparamsAll`) is a separate item that goes with the
+  loader above.
 
 ## Sequence syntax and PTMs
 
@@ -724,6 +742,190 @@ an older picker (constant bin spacing) and is not an oracle.
 B4, tubulin) no window has 10 or more points, so they are covered by synthetic tests only.
 Modified peptides (`Hex`, `H:1`, PTM labels) are also covered only by synthetic tests, because no
 oracle run uses them.
+
+## Phase 2 plan: the engine (proposed 2026-10-10; decisions marked OPEN)
+
+Read: the whole prototype, `fit_multimodal_binomial.py` (2,034 lines) and `run_test.ipynb`.
+
+**What the prototype has.** Core model (about 450 lines): real-valued binomial pmf, convolution with
+the natural-abundance shape, a batched K-component mixture (`log A`, `n = n_max * sigmoid`,
+`p = sigmoid`; optional mean bounds). Fit: shape-corrected k-means start, nested K start by
+splitting the heaviest component, Adam with cosine learning rate then L-BFGS, per-measurement
+NaN protection, best restart per measurement, BIC/AIC selection with a minimum-population
+filter. Noise: constant-sd Gaussian or Poisson, scaled from a reference spectrum (the series'
+undeuterated control). Bootstrap: parametric resampling, warm-started refits at the selected K,
+Hungarian matching of components, SE and percentile CI on A, n, p, mean and fraction, plus a CI
+band of the total curve. Output: a pandas table and matplotlib plots.
+
+**Problems that shape the design.**
+1. Device and dtype are module globals set at import (`torch.set_default_dtype`): no global state
+   is allowed, so they become an explicit engine setting (default as now: float32 on GPU,
+   float64 on CPU).
+2. The bootstrap keeps an iteration only if *every* measurement in the set succeeded, so one
+   degenerate spectrum discards that resample for all of them. It never bit on the 542-spectrum
+   set (all 20 iterations succeeded for all), but with 10,000 fits it would lose most iterations.
+3. A second, single-measurement code path (`BinomialMixture`, `fit_mixture`, `fit_mixture_auto`,
+   about 400 lines) duplicates the batch path; the notebook only uses the batch one.
+4. `mean_bounds` (pinning controls to expected means) is implemented but unused: the notebook
+   handles bad controls by a back-exchange fallback instead.
+5. Errors are `print`ed, `plt.show()` is called, and the k-means start is a Python loop over
+   measurements (slow at 10,000).
+
+**Proposed mapping.** `model`: the math and the mixture, given an explicit device and dtype.
+`noise`: the noise model and choosing each measurement's reference spectrum (a series is one
+entry, that is `data_id`; the undeuterated control is the spectrum at the user-set time).
+`fit`: `FitConfig`, initialisation, optimiser, K selection, returning a `FitResult` made of
+NumPy arrays (per K: A, n, p; grids of NLL, BIC, AIC; selected K; population filter flags;
+noise scale; the configs). `bootstrap`: `BootstrapConfig` and `BootstrapResult`. No pandas
+(tables are columns of arrays that go to Parquet in the bundle). Plotting moves to `report`
+in Phase 4 and reads only a loaded result. Input is a `BinnedSet`: bins are `n_deut`, shapes
+come from `chem.natural_abundance`, and `n_max` is a factor times `chem.exchangeable_sites`.
+
+**Regression baseline (frozen from the prototype, 2026-10-10).** The 542 measurements of the
+Bimodal test set (23 series, Bradykinin_Lo excluded) as the notebook sets them up: binned
+sticks from `alldeutdata_19Feb2024.csv` (the engine takes binned data, so the older picker does
+not matter here), Gaussian noise at 3 % of the undeuterated control peak, `n_max = 1.5 x
+amides`, K_max 3, bootstrap N = 20. Prototype results:
+
+| | CPU float64 | GPU float32 |
+|---|---|---|
+| fit | 67.7 s | 18.9 s |
+| bootstrap (N=20) | 299 s | 177 s |
+| K correct | 69.2 % | 69.0 % |
+| selected K = 1 / 2 / 3 | 180 / 279 / 83 | 180 / 278 / 84 |
+
+CPU and GPU agree on the selected K for 541 of 542 spectra. On those, the fitted means differ
+by a median of 0.0002 D (90th percentile 0.04 D, maximum 1.6 D) and the fractions by a median of
+0.000 (90th percentile 0.005, maximum 0.42): the large differences are different local optima of
+the same non-convex fit, so CPU/GPU parity has to be a statistical criterion (selected K, median
+and percentile differences, NLL no worse), not an element-wise one. All bootstrap iterations
+succeeded for all 542 measurements on both. The refactored engine on CPU float64 with the same
+seeds is expected to reproduce the CPU baseline much more closely, and how closely will be
+measured and recorded.
+
+**Order of work (1 to 3 done, see the status below).** (1) `model` and `noise`, tested numerically against the prototype's values;
+(2) `fit`, checked against the CPU baseline; (3) `bootstrap`; (4) the result types and the
+results-bundle schema (spectrum ids are the keys); (5) CPU/GPU parity tests.
+
+**Decisions (2026-10-10).** Drop the single-measurement path (batch with one measurement covers
+it). The bootstrap accepts iterations per measurement (a deliberate difference; identical when
+nothing fails). `n_max` is a user setting with default 1.2 times the exchangeable sites.
+`mean_bounds` (bounds and a starting value for the mean of every component of a measurement, to
+pin control spectra near their expected means) is dropped: a hard bound hides a bad control,
+while the notebook's fallback flags it. It was confined to the parameter transform and the
+initialisation, so it can be added later if a use appears.
+
+**K range.** The user sets the range of K to test (`k_min` to `k_max`): 1 to 3, 2 to 3, only 1,
+only 2. The nested start uses the (K-1) fit when that K was fitted and k-means otherwise (for
+example the first K of a range that starts at 2). With one K there is no model selection and
+the minimum-population filter is only reported as a flag. The bootstrap always runs at each
+measurement's selected K and is optional, including with a single K.
+
+## Phase 2 status: `model`, `noise` and `fit` (2026-10-10)
+
+Done so far; bootstrap, the results bundle and CPU/GPU parity are next. Implemented: `hxex.model`
+(`Backend` for device and dtype, the real-valued binomial pmf, shape
+convolution, `PaddedBatch`, `MixtureBatch`, BIC/AIC), `hxex.noise` (`NoiseConfig`,
+`noise_scale`, `control_references`, `sample_size`) and `hxex.fit` (`FitConfig`, `Measurements`
+with `from_binned` and `from_arrays`, `fit_models` returning a `FitResult` of NumPy arrays with a
+tidy `table()`, k-means and split starts, the optimiser). No global state, no pandas, errors are
+logged or raised, hooks for progress and cancellation. `k_min` to `k_max` is a setting (1-3, 2-3,
+only 1, only 2); with one K there is no selection and the population filter is only reported;
+the nested start uses the previous K when it was fitted and k-means otherwise.
+
+**Verified against the prototype** (the 542 measurements, CPU float64, tests in
+`tests/test_model.py`, `test_noise.py`, `test_fit.py`, goldens from `tests/golden/`):
+
+- The noise scale matches the prototype to 1e-12. The pmf matches for every bin up to `n` (1e-12)
+  and predictions and losses match at `n` just above an integer (1e-6); the one bin above `n`
+  differs by design (see the next subsections).
+- With the prototype's torch version, a port (made before the model change below) that keeps its
+  global gradient clipping, L-BFGS and random streams reproduces the prototype's K = 1 fits for 98.7 % of the spectra to 1e-9 (all to
+  4e-8), selects the same K for 541 to 542 of 542, and is not slower (58.6 s against 67.7 s). With
+  torch 2.14 instead of 2.5.1 the same K = 1 agreement is 78 %: different torch versions give
+  different roundings, and the non-convex fit amplifies them.
+- The prototype is **not reproducible**: it never seeds torch's generator and its warm starts
+  add `torch.randn` noise, so two runs differ for about a third of the K >= 2 fits (selected K
+  agrees for 541 of 542). Agreement with it can only be statistical.
+- The prototype's measurements are **not independent**: `clip_grad_norm_` over the whole batch
+  (and the summed L-BFGS objective) let one spectrum change the step of all others. A change of
+  1e-10 to one spectrum changed the fits of 20 to 82 % of the other 541 (loss differences up to
+  46 %). Results therefore depended on what else was in the batch, which would break chunking
+  by device (Phase 4).
+
+**Deliberate differences** (1, 2 and 4 are settings; 3 and 5 are not):
+1. `grad_clip='per_measurement'` instead of the whole-batch norm.
+2. `lbfgs_steps=0` (replaced by the Levenberg-Marquardt polish): L-BFGS gave no measurable gain (315 against 317 fits better than the
+   prototype with and without it) and is the second source of coupling.
+3. Every random number of a measurement comes from a generator seeded by `seed` and a key from
+   its `spectrum_id` (CRC-32), so runs are reproducible and a spectrum's starting points do not
+   depend on its position or the batch size.
+4. `n_max` is `n_max_factor` times the exchangeable sites (user setting, default 1.2).
+5. The model's pmf masks at `b < n + 1` instead of `b <= n` (see the next subsection).
+
+With these, a spectrum's fit depends only on its own data, its noise reference and the seed: a
+1e-10 change to one spectrum leaves 95.9 % of the others bit-identical (the rest are its series,
+whose noise scale comes from it), and a subset fitted alone agrees with the full-batch fit to
+1e-9 for 93 to 99 % of its spectra (the remainder is summation order with different padding,
+amplified by the fit; pad to one global width when chunking). Against the prototype's baseline
+(`HXEX_FULL_REGRESSION=1`, about a minute): selected K identical for 97.6 % (13 of 542), correct K
+68.5 % against 69.2 % (variants of the optimiser spanned 68.5 to 69.4 %), median loss difference
+about 0 (slightly lower at K = 2 and 3), fit 51.5 s against 67.7 s. CPU/GPU: the prototype's own
+GPU run selects the same K as its CPU run for 541 of 542; the parity test for the new engine is
+still to be written.
+
+**Convergence and the cut-off of the binomial (investigated and settled 2026-10-10).** On clean
+synthetic bimodal spectra 10 to 17 % of K = 2 fits ended well above the best loss, in every
+optimiser variant (more Adam steps or restarts did not help). Comparing 80 synthetic spectra
+(one, two and three populations) with a second-order multi-start solver gave two causes:
+
+- **The cut-off of the real-valued binomial.** The prototype masks bins above `n` (`b <= n`;
+  pyHXExpress's `nCk_real` does the same), so the loss drops by a jump each time `n` rises through
+  an integer that carries probability, a large one when `p` is high (late time points, fully
+  deuterated controls). A gradient method that stops just below an integer cannot see that
+  crossing helps, Adam overshoots back over the edge, and the optimum can sit on the edge itself.
+  (`n` is a free real number throughout; the best fits include n = 14.43 and 16.23.) The mask
+  also loses up to 15 % of the probability between integers at p = 0.9 and puts the centre of the
+  component up to 0.28 D below `n p`, so the reported mean `n p` was not the component's centre.
+- **The wrong basin.** A spectrum of two populations fitted with one often ends in a broad
+  low-mean solution with `n` at its upper bound; harmless for selection (BIC rejects it).
+
+**Decision: the model uses the exact gamma-function continuation, masking at `b < n + 1`
+instead of `b <= n`.** `Gamma(n - b + 1)` is finite and positive for `n < b < n + 1` and its
+reciprocal falls to 0 as `n` decreases to `b - 1`, so the pmf is continuous in `n`, identical at
+integer `n`, keeps the mass within 2 % of 1 and the centre within 0.05 D of `n p` (checked for
+13 <= n <= 14, p = 0.9). It is the only model: the prototype's hard mask is not an option
+(removed on the owner's instruction), and the escape stage that was written to cross the cliffs
+of the hard mask was removed with it. **This is a deliberate difference from the prototype and
+pyHXExpress:** at non-integer `n` the bin just above `n` has probability, and the fitted means of
+spectra at high `p` can move (on the Bimodal set the median shift against the hard mask was 0.005
+D, the 90th percentile 0.18 D, with no systematic direction). The model test with the prototype's
+values compares every bin up to `n` exactly (1e-12) and predictions and losses at `n` just above an
+integer (1e-6); the one extra bin is checked structurally.
+
+A **Levenberg-Marquardt polish** per measurement (`polish_steps=40`; `hxex.fit.polish.lm_polish`)
+follows the restarts: damped Gauss-Newton on the Jacobian from `torch.func`, only steps that lower
+the measurement's loss are kept, each step limited to 2 per parameter (without the limit the first
+step from a poor start could leap to a distant optimum with `n` pinned at its bound), measurements
+that converge or stall are dropped from the batch, Fisher weights for Poisson noise. It lowers the
+loss by a small amount in about 85 % of the fits (more than one loss unit in 1 to 2 of 140) at
+almost no cost, and it works per measurement, so independence is kept.
+
+| | hard mask, Adam only | hard mask + polish + escape | smooth, Adam only | smooth + polish (final) |
+|---|---|---|---|---|
+| synthetic set A (80 spectra): correct K | 93.8 % | 97.5 % | 100 % | 100 % |
+| synthetic set B (60 spectra, own integer n of 6-14 and p of 0.3-0.95 per component): correct K | 83.3 % | 90.0 % | 96.7 % | 98.3 % |
+| set B: error of the means, median / 90th pct | 0.071 / 0.53 D | 0.028 / 0.35 D | 0.024 / 0.34 D | 0.027 / 0.33 D |
+| Bimodal test set (542): correct K (prototype 69.2 %) | | 69.6 % | 69.2 % | 69.0 % |
+| Bimodal test set: fully recovered / median mean error | | 30.8 % / 0.342 D | 31.0 % / 0.324 D | 30.3 % / 0.326 D |
+| Bimodal test set: fit time (prototype 67.7 s) | | 63.2 s | 55.7 s | 60.4 s |
+
+On your real set the model change is neutral (the two models pick the same K for 526 of 542
+spectra) and it is clearly better where the truth is known and varied. Selected K equals the
+prototype's for 94.8 % of the spectra; the regression tests require the fits to be not worse than
+the prototype's (median loss difference below 1e-3, as good or better for 70 % of fits), because
+the models now differ slightly. Still open: a spectrum fitted with too few populations can end in
+the wrong basin (harmless for selection).
 
 ## Next steps
 
