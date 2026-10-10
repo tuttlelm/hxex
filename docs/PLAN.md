@@ -927,6 +927,28 @@ the prototype's (median loss difference below 1e-3, as good or better for 70 % o
 the models now differ slightly. Still open: a spectrum fitted with too few populations can end in
 the wrong basin (harmless for selection).
 
+**Noise model (looked at 2026-10-10; decision: keep both Gaussian and Poisson).** In the
+replicate data of the tubulin runs (TBA and TBB, the peak-picked stick heights of 12,000 bins
+each, 3 or more replicates at the same peptide, charge, time and bin) the noise is not constant:
+the replicate sd grows with the intensity with a log-log slope of 0.82 (0.64 after each spectrum
+is normalised to its own total, which removes whole-spectrum scale differences), and the
+variance divided by the intensity is roughly constant (about 1.0 to 1.3e-3) for shares of the
+spectrum between 0.005 and 0.77, which is Poisson-like with about 1,000 effective counts per
+spectrum. Caveats: these are window maxima (biased up at low intensity) and replicate-to-replicate
+variability includes deuteration differences, not only measurement noise. On the Bimodal set
+against the known solutions the constant-sd Gaussian (3 % of the undeuterated peak) did better
+than Poisson at every effective-count value tried (correct K 69.0 % against at most 68.5 %, fully
+recovered 30.3 % against at most 28.0 %, median mean error 0.326 D against at least 0.381 D), but
+that set's noise may not look like real replicate noise, so the two results do not settle which
+model is right; real noise probably has a floor plus an intensity-dependent part (for example
+variance = a^2 + b I). Both models stay. A heteroscedastic Gaussian that contains both as special
+cases is a candidate. The test that decides is the Phase 5 validation: which model gives
+calibrated confidence intervals on replicates and charge-state pairs. The k-means start rescales
+a Gaussian-noise spectrum to `KMEANS_PSEUDO_COUNTS` (1000) so the clustering does not depend on
+the intensity of the data; the fits did not change for values from 30 to 100,000. The Poisson
+path does not rescale (it would see flattened peaks if its scaled intensities exceeded 2,000 per
+bin, which the usual `n_eff` setting avoids).
+
 ## Next steps
 
 1. Phase 1 is complete under the differences above. Phase 2 (engine): split the prototype
