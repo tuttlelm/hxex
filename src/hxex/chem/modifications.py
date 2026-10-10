@@ -57,7 +57,7 @@ class ModificationRegistry:
             raise ChemistryError(
                 f"modification label {label!r} must be a lowercase prefix plus a residue letter"
             )
-        if label in self or label in mass.std_aa_comp:
+        if label in self:
             raise ChemistryError(f"modification {label!r} is already defined")
         if label[-1] != base or base not in _standard_residues():
             raise ChemistryError(
@@ -72,7 +72,7 @@ class ModificationRegistry:
     @cached_property
     def aa_comp(self) -> dict:
         """Residue compositions for pyteomics' ``aa_comp`` argument (a private copy)."""
-        table = dict(mass.std_aa_comp)
+        table = _standard_aa_comp()
         for r in self.residues:
             table[r.label] = table[r.base] + mass.Composition(dict(r.delta))
         return table
@@ -83,6 +83,15 @@ class ModificationRegistry:
             if r.label == label:
                 return r.base
         return label
+
+
+def _standard_aa_comp() -> dict:
+    """pyteomics' residue table without modX entries (a private copy).
+
+    Other code, pyHXExpress for one, adds ``acK`` and similar labels to pyteomics' global table.
+    They are left out so that the registry alone decides which modifications exist.
+    """
+    return {k: v for k, v in mass.std_aa_comp.items() if not _MOD_LABEL.fullmatch(k)}
 
 
 def _standard_residues() -> set[str]:

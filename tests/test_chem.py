@@ -248,3 +248,18 @@ def test_amide_rules_validation_and_serialisation():
         chem.AmideRules({"c": 1.5})
     with pytest.raises(chem.IonTypeError):
         chem.count_amides("PEPTIDE", ion_type="q")
+
+
+def test_polluted_pyteomics_table_is_ignored(monkeypatch):
+    """pyHXExpress adds acK etc. to pyteomics' global table; hxex must not depend on that."""
+    polluted = dict(mass.std_aa_comp)
+    polluted["acK"] = polluted["K"] + mass.Composition("C2H2O")
+    polluted["xxK"] = polluted["K"]
+    monkeypatch.setattr(mass, "std_aa_comp", polluted)
+    reg = chem.ModificationRegistry().with_modification("acK", "K", "C2H2O")  # no clash
+    assert "xxK" not in reg.aa_comp and "acK" in reg.aa_comp
+    assert chem.composition("PEPacKTIDE", registry=reg) == chem.composition("PEPacKTIDE")
+    with pytest.raises(chem.SequenceError):
+        chem.parse_sequence("PEPxxKTIDE", reg)
+    with pytest.raises(chem.SequenceError):
+        chem.parse_sequence("PEPacKTIDE", chem.ModificationRegistry())
