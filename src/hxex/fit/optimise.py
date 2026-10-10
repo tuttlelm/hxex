@@ -27,6 +27,12 @@ log = logging.getLogger(__name__)
 
 _CANCEL_EVERY = 25  # Adam steps between cancel checks
 
+# Total pseudo-counts a spectrum is rescaled to for the k-means start of a Gaussian fit (see
+# ``kmeans_start``, which clusters ``round(intensity)`` copies of each bin, at most 2000 per bin).
+# The clustering therefore does not depend on the intensity of the data; the amplitude is
+# restored afterwards. 1000 is the prototype's value.
+KMEANS_PSEUDO_COUNTS = 1000.0
+
 
 class FitError(RuntimeError):
     """The fit failed for every measurement (non-finite in every restart)."""
@@ -209,8 +215,8 @@ def fit_batch(
                     # clustering, then restore the amplitude scale
                     ob_init = np.clip(ob_init, 0, None)
                     total = max(float(ob_init.sum()), 1e-12)
-                    ob_init = ob_init * (1000.0 / total)
-                    la_shift = float(np.log(max(total, 1.0) / 1000.0))
+                    ob_init = ob_init * (KMEANS_PSEUDO_COUNTS / total)
+                    la_shift = float(np.log(max(total, 1.0) / KMEANS_PSEUDO_COUNTS))
                 a, n_, p_ = kmeans_start(
                     prep.bins[i], ob_init, k, prep.shapes[i], float(prep.n_max[i]),
                     seed=(seed + int(prep.keys[i])) % 2**31,
