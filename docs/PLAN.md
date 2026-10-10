@@ -612,18 +612,126 @@ Deliberate differences from `hxex_updating.py`:
 Kept from the reference, on purpose: digits after the decimal point of an HX-Express time of 1
 or more are replicate markers (`1.2 min` is 60 s, second replicate), not fractions.
 
-## Next steps (Phase 1)
+## Peak picker: reference behaviour (`peak_picker` in `hxex_updating.py`, read 2026-10-10)
 
-1. **Peak picker** (`hxex.picking`): `SpectrumSet` to binned sticks (the `alldeutdata` columns).
-   Read `peak_picker` in `hxex_updating.py` closely first, as the chemistry and readers turned up
-   several reference bugs. It uses `chem.mz`, `exchangeable_sites` and `natural_abundance`, the
-   ExMS spacing, a ppm window, shoulder rejection, a noise threshold and zero-filling, taking
-   an explicit config object. Test against `alldeutdata_19Feb2024.csv` (Bimodal test set).
-2. Dropping spectra whose picked intensity is all zero, and the `time_idx` column, are done by
-   the reference readers and still have to be placed (picker or run stage).
+What it does, per spectrum (m/z sorted, intensity):
+
+1. Predicted bin centres: `undeut_mz` (from `chem.mz`, or the user's `undeut_mz`), then bin `i`
+   is `undeut_mz + sum(dm_k) / z` with the ExMS steps 1.003355, 1.003355, 1.004816, 1.004816 and
+   then 1.006277 per bin. The number of bins is
+   `max(count_amides, min_pts) + len(natural_abundance) // 2 + Zero_Filling (+ Hex)` with
+   `min_pts = 3 * Max_Pops + 2`.
+2. Noise threshold: `setNoise` if non-zero, else `Y_ERR / 100 * max(intensity)` of that spectrum.
+3. For each bin, the window is `pred * (1 +/- ppm / 1e6)`. With fewer than 10 points in the window
+   the bin intensity is the window maximum; with 10 or more the maximum counts only if it is not
+   the first or last point of the window (shoulder rejection), else the bin is 0.
+4. A bin is a "zero" if it is empty, or below the threshold, **and** its predicted m/z is above
+   the mean of all predicted m/z. Picking stops at the first bin `i >= min_pts` where the count
+   of zeros so far reaches `Zero_Filling`.
+5. Output per bin: the **predicted** m/z (not the observed position), the window maximum (kept
+   as is when below the threshold), `n_deut`, plus `env_width` (charge times the m/z width of
+   the envelope at `Env_threshold` times the maximum, by linear interpolation) and `env_symm`
+   (`1 + left-edge intensity / max`, so 1.1 unless the first bin is above the envelope height),
+   and `max_namides` (backbone count, without `Hex`).
+6. The SpecExport reader drops spectra whose picked intensities sum to zero; the HX-Express
+   reader does not. `time_idx` is numbered over the times that remain.
+
+Findings (numbers from the October 2026 tubulin runs, 4,235 spectra, and the other test sets):
+
+- **The 19Feb2024 `alldeutdata` is not an oracle for the current picker.** It was made by an
+  older version (constant spacing 1.006227 per bin and a different bin count). The oracle is the
+  October 2026 pooled runs, which come with `allrawdata` and use the current spacing: the
+  reference function reproduces `batchrun_1pop_06Oct2026/TBA_run` exactly (2,232 spectra, six
+  columns, 1e-9) with `Nterm_subtract=2, Zero_Filling=3, setNoise=50, Max_Pops=1,
+  Peak_Resolution=50, Env_threshold=0.1`. A numpy prototype of the same logic also matches
+  TBA_run and TBB_run exactly (0 of 4,235 differ).
+- **The zero count is cumulative, not consecutive.** Zeros anywhere to the right of the mean
+  m/z add up, so a valley inside a multimodal envelope can stop picking early. A consecutive
+  rule would pick more bins in 21 % of spectra, and in 7 % the extra bins contain intensity
+  above the threshold (whether that is signal or noise has not been examined).
+- **The picked data depend on `Max_Pops`** (through `min_pts`), a fitting parameter.
+- **Below-threshold intensities are kept** (10 % of bins hold a non-zero value under the
+  threshold) while being counted as zeros; 32 % of spectra run to the bin cap instead of
+  stopping on zeros.
+- **Shoulder rejection and the 10-point rule have never been exercised by real data here:** in
+  every dataset tested (Bimodal, B4, tubulin) no window has 10 or more points, so these data
+  are centroided or sparse. The branch has no oracle and needs synthetic tests; treat it as
+  unvalidated.
+- The reference sorts the window with an unstable quicksort, so a tie for the maximum is broken
+  arbitrarily (only relevant to the shoulder test; no ties occurred).
+- The `try/except` around the envelope calculation hides errors; the envelope columns are
+  missing (NaN) instead. For modified peptides the bin count and `undeut_mz` inherit the two
+  `chem` differences listed above.
+
+## Phase 1 status: picker (`hxex.picking`)
+
+Implemented 2026-10-10. `pick_spectra(spectra, PickerConfig)` turns a `SpectrumSet` into a
+`BinnedSet` (flat arrays: predicted m/z, intensity, `n_deut`, plus per spectrum `env_width`,
+`env_symm`, `max_namides`, the threshold used, and the flags `empty`, `no_signal`, `capped`; the
+index arrays and `spectrum_id` are carried over). `PickerConfig` is serialisable
+(`to_dict`/`from_dict`) and holds the settings pyHXExpress took from `config`: `resolution_ppm`
+(50), `zero_filling` (4), `noise` (absolute; None or 0 means use `noise_percent` of the spectrum
+maximum, 1 %), `env_threshold` (0.1), `nterm_subtract`, `shoulder_min_points` (10) and the
+amide rules. Per-spectrum modification strings (`Hex`, `ion_type`, `undeut_mz`, composition)
+are honoured through `chem`.
+
+Deliberate differences from `peak_picker` (decided with the owner, 2026-10-10):
+
+1. **Picking ends `zero_filling` bins after the last bin that reaches the threshold**, so a
+   valley inside a multimodal envelope never ends picking early. pyHXExpress stopped after a
+   cumulative count of below-threshold bins to the right of the mean m/z. On the October
+   tubulin runs (TBA 2,232 and TBB 2,003 spectra) the old rule left out bins above the
+   threshold in 20 to 25 % of spectra, more than 10 % of the spectrum maximum in about 5 %, and
+   in a few cases the maximum itself.
+2. **The bin limit is the physical range**: `amides + Hex + (natural-abundance peaks - 1) +
+   zero_filling`. pyHXExpress used `max(amides, min_pts) + peaks // 2 + zero_filling`, which cut
+   the natural-abundance tail of strongly deuterated spectra (the limit was reached in 32 to
+   41 % of spectra, now 18 of 2,233 and 2 of 2,003; `capped` flags them).
+3. **No `min_pts`.** pyHXExpress needed at least as many points as fit variables, and derived the
+   minimum from `Max_Pops`, so the picked data depended on a fitting setting. The picker has no
+   such minimum; the engine in this project has no point-count requirement (3K parameters per
+   model, BIC), and capping K by the number of bins is a fit-stage decision (Phase 2).
+4. **Nothing is dropped.** Spectra with all-zero picked intensity are flagged `empty`
+   (pyHXExpress dropped them in the SpecExport reader only) and `no_signal` (no bin reaches the
+   threshold, a broader flag). The run stage drops flagged spectra with `BinnedSet.select`.
+5. **`time_idx` is not stored**; `time_idx()` is derived from the spectra in the set. In
+   pyHXExpress the SpecExport reader numbered the picked table and the raw table separately, so
+   dropping a whole time point shifted the picked numbering against the raw one, and
+   `run_hdx_fits` selects raw spectra by the picked index (silently the wrong spectra). Refer to
+   spectra by `spectrum_id`.
+6. A tie for the window maximum goes to the first point in m/z order (pyHXExpress used an
+   unstable sort). Errors in the envelope calculation are not swallowed: a spectrum without a
+   crossing gets NaN `env_width` and `env_symm`.
+7. A trailing zero fill of exactly `zero_filling` bins replaces pyHXExpress's variable tail (it
+   kept picking until the zero count to the right of the mean m/z was reached, so undeuterated
+   spectra had many more zero bins). If baseline bins are wanted for noise estimation, raise
+   `zero_filling`.
+
+Kept from `peak_picker`: the ExMS spacing, the inclusive +/- ppm window, the 10-point rule and
+shoulder rejection, sub-threshold intensities kept as they are, predicted (not observed) m/z in
+the table, the envelope formulas, `max_namides` without `Hex`.
+
+Verified against pyHXExpress output from the October 2026 pooled runs (SpecExport raw spectra
+with the picked table from the same code): in TBA, TBB, TBA_B5 and TBB_B5, every bin both
+pickers produced is identical (m/z and intensity, exactly), every bin only pyHXExpress kept is
+below the threshold, the envelope columns are equal wherever the bin counts are equal, and the one
+all-zero spectrum is flagged `empty`. `tests/golden/picker_reference.npz` (11 spectra covering
+the cases above, made by `tests/golden/make_picker_golden.py`) is committed; the whole-run check
+reads a run directory from `HXEX_PICKER_ORACLE`. The 19Feb2024 Bimodal `alldeutdata` came from
+an older picker (constant bin spacing) and is not an oracle.
+
+**Unvalidated:** shoulder rejection and the 10-point rule. In every dataset available (Bimodal,
+B4, tubulin) no window has 10 or more points, so they are covered by synthetic tests only.
+Modified peptides (`Hex`, `H:1`, PTM labels) are also covered only by synthetic tests, because no
+oracle run uses them.
+
+## Next steps
+
+1. Phase 1 is complete under the differences above. Phase 2 (engine): split the prototype
+   engine into modules with explicit config objects, taking a `BinnedSet`; decide how K is capped
+   by the number of bins; the results-bundle schema (spectrum ids are the keys).
+2. Run stage: drop flagged spectra (`empty`, and a decision on `no_signal`).
 3. Unverified: fragment-ion amide counts (see "Risks and open decisions").
-4. CI has not yet run on the readers; check the Windows and macOS jobs and the minimum-versions
-   job (the `openpyxl` lower bound was tested locally on Python 3.11 only).
 
 ## Risks and open decisions
 

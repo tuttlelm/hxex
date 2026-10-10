@@ -2,8 +2,8 @@
 
 Standalone Python package for multimodal binomial-mixture analysis of HDX-MS spectra: spectra
 to binned deuterium sticks to fitted populations with uncertainties and plots. Successor to
-pyHXExpress (it does not depend on it). Early development: Phase 0 is done; Phase 1 has `chem`
-and the readers, the peak picker is next.
+pyHXExpress (it does not depend on it). Early development: Phase 0 is done; Phase 1 (`chem`,
+readers, peak picker) is done and the engine (Phase 2) is next.
 
 The plan, decisions and phases are in `docs/PLAN.md`. Read it before designing anything, and
 do not copy it here. Release steps are in `docs/RELEASING.md`.
@@ -56,7 +56,7 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
 - `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,
   `fit`, `report`, `noise`, `controls`, `bootstrap`, `run`, `cli`). Each docstring says what
   it will contain and in which phase. Shared contracts: `spectra.py` (spectrum and entry
-  types) and `hooks.py` (progress and cancellation).
+  types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
 - `tests/`, `docs/`, `.github/workflows/` (`ci.yml`, `publish.yml`).
 
 Machine-specific notes (local paths to the pyHXExpress reference code and test data, tooling

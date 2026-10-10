@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -23,6 +24,27 @@ def split_spectrum_id(spectrum_id: str) -> tuple[str, str]:
     if not sep or not project:
         raise ValueError(f"{spectrum_id!r} is not a PROJECT:ID spectrum id")
     return project, local_id
+
+
+def time_index(data_id: np.ndarray, time: np.ndarray) -> np.ndarray:
+    """Rank of each time among the sorted distinct times of its data set (``data_id``)."""
+    out = np.zeros(len(time), dtype=np.int64)
+    for d in np.unique(data_id):
+        sel = data_id == d
+        out[sel] = np.searchsorted(np.unique(time[sel]), time[sel])
+    return out
+
+
+def ragged_mask(offsets: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """Boolean mask over the flat array for the segments (spectra) where ``keep`` is True."""
+    return np.repeat(keep, np.diff(offsets))
+
+
+def _check_mask(keep: np.ndarray, n: int) -> np.ndarray:
+    keep = np.asarray(keep, dtype=bool)
+    if keep.shape != (n,):
+        raise ValueError(f"mask must have one element per spectrum ({n}), got shape {keep.shape}")
+    return keep
 
 
 @dataclass(frozen=True)
@@ -99,6 +121,7 @@ class SpectrumSet:
     rep: np.ndarray
     data_id: np.ndarray
     time: np.ndarray
+    modification: np.ndarray
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -116,12 +139,29 @@ class SpectrumSet:
         return int(hits[0])
 
     def time_idx(self) -> np.ndarray:
-        """Index of each spectrum's time among the sorted distinct times of its data set."""
-        out = np.zeros(len(self), dtype=np.int64)
-        for d in np.unique(self.data_id):
-            sel = self.data_id == d
-            out[sel] = np.searchsorted(np.unique(self.time[sel]), self.time[sel])
-        return out
+        """Index of each spectrum's time among the sorted distinct times of its data set.
+
+        Derived from the spectra in this set, so it changes if spectra are dropped. Prefer
+        ``spectrum_id`` to refer to spectra.
+        """
+        return time_index(self.data_id, self.time)
+
+    def select(self, keep: np.ndarray) -> SpectrumSet:
+        """A new set with the spectra where the boolean array ``keep`` is True."""
+        keep = _check_mask(keep, len(self))
+        pts = ragged_mask(self.offsets, keep)
+        sizes = np.diff(self.offsets)[keep]
+        fields = {
+            f.name: getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if f.name not in ("mz", "intensity", "offsets")
+        }
+        return SpectrumSet(
+            mz=self.mz[pts],
+            intensity=self.intensity[pts],
+            offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
+            **{k: v[keep] for k, v in fields.items()},
+        )
 
     @classmethod
     def from_spectra(cls, spectra: Iterable[Spectrum]) -> SpectrumSet:
@@ -145,4 +185,5 @@ class SpectrumSet:
             rep=np.array([s.rep for s in spectra], dtype=np.int64),
             data_id=np.array([s.data_id for s in spectra], dtype=np.int64),
             time=np.array([s.time for s in spectra], dtype=np.float64),
+            modification=np.array([s.entry.modification for s in spectra], dtype=str),
         )
