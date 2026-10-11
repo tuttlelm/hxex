@@ -348,6 +348,7 @@ def write_bundle(
     review: ReviewTable | None = None,
     controls: ControlTable | None = None,
     quality: QualityFlags | None = None,
+    run_config: dict | None = None,
     project: str | None = None,
     notes: str = "",
     overwrite: bool = False,
@@ -413,6 +414,7 @@ def write_bundle(
                 "picker": None if picker_config is None else picker_config.to_dict(),
                 "controls": None if controls is None else controls.config.to_dict(),
                 "quality": None if quality is None else quality.config.to_dict(),
+                "run": run_config,
             },
             "files": files,
         }

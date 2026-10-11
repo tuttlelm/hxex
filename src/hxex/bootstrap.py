@@ -22,7 +22,7 @@ from __future__ import annotations
 import itertools
 import logging
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -127,6 +127,53 @@ class BootstrapResult:
 
     def __len__(self) -> int:
         return len(self.selected_K)
+
+    @classmethod
+    def merge(
+        cls, parts: Sequence[BootstrapResult], rows: Sequence[Sequence[int]]
+    ) -> BootstrapResult:
+        """One result from bootstraps of separate groups of measurements (``rows[j]`` are the
+        positions of ``parts[j]`` in the whole input, covering every position once)."""
+        if not parts or len(parts) != len(rows):
+            raise ValueError("merge needs one list of rows per part")
+        positions = np.concatenate([np.asarray(r, dtype=np.int64) for r in rows])
+        if any(len(part) != len(r) for part, r in zip(parts, rows, strict=True)):
+            raise ValueError("each part needs one row position per measurement")
+        if not np.array_equal(np.sort(positions), np.arange(len(positions))):
+            raise ValueError("the rows of the parts must cover every measurement exactly once")
+        if any(p.config != parts[0].config for p in parts):
+            raise ValueError("the parts were made with different settings")
+        if len({p.draws is None for p in parts}) != 1:
+            raise ValueError("only some of the parts have draws")
+        order = np.argsort(positions)
+
+        def cat(name: str) -> np.ndarray:
+            return np.concatenate([getattr(p, name) for p in parts])[order]
+
+        where = np.empty((len(positions), 2), dtype=np.int64)  # part and local row of each
+        for j, r in enumerate(rows):
+            where[np.asarray(r, dtype=np.int64)] = np.column_stack(
+                [np.full(len(r), j), np.arange(len(r))]
+            )
+        lo, hi, offsets = [], [], [0]
+        for j, local in where:
+            a, b = parts[j].curve_offsets[local], parts[j].curve_offsets[local + 1]
+            lo.append(parts[j].curve_lo[a:b])
+            hi.append(parts[j].curve_hi[a:b])
+            offsets.append(offsets[-1] + (b - a))
+        draws = None
+        if parts[0].draws is not None:
+            draws = BootstrapDraws(*(
+                np.concatenate([getattr(p.draws, name) for p in parts])[order]
+                for name in ("A", "n", "p", "ok")
+            ))
+        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se", "A_ci",
+                 "n_ci", "p_ci", "mean_ci", "frac_ci")
+        return cls(
+            config=parts[0].config, **{name: cat(name) for name in names},
+            curve_lo=np.concatenate(lo), curve_hi=np.concatenate(hi),
+            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws,
+        )
 
     def curve_band(self, i: int) -> tuple[np.ndarray, np.ndarray]:
         """``(lo, hi)`` of the total fitted curve of spectrum ``i``."""

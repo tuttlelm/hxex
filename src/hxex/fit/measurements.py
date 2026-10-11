@@ -50,6 +50,27 @@ class Measurements:
     def __len__(self) -> int:
         return len(self.bins)
 
+    def select(self, index) -> Measurements:
+        """The measurements at ``index`` (positions, in that order). The reference spectra of each
+        selected measurement must be selected too (select whole series); they are renumbered."""
+        index = np.asarray(index, dtype=np.int64)
+        if index.ndim != 1 or len(set(index.tolist())) != len(index):
+            raise ValueError("index must be a one-dimensional list of distinct positions")
+        new = {int(old): j for j, old in enumerate(index)}
+        refs = []
+        for i in index:
+            ref = self.references[int(i)]
+            if ref is not None and any(r not in new for r in ref):
+                raise ValueError("a measurement was selected without its reference spectra")
+            refs.append(None if ref is None else tuple(new[r] for r in ref))
+        return Measurements(
+            bins=tuple(self.bins[i] for i in index),
+            observed=tuple(self.observed[i] for i in index),
+            shapes=tuple(self.shapes[i] for i in index), n_max=self.n_max[index],
+            references=tuple(refs), spectrum_id=self.spectrum_id[index],
+            data_id=self.data_id[index], time=self.time[index],
+        )
+
     @classmethod
     def from_arrays(
         cls,

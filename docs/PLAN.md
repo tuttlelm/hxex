@@ -1072,6 +1072,24 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     the screens are largely complementary; on Bimodal: 1, 0 and 0. Thresholds are defaults from
     these two data sets, not validated against known bad spectra (there is no labelled set).
 
+29. **Run stage (Phase 3, `hxex.run`).** `run(spectra_or_binned, RunConfig, out=...)`: pick, drop
+    the spectra flagged `empty` (and `no_signal` unless `drop_no_signal=False`; the picked table
+    in the bundle keeps every spectrum and its flags), fit and bootstrap in chunks, controls,
+    quality flags, bundle (with the run settings in `configs.run`). A chunk is made of whole
+    series, because the noise estimate and the noise references work within a series; it is
+    sized from a memory budget (default half the free GPU memory, 4 GiB on the CPU; `max_chunk`
+    caps it). The memory of a fit was measured on the GPU: the peak grows linearly with the
+    chunk, at 5.2 to 5.9 times the size of 12 pmf arrays for 94 to 542 Bimodal measurements
+    (float32), so the estimate uses 75 arrays (the bootstrap needs less). Chunking does not change
+    the result: on the 542 Bimodal measurements in 12 chunks of whole series against one chunk
+    (CPU, float64) the selected K is the same for 542 of 542, the controls and flags are
+    identical, and the means of the populations agree to 0.0017 D at the 99th percentile and
+    0.037 D at most (the order of the populations in a fit is arbitrary, so they were compared
+    sorted; 5 measurements differ by more than 0.01 D, all with nearly equal loss). Small chunks
+    cost time (12 chunks took 198 s against 63 s for one on the CPU), so the default budget is
+    large. Progress is reported in 1000 units with the fit first and then the bootstrap, and a
+    cancel writes nothing. The bootstrap is made at each measurement's selected K only.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
@@ -1102,18 +1120,12 @@ CSVs or mzML if wanted.
 
 ## Next steps
 
-1. **Phase 3 (controls and results), in progress: controls, the correction, the quality flags
-   and their bundle tables are done (items 27 and 28); the run integration remains.** Identify the undeuterated and fully deuterated controls by
-   the user-set times (replicates averaged), the back-exchange correction with flagged fallbacks
-   for missing or bad controls (the notebook's rule: undeuterated mean above 0.5 D, or retention
-   outside 0.5 to 1.1, falls back to the theoretical controls), quality flags (the
-   replicate-consistency score is a start; the fit chi-square and the total intensity against the
-   series are the other screens), and the control tables for the bundle. On the Bimodal
+1. **Phase 3 (controls and results): done** (items 27 to 29: controls and the back-exchange
+   correction, quality flags, their bundle tables and the run stage). On the Bimodal
    unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
    it matters for the reported means.
-2. **Run stage** (`hxex.run`): drop flagged spectra (`empty`, a decision on `no_signal`), chunking
-   by device memory (results do not depend on the chunk, see the independence tests; pad to one
-   global width), progress and cancellation across the whole pipeline.
+2. **Run stage** (`hxex.run`): done (item 29). Open: bootstrap at K values other than the selected
+   one (see the owner's question), HX-Express-style output of the run.
 3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5

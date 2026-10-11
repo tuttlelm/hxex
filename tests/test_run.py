@@ -1,0 +1,203 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The run stage: dropping flagged spectra, chunking (which must not change the result),
+progress and cancellation, and the bundle it writes."""
+
+import logging
+
+import numpy as np
+import pytest
+
+from hxex.bootstrap import BootstrapConfig, BootstrapResult
+from hxex.controls import ControlConfig
+from hxex.fit import FitConfig, FitResult, Measurements
+from hxex.hooks import Cancelled
+from hxex.io import open_bundle
+from hxex.model import Backend
+from hxex.noise import NoiseConfig
+from hxex.picking import PickerConfig, pick_spectra, plan_bins
+from hxex.quality import QualityConfig
+from hxex.run import RunConfig, chunk_bytes, plan_chunks, run
+from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
+from test_bundle import envelope
+from test_picking import sticks
+
+PEPTIDE = "RDKVQKEYAL"
+PICK = PickerConfig(zero_filling=3, noise=100.0)
+CPU = Backend("cpu", "float64")
+LAYOUT = [(0.0, 1, 0.5, 0.8), (0.0, 2, 0.5, 0.85), (0.0, 3, 0.5, 0.8), (60.0, 1, 3.0, 1.2),
+          (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]
+
+
+def raw_spectra(n_series=3, project="proj", empty=None):
+    plan = plan_bins(PEPTIDE, 2, config=PICK)
+    spectra = []
+    for s in range(n_series):
+        entry = PeptideEntry(f"f{s}.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2)
+        for k, (t, rep, centre, width) in enumerate(LAYOUT):
+            height = 4e4 * (0.9 + 0.1 * (k % 3))
+            mz, y = sticks(plan, envelope(plan, centre + 0.1 * s, width, height))
+            y = y + np.random.default_rng(100 * s + k).normal(0, 15, len(y))
+            if empty == (s, k):
+                y = np.zeros_like(y)
+            spectra.append(Spectrum(mz, y, entry, t, rep, data_id=s, label=f"s{s}c{k}",
+                                    spectrum_id=f"{project}:f{s}.xlsx#{k + 1}"))
+    return SpectrumSet.from_spectra(spectra)
+
+
+def config(**kw):
+    fit = FitConfig(k_max=2, adam_steps=60, n_restarts=2, backend=CPU,
+                    noise=NoiseConfig("gaussian", percent=3.0, estimate="replicates",
+                                      min_replicated=2))
+    boot = BootstrapConfig(n_boot=3, n_restarts=1, adam_steps=30, polish_steps=0, keep_draws=True)
+    base = dict(picker=PICK, fit=fit, bootstrap=boot,
+                controls=ControlConfig(undeut_time=0.0, fd_time=1e6))
+    return RunConfig(**{**base, **kw})
+
+
+def measurements(raw):
+    return Measurements.from_binned(pick_spectra(raw, PICK), nterm_subtract=PICK.nterm_subtract)
+
+
+@pytest.fixture(scope="module")
+def whole():
+    raw = raw_spectra()
+    return raw, run(raw, config())
+
+
+def test_run_gives_every_stage(whole):
+    raw, res = whole
+    assert res.kept.all() and len(res.fit) == len(raw) == len(res.measurements)
+    assert res.bootstrap is not None and len(res.bootstrap) == len(raw)
+    assert list(res.controls.data_id) == [0, 1, 2] and res.quality is not None
+    assert not res.controls.fallback.any()
+    assert (res.controls.n_amides == res.measurements.n_max[0] / 1.2).all()
+
+
+def test_flagged_spectra_are_dropped_and_recorded():
+    raw = raw_spectra(empty=(1, 4))
+    res = run(raw, config(bootstrap=None))
+    assert res.kept.sum() == len(raw) - 1 and len(res.fit) == len(raw) - 1
+    assert list(res.dropped_ids) == ["proj:f1.xlsx#5"]
+    assert list(res.dropped_reason[~res.kept]) == ["empty"]
+    assert len(res.binned) == len(raw)  # the picked table keeps every spectrum and its flags
+    assert "proj:f1.xlsx#5" not in set(res.measurements.spectrum_id)
+
+
+def test_nothing_left_is_an_error():
+    raw = raw_spectra(n_series=1)
+    zero = SpectrumSet.from_spectra([
+        Spectrum(raw.spectrum(i)[0], np.zeros(len(raw.spectrum(i)[1])),
+                 PeptideEntry("f0.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2), float(raw.time[i]),
+                 int(raw.rep[i]), data_id=0, label="z", spectrum_id=str(raw.spectrum_id[i]))
+        for i in range(len(raw))])
+    with pytest.raises(ValueError, match="every spectrum was dropped"):
+        run(zero, config())
+
+
+def test_chunking_does_not_change_the_result(whole):
+    raw, res = whole
+    small = run(raw, config(max_chunk=1))  # one series per chunk: three chunks
+    a, b = res.fit, small.fit
+    assert np.array_equal(a.spectrum_id, b.spectrum_id)
+    assert np.array_equal(a.selected_K, b.selected_K)
+    for k in a.k_values:
+        np.testing.assert_allclose(b.fits[k].nll, a.fits[k].nll, rtol=1e-4, atol=1e-4)
+        # padding to another width changes the rounding, and a short fit amplifies it (1e-3 D)
+        np.testing.assert_allclose(b.fits[k].means, a.fits[k].means, rtol=1e-3, atol=1e-3)
+    np.testing.assert_allclose(b.obs_scale, a.obs_scale, rtol=1e-9)
+    ba, bb = res.bootstrap, small.bootstrap
+    np.testing.assert_allclose(bb.mean_se, ba.mean_se, rtol=1e-4, atol=1e-5)
+    np.testing.assert_array_equal(bb.curve_offsets, ba.curve_offsets)
+    np.testing.assert_allclose(bb.curve_hi, ba.curve_hi, rtol=1e-4, atol=1e-6)
+    np.testing.assert_allclose(small.controls.m0, res.controls.m0, atol=1e-5)
+    np.testing.assert_array_equal(small.quality.poor_fit, res.quality.poor_fit)
+
+
+def test_plan_chunks_cover_whole_series_within_the_budget():
+    raw = raw_spectra(n_series=5)
+    meas = measurements(raw)
+    one = chunk_bytes(max(len(b) for b in meas.bins), max(len(s) for s in meas.shapes), 2, 16, 8)
+    chunks = plan_chunks(meas, 2, 8, budget=one)
+    assert np.array_equal(np.sort(np.concatenate(chunks)), np.arange(len(meas)))
+    for rows in chunks:
+        assert len(rows) in (8, 16)  # whole series of 8
+        assert len(set(meas.data_id[rows])) == len(rows) // 8
+    assert len(chunks) == 3  # five series, two per chunk
+    assert len(plan_chunks(meas, 2, 8, budget=1e12)) == 1
+    assert len(plan_chunks(meas, 2, 8, budget=1e12, max_chunk=8)) == 5
+
+
+def test_a_series_over_the_budget_is_its_own_chunk_with_a_warning(caplog):
+    raw = raw_spectra(n_series=2)
+    meas = measurements(raw)
+    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+        chunks = plan_chunks(meas, 2, 8, budget=1.0)
+    assert len(chunks) == 2 and "cannot be split" in caplog.text
+
+
+def test_progress_is_monotone_to_the_end_and_cancel_stops_cleanly(tmp_path):
+    raw = raw_spectra(n_series=2)
+    seen = []
+    run(raw, config(max_chunk=1), progress=lambda d, t: seen.append((d, t)))
+    done = [d for d, _ in seen]
+    assert done == sorted(done) and seen[-1] == (1000, 1000) and {t for _, t in seen} == {1000}
+    stop = []
+    out = tmp_path / "never"
+    with pytest.raises(Cancelled):
+        run(raw, config(), out=out, cancel=lambda: len(stop) > 0 or stop.append(1) or False)
+    assert not out.exists()
+
+
+def test_the_bundle_is_written_and_records_the_run(tmp_path):
+    raw = raw_spectra(n_series=2, empty=(0, 7))
+    cfg = config()
+    path = tmp_path / "bundle"
+    res = run(raw, cfg, out=path, project="proj", notes="test")
+    with open_bundle(path) as b:
+        assert b.has("spectra") and b.has("controls") and b.has("quality") and b.has("bootstrap")
+        assert RunConfig.from_dict(b.manifest["configs"]["run"]) == cfg
+        assert len(b.binned()) == len(raw) and len(b.fit()) == len(raw) - 1
+        np.testing.assert_array_equal(b.quality().poor_fit, res.quality.poor_fit)
+        assert b.controls().config == cfg.controls
+    plain = run(raw, config(controls=None, quality=None, bootstrap=None), out=tmp_path / "p",
+                keep_spectra=False)
+    with open_bundle(tmp_path / "p") as b:
+        assert not (b.has("spectra") or b.has("controls") or b.has("quality") or b.has("bootstrap"))
+    assert plain.controls is None and plain.quality is None
+
+
+def test_a_picked_set_can_be_run_directly():
+    raw = raw_spectra(n_series=1)
+    res = run(pick_spectra(raw, PICK), config(bootstrap=None))
+    assert len(res.fit) == len(raw)
+
+
+def test_config_checks_and_round_trip():
+    with pytest.raises(ValueError, match="k_min"):
+        RunConfig(fit=FitConfig(k_min=2), controls=ControlConfig(undeut_time=0.0, fd_time=1e6))
+    with pytest.raises(ValueError):
+        RunConfig(max_chunk=0)
+    with pytest.raises(ValueError, match="unknown"):
+        RunConfig.from_dict({"bogus": 1})
+    c = RunConfig(quality=QualityConfig(min_intensity=0.2), undeut_time=5.0)
+    assert RunConfig.from_dict(c.to_dict()) == c and c.reference_time == 5.0
+    assert config().reference_time == 0.0
+
+
+def test_select_and_merge_are_checked(whole):
+    raw, res = whole
+    m = res.measurements
+    sub = m.select([8, 9, 10, 11, 12, 13, 14, 15])  # series 1
+    assert sub.references[0] == (0, 1, 2) and sub.spectrum_id[0] == m.spectrum_id[8]
+    with pytest.raises(ValueError, match="reference"):
+        m.select([3, 4])
+    with pytest.raises(ValueError, match="distinct"):
+        m.select([0, 0])
+    n = len(res.fit)
+    with pytest.raises(ValueError, match="one row position"):
+        FitResult.merge([res.fit], [[0, 1]])
+    with pytest.raises(ValueError, match="exactly once"):
+        FitResult.merge([res.fit], [[0] * n])
+    with pytest.raises(ValueError, match="exactly once"):
+        BootstrapResult.merge([res.bootstrap], [[0] * n])
+    assert isinstance(sub, Measurements)

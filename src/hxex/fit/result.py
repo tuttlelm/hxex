@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -73,6 +75,51 @@ class FitResult:
     def __len__(self) -> int:
         return len(self.selected_K)
 
+    @classmethod
+    def merge(cls, parts: Sequence[FitResult], rows: Sequence[Sequence[int]]) -> FitResult:
+        """One result from fits of separate groups of measurements: ``rows[j]`` are the positions
+        (in the whole input) of the measurements of ``parts[j]``. The groups must cover every
+        position once and share the settings; the merged order is that of the whole input."""
+        if not parts or len(parts) != len(rows):
+            raise ValueError("merge needs one list of rows per part")
+        positions = np.concatenate([np.asarray(r, dtype=np.int64) for r in rows])
+        if any(len(part) != len(r) for part, r in zip(parts, rows, strict=True)):
+            raise ValueError("each part needs one row position per measurement")
+        if not np.array_equal(np.sort(positions), np.arange(len(positions))):
+            raise ValueError("the rows of the parts must cover every measurement exactly once")
+        first = parts[0]
+        for part in parts:
+            if part.config != first.config or part.k_values != first.k_values:
+                raise ValueError("the parts were fitted with different settings")
+        order = np.argsort(positions)
+
+        def cat(name: str) -> np.ndarray:
+            return np.concatenate([getattr(p, name) for p in parts])[order]
+
+        fits = {
+            k: KFit(k=k, **{
+                name: np.concatenate([getattr(p.fits[k], name) for p in parts])[order]
+                for name in _KFIT_ARRAYS
+            })
+            for k in first.k_values
+        }
+        estimates = [p.noise_estimate for p in parts]
+        if all(e is None for e in estimates):
+            estimate = None
+        elif any(e is None for e in estimates):
+            raise ValueError("only some of the parts have a noise estimate")
+        else:
+            estimate = NoiseEstimate(**{
+                f.name: np.concatenate([getattr(e, f.name) for e in estimates])[order]
+                for f in dataclasses.fields(NoiseEstimate)
+            })
+        return cls(
+            config=first.config, spectrum_id=cat("spectrum_id"), data_id=cat("data_id"),
+            time=cat("time"), k_values=first.k_values, fits=fits, selected_K=cat("selected_K"),
+            score=cat("score"), obs_scale=cat("obs_scale"), sample_size=cat("sample_size"),
+            n_max=cat("n_max"), noise_kind=cat("noise_kind"), noise_estimate=estimate,
+        )
+
     def grid(self, name: str) -> np.ndarray:
         """``nll``, ``bic``, ``aic`` or ``passes_min_pop`` for every K tried, ``(M, nK)``."""
         return np.column_stack([getattr(self.fits[k], name) for k in self.k_values])
@@ -121,6 +168,10 @@ class FitResult:
         order = np.lexsort((out["component"], out["fit_K"], out["measurement"]))
         return {name: arr[order] for name, arr in out.items()}
 
+
+_KFIT_ARRAYS = (
+    "A", "n", "p", "log_A", "n_raw", "logit_p", "nll", "bic", "aic", "passes_min_pop",
+)
 
 _TABLE_COLUMNS = (
     "measurement", "spectrum_id", "data_id", "time", "selected_K", "fit_K", "is_selected",
