@@ -1034,13 +1034,42 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
 26. Not in the bundle yet: the control identification and back-exchange values (Phase 3, to be
 added as tables). `hxex.io` loads the bundle lazily, so reading spectra does not import torch.
 
+**CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
+skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
+the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
+each K agrees to within 1e-3 for 100, 98 and 91 % of the fits (K = 1, 2, 3; median relative
+difference below 1e-6); the fitted means of spectra with the same K differ by a median of
+0.0000 D, 90th percentile 0.002 D, 99th percentile 0.05 D and at most 0.70 D (more than 0.1 D in
+0.9 % of the spectra, more than 0.5 D in 0.2 %, the prototype's worst was 1.6 D), and the
+fractions by at most 0.07 (the prototype 0.42). GPU float64 reproduces the CPU almost exactly (same
+K for all 542, median loss difference 1e-15, means within 0.02 D). A GPU float32 run twice is
+bit-identical, and fitting a subset alone agrees with the full batch, as on the CPU. Fit
+time for the 542: CPU 67.5 s, GPU 18.9 s (float32) and 22.0 s (float64) (the prototype's GPU
+fit took 16 to 19 s); bootstrap with N = 20: CPU 284 s, GPU 184 s, all resamples succeeding.
+The mixed noise models, the estimate and the polish (`torch.func` on CUDA) run on the GPU, and
+a bundle written from a GPU run opens without CUDA. Float32 is the GPU default; float64 is
+available and costs little on this card.
+
+**Phase 2 exit criteria** (reproduces the frozen results, passes CPU/GPU parity, save/load round
+trip exact) are met.
+
 ## Next steps
 
-1. Phase 1 is complete under the differences above. Phase 2 (engine): split the prototype
-   engine into modules with explicit config objects, taking a `BinnedSet`; decide how K is capped
-   by the number of bins; the results-bundle schema (spectrum ids are the keys).
-2. Run stage: drop flagged spectra (`empty`, and a decision on `no_signal`).
-3. Unverified: fragment-ion amide counts (see "Risks and open decisions").
+1. **Phase 3 (controls and results).** Identify the undeuterated and fully deuterated controls by
+   the user-set times (replicates averaged), the back-exchange correction with flagged fallbacks
+   for missing or bad controls (the notebook's rule: undeuterated mean above 0.5 D, or retention
+   outside 0.5 to 1.1, falls back to the theoretical controls), quality flags (the
+   replicate-consistency score is a start; the fit chi-square and the total intensity against the
+   series are the other screens), and the control tables for the bundle. On the Bimodal
+   unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
+   it matters for the reported means.
+2. **Run stage** (`hxex.run`): drop flagged spectra (`empty`, a decision on `no_signal`), chunking
+   by device memory (results do not depend on the chunk, see the independence tests; pad to one
+   global width), progress and cancellation across the whole pipeline.
+3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
+   (per component, with decisions on K above the number of bounds) or a fixed-population
+   (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5
+   validation; fragment-ion amide counts (see "Risks and open decisions").
 
 ## Risks and open decisions
 
