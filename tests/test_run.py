@@ -201,3 +201,91 @@ def test_select_and_merge_are_checked(whole):
     with pytest.raises(ValueError, match="exactly once"):
         BootstrapResult.merge([res.bootstrap], [[0] * n])
     assert isinstance(sub, Measurements)
+
+
+# --- the bootstrap at fixed K ---------------------------------------------------------------
+
+def boot_config(**kw):
+    return BootstrapConfig(n_boot=3, n_restarts=1, adam_steps=30, polish_steps=0, **kw)
+
+
+def test_ks_setting_is_checked_and_round_trips():
+    for bad in ("some", (), (0,), (1, 1)):
+        with pytest.raises(ValueError, match="ks must be"):
+            BootstrapConfig(ks=bad)
+    c = BootstrapConfig(ks=[1, 2])
+    assert c.ks == (1, 2) and BootstrapConfig.from_dict(c.to_dict()) == c
+    assert BootstrapConfig().ks == "selected" and BootstrapConfig(ks="all").ks == "all"
+    with pytest.raises(ValueError, match="outside the fitted"):
+        config(bootstrap=boot_config(ks=(1, 5)))
+
+
+def test_fixed_k_bootstrap_agrees_with_the_selected_k_bootstrap(whole):
+    from hxex.bootstrap import bootstrap, bootstrap_by_k, selected_from
+    raw, res = whole
+    cfg = boot_config()
+    by_k = bootstrap_by_k(res.measurements, res.fit, (1, 2), cfg)
+    assert set(by_k) == {1, 2} and all(len(b) == len(res.fit) for b in by_k.values())
+    assert all((by_k[k].selected_K == k).all() for k in by_k)
+    plain = bootstrap(res.measurements, res.fit, cfg)
+    again = selected_from(res.fit, by_k)
+    for name in ("mean_se", "frac_se", "mean_ci", "n_success", "curve_hi", "curve_offsets"):
+        np.testing.assert_allclose(getattr(again, name), getattr(plain, name), rtol=1e-6,
+                                   atol=1e-8, equal_nan=True)
+    with pytest.raises(ValueError, match="not fitted"):
+        bootstrap_by_k(res.measurements, res.fit, (3,), cfg)
+    with pytest.raises(ValueError, match="cover"):
+        selected_from(res.fit, {k: b for k, b in by_k.items() if k != res.fit.selected_K[0]})
+
+
+def test_run_with_ks_gives_every_k_and_chunking_does_not_matter():
+    raw = raw_spectra()
+    cfg = config(bootstrap=boot_config(ks="all", keep_draws=True))
+    one = run(raw, cfg)
+    assert set(one.bootstrap_by_k) == {1, 2} and one.bootstrap is not None
+    for k, b in one.bootstrap_by_k.items():
+        assert (b.selected_K == k).all() and b.draws is not None
+    # the selected-K bootstrap is made of the rows of the fixed-K ones
+    for i, k in enumerate(one.fit.selected_K):
+        np.testing.assert_array_equal(one.bootstrap.mean_se[i], one.bootstrap_by_k[k].mean_se[i])
+    small = run(raw, config(bootstrap=boot_config(ks="all", keep_draws=True), max_chunk=1))
+    for k in (1, 2):
+        np.testing.assert_allclose(small.bootstrap_by_k[k].mean_se, one.bootstrap_by_k[k].mean_se,
+                                   rtol=1e-3, atol=1e-3, equal_nan=True)
+    only = run(raw, config(bootstrap=boot_config(ks=(1,))))
+    assert set(only.bootstrap_by_k) == {1} and len(only.bootstrap) == len(raw)
+
+
+def test_the_bundle_keeps_the_fixed_k_bootstrap(tmp_path):
+    raw = raw_spectra(n_series=2)
+    res = run(raw, config(bootstrap=boot_config(ks="all", keep_draws=True)),
+              out=tmp_path / "b")
+    with open_bundle(tmp_path / "b") as b:
+        assert b.bootstrap_ks() == [1, 2] and b.has("bootstrap_k_draws")
+        for k in (1, 2):
+            got, want = b.bootstrap(k), res.bootstrap_by_k[k]
+            for name in ("selected_K", "n_success", "mean_se", "mean_ci", "frac_se", "curve_lo",
+                         "curve_offsets"):
+                np.testing.assert_array_equal(getattr(got, name), getattr(want, name))
+            np.testing.assert_array_equal(got.draws.n, want.draws.n)
+        np.testing.assert_array_equal(b.bootstrap().mean_se, res.bootstrap.mean_se)
+        assert b.bootstrap(3) is None
+        comp = b.components_table()
+        for k in (1, 2):  # a fixed-K result fills the rows of its K, selected or not
+            rows = comp["fit_K"] == k
+            assert np.isfinite(comp["mean_se"][rows]).all() and np.isfinite(
+                comp["mean_corrected_se"][rows]).all()
+    res_plain = run(raw, config(bootstrap=boot_config()), out=tmp_path / "p")
+    with open_bundle(tmp_path / "p") as b:
+        assert b.bootstrap_ks() == [] and b.bootstrap(1) is None
+        comp = b.components_table()
+        assert np.isnan(comp["mean_se"][~comp["is_selected"]]).all()
+    assert res_plain.bootstrap_by_k is None
+
+
+def test_write_bundle_refuses_a_wrong_fixed_k_result(tmp_path, whole):
+    from hxex.io import BundleError, write_bundle
+    raw, res = whole
+    with pytest.raises(BundleError, match="fixed-K"):
+        write_bundle(tmp_path / "x", measurements=res.measurements, fit=res.fit,
+                     bootstrap_by_k={2: res.bootstrap})  # the selected-K result is not at K=2

@@ -9,7 +9,8 @@ objects the run produced, bit for bit. The review layer (accept or reject, a cho
 the only part that changes after writing; it needs no refit.
 
 Written tables: ``measurements`` and ``fit`` (always), ``fit_k``, ``noise_estimate``,
-``bootstrap``, ``bootstrap_draws``, ``binned``, ``spectra`` (raw), ``review``, ``controls``,
+``bootstrap``, ``bootstrap_draws``, ``bootstrap_k`` and ``bootstrap_k_draws`` (fixed-K
+results), ``binned``, ``spectra`` (raw), ``review``, ``controls``,
 ``quality``, and a derived tidy
 ``components`` table for other tools. The loader ignores tables it does not know.
 """
@@ -23,7 +24,7 @@ import platform
 import shutil
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -34,7 +35,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult
+from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult, interval_table
 from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
@@ -191,9 +192,14 @@ def _fit_tables(fit: FitResult) -> dict[str, pa.Table]:
     return tables
 
 
-def _bootstrap_tables(b: BootstrapResult) -> dict[str, pa.Table]:
+def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.Table]:
+    """The tables of a bootstrap: ``bootstrap`` (and ``bootstrap_draws``), or, for a fixed-K
+    result (``k`` given), ``bootstrap_k`` (and ``bootstrap_k_draws``) with a ``fit_K`` column."""
     n = len(b)
+    suffix = "" if k is None else "_k"
+    extra = {} if k is None else {"fit_K": pa.array(np.full(n, k, dtype=np.int64))}
     cols: dict[str, pa.Array] = {
+        **extra,
         "measurement": pa.array(np.arange(n, dtype=np.int64)),
         "selected_K": pa.array(np.asarray(b.selected_K, dtype=np.int64)),
         "n_success": pa.array(np.asarray(b.n_success, dtype=np.int64)),
@@ -203,10 +209,11 @@ def _bootstrap_tables(b: BootstrapResult) -> dict[str, pa.Table]:
         cols[f"{name}_ci"] = _ragged(_rows(getattr(b, f"{name}_ci")), pa.float64())
     cols["curve_lo"] = _flat_ragged(b.curve_lo, b.curve_offsets, pa.float64())
     cols["curve_hi"] = _flat_ragged(b.curve_hi, b.curve_offsets, pa.float64())
-    tables = {"bootstrap": pa.table(cols)}
+    tables = {f"bootstrap{suffix}": pa.table(cols)}
     if b.draws is not None:
         d = b.draws
-        tables["bootstrap_draws"] = pa.table({
+        tables[f"bootstrap{suffix}_draws"] = pa.table({
+            **extra,
             "measurement": pa.array(np.arange(n, dtype=np.int64)),
             "A": _ragged(_rows(d.A), pa.float64()),
             "n": _ragged(_rows(d.n), pa.float64()),
@@ -286,11 +293,15 @@ def _corrected_columns(
 
 
 def _components_table(
-    fit: FitResult, boot: BootstrapResult | None, controls: ControlTable | None = None
+    fit: FitResult,
+    boot: BootstrapResult | None,
+    controls: ControlTable | None = None,
+    by_k: Mapping[int, BootstrapResult] | None = None,
 ) -> pa.Table:
     """The tidy table of every fit (and its intervals), for other tools; derived, not read back.
     With controls it also has the back-exchange-corrected means."""
-    data = boot.table(fit, selected_only=False) if boot is not None else fit.table()
+    results = ([boot] if boot is not None else []) + list((by_k or {}).values())
+    data = interval_table(fit, results) if results else fit.table()
     if controls is not None:
         data = {**data, **_corrected_columns(data, boot, controls)}
     cols = {}
@@ -342,6 +353,7 @@ def write_bundle(
     measurements: Measurements,
     fit: FitResult,
     bootstrap: BootstrapResult | None = None,
+    bootstrap_by_k: Mapping[int, BootstrapResult] | None = None,
     binned: BinnedSet | None = None,
     spectra: SpectrumSet | None = None,
     picker_config: PickerConfig | None = None,
@@ -367,6 +379,9 @@ def write_bundle(
         raise BundleError("the measurements and the fit must be for the same spectra")
     if bootstrap is not None and not np.array_equal(bootstrap.selected_K, fit.selected_K):
         raise BundleError("the bootstrap was not made from this fit")
+    for k, b in (bootstrap_by_k or {}).items():
+        if k not in fit.fits or len(b) != len(fit) or not (b.selected_K == k).all():
+            raise BundleError(f"bootstrap_by_k[{k}] is not a fixed-K bootstrap of this fit")
     if binned is not None and not set(measurements.spectrum_id) <= set(binned.spectrum_id):
         raise BundleError("every measurement must be in the binned table")
     if path.exists():
@@ -384,6 +399,13 @@ def write_bundle(
         if bootstrap is not None:
             for name, table in _bootstrap_tables(bootstrap).items():
                 _write_table(tmp, name, table, files)
+        if bootstrap_by_k:
+            by_table: dict[str, list[pa.Table]] = {}
+            for k in sorted(bootstrap_by_k):
+                for name, table in _bootstrap_tables(bootstrap_by_k[k], k).items():
+                    by_table.setdefault(name, []).append(table)
+            for name, parts in by_table.items():
+                _write_table(tmp, name, pa.concat_tables(parts), files)
         if binned is not None:
             _write_table(tmp, "binned", _binned_table(binned), files)
         if spectra is not None:
@@ -394,9 +416,8 @@ def write_bundle(
             _write_table(tmp, "quality", _quality_table(quality), files)
         if controls is not None:
             _write_table(tmp, "controls", _controls_table(controls), files)
-        _write_table(
-            tmp, "components", _components_table(fit, bootstrap, controls), files, derived=True
-        )
+        components = _components_table(fit, bootstrap, controls, bootstrap_by_k)
+        _write_table(tmp, "components", components, files, derived=True)
         if review is not None:
             _write_table(tmp, "review", _review_table(review), files)
         manifest = {
@@ -665,37 +686,55 @@ class Bundle:
             assert m == len(self._cache["fit"])
         return self._cache["fit"]
 
-    def bootstrap(self) -> BootstrapResult | None:
-        if not self.has("bootstrap"):
+    def bootstrap_ks(self) -> list[int]:
+        """The K values that have a fixed-K bootstrap (``bootstrap(k)``)."""
+        if not self.has("bootstrap_k"):
+            return []
+        return sorted(set(int(k) for k in _col(self._table("bootstrap_k"), "fit_K")))
+
+    def bootstrap(self, k: int | None = None) -> BootstrapResult | None:
+        """The bootstrap at each measurement's selected K, or, with ``k``, the fixed-K
+        bootstrap of every measurement at that K; None if there is none."""
+        name = "bootstrap" if k is None else "bootstrap_k"
+        if not self.has(name) or (k is not None and k not in self.bootstrap_ks()):
             return None
-        if "bootstrap" not in self._cache:
-            t = self._table("bootstrap")
-            k_max = max(self.manifest["k_values"])
-            cfg = BootstrapConfig.from_dict(self.manifest["configs"]["bootstrap"])
-            arrays: dict[str, np.ndarray] = {}
-            for name in ("A", "n", "p", "mean", "frac"):
-                arrays[f"{name}_se"] = _matrix(t, f"{name}_se", k_max)
-                arrays[f"{name}_ci"] = _matrix(t, f"{name}_ci", 2 * k_max).reshape(-1, k_max, 2)
-            lo, offsets = _ragged_read(t, "curve_lo")
-            hi, _ = _ragged_read(t, "curve_hi")
-            draws = None
-            if self.has("bootstrap_draws"):
-                d = self._table("bootstrap_draws")
-                m = d.num_rows
-                draws = BootstrapDraws(
-                    A=_matrix(d, "A", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
-                    n=_matrix(d, "n", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
-                    p=_matrix(d, "p", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
-                    ok=_matrix(d, "ok", cfg.n_boot, dtype=bool),
-                )
-            self._cache["bootstrap"] = BootstrapResult(
-                config=cfg, selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
-                n_success=np.asarray(_col(t, "n_success"), dtype=np.int64),
-                curve_lo=np.asarray(lo, dtype=np.float64),
-                curve_hi=np.asarray(hi, dtype=np.float64),
-                curve_offsets=offsets, draws=draws, **arrays,
+        if (name, k) in self._cache:
+            return self._cache[name, k]
+        k_max = max(self.manifest["k_values"])
+        cfg = BootstrapConfig.from_dict(self.manifest["configs"]["bootstrap"])
+
+        def part(table_name: str) -> pa.Table:
+            t = self._table(table_name)
+            if k is None:
+                return t
+            t = t.take(pa.array(np.flatnonzero(np.asarray(_col(t, "fit_K")) == k)))
+            return t.take(pa.array(np.argsort(np.asarray(_col(t, "measurement")))))
+
+        t = part(name)
+        arrays: dict[str, np.ndarray] = {}
+        for stat in ("A", "n", "p", "mean", "frac"):
+            arrays[f"{stat}_se"] = _matrix(t, f"{stat}_se", k_max)
+            arrays[f"{stat}_ci"] = _matrix(t, f"{stat}_ci", 2 * k_max).reshape(-1, k_max, 2)
+        lo, offsets = _ragged_read(t, "curve_lo")
+        hi, _ = _ragged_read(t, "curve_hi")
+        draws = None
+        if self.has(f"{name}_draws"):
+            d = part(f"{name}_draws")
+            m = d.num_rows
+            draws = BootstrapDraws(
+                A=_matrix(d, "A", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                n=_matrix(d, "n", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                p=_matrix(d, "p", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                ok=_matrix(d, "ok", cfg.n_boot, dtype=bool),
             )
-        return self._cache["bootstrap"]
+        result = BootstrapResult(
+            config=cfg, selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
+            n_success=np.asarray(_col(t, "n_success"), dtype=np.int64),
+            curve_lo=np.asarray(lo, dtype=np.float64), curve_hi=np.asarray(hi, dtype=np.float64),
+            curve_offsets=offsets, draws=draws, **arrays,
+        )
+        self._cache[name, k] = result
+        return result
 
     def binned(self) -> BinnedSet | None:
         if not self.has("binned"):

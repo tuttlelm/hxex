@@ -19,6 +19,7 @@ the seed, the iteration and the spectrum id.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import logging
 import warnings
@@ -47,6 +48,11 @@ class BootstrapConfig:
     learning rate from ``lr_adam`` to ``lr_adam_end`` and ``polish_steps`` Levenberg-Marquardt
     iterations. ``keep_draws`` keeps the individual fits of the selected K (``A``, ``n`` and
     ``p`` of every successful resample); ``curve_band`` computes the band of the total curve.
+
+    ``ks`` says at which K a run bootstraps (:func:`hxex.run.run`; :func:`bootstrap` itself
+    always uses the selected K): ``'selected'`` (each measurement at its own selected K),
+    ``'all'`` (also every K that was fitted, for every measurement, as a fixed-K analysis) or a
+    tuple of K values (those, for every measurement). The cost grows with the number of Ks.
     """
 
     n_boot: int = 200
@@ -61,6 +67,7 @@ class BootstrapConfig:
     seed: int = 42
     keep_draws: bool = False
     curve_band: bool = True
+    ks: str | tuple[int, ...] = "selected"
 
     def __post_init__(self):
         if self.n_boot < 2:
@@ -75,6 +82,12 @@ class BootstrapConfig:
             raise ValueError("warm_noise and seed must be non-negative")
         if self.grad_clip not in ("global", "per_measurement"):
             raise ValueError("grad_clip must be 'global' or 'per_measurement'")
+        if not isinstance(self.ks, str):
+            object.__setattr__(self, "ks", tuple(int(k) for k in self.ks))
+            if not self.ks or min(self.ks) < 1 or len(set(self.ks)) != len(self.ks):
+                raise ValueError("ks must be 'selected', 'all' or distinct K values >= 1")
+        elif self.ks not in ("selected", "all"):
+            raise ValueError("ks must be 'selected', 'all' or distinct K values >= 1")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -180,29 +193,63 @@ class BootstrapResult:
         a, b = self.curve_offsets[i], self.curve_offsets[i + 1]
         return self.curve_lo[a:b], self.curve_hi[a:b]
 
+    def select(self, rows) -> BootstrapResult:
+        """The measurements at ``rows`` (positions, in that order)."""
+        rows = np.asarray(rows, dtype=np.int64)
+        lo, hi, offsets = [], [], [0]
+        for i in rows:
+            a, b = self.curve_offsets[i], self.curve_offsets[i + 1]
+            lo.append(self.curve_lo[a:b])
+            hi.append(self.curve_hi[a:b])
+            offsets.append(offsets[-1] + (b - a))
+        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se", "A_ci",
+                 "n_ci", "p_ci", "mean_ci", "frac_ci")
+        draws = None
+        if self.draws is not None:
+            draws = BootstrapDraws(*(getattr(self.draws, n)[rows] for n in ("A", "n", "p", "ok")))
+        return BootstrapResult(
+            config=self.config, **{name: getattr(self, name)[rows] for name in names},
+            curve_lo=np.concatenate(lo) if lo else np.empty(0),
+            curve_hi=np.concatenate(hi) if hi else np.empty(0),
+            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws,
+        )
+
     def table(self, fit: FitResult, selected_only: bool = True) -> dict[str, np.ndarray]:
-        """``fit.table()`` with the interval columns added for the selected K (NaN for the other
-        rows): ``<name>_se``, ``<name>_ci_lo`` and ``<name>_ci_hi`` for ``amplitude``, ``n``,
-        ``p``, ``mean`` and ``population_fraction``, and ``n_bootstrap``."""
-        base = fit.table(selected_only=selected_only)
-        rows = len(base["measurement"])
-        sources = {
-            "amplitude": (self.A_se, self.A_ci), "n": (self.n_se, self.n_ci),
-            "p": (self.p_se, self.p_ci), "mean": (self.mean_se, self.mean_ci),
-            "population_fraction": (self.frac_se, self.frac_ci),
-        }
-        cols = {f"{name}_{suffix}": np.full(rows, np.nan)
-                for name in sources for suffix in ("se", "ci_lo", "ci_hi")}
-        cols["n_bootstrap"] = np.full(rows, np.nan)
-        for r in range(rows):
-            if not base["is_selected"][r]:
+        """``fit.table()`` with the interval columns added for the rows at this result's K (NaN
+        for the other rows; the selected K, or the K of a fixed-K result): ``<name>_se``,
+        ``<name>_ci_lo`` and ``<name>_ci_hi`` for ``amplitude``, ``n``, ``p``, ``mean`` and
+        ``population_fraction``, and ``n_bootstrap``."""
+        return interval_table(fit, [self], selected_only=selected_only)
+
+
+def interval_table(
+    fit: FitResult, results: Sequence[BootstrapResult], selected_only: bool = False
+) -> dict[str, np.ndarray]:
+    """``fit.table()`` with the interval columns filled from ``results``: a row of K components
+    of measurement ``m`` takes its values from the result whose ``selected_K[m]`` is K (the
+    first such result if several, which agree). Rows without one are NaN."""
+    base = fit.table(selected_only=selected_only)
+    rows = len(base["measurement"])
+    names = ("amplitude", "n", "p", "mean", "population_fraction")
+    cols = {f"{name}_{suffix}": np.full(rows, np.nan)
+            for name in names for suffix in ("se", "ci_lo", "ci_hi")}
+    cols["n_bootstrap"] = np.full(rows, np.nan)
+    for r in range(rows):
+        m, c = int(base["measurement"][r]), int(base["component"][r]) - 1
+        for res in results:
+            if res.selected_K[m] != base["fit_K"][r]:
                 continue
-            m, c = int(base["measurement"][r]), int(base["component"][r]) - 1
-            cols["n_bootstrap"][r] = self.n_success[m]
+            sources = {
+                "amplitude": (res.A_se, res.A_ci), "n": (res.n_se, res.n_ci),
+                "p": (res.p_se, res.p_ci), "mean": (res.mean_se, res.mean_ci),
+                "population_fraction": (res.frac_se, res.frac_ci),
+            }
+            cols["n_bootstrap"][r] = res.n_success[m]
             for name, (se, ci) in sources.items():
                 cols[f"{name}_se"][r] = se[m, c]
                 cols[f"{name}_ci_lo"][r], cols[f"{name}_ci_hi"][r] = ci[m, c]
-        return {**base, **cols}
+            break
+    return {**base, **cols}
 
 
 def match_components(ref_means: np.ndarray, draw_means: np.ndarray) -> np.ndarray:
@@ -402,3 +449,45 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
                     lo_all[offsets[m]:offsets[m + 1]] = lo[: sizes[m], j]
                     hi_all[offsets[m]:offsets[m + 1]] = hi[: sizes[m], j]
     return lo_all, hi_all, offsets
+
+
+def bootstrap_by_k(
+    data: Measurements,
+    fit: FitResult,
+    ks: Sequence[int],
+    config: BootstrapConfig = BootstrapConfig(),  # noqa: B008
+    *,
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+) -> dict[int, BootstrapResult]:
+    """Bootstrap every measurement at each K of ``ks`` (all of them must have been fitted): the
+    fixed-K analysis. Each result is a :class:`BootstrapResult` with ``selected_K`` equal to K
+    everywhere. A measurement's resamples depend only on its id and the draw, so the result at
+    its selected K equals the one :func:`bootstrap` gives. ``progress`` counts resamples over all
+    the Ks."""
+    missing = [k for k in ks if k not in fit.fits]
+    if missing:
+        raise ValueError(f"K = {missing} was not fitted (fitted: {list(fit.k_values)})")
+    out: dict[int, BootstrapResult] = {}
+    total = config.n_boot * len(ks)
+    for j, k in enumerate(ks):
+        fixed = dataclasses.replace(
+            fit, selected_K=np.full(len(fit), k, dtype=fit.selected_K.dtype)
+        )
+
+        def inner(done: int, _total: int, j: int = j) -> None:
+            report(progress, j * config.n_boot + done, total)
+
+        out[k] = bootstrap(data, fixed, config, progress=inner, cancel=cancel)
+    return out
+
+
+def selected_from(fit: FitResult, by_k: Mapping[int, BootstrapResult]) -> BootstrapResult:
+    """The bootstrap at each measurement's selected K, taken from fixed-K results (``by_k`` must
+    cover every selected K); the same as :func:`bootstrap` would give."""
+    needed = sorted(set(int(k) for k in fit.selected_K))
+    if any(k not in by_k for k in needed):
+        raise ValueError(f"by_k must cover the selected K values {needed}")
+    rows = [np.flatnonzero(fit.selected_K == k) for k in needed]
+    return BootstrapResult.merge([by_k[k].select(r) for k, r in zip(needed, rows, strict=True)],
+                                 rows)

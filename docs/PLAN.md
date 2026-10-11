@@ -1090,6 +1090,31 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     large. Progress is reported in 1000 units with the fit first and then the bootstrap, and a
     cancel writes nothing. The bootstrap is made at each measurement's selected K only.
 
+30. **Bootstrap at fixed K (`BootstrapConfig.ks`).** pyHXExpress was usually run as separate fixed
+    1-population and 2-population fits, each with bootstrap statistics. `ks='selected'` (the
+    default) is the bootstrap at each measurement's selected K; `'all'` or a tuple such as
+    `(1, 2)` also bootstraps every measurement at each of those K values
+    (`bootstrap.bootstrap_by_k`; `RunResult.bootstrap_by_k`; the `bootstrap_k` bundle tables).
+    The fit already holds every K of a run, so only the bootstrap is added; its cost grows with
+    the number of Ks, about the same as the separate runs without the second picking and fit. A
+    measurement's resamples depend on its id and the draw only, so the result at its selected K
+    is the one the selected-K bootstrap gives, and the selected-K result is taken from the
+    fixed-K ones when they cover it (no repeated work; Ks that were selected but not requested
+    are bootstrapped anyway, because the selected-K result needs them). Intervals at a K that
+    fits badly are still computed; `passes_min_pop` and the quality flags say so. **A K in a run of
+    several is not worse than the same K fitted alone** (`FitConfig.kmeans_after_warm`, now the
+    default). Before, K=2 in a K=1..2 run started from the K=1 fit only, and a separate fixed-2
+    run from k-means: on the Bimodal data (542 measurements, CPU) 25 differed by more than 0.01
+    loss units (9 better nested, 16 better separate; the largest gaps 5.7 and 122), and the
+    sorted means by more than 0.1 D for 34 measurements. A K that has a nested start is now also
+    fitted from the k-means start, as one restart more (the random restarts are unchanged, so
+    the run contains the separate fit), and the best restart is kept. Result: the K=2 loss is
+    at most 0.045 worse than the separate fit for 3 of 542 measurements (the best restart is
+    chosen before the final polish) and better, by up to 5.7, for 5; K=1 and the selected K do
+    not change (0 of 542 differ); the cost is one restart per K above the first (the fit took
+    32 s against 39 s in this measurement, which is within the timing noise); the regression
+    comparison with the prototype still passes.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
@@ -1124,8 +1149,7 @@ CSVs or mzML if wanted.
    correction, quality flags, their bundle tables and the run stage). On the Bimodal
    unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
    it matters for the reported means.
-2. **Run stage** (`hxex.run`): done (item 29). Open: bootstrap at K values other than the selected
-   one (see the owner's question), HX-Express-style output of the run.
+2. **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
 3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5

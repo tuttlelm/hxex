@@ -25,7 +25,13 @@ from typing import Any
 
 import numpy as np
 
-from .bootstrap import BootstrapConfig, BootstrapResult, bootstrap
+from .bootstrap import (
+    BootstrapConfig,
+    BootstrapResult,
+    bootstrap,
+    bootstrap_by_k,
+    selected_from,
+)
 from .controls import ControlConfig, ControlTable, fit_controls
 from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report
@@ -73,6 +79,10 @@ class RunConfig:
             raise ValueError("memory_budget_bytes must be positive")
         if self.max_chunk is not None and self.max_chunk < 1:
             raise ValueError("max_chunk must be at least 1")
+        if self.bootstrap is not None and not isinstance(self.bootstrap.ks, str):
+            missing = [k for k in self.bootstrap.ks if k not in self.fit.k_values]
+            if missing:
+                raise ValueError(f"bootstrap.ks {missing} are outside the fitted K values")
         if self.controls is not None and self.fit.k_min > 1:
             raise ValueError("the controls come from the K=1 fits: set fit.k_min to 1")
 
@@ -109,7 +119,9 @@ class RunConfig:
 class RunResult:
     """What a run produced. ``binned`` is every picked spectrum (flags included); the spectra
     where ``kept`` is False were dropped and are not in ``measurements`` or ``fit``;
-    ``dropped_reason`` says why (``empty`` or ``no_signal``)."""
+    ``dropped_reason`` says why (``empty`` or ``no_signal``). ``bootstrap`` is at each
+    measurement's selected K; ``bootstrap_by_k`` (when ``BootstrapConfig.ks`` asks for it) has
+    the fixed-K bootstrap of every measurement at each K requested."""
 
     config: RunConfig
     binned: BinnedSet
@@ -118,6 +130,7 @@ class RunResult:
     measurements: Measurements
     fit: FitResult
     bootstrap: BootstrapResult | None
+    bootstrap_by_k: dict[int, BootstrapResult] | None
     controls: ControlTable | None
     quality: QualityFlags | None
 
@@ -139,7 +152,8 @@ class RunResult:
 
         return write_bundle(
             path, measurements=self.measurements, fit=self.fit, bootstrap=self.bootstrap,
-            binned=self.binned, spectra=spectra, picker_config=self.config.picker,
+            bootstrap_by_k=self.bootstrap_by_k, binned=self.binned, spectra=spectra,
+            picker_config=self.config.picker,
             controls=self.controls, quality=self.quality, run_config=self.config.to_dict(),
             project=project, notes=notes, overwrite=overwrite,
         )
@@ -216,6 +230,13 @@ class _Span:
             report(self.hook, int(round(self.start + (self.end - self.start) * frac)), UNITS)
 
 
+def _bootstrap_ks(config: RunConfig, fit: FitResult) -> list[int]:
+    """The Ks of the fixed-K bootstrap the run was asked for (none for ``'selected'``)."""
+    if config.bootstrap is None or config.bootstrap.ks == "selected":
+        return []
+    return list(fit.k_values) if config.bootstrap.ks == "all" else list(config.bootstrap.ks)
+
+
 def analyse(
     data: Measurements,
     config: RunConfig,
@@ -223,7 +244,13 @@ def analyse(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     progress_range: tuple[float, float] = (0.0, float(UNITS)),
-) -> tuple[FitResult, BootstrapResult | None, ControlTable | None, QualityFlags | None]:
+) -> tuple[
+    FitResult,
+    BootstrapResult | None,
+    dict[int, BootstrapResult] | None,
+    ControlTable | None,
+    QualityFlags | None,
+]:
     """Fit (and bootstrap) ``data`` in chunks of whole series, then the controls and the quality
     flags of the merged result. The chunking does not change the result."""
     k_max = config.fit.k_max
@@ -242,24 +269,37 @@ def analyse(
         b = lo + (hi - lo) * fit_share * edges[j + 1]
         fits.append(fit_models(sub, config.fit, progress=_Span(progress, a, b), cancel=cancel))
     boots: list[BootstrapResult] = []
+    fixed: list[dict[int, BootstrapResult]] = []
+    ks = _bootstrap_ks(config, fits[0])
     if config.bootstrap is not None:
         for j, (sub, fit) in enumerate(zip(subs, fits, strict=True)):
             check_cancel(cancel)
             a = lo + (hi - lo) * (fit_share + (1 - fit_share) * edges[j])
             b = lo + (hi - lo) * (fit_share + (1 - fit_share) * edges[j + 1])
-            boots.append(bootstrap(
-                sub, fit, config.bootstrap, progress=_Span(progress, a, b), cancel=cancel,
-            ))
+            hook = _Span(progress, a, b)
+            if not ks:
+                boots.append(bootstrap(sub, fit, config.bootstrap, progress=hook, cancel=cancel))
+                continue
+            # every selected K must be covered: add the missing ones (not requested for output)
+            extra = sorted(set(int(k) for k in fit.selected_K) - set(ks))
+            done = bootstrap_by_k(sub, fit, [*ks, *extra], config.bootstrap, progress=hook,
+                                  cancel=cancel)
+            boots.append(selected_from(fit, done))
+            fixed.append({k: done[k] for k in ks})
     fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, chunks)
     boot = None
     if boots:
         boot = boots[0] if len(boots) == 1 else BootstrapResult.merge(boots, chunks)
+    by_k = None
+    if fixed:
+        by_k = {k: fixed[0][k] if len(fixed) == 1
+                else BootstrapResult.merge([f[k] for f in fixed], chunks) for k in ks}
     check_cancel(cancel)
     controls = None
     if config.controls is not None:
         controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls)
     quality = assess_quality(data, fit, config.quality) if config.quality is not None else None
-    return fit, boot, controls, quality
+    return fit, boot, by_k, controls, quality
 
 
 def run(
@@ -303,13 +343,14 @@ def run(
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules,
     )
-    fit, boot, controls, quality = analyse(
+    fit, boot, by_k, controls, quality = analyse(
         measurements, config, progress=progress, cancel=cancel,
         progress_range=(UNITS * pick_share, float(UNITS)),
     )
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
-        measurements=measurements, fit=fit, bootstrap=boot, controls=controls, quality=quality,
+        measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
+        controls=controls, quality=quality,
     )
     if out is not None:
         result.write(out, spectra=raw if keep_spectra else None, project=project, notes=notes,
