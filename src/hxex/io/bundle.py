@@ -9,7 +9,8 @@ objects the run produced, bit for bit. The review layer (accept or reject, a cho
 the only part that changes after writing; it needs no refit.
 
 Written tables: ``measurements`` and ``fit`` (always), ``fit_k``, ``noise_estimate``,
-``bootstrap``, ``bootstrap_draws``, ``binned``, ``spectra`` (raw), ``review``, and a derived tidy
+``bootstrap``, ``bootstrap_draws``, ``binned``, ``spectra`` (raw), ``review``, ``controls``,
+``quality``, and a derived tidy
 ``components`` table for other tools. The loader ignores tables it does not know.
 """
 
@@ -38,6 +39,7 @@ from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, PickerConfig
+from ..quality import QualityConfig, QualityFlags
 from ..spectra import SpectrumSet
 from ._arrow import (
     _col,
@@ -214,6 +216,27 @@ def _bootstrap_tables(b: BootstrapResult) -> dict[str, pa.Table]:
     return tables
 
 
+def _quality_table(q: QualityFlags) -> pa.Table:
+    cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
+    for name in ("deviance", "deviance_rel", "intensity", "intensity_rel"):
+        cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
+    for name in ("poor_fit", "low_intensity", "noise_outlier"):
+        cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
+    cols["flagged"] = pa.array(np.asarray(q.flagged, dtype=bool))
+    return pa.table(cols)
+
+
+def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> QualityFlags:
+    f = lambda name: np.asarray(_col(table, name), dtype=np.float64)  # noqa: E731
+    b = lambda name: np.asarray(_col(table, name), dtype=bool)  # noqa: E731
+    return QualityFlags(
+        config=QualityConfig.from_dict(config), spectrum_id=spectrum_id,
+        deviance=f("deviance"), deviance_rel=f("deviance_rel"), intensity=f("intensity"),
+        intensity_rel=f("intensity_rel"), poor_fit=b("poor_fit"),
+        low_intensity=b("low_intensity"), noise_outlier=b("noise_outlier"),
+    )
+
+
 def _controls_table(c: ControlTable) -> pa.Table:
     cols: dict[str, pa.Array] = {"data_id": pa.array(c.data_id)}
     for name in ("n_amides", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd", "mfd_se",
@@ -324,6 +347,7 @@ def write_bundle(
     picker_config: PickerConfig | None = None,
     review: ReviewTable | None = None,
     controls: ControlTable | None = None,
+    quality: QualityFlags | None = None,
     project: str | None = None,
     notes: str = "",
     overwrite: bool = False,
@@ -363,6 +387,10 @@ def write_bundle(
             _write_table(tmp, "binned", _binned_table(binned), files)
         if spectra is not None:
             _write_table(tmp, "spectra", _spectra_table(spectra), files)
+        if quality is not None:
+            if not np.array_equal(quality.spectrum_id, fit.spectrum_id):
+                raise BundleError("the quality flags were not made from this fit")
+            _write_table(tmp, "quality", _quality_table(quality), files)
         if controls is not None:
             _write_table(tmp, "controls", _controls_table(controls), files)
         _write_table(
@@ -384,6 +412,7 @@ def write_bundle(
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
                 "picker": None if picker_config is None else picker_config.to_dict(),
                 "controls": None if controls is None else controls.config.to_dict(),
+                "quality": None if quality is None else quality.config.to_dict(),
             },
             "files": files,
         }
@@ -708,6 +737,16 @@ class Bundle:
             config = self.manifest["configs"]["controls"]
             self._cache["controls"] = _read_controls(self._table("controls"), config)
         return self._cache["controls"]
+
+    def quality(self) -> QualityFlags | None:
+        """The quality flags, or None if the run did not assess them."""
+        if not self.has("quality"):
+            return None
+        if "quality" not in self._cache:
+            config = self.manifest["configs"]["quality"]
+            ids = self.fit().spectrum_id
+            self._cache["quality"] = _read_quality(self._table("quality"), config, ids)
+        return self._cache["quality"]
 
     def review(self) -> ReviewTable:
         return _read_review(self._table("review")) if self.has("review") else ReviewTable.empty()

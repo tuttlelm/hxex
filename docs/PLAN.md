@@ -1053,6 +1053,24 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     series only pep122_LO_z2 falls back (`m0_high`, a K=1 fit of 13.0 D on its undeuterated
     control), and retention is 0.81 to 1.00.
 
+28. **Quality flags (Phase 3, `hxex.quality`).** Flags only; nothing is dropped here (the run stage
+    drops spectra the picker marked `empty`, and the review layer holds manual decisions).
+    `poor_fit`: the reduced deviance of the selected-K fit (squared residual for Gaussian noise,
+    Poisson deviance for Poisson, noise-scaled, over `bins - 3K`) is more than 10 times the
+    median of its series (at least 5 assessed spectra) **and** above 1. The absolute value alone
+    is unusable: on the tubulin subset (40 peptides, 371 spectra, noise estimated from
+    replicates) the median is 4.9, because the model is never exactly right, and on the Bimodal
+    data with the 3 % noise setting it is 0.17, because that noise is far above the real one; the
+    floor of 1 removed 11 of 12 false flags on Bimodal (fits better than the noise model, flagged
+    only because their series was cleaner) and left the one real bad fit (series 14, 7 s,
+    deviance 44). `low_intensity`: total intensity below 0.3 of the mean of the other replicates
+    at the same time (not assessed without a replicate: the total changes along a time course,
+    and against the series median the 5th percentile on tubulin is already 0.31). `noise_outlier`:
+    the replicate-consistency flag of the noise estimate. On the tubulin subset: 9, 11 and 23
+    spectra (36 flagged of 371), overlap poor-fit with outlier 2, low-intensity with outlier 5, so
+    the screens are largely complementary; on Bimodal: 1, 0 and 0. Thresholds are defaults from
+    these two data sets, not validated against known bad spectra (there is no labelled set).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
@@ -1083,8 +1101,8 @@ CSVs or mzML if wanted.
 
 ## Next steps
 
-1. **Phase 3 (controls and results), in progress: controls, the correction and the bundle
-   tables are done (item 27); quality flags and the run integration remain.** Identify the undeuterated and fully deuterated controls by
+1. **Phase 3 (controls and results), in progress: controls, the correction, the quality flags
+   and their bundle tables are done (items 27 and 28); the run integration remains.** Identify the undeuterated and fully deuterated controls by
    the user-set times (replicates averaged), the back-exchange correction with flagged fallbacks
    for missing or bad controls (the notebook's rule: undeuterated mean above 0.5 D, or retention
    outside 0.5 to 1.1, falls back to the theoretical controls), quality flags (the
