@@ -1,0 +1,375 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Results bundle: exact round trips, integrity, zip, laziness and the review layer."""
+
+import json
+import shutil
+import zipfile
+
+import numpy as np
+import pyarrow.parquet as pq
+import pytest
+
+import hxex.io.bundle as bundle_module
+from hxex.bootstrap import BootstrapConfig, bootstrap
+from hxex.fit import FitConfig, Measurements, fit_models
+from hxex.io import BundleError, ReviewTable, open_bundle, write_bundle
+from hxex.model import Backend
+from hxex.noise import NoiseConfig
+from hxex.picking import PickerConfig, pick_spectra, plan_bins
+from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
+from test_picking import sticks  # noqa: I001
+
+PEPTIDE = "RDKVQKEYAL"
+CFG = PickerConfig(zero_filling=3, noise=100.0)
+
+
+def envelope(plan, centre, width, height):
+    bins = np.arange(len(plan.pred_mz))
+    return {int(i): float(height * np.exp(-0.5 * ((i - centre) / width) ** 2))
+            for i in bins if height * np.exp(-0.5 * ((i - centre) / width) ** 2) > 20}
+
+
+def build_run(project="proj", n_boot=4):
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    entry = PeptideEntry("f.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2)
+    layout = [(0.0, 1, 0.5, 0.8), (0.0, 2, 0.5, 0.85), (0.0, 3, 0.5, 0.8), (60.0, 1, 3.0, 1.2),
+              (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]
+    spectra = []
+    for k, (t, rep, centre, width) in enumerate(layout):
+        mz, y = sticks(plan, envelope(plan, centre, width, 4e4 * (0.9 + 0.1 * (k % 3))))
+        y = y + np.random.default_rng(k).normal(0, 15, len(y))
+        spectra.append(Spectrum(mz, y, entry, t, rep, data_id=0, label=f"c{k}",
+                                spectrum_id=f"{project}:f.xlsx#{k + 1}"))
+    raw = SpectrumSet.from_spectra(spectra)
+    binned = pick_spectra(raw, CFG)
+    meas = Measurements.from_binned(binned)
+    fit = fit_models(meas, FitConfig(
+        k_max=2, adam_steps=100, n_restarts=2, backend=Backend("cpu", "float64"),
+        noise=NoiseConfig("gaussian", percent=3.0, estimate="replicates", min_replicated=2)))
+    boot = bootstrap(meas, fit, BootstrapConfig(n_boot=n_boot, n_restarts=1, adam_steps=40,
+                                                polish_steps=0, keep_draws=True))
+    return raw, binned, meas, fit, boot
+
+
+@pytest.fixture(scope="module")
+def run():
+    return build_run()
+
+
+@pytest.fixture
+def written(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit, bootstrap=boot, binned=binned,
+                        spectra=raw, picker_config=CFG)
+    return path
+
+
+def assert_arrays_equal(a, b):
+    a, b = np.asarray(a), np.asarray(b)
+    assert a.shape == b.shape and a.dtype.kind == b.dtype.kind
+    np.testing.assert_array_equal(a, b)  # NaN == NaN here
+
+
+def assert_fit_equal(a, b):
+    assert a.config == b.config and a.k_values == b.k_values
+    for name in ("spectrum_id", "data_id", "time", "selected_K", "score", "obs_scale",
+                 "sample_size", "n_max", "noise_kind"):
+        assert_arrays_equal(getattr(a, name), getattr(b, name))
+    assert set(a.fits) == set(b.fits)
+    for k in a.fits:
+        for name in ("A", "n", "p", "log_A", "n_raw", "logit_p", "nll", "bic", "aic",
+                     "passes_min_pop"):
+            assert_arrays_equal(getattr(a.fits[k], name), getattr(b.fits[k], name))
+    assert (a.noise_estimate is None) == (b.noise_estimate is None)
+    if a.noise_estimate is not None:
+        for name in ("gain", "estimated", "reason", "score", "outlier", "n_replicated"):
+            assert_arrays_equal(getattr(a.noise_estimate, name), getattr(b.noise_estimate, name))
+
+
+# --- round trips ----------------------------------------------------------------------------
+
+def test_the_run_has_what_the_bundle_must_keep(run):
+    raw, binned, meas, fit, boot = run
+    assert fit.noise_estimate is not None and fit.noise_estimate.estimated.all()
+    assert set(fit.noise_kind) == {"poisson"} and boot.draws is not None
+    assert meas.references[0] == (0, 1, 2)  # the replicate undeuterated controls
+
+
+def test_everything_round_trips_exactly(written, run):
+    raw, binned, meas, fit, boot = run
+    with open_bundle(written) as b:
+        got = b.measurements()
+        for name in ("n_max", "spectrum_id", "data_id", "time"):
+            assert_arrays_equal(getattr(got, name), getattr(meas, name))
+        assert got.references == meas.references
+        for x, y in zip(got.bins + got.observed + got.shapes,
+                        meas.bins + meas.observed + meas.shapes, strict=True):
+            assert_arrays_equal(x, y)
+        assert_fit_equal(b.fit(), fit)
+        got_b = b.bootstrap()
+        assert got_b.config == boot.config
+        for name in ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se",
+                     "A_ci", "n_ci", "p_ci", "mean_ci", "frac_ci", "curve_lo", "curve_hi",
+                     "curve_offsets"):
+            assert_arrays_equal(getattr(got_b, name), getattr(boot, name))
+        for name in ("A", "n", "p", "ok"):
+            assert_arrays_equal(getattr(got_b.draws, name), getattr(boot.draws, name))
+        got_binned = b.binned()
+        for name in ("mz", "intensity", "n_deut", "offsets", "env_width", "env_symm",
+                     "max_namides", "threshold", "empty", "no_signal", "capped", "spectrum_id",
+                     "sample", "peptide", "peptide_range", "file", "label", "modification",
+                     "start_seq", "end_seq", "charge", "rep", "data_id", "time"):
+            assert_arrays_equal(getattr(got_binned, name), getattr(binned, name))
+        got_raw = b.spectra()
+        for name in ("mz", "intensity", "offsets", "spectrum_id", "time", "rep"):
+            assert_arrays_equal(getattr(got_raw, name), getattr(raw, name))
+
+
+def test_references_and_missing_references_survive(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    refs = tuple((0, 1) if i % 2 == 0 else None for i in range(len(meas)))
+    altered = Measurements(meas.bins, meas.observed, meas.shapes, meas.n_max, refs,
+                           meas.spectrum_id, meas.data_id, meas.time)
+    path = write_bundle(tmp_path / "r", measurements=altered, fit=fit)
+    with open_bundle(path) as b:
+        assert b.measurements().references == refs
+
+
+def test_a_zip_loads_like_the_directory(tmp_path, written, run):
+    raw, binned, meas, fit, boot = run
+    z = write_bundle(tmp_path / "b.zip", measurements=meas, fit=fit, bootstrap=boot,
+                     binned=binned, spectra=raw)
+    assert z.suffix == ".zip" and zipfile.is_zipfile(z)
+    with open_bundle(z) as b, open_bundle(written) as d:
+        assert_fit_equal(b.fit(), d.fit())
+        assert_arrays_equal(b.spectra().intensity, d.spectra().intensity)
+        b.verify()
+        with pytest.raises(BundleError, match="read only"):
+            b.set_review(ReviewTable.empty())
+
+
+def test_optional_parts_can_be_left_out(tmp_path, run):
+    _, _, meas, fit, _ = run
+    path = write_bundle(tmp_path / "min", measurements=meas, fit=fit)
+    with open_bundle(path) as b:
+        assert b.bootstrap() is None and b.binned() is None and b.spectra() is None
+        assert b.tables() == ["components", "fit", "fit_k", "measurements", "noise_estimate"]
+        with pytest.raises(BundleError, match="no 'binned' table"):
+            b._table("binned")
+        assert_fit_equal(b.fit(), fit)
+
+
+# --- manifest and integrity -----------------------------------------------------------------
+
+def test_the_manifest(written, run):
+    raw, binned, meas, fit, boot = run
+    with open_bundle(written) as b:
+        m = b.manifest
+        assert m["kind"] == "hxex-results-bundle" and m["schema_version"] == 1
+        assert b.project == "proj" and m["n_measurements"] == len(meas)
+        assert m["k_values"] == [1, 2] and set(m["versions"]) >= {"hxex", "torch", "numpy"}
+        assert m["configs"]["fit"] == fit.config.to_dict()
+        assert m["configs"]["picker"] == CFG.to_dict()
+        assert m["configs"]["bootstrap"] == boot.config.to_dict()
+        assert m["files"]["components.parquet"]["derived"] is True
+        assert all(len(v["sha256"]) == 64 for v in m["files"].values())
+        b.verify()
+        assert b.tables() == sorted(["measurements", "fit", "fit_k", "noise_estimate", "bootstrap",
+                                     "bootstrap_draws", "binned", "spectra", "components"])
+
+
+def test_verify_detects_damage_and_loss(written):
+    path = written / "fit_k.parquet"
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    path.write_bytes(bytes(data))
+    with open_bundle(written) as b, pytest.raises(BundleError, match="checksum"):
+        b.verify()
+    path.unlink()
+    with open_bundle(written) as b, pytest.raises(BundleError, match="missing"):
+        b.verify()
+
+
+def test_unreadable_and_newer_bundles(tmp_path, written):
+    with pytest.raises(BundleError, match="not a bundle"):
+        open_bundle(tmp_path / "nothing")
+    (tmp_path / "junk").mkdir()
+    (tmp_path / "junk" / "manifest.json").write_text("{not json")
+    with pytest.raises(BundleError, match="cannot read the manifest"):
+        open_bundle(tmp_path / "junk")
+    manifest = json.loads((written / "manifest.json").read_text())
+    (written / "manifest.json").write_text(json.dumps({**manifest, "schema_version": 99}))
+    with pytest.raises(BundleError, match="schema version 99"):
+        open_bundle(written)
+    (written / "manifest.json").write_text(json.dumps({**manifest, "kind": "other"}))
+    with pytest.raises(BundleError, match="not an hxex results bundle"):
+        open_bundle(written)
+
+
+def test_unknown_tables_are_ignored(written, run):
+    shutil.copy(written / "fit.parquet", written / "future.parquet")
+    manifest = json.loads((written / "manifest.json").read_text())
+    manifest["files"]["future.parquet"] = {"rows": 1, "bytes": 1, "sha256": "0" * 64}
+    (written / "manifest.json").write_text(json.dumps(manifest))
+    with open_bundle(written) as b:
+        assert_fit_equal(b.fit(), run[3])
+
+
+# --- writing safely -------------------------------------------------------------------------
+
+def test_existing_paths_are_protected(tmp_path, run):
+    _, _, meas, fit, _ = run
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit)
+    with pytest.raises(BundleError, match="exists"):
+        write_bundle(path, measurements=meas, fit=fit)
+    write_bundle(path, measurements=meas, fit=fit, overwrite=True, notes="again")
+    with open_bundle(path) as b:
+        assert b.manifest["notes"] == "again"
+    other = tmp_path / "data"
+    other.mkdir()
+    (other / "keep.txt").write_text("do not delete")
+    with pytest.raises(BundleError, match="not a results bundle"):
+        write_bundle(other, measurements=meas, fit=fit, overwrite=True)
+    assert (other / "keep.txt").exists()
+
+
+def test_a_failed_write_leaves_nothing(tmp_path, run, monkeypatch):
+    _, _, meas, fit, boot = run
+    with pytest.raises(BundleError, match="same spectra"):
+        write_bundle(tmp_path / "x", measurements=meas.__class__(
+            meas.bins[:2], meas.observed[:2], meas.shapes[:2], meas.n_max[:2], meas.references[:2],
+            meas.spectrum_id[:2], meas.data_id[:2], meas.time[:2]), fit=fit)
+    monkeypatch.setattr(bundle_module, "_components_table",
+                        lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError, match="boom"):
+        write_bundle(tmp_path / "y", measurements=meas, fit=fit, bootstrap=boot)
+    assert list(tmp_path.iterdir()) == []  # neither the bundle nor a temporary directory
+
+
+def test_inconsistent_parts_are_refused(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    with pytest.raises(BundleError, match="not made from this fit"):
+        write_bundle(tmp_path / "a", measurements=meas, fit=fit, bootstrap=type(boot)(
+            **{**boot.__dict__, "selected_K": boot.selected_K + 1}))
+    with pytest.raises(BundleError, match="must be in the binned table"):
+        write_bundle(tmp_path / "b", measurements=meas, fit=fit, binned=binned.select(
+            np.arange(len(binned)) < 3))
+
+
+# --- laziness, types and the tidy table -----------------------------------------------------
+
+def test_spectra_can_be_read_by_id(written, run, monkeypatch):
+    raw = run[0]
+    ids = [str(raw.spectrum_id[5]), str(raw.spectrum_id[1])]
+    with open_bundle(written) as b:
+        sub = b.spectra(ids)
+        assert sorted(sub.spectrum_id) == sorted(ids)
+        for sid in ids:
+            i, j = raw.find(sid), sub.find(sid)
+            assert_arrays_equal(sub.spectrum(j)[0], raw.spectrum(i)[0])
+            assert_arrays_equal(sub.spectrum(j)[1], raw.spectrum(i)[1])
+        assert len(b.spectra([])) == 0
+
+
+def test_many_row_groups(tmp_path, run, monkeypatch):
+    raw, binned, meas, fit, boot = run
+    monkeypatch.setattr(bundle_module, "ROW_GROUP", 3)
+    path = write_bundle(tmp_path / "rg", measurements=meas, fit=fit, spectra=raw, binned=binned)
+    assert pq.ParquetFile(path / "spectra.parquet").num_row_groups == 3  # 8 spectra, 3 per group
+    with open_bundle(path) as b:
+        assert_arrays_equal(b.spectra().intensity, raw.intensity)
+        assert list(b.spectra([str(raw.spectrum_id[7])]).spectrum_id) == [str(raw.spectrum_id[7])]
+
+
+def test_the_files_have_plain_arrow_types(written):
+    types = lambda name: {f.name: str(f.type) for f in pq.read_schema(written / name)}  # noqa: E731
+    t = types("measurements.parquet")
+    assert t["bins"] == "list<element: double>" and t["spectrum_id"] == "string"
+    assert t["references"] == "list<element: int64>" and t["measurement"] == "int64"
+    f = types("fit_k.parquet")
+    assert f["A"] == "list<element: double>" and f["fit_K"] == "int64"
+    assert f["passes_min_pop"] == "bool"
+    assert types("binned.parquet")["n_deut"] == "list<element: int64>"
+    column = pq.ParquetFile(written / "fit.parquet").metadata.row_group(0).column(0)
+    assert column.compression == "ZSTD"
+
+
+def test_the_tidy_table_matches_the_run(written, run):
+    raw, binned, meas, fit, boot = run
+    expected = boot.table(fit, selected_only=False)
+    with open_bundle(written) as b:
+        got = b.components_table()
+    assert set(got) == set(expected)
+    for name, values in expected.items():
+        if values.dtype.kind in "US":
+            assert list(got[name]) == list(values)
+        else:
+            np.testing.assert_array_equal(np.asarray(got[name], dtype=float),
+                                          np.asarray(values, dtype=float))
+
+
+def test_project_name(tmp_path, run):
+    _, _, meas, fit, _ = run
+    path = write_bundle(tmp_path / "p", measurements=meas, fit=fit, project="tubB5")
+    with open_bundle(path) as b:
+        assert b.project == "tubB5"
+
+
+# --- the review layer -----------------------------------------------------------------------
+
+def test_review_table_operations(run):
+    fit = run[3]
+    ids = [str(s) for s in fit.spectrum_id]
+    r = ReviewTable.empty()
+    assert len(r) == 0 and r.get(ids[0]) is None
+    r = r.update(ids[0], status="rejected", note="spike at bin 3")
+    r = r.update(ids[1], k_override=1)
+    r = r.update(ids[0], note="spike at bin 3, contaminant")  # only the note changes
+    assert r.get(ids[0])["status"] == "rejected" and r.get(ids[0])["note"].endswith("contaminant")
+    assert r.get(ids[1])["k_override"] == 1
+    assert list(r.effective_K(fit))[:2] == [fit.selected_K[0], 1]
+    status = r.status_of(fit)
+    assert status[0] == "rejected" and status[1] == "unreviewed" and status[2] == "unreviewed"
+    cleared = r.update(ids[0], status="", note="").update(ids[1], k_override=0)
+    assert len(cleared) == 0
+    with pytest.raises(ValueError, match="status"):
+        r.update(ids[0], status="maybe")
+    with pytest.raises(ValueError, match="k_override"):
+        r.update(ids[0], k_override=-1)
+    with pytest.raises(ValueError, match="was not fitted"):
+        r.update(ids[2], k_override=7).effective_K(fit)
+
+
+def test_review_is_stored_with_the_bundle_and_needs_no_refit(written, run):
+    fit = run[3]
+    ids = [str(s) for s in fit.spectrum_id]
+    with open_bundle(written) as b:
+        assert len(b.review()) == 0
+        before = (written / "fit_k.parquet").read_bytes()
+        review = b.review().update(ids[3], status="accepted", note="checked by eye").update(
+            ids[4], k_override=1)
+        b.set_review(review)
+        b.verify()  # the manifest was updated with the new table
+    assert (written / "fit_k.parquet").read_bytes() == before  # the fit is untouched
+    with open_bundle(written) as b:
+        got = b.review()
+        assert got.get(ids[3])["status"] == "accepted" and got.get(ids[4])["k_override"] == 1
+        assert got.effective_K(b.fit())[4] == 1
+        assert_fit_equal(b.fit(), fit)
+        b.verify()
+
+
+def test_review_is_validated_against_the_fit(written, run):
+    with open_bundle(written) as b:
+        with pytest.raises(BundleError, match="unknown spectra"):
+            b.set_review(ReviewTable.empty().update("proj:not-there", status="rejected"))
+        bad = ReviewTable.empty().update(str(b.fit().spectrum_id[0]), k_override=9)
+        with pytest.raises(ValueError, match="was not fitted"):
+            b.set_review(bad)
+
+
+def test_a_review_given_at_writing(tmp_path, run):
+    _, _, meas, fit, _ = run
+    r = ReviewTable.empty().update(str(fit.spectrum_id[2]), status="rejected")
+    with open_bundle(write_bundle(tmp_path / "rv", measurements=meas, fit=fit, review=r)) as b:
+        assert b.review().get(str(fit.spectrum_id[2]))["status"] == "rejected"

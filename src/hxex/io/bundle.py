@@ -1,0 +1,760 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The results bundle: everything needed to replot and review a run, without refitting.
+
+A bundle is a directory (or a zip of one, read only) holding ``manifest.json`` and Parquet
+tables, readable from Python, R and Julia (see docs/BUNDLE.md for the schema). Spectra, binned
+tables and fits are stored as exact float64, int64, bool and string columns, one row per
+spectrum (or per spectrum and K), with the spectrum id as the key, so loading gives back the
+objects the run produced, bit for bit. The review layer (accept or reject, a chosen K, notes) is
+the only part that changes after writing; it needs no refit.
+
+Written tables: ``measurements`` and ``fit`` (always), ``fit_k``, ``noise_estimate``,
+``bootstrap``, ``bootstrap_draws``, ``binned``, ``spectra`` (raw), ``review``, and a derived tidy
+``components`` table for other tools. The loader ignores tables it does not know.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import shutil
+import tempfile
+import zipfile
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+
+from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult
+from ..fit import FitConfig, FitResult, KFit, Measurements
+from ..noise import NoiseEstimate
+from ..picking import BinnedSet, PickerConfig
+from ..spectra import SpectrumSet
+
+SCHEMA_VERSION = 1
+KIND = "hxex-results-bundle"
+MANIFEST = "manifest.json"
+ROW_GROUP = 1000  # rows per Parquet row group (lazy loading reads whole groups)
+STATUSES = ("accepted", "rejected")
+
+
+class BundleError(Exception):
+    """A bundle could not be written, read or verified."""
+
+
+# --- stores: a directory, or a zip (read only) ------------------------------------------------
+
+class _DirStore:
+    writable = True
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def exists(self, name: str) -> bool:
+        return (self.path / name).is_file()
+
+    def read(self, name: str) -> bytes:
+        return (self.path / name).read_bytes()
+
+    def table(self, name: str, columns=None, filters=None) -> pa.Table:
+        return pq.read_table(self.path / name, columns=columns, filters=filters)
+
+    def close(self) -> None:
+        pass
+
+
+class _ZipStore:
+    writable = False
+
+    def __init__(self, path: Path):
+        self.zf = zipfile.ZipFile(path)
+
+    def exists(self, name: str) -> bool:
+        return name in self.zf.namelist()
+
+    def read(self, name: str) -> bytes:
+        return self.zf.read(name)
+
+    def table(self, name: str, columns=None, filters=None) -> pa.Table:
+        return pq.read_table(pa.BufferReader(self.read(name)), columns=columns, filters=filters)
+
+    def close(self) -> None:
+        self.zf.close()
+
+
+# --- Arrow helpers --------------------------------------------------------------------------
+
+def _str(values) -> pa.Array:
+    return pa.array([str(v) for v in values], type=pa.string())
+
+
+def _ragged(arrays: Sequence[np.ndarray | None], value_type: pa.DataType) -> pa.Array:
+    """A list column from one array per row (``None`` makes a null row)."""
+    sizes = [0 if a is None else len(a) for a in arrays]
+    offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int32)
+    parts = [np.asarray(a) for a in arrays if a is not None]
+    flat = np.concatenate(parts) if parts else np.empty(0)
+    mask = pa.array([a is None for a in arrays]) if any(a is None for a in arrays) else None
+    return pa.ListArray.from_arrays(
+        pa.array(offsets, type=pa.int32()), pa.array(flat, type=value_type), mask=mask
+    )
+
+
+def _flat_ragged(flat: np.ndarray, offsets: np.ndarray, value_type: pa.DataType) -> pa.Array:
+    return pa.ListArray.from_arrays(
+        pa.array(np.asarray(offsets, dtype=np.int32), type=pa.int32()),
+        pa.array(flat, type=value_type),
+    )
+
+
+def _rows(array2d: np.ndarray) -> list[np.ndarray]:
+    """The rows of an ``(M, ...)`` array as flat arrays (for a list column)."""
+    return [np.asarray(row).reshape(-1) for row in array2d]
+
+
+def _col(table: pa.Table, name: str) -> np.ndarray:
+    return table.column(name).to_numpy(zero_copy_only=False)
+
+
+def _strs(table: pa.Table, name: str) -> np.ndarray:
+    return np.array(table.column(name).to_pylist(), dtype=str)
+
+
+def _ragged_read(table: pa.Table, name: str):
+    """(flat values, offsets) of a list column; null rows count as empty."""
+    col = table.column(name).combine_chunks()
+    lengths = np.asarray(pc.fill_null(pc.list_value_length(col), 0).to_numpy(zero_copy_only=False))
+    flat = col.flatten().to_numpy(zero_copy_only=False)
+    return flat, np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64)
+
+
+def _split(flat: np.ndarray, offsets: np.ndarray) -> list[np.ndarray]:
+    return [flat[offsets[i] : offsets[i + 1]] for i in range(len(offsets) - 1)]
+
+
+def _matrix(table: pa.Table, name: str, width: int, dtype=np.float64) -> np.ndarray:
+    """A list column whose rows all have ``width`` values, as an ``(M, width)`` array."""
+    flat, _ = _ragged_read(table, name)
+    return np.asarray(flat, dtype=dtype).reshape(table.num_rows, width) if width else np.empty(
+        (table.num_rows, 0), dtype=dtype
+    )
+
+
+# --- writing --------------------------------------------------------------------------------
+
+_INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", "modification")
+_INDEX_INT = ("start_seq", "end_seq", "charge", "rep", "data_id")
+
+
+def _index_table(obj) -> dict[str, pa.Array]:
+    cols: dict[str, pa.Array] = {name: _str(getattr(obj, name)) for name in _INDEX}
+    for name in _INDEX_INT:
+        cols[name] = pa.array(np.asarray(getattr(obj, name), dtype=np.int64))
+    cols["time"] = pa.array(np.asarray(obj.time, dtype=np.float64))
+    return cols
+
+
+def _spectra_table(s: SpectrumSet) -> pa.Table:
+    cols = _index_table(s)
+    cols["mz"] = _flat_ragged(s.mz, s.offsets, pa.float64())
+    cols["intensity"] = _flat_ragged(s.intensity, s.offsets, pa.float64())
+    return pa.table(cols)
+
+
+def _binned_table(b: BinnedSet) -> pa.Table:
+    cols = _index_table(b)
+    cols["mz"] = _flat_ragged(b.mz, b.offsets, pa.float64())
+    cols["intensity"] = _flat_ragged(b.intensity, b.offsets, pa.float64())
+    cols["n_deut"] = _flat_ragged(b.n_deut, b.offsets, pa.int64())
+    per_spectrum = (
+        ("env_width", np.float64), ("env_symm", np.float64), ("threshold", np.float64),
+        ("max_namides", np.int64), ("empty", bool), ("no_signal", bool), ("capped", bool),
+    )
+    for name, typ in per_spectrum:
+        cols[name] = pa.array(np.asarray(getattr(b, name), dtype=typ))
+    return pa.table(cols)
+
+
+def _measurements_table(m: Measurements) -> pa.Table:
+    n = len(m)
+    refs = [None if r is None else np.asarray(r, dtype=np.int64) for r in m.references]
+    return pa.table({
+        "measurement": pa.array(np.arange(n, dtype=np.int64)),
+        "spectrum_id": _str(m.spectrum_id),
+        "data_id": pa.array(np.asarray(m.data_id, dtype=np.int64)),
+        "time": pa.array(np.asarray(m.time, dtype=np.float64)),
+        "n_max": pa.array(np.asarray(m.n_max, dtype=np.float64)),
+        "bins": _ragged(list(m.bins), pa.float64()),
+        "observed": _ragged(list(m.observed), pa.float64()),
+        "shape": _ragged(list(m.shapes), pa.float64()),
+        "references": _ragged(refs, pa.int64()),
+    })
+
+
+def _fit_tables(fit: FitResult) -> dict[str, pa.Table]:
+    n = len(fit)
+    tables = {"fit": pa.table({
+        "measurement": pa.array(np.arange(n, dtype=np.int64)),
+        "spectrum_id": _str(fit.spectrum_id),
+        "data_id": pa.array(np.asarray(fit.data_id, dtype=np.int64)),
+        "time": pa.array(np.asarray(fit.time, dtype=np.float64)),
+        "selected_K": pa.array(np.asarray(fit.selected_K, dtype=np.int64)),
+        "obs_scale": pa.array(np.asarray(fit.obs_scale, dtype=np.float64)),
+        "sample_size": pa.array(np.asarray(fit.sample_size, dtype=np.float64)),
+        "n_max": pa.array(np.asarray(fit.n_max, dtype=np.float64)),
+        "noise_kind": _str(fit.noise_kind),
+        "score": _ragged(_rows(fit.score), pa.float64()),
+    })}
+    rows: dict[str, list] = {k: [] for k in (
+        "measurement", "fit_K", "A", "n", "p", "log_A", "n_raw", "logit_p", "nll", "bic", "aic",
+        "passes_min_pop")}
+    for k in fit.k_values:
+        f = fit.fits[k]
+        rows["measurement"].append(np.arange(n, dtype=np.int64))
+        rows["fit_K"].append(np.full(n, k, dtype=np.int64))
+        for name in ("nll", "bic", "aic"):
+            rows[name].append(np.asarray(getattr(f, name), dtype=np.float64))
+        rows["passes_min_pop"].append(np.asarray(f.passes_min_pop, dtype=bool))
+        for name in ("A", "n", "p", "log_A", "n_raw", "logit_p"):
+            rows[name].extend(_rows(getattr(f, name)))
+    cols: dict[str, pa.Array] = {}
+    for name in ("measurement", "fit_K"):
+        cols[name] = pa.array(np.concatenate(rows[name]))
+    for name in ("A", "n", "p", "log_A", "n_raw", "logit_p"):
+        cols[name] = _ragged(rows[name], pa.float64())
+    for name in ("nll", "bic", "aic"):
+        cols[name] = pa.array(np.concatenate(rows[name]))
+    cols["passes_min_pop"] = pa.array(np.concatenate(rows["passes_min_pop"]))
+    tables["fit_k"] = pa.table(cols)
+    if fit.noise_estimate is not None:
+        e = fit.noise_estimate
+        tables["noise_estimate"] = pa.table({
+            "measurement": pa.array(np.arange(n, dtype=np.int64)),
+            "gain": pa.array(np.asarray(e.gain, dtype=np.float64)),
+            "estimated": pa.array(np.asarray(e.estimated, dtype=bool)),
+            "reason": _str(e.reason),
+            "score": pa.array(np.asarray(e.score, dtype=np.float64)),
+            "outlier": pa.array(np.asarray(e.outlier, dtype=bool)),
+            "n_replicated": pa.array(np.asarray(e.n_replicated, dtype=np.int64)),
+        })
+    return tables
+
+
+def _bootstrap_tables(b: BootstrapResult) -> dict[str, pa.Table]:
+    n = len(b)
+    cols: dict[str, pa.Array] = {
+        "measurement": pa.array(np.arange(n, dtype=np.int64)),
+        "selected_K": pa.array(np.asarray(b.selected_K, dtype=np.int64)),
+        "n_success": pa.array(np.asarray(b.n_success, dtype=np.int64)),
+    }
+    for name in ("A", "n", "p", "mean", "frac"):
+        cols[f"{name}_se"] = _ragged(_rows(getattr(b, f"{name}_se")), pa.float64())
+        cols[f"{name}_ci"] = _ragged(_rows(getattr(b, f"{name}_ci")), pa.float64())
+    cols["curve_lo"] = _flat_ragged(b.curve_lo, b.curve_offsets, pa.float64())
+    cols["curve_hi"] = _flat_ragged(b.curve_hi, b.curve_offsets, pa.float64())
+    tables = {"bootstrap": pa.table(cols)}
+    if b.draws is not None:
+        d = b.draws
+        tables["bootstrap_draws"] = pa.table({
+            "measurement": pa.array(np.arange(n, dtype=np.int64)),
+            "A": _ragged(_rows(d.A), pa.float64()),
+            "n": _ragged(_rows(d.n), pa.float64()),
+            "p": _ragged(_rows(d.p), pa.float64()),
+            "ok": _ragged(_rows(d.ok), pa.bool_()),
+        })
+    return tables
+
+
+def _components_table(fit: FitResult, boot: BootstrapResult | None) -> pa.Table:
+    """The tidy table of every fit (and its intervals), for other tools; derived, not read back."""
+    data = boot.table(fit, selected_only=False) if boot is not None else fit.table()
+    cols = {}
+    for name, values in data.items():
+        if values.dtype.kind in "US" or values.dtype == object:
+            cols[name] = _str(values)
+        else:
+            cols[name] = pa.array(values)
+    return pa.table(cols)
+
+
+def _versions() -> dict[str, str]:
+    out = {"python": platform.python_version()}
+    for pkg in ("hxex", "numpy", "scipy", "torch", "pyarrow", "pyteomics"):
+        try:
+            out[pkg] = version(pkg)
+        except PackageNotFoundError:
+            out[pkg] = "unknown"
+    return out
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _write_table(directory: Path, name: str, table: pa.Table, files: dict, **extra) -> None:
+    path = directory / f"{name}.parquet"
+    pq.write_table(table, path, compression="zstd", row_group_size=ROW_GROUP)
+    files[f"{name}.parquet"] = {
+        "rows": table.num_rows, "bytes": path.stat().st_size, "sha256": _sha256(path), **extra,
+    }
+
+
+def _is_bundle_dir(path: Path) -> bool:
+    manifest = path / MANIFEST
+    try:
+        return manifest.is_file() and json.loads(manifest.read_text()).get("kind") == KIND
+    except (OSError, ValueError):
+        return False
+
+
+def write_bundle(
+    path: str | Path,
+    *,
+    measurements: Measurements,
+    fit: FitResult,
+    bootstrap: BootstrapResult | None = None,
+    binned: BinnedSet | None = None,
+    spectra: SpectrumSet | None = None,
+    picker_config: PickerConfig | None = None,
+    review: ReviewTable | None = None,
+    project: str | None = None,
+    notes: str = "",
+    overwrite: bool = False,
+) -> Path:
+    """Write a results bundle and return its path.
+
+    ``path`` ending in ``.zip`` gives a zip (read only); anything else a directory. The
+    bundle is written next to its final place and moved there when complete, so a failed write
+    leaves nothing behind. An existing bundle is only replaced with ``overwrite=True`` (a
+    directory that is not a bundle is never removed). ``project`` is recorded in the manifest.
+    """
+    path = Path(path)
+    if len(measurements) != len(fit) or not np.array_equal(
+        measurements.spectrum_id, fit.spectrum_id
+    ):
+        raise BundleError("the measurements and the fit must be for the same spectra")
+    if bootstrap is not None and not np.array_equal(bootstrap.selected_K, fit.selected_K):
+        raise BundleError("the bootstrap was not made from this fit")
+    if binned is not None and not set(measurements.spectrum_id) <= set(binned.spectrum_id):
+        raise BundleError("every measurement must be in the binned table")
+    if path.exists():
+        if not overwrite:
+            raise BundleError(f"{path} exists (use overwrite=True to replace a bundle)")
+        if path.is_dir() and not _is_bundle_dir(path):
+            raise BundleError(f"{path} is a directory but not a results bundle; not removing it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=path.name + ".tmp-", dir=path.parent))
+    try:
+        files: dict[str, dict] = {}
+        _write_table(tmp, "measurements", _measurements_table(measurements), files)
+        for name, table in _fit_tables(fit).items():
+            _write_table(tmp, name, table, files)
+        if bootstrap is not None:
+            for name, table in _bootstrap_tables(bootstrap).items():
+                _write_table(tmp, name, table, files)
+        if binned is not None:
+            _write_table(tmp, "binned", _binned_table(binned), files)
+        if spectra is not None:
+            _write_table(tmp, "spectra", _spectra_table(spectra), files)
+        _write_table(tmp, "components", _components_table(fit, bootstrap), files, derived=True)
+        if review is not None:
+            _write_table(tmp, "review", _review_table(review), files)
+        manifest = {
+            "kind": KIND,
+            "schema_version": SCHEMA_VERSION,
+            "created": datetime.now(UTC).isoformat(timespec="seconds"),
+            "project": project if project is not None else _project_of(fit.spectrum_id),
+            "notes": notes,
+            "versions": _versions(),
+            "k_values": list(fit.k_values),
+            "n_measurements": len(fit),
+            "configs": {
+                "fit": fit.config.to_dict(),
+                "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
+                "picker": None if picker_config is None else picker_config.to_dict(),
+            },
+            "files": files,
+        }
+        (tmp / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
+        _publish(tmp, path, overwrite)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return path
+
+
+def _project_of(ids) -> str:
+    heads = {str(i).partition(":")[0] for i in ids if ":" in str(i)}
+    return heads.pop() if len(heads) == 1 else ""
+
+
+def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
+    """Move the finished bundle to ``path`` (as a directory, or zipped if ``path`` is .zip)."""
+    if path.suffix == ".zip":
+        archive = tmp.with_suffix(".zip")
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            for item in sorted(tmp.iterdir()):
+                zf.write(item, item.name)
+        shutil.rmtree(tmp)
+        if path.exists():
+            path.unlink()
+        os.replace(archive, path)
+        return
+    if path.exists():
+        shutil.rmtree(path)
+    os.replace(tmp, path)
+
+
+# --- the review layer -----------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReviewTable:
+    """Per-spectrum review: ``status`` (``accepted`` or ``rejected``), a chosen ``k_override``
+    (0 = none) and a ``note``, with the time of the last change. Spectra not listed are
+    unreviewed. It changes nothing in the fit: :meth:`effective_K` and :meth:`status_of` give
+    the reviewed view."""
+
+    spectrum_id: np.ndarray
+    status: np.ndarray
+    k_override: np.ndarray
+    note: np.ndarray
+    updated: np.ndarray
+
+    @classmethod
+    def empty(cls) -> ReviewTable:
+        z = np.array([], dtype=str)
+        return cls(z, z.copy(), np.array([], dtype=np.int64), z.copy(), z.copy())
+
+    def __len__(self) -> int:
+        return len(self.spectrum_id)
+
+    def get(self, spectrum_id: str) -> dict[str, Any] | None:
+        hits = np.flatnonzero(self.spectrum_id == spectrum_id)
+        if len(hits) == 0:
+            return None
+        i = hits[0]
+        return {"status": str(self.status[i]), "k_override": int(self.k_override[i]),
+                "note": str(self.note[i]), "updated": str(self.updated[i])}
+
+    def update(
+        self,
+        spectrum_id: str,
+        *,
+        status: str | None = None,
+        k_override: int | None = None,
+        note: str | None = None,
+        now: datetime | None = None,
+    ) -> ReviewTable:
+        """A new table with the entry for ``spectrum_id`` changed (created if missing). Only the
+        arguments given are changed; ``status=''`` and ``k_override=0`` clear them."""
+        if status not in (None, "", *STATUSES):
+            raise ValueError(f"status must be one of {STATUSES} (or '' to clear)")
+        if k_override is not None and k_override < 0:
+            raise ValueError("k_override must be 0 (none) or a positive K")
+        stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+        old = self.get(spectrum_id) or {"status": "", "k_override": 0, "note": ""}
+        new = {
+            "status": old["status"] if status is None else status,
+            "k_override": old["k_override"] if k_override is None else int(k_override),
+            "note": old["note"] if note is None else note,
+        }
+        keep = self.spectrum_id != spectrum_id
+        if not new["status"] and not new["k_override"] and not new["note"]:
+            return ReviewTable(self.spectrum_id[keep], self.status[keep], self.k_override[keep],
+                               self.note[keep], self.updated[keep])
+        return ReviewTable(
+            np.append(self.spectrum_id[keep], spectrum_id).astype(str),
+            np.append(self.status[keep], new["status"]).astype(str),
+            np.append(self.k_override[keep], new["k_override"]).astype(np.int64),
+            np.append(self.note[keep], new["note"]).astype(str),
+            np.append(self.updated[keep], stamp).astype(str),
+        )
+
+    def effective_K(self, fit: FitResult) -> np.ndarray:
+        """The K of every measurement with the reviewer's choices applied."""
+        out = fit.selected_K.copy()
+        index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+        for sid, k in zip(self.spectrum_id, self.k_override, strict=True):
+            if k:
+                if int(k) not in fit.k_values:
+                    raise ValueError(f"{sid}: K = {int(k)} was not fitted (tried {fit.k_values})")
+                out[index[str(sid)]] = int(k)
+        return out
+
+    def status_of(self, fit: FitResult) -> np.ndarray:
+        """``accepted``, ``rejected`` or ``unreviewed`` for every measurement."""
+        out = np.full(len(fit), "unreviewed", dtype=object)
+        index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+        for sid, status in zip(self.spectrum_id, self.status, strict=True):
+            if status:
+                out[index[str(sid)]] = str(status)
+        return out.astype(str)
+
+
+def _review_table(r: ReviewTable) -> pa.Table:
+    return pa.table({
+        "spectrum_id": _str(r.spectrum_id), "status": _str(r.status),
+        "k_override": pa.array(np.asarray(r.k_override, dtype=np.int64)),
+        "note": _str(r.note), "updated": _str(r.updated),
+    })
+
+
+def _read_review(table: pa.Table) -> ReviewTable:
+    return ReviewTable(_strs(table, "spectrum_id"), _strs(table, "status"),
+                       np.asarray(_col(table, "k_override"), dtype=np.int64),
+                       _strs(table, "note"), _strs(table, "updated"))
+
+
+# --- reading --------------------------------------------------------------------------------
+
+class Bundle:
+    """An open results bundle. Tables are read when asked for (``spectra_by_id`` reads only the
+    rows needed), and the objects returned are the ones the run produced."""
+
+    def __init__(self, path: Path, store, manifest: dict[str, Any]):
+        self.path, self._store, self.manifest = path, store, manifest
+        self._cache: dict[str, Any] = {}
+
+    @property
+    def project(self) -> str:
+        return self.manifest.get("project", "")
+
+    @property
+    def schema_version(self) -> int:
+        return int(self.manifest["schema_version"])
+
+    def has(self, table: str) -> bool:
+        return f"{table}.parquet" in self.manifest["files"]
+
+    def tables(self) -> list[str]:
+        return sorted(n[: -len(".parquet")] for n in self.manifest["files"])
+
+    def close(self) -> None:
+        self._store.close()
+
+    def __enter__(self) -> Bundle:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def _table(self, name: str, **kw) -> pa.Table:
+        if not self.has(name):
+            raise BundleError(f"this bundle has no {name!r} table")
+        return self._store.table(f"{name}.parquet", **kw)
+
+    def verify(self) -> None:
+        """Check the size and SHA-256 of every file against the manifest."""
+        for name, info in self.manifest["files"].items():
+            if not self._store.exists(name):
+                raise BundleError(f"{name} is listed in the manifest but missing")
+            data = self._store.read(name)
+            if hashlib.sha256(data).hexdigest() != info["sha256"] or len(data) != info["bytes"]:
+                raise BundleError(f"{name} does not match its checksum: the bundle is damaged")
+
+    def measurements(self) -> Measurements:
+        if "measurements" not in self._cache:
+            t = self._table("measurements")
+            bins = _split(*_ragged_read(t, "bins"))
+            observed = _split(*_ragged_read(t, "observed"))
+            shapes = _split(*_ragged_read(t, "shape"))
+            ref_flat, ref_off = _ragged_read(t, "references")
+            ref_null = np.asarray(t.column("references").is_null().to_numpy(zero_copy_only=False))
+            refs = tuple(
+                None if ref_null[i] else tuple(int(x) for x in ref_flat[ref_off[i]:ref_off[i + 1]])
+                for i in range(t.num_rows)
+            )
+            self._cache["measurements"] = Measurements(
+                bins=tuple(bins), observed=tuple(observed), shapes=tuple(shapes),
+                n_max=np.asarray(_col(t, "n_max"), dtype=np.float64), references=refs,
+                spectrum_id=_strs(t, "spectrum_id"),
+                data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
+                time=np.asarray(_col(t, "time"), dtype=np.float64),
+            )
+        return self._cache["measurements"]
+
+    def fit(self) -> FitResult:
+        if "fit" not in self._cache:
+            t = self._table("fit")
+            m = t.num_rows
+            k_values = tuple(int(k) for k in self.manifest["k_values"])
+            fk = self._table("fit_k")
+            kcol = np.asarray(_col(fk, "fit_K"), dtype=np.int64)
+            fits = {}
+            for k in k_values:
+                sel = np.flatnonzero(kcol == k)
+                sub = fk.take(pa.array(sel))
+                order = np.argsort(np.asarray(_col(sub, "measurement")))
+                sub = sub.take(pa.array(order))
+                fits[k] = KFit(
+                    k=k, A=_matrix(sub, "A", k), n=_matrix(sub, "n", k), p=_matrix(sub, "p", k),
+                    log_A=_matrix(sub, "log_A", k), n_raw=_matrix(sub, "n_raw", k),
+                    logit_p=_matrix(sub, "logit_p", k),
+                    nll=np.asarray(_col(sub, "nll"), dtype=np.float64),
+                    bic=np.asarray(_col(sub, "bic"), dtype=np.float64),
+                    aic=np.asarray(_col(sub, "aic"), dtype=np.float64),
+                    passes_min_pop=np.asarray(_col(sub, "passes_min_pop"), dtype=bool),
+                )
+            estimate = None
+            if self.has("noise_estimate"):
+                e = self._table("noise_estimate")
+                estimate = NoiseEstimate(
+                    gain=np.asarray(_col(e, "gain"), dtype=np.float64),
+                    estimated=np.asarray(_col(e, "estimated"), dtype=bool),
+                    reason=_strs(e, "reason"),
+                    score=np.asarray(_col(e, "score"), dtype=np.float64),
+                    outlier=np.asarray(_col(e, "outlier"), dtype=bool),
+                    n_replicated=np.asarray(_col(e, "n_replicated"), dtype=np.int64),
+                )
+            self._cache["fit"] = FitResult(
+                config=FitConfig.from_dict(self.manifest["configs"]["fit"]),
+                spectrum_id=_strs(t, "spectrum_id"),
+                data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
+                time=np.asarray(_col(t, "time"), dtype=np.float64),
+                k_values=k_values, fits=fits,
+                selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
+                score=_matrix(t, "score", len(k_values)),
+                obs_scale=np.asarray(_col(t, "obs_scale"), dtype=np.float64),
+                sample_size=np.asarray(_col(t, "sample_size"), dtype=np.float64),
+                n_max=np.asarray(_col(t, "n_max"), dtype=np.float64),
+                noise_kind=_strs(t, "noise_kind"), noise_estimate=estimate,
+            )
+            assert m == len(self._cache["fit"])
+        return self._cache["fit"]
+
+    def bootstrap(self) -> BootstrapResult | None:
+        if not self.has("bootstrap"):
+            return None
+        if "bootstrap" not in self._cache:
+            t = self._table("bootstrap")
+            k_max = max(self.manifest["k_values"])
+            cfg = BootstrapConfig.from_dict(self.manifest["configs"]["bootstrap"])
+            arrays: dict[str, np.ndarray] = {}
+            for name in ("A", "n", "p", "mean", "frac"):
+                arrays[f"{name}_se"] = _matrix(t, f"{name}_se", k_max)
+                arrays[f"{name}_ci"] = _matrix(t, f"{name}_ci", 2 * k_max).reshape(-1, k_max, 2)
+            lo, offsets = _ragged_read(t, "curve_lo")
+            hi, _ = _ragged_read(t, "curve_hi")
+            draws = None
+            if self.has("bootstrap_draws"):
+                d = self._table("bootstrap_draws")
+                m = d.num_rows
+                draws = BootstrapDraws(
+                    A=_matrix(d, "A", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                    n=_matrix(d, "n", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                    p=_matrix(d, "p", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
+                    ok=_matrix(d, "ok", cfg.n_boot, dtype=bool),
+                )
+            self._cache["bootstrap"] = BootstrapResult(
+                config=cfg, selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
+                n_success=np.asarray(_col(t, "n_success"), dtype=np.int64),
+                curve_lo=np.asarray(lo, dtype=np.float64),
+                curve_hi=np.asarray(hi, dtype=np.float64),
+                curve_offsets=offsets, draws=draws, **arrays,
+            )
+        return self._cache["bootstrap"]
+
+    def binned(self) -> BinnedSet | None:
+        if not self.has("binned"):
+            return None
+        t = self._table("binned")
+        mz, offsets = _ragged_read(t, "mz")
+        intensity, _ = _ragged_read(t, "intensity")
+        n_deut, _ = _ragged_read(t, "n_deut")
+        return BinnedSet(
+            mz=np.asarray(mz, dtype=np.float64), intensity=np.asarray(intensity, dtype=np.float64),
+            n_deut=np.asarray(n_deut, dtype=np.int64), offsets=offsets,
+            env_width=np.asarray(_col(t, "env_width"), dtype=np.float64),
+            env_symm=np.asarray(_col(t, "env_symm"), dtype=np.float64),
+            max_namides=np.asarray(_col(t, "max_namides"), dtype=np.int64),
+            threshold=np.asarray(_col(t, "threshold"), dtype=np.float64),
+            empty=np.asarray(_col(t, "empty"), dtype=bool),
+            no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
+            capped=np.asarray(_col(t, "capped"), dtype=bool), **_index_arrays(t),
+        )
+
+    def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:
+        """The raw spectra (all, or only the rows with these ids), or None if not stored."""
+        if not self.has("spectra"):
+            return None
+        if ids is not None and len(ids) == 0:
+            return SpectrumSet.from_spectra([])
+        filters = None if ids is None else [("spectrum_id", "in", [str(i) for i in ids])]
+        t = self._table("spectra", filters=filters)
+        mz, offsets = _ragged_read(t, "mz")
+        intensity, _ = _ragged_read(t, "intensity")
+        return SpectrumSet(
+            mz=np.asarray(mz, dtype=np.float64), intensity=np.asarray(intensity, dtype=np.float64),
+            offsets=offsets, **_index_arrays(t),
+        )
+
+    def components_table(self) -> dict[str, np.ndarray]:
+        """The tidy table of every fit with its intervals (as written for other tools)."""
+        t = self._table("components")
+        return {name: np.asarray(t.column(name).to_pylist()) if t.schema.field(name).type ==
+                pa.string() else _col(t, name) for name in t.column_names}
+
+    def review(self) -> ReviewTable:
+        return _read_review(self._table("review")) if self.has("review") else ReviewTable.empty()
+
+    def set_review(self, review: ReviewTable) -> None:
+        """Replace the review layer (directory bundles only); no fit is touched."""
+        if not self._store.writable:
+            raise BundleError("a zip bundle is read only; unpack it to edit the review layer")
+        known = set(map(str, self.fit().spectrum_id))
+        unknown = [str(s) for s in review.spectrum_id if str(s) not in known]
+        if unknown:
+            raise BundleError(f"review entries for unknown spectra: {unknown[:3]}")
+        review.effective_K(self.fit())  # raises if a chosen K was not fitted
+        files = dict(self.manifest["files"])
+        _write_table(self.path, "review", _review_table(review), files)
+        manifest = {**self.manifest, "files": files}
+        tmp = self.path / (MANIFEST + ".tmp")
+        tmp.write_text(json.dumps(manifest, indent=2) + "\n")
+        os.replace(tmp, self.path / MANIFEST)
+        self.manifest = manifest
+
+
+def _index_arrays(t: pa.Table) -> dict[str, np.ndarray]:
+    out: dict[str, np.ndarray] = {name: _strs(t, name) for name in _INDEX}
+    for name in _INDEX_INT:
+        out[name] = np.asarray(_col(t, name), dtype=np.int64)
+    out["time"] = np.asarray(_col(t, "time"), dtype=np.float64)
+    return out
+
+
+def open_bundle(path: str | Path) -> Bundle:
+    """Open a bundle (a directory or a ``.zip``). Raises :class:`BundleError` if it is not one,
+    or was written by a newer schema."""
+    path = Path(path)
+    try:
+        if path.is_dir():
+            store: Any = _DirStore(path)
+        elif path.is_file() and zipfile.is_zipfile(path):
+            store = _ZipStore(path)
+        else:
+            raise BundleError(f"{path} is not a bundle directory or zip")
+        manifest = json.loads(store.read(MANIFEST).decode())
+    except (OSError, KeyError, ValueError) as exc:
+        raise BundleError(f"cannot read the manifest of {path}: {exc}") from exc
+    if manifest.get("kind") != KIND:
+        raise BundleError(f"{path} is not an hxex results bundle")
+    if int(manifest.get("schema_version", 0)) > SCHEMA_VERSION:
+        raise BundleError(
+            f"{path} has schema version {manifest['schema_version']}; this hxex reads up to "
+            f"{SCHEMA_VERSION}. Upgrade hxex to open it."
+        )
+    return Bundle(path, store, manifest)

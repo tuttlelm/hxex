@@ -823,7 +823,7 @@ measurement's selected K and is optional, including with a single K.
 
 ## Phase 2 status: `model`, `noise` and `fit` (2026-10-10)
 
-Done so far, with the bootstrap (next subsection); the results bundle and CPU/GPU parity are
+Done so far, with the bootstrap and the results bundle (later subsections); CPU/GPU parity is
 next. Implemented: `hxex.model`
 (`Backend` for device and dtype, the real-valued binomial pmf, shape
 convolution, `PaddedBatch`, `MixtureBatch`, BIC/AIC), `hxex.noise` (`NoiseConfig`,
@@ -1012,6 +1012,27 @@ implemented, on purpose: an estimate from the residuals of the fit when there ar
 (it was 1.98 times the replicate gain, middle half 1.43 to 3.07, Spearman 0.82, because it
 includes the misfit of the model); other screens of a spectrum (fit chi-square, total intensity
 against the series) belong to the quality flags of Phase 3.
+
+**The results bundle (`hxex.io.write_bundle` and `open_bundle`, 2026-10-10).** A directory (or a
+zip, read only) with `manifest.json` and zstd Parquet tables, schema version 1, documented for
+readers in other languages in `docs/BUNDLE.md`. It keeps the fit inputs (`measurements`: bins,
+intensities, the natural-abundance shape, `n_max`, noise references), the fit (the selected K,
+the noise scale and model per spectrum, every K tried with its amplitudes, `n`, `p`, losses, BIC,
+AIC and the optimiser's own parameters), the noise estimate, the bootstrap (summaries, the band
+of the total curve, optional draws), the picked table, optional raw spectra, the configs and
+package versions, and a tidy derived `components` table. Loading returns the objects the run
+produced **bit for bit** (tested for every table, from a directory and a zip), so a loaded bundle
+and a fresh fit give identical plots. Writing is atomic and refuses to overwrite a bundle unless
+asked (never a directory that is not a bundle); `verify()` checks the SHA-256 of every file;
+newer schema versions are refused and unknown tables ignored. `spectra(ids)` reads only the rows
+asked for (Parquet row groups of 1,000 spectra). The **review layer** (accept or reject, a chosen
+K, a note, per `spectrum_id`) is the one mutable table; it needs no refit, is validated against
+the fit, and `effective_K` and `status_of` give the reviewed view. On the Bimodal set (566
+spectra, 542 fits, a bootstrap with draws) the whole bundle is 2.35 MB, of which the raw spectra
+are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s and loads in
+0.03 s, and one spectrum by id takes about 9 ms. Tested with pyarrow 15.0.0 (the minimum) and
+26. Not in the bundle yet: the control identification and back-exchange values (Phase 3, to be
+added as tables). `hxex.io` loads the bundle lazily, so reading spectra does not import torch.
 
 ## Next steps
 

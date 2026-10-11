@@ -28,6 +28,12 @@ from .specexport import (
 from .times import DEFAULT_FULLDEUT_TIME, parse_hxexpress_time, parse_specexport_time
 
 __all__ = [
+    "Bundle",
+    "BundleError",
+    "ReviewTable",
+    "SCHEMA_VERSION",
+    "open_bundle",
+    "write_bundle",
     "CandidateMatch",
     "DEFAULT_FULLDEUT_TIME",
     "ReadError",
@@ -49,3 +55,18 @@ __all__ = [
     "scan_specexport_pooled",
     "sort_entries",
 ]
+
+
+_BUNDLE = {
+    "Bundle", "BundleError", "ReviewTable", "SCHEMA_VERSION", "open_bundle", "write_bundle",
+}
+
+
+def __getattr__(name):
+    """The bundle is loaded on first use: it needs the fitting code (and so torch), which the
+    readers do not."""
+    if name in _BUNDLE:
+        from . import bundle
+
+        return getattr(bundle, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
