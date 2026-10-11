@@ -10,6 +10,7 @@ comparison takes about a minute and runs when HXEX_FULL_REGRESSION=1; a quick on
 always runs.
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -360,6 +361,17 @@ def test_a_measurement_does_not_depend_on_the_others():
         np.testing.assert_allclose(other.fits[k].nll[1:], full.fits[k].nll[1:], rtol=1e-9)
 
 
+def test_a_nested_k_is_not_worse_than_the_same_k_fitted_alone():
+    meas, _ = synthetic([BIMODAL, UNIMODAL, TRIMODAL, BIMODAL, TRIMODAL])
+    cfg = FitConfig(noise=NoiseConfig("gaussian", sd=1500.0, percent=None), backend=CPU,
+                    k_min=1, k_max=3, **FAST)
+    nested = fit_models(meas, cfg)
+    for k in (2, 3):
+        alone = fit_models(meas, dataclasses.replace(cfg, k_min=k, k_max=k))
+        # the best restart is chosen before the final polish, hence a small tolerance
+        assert np.all(nested.fits[k].nll <= alone.fits[k].nll + 0.1)
+
+
 def test_float32_agrees_with_float64():
     meas, truth = synthetic([BIMODAL, UNIMODAL])
     r32 = fit_models(meas, FitConfig(noise=CFG.noise, backend=Backend("cpu", "float32"), **FAST))
@@ -387,6 +399,10 @@ def test_progress_and_cancel():
     calls = []
     cfg = FitConfig(noise=CFG.noise, backend=CPU, k_max=2, adam_steps=30, n_restarts=2)
     fit_models(meas, cfg, progress=lambda d, t: calls.append((d, t)))
+    assert calls == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]  # K=2 has the k-means start too
+    calls.clear()
+    fit_models(meas, dataclasses.replace(cfg, kmeans_after_warm=False),
+               progress=lambda d, t: calls.append((d, t)))
     assert calls == [(1, 4), (2, 4), (3, 4), (4, 4)]
     flags = iter([False, False, True])
     with pytest.raises(Cancelled):

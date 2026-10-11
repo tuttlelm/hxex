@@ -24,7 +24,10 @@ class FitConfig:
 
     Each K is fitted from ``n_restarts`` starting points: restart 0 is the (K-1)-population
     solution with its heaviest component split in two when ``nested_init`` is set and K-1 was
-    fitted (otherwise a shape-corrected k-means start), the others are random. Adam runs
+    fitted (otherwise a shape-corrected k-means start), the others are random. With
+    ``kmeans_after_warm`` (the default) a K that has a nested start is also fitted from the
+    k-means start, as one restart more, so that a K in a run of several is never worse than the
+    same K fitted alone. Adam runs
     ``adam_steps`` steps with a cosine learning rate from ``lr_adam`` to ``lr_adam_end``, then
     L-BFGS runs up to ``lbfgs_steps`` iterations (0, the default: it did not improve the fits, and
     it minimises the summed loss, so it makes measurements influence each other).
@@ -49,7 +52,7 @@ class FitConfig:
     lr_adam: float = 0.05
     lr_adam_end: float = 0.002
     nested_init: bool = True
-    kmeans_after_warm: bool = False
+    kmeans_after_warm: bool = True
     split_delta: float = 0.5
     warm_noise: float = 0.05
     grad_clip: str = "per_measurement"

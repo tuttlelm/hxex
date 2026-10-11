@@ -174,8 +174,10 @@ def fit_batch(
 ) -> tuple[MixtureBatch, np.ndarray]:
     """Fit ``k`` components to every measurement of ``prep``.
 
-    Restart 0 is ``warm`` (with ``warm_noise`` jitter) if given, else the k-means start; restart 1
-    is also the k-means start when ``kmeans_after_warm``; the other restarts are random. Every
+    Restart 0 is ``warm`` (with ``warm_noise`` jitter) if given, else the k-means start; with
+    ``kmeans_after_warm`` (and a warm start) the k-means start is run as well, as an extra
+    restart, so that the fit is at least as good as one from the k-means start alone; the other
+    ``n_restarts - 1`` restarts are random and do not depend on the extra one. Every
     random number of a measurement comes from a generator seeded by ``seed`` and its key. The best
     restart per measurement, by loss, is kept. Returns the model (in scaled units) and the loss of
     each measurement (``inf`` where every restart was non-finite). Raises :class:`FitError` if that
@@ -197,9 +199,13 @@ def fit_batch(
     best_model: MixtureBatch | None = None
     best_nll = np.full(m, np.inf)
 
-    for restart in range(n_restarts):
+    schedule = [("warm" if warm is not None else "kmeans", 0)]
+    if warm is not None and kmeans_after_warm:
+        schedule.append(("kmeans", 0))
+    schedule += [("random", r) for r in range(1, n_restarts)]
+    for kind, restart in schedule:
         check_cancel(cancel)
-        if restart == 0 and warm is not None:
+        if kind == "warm":
             jitter = np.stack(
                 [np.random.default_rng([seed, 1, int(key)]).standard_normal((3, k))
                  for key in prep.keys]
@@ -207,7 +213,7 @@ def fit_batch(
             la = warm.log_A + jitter[:, 0]
             nr = warm.n_raw + jitter[:, 1]
             lp = warm.logit_p + jitter[:, 2]
-        elif restart == 0 or (restart == 1 and warm is not None and kmeans_after_warm):
+        elif kind == "kmeans":
             la, nr, lp = np.zeros((m, k)), np.zeros((m, k)), np.zeros((m, k))
             for i in range(m):
                 ob_init, la_shift = prep.observed[i], 0.0

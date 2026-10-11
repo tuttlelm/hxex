@@ -66,7 +66,8 @@ def fit_models(
     )
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
-    total = config.n_restarts * len(k_values)
+    extra = len(k_values) - 1 if config.nested_init and config.kmeans_after_warm else 0
+    total = config.n_restarts * len(k_values) + extra  # the k-means start of a nested K
     done = 0
 
     def tick() -> None:
