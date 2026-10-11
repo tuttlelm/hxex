@@ -5,7 +5,7 @@ to binned deuterium sticks to fitted populations with uncertainties and plots. S
 pyHXExpress (it does not depend on it). Early development: Phases 0 to 3 are done (scaffold,
 `chem`, readers and peak picker, then the engine: `model`, `noise`, `fit`, `bootstrap`, the
 results bundle and CPU/GPU parity, then controls, quality flags and the `run` stage). Phase 4
-(reports and plots) is next.
+(`report`: plots, tables and figure files) is in progress.
 
 The plan, decisions and phases are in `docs/PLAN.md`. Read it before designing anything, and
 do not copy it here. Release steps are in `docs/RELEASING.md`.

@@ -30,7 +30,7 @@ of every file.
 
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
 `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
-`n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`: the settings as written by the
+`n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `run` (the whole run configuration, including the modification registry): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device), and
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
@@ -42,7 +42,7 @@ of every file.
 | `fit.parquet` | measurement | `measurement`, `spectrum_id`, `data_id`, `time`, `selected_K`, `obs_scale` (the noise scale the spectrum was divided by), `sample_size` (the N of the BIC), `n_max`, `noise_kind` (`gaussian` or `poisson`), `score` (selection criterion for each K tried, inf where the population filter rejected it) |
 | `fit_k.parquet` | measurement and K | `measurement`, `fit_K`, `A`, `n`, `p` (lists of K), `log_A`, `n_raw`, `logit_p` (the optimiser's parameters), `nll`, `bic`, `aic`, `passes_min_pop` |
 | `noise_estimate.parquet` | measurement | when the noise was estimated from replicates: `gain`, `estimated`, `reason` (why a series was not estimated), `score` (consistency with replicates), `outlier` (flagged), `n_replicated` |
-| `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `frac_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `frac_ci` (lists of `k_max * 2`: low and high of each component); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin) |
+| `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `frac_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `frac_ci` (lists of `k_max * 2`: low and high of each component); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin); `component_lo`, `component_hi` (the same band for each population, `K * bins` values: population by population in the order of the original fit; absent in bundles written before they were added) |
 | `bootstrap_draws.parquet` | measurement | optional individual fits at the selected K: `A`, `n`, `p` (lists of `n_boot * k_max`, draw-major), `ok` (list of `n_boot`) |
 | `bootstrap_k.parquet` | measurement and K | the fixed-K bootstrap (`BootstrapConfig.ks`): the columns of `bootstrap` plus `fit_K`; every measurement has a row for each K requested, and `selected_K` equals `fit_K` |
 | `bootstrap_k_draws.parquet` | measurement and K | the draws of the fixed-K bootstrap when kept: the columns of `bootstrap_draws` plus `fit_K` |

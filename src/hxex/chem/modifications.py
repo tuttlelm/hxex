@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 
 from pyteomics import mass
@@ -36,7 +36,10 @@ class ModifiedResidue:
 
     label: str
     base: str
-    delta: Mapping[str, int] = field(compare=False)
+    delta: Mapping[str, int]
+
+    def __hash__(self) -> int:  # the delta is a dict, so hash its sorted items
+        return hash((self.label, self.base, tuple(sorted(dict(self.delta).items()))))
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,25 @@ class ModificationRegistry:
             )
         comp = mass.Composition(delta) if isinstance(delta, str) else mass.Composition(dict(delta))
         return ModificationRegistry((*self.residues, ModifiedResidue(label, base, dict(comp))))
+
+    def to_dict(self) -> dict[str, list[dict]]:
+        """The registry as plain data (labels, base residues and composition changes), to be
+        stored with results and read back by :meth:`from_dict`."""
+        return {"residues": [
+            {"label": r.label, "base": r.base,
+             "delta": {k: int(v) for k, v in dict(r.delta).items()}}
+            for r in self.residues
+        ]}
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> ModificationRegistry:
+        unknown = set(data) - {"residues"}
+        if unknown:
+            raise ValueError(f"unknown registry field(s): {', '.join(sorted(unknown))}")
+        registry = cls()
+        for r in data.get("residues", ()):
+            registry = registry.with_modification(r["label"], r["base"], dict(r["delta"]))
+        return registry
 
     def __contains__(self, label: object) -> bool:
         return any(r.label == label for r in self.residues)

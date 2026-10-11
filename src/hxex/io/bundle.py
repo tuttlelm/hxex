@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import platform
 import shutil
@@ -58,6 +59,7 @@ from ._arrow import (
     _strs,
 )
 
+log = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 KIND = "hxex-results-bundle"
 MANIFEST = "manifest.json"
@@ -209,6 +211,9 @@ def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.
         cols[f"{name}_ci"] = _ragged(_rows(getattr(b, f"{name}_ci")), pa.float64())
     cols["curve_lo"] = _flat_ragged(b.curve_lo, b.curve_offsets, pa.float64())
     cols["curve_hi"] = _flat_ragged(b.curve_hi, b.curve_offsets, pa.float64())
+    if b.component_lo is not None:
+        cols["component_lo"] = _flat_ragged(b.component_lo, b.component_offsets, pa.float64())
+        cols["component_hi"] = _flat_ragged(b.component_hi, b.component_offsets, pa.float64())
     tables = {f"bootstrap{suffix}": pa.table(cols)}
     if b.draws is not None:
         d = b.draws
@@ -382,6 +387,12 @@ def write_bundle(
     for k, b in (bootstrap_by_k or {}).items():
         if k not in fit.fits or len(b) != len(fit) or not (b.selected_K == k).all():
             raise BundleError(f"bootstrap_by_k[{k}] is not a fixed-K bootstrap of this fit")
+    if picker_config is None:
+        log.warning("no picker settings were given: the bundle will not record how the spectra "
+                    "were picked (plots cannot show the picking window)")
+    if run_config is None:
+        log.warning("no run settings were given: the bundle will record the stage settings but "
+                    "not the settings of the run as a whole")
     if binned is not None and not set(measurements.spectrum_id) <= set(binned.spectrum_id):
         raise BundleError("every measurement must be in the binned table")
     if path.exists():
@@ -717,6 +728,12 @@ class Bundle:
             arrays[f"{stat}_ci"] = _matrix(t, f"{stat}_ci", 2 * k_max).reshape(-1, k_max, 2)
         lo, offsets = _ragged_read(t, "curve_lo")
         hi, _ = _ragged_read(t, "curve_hi")
+        comp: dict[str, np.ndarray] = {}
+        if "component_lo" in t.column_names:  # absent in bundles written before they were stored
+            clo, coff = _ragged_read(t, "component_lo")
+            chi, _ = _ragged_read(t, "component_hi")
+            comp = {"component_lo": np.asarray(clo, dtype=np.float64),
+                    "component_hi": np.asarray(chi, dtype=np.float64), "component_offsets": coff}
         draws = None
         if self.has(f"{name}_draws"):
             d = part(f"{name}_draws")
@@ -731,7 +748,7 @@ class Bundle:
             config=cfg, selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
             n_success=np.asarray(_col(t, "n_success"), dtype=np.int64),
             curve_lo=np.asarray(lo, dtype=np.float64), curve_hi=np.asarray(hi, dtype=np.float64),
-            curve_offsets=offsets, draws=draws, **arrays,
+            curve_offsets=offsets, draws=draws, **comp, **arrays,
         )
         self._cache[name, k] = result
         return result

@@ -1115,6 +1115,56 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     32 s against 39 s in this measurement, which is within the timing noise); the regression
     comparison with the prototype still passes.
 
+31. **Reports and plots (Phase 4, `hxex.report`; owner's decisions of 2026-10-11).** Everything
+    draws from `Results` (a run's objects or an open bundle, `Results.from_run` /
+    `from_bundle`), so a fresh run and a loaded bundle give the same data (tested on the arrays
+    behind each plot). matplotlib only, with `Figure` objects (no pyplot, nothing shown or
+    saved by the plot functions); the curves are plain NumPy and checked against the PyTorch
+    model. **Plots:** `plot_spectrum` with independent layers `raw`, `picked` and `fit` (any
+    subset, each from its own source, so raw-only and picked-only work without a fit; m/z is
+    the default axis, as the predicted m/z of the picked bins, with the deuterium bin as the
+    fallback when the picked table is absent), a choice of populations by rank, residuals,
+    normalisation, bootstrap band and the K in effect (the reviewer's choice); the series plots
+    `plot_series_spectra` (time by replicate grid; a single-replicate time course wraps into a near-square grid of at most 4 columns, or `columns=` sets it), `plot_populations` (fraction against
+    deuterium level with draws, standard errors and centroid, replicate overlay) and
+    `plot_uptake` (population means along the time course, marker area by fraction, `x='time'`
+    linear or log, or `x='index'` for the test sets, the fully deuterated control as a line or as
+    the last labelled point, **back-exchange corrected by default** with raw as an option);
+    `Reference` / `load_reference` overlay known populations (the Bimodal solutions file). Every
+    plot has a `*_data` function returning its arrays, every artist a `gid` (`component:2`,
+    `band`, ...) and `Results.with_review` replaces the review layer without copying anything,
+    so a GUI can redraw, toggle and review without changes here. **Tables** (CSV, no pandas):
+    per spectrum (`data_fits` style, wide), per spectrum and population (tidy) and the
+    replicate-averaged uptake (rejected spectra left out). **Files:** `PlotConfig` (series
+    `flagged` by default, `all` or a list; kinds; layers; axis; format) and `write_figures` write
+    one multipage PDF per series (or SVG/PNG per kind), made and released one series at a time;
+    `RunConfig.plots` (off by default) writes them as part of a run. **Populations are
+    identified by the rank of the mean at each time point, sorted independently**; tracking a
+    population along the time course (linking each to the nearest mean at the next time) could
+    be done entirely from the results as a post-processing step and is a possible later option
+    (it fails when populations appear, vanish, cross or change K, so rank stays the default).
+    **Colours.** Okabe-Ito colours (distinguishable with red-green colour blindness; checked by
+    simulating deutan and protan vision) for the populations (`COLORS`, by rank of the mean) and
+    the replicates (beyond six populations the colours repeat with the next line style and hollow
+    markers, `population_style`, so K has no cap for plotting); the fit line has a colour of its own (`FIT_COLOR`, not one of the
+    populations'), because raw and picked data are grey; the populations keep their colours in
+    the population map and its replicate overlay (there the replicate is the marker shape).
+    The bootstrap now also stores the band of each population (`component_lo`/`component_hi`,
+    additive columns of the `bootstrap` tables), drawn in the population's colour like the band
+    of the total fit. **Settings are stored with the results** (the bundle manifest, `configs`): every stage's settings
+    and the whole `RunConfig`, now including the modification registry (`RunConfig.registry`,
+    serialisable; registries compare by mass, not only by label), the package versions, the
+    creation time, project and notes. `Results.settings` (`Settings`) reads them back for plots
+    (typed `picker`, `run`, `registry`); `write_bundle` warns when it is given no picker or run
+    settings. Display choices (which populations are drawn, zoom) are deliberately not stored
+    with the results; the picked bins are drawn as the picker's window (predicted m/z times
+    1 +/- `resolution_ppm`) when that setting is known (`picked_style='auto'`), the replicate
+    overlay of the population map carries the same guides at 0 and at the number of amides as
+    the single cells, and the raw line is broken across large gaps in m/z. Not stored: the
+    input file paths or checksums (the ids hold only file names; an open question, since a path
+    can reveal a local layout). Not built yet: the K comparison plot, the controls, quality and K-selection overviews, the
+    sequence-coverage uptake map and state comparison (butterfly) plots.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
@@ -1149,7 +1199,7 @@ CSVs or mzML if wanted.
    correction, quality flags, their bundle tables and the run stage). On the Bimodal
    unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
    it matters for the reported means.
-2. **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
+2. **Phase 4 (reports and plots): in progress** (item 31). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
 3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5

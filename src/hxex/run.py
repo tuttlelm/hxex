@@ -21,10 +21,11 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from . import chem
 from .bootstrap import (
     BootstrapConfig,
     BootstrapResult,
@@ -38,6 +39,10 @@ from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .picking import DEFAULT_PICKER_CONFIG, BinnedSet, PickerConfig, pick_spectra
 from .quality import QualityConfig, QualityFlags, assess_quality
 from .spectra import SpectrumSet
+
+if TYPE_CHECKING:
+    from .report.figures import PlotConfig
+    from .report.series import Reference
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +71,8 @@ class RunConfig:
     bootstrap: BootstrapConfig | None = None
     controls: ControlConfig | None = None
     quality: QualityConfig | None = QualityConfig()  # noqa: RUF009
+    plots: PlotConfig | None = None
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
     undeut_time: float = 0.0
     n_max_factor: float = 1.2
     drop_no_signal: bool = True
@@ -104,9 +111,12 @@ class RunConfig:
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"unknown run setting(s): {', '.join(sorted(unknown))}")
+        from .report.figures import PlotConfig
+
         parts = {
-            "picker": PickerConfig, "fit": FitConfig, "bootstrap": BootstrapConfig,
-            "controls": ControlConfig, "quality": QualityConfig,
+            "plots": PlotConfig, "picker": PickerConfig, "fit": FitConfig,
+            "bootstrap": BootstrapConfig, "controls": ControlConfig, "quality": QualityConfig,
+            "registry": chem.ModificationRegistry,
         }
         kwargs = {
             k: (parts[k].from_dict(v) if k in parts and v is not None else v)
@@ -137,6 +147,25 @@ class RunResult:
     @property
     def dropped_ids(self) -> np.ndarray:
         return self.binned.spectrum_id[~self.kept]
+
+    def write_figures(
+        self,
+        directory: str | Path,
+        *,
+        spectra: SpectrumSet | None = None,
+        reference: Reference | None = None,
+        progress: ProgressHook | None = None,
+        cancel: CancelHook | None = None,
+    ) -> list[Path]:
+        """Write the series figures described by ``config.plots`` (the default settings if it
+        is None); ``spectra`` adds the raw layer. Returns the files."""
+        from .report import Results
+        from .report.figures import PlotConfig, write_figures
+
+        return write_figures(
+            Results.from_run(self, spectra=spectra), directory, self.config.plots or PlotConfig(),
+            reference=reference, progress=progress, cancel=cancel,
+        )
 
     def write(
         self,
@@ -311,6 +340,8 @@ def run(
     notes: str = "",
     overwrite: bool = False,
     keep_spectra: bool = True,
+    figures_dir: str | Path | None = None,
+    reference: Reference | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -318,13 +349,20 @@ def run(
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
     recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
-    was a :class:`SpectrumSet` and ``keep_spectra``). Raises ValueError if nothing is left.
+    was a :class:`SpectrumSet` and ``keep_spectra``). With ``config.plots`` the series figures
+    are written to ``figures_dir`` (default: ``out`` with ``_figures`` added to its name);
+    ``reference`` adds known populations to them. Raises ValueError if nothing is left.
     """
+    if config.plots is not None and figures_dir is None:
+        if out is None:
+            raise ValueError("config.plots needs figures_dir or out to say where to write")
+        figures_dir = Path(out).with_name(Path(out).name + "_figures")
     raw = data if isinstance(data, SpectrumSet) else None
     pick_share = 0.05 if raw is not None else 0.0
     if raw is not None:
         binned = pick_spectra(
-            raw, config.picker, progress=_Span(progress, 0.0, UNITS * pick_share), cancel=cancel
+            raw, config.picker, registry=config.registry,
+            progress=_Span(progress, 0.0, UNITS * pick_share), cancel=cancel,
         )
     else:
         binned = data
@@ -341,7 +379,7 @@ def run(
     measurements = Measurements.from_binned(
         binned.select(kept), n_max_factor=config.n_max_factor,
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
-        amide_rules=config.picker.amide_rules,
+        amide_rules=config.picker.amide_rules, registry=config.registry,
     )
     fit, boot, by_k, controls, quality = analyse(
         measurements, config, progress=progress, cancel=cancel,
@@ -355,5 +393,8 @@ def run(
     if out is not None:
         result.write(out, spectra=raw if keep_spectra else None, project=project, notes=notes,
                      overwrite=overwrite)
+    if config.plots is not None:
+        check_cancel(cancel)
+        result.write_figures(figures_dir, spectra=raw, reference=reference, cancel=cancel)
     report(progress, UNITS, UNITS)
     return result

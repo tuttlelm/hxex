@@ -118,7 +118,11 @@ class BootstrapResult:
     component order of the original fit. ``n_success`` counts the successful resamples of each
     measurement (statistics need at least 2). ``curve_lo`` and ``curve_hi`` are the band of the
     total fitted curve in intensity units: flat arrays, with spectrum ``i`` in
-    ``curve_offsets[i]:curve_offsets[i + 1]``."""
+    ``curve_offsets[i]:curve_offsets[i + 1]``. ``component_lo`` and ``component_hi`` are the same
+    band for each population separately (None in results made before they were stored): for
+    spectrum ``i`` the slice ``component_offsets[i]:component_offsets[i + 1]`` holds ``K`` curves
+    of ``len(bins)`` values each, population by population in the order of the original fit (see
+    :meth:`curve_components`)."""
 
     config: BootstrapConfig
     selected_K: np.ndarray
@@ -137,6 +141,9 @@ class BootstrapResult:
     curve_hi: np.ndarray
     curve_offsets: np.ndarray
     draws: BootstrapDraws | None = None
+    component_lo: np.ndarray | None = None
+    component_hi: np.ndarray | None = None
+    component_offsets: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.selected_K)
@@ -180,13 +187,27 @@ class BootstrapResult:
                 np.concatenate([getattr(p.draws, name) for p in parts])[order]
                 for name in ("A", "n", "p", "ok")
             ))
+        comp = _splice_components(parts, where)
         names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se", "A_ci",
                  "n_ci", "p_ci", "mean_ci", "frac_ci")
         return cls(
             config=parts[0].config, **{name: cat(name) for name in names},
             curve_lo=np.concatenate(lo), curve_hi=np.concatenate(hi),
-            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws,
+            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
         )
+
+    def curve_components(self, i: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """``(lo, hi)`` band of every population of spectrum ``i``, each ``(K, bins)``, in the
+        component order of the original fit; None if the result does not hold them."""
+        if self.component_lo is None:
+            return None
+        a, b = self.component_offsets[i], self.component_offsets[i + 1]
+        n_bins = self.curve_offsets[i + 1] - self.curve_offsets[i]
+        if b == a or n_bins == 0:
+            return None
+        k = (b - a) // n_bins
+        return (self.component_lo[a:b].reshape(k, n_bins),
+                self.component_hi[a:b].reshape(k, n_bins))
 
     def curve_band(self, i: int) -> tuple[np.ndarray, np.ndarray]:
         """``(lo, hi)`` of the total fitted curve of spectrum ``i``."""
@@ -207,11 +228,13 @@ class BootstrapResult:
         draws = None
         if self.draws is not None:
             draws = BootstrapDraws(*(getattr(self.draws, n)[rows] for n in ("A", "n", "p", "ok")))
+        comp = _splice_components([self], np.column_stack([np.zeros(len(rows), dtype=np.int64),
+                                                           rows]))
         return BootstrapResult(
             config=self.config, **{name: getattr(self, name)[rows] for name in names},
             curve_lo=np.concatenate(lo) if lo else np.empty(0),
             curve_hi=np.concatenate(hi) if hi else np.empty(0),
-            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws,
+            curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
         )
 
     def table(self, fit: FitResult, selected_only: bool = True) -> dict[str, np.ndarray]:
@@ -220,6 +243,22 @@ class BootstrapResult:
         ``<name>_ci_lo`` and ``<name>_ci_hi`` for ``amplitude``, ``n``, ``p``, ``mean`` and
         ``population_fraction``, and ``n_bootstrap``."""
         return interval_table(fit, [self], selected_only=selected_only)
+
+
+def _splice_components(parts: Sequence[BootstrapResult], where: np.ndarray) -> dict:
+    """The per-population band arrays of the measurements ``where[i] = (part, row)`` taken from
+    ``parts`` (empty dict, i.e. None, unless every part has them)."""
+    if any(p.component_lo is None for p in parts):
+        return {}
+    lo, hi, offsets = [], [], [0]
+    for j, local in where:
+        a, b = parts[j].component_offsets[local], parts[j].component_offsets[local + 1]
+        lo.append(parts[j].component_lo[a:b])
+        hi.append(parts[j].component_hi[a:b])
+        offsets.append(offsets[-1] + (b - a))
+    return {"component_lo": np.concatenate(lo) if lo else np.empty(0),
+            "component_hi": np.concatenate(hi) if hi else np.empty(0),
+            "component_offsets": np.asarray(offsets, dtype=np.int64)}
 
 
 def interval_table(
@@ -396,26 +435,34 @@ def bootstrap(
     stats = {name: _nan_stats(x, ok, config.ci) for name, x in
              (("A", draw_a), ("n", draw_n), ("p", draw_p), ("mean", mean_d), ("frac", frac_d))}
 
-    curve_lo, curve_hi, offsets = _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok,
-                                              config, backend, scale)
+    curve_lo, curve_hi, offsets, comp_lo, comp_hi, comp_offsets = _curve_band(
+        data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale
+    )
     draws = BootstrapDraws(draw_a, draw_n, draw_p, ok) if config.keep_draws else None
     return BootstrapResult(
         config=config, selected_K=fit.selected_K.copy(), n_success=ok.sum(axis=1),
         A_se=stats["A"][0], n_se=stats["n"][0], p_se=stats["p"][0], mean_se=stats["mean"][0],
         frac_se=stats["frac"][0], A_ci=stats["A"][1], n_ci=stats["n"][1], p_ci=stats["p"][1],
         mean_ci=stats["mean"][1], frac_ci=stats["frac"][1], curve_lo=curve_lo,
-        curve_hi=curve_hi, curve_offsets=offsets, draws=draws,
+        curve_hi=curve_hi, curve_offsets=offsets, draws=draws, component_lo=comp_lo,
+        component_hi=comp_hi, component_offsets=comp_offsets,
     )
 
 
 def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale):
-    """Per-bin percentiles of the total curve over the resamples (intensity units)."""
+    """Per-bin percentiles over the resamples (intensity units) of the total curve and of each
+    population: ``(lo, hi, offsets, comp_lo, comp_hi, comp_offsets)``; the population arrays hold,
+    for each spectrum, its ``K`` curves one after the other."""
     sizes = np.array([len(b) for b in data.bins])
     offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64)
+    ks = fit.selected_K.astype(np.int64)
+    comp_offsets = np.concatenate([[0], np.cumsum(sizes * ks)]).astype(np.int64)
     lo_all = np.full(offsets[-1], np.nan)
     hi_all = np.full(offsets[-1], np.nan)
+    comp_lo = np.full(comp_offsets[-1], np.nan)
+    comp_hi = np.full(comp_offsets[-1], np.nan)
     if not config.curve_band:
-        return lo_all, hi_all, offsets
+        return lo_all, hi_all, offsets, comp_lo, comp_hi, comp_offsets
     lo_q, hi_q = (100.0 - config.ci) / 2.0, 100.0 - (100.0 - config.ci) / 2.0
     chunk = 400
     for k, idx in groups.items():
@@ -428,6 +475,7 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
             )
             shape_w = shape_weights([data.shapes[i] for i in members], k, backend)
             curves = np.full((config.n_boot, batch.b.shape[0], len(members)), np.nan)
+            parts_all = np.full((config.n_boot, batch.b.shape[0], len(members), k), np.nan)
             for it in range(config.n_boot):
                 good = ok[members, it]
                 if not good.any():
@@ -437,18 +485,24 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
                     batch.b, backend.tensor(np.nan_to_num(draw_n[members, it, :k], nan=1.0)),
                     backend.tensor(np.nan_to_num(draw_p[members, it, :k], nan=0.5)), shape_w,
                 ).detach().cpu().numpy()  # (B, M, K)
-                total = (np.nan_to_num(a, nan=0.0)[None] * comp).sum(axis=2)
-                curves[it][:, good] = total[:, good]
+                parts = np.nan_to_num(a, nan=0.0)[None] * comp  # (B, M, K)
+                curves[it][:, good] = parts.sum(axis=2)[:, good]
+                parts_all[it][:, good] = parts[:, good]
             enough = ok[members].sum(axis=1) >= 2
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 lo = np.nanpercentile(curves, lo_q, axis=0) * scale[members][None, :]
                 hi = np.nanpercentile(curves, hi_q, axis=0) * scale[members][None, :]
+                clo = np.nanpercentile(parts_all, lo_q, axis=0) * scale[members][None, :, None]
+                chi = np.nanpercentile(parts_all, hi_q, axis=0) * scale[members][None, :, None]
             for j, m in enumerate(members):
                 if enough[j]:
                     lo_all[offsets[m]:offsets[m + 1]] = lo[: sizes[m], j]
                     hi_all[offsets[m]:offsets[m + 1]] = hi[: sizes[m], j]
-    return lo_all, hi_all, offsets
+                    a, b = comp_offsets[m], comp_offsets[m + 1]
+                    comp_lo[a:b] = clo[: sizes[m], j, :].T.ravel()  # population by population
+                    comp_hi[a:b] = chi[: sizes[m], j, :].T.ravel()
+    return lo_all, hi_all, offsets, comp_lo, comp_hi, comp_offsets
 
 
 def bootstrap_by_k(
