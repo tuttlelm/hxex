@@ -66,3 +66,15 @@ one that was fitted.
 it; a reader ignores tables and columns it does not know. An incompatible change raises it, and
 `open_bundle` refuses a bundle with a higher version than it knows, with a message to upgrade.
 Control identification and back-exchange values (Phase 3) will be added as further tables.
+
+## Raw spectra without a bundle
+
+`hxex.io.save_spectra(spectra, path)` writes a `SpectrumSet` to one Parquet file and
+`hxex.io.load_spectra(path, ids=None)` reads it back exactly, with no fit and no peak picking.
+The layout is that of `spectra.parquet` above (the same columns and types), so the two are
+interchangeable: `load_spectra` also reads the `spectra.parquet` of a bundle. The Parquet file
+metadata (keys prefixed `hxex.`) records `kind` (`hxex-spectra`), `schema_version`, `project`,
+`created`, `hxex_version`, `n_spectra` and `content_sha256` (a hash of the ids, times and every
+m/z and intensity, checked on a full load; a partial load by `ids` cannot be checked).
+Writing is atomic and replaces an existing file only with `overwrite=True`. These two functions
+need numpy and pyarrow only (not torch). `spectra_info(path)` returns the metadata.

@@ -1053,6 +1053,15 @@ available and costs little on this card.
 **Phase 2 exit criteria** (reproduces the frozen results, passes CPU/GPU parity, save/load round
 trip exact) are met.
 
+**Raw spectra without a fit (`hxex.io.save_spectra` and `load_spectra`, 2026-10-11).** The readers
+return raw spectra and do no picking; a `SpectrumSet` can now be saved to and loaded from a single
+Parquet file without a fit or a bundle (the same layout and types as the bundle's
+`spectra.parquet`, so the two are interchangeable, documented in `docs/BUNDLE.md`), exactly,
+atomically, with a content checksum in the file metadata and partial reads by spectrum id. They
+need numpy and pyarrow only. The shared Arrow helpers moved to `hxex.io._arrow`. Still to do:
+the HX-Express writer (of the peak-picked spectra, see "Later goals"), and writers for SpecExport
+CSVs or mzML if wanted.
+
 ## Next steps
 
 1. **Phase 3 (controls and results).** Identify the undeuterated and fully deuterated controls by

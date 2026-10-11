@@ -28,6 +28,9 @@ from .specexport import (
 from .times import DEFAULT_FULLDEUT_TIME, parse_hxexpress_time, parse_specexport_time
 
 __all__ = [
+    "load_spectra",
+    "save_spectra",
+    "spectra_info",
     "Bundle",
     "BundleError",
     "ReviewTable",
@@ -60,13 +63,18 @@ __all__ = [
 _BUNDLE = {
     "Bundle", "BundleError", "ReviewTable", "SCHEMA_VERSION", "open_bundle", "write_bundle",
 }
+_SPECTRA_FILE = {"save_spectra", "load_spectra", "spectra_info"}
 
 
 def __getattr__(name):
     """The bundle is loaded on first use: it needs the fitting code (and so torch), which the
-    readers do not."""
+    readers do not. The spectra file needs pyarrow only, which is also loaded on first use."""
     if name in _BUNDLE:
         from . import bundle
 
         return getattr(bundle, name)
+    if name in _SPECTRA_FILE:
+        from . import spectra_file
+
+        return getattr(spectra_file, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
