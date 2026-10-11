@@ -733,9 +733,10 @@ Verified against pyHXExpress output from the October 2026 pooled runs (SpecExpor
 with the picked table from the same code): in TBA, TBB, TBA_B5 and TBB_B5, every bin both
 pickers produced is identical (m/z and intensity, exactly), every bin only pyHXExpress kept is
 below the threshold, the envelope columns are equal wherever the bin counts are equal, and the one
-all-zero spectrum is flagged `empty`. `tests/golden/picker_reference.npz` (11 spectra covering
-the cases above, made by `tests/golden/make_picker_golden.py`) is committed; the whole-run check
-reads a run directory from `HXEX_PICKER_ORACLE`. The 19Feb2024 Bimodal `alldeutdata` came from
+all-zero spectrum is flagged `empty`. A golden file of 11 spectra covering
+the cases above (made by `tests/golden/make_picker_golden.py`) is kept outside the repository
+because the data is unpublished; the test reads it from `HXEX_PICKER_GOLDEN`, and the whole-run
+check reads a run directory from `HXEX_PICKER_ORACLE`. Both skip when unset. The 19Feb2024 Bimodal `alldeutdata` came from
 an older picker (constant bin spacing) and is not an oracle.
 
 **Unvalidated:** shoulder rejection and the 10-point rule. In every dataset available (Bimodal,

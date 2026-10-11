@@ -15,7 +15,7 @@ of every file.
 ## Keys and conventions
 
 - `spectrum_id` is the key of a spectrum in every table: `PROJECT:LOCAL_ID` (for example
-  `tubB5:0001-0006-MRECIS/60s-2-z2.csv`, or `bimodal:Angio_2_HI.xlsx#3`). It is unique within a
+  `myproj:0001-0006-PEPTIDE/60s-2-z2.csv`, or `bimodal:Angio_2_HI.xlsx#3`). It is unique within a
   bundle. `measurement` is the row number (0-based) of a measurement in `measurements.parquet`
   and joins the per-measurement tables.
 - Time is in seconds (0 undeuterated, the user-set time for the fully deuterated control).

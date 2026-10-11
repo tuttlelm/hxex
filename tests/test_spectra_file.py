@@ -61,8 +61,8 @@ def test_metadata_and_project(tmp_path):
     assert info["kind"] == "hxex-spectra" and info["schema_version"] == "1"
     assert info["project"] == "proj" and info["n_spectra"] == str(len(s))
     assert len(info["content_sha256"]) == 64 and info["created"].endswith("+00:00")
-    named = save_spectra(s, tmp_path / "b.parquet", project="tubB5")
-    assert spectra_info(named)["project"] == "tubB5"
+    named = save_spectra(s, tmp_path / "b.parquet", project="myproj")
+    assert spectra_info(named)["project"] == "myproj"
     mixed = SpectrumSet.from_spectra(
         [Spectrum(np.array([1.0]), np.array([2.0]), PeptideEntry("f", "s", "AK", "1-2", 1, 2, 1),
                   0.0, 1, spectrum_id=i) for i in ("a:1", "b:2")]

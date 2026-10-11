@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Regenerate picker_reference.npz from a pyHXExpress run that has both raw and picked data.
+"""Make picker_reference.npz from a pyHXExpress run that has both raw and picked data.
 
-Usage: python tests/golden/make_picker_golden.py RUN_DIR TAG
-e.g. .../batchrun_1pop_06Oct2026/TBA_run 06Oct2026
+Usage: python tests/golden/make_picker_golden.py RUN_DIR TAG OUT.npz
+e.g. .../batchrun_1pop_06Oct2026/TBA_run 06Oct2026 /path/outside/the/repo/picker_reference.npz
+
+The output holds raw spectra of the owner's unpublished data and must NOT be committed: keep it
+outside the repository and point HXEX_PICKER_GOLDEN at it (tests/test_picking.py).
 
 RUN_DIR holds ``allrawdata_TAG.zip`` and ``alldeutdata_TAG.csv`` written by pyHXExpress's
 ``run_hdx_fits`` (SpecExport data). The picked table is the reference output of its
@@ -87,7 +90,7 @@ def main(run_dir, tag, per_class=2):
         out["ref_" + col] = np.array([float(r[col]) for r in rows])
     for col in ("env_width", "env_symm", "max_namides"):
         out["ref_" + col] = np.array([float(ref[k][0][col]) if k in ref else np.nan for k in keys])
-    dest = Path(__file__).with_name("picker_reference.npz")
+    dest = Path(sys.argv[3])
     np.savez_compressed(dest, **out)
     print("wrote", dest, dest.stat().st_size, "bytes;", {c: len(v) for c, v in chosen.items()})
 

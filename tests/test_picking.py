@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Peak-picker tests: synthetic spectra for the logic, and pyHXExpress output as the oracle.
 
-The golden fixture (tests/golden/picker_reference.npz) holds raw spectra and the reference
+The golden file (HXEX_PICKER_GOLDEN, made by tests/golden/make_picker_golden.py; it holds
+unpublished data and is not in the repository) has raw spectra and the reference
 ``peak_picker`` output from an October 2026 pyHXExpress run (Zero_Filling 3, setNoise 50,
 Nterm_subtract 2). Where pyHXExpress and hxex differ on purpose (see docs/PLAN.md) the tests
 check the relation between the two, not equality. HXEX_PICKER_ORACLE can point to a whole run
@@ -385,8 +386,12 @@ def check_against_reference(p, ref_mz, ref_y, ref_env_width, ref_env_symm, ref_n
         assert p.env_symm == pytest.approx(ref_env_symm, rel=1e-9)
 
 
+GOLDEN = os.environ.get("HXEX_PICKER_GOLDEN")
+
+
+@pytest.mark.skipif(not GOLDEN, reason="HXEX_PICKER_GOLDEN not set")
 def test_golden_spectra_match_pyhxexpress():
-    z = np.load(Path(__file__).parent / "golden" / "picker_reference.npz")
+    z = np.load(GOLDEN)
     seen = defaultdict(int)
     for i, cls in enumerate(z["classes"]):
         a, b = z["raw_offsets"][i], z["raw_offsets"][i + 1]

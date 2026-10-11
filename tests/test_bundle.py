@@ -310,9 +310,9 @@ def test_the_tidy_table_matches_the_run(written, run):
 
 def test_project_name(tmp_path, run):
     _, _, meas, fit, _ = run
-    path = write_bundle(tmp_path / "p", measurements=meas, fit=fit, project="tubB5")
+    path = write_bundle(tmp_path / "p", measurements=meas, fit=fit, project="myproj")
     with open_bundle(path) as b:
-        assert b.project == "tubB5"
+        assert b.project == "myproj"
 
 
 # --- the review layer -----------------------------------------------------------------------
@@ -406,3 +406,18 @@ def test_controls_and_corrected_means_are_kept(tmp_path, run):
 def written_no_controls(tmp_path, run):
     raw, binned, meas, fit, boot = run
     return write_bundle(tmp_path / "n", measurements=meas, fit=fit, bootstrap=boot)
+
+
+def test_quality_flags_are_kept(tmp_path, run):
+    from hxex.quality import QualityConfig, assess_quality
+    raw, binned, meas, fit, boot = run
+    q = assess_quality(meas, fit, QualityConfig(min_intensity=0.2))
+    path = write_bundle(tmp_path / "q", measurements=meas, fit=fit, quality=q)
+    with open_bundle(path) as b:
+        got = b.quality()
+        assert got.config == q.config
+        for name in ("spectrum_id", "deviance", "deviance_rel", "intensity", "intensity_rel",
+                     "poor_fit", "low_intensity", "noise_outlier", "flagged"):
+            assert_arrays_equal(getattr(got, name), getattr(q, name))
+    with open_bundle(written_no_controls(tmp_path, run)) as b:
+        assert b.quality() is None
