@@ -34,6 +34,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult
+from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, PickerConfig
@@ -213,9 +214,62 @@ def _bootstrap_tables(b: BootstrapResult) -> dict[str, pa.Table]:
     return tables
 
 
-def _components_table(fit: FitResult, boot: BootstrapResult | None) -> pa.Table:
-    """The tidy table of every fit (and its intervals), for other tools; derived, not read back."""
+def _controls_table(c: ControlTable) -> pa.Table:
+    cols: dict[str, pa.Array] = {"data_id": pa.array(c.data_id)}
+    for name in ("n_amides", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd", "mfd_se",
+                 "retention"):
+        cols[name] = pa.array(np.asarray(getattr(c, name), dtype=np.float64))
+    cols["n_undeut"] = pa.array(np.asarray(c.n_undeut, dtype=np.int64))
+    cols["n_fd"] = pa.array(np.asarray(c.n_fd, dtype=np.int64))
+    cols["fallback"] = pa.array(np.asarray(c.fallback, dtype=bool))
+    cols["flags"] = _str(c.flags)
+    return pa.table(cols)
+
+
+def _read_controls(table: pa.Table, config: dict) -> ControlTable:
+    f = lambda name: np.asarray(_col(table, name), dtype=np.float64)  # noqa: E731
+    return ControlTable(
+        config=ControlConfig.from_dict(config),
+        data_id=np.asarray(_col(table, "data_id"), dtype=np.int64),
+        n_amides=f("n_amides"),
+        n_undeut=np.asarray(_col(table, "n_undeut"), dtype=np.int64),
+        n_fd=np.asarray(_col(table, "n_fd"), dtype=np.int64),
+        m0_measured=f("m0_measured"), mfd_measured=f("mfd_measured"), m0=f("m0"),
+        m0_se=f("m0_se"), mfd=f("mfd"), mfd_se=f("mfd_se"), retention=f("retention"),
+        fallback=np.asarray(_col(table, "fallback"), dtype=bool), flags=_strs(table, "flags"),
+    )
+
+
+def _corrected_columns(
+    data: dict[str, np.ndarray], boot: BootstrapResult | None, controls: ControlTable
+) -> dict[str, np.ndarray]:
+    """Back-exchange-corrected mean (and its intervals) for every row of a components table."""
+    rows = len(data["measurement"])
+    level = boot.config.ci / 100.0 if boot is not None else 0.95
+    se = data.get("mean_se")
+    ci = None
+    if "mean_ci_lo" in data:
+        ci = np.stack([data["mean_ci_lo"], data["mean_ci_hi"]], axis=-1)
+    out = correct_means(controls, data["data_id"], data["mean"], se=se, ci=ci, ci_level=level)
+    cols = {"mean_corrected": out.mean, "mean_corrected_control_se": out.control_se}
+    if out.se is not None:
+        cols["mean_corrected_se"] = out.se
+    if out.ci is not None:
+        cols["mean_corrected_ci_lo"], cols["mean_corrected_ci_hi"] = out.ci[:, 0], out.ci[:, 1]
+    rows_ctrl = controls.rows(data["data_id"])
+    cols["control_fallback"] = controls.fallback[rows_ctrl]
+    assert all(len(v) == rows for v in cols.values())
+    return cols
+
+
+def _components_table(
+    fit: FitResult, boot: BootstrapResult | None, controls: ControlTable | None = None
+) -> pa.Table:
+    """The tidy table of every fit (and its intervals), for other tools; derived, not read back.
+    With controls it also has the back-exchange-corrected means."""
     data = boot.table(fit, selected_only=False) if boot is not None else fit.table()
+    if controls is not None:
+        data = {**data, **_corrected_columns(data, boot, controls)}
     cols = {}
     for name, values in data.items():
         if values.dtype.kind in "US" or values.dtype == object:
@@ -269,6 +323,7 @@ def write_bundle(
     spectra: SpectrumSet | None = None,
     picker_config: PickerConfig | None = None,
     review: ReviewTable | None = None,
+    controls: ControlTable | None = None,
     project: str | None = None,
     notes: str = "",
     overwrite: bool = False,
@@ -308,7 +363,11 @@ def write_bundle(
             _write_table(tmp, "binned", _binned_table(binned), files)
         if spectra is not None:
             _write_table(tmp, "spectra", _spectra_table(spectra), files)
-        _write_table(tmp, "components", _components_table(fit, bootstrap), files, derived=True)
+        if controls is not None:
+            _write_table(tmp, "controls", _controls_table(controls), files)
+        _write_table(
+            tmp, "components", _components_table(fit, bootstrap, controls), files, derived=True
+        )
         if review is not None:
             _write_table(tmp, "review", _review_table(review), files)
         manifest = {
@@ -324,6 +383,7 @@ def write_bundle(
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
                 "picker": None if picker_config is None else picker_config.to_dict(),
+                "controls": None if controls is None else controls.config.to_dict(),
             },
             "files": files,
         }
@@ -639,6 +699,15 @@ class Bundle:
         t = self._table("components")
         return {name: np.asarray(t.column(name).to_pylist()) if t.schema.field(name).type ==
                 pa.string() else _col(t, name) for name in t.column_names}
+
+    def controls(self) -> ControlTable | None:
+        """The control table, or None if the run had no controls."""
+        if not self.has("controls"):
+            return None
+        if "controls" not in self._cache:
+            config = self.manifest["configs"]["controls"]
+            self._cache["controls"] = _read_controls(self._table("controls"), config)
+        return self._cache["controls"]
 
     def review(self) -> ReviewTable:
         return _read_review(self._table("review")) if self.has("review") else ReviewTable.empty()

@@ -373,3 +373,36 @@ def test_a_review_given_at_writing(tmp_path, run):
     r = ReviewTable.empty().update(str(fit.spectrum_id[2]), status="rejected")
     with open_bundle(write_bundle(tmp_path / "rv", measurements=meas, fit=fit, review=r)) as b:
         assert b.review().get(str(fit.spectrum_id[2]))["status"] == "rejected"
+
+
+# --- controls -------------------------------------------------------------------------------
+
+def test_controls_and_corrected_means_are_kept(tmp_path, run):
+    from hxex.controls import ControlConfig, fit_controls
+    raw, binned, meas, fit, boot = run
+    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6)
+    ctrl = fit_controls(fit, binned.max_namides, cfg)
+    path = write_bundle(tmp_path / "c", measurements=meas, fit=fit, bootstrap=boot,
+                        controls=ctrl)
+    with open_bundle(path) as b:
+        got = b.controls()
+        assert got.config == cfg
+        for name in ("data_id", "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured",
+                     "m0", "m0_se", "mfd", "mfd_se", "retention", "fallback", "flags"):
+            assert_arrays_equal(getattr(got, name), getattr(ctrl, name))
+        comp = b.components_table()
+        i = np.flatnonzero(comp["is_selected"])
+        assert np.all(comp["mean_corrected"] >= 0) and np.isfinite(comp["mean_corrected"][i]).all()
+        np.testing.assert_allclose(
+            comp["mean_corrected"][i],
+            np.maximum((comp["mean"][i] - ctrl.m0[0]) / (ctrl.mfd[0] - ctrl.m0[0])
+                       * ctrl.n_amides[0], 0))
+        assert "mean" in comp and "mean_corrected_ci_lo" in comp  # raw values stay
+        assert (comp["mean_corrected_ci_lo"][i] <= comp["mean_corrected"][i] + 1e-9).all()
+    with open_bundle(written_no_controls(tmp_path, run)) as b:
+        assert b.controls() is None and "mean_corrected" not in b.components_table()
+
+
+def written_no_controls(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    return write_bundle(tmp_path / "n", measurements=meas, fit=fit, bootstrap=boot)

@@ -1031,8 +1031,27 @@ the fit, and `effective_K` and `status_of` give the reviewed view. On the Bimoda
 spectra, 542 fits, a bootstrap with draws) the whole bundle is 2.35 MB, of which the raw spectra
 are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s and loads in
 0.03 s, and one spectrum by id takes about 9 ms. Tested with pyarrow 15.0.0 (the minimum) and
-26. Not in the bundle yet: the control identification and back-exchange values (Phase 3, to be
-added as tables). `hxex.io` loads the bundle lazily, so reading spectra does not import torch.
+26. The controls and back-exchange values are bundle tables (Phase 3, item 27; additive, no schema version change). `hxex.io` loads the bundle lazily, so reading spectra does not import torch.
+
+27. **Controls and back-exchange correction (Phase 3, `hxex.controls`; owner's decisions of
+    2026-10-11).** Controls are the spectra of a series at the user-set undeuterated and fully
+    deuterated times, replicates averaged (a replicate flagged as a noise outlier is left out).
+    The control means `m0` and `mFD` come from the **K=1 fits** of the control spectra, in the
+    model's units (deuterons beyond natural abundance); the raw envelope centroid is not used,
+    because it contains the natural-abundance offset (0.35 to 1.16 Da on the Bimodal peptides)
+    and is noisier (the centroid and the K=1 mean differ by more than 1.2 D for the worst 10 %
+    of fully deuterated controls). The correction is `(mean - m0) / (mFD - m0) * n_amides`, not
+    below 0; fractions are unchanged and the uncorrected means are kept beside the corrected
+    ones. Each control **falls back on its own** to the theoretical value (`m0` = 0, `mFD` =
+    `n_amides`) with a flag: `m0` when missing or above 0.5 D; `mFD` when missing or when the
+    retention `(mFD - m0) / n_amides` is below 0.5 or above 1.1 (the limits are settings of
+    `ControlConfig`, default 0.5, 0.5 and 1.1). A series with no usable control uses the
+    theoretical values, flagged; retention is not borrowed from other series. The uncertainty of
+    measured controls (SE over replicates, flagged when there is one replicate) is added to the
+    SE (delta method) and widens the interval of each corrected mean (in quadrature). A deliberate
+    difference from hxex_updating.py, which has no back-exchange correction. On the 23 Bimodal
+    series only pep122_LO_z2 falls back (`m0_high`, a K=1 fit of 13.0 D on its undeuterated
+    control), and retention is 0.81 to 1.00.
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
@@ -1064,7 +1083,8 @@ CSVs or mzML if wanted.
 
 ## Next steps
 
-1. **Phase 3 (controls and results).** Identify the undeuterated and fully deuterated controls by
+1. **Phase 3 (controls and results), in progress: controls, the correction and the bundle
+   tables are done (item 27); quality flags and the run integration remain.** Identify the undeuterated and fully deuterated controls by
    the user-set times (replicates averaged), the back-exchange correction with flagged fallbacks
    for missing or bad controls (the notebook's rule: undeuterated mean above 0.5 D, or retention
    outside 0.5 to 1.1, falls back to the theoretical controls), quality flags (the

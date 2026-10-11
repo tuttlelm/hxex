@@ -30,7 +30,7 @@ of every file.
 
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
 `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
-`n_measurements`, `configs` (`fit`, `bootstrap`, `picker`: the settings as written by the
+`n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`: the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device), and
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
@@ -47,7 +47,8 @@ of every file.
 | `binned.parquet` | spectrum | the peak-picked table: the index columns below plus `mz` (predicted), `intensity`, `n_deut` (lists per bin), `env_width`, `env_symm`, `max_namides`, `threshold`, and the flags `empty`, `no_signal`, `capped` |
 | `spectra.parquet` | spectrum | optional raw spectra: the index columns plus `mz`, `intensity` (lists) |
 | `review.parquet` | reviewed spectrum | `spectrum_id`, `status` (`accepted` or `rejected`, or empty), `k_override` (0 = none), `note`, `updated` (UTC time) |
-| `components.parquet` | measurement, K and component | the tidy table of every fit with its intervals, for other tools; derived (not read back) |
+| `controls.parquet` | series (`data_id`) | when controls were given: `n_amides`, `n_undeut`, `n_fd` (replicates used), `m0_measured`, `mfd_measured` (replicate means of the K=1 fits, NaN if missing), `m0`, `mfd` (the values used) with `m0_se`, `mfd_se` (NaN: one replicate; 0: theoretical), `retention`, `fallback`, `flags` (`;`-separated: `m0_missing`, `m0_high`, `fd_missing`, `retention_low`, `retention_high`, `no_amides`, `m0_unreplicated`, `fd_unreplicated`) |
+| `components.parquet` | measurement, K and component | the tidy table of every fit with its intervals, for other tools; derived (not read back). `mean` is the uncorrected mean (deuterons beyond natural abundance). With controls it also has `mean_corrected`, `mean_corrected_se`, `mean_corrected_ci_lo`, `mean_corrected_ci_hi` (the controls' uncertainty included), `mean_corrected_control_se` (that part alone) and `control_fallback` |
 
 Index columns of `binned` and `spectra`: `spectrum_id`, `sample`, `peptide` (modX labels such as
 `acK`), `peptide_range`, `file`, `label`, `modification`, `start_seq`, `end_seq`, `charge`,
