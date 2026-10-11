@@ -3,7 +3,7 @@
 Standalone Python package for multimodal binomial-mixture analysis of HDX-MS spectra: spectra
 to binned deuterium sticks to fitted populations with uncertainties and plots. Successor to
 pyHXExpress (it does not depend on it). Early development: Phase 0 is done; Phase 1 (`chem`,
-readers, peak picker) is done; Phase 2 (engine): `model`, `noise` and `fit` are done, bootstrap and the results bundle are next.
+readers, peak picker) is done; Phase 2 (engine): `model`, `noise`, `fit` and `bootstrap` are done, the results bundle and CPU/GPU parity are next.
 
 The plan, decisions and phases are in `docs/PLAN.md`. Read it before designing anything, and
 do not copy it here. Release steps are in `docs/RELEASING.md`.

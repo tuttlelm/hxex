@@ -823,7 +823,8 @@ measurement's selected K and is optional, including with a single K.
 
 ## Phase 2 status: `model`, `noise` and `fit` (2026-10-10)
 
-Done so far; bootstrap, the results bundle and CPU/GPU parity are next. Implemented: `hxex.model`
+Done so far, with the bootstrap (next subsection); the results bundle and CPU/GPU parity are
+next. Implemented: `hxex.model`
 (`Backend` for device and dtype, the real-valued binomial pmf, shape
 convolution, `PaddedBatch`, `MixtureBatch`, BIC/AIC), `hxex.noise` (`NoiseConfig`,
 `noise_scale`, `control_references`, `sample_size`) and `hxex.fit` (`FitConfig`, `Measurements`
@@ -948,6 +949,69 @@ a Gaussian-noise spectrum to `KMEANS_PSEUDO_COUNTS` (1000) so the clustering doe
 the intensity of the data; the fits did not change for values from 30 to 100,000. The Poisson
 path does not rescale (it would see flattened peaks if its scaled intensities exceeded 2,000 per
 bin, which the usual `n_eff` setting avoids).
+
+**Bootstrap (`hxex.bootstrap`, 2026-10-10).** A parametric bootstrap per measurement at its
+selected K (optional, also with a single K): the fitted curve is resampled with the noise model
+of the fit (Gaussian with unit sd on the noise-scaled spectrum, or Poisson), refitted from the
+original fit (first start with jitter, two random starts, Adam at a lower learning rate, the
+polish), and the components are matched to the original fit by their mean `n p` (all
+permutations vectorised up to K = 4, Hungarian beyond). Reported at the selected K: standard
+errors and percentile intervals of the amplitude, `n`, `p`, the mean and the population fraction,
+and a per-bin band of the total curve. `BootstrapConfig` sets `n_boot` (200), `ci` (95), the refit
+settings, `keep_draws` (the individual fits of the selected K, off by default) and `curve_band`.
+`BootstrapResult.table(fit)` adds the interval columns to the fit's table.
+
+Differences from the prototype: a resample that fails for one measurement is dropped for that
+measurement only (the prototype discarded the iteration for all of them; `n_success` counts the
+good ones per measurement), a measurement whose own fit failed is not resampled, and every random
+number comes from a generator seeded by the seed, the iteration and the spectrum id (reproducible
+and independent of the batch). Checks: with the noise level of the generator the standard errors
+match the spread of the fits over 40 independent noise realisations (ratio 1.06 and 0.91 for the
+two means, 0.97 for the fractions; test under `HXEX_FULL_REGRESSION=1`); on the 542 Bimodal
+measurements with N = 20 all resamples succeed, it takes 284 s on the CPU (prototype 299 s), and
+against the prototype's own bootstrap the standard error of the mean is a median 0.93 times its
+(middle half 0.74 to 1.12), of the fraction 1.02 times, and the interval width of the mean 0.91
+times, as expected for estimates that each carry about 16 % error from 20 resamples. The
+intervals are only as good as the noise model: they use the configured noise, not the data's.
+Small batches are slow because each resample runs the optimiser steps one after the other
+(about 1.5 s per resample for 3 spectra); the cost per spectrum falls with the batch size.
+
+**Noise estimated from replicates (2026-10-10; `NoiseConfig(estimate='replicates')`, off by
+default).** A set is one series: a peptide at one charge with its controls and time points
+(`data_id`); nothing is known about the instrument or sample preparation, so nothing is pooled
+across series. The noise of the tubulin series (peak-picked stick heights) is variance =
+gain x intensity within a series (log-log slope of variance against intensity 1.11, middle half
+1.00 to 1.19, 73 series), with a gain that differs between series (median 54, 10th to 90th
+percentile 29 to 103; the effective counts per series 99 to 1,266 and rising with the series'
+total intensity), so the estimate is made per series and no pooled variance function is used.
+Replicates of a time point are rescaled to a common total (the amplitude is a free parameter of
+the fit), the variance of each bin of enough intensity (`min_share` of the total) is divided by
+its mean, and the series gain is the median over its time points of the median over bins,
+each divided by the median of the chi-square distribution of that ratio, so that a bad
+spectrum cannot inflate it (a plain pooled estimate was a median 1.13 times, 90th percentile 2.5
+times and at most 12 times the robust one). A series is fitted with the Poisson model and that
+gain as its scale (`obs / gain` are then counts). It needs at least `min_replicated` (3) time
+points with two or more replicates; **a series without that falls back to the configured noise
+settings**, so the engine now takes the noise model per measurement (`MixtureBatch`, the polish,
+the starting points, the sample size of the BIC and the bootstrap draws all work per
+measurement; `FitResult.noise_kind` records it). On the tubulin data 158 of 168 series can be
+estimated (16 have one replicated time point, 5 none).
+
+**Safeguard against bad spectra.** Each spectrum of a time point with three or more replicates
+gets a score: the mean over bins of its squared difference from the mean of the other replicates
+divided by the variance the gain predicts for that difference (`gain x mean x (1 + 1 / k)`),
+about 1 for a consistent spectrum (tubulin: median 0.93, 90th percentile 2.3; 3.5 % flagged in
+50 series, 99th percentile above 10). While three or more replicates are active the worst is
+removed if its score exceeds `outlier_score` (4) and the others are scored again, so one bad
+spectrum does not make its good replicates look bad; removed spectra are left out of the gain
+(estimated again) and flagged, never dropped, and `fit_models` logs a warning. A flag means
+"inconsistent with its replicates" (it can be a real difference in deuteration, not only bad
+data), and a pair of replicates gives a gain but no score. `FitResult.noise_estimate` keeps the
+gains, scores, flags and the reasons a series was not estimated, for the review layer. Not
+implemented, on purpose: an estimate from the residuals of the fit when there are no replicates
+(it was 1.98 times the replicate gain, middle half 1.43 to 3.07, Spearman 0.82, because it
+includes the misfit of the model); other screens of a spectrum (fit chi-square, total intensity
+against the series) belong to the quality flags of Phase 3.
 
 ## Next steps
 
