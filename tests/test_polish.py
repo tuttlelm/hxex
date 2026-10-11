@@ -104,7 +104,7 @@ def test_polish_is_per_measurement():
 
 def test_polish_poisson_and_non_finite():
     model, obs = trapped_model(9.7, 0.5, 8.0, 0.4)
-    model.noise_kind = "poisson"
+    model.set_noise_kind("poisson")
     obs = obs.abs() + 1.0
     with torch.no_grad():
         before = model.nll(obs).item()

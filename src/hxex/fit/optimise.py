@@ -47,7 +47,7 @@ class Prepared:
     observed: Sequence[np.ndarray]  # scaled
     shapes: Sequence[np.ndarray]
     n_max: np.ndarray
-    noise_kind: str
+    noise_kind: tuple[str, ...]  # one per measurement
     keys: np.ndarray  # stable integer per measurement; seeds its random starting points
 
     @property
@@ -66,7 +66,7 @@ def prepare(
     shapes: Sequence[np.ndarray],
     n_max: np.ndarray,
     scale: np.ndarray,
-    noise_kind: str,
+    noise_kind: str | Sequence[str],
     backend: Backend,
     keys: Sequence[int] | None = None,
 ) -> Prepared:
@@ -79,7 +79,8 @@ def prepare(
     scaled = [np.asarray(o, dtype=np.float64) / scale[m] for m, o in enumerate(observed)]
     return Prepared(
         PaddedBatch.from_arrays(bins, scaled, n_max, backend), bins, scaled, shapes,
-        np.asarray(n_max, dtype=np.float64), noise_kind,
+        np.asarray(n_max, dtype=np.float64),
+        (noise_kind,) * len(bins) if isinstance(noise_kind, str) else tuple(noise_kind),
         np.arange(len(bins)) if keys is None else np.asarray(keys, dtype=np.int64),
     )
 
@@ -210,7 +211,7 @@ def fit_batch(
             la, nr, lp = np.zeros((m, k)), np.zeros((m, k)), np.zeros((m, k))
             for i in range(m):
                 ob_init, la_shift = prep.observed[i], 0.0
-                if prep.noise_kind == "gaussian":
+                if prep.noise_kind[i] == "gaussian":
                     # k-means pseudo-samples need count-like weights: normalise for the
                     # clustering, then restore the amplitude scale
                     ob_init = np.clip(ob_init, 0, None)

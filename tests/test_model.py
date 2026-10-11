@@ -171,7 +171,7 @@ def test_values_match_the_prototype_at_near_integer_n():
         )
         np.testing.assert_allclose(model.predict().numpy(), GOLD["predict_int"], rtol=1e-6)
         for kind in ("gaussian", "poisson"):
-            model.noise_kind = kind
+            model.set_noise_kind(kind)
             np.testing.assert_allclose(
                 model.nll(batch.obs).numpy(), GOLD[f"nll_{kind}_int"], rtol=1e-6
             )
@@ -208,7 +208,7 @@ def test_gaussian_nll_matches_the_formula_and_ignores_padding():
 
 def test_poisson_nll_matches_the_formula():
     batch, model, _ = gold_inputs()
-    model.noise_kind = "poisson"
+    model.set_noise_kind("poisson")
     with torch.no_grad():
         pred = np.maximum(model.predict().numpy(), 1e-10)
         obs, mask = batch.obs.numpy(), batch.mask.numpy()

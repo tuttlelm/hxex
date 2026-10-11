@@ -16,6 +16,7 @@ from .mixture import (
     log_binom_pmf,
     logit,
     n_params,
+    noise_loss,
     normalise_shape,
     shape_weights,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "convolve",
     "log_binom_pmf",
     "logit",
+    "noise_loss",
     "n_params",
     "normalise_shape",
     "shape_weights",

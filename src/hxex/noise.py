@@ -26,6 +26,7 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 import numpy as np
+from scipy.stats import chi2
 
 MODELS = ("gaussian", "poisson")
 
@@ -37,12 +38,25 @@ class NoiseConfig:
 
     ``sd`` is a scalar or one value per measurement. Exactly one of ``sd`` and ``percent`` is
     needed for ``gaussian``; ``n_eff`` is only for ``poisson`` (alone or without ``percent``).
+
+    ``estimate='replicates'`` estimates the noise of each series (one peptide at one charge, with
+    its controls and time points) from its replicate spectra (:func:`estimate_noise`): variance
+    equal to a gain times the intensity, so the series is fitted with the Poisson model and that
+    gain as its scale. It needs at least ``min_replicated`` time points with two or more
+    replicates; a series without that falls back to the settings above, as if ``estimate`` were
+    not set. ``min_share`` is the smallest share of a spectrum's total intensity a bin must have
+    to be used, and a replicate whose score exceeds ``outlier_score`` is flagged and left out of
+    the estimate.
     """
 
     model: str = "gaussian"
     sd: float | tuple[float, ...] | None = None
     percent: float | None = 3.0
     n_eff: float | None = None
+    estimate: str | None = None
+    min_replicated: int = 3
+    min_share: float = 0.005
+    outlier_score: float = 4.0
 
     def __post_init__(self):
         if self.model not in MODELS:
@@ -65,6 +79,14 @@ class NoiseConfig:
                 raise ValueError("n_eff must be > 0")
         if self.percent is not None and self.percent <= 0:
             raise ValueError("percent must be > 0")
+        if self.estimate not in (None, "replicates"):
+            raise ValueError("estimate must be None or 'replicates'")
+        if self.min_replicated < 1:
+            raise ValueError("min_replicated must be at least 1")
+        if not 0.0 < self.min_share < 1.0:
+            raise ValueError("min_share must be between 0 and 1")
+        if not self.outlier_score > 0:
+            raise ValueError("outlier_score must be positive")
 
     @property
     def needs_reference(self) -> bool:
@@ -149,9 +171,191 @@ def noise_scale(
     return np.array([pct**2 * stat(r, np.max) for r in refs])
 
 
-def sample_size(scaled: Sequence[np.ndarray], config: NoiseConfig) -> np.ndarray:
+def sample_size(
+    scaled: Sequence[np.ndarray], kinds: NoiseConfig | str | Sequence[str]
+) -> np.ndarray:
     """The ``N`` of the BIC penalty for spectra already divided by ``c``: the number of bins
-    (gaussian) or the total effective counts (poisson)."""
-    if config.model == "gaussian":
-        return np.array([len(o) for o in scaled], dtype=float)
-    return np.array([float(np.sum(o)) for o in scaled])
+    (gaussian) or the total effective counts (poisson). ``kinds`` is the noise model of each
+    measurement, one name for all, or a :class:`NoiseConfig`."""
+    if isinstance(kinds, NoiseConfig):
+        kinds = kinds.model
+    names = [kinds] * len(scaled) if isinstance(kinds, str) else list(kinds)
+    return np.array(
+        [
+            float(len(o)) if k == "gaussian" else float(np.sum(o))
+            for o, k in zip(scaled, names, strict=True)
+        ],
+        dtype=float,
+    )
+
+
+@dataclass(frozen=True)
+class NoiseEstimate:
+    """The noise of each measurement estimated from replicates (see :func:`estimate_noise`).
+
+    All arrays have one entry per measurement. ``gain`` is the variance per unit intensity of the
+    measurement's series, NaN where ``estimated`` is False; ``reason`` says why not. ``score`` is
+    the consistency of a spectrum with its replicates (about 1 if it behaves as the series' noise
+    says; NaN where the time point has fewer than 3 replicates) and ``outlier`` flags scores above
+    the configured limit. ``n_replicated`` counts the replicated time points of the series.
+    """
+
+    gain: np.ndarray
+    estimated: np.ndarray
+    reason: np.ndarray
+    score: np.ndarray
+    outlier: np.ndarray
+    n_replicated: np.ndarray
+
+
+def _cell_matrix(bins, observed, members):
+    """Intensities of replicate spectra on the union of their bins (absent bins are 0), each
+    rescaled to the mean total intensity of the time point."""
+    union = np.unique(np.concatenate([np.asarray(bins[i]) for i in members]))
+    x = np.zeros((len(members), len(union)))
+    for r, i in enumerate(members):
+        x[r, np.searchsorted(union, np.asarray(bins[i]))] = observed[i]
+    totals = x.sum(axis=1)
+    good = totals > 0
+    mean_total = totals[good].mean() if good.any() else 0.0
+    return x * (mean_total / np.where(good, totals, 1.0))[:, None], mean_total, good
+
+
+def _cell_gain(x: np.ndarray, mean_total: float, min_share: float) -> float:
+    """The gain of one time point: the median over bins of (replicate variance / mean), divided by
+    the median of the chi-square distribution of that ratio, so that a bad bin cannot move it."""
+    n = x.shape[0]
+    mean = x.mean(axis=0)
+    use = mean >= min_share * mean_total
+    if n < 2 or use.sum() < 3:
+        return float("nan")
+    ratio = x.var(axis=0, ddof=1)[use] / mean[use]
+    return float(np.median(ratio) / (chi2.ppf(0.5, n - 1) / (n - 1)))
+
+
+def _score_cell(x, good, total, g, min_share, limit):
+    """Scores of the replicates of one time point and the set of outliers (indices into ``x``).
+
+    The score of a replicate is the mean over bins of its squared difference from the mean of the
+    other active replicates divided by the variance the gain predicts for that difference,
+    ``g * mean * (1 + 1 / k)`` for ``k`` others. While three or more replicates are active, the
+    one with the highest score is removed if that score exceeds ``limit`` and the rest are
+    scored again, so one bad spectrum does not make its good replicates look bad. Removed
+    replicates are scored against the mean of the active ones. NaN where a score cannot be
+    formed (a pair, or too few usable bins).
+    """
+    n = len(x)
+    scores = np.full(n, np.nan)
+    active = [r for r in range(n) if good[r]]
+
+    def score_of(r, pool):
+        others = x[[j for j in pool if j != r]]
+        if len(others) < 1:
+            return np.nan
+        mean = others.mean(axis=0)
+        use = mean >= min_share * total
+        if use.sum() < 3:
+            return np.nan
+        k = len(others)
+        return float(np.mean((x[r] - mean)[use] ** 2 / (g * mean[use] * (1.0 + 1.0 / k))))
+
+    removed: set[int] = set()
+    while len(active) >= 3:
+        current = {r: score_of(r, active) for r in active}
+        valid = {r: v for r, v in current.items() if np.isfinite(v)}
+        if not valid:
+            break
+        worst = max(valid, key=valid.get)
+        if valid[worst] <= limit:
+            break
+        active.remove(worst)
+        removed.add(worst)
+    if n >= 3:  # a pair cannot say which of the two is off
+        for r in range(n):
+            if good[r]:
+                scores[r] = score_of(r, active + ([r] if r in removed else []))
+    return scores, removed
+
+
+def estimate_noise(
+    bins: Sequence[np.ndarray],
+    observed: Sequence[np.ndarray],
+    data_id: Sequence[int],
+    time: Sequence[float],
+    config: NoiseConfig,
+) -> NoiseEstimate:
+    """Estimate the noise of every series from its replicate spectra.
+
+    A series is one ``data_id`` (a peptide at one charge); replicates are the spectra of a series
+    at the same time (the controls included). For each time point with two or more replicates the
+    replicates are rescaled to a common total (the amplitude of a spectrum is a free parameter of
+    the fit, so only the shape and the noise matter), and the variance of every bin of enough
+    intensity is compared with its mean: the noise is taken as variance = gain x intensity, which
+    within a series was found to hold with an exponent of about 1.1. The gain of the series is the
+    median over its time points of the median over bins of variance / mean (each corrected for
+    the chi-square distribution), a robust estimate that a bad spectrum cannot inflate.
+
+    Each spectrum of a time point with three or more replicates also gets a score: the mean over
+    bins of its squared difference from the mean of the others, divided by the variance the gain
+    predicts for that difference (``gain x mean x (1 + 1 / (n - 1))``). It is about 1 for a
+    consistent spectrum; above ``config.outlier_score`` the spectrum is flagged and left out of a
+    second estimate of the gain. The flag is a warning (the spectrum may also differ for a real
+    reason, such as its deuteration); nothing is dropped here.
+
+    A series needs ``config.min_replicated`` time points with replicates, else it is not
+    estimated (``reason`` says why) and the caller uses the fallback noise settings.
+    """
+    m = len(observed)
+    data_id = np.asarray(data_id)
+    time = np.round(np.asarray(time, dtype=float), 9)
+    gain = np.full(m, np.nan)
+    estimated = np.zeros(m, dtype=bool)
+    reason = np.full(m, "", dtype=object)
+    score = np.full(m, np.nan)
+    outlier = np.zeros(m, dtype=bool)
+    n_rep = np.zeros(m, dtype=np.int64)
+    min_share = config.min_share
+
+    for series in np.unique(data_id):
+        rows = np.flatnonzero(data_id == series)
+        cells = [rows[time[rows] == t] for t in np.unique(time[rows])]
+        replicated = [c for c in cells if len(c) >= 2]
+        n_rep[rows] = len(replicated)
+        if len(replicated) < config.min_replicated:
+            reason[rows] = (
+                "no replicates" if not replicated else
+                f"{len(replicated)} replicated time points (need {config.min_replicated})"
+            )
+            continue
+        matrices = [_cell_matrix(bins, observed, c) for c in replicated]
+        g, removed = float("nan"), [set() for _ in replicated]
+        for _ in range(2):  # estimate the gain, find the outliers, estimate again without them
+            cell_gains = []
+            for (x, total, good), drop in zip(matrices, removed, strict=True):
+                keep = [r for r in range(len(x)) if good[r] and r not in drop]
+                if len(keep) >= 2:
+                    cell_gains.append(_cell_gain(x[keep], total, min_share))
+            cell_gains = [v for v in cell_gains if np.isfinite(v) and v > 0]
+            if not cell_gains:
+                g = float("nan")
+                break
+            g = float(np.median(cell_gains))
+            new_removed = []
+            for c, (x, total, good) in zip(replicated, matrices, strict=True):
+                scores, drop = _score_cell(x, good, total, g, min_share, config.outlier_score)
+                for r, i in enumerate(c):
+                    score[i] = scores[r]
+                new_removed.append(drop)
+            if new_removed == removed:
+                break
+            removed = new_removed
+        if not np.isfinite(g):
+            reason[rows] = "too few usable bins"
+            score[rows] = np.nan
+            continue
+        gain[rows] = g
+        estimated[rows] = True
+        for c, drop in zip(replicated, removed, strict=True):
+            for r in drop:
+                outlier[c[r]] = True
+    return NoiseEstimate(gain, estimated, reason.astype(str), score, outlier, n_rep)

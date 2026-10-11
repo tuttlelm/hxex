@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..noise import NoiseEstimate
 from .config import FitConfig
 
 
@@ -51,8 +52,8 @@ class FitResult:
     ``fits[K]`` for each K tried (``k_values``); ``selected_K`` is the K each measurement chose
     (the only K if one was tried). ``score`` is the criterion used for selection, ``(M, nK)``,
     with ``inf`` where the minimum-population filter rejected that K. ``obs_scale`` is the noise
-    scale each spectrum was divided by, ``sample_size`` the ``N`` of the BIC penalty and ``n_max``
-    the bound on ``n``.
+    scale each spectrum was divided by, ``sample_size`` the ``N`` of the BIC penalty, ``n_max``
+    the bound on ``n`` and ``noise_kind`` the noise model of each measurement.
     """
 
     config: FitConfig
@@ -66,6 +67,8 @@ class FitResult:
     obs_scale: np.ndarray
     sample_size: np.ndarray
     n_max: np.ndarray
+    noise_kind: np.ndarray  # the noise model of each measurement
+    noise_estimate: NoiseEstimate | None = None  # set when the noise was estimated
 
     def __len__(self) -> int:
         return len(self.selected_K)

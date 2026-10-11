@@ -9,7 +9,7 @@ import numpy as np
 
 from ..hooks import CancelHook, ProgressHook, report
 from ..model import aic, bic
-from ..noise import noise_scale, sample_size
+from ..noise import estimate_noise, noise_scale, sample_size
 from .config import FitConfig
 from .init import split_start
 from .measurements import Measurements
@@ -32,18 +32,39 @@ def fit_models(
     Each spectrum is divided by its noise scale (:func:`hxex.noise.noise_scale`) before fitting,
     and the fitted amplitudes are returned in the original intensity units. A K is rejected for a
     measurement if one of its populations has a fraction below ``config.min_population``; if
-    every K is rejected the smallest K is selected. With one K there is no selection.
+    every K is rejected the smallest K is selected. With one K there is no selection. If
+    ``config.noise.estimate`` is set, the noise of each series with enough replicates is estimated
+    from them (see :func:`hxex.noise.estimate_noise`); the result keeps the estimate and the flags.
     ``progress(done, total)`` counts optimiser restarts; ``cancel`` raises
     :class:`~hxex.hooks.Cancelled`.
     """
     backend = config.backend
     m = len(data)
     scale = noise_scale(data.observed, config.noise, data.references)
+    kinds = [config.noise.model] * m
+    estimate = None
+    if config.noise.estimate:
+        # series with enough replicates use the Poisson model with their estimated gain as the
+        # scale; the others keep the noise settings above
+        estimate = estimate_noise(
+            data.bins, data.observed, data.data_id, data.time, config.noise
+        )
+        scale = np.where(estimate.estimated, estimate.gain, scale)
+        kinds = ["poisson" if u else config.noise.model for u in estimate.estimated]
+        n_series = len(np.unique(data.data_id))
+        n_est = len(np.unique(data.data_id[estimate.estimated]))
+        log.info("noise estimated from replicates for %d of %d series", n_est, n_series)
+        if estimate.outlier.any():
+            log.warning(
+                "%d spectra are inconsistent with their replicates (score above %g) and were "
+                "left out of the noise estimate", int(estimate.outlier.sum()),
+                config.noise.outlier_score,
+            )
     prep = prepare(
-        data.bins, data.observed, data.shapes, data.n_max, scale, config.noise.model, backend,
+        data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
         keys=stable_keys(data.spectrum_id),
     )
-    sizes = sample_size(prep.observed, config.noise)
+    sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
     total = config.n_restarts * len(k_values)
     done = 0
@@ -92,5 +113,6 @@ def fit_models(
     return FitResult(
         config=config, spectrum_id=data.spectrum_id, data_id=data.data_id, time=data.time,
         k_values=k_values, fits=fits, selected_K=selected, score=score, obs_scale=scale,
-        sample_size=sizes, n_max=data.n_max,
+        sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
+        noise_estimate=estimate,
     )

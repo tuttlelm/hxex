@@ -150,6 +150,19 @@ def logit(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     return np.log(x / (1.0 - x))
 
 
+def noise_loss(pred: torch.Tensor, obs: torch.Tensor, is_gaussian: torch.Tensor) -> torch.Tensor:
+    """Loss of every bin, ``(B, M)``: ``0.5 (pred - obs)^2`` (Gaussian, unit-sd noise) where
+    ``is_gaussian`` is True (broadcast against ``(B, M)``, one flag per measurement) and
+    ``pred - obs log pred`` (Poisson, log-factorial dropped) elsewhere."""
+    if bool(is_gaussian.all()):
+        return 0.5 * (pred - obs) ** 2
+    pc = pred.clamp(min=1e-10)
+    poisson = pc - obs * torch.log(pc)
+    if not bool(is_gaussian.any()):
+        return poisson
+    return torch.where(is_gaussian, 0.5 * (pred - obs) ** 2, poisson)
+
+
 class MixtureBatch(nn.Module):
     """K binomial components for each of M measurements (same K, variable bins).
 
@@ -165,12 +178,10 @@ class MixtureBatch(nn.Module):
         log_A: torch.Tensor,
         n_raw: torch.Tensor,
         logit_p: torch.Tensor,
-        noise_kind: str = "gaussian",
+        noise_kind: str | Sequence[str] = "gaussian",
     ):
         super().__init__()
-        if noise_kind not in NOISE_KINDS:
-            raise ValueError(f"noise_kind must be one of {NOISE_KINDS}")
-        self.noise_kind = noise_kind
+        self.register_buffer("is_gaussian", torch.zeros(log_A.shape[0], dtype=torch.bool))
         self.register_buffer("n_max", batch.n_max)
         self.register_buffer("mask", batch.mask)
         self.register_buffer("b", batch.b)
@@ -178,6 +189,16 @@ class MixtureBatch(nn.Module):
         self.log_A = nn.Parameter(log_A.clone())
         self.n_raw = nn.Parameter(n_raw.clone())
         self.logit_p = nn.Parameter(logit_p.clone())
+        self.set_noise_kind(noise_kind)
+
+    def set_noise_kind(self, noise_kind: str | Sequence[str]) -> None:
+        """Change the noise model: one name for all measurements, or one per measurement."""
+        m = self.log_A.shape[0]
+        kinds = [noise_kind] * m if isinstance(noise_kind, str) else list(noise_kind)
+        if len(kinds) != m or any(k not in NOISE_KINDS for k in kinds):
+            raise ValueError(f"noise_kind must be one of {NOISE_KINDS}, one per measurement")
+        self.noise_kinds = tuple(kinds)
+        self.is_gaussian = torch.tensor([k == "gaussian" for k in kinds], device=self.log_A.device)
 
     @property
     def n_measurements(self) -> int:
@@ -210,12 +231,7 @@ class MixtureBatch(nn.Module):
 
     def nll(self, obs: torch.Tensor) -> torch.Tensor:
         """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``."""
-        pred = self.predict()
-        if self.noise_kind == "gaussian":
-            loss = 0.5 * (pred - obs) ** 2
-        else:
-            pred = pred.clamp(min=1e-10)
-            loss = pred - obs * torch.log(pred)
+        loss = noise_loss(self.predict(), obs, self.is_gaussian.unsqueeze(0))
         return loss.masked_fill(~self.mask, 0.0).sum(dim=0)
 
     @torch.no_grad()
