@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -111,8 +111,11 @@ class Measurements:
         nterm_subtract: int = 1,
         amide_rules: chem.AmideRules = chem.DEFAULT_AMIDE_RULES,
         registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+        shapes: Mapping[int, np.ndarray] | None = None,
     ) -> Measurements:
         """Measurements from a picked set. Drop flagged spectra first (``BinnedSet.select``).
+        ``shapes`` replaces the envelope of some series (``data_id``), for example an ion-type
+        mixture or an inferred envelope (:mod:`hxex.picking.envelope`).
 
         ``n_max = n_max_factor * exchangeable sites`` (amides plus user ``Hex``); the shape is
         the natural-abundance envelope of the peptide and ion type (``chem.natural_abundance``);
@@ -123,7 +126,8 @@ class Measurements:
             raise ValueError("n_max_factor must be positive")
         shape_cache: dict[tuple[str, str], np.ndarray] = {}
         sites_cache: dict[tuple[str, str], int] = {}
-        bins, observed, shapes, n_max = [], [], [], []
+        shapes = shapes or {}
+        bins, observed, shape_list, n_max = [], [], [], []
         for i in range(len(binned)):
             _, y, nd = binned.spectrum(i)
             peptide, modification = str(binned.peptide[i]), str(binned.modification[i])
@@ -140,10 +144,12 @@ class Measurements:
                 )
             bins.append(nd.astype(np.float64))
             observed.append(y.astype(np.float64))
-            shapes.append(shape_cache[key])
+            series = int(binned.data_id[i])
+            shape_list.append(np.asarray(shapes[series], dtype=np.float64)
+                              if series in shapes else shape_cache[key])
             n_max.append(n_max_factor * sites_cache[key])
         return cls(
-            bins=tuple(bins), observed=tuple(observed), shapes=tuple(shapes),
+            bins=tuple(bins), observed=tuple(observed), shapes=tuple(shape_list),
             n_max=np.asarray(n_max, dtype=np.float64),
             references=tuple(control_references(binned.data_id, binned.time, undeut_time)),
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,

@@ -1,0 +1,252 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The isotope envelope of an ion: theoretical, an ion-type mixture, or inferred from a reference.
+
+Fragment spectra can hold several ion types of one fragment that differ by a hydrogen (for
+example ``c-1``, ``c`` and ``c+1`` in ETD), whose envelopes overlap. The envelope used to place the
+picker's bins and to fit the spectra is then not the natural isotope envelope of one ion type.
+``EnvelopeConfig.mode``:
+
+- ``'theory'``: the natural isotope clusters of the ion type (the default);
+- ``'mixed'``: ``components`` ion types, the given one (the lightest) plus 0, 1, ... hydrogens,
+  with weights fitted (non-negative least squares) to the picked reference spectra of the series
+  (normally the undeuterated control); the mixture sets both the bin positions
+  (:func:`hxex.chem.mixed_clusters`) and the envelope of the fit;
+- ``'infer'``: the fit uses the picked reference envelope itself (averaged over the references),
+  and the bins are placed as for ``'mixed'`` (or the theory with one component).
+
+This follows pyHXExpress's ``NA_envelope`` options (``mixedN`` and ``infer``), with two
+differences: the components are shifted by the hydrogen mass rather than by one ExMS step, and the
+mixture also sets the bin positions. Like pyHXExpress it assumes the proportions of the ion types
+do not change with deuteration.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, fields
+from typing import Any
+
+import numpy as np
+from scipy.optimize import nnls
+
+from .. import chem
+from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .pick import pick_spectrum, plan_bins
+
+MODES = ("theory", "mixed", "infer")
+
+
+@dataclass(frozen=True)
+class EnvelopeConfig:
+    """How the envelope of each series is found (see the module docstring). ``components`` is the
+    number of ion types in a mixture; ``max_residual`` the largest relative residual (RMS of the
+    mixture's misfit over the RMS of the reference envelope) for which a reference counts as
+    good; ``iterations`` the rounds of picking and fitting the weights."""
+
+    mode: str = "theory"
+    components: int = 2
+    max_residual: float = 0.15
+    iterations: int = 3
+
+    def __post_init__(self):
+        if self.mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}")
+        if self.components < 1:
+            raise ValueError("components must be at least 1")
+        if not self.max_residual > 0:
+            raise ValueError("max_residual must be positive")
+        if self.iterations < 1:
+            raise ValueError("iterations must be at least 1")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EnvelopeConfig:
+        unknown = set(data) - {f.name for f in fields(cls)}
+        if unknown:
+            raise ValueError(f"unknown envelope setting(s): {', '.join(sorted(unknown))}")
+        return cls(**data)
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """The envelope found for one ion: ``mode``, the ion-type ``weights`` (lightest first, summing
+    to 1; ``[1]`` for the theory), ``clusters`` (abundance and mass offset of each cluster, for
+    the bin positions), ``fit_shape`` (the envelope of the fit, summing to 1), ``residual`` (of the
+    mixture fit to the references; NaN for the theory), ``n_reference`` (reference spectra used)
+    and ``good`` (``residual <= max_residual``, or the theory)."""
+
+    mode: str
+    weights: np.ndarray
+    clusters: tuple[np.ndarray, np.ndarray]
+    fit_shape: np.ndarray
+    residual: float
+    n_reference: int
+    good: bool
+
+
+def _normalised(y: np.ndarray, length: int) -> np.ndarray:
+    out = np.zeros(length)
+    k = min(length, len(y))
+    out[:k] = y[:k]
+    total = out.sum()
+    return out / total if total > 0 else out
+
+
+def estimate_envelope(
+    references: Sequence[tuple[np.ndarray, np.ndarray]],
+    peptide: str,
+    charge: int,
+    *,
+    modification: str = "",
+    config: EnvelopeConfig = EnvelopeConfig(),  # noqa: B008
+    picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+) -> Envelope:
+    """The envelope of one ion from its reference spectra (``(mz, intensity)`` pairs, normally the
+    undeuterated controls of the series; ignored for ``'theory'``).
+
+    For ``'mixed'`` and ``'infer'``: start from equal weights, then ``iterations`` times pick the
+    references with the bins of the current mixture, average their envelopes (each scaled to sum
+    to 1) and fit the weights by non-negative least squares to that average. Without a usable
+    reference (none given, or nothing picked) the result is the theory with ``good`` False.
+    """
+    spec = chem.parse_modification(modification)
+    base = chem.isotope_clusters(
+        peptide, spec.ion_type, mod=spec, nterm_subtract=picker.nterm_subtract,
+        rules=picker.amide_rules, registry=registry,
+    )
+    theory = Envelope("theory", np.array([1.0]), base, base[0], float("nan"), 0, True)
+    if config.mode == "theory":
+        return theory
+    shape = base[0]
+    k = config.components
+    weights = np.full(k, 1.0 / k)
+    length = len(shape) + k - 1
+    columns = np.zeros((length, k))
+    for i in range(k):
+        columns[i:i + len(shape), i] = shape
+    observed = None
+    residual = float("nan")
+    n_used = 0
+    for _ in range(config.iterations):
+        clusters = chem.mixed_clusters(*base, weights)
+        plan = plan_bins(peptide, charge, modification=modification, config=picker,
+                         registry=registry, clusters=clusters)
+        picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
+                                registry=registry, plan=plan).intensity for mz, y in references]
+        picked = [p for p in picked if p.sum() > 0]
+        n_used = len(picked)
+        if not n_used:
+            return Envelope(config.mode, theory.weights, base, base[0], float("nan"), 0, False)
+        observed = np.mean([_normalised(p, length) for p in picked], axis=0)
+        fitted, _ = nnls(columns, observed)
+        if fitted.sum() <= 0:
+            return Envelope(config.mode, theory.weights, base, base[0], float("nan"), n_used,
+                            False)
+        weights = fitted / fitted.sum()
+        model = columns @ fitted
+        residual = float(np.sqrt(np.mean((model - observed) ** 2))
+                         / np.sqrt(np.mean(observed ** 2)))
+    clusters = chem.mixed_clusters(*base, weights)
+    fit_shape = clusters[0] if config.mode == "mixed" else observed / observed.sum()
+    return Envelope(config.mode, weights, clusters, fit_shape, residual, n_used,
+                    residual <= config.max_residual)
+
+
+@dataclass(frozen=True)
+class EnvelopeTable:
+    """The envelope of every series of a run, one row per series (ascending ``data_id``):
+    ``mode``, ``source`` (``reference``: the series' reference spectra, normally the undeuterated
+    control; ``fallback``: the spectra at the fallback time, because the reference was missing or
+    poor; ``theory``: no usable spectra), the ion-type ``weights`` (``(n_series, components)``,
+    lightest first), ``residual``, ``n_reference``, ``good`` and the envelope of the fit
+    (``fit_shape``, flat, series ``i`` in ``shape_offsets[i]:shape_offsets[i + 1]``)."""
+
+    config: EnvelopeConfig
+    data_id: np.ndarray
+    mode: np.ndarray
+    source: np.ndarray
+    weights: np.ndarray
+    residual: np.ndarray
+    n_reference: np.ndarray
+    good: np.ndarray
+    fit_shape: np.ndarray
+    shape_offsets: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.data_id)
+
+    def shape(self, i: int) -> np.ndarray:
+        return self.fit_shape[self.shape_offsets[i]:self.shape_offsets[i + 1]]
+
+
+def series_envelopes(
+    spectra,
+    *,
+    config: EnvelopeConfig,
+    reference_time: float,
+    fallback_time: float | None = None,
+    picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    atol: float = 1e-6,
+) -> tuple[EnvelopeTable, dict[int, Envelope]]:
+    """The envelope of every series (``data_id``) of a :class:`~hxex.spectra.SpectrumSet` from
+    its spectra at ``reference_time`` (the undeuterated control). If those are missing or the
+    mixture does not describe them (``good`` False), the spectra at ``fallback_time`` are used
+    (for example a fully exchanged end-state run), and the source is recorded as ``fallback``;
+    with neither, the theory. Returns the table and the envelopes by series."""
+    by_series: dict[int, Envelope] = {}
+    sources: dict[int, str] = {}
+    for d in np.unique(spectra.data_id):
+        rows = np.flatnonzero(spectra.data_id == d)
+        i0 = rows[0]
+        peptide, charge = str(spectra.peptide[i0]), int(spectra.charge[i0])
+        modification = str(spectra.modification[i0])
+
+        def at(t, rows=rows):
+            sel = rows[np.abs(spectra.time[rows] - t) <= atol]
+            return [spectra.spectrum(int(i)) for i in sel]
+
+        def estimate(refs, peptide=peptide, charge=charge, modification=modification):
+            return estimate_envelope(refs, peptide, charge, modification=modification,
+                                     config=config, picker=picker, registry=registry)
+
+        chosen, source = None, "theory"
+        refs = at(reference_time)
+        if refs:
+            chosen, source = estimate(refs), "reference"
+        if (chosen is None or not chosen.good) and fallback_time is not None:
+            back = at(fallback_time)
+            if back:
+                other = estimate(back)
+                if chosen is None or other.good or other.residual < chosen.residual:
+                    chosen, source = other, "fallback"
+        if chosen is None or chosen.n_reference == 0:
+            base = estimate([])  # the theory (no reference spectra)
+            chosen = Envelope(config.mode, np.array([1.0]), base.clusters, base.fit_shape,
+                              float("nan"), 0, config.mode == "theory")
+            source = "theory"
+        by_series[int(d)] = chosen
+        sources[int(d)] = source
+    ids = sorted(by_series)
+    width = max(config.components, 1)
+    weights = np.full((len(ids), width), np.nan)
+    shapes, offsets = [], [0]
+    for r, d in enumerate(ids):
+        e = by_series[d]
+        weights[r, : len(e.weights)] = e.weights
+        shapes.append(np.asarray(e.fit_shape, dtype=float))
+        offsets.append(offsets[-1] + len(e.fit_shape))
+    table = EnvelopeTable(
+        config=config, data_id=np.array(ids, dtype=np.int64),
+        mode=np.array([by_series[d].mode for d in ids], dtype=str),
+        source=np.array([sources[d] for d in ids], dtype=str), weights=weights,
+        residual=np.array([by_series[d].residual for d in ids], dtype=float),
+        n_reference=np.array([by_series[d].n_reference for d in ids], dtype=np.int64),
+        good=np.array([by_series[d].good for d in ids], dtype=bool),
+        fit_shape=np.concatenate(shapes) if shapes else np.empty(0),
+        shape_offsets=np.asarray(offsets, dtype=np.int64),
+    )
+    return table, by_series

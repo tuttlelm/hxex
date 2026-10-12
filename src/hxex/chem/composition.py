@@ -101,6 +101,39 @@ def isotope_clusters(
     return shape / shape.sum(), masses - masses[0]
 
 
+H_ATOM = 1.00782503207  # mass of a hydrogen atom (Da): the step between ion types such as c-1, c
+
+
+def mixed_clusters(
+    shape: np.ndarray, offset: np.ndarray, weights, step: float = H_ATOM
+) -> tuple[np.ndarray, np.ndarray]:
+    """The isotope clusters of a mixture of ion types that differ by one hydrogen each (for
+    example ``c-1``, ``c`` and ``c+1``): component ``i`` (weight ``weights[i]``) is the lightest
+    type plus ``i`` hydrogens, so its cluster ``j`` falls in the mixture's cluster ``i + j``, at
+    ``i * step + offset[j]``. Returns ``(shape, offset)`` like :func:`isotope_clusters`: the
+    abundance of each mixed cluster (sums to 1) and its abundance-weighted mass offset from the
+    lightest type's monoisotopic mass."""
+    shape = np.asarray(shape, dtype=float)
+    offset = np.asarray(offset, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    if w.ndim != 1 or len(w) == 0 or np.any(w < 0) or w.sum() <= 0:
+        raise ValueError("weights must be non-negative with a positive sum")
+    w = w / w.sum()
+    n = len(shape) + len(w) - 1
+    abundance = np.zeros(n)
+    mass = np.zeros(n)
+    for i, wi in enumerate(w):
+        abundance[i:i + len(shape)] += wi * shape
+        mass[i:i + len(shape)] += wi * shape * (i * step + offset)
+    out = np.full(n, np.nan)
+    has = abundance > 0
+    out[has] = mass[has] / abundance[has]
+    # a cluster no component reaches (a zero weight at the end): one step past the previous one
+    for k in np.flatnonzero(~has):
+        out[k] = out[k - 1] + step if k > 0 else 0.0
+    return abundance / abundance.sum(), out
+
+
 def natural_abundance(
     sequence: str,
     ion_type: str = "M",

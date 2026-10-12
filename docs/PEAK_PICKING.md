@@ -76,6 +76,54 @@ to bins, so a co-eluting species cannot pull the predicted positions toward itse
 an approximation for spectra with several populations; the positions depend on d only weakly (the
 difference between a natural and a deuterium step, 0.0035 Da per bin, divided by z).
 
+## Ion-type mixtures (fragments)
+
+In fragment spectra one fragment often appears as several ion types that differ by a hydrogen,
+for example `c-1`, `c` (c′) and `c+1` in ETD, or `z`, `z+1` (z•) and `z+2` (z′), from hydrogen
+transfer between the two fragments. Their envelopes overlap one hydrogen apart, so neither the
+picker's positions nor the fit's envelope are those of one ion type. In the undeuterated
+reference of a 12-residue peptide fragmented by ETD, short c and z fragments were almost purely
+c′ and z•, while the longest ones were about one third c′ (z•) and two thirds c+1 (z′); a single
+ion type left a misfit as large as the envelope itself, three types less than 3 %.
+
+The envelope of a series is then a mixture of `components` ion types: the given ion type (the
+lightest) and the same plus 1, 2, ... hydrogens, with weights w(i):
+
+    a_mix(n) = sum_i w(i) a(n-i)
+    m_mix(n) = sum_i w(i) a(n-i) [ i * mH + m(n-i) ] / a_mix(n)
+
+where a and m are the natural clusters of the lightest type (as above) and mH = 1.00782503 Da is
+the mass of a hydrogen atom. The mixed clusters replace the natural ones everywhere: in the
+composition ladder (so the bins are placed for the mixture) and as the envelope of the fit.
+
+**Weights.** They are estimated per series from its reference spectra, normally the undeuterated
+control: starting from equal weights, the references are picked with the bins of the current
+mixture, their envelopes (each scaled to sum to 1) are averaged, and the weights are fitted to
+that average by non-negative least squares; this is repeated three times. The fit's relative
+residual (the RMS misfit over the RMS of the average envelope) decides whether the reference is
+good (`max_residual`, 0.15). If the undeuterated control is missing or poor, the spectra at a
+fallback time are used instead (for example a fully exchanged end-state run), and the series is
+marked; without either, the series uses its theoretical envelope and is marked too. As in
+pyHXExpress, the proportions of the ion types are assumed not to change with deuteration.
+
+**Inferred envelope.** With `mode="infer"` the fit uses the averaged reference envelope itself
+instead of the fitted mixture (the bins are still placed with the fitted mixture); it follows
+the reference exactly, noise included.
+
+These options follow pyHXExpress's `NA_envelope` settings (`mixedN` and `infer`), with two
+differences: the components are one hydrogen mass apart rather than one ExMS step, and the
+mixture also places the bins. They are set by `RunConfig.envelope` (`EnvelopeConfig`: `mode`
+`theory`, `mixed` or `infer`; `components`; `max_residual`) and `RunConfig.envelope_fallback_time`;
+the envelope of every series (weights, residual, source) is stored with the results.
+
+On synthetic spectra of a 1:3 mixture of `c-1` and `c`, the mixture recovered the weights within
+0.01 and the fitted deuteration within 0.25 D, while the theoretical envelope of `c-1` alone gave
+about one deuterium too much (the extra hydrogen). On the 12-residue peptide's back-exchange time
+course (one population, first replicate), the deuteration of c fragments agreed with pyHXExpress's
+fits within 0.07 D for 10 of 11 fragments (the eleventh, with two thirds c+1, which pyHXExpress's
+two-type mixture could not represent, by -0.37 D), and z fragments were 0.05 to 0.23 D higher;
+that difference is not explained yet.
+
 ## The ExMS ladder (option)
 
 pyHXExpress, following ExMS (Kan et al., J. Am. Soc. Mass Spectrom. 2011), spaces the bins by a
@@ -174,10 +222,12 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
 - **The shoulder rule** is unvalidated: it was designed against overlapping species but cannot tell
   their flank from a real peak off its prediction. With the composition ladder it mostly zeroes
   small tail bins.
-- **Fragment ion masses.** Fragment peaks still sit at constant offsets of -14 to -49 ppm from
-  their predictions, depending on the ion type (`c-1`, `z-dot`, `M-NH3`), independent of the bin:
-  a question of the ion-type masses (hydrogen transfer in ETD), not of the spacing. It belongs to
-  the open verification of fragment ion types and their exchangeable sites.
+- **Fragment ions.** Constant offsets of -14 to -49 ppm seen for fragment targets on the
+  `c-1`, `z-dot` and `M-NH3` ladders came from the ion-type mixtures above (a single assumed type
+  one hydrogen off the real ions): with the right type, fragments of an undeuterated reference sit
+  within 1 to 3 ppm. Still open: the z fragments' 0.1 to 0.2 D difference from pyHXExpress, and
+  whether a transferred hydrogen can be a deuteron in labelled samples (which would make the
+  mixture weights change with deuteration).
 - **One deuteration level.** The ladder uses one binomial level per spectrum; spectra with several
   populations are placed by their overall level.
 

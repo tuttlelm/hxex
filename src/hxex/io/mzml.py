@@ -244,10 +244,13 @@ class ScanTable:
         precursor_charge: int | None = None,
         time_range: tuple[float, float] | None = None,
         filter_contains: str | None = None,
+        filter_excludes: str | None = None,
     ) -> np.ndarray:
         """Positions (into this table) of the scans that match every condition given.
         ``activation`` is a short name (``ETD``, ``HCD``, ``CID``, ``ECD``, ``EThcD``, ``UVPD``)
-        or any text found in the activation names; ``time_range`` is in seconds, inclusive."""
+        or any text found in the activation names; ``time_range`` is in seconds, inclusive;
+        ``filter_contains`` and ``filter_excludes`` test the vendor filter string (for example
+        ``'sid'`` separates scans with supplemental activation)."""
         keep = np.ones(len(self), dtype=bool)
         if ms_level is not None:
             keep &= self.ms_level == ms_level
@@ -263,6 +266,8 @@ class ScanTable:
             keep &= (self.time >= time_range[0]) & (self.time <= time_range[1])
         if filter_contains is not None:
             keep &= np.array([filter_contains in str(f) for f in self.filter], dtype=bool)
+        if filter_excludes is not None:
+            keep &= np.array([filter_excludes not in str(f) for f in self.filter], dtype=bool)
         return np.flatnonzero(keep)
 
 
@@ -441,8 +446,9 @@ class MzmlTarget:
     """What to extract: ``entry`` (peptide, charge, modification with the ion type, range) and
     which scans hold it: ``ms_level`` (1 for peptides and the intact protein, 2 for fragments),
     ``activation`` (for example ``ETD``), the precursor (``precursor_mz`` within the config's
-    tolerance, ``precursor_charge``) and ``rt_window`` (seconds; for a run with a fixed time the
-    scans summed are those inside it)."""
+    tolerance, ``precursor_charge``), the filter string (``filter_contains``,
+    ``filter_excludes``) and ``rt_window`` (seconds; for a run with a fixed time the scans summed
+    are those inside it)."""
 
     entry: PeptideEntry
     ms_level: int = 1
@@ -450,6 +456,8 @@ class MzmlTarget:
     precursor_mz: float | None = None
     precursor_charge: int | None = None
     rt_window: tuple[float, float] | None = None
+    filter_contains: str | None = None
+    filter_excludes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -466,6 +474,8 @@ class MzmlConfig:
     group: str = "each"
     every: int = 1
     windows: tuple[tuple[float, float], ...] = ()
+    min_time: float | None = None
+    max_spectra: int | None = None
     mz_margin: float = 2.0
     sum_ppm: float = 10.0
     gap_factor: float = 3.0
@@ -481,6 +491,8 @@ class MzmlConfig:
             raise ValueError("group='windows' needs windows")
         if any(b < a for a, b in self.windows):
             raise ValueError("a window must end after it starts")
+        if self.max_spectra is not None and self.max_spectra < 2:
+            raise ValueError("max_spectra must be at least 2")
         if (self.mz_margin < 0 or self.sum_ppm <= 0 or self.gap_factor <= 1
                 or self.precursor_tol < 0):
             raise ValueError("need mz_margin >= 0, sum_ppm > 0, gap_factor > 1 and "
@@ -500,6 +512,18 @@ def _groups(times: np.ndarray, config: MzmlConfig) -> list[np.ndarray]:
         if len(inside):
             out.append(inside)
     return out
+
+
+def _sample_log(times: np.ndarray, n: int) -> np.ndarray:
+    """Positions of at most ``n`` of the sorted ``times``, spaced evenly in log(time - first),
+    always including the first and the last."""
+    if len(times) <= n:
+        return np.arange(len(times))
+    rel = times - times[0]
+    step = np.median(np.diff(times)) if len(times) > 1 else 1.0
+    goal = np.concatenate([[0.0], np.geomspace(max(step, 1e-9), rel[-1], n - 1)])
+    picks = sorted({int(np.argmin(np.abs(rel - g))) for g in goal} | {0, len(times) - 1})
+    return np.array(picks[:n] if len(picks) > n else picks, dtype=np.int64)
 
 
 def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: float):
@@ -547,27 +571,42 @@ def read_mzml(
             table.select(ms_level=t.ms_level, activation=t.activation,
                          precursor_mz=t.precursor_mz, precursor_tol=config.precursor_tol,
                          precursor_charge=t.precursor_charge,
-                         time_range=t.rt_window if run.time is not None else None)
+                         time_range=t.rt_window if run.time is not None else (
+                             None if config.min_time is None else (config.min_time, np.inf)),
+                         filter_contains=t.filter_contains, filter_excludes=t.filter_excludes)
             for t in targets
         ]
-        needed = set(int(table.index[i]) for rows in chosen for i in rows)
+        # the scans of every spectrum, per target, before anything is read (so that sampling a
+        # large file reads only the scans it keeps)
+        plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
+        for rows in chosen:
+            if not len(rows):
+                plans.append(None)
+                continue
+            order = rows[np.argsort(table.time[rows], kind="stable")]
+            groups = [np.arange(len(order))] if run.time is not None else _groups(
+                table.time[order], config)
+            if run.time is None and config.max_spectra is not None and len(groups) > 1:
+                centre = np.array([table.time[order][g].mean() for g in groups])
+                groups = [groups[i] for i in _sample_log(centre, config.max_spectra)]
+            plans.append((order, groups))
+        needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
+                  for i in g}
         if not needed:
             log.warning("%s: no scan matches any target", f.path.name)
             report(progress, n_run + 1, len(runs))
             continue
         by_index = {s.index: s for s in iter_scans(f.path, mz_windows=windows,
                                                    keep=lambda m, wanted=needed: m.index in wanted)}
-        for t_i, (target, rows) in enumerate(zip(targets, chosen, strict=True)):
-            if not len(rows):
+        for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
+            if plan is None:
                 log.warning("%s: no scan for target %s", f.path.name, _target_label(target.entry))
                 continue
             lo, hi = windows[t_i]
             key = (run.sample, t_i)
             data_id = series.setdefault(key, len(series))
             entry = replace(target.entry, sample=run.sample)
-            order = rows[np.argsort(table.time[rows], kind="stable")]
-            groups = [np.arange(len(order))] if run.time is not None else _groups(
-                table.time[order], config)
+            order, groups = plan
             for g in groups:
                 scans = [by_index[int(table.index[order[i]])] for i in g]
                 parts = []

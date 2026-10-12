@@ -36,7 +36,15 @@ from .bootstrap import (
 from .controls import ControlConfig, ControlTable, fit_controls
 from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report
-from .picking import DEFAULT_PICKER_CONFIG, BinnedSet, PickerConfig, pick_spectra
+from .picking import (
+    DEFAULT_PICKER_CONFIG,
+    BinnedSet,
+    EnvelopeConfig,
+    EnvelopeTable,
+    PickerConfig,
+    pick_spectra,
+    series_envelopes,
+)
 from .quality import QualityConfig, QualityFlags, assess_quality
 from .spectra import SpectrumSet
 
@@ -73,6 +81,8 @@ class RunConfig:
     quality: QualityConfig | None = QualityConfig()  # noqa: RUF009
     plots: PlotConfig | None = None
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
+    envelope: EnvelopeConfig = EnvelopeConfig()  # noqa: RUF009
+    envelope_fallback_time: float | None = None
     undeut_time: float = 0.0
     n_max_factor: float = 1.2
     drop_no_signal: bool = True
@@ -116,7 +126,7 @@ class RunConfig:
         parts = {
             "plots": PlotConfig, "picker": PickerConfig, "fit": FitConfig,
             "bootstrap": BootstrapConfig, "controls": ControlConfig, "quality": QualityConfig,
-            "registry": chem.ModificationRegistry,
+            "registry": chem.ModificationRegistry, "envelope": EnvelopeConfig,
         }
         kwargs = {
             k: (parts[k].from_dict(v) if k in parts and v is not None else v)
@@ -143,6 +153,7 @@ class RunResult:
     bootstrap_by_k: dict[int, BootstrapResult] | None
     controls: ControlTable | None
     quality: QualityFlags | None
+    envelopes: EnvelopeTable | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -183,7 +194,8 @@ class RunResult:
             path, measurements=self.measurements, fit=self.fit, bootstrap=self.bootstrap,
             bootstrap_by_k=self.bootstrap_by_k, binned=self.binned, spectra=spectra,
             picker_config=self.config.picker,
-            controls=self.controls, quality=self.quality, run_config=self.config.to_dict(),
+            controls=self.controls, quality=self.quality, envelopes=self.envelopes,
+            run_config=self.config.to_dict(),
             project=project, notes=notes, overwrite=overwrite,
         )
 
@@ -358,10 +370,26 @@ def run(
             raise ValueError("config.plots needs figures_dir or out to say where to write")
         figures_dir = Path(out).with_name(Path(out).name + "_figures")
     raw = data if isinstance(data, SpectrumSet) else None
+    if config.envelope.mode != "theory" and raw is None:
+        raise ValueError(f"envelope mode {config.envelope.mode!r} needs the raw spectra "
+                         "(a SpectrumSet), not a picked set")
     pick_share = 0.05 if raw is not None else 0.0
+    envelopes, clusters, shapes = None, None, None
+    if raw is not None and config.envelope.mode != "theory":
+        envelopes, by_series = series_envelopes(
+            raw, config=config.envelope, reference_time=config.reference_time,
+            fallback_time=config.envelope_fallback_time, picker=config.picker,
+            registry=config.registry,
+        )
+        clusters = {d: e.clusters for d, e in by_series.items()}
+        shapes = {d: e.fit_shape for d, e in by_series.items()}
+        n_back = int((envelopes.source != "reference").sum())
+        if n_back:
+            log.warning("%d of %d series took their envelope from the fallback or the theory",
+                        n_back, len(envelopes))
     if raw is not None:
         binned = pick_spectra(
-            raw, config.picker, registry=config.registry,
+            raw, config.picker, registry=config.registry, clusters=clusters,
             progress=_Span(progress, 0.0, UNITS * pick_share), cancel=cancel,
         )
     else:
@@ -379,7 +407,7 @@ def run(
     measurements = Measurements.from_binned(
         binned.select(kept), n_max_factor=config.n_max_factor,
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
-        amide_rules=config.picker.amide_rules, registry=config.registry,
+        amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
     )
     fit, boot, by_k, controls, quality = analyse(
         measurements, config, progress=progress, cancel=cancel,
@@ -388,7 +416,7 @@ def run(
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
-        controls=controls, quality=quality,
+        controls=controls, quality=quality, envelopes=envelopes,
     )
     if out is not None:
         result.write(out, spectra=raw if keep_spectra else None, project=project, notes=notes,

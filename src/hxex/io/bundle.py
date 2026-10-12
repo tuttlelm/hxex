@@ -11,7 +11,7 @@ the only part that changes after writing; it needs no refit.
 Written tables: ``measurements`` and ``fit`` (always), ``fit_k``, ``noise_estimate``,
 ``bootstrap``, ``bootstrap_draws``, ``bootstrap_k`` and ``bootstrap_k_draws`` (fixed-K
 results), ``binned``, ``spectra`` (raw), ``review``, ``controls``,
-``quality``, and a derived tidy
+``quality``, ``envelopes``, and a derived tidy
 ``components`` table for other tools. The loader ignores tables it does not know.
 """
 
@@ -40,7 +40,7 @@ from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult, interv
 from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
-from ..picking import BinnedSet, PickerConfig
+from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
 from ..quality import QualityConfig, QualityFlags
 from ..spectra import SpectrumSet
 from ._arrow import (
@@ -228,6 +228,32 @@ def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.
     return tables
 
 
+def _envelopes_table(e: EnvelopeTable) -> pa.Table:
+    return pa.table({
+        "data_id": pa.array(np.asarray(e.data_id, dtype=np.int64)),
+        "mode": _str(e.mode), "source": _str(e.source),
+        "weights": _ragged(_rows(e.weights), pa.float64()),
+        "residual": pa.array(np.asarray(e.residual, dtype=np.float64)),
+        "n_reference": pa.array(np.asarray(e.n_reference, dtype=np.int64)),
+        "good": pa.array(np.asarray(e.good, dtype=bool)),
+        "fit_shape": _flat_ragged(e.fit_shape, e.shape_offsets, pa.float64()),
+    })
+
+
+def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
+    cfg = EnvelopeConfig.from_dict(config)
+    shape, offsets = _ragged_read(table, "fit_shape")
+    return EnvelopeTable(
+        config=cfg, data_id=np.asarray(_col(table, "data_id"), dtype=np.int64),
+        mode=_strs(table, "mode"), source=_strs(table, "source"),
+        weights=_matrix(table, "weights", max(cfg.components, 1)),
+        residual=np.asarray(_col(table, "residual"), dtype=np.float64),
+        n_reference=np.asarray(_col(table, "n_reference"), dtype=np.int64),
+        good=np.asarray(_col(table, "good"), dtype=bool),
+        fit_shape=np.asarray(shape, dtype=np.float64), shape_offsets=offsets,
+    )
+
+
 def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
     for name in ("deviance", "deviance_rel", "intensity", "intensity_rel"):
@@ -365,6 +391,7 @@ def write_bundle(
     review: ReviewTable | None = None,
     controls: ControlTable | None = None,
     quality: QualityFlags | None = None,
+    envelopes: EnvelopeTable | None = None,
     run_config: dict | None = None,
     project: str | None = None,
     notes: str = "",
@@ -425,6 +452,8 @@ def write_bundle(
             if not np.array_equal(quality.spectrum_id, fit.spectrum_id):
                 raise BundleError("the quality flags were not made from this fit")
             _write_table(tmp, "quality", _quality_table(quality), files)
+        if envelopes is not None:
+            _write_table(tmp, "envelopes", _envelopes_table(envelopes), files)
         if controls is not None:
             _write_table(tmp, "controls", _controls_table(controls), files)
         components = _components_table(fit, bootstrap, controls, bootstrap_by_k)
@@ -446,6 +475,7 @@ def write_bundle(
                 "picker": None if picker_config is None else picker_config.to_dict(),
                 "controls": None if controls is None else controls.config.to_dict(),
                 "quality": None if quality is None else quality.config.to_dict(),
+                "envelope": None if envelopes is None else envelopes.config.to_dict(),
                 "run": run_config,
             },
             "files": files,
@@ -795,6 +825,15 @@ class Bundle:
             config = self.manifest["configs"]["controls"]
             self._cache["controls"] = _read_controls(self._table("controls"), config)
         return self._cache["controls"]
+
+    def envelopes(self) -> EnvelopeTable | None:
+        """The envelope of every series, or None if the run used the theory."""
+        if not self.has("envelopes"):
+            return None
+        if "envelopes" not in self._cache:
+            config = self.manifest["configs"]["envelope"]
+            self._cache["envelopes"] = _read_envelopes(self._table("envelopes"), config)
+        return self._cache["envelopes"]
 
     def quality(self) -> QualityFlags | None:
         """The quality flags, or None if the run did not assess them."""

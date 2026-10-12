@@ -13,7 +13,7 @@ early (pyHXExpress stopped after a cumulative count of below-threshold bins).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -76,8 +76,12 @@ def plan_bins(
     modification: str = "",
     config: PickerConfig = DEFAULT_PICKER_CONFIG,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    clusters: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> BinPlan:
     """Predicted bin positions for a peptide.
+
+    ``clusters`` replaces the ion's natural isotope clusters, for an ion-type mixture
+    (:func:`hxex.chem.mixed_clusters`); bins then reach as far as the mixture does.
 
     The last bin is the highest possible deuteration plus the full natural-abundance envelope,
     plus the zero filling: ``amides + Hex + (natural-abundance peaks - 1) + zero_filling``. It
@@ -94,14 +98,16 @@ def plan_bins(
         rules=config.amide_rules,
         registry=registry,
     )
-    shape, offsets = chem.isotope_clusters(
-        peptide,
-        spec.ion_type,
-        mod=spec,
-        nterm_subtract=config.nterm_subtract,
-        rules=config.amide_rules,
-        registry=registry,
-    )
+    if clusters is None:
+        clusters = chem.isotope_clusters(
+            peptide,
+            spec.ion_type,
+            mod=spec,
+            nterm_subtract=config.nterm_subtract,
+            rules=config.amide_rules,
+            registry=registry,
+        )
+    shape, offsets = clusters
     sites = chem.exchangeable_sites(
         peptide, mod=spec, ion_type=spec.ion_type, nterm_subtract=config.nterm_subtract,
         rules=config.amide_rules, registry=registry,
@@ -269,18 +275,25 @@ def pick_spectra(
     config: PickerConfig = DEFAULT_PICKER_CONFIG,
     *,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    clusters: Mapping[int, tuple[np.ndarray, np.ndarray]] | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> BinnedSet:
-    """Pick every spectrum of ``spectra``. Nothing is dropped; see the flags on the result."""
-    plans: dict[tuple[str, int, str], BinPlan] = {}
+    """Pick every spectrum of ``spectra``. Nothing is dropped; see the flags on the result.
+    ``clusters`` gives the isotope clusters of some series (``data_id``), for example an
+    ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones."""
+    clusters = clusters or {}
+    plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
     for i in range(len(spectra)):
         check_cancel(cancel)
-        key = (str(spectra.peptide[i]), int(spectra.charge[i]), str(spectra.modification[i]))
+        series = int(spectra.data_id[i])
+        own = series if series in clusters else None
+        key = (str(spectra.peptide[i]), int(spectra.charge[i]), str(spectra.modification[i]), own)
         if key not in plans:
             plans[key] = plan_bins(
-                key[0], key[1], modification=key[2], config=config, registry=registry
+                key[0], key[1], modification=key[2], config=config, registry=registry,
+                clusters=None if own is None else clusters[own],
             )
         mz, y = spectra.spectrum(i)
         picked.append(

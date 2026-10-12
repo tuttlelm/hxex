@@ -352,3 +352,36 @@ def test_a_real_thermo_file():
     one = f.scan(len(t) // 2)
     assert one.index == len(t) // 2 and len(one.mz) == len(one.intensity) > 0
     assert np.all(np.diff(one.mz) > 0)
+
+
+def test_filter_exclusion_earliest_time_and_log_sampling(tmp_path):
+    scans = time_course(n=12, start=0.1, step=0.25, ms2_every=1)
+    for k, s in enumerate(scans):
+        if s.get("ms_level") == 2 and k % 4 == 1:
+            s["filter"] = s["filter"] + " sid=35.00"  # a second kind of ETD scan
+    path = write_mzml(tmp_path / "k.mzML", scans)
+    t = MzmlFile(path).scans()
+    with_sid = t.select(filter_contains="sid")
+    without = t.select(ms_level=2, filter_excludes="sid")
+    assert len(with_sid) and len(without) and not set(with_sid) & set(without)
+    assert len(with_sid) + len(without) == int((t.ms_level == 2).sum())
+    frag = MzmlTarget(ENTRY, ms_level=2, activation="ETD", filter_excludes="sid")
+    s = read_mzml([MzmlRun(path, "WT")], [frag], project="p")
+    assert len(s) == len(without)
+    # the earliest time: scans before it are left out
+    late = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p",
+                     config=MzmlConfig(min_time=60.0))
+    assert late.time.min() >= 60.0 and len(late) < 12
+    # sampling: at most N spectra, the first and the last kept, denser early than late
+    every = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p")
+    few = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p",
+                    config=MzmlConfig(max_spectra=5))
+    assert 2 <= len(few) <= 5 and few.time[0] == every.time[0] and few.time[-1] == every.time[-1]
+    gaps = np.diff(few.time)
+    assert gaps[0] <= gaps[-1]
+    with pytest.raises(ValueError, match="max_spectra"):
+        MzmlConfig(max_spectra=1)
+    # a run with a fixed time is not sampled (it gives one sum per target)
+    fixed = read_mzml([MzmlRun(path, "WT", time=60.0)], [MzmlTarget(ENTRY)], project="p",
+                      config=MzmlConfig(max_spectra=2))
+    assert len(fixed) == 1

@@ -1218,7 +1218,10 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     H2O; the scan times may need adjusting for kinetics fits (an offset exists, `time_offset`);
     early time points are poor in some datasets and need a way to be excluded; large files
     should be sampled (some time points, for example spaced in log time) rather than read whole.
-    **Summing checked against OpenMS** (the same file summed 10 MS1 scans at a time by
+    **The fixed-time (LC-MS) layout on real data:** one file of an unpublished bottom-up ETD
+    dataset, 18 peptides with retention windows from a list: all found (44 to 139 MS1 scans
+    summed per window, m/z equal to the list's), with plausible envelopes. **Summing checked
+    against OpenMS** (the same file summed 10 MS1 scans at a time by
     OpenMS SpectraMerger, 68 sums; our sums rebuilt from the same component scans, compared in
     the intact protein's window): the first version summed on the union of the scans' m/z points,
     which was 7 times denser than any scan, because scans of one acquisition have the same
@@ -1255,6 +1258,27 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     their windows. Open: the shoulder rule; per-spectrum offsets (diagnostic planned, calibration
     from the undeuterated control possible); constant offsets of -14 to -49 ppm for fragment ion
     types (`c-1`, `z-dot`, `M-NH3`), to be settled with the fragment ion verification.
+
+35. **Ion-type mixtures for fragments (owner's decisions of 2026-10-12; `hxex.picking.envelopes`,
+    method in docs/PEAK_PICKING.md).** Fragment spectra hold several ion types one hydrogen apart
+    (c-1, c′, c+1; z, z•, z′); pyHXExpress handled this with `NA_envelope` `mixedN` (and `infer`).
+    The fragment offsets of item 34 came from this: with the right type, fragments of an
+    undeuterated reference sit within 1 to 3 ppm. hxex fits the weights of `components` types
+    (the lightest given) to the series' undeuterated references (non-negative least squares,
+    three rounds of picking and fitting), falls back to the spectra at `envelope_fallback_time`
+    (the end-state run; the owner: a fallback when the undeuterated control is missing or poor)
+    and then to the theory, both marked; the mixture sets the picker's positions and the fit's
+    envelope (`infer` uses the reference envelope in the fit). `RunConfig.envelope`, the
+    `envelopes` bundle table. Checked on a 12-residue peptide (ETD, back-exchange kinetics, one
+    replicate, private data): short fragments almost pure c′ and z•, the longest about one third
+    c′ (z•) and two thirds c+1 (z′); misfit below 3 % with three types against 80 to 97 % with one;
+    deuteration of c fragments within 0.07 D of pyHXExpress for 10 of 11, z fragments 0.05 to
+    0.23 D higher (open). The mzML reader gained `filter_excludes` and `filter_contains` on
+    targets (scan types such as with or without supplemental activation), `min_time` (leave out
+    early time points) and `max_spectra` (time points sampled evenly in log time, only those
+    scans read), for the kinetics runs. Next: the z offset, the other fragmentation types and
+    peptides, fragment target generation from the residue-tokenised sequence (including C-terminal
+    amides such as SubstanceP's `-NH2`), and exchange-rate fitting.
 
     | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
     |---|---|---|
