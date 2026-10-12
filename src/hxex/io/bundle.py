@@ -64,6 +64,7 @@ log = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 KIND = "hxex-results-bundle"
 MANIFEST = "manifest.json"
+PENDING_STAGES = ("bootstrap",)  # stages a bundle can be written without, to add later
 ROW_GROUP = 1000  # rows per Parquet row group (lazy loading reads whole groups)
 STATUSES = ("accepted", "rejected")
 
@@ -402,6 +403,7 @@ def write_bundle(
     spectra_source: Mapping | None = None,
     project: str | None = None,
     notes: str = "",
+    pending: Sequence[str] = (),
     overwrite: bool = False,
 ) -> Path:
     """Write a results bundle and return its path.
@@ -412,9 +414,14 @@ def write_bundle(
     directory that is not a bundle is never removed). ``project`` is recorded in the manifest.
     ``spectra_source`` (how the raw spectra were read, see
     :attr:`~hxex.spectra.SpectrumSet.source`; by default that of ``spectra``) is recorded in the
-    manifest whether or not the spectra are stored.
+    manifest whether or not the spectra are stored. ``pending`` names the stages the run has
+    still to add (``'bootstrap'`` for the bundle a run writes before its bootstrap, see
+    :func:`hxex.run.resume_bootstrap`).
     """
     path = Path(path)
+    unknown = set(pending) - set(PENDING_STAGES)
+    if unknown:
+        raise BundleError(f"unknown pending stage(s): {', '.join(sorted(unknown))}")
     if spectra_source is None and spectra is not None:
         spectra_source = spectra.source
     if len(measurements) != len(fit) or not np.array_equal(
@@ -481,6 +488,7 @@ def write_bundle(
             "versions": _versions(),
             "k_values": list(fit.k_values),
             "n_measurements": len(fit),
+            "pending": list(pending),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
@@ -640,6 +648,12 @@ class Bundle:
     @property
     def schema_version(self) -> int:
         return int(self.manifest["schema_version"])
+
+    @property
+    def pending(self) -> list[str]:
+        """The stages the run has still to add (``['bootstrap']`` for a bundle written before
+        the bootstrap, which :func:`hxex.run.resume_bootstrap` completes); empty when complete."""
+        return list(self.manifest.get("pending", []))
 
     def has(self, table: str) -> bool:
         return f"{table}.parquet" in self.manifest["files"]

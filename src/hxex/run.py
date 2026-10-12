@@ -9,16 +9,26 @@ depend on how the data was split (tests/test_run.py). The chunk size is set by a
 (by default a share of the free GPU memory, or a fixed amount on the CPU) and can be capped.
 
 Progress is reported as ``progress(done, 1000)``: picking, the fit and the bootstrap each take a
-share of the 1000 units (about 5, 30 and 65 with a bootstrap; 5 and 95 without), divided between
-chunks by their number of measurements. It is an estimate of the time, not a count of work.
-``cancel`` is polled throughout and raises :class:`~hxex.hooks.Cancelled`; nothing is written
-then.
+share of the 1000 units (about 5, 30 and 65 with a bootstrap; 5 and 95 without; the last 10 are
+the controls, the quality flags, writing and figures), divided between chunks by their number of
+measurements. It is an estimate of the time, not a count of work.
+A hook with a ``start_stage`` method, such as :class:`~hxex.hooks.ProgressLog`, is also told the
+stages and their units (see :func:`~hxex.hooks.start_stage`): ``pick``, ``fit``, ``bootstrap``,
+``controls and quality``, ``write fits``, ``write`` and ``figures``. ``cancel`` is polled
+throughout and raises :class:`~hxex.hooks.Cancelled`.
+
+With a bundle (``out``) and a bootstrap, the bundle is first written as soon as the fits, the
+controls and the quality flags are done, marked as waiting for its bootstrap
+(:attr:`~hxex.io.Bundle.pending`), and written again, complete, at the end. A run stopped or
+failed during the bootstrap leaves that bundle, and :func:`resume_bootstrap` adds the bootstrap
+without fitting again. Stopped before, nothing is written.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,7 +45,7 @@ from .bootstrap import (
 )
 from .controls import ControlConfig, ControlTable, fit_controls
 from .fit import FitConfig, FitResult, Measurements, fit_models
-from .hooks import CancelHook, ProgressHook, check_cancel, report
+from .hooks import CancelHook, ProgressHook, check_cancel, report, start_stage
 from .picking import (
     DEFAULT_PICKER_CONFIG,
     BinnedSet,
@@ -55,6 +65,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 UNITS = 1000  # the ``total`` of the progress hook
+_FINISH = 10  # the last units: controls, quality flags, writing, figures
 CPU_BUDGET = 4 * 2**30  # bytes per chunk on the CPU unless set
 GPU_SHARE = 0.5  # share of the free GPU memory used by one chunk unless set
 # memory of the fit (the bootstrap needs less) in units of one pmf array: measured on the GPU,
@@ -189,8 +200,11 @@ class RunResult:
         project: str | None = None,
         notes: str = "",
         overwrite: bool = False,
+        pending: Sequence[str] = (),
+        review=None,
     ) -> Path:
-        """Write the results bundle (see :mod:`hxex.io.bundle`); ``spectra`` adds the raw data."""
+        """Write the results bundle (see :mod:`hxex.io.bundle`); ``spectra`` adds the raw data,
+        ``pending`` and ``review`` are as for :func:`~hxex.io.write_bundle`."""
         from .io.bundle import write_bundle
 
         return write_bundle(
@@ -201,7 +215,7 @@ class RunResult:
             run_config=self.config.to_dict(),
             spectra_source=self.spectra_source if spectra is None or spectra.source is None
             else spectra.source,
-            project=project, notes=notes, overwrite=overwrite,
+            project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
         )
 
 
@@ -283,6 +297,90 @@ def _bootstrap_ks(config: RunConfig, fit: FitResult) -> list[int]:
     return list(fit.k_values) if config.bootstrap.ks == "all" else list(config.bootstrap.ks)
 
 
+@dataclass
+class _Plan:
+    """The chunks of an analysis and its progress units: the fit's share of ``progress_range``
+    and, per chunk, its edges (fraction of the measurements before it)."""
+
+    chunks: list[np.ndarray]
+    subs: list[Measurements]
+    edges: np.ndarray
+    lo: float
+    hi: float
+    fit_share: float
+
+
+def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
+    k_max = config.fit.k_max
+    itemsize = config.fit.backend.torch_dtype().itemsize
+    chunks = plan_chunks(data, k_max, itemsize, default_budget(config), config.max_chunk)
+    log.info("%d measurements in %d chunk(s)", len(data), len(chunks))
+    sizes = np.array([len(c) for c in chunks], dtype=float)
+    edges = np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()])
+    lo, hi = progress_range
+    return _Plan(chunks, [data.select(rows) for rows in chunks], edges, lo, hi,
+                 0.3 if config.bootstrap is not None else 1.0)
+
+
+def _fit_part(
+    data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm
+) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
+    """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
+    need the bootstrap)."""
+    lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
+    fits: list[FitResult] = []
+    start_stage(progress, "fit", lo, lo + (hi - lo) * share)
+    for j, sub in enumerate(plan.subs):
+        check_cancel(cancel)
+        a = lo + (hi - lo) * share * edges[j]
+        b = lo + (hi - lo) * share * edges[j + 1]
+        fits.append(fit_models(sub, config.fit, progress=_Span(progress, a, b), cancel=cancel))
+    fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, plan.chunks)
+    check_cancel(cancel)
+    at = lo + (hi - lo) * share
+    start_stage(progress, "controls and quality", at, at)
+    controls = None
+    if config.controls is not None:
+        controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls)
+    quality = None
+    if config.quality is not None:
+        quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
+    return fits, fit, controls, quality
+
+
+def _bootstrap_part(
+    config: RunConfig, plan: _Plan, fits: Sequence[FitResult], progress, cancel
+) -> tuple[BootstrapResult | None, dict[int, BootstrapResult] | None]:
+    """Bootstrap every chunk from its fit (``fits``, one per chunk) and merge."""
+    if config.bootstrap is None:
+        return None, None
+    lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
+    boots: list[BootstrapResult] = []
+    fixed: list[dict[int, BootstrapResult]] = []
+    ks = _bootstrap_ks(config, fits[0])
+    start_stage(progress, "bootstrap", lo + (hi - lo) * share, hi)
+    for j, (sub, fit) in enumerate(zip(plan.subs, fits, strict=True)):
+        check_cancel(cancel)
+        a = lo + (hi - lo) * (share + (1 - share) * edges[j])
+        b = lo + (hi - lo) * (share + (1 - share) * edges[j + 1])
+        hook = _Span(progress, a, b)
+        if not ks:
+            boots.append(bootstrap(sub, fit, config.bootstrap, progress=hook, cancel=cancel))
+            continue
+        # every selected K must be covered: add the missing ones (not requested for output)
+        extra = sorted(set(int(k) for k in fit.selected_K) - set(ks))
+        done = bootstrap_by_k(sub, fit, [*ks, *extra], config.bootstrap, progress=hook,
+                              cancel=cancel)
+        boots.append(selected_from(fit, done))
+        fixed.append({k: done[k] for k in ks})
+    boot = boots[0] if len(boots) == 1 else BootstrapResult.merge(boots, plan.chunks)
+    by_k = None
+    if fixed:
+        by_k = {k: fixed[0][k] if len(fixed) == 1
+                else BootstrapResult.merge([f[k] for f in fixed], plan.chunks) for k in ks}
+    return boot, by_k
+
+
 def analyse(
     data: Measurements,
     config: RunConfig,
@@ -301,54 +399,9 @@ def analyse(
     """Fit (and bootstrap) ``data`` in chunks of whole series, then the controls and the quality
     flags of the merged result (``mz_offset_ppm``, the picker's offset of every measurement,
     for the m/z screen). The chunking does not change the result."""
-    k_max = config.fit.k_max
-    itemsize = config.fit.backend.torch_dtype().itemsize
-    chunks = plan_chunks(data, k_max, itemsize, default_budget(config), config.max_chunk)
-    log.info("%d measurements in %d chunk(s)", len(data), len(chunks))
-    lo, hi = progress_range
-    fit_share = 0.3 if config.bootstrap is not None else 1.0
-    sizes = np.array([len(c) for c in chunks], dtype=float)
-    edges = np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()])
-    subs = [data.select(rows) for rows in chunks]
-    fits: list[FitResult] = []
-    for j, sub in enumerate(subs):  # every fit, then every bootstrap, so progress only increases
-        check_cancel(cancel)
-        a = lo + (hi - lo) * fit_share * edges[j]
-        b = lo + (hi - lo) * fit_share * edges[j + 1]
-        fits.append(fit_models(sub, config.fit, progress=_Span(progress, a, b), cancel=cancel))
-    boots: list[BootstrapResult] = []
-    fixed: list[dict[int, BootstrapResult]] = []
-    ks = _bootstrap_ks(config, fits[0])
-    if config.bootstrap is not None:
-        for j, (sub, fit) in enumerate(zip(subs, fits, strict=True)):
-            check_cancel(cancel)
-            a = lo + (hi - lo) * (fit_share + (1 - fit_share) * edges[j])
-            b = lo + (hi - lo) * (fit_share + (1 - fit_share) * edges[j + 1])
-            hook = _Span(progress, a, b)
-            if not ks:
-                boots.append(bootstrap(sub, fit, config.bootstrap, progress=hook, cancel=cancel))
-                continue
-            # every selected K must be covered: add the missing ones (not requested for output)
-            extra = sorted(set(int(k) for k in fit.selected_K) - set(ks))
-            done = bootstrap_by_k(sub, fit, [*ks, *extra], config.bootstrap, progress=hook,
-                                  cancel=cancel)
-            boots.append(selected_from(fit, done))
-            fixed.append({k: done[k] for k in ks})
-    fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, chunks)
-    boot = None
-    if boots:
-        boot = boots[0] if len(boots) == 1 else BootstrapResult.merge(boots, chunks)
-    by_k = None
-    if fixed:
-        by_k = {k: fixed[0][k] if len(fixed) == 1
-                else BootstrapResult.merge([f[k] for f in fixed], chunks) for k in ks}
-    check_cancel(cancel)
-    controls = None
-    if config.controls is not None:
-        controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls)
-    quality = None
-    if config.quality is not None:
-        quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
+    plan = _plan(data, config, progress_range)
+    fits, fit, controls, quality = _fit_part(data, config, plan, progress, cancel, mz_offset_ppm)
+    boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
     return fit, boot, by_k, controls, quality
 
 
@@ -397,6 +450,7 @@ def run(
             log.warning("%d of %d series took their envelope from the fallback or the theory",
                         n_back, len(envelopes))
     if raw is not None:
+        start_stage(progress, "pick", 0.0, UNITS * pick_share)
         binned = pick_spectra(
             raw, config.picker, registry=config.registry, clusters=clusters,
             progress=_Span(progress, 0.0, UNITS * pick_share), cancel=cancel,
@@ -418,22 +472,102 @@ def run(
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
     )
-    fit, boot, by_k, controls, quality = analyse(
-        measurements, config, progress=progress, cancel=cancel,
-        progress_range=(UNITS * pick_share, float(UNITS)),
-        mz_offset_ppm=binned.mz_offset_ppm[kept],
-    )
+    plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
+    fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
+                                             binned.mz_offset_ppm[kept])
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
-        measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
+        measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
         controls=controls, quality=quality, envelopes=envelopes,
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
     )
-    if out is not None:
-        result.write(out, spectra=raw if keep_spectra else None, project=project, notes=notes,
-                     overwrite=overwrite)
-    if config.plots is not None:
+    spectra = raw if keep_spectra else None
+    checkpoint = out is not None and config.bootstrap is not None
+    if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)
+        at = plan.lo + (plan.hi - plan.lo) * plan.fit_share
+        start_stage(progress, "write fits", at, at)
+        result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
+                     pending=("bootstrap",))
+        overwrite = True
+    try:
+        boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
+    except BaseException:
+        if checkpoint:
+            log.warning("the bootstrap did not finish: the fits are in %s, and "
+                        "hxex.run.resume_bootstrap adds the bootstrap to them", out)
+        raise
+    result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
+    return _finish(result, out, spectra=spectra, project=project, notes=notes,
+                   overwrite=overwrite, figures_dir=figures_dir, raw=raw, reference=reference,
+                   progress=progress, cancel=cancel)
+
+
+def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, figures_dir, raw,
+            reference, progress, cancel, review=None) -> RunResult:
+    """Write the bundle (if ``out``) and the figures (if the run asks for them)."""
+    if out is not None:
+        check_cancel(cancel)
+        start_stage(progress, "write", UNITS - _FINISH, UNITS)
+        result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
+                     review=review)
+    if result.config.plots is not None:
+        check_cancel(cancel)
+        start_stage(progress, "figures", UNITS - _FINISH, UNITS)
         result.write_figures(figures_dir, spectra=raw, reference=reference, cancel=cancel)
     report(progress, UNITS, UNITS)
     return result
+
+
+def resume_bootstrap(
+    path: str | Path,
+    *,
+    bootstrap: BootstrapConfig | None = None,
+    figures_dir: str | Path | None = None,
+    reference: Reference | None = None,
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+) -> RunResult:
+    """Add the bootstrap to the bundle a run wrote before its bootstrap (its ``pending`` is
+    ``['bootstrap']``: the run was stopped or failed during the bootstrap), and rewrite it
+    complete. The fits are not repeated, and the result is the one the run would have given
+    (each measurement is seeded from its own id). The bootstrap settings are the run's unless
+    ``bootstrap`` is given. The stored spectra, notes and review are kept; figures are written
+    as by :func:`run` when the run's settings ask for them."""
+    from .io.bundle import open_bundle
+
+    path = Path(path)
+    with open_bundle(path) as b:
+        if "bootstrap" not in b.pending:
+            raise ValueError(f"{path}: no bootstrap is pending (the bundle is complete)")
+        if b.manifest["configs"].get("run") is None:
+            raise ValueError(f"{path}: the bundle does not record its run settings")
+        config = RunConfig.from_dict(b.manifest["configs"]["run"])
+        if bootstrap is not None:
+            config = dataclasses.replace(config, bootstrap=bootstrap)
+        if config.bootstrap is None:
+            raise ValueError("the run had no bootstrap settings: give bootstrap=")
+        measurements, fit, binned = b.measurements(), b.fit(), b.binned()
+        if binned is None:
+            raise ValueError(f"{path}: the bundle has no picked spectra")
+        controls, quality, envelopes = b.controls(), b.quality(), b.envelopes()
+        spectra = b.spectra() if b.has("spectra") else None
+        review = b.review() if b.has("review") else None
+        source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
+    if config.plots is not None and figures_dir is None:
+        figures_dir = path.with_name(path.name + "_figures")
+    kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
+    reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
+                      np.where(~kept, "no_signal", "")).astype(str)
+    plan = dataclasses.replace(_plan(measurements, config, (0.0, float(UNITS - _FINISH))),
+                               fit_share=0.0)
+    boot, by_k = _bootstrap_part(config, plan, [fit.select(rows) for rows in plan.chunks],
+                                 progress, cancel)
+    result = RunResult(
+        config=config, binned=binned, kept=kept, dropped_reason=reason,
+        measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
+        controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
+    )
+    return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
+                   figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,
+                   cancel=cancel, review=review)

@@ -30,7 +30,10 @@ of every file.
 
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
 `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
-`n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
+`n_measurements`, `pending` (the stages the run has still to add: `["bootstrap"]` for the
+bundle a run writes as soon as its fits are done, which it rewrites complete at the end, or
+`hxex.run.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
+when complete), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and
@@ -40,7 +43,9 @@ picker settings, modification registry, `series` (each `data_id` with its sample
 position, which ties a result to its precursor and activation), `record_paths` (`path` as
 given, `relative` to a data root, or `name` only, for results to be shared) and `files` (each
 run's file `name`, `size`, `checksum` and `algorithm`: the indexed mzML file's own SHA-1 when
-it has one, else SHA-256). `hxex.io.read_mzml_source` reads it again, finding the files by
+it has one, else SHA-256); `read_thermo` records the same with `reader` `thermo`, the
+RawFileReader version as `thermo_reader`, and each `.raw` file's SHA-256.
+`hxex.io.read_mzml_source` (or `read_thermo_source`) reads it again, finding the files by
 path, relative to a data root, or by name in a directory; a file whose size or checksum
 differs is read with a warning, or refused with `on_change="error"`, and its new entry in
 `files` keeps the old identity under `previous`; for `read_spectra` (HX-Express, SpecExport,

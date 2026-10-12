@@ -1275,6 +1275,28 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       .NET hosting (as the Rust `thermorawfilereader` does), a helper process, or decoding the
       format; or a written answer from Thermo.
 
+44. **Progress display (2026-10-12).** The hooks reported a fraction only, with fixed shares of
+    the 1000 units per stage (fit 30, bootstrap 65), so a display could neither name the stage
+    nor estimate the time left: on the intact-peptide benchmark the CPU fit took 77 min and the
+    bootstrap over 3 h (item 32). `hxex.hooks.start_stage` now tells a hook that has a
+    `start_stage(name, start, end)` method which units are which stage (plain functions are
+    unchanged); `run` names `pick`, `fit`, `bootstrap`, `controls and quality`, `write` and
+    `figures`, and keeps the last 10 units for the stages after the bootstrap, so the total is
+    reached only at the very end. `hxex.hooks.ProgressLog` is such a hook: through `logging`
+    (logger `hxex.progress`) it logs each stage's start and end, and at most every 30 s the
+    stage's percent, time taken and time left, estimated from that stage's own rate.
+    - Results were written only at the very end, so a run stopped or failed during the bootstrap
+      lost its fits (77 min on the CPU benchmark). The controls and quality flags need only the
+      fits, so a run with a bundle and a bootstrap now goes fit, controls and quality, writes the
+      bundle with `pending: ["bootstrap"]` in the manifest (`Bundle.pending`), bootstraps, and
+      rewrites it complete (bundle writes were already atomic: a temporary directory moved into
+      place). Stopped during the bootstrap, the fit bundle stays and the log says so;
+      `hxex.run.resume_bootstrap(path)` bootstraps it with the recorded run settings (or new
+      bootstrap settings) and rewrites it, keeping the stored spectra, notes and review, with the
+      same result as an uninterrupted run (tests/test_run.py). Stopped before the fits are done,
+      nothing is written, as before. `FitResult.select` (the inverse of `merge`) splits a stored
+      fit into chunks. The bundle is written twice (6 s on the benchmark).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

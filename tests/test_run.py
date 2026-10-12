@@ -16,7 +16,7 @@ from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import PickerConfig, pick_spectra, plan_bins
 from hxex.quality import QualityConfig
-from hxex.run import RunConfig, chunk_bytes, plan_chunks, run
+from hxex.run import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_bundle import envelope
 from test_picking import sticks
@@ -146,6 +146,37 @@ def test_progress_is_monotone_to_the_end_and_cancel_stops_cleanly(tmp_path):
     with pytest.raises(Cancelled):
         run(raw, config(), out=out, cancel=lambda: len(stop) > 0 or stop.append(1) or False)
     assert not out.exists()
+
+
+def test_the_stages_are_named_in_order_and_cover_the_units(tmp_path):
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def start_stage(self, name, start, end):
+            self.calls.append(("stage", name, start, end))
+
+        def __call__(self, done, total):
+            self.calls.append(("done", done, total))
+
+    rec = Recorder()
+    run(raw_spectra(n_series=2), config(max_chunk=1), out=tmp_path / "b", progress=rec)
+    stages = [c for c in rec.calls if c[0] == "stage"]
+    assert [c[1] for c in stages] == ["pick", "fit", "controls and quality", "write fits",
+                                      "bootstrap", "write"]
+    ends = [(c[2], c[3]) for c in stages]
+    assert ends[0][0] == 0 and all(a <= b for a, b in ends)
+    assert all(e[1] <= f[0] + 1e-9 for e, f in zip(ends, ends[1:], strict=False))
+    # every report lies in the stage it belongs to (to the rounding of the units), and only the
+    # very last one reaches the total (so a display does not finish before writing)
+    stage = None
+    for c in rec.calls:
+        if c[0] == "stage":
+            stage = c
+        else:
+            assert stage[2] - 1 <= c[1] <= stage[3] + 1
+    done = [c[1] for c in rec.calls if c[0] == "done"]
+    assert done.count(1000) == 1 and rec.calls[-1] == ("done", 1000, 1000)
 
 
 def test_the_bundle_is_written_and_records_the_run(tmp_path):
@@ -296,3 +327,49 @@ def test_write_bundle_refuses_a_wrong_fixed_k_result(tmp_path, whole):
     with pytest.raises(BundleError, match="fixed-K"):
         write_bundle(tmp_path / "x", measurements=res.measurements, fit=res.fit,
                      bootstrap_by_k={2: res.bootstrap})  # the selected-K result is not at K=2
+
+
+def test_the_fits_are_written_before_the_bootstrap_and_resumed(tmp_path, whole, caplog):
+    raw, res = whole
+    out = tmp_path / "b"
+    in_bootstrap = []
+
+    class StopInBootstrap:
+        def start_stage(self, name, start, end):
+            in_bootstrap.append(name == "bootstrap")
+
+        def __call__(self, done, total):
+            pass
+
+    hook = StopInBootstrap()
+    with caplog.at_level(logging.WARNING, logger="hxex.run"), pytest.raises(Cancelled):
+        run(raw, config(), out=out, progress=hook,
+            cancel=lambda: bool(in_bootstrap) and in_bootstrap[-1])
+    assert "resume_bootstrap" in caplog.text
+    with open_bundle(out) as b:  # the fits, controls and flags, waiting for the bootstrap
+        assert b.pending == ["bootstrap"] and b.bootstrap() is None
+        assert b.has("spectra") and b.controls() is not None and b.quality() is not None
+        np.testing.assert_array_equal(b.fit().selected_K, res.fit.selected_K)
+    done = resume_bootstrap(out)
+    with open_bundle(out) as b:
+        assert b.pending == [] and b.has("spectra")
+        boot = b.bootstrap()
+    for got in (done.bootstrap, boot):  # as if the run had not been stopped
+        np.testing.assert_allclose(got.mean_se, res.bootstrap.mean_se, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(got.curve_hi, res.bootstrap.curve_hi, rtol=1e-6, atol=1e-8)
+    assert list(done.dropped_reason) == list(res.dropped_reason) and done.kept.all()
+    with pytest.raises(ValueError, match="no bootstrap is pending"):
+        resume_bootstrap(out)
+
+
+def test_a_finished_run_and_a_run_without_bootstrap_have_nothing_pending(tmp_path):
+    raw = raw_spectra(n_series=1)
+    run(raw, config(bootstrap=None), out=tmp_path / "a")
+    with open_bundle(tmp_path / "a") as b:
+        assert b.pending == [] and b.bootstrap() is None
+    with pytest.raises(ValueError, match="no bootstrap is pending"):
+        resume_bootstrap(tmp_path / "a")
+    stop = []
+    with pytest.raises(Cancelled):  # stopped during the fit: nothing is written
+        run(raw, config(), out=tmp_path / "c", cancel=lambda: len(stop) > 0 or stop.append(1))
+    assert not (tmp_path / "c").exists()

@@ -120,6 +120,27 @@ class FitResult:
             n_max=cat("n_max"), noise_kind=cat("noise_kind"), noise_estimate=estimate,
         )
 
+    def select(self, rows) -> FitResult:
+        """The result of the measurements at the positions ``rows`` (in that order), as if
+        they had been fitted alone (the inverse of :meth:`merge`)."""
+        rows = np.asarray(rows, dtype=np.int64)
+        fits = {k: dataclasses.replace(f, **{name: getattr(f, name)[rows]
+                                             for name in _KFIT_ARRAYS})
+                for k, f in self.fits.items()}
+        estimate = None
+        if self.noise_estimate is not None:
+            estimate = NoiseEstimate(**{
+                f.name: getattr(self.noise_estimate, f.name)[rows]
+                for f in dataclasses.fields(NoiseEstimate)
+            })
+        return dataclasses.replace(
+            self, spectrum_id=self.spectrum_id[rows], data_id=self.data_id[rows],
+            time=self.time[rows], fits=fits, selected_K=self.selected_K[rows],
+            score=self.score[rows], obs_scale=self.obs_scale[rows],
+            sample_size=self.sample_size[rows], n_max=self.n_max[rows],
+            noise_kind=self.noise_kind[rows], noise_estimate=estimate,
+        )
+
     def grid(self, name: str) -> np.ndarray:
         """``nll``, ``bic``, ``aic`` or ``passes_min_pop`` for every K tried, ``(M, nK)``."""
         return np.column_stack([getattr(self.fits[k], name) for k in self.k_values])
