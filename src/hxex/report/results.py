@@ -53,7 +53,8 @@ class Settings:
 
         return cls(
             project=project, created=datetime.now(UTC).isoformat(timespec="seconds"),
-            notes=notes, versions=_versions(), configs={"run": run.config.to_dict()},
+            notes=notes, versions=_versions(),
+            configs={"run": run.config.to_dict(), "spectra_source": run.spectra_source},
         )
 
     @property
@@ -63,6 +64,11 @@ class Settings:
 
         data = self.configs.get("run")
         return None if data is None else RunConfig.from_dict(data)
+
+    @property
+    def spectra_source(self) -> dict | None:
+        """How the raw spectra were read (:attr:`hxex.spectra.SpectrumSet.source`), or None."""
+        return self.configs.get("spectra_source")
 
     @property
     def picker(self) -> PickerConfig | None:

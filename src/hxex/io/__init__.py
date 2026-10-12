@@ -19,6 +19,7 @@ from .hxexpress import (
     read_hxexpress_file,
     scan_hxexpress,
 )
+from .identity import directory_identity
 from .mzml import (
     MzmlConfig,
     MzmlError,
@@ -35,7 +36,7 @@ from .mzml import (
     sum_profile,
 )
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
-from .read import read_spectra, scan
+from .read import read_source, read_spectra, read_spectra_source, scan
 from .specexport import (
     parse_specexport_filename,
     read_specexport_dir,
@@ -55,6 +56,7 @@ __all__ = [
     "MzmlRun",
     "MzmlTarget",
     "ScanTable",
+    "directory_identity",
     "file_identity",
     "iter_scans",
     "mzml_series_targets",
@@ -86,7 +88,9 @@ __all__ = [
     "read_hxexpress_file",
     "read_peptide_table",
     "read_specexport_dir",
+    "read_source",
     "read_spectra",
+    "read_spectra_source",
     "scan",
     "scan_hxexpress",
     "scan_specexport",

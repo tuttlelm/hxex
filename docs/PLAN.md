@@ -1284,21 +1284,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     method in docs/PEAK_PICKING.md).** Fragment spectra hold several ion types one hydrogen apart
     (c-1, c′, c+1; z, z•, z′); pyHXExpress handled this with `NA_envelope` `mixedN` (and `infer`).
     The fragment offsets of item 34 came from this: with the right type, fragments of an
-    undeuterated reference sit within 1 to 3 ppm. hxex fits the weights of `components` types
-    (the lightest given) to the series' undeuterated references (non-negative least squares,
-    three rounds of picking and fitting), falls back to the spectra at `envelope_fallback_time`
-    (the end-state run; the owner: a fallback when the undeuterated control is missing or poor)
-    and then to the theory, both marked; the mixture sets the picker's positions and the fit's
-    envelope (`infer` uses the reference envelope in the fit). `RunConfig.envelope`, the
-    `envelopes` bundle table. Checked on a 12-residue peptide (ETD, back-exchange kinetics, one
-    replicate, private data): short fragments almost pure c′ and z•, the longest about one third
-    c′ (z•) and two thirds c+1 (z′); misfit below 3 % with three types against 80 to 97 % with one;
-    deuteration of c fragments within 0.07 D of pyHXExpress for 10 of 11, z fragments 0.05 to
-    0.23 D higher (open). The mzML reader gained `filter_excludes` and `filter_contains` on
-    targets (scan types such as with or without in-source activation, Thermo's `sid=`;
-    activation short names now match exactly, so `ETD` no longer also selects EThcD scans),
-    `min_time` (leave out
-    early time points) and `max_spectra` (time points sampled evenly in log time, only those
+    undeuterated reference sit within 1 to 3 ppm. hxex fits the weights of `components` types (the
+    lightest given) to the series' undeuterated references (non-negative least squares, three rounds
+    of picking and fitting), falls back to the spectra at `envelope_fallback_time` (the end-state
+    run; the owner: a fallback when the undeuterated control is missing or poor) and then to the
+    theory, both marked; the mixture sets the picker's positions and the fit's envelope (`infer`
+    uses the reference envelope in the fit). `RunConfig.envelope`, the `envelopes` bundle table.
+    Checked on a 12-residue peptide (ETD, back-exchange kinetics, one replicate, private data):
+    short fragments almost pure c′ and z•, the longest about one third c′ (z•) and two thirds c+1
+    (z′); misfit below 3 % with three types against 80 to 97 % with one; deuteration of c fragments
+    within 0.07 D of pyHXExpress for 10 of 11, z fragments 0.05 to 0.23 D higher (most likely
+    pyHXExpress's, item 41). The mzML reader gained `filter_excludes` and `filter_contains` on
+    targets (scan types such as with or without in-source activation, Thermo's `sid=`; activation
+    short names now match exactly, so `ETD` no longer also selects EThcD scans), `min_time` (leave
+    out early time points) and `max_spectra` (time points sampled evenly in log time, only those
     scans read), for the kinetics runs. Next: the z offset, the other fragmentation types and
     peptides, fragment target generation (done, item 36), and exchange-rate fitting.
 
@@ -1374,7 +1373,8 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       pyHXExpress's.
     - Both programs see c4 higher (0.45 against 0.14 D at the start) and z6, z8 about 0.6 D lower
       from the 4+ precursor than from the 3+: a property of the data (for example hydrogen
-      scrambling depending on the precursor charge), not of either program; open.
+      scrambling depending on the precursor charge), not of either program. The owner: it may
+      well depend on the charge; noted, no action.
     - EThcD 2+: the undeuterated file records charge 3 for its 2+ precursor, so a
       charge filter selected nothing; `fragment_targets(precursor_charge=None)` selects by the
       other conditions. Then z7, z8 0.11 D higher. Only 8 fragments in pyHXExpress's list.
@@ -1399,6 +1399,43 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes`; the
     default `'target'` keeps the target's, None removes the condition; recorded with the read):
     one read with `filter_excludes=None` on the control gives the same spectra.
+
+41. **The z-fragment offset: a closure test (2026-10-12; private fragment dataset).** In ETD every
+    atom of the precursor ends up in the c or the z fragment, so at each scan the deuteration of
+    c_i plus that of its complement z_(n-i) equals the precursor's, whatever hydrogen scrambling
+    or transfer happens. This checks fragments without a reference program. With the unreacted
+    precursor (charge-reduced species need not carry the same deuteration): on the 12-residue
+    peptide (ETD 3+), where hxex's z fragments were 0.05 to 0.23 D above pyHXExpress's, hxex closes
+    within 0.10 D for every 1+ pair (median over scans -0.01 to -0.10) and pyHXExpress misses by
+    up to +0.21 D (its precursor is 0.26 D below hxex's, its z fragments lower, its c fragments the
+    same). Where the two programs' z fragments agree, they close alike: 8-residue peptide ETD 3+
+    -0.07 (hxex) and +0.04 (pyHXExpress), 24-residue peptide ETD 5+ -0.19 and -0.16. So the z
+    offset of items 35 and 39 is most likely pyHXExpress's (its envelope reference and ion-type
+    set); the 14-residue peptide's z offset (item 40) cannot be tested (no usable c fragments).
+    The 2+ z fragments that the m/z screen flagged do not close in either program. A closure check
+    could become a fragment-level quality measure (open).
+
+42. **Read records for every format, target columns, and the m/z-flagged series (2026-10-12).**
+    - `read_spectra` (HX-Express, SpecExport, pooled) now records its read like `read_mzml`: the
+      format, project, data directory (`record_paths` `'path'` or `'name'`), entries, filters,
+      control times, and each entry's input identity (`hxex.io.identity`: an HX-Express file's
+      SHA-256; a SpecExport folder as a whole, its file count, size and one SHA-256 over every
+      file's relative name and contents). `read_spectra_source` repeats it, warning about (or,
+      with `on_change='error'`, refusing) a changed input and keeping the old identity under
+      `previous`; `read_source` repeats a read of any format. On the intact-peptide benchmark
+      (1,376 entries, 26,333 spectra) hashing costs about 1 s of a 32 s read and the record is
+      0.46 MB.
+    - Result tables of mzML reads (`spectra_table` and the others built on the index columns)
+      add `fragment`, `ms_level`, `activation`, `precursor_mz` and `precursor_charge` (0 or NaN
+      where the target set none), from the read record's series map; other formats are unchanged.
+    - The m/z screen on the whole intact-peptide benchmark: 35 of 1,376 series (2.5 %; run
+      calibration +5.2 ppm), 27 of them 2+ (half the dataset is 2+), weak (median at the 26th
+      intensity percentile) and noisy (offset spread within the series 16.6 ppm against 4.8). 25
+      have different offsets in the undeuterated and the deuterated spectra (an overlapping
+      species or noise, which deuteration moves relative to the peptide); 10 have one offset
+      throughout (a wrong composition or assignment). 8 peptide ranges are flagged in two or more
+      series (of 51 series of those ranges), which points at the peptide rather than a spectrum.
+      Individual series were not examined.
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

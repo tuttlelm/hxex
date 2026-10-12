@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""One entry point over both input formats."""
+"""One entry point over the folder formats (HX-Express, SpecExport, pooled SpecExport), and the
+repetition of a recorded read of any format (:func:`read_source`)."""
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -12,7 +14,9 @@ from typing import Literal
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
 from .entries import filter_entries
+from .errors import ReadError
 from .hxexpress import read_hxexpress_file, scan_hxexpress
+from .identity import CHANGE_ACTIONS, compare_identity, identity
 from .pooled import scan_specexport_pooled
 from .specexport import read_specexport_dir, scan_specexport
 from .times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME
@@ -44,6 +48,9 @@ def scan(
     raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
 
 
+PATH_MODES = ("path", "name")
+
+
 def read_spectra(
     entries: Sequence[PeptideEntry],
     data_dir: str | Path,
@@ -54,6 +61,7 @@ def read_spectra(
     undeut_time: float = DEFAULT_UNDEUT_TIME,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    record_paths: str = "path",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> SpectrumSet:
@@ -67,32 +75,122 @@ def read_spectra(
     ``fulldeut_time`` are the times given to the control labels (``undeut``/``Non`` and
     ``TD``/``Full``); they must differ. Raises
     :class:`~hxex.hooks.Cancelled` if ``cancel`` returns True between entries.
+
+    The spectra's ``source`` records the read (the format, ``project``, the data directory, the
+    entries, the filters and the control times) and the identity of every entry's input (its
+    HX-Express file, or its SpecExport folder: :mod:`hxex.io.identity`), so that
+    :func:`read_spectra_source` repeats it and notices a changed input. ``record_paths`` is
+    ``'path'`` (the data directory as given) or ``'name'`` (its name only, for results to be
+    shared; the read is then repeated with ``directory``).
     """
     if fmt not in ("hxexpress", "specexport", "pooled"):
         raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
+    if record_paths not in PATH_MODES:
+        raise ValueError(f"record_paths must be one of {', '.join(PATH_MODES)}")
     qualify_spectrum_id(project, "")  # validate the name before any reading
     if undeut_time == fulldeut_time:
         raise ValueError("undeut_time and fulldeut_time must differ")
     root = Path(data_dir)
+    return _read(entries, root, fmt, project=project, fulldeut_time=fulldeut_time,
+                 undeut_time=undeut_time, samples=samples, peptide_ranges=peptide_ranges,
+                 recorded_dir=str(root) if record_paths == "path" else root.name,
+                 record_paths=record_paths, known=None, on_change="warn", progress=progress,
+                 cancel=cancel)
+
+
+def _input_path(fmt: str, entry: PeptideEntry) -> str:
+    """The entry's input relative to the data directory: a file or a folder."""
+    if fmt == "hxexpress" or fmt == "pooled":
+        return entry.file
+    return f"{entry.sample}/{entry.file}"
+
+
+def _read(entries, root: Path, fmt: str, *, project, fulldeut_time, undeut_time, samples,
+          peptide_ranges, recorded_dir: str, record_paths: str, known: Mapping | None,
+          on_change: str, progress, cancel) -> SpectrumSet:
     kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges)
     wanted = {id(e) for e in kept}
     jobs = [(i, e) for i, e in enumerate(entries) if id(e) in wanted]
     spectra: list[Spectrum] = []
+    files: dict[str, dict] = {}
     for done, (data_id, entry) in enumerate(jobs):
         check_cancel(cancel)
         log.info("reading %s %s z=%d", entry.sample, entry.peptide_range, entry.charge)
+        rel = _input_path(fmt, entry)
+        if rel not in files:  # several entries can share one HX-Express file
+            if not (root / rel).exists():
+                raise ReadError(f"{root / rel} not found (give the directory that holds the "
+                                "data)")
+            files[rel] = (identity(root / rel) if known is None
+                          else compare_identity(root / rel, known.get(rel), on_change,
+                                                ReadError))
         if fmt == "hxexpress":
             spectra += read_hxexpress_file(
-                root / entry.file, entry, data_id=data_id, fulldeut_time=fulldeut_time,
+                root / rel, entry, data_id=data_id, fulldeut_time=fulldeut_time,
                 undeut_time=undeut_time,
             )
         else:
-            rel = entry.file if fmt == "pooled" else f"{entry.sample}/{entry.file}"
             spectra += read_specexport_dir(
                 root / rel, entry, data_id=data_id, fulldeut_time=fulldeut_time,
                 undeut_time=undeut_time, id_prefix=rel,
             )
         report(progress, done + 1, len(jobs))
+    source = {
+        "reader": fmt,
+        "project": project,
+        "data_dir": recorded_dir,
+        "record_paths": record_paths,
+        "entries": [e.to_dict() for e in entries],
+        "samples": None if samples is None else list(samples),
+        "peptide_ranges": None if peptide_ranges is None else list(peptide_ranges),
+        "fulldeut_time": float(fulldeut_time),
+        "undeut_time": float(undeut_time),
+        "files": files,
+    }
     return SpectrumSet.from_spectra(
-        replace(s, spectrum_id=qualify_spectrum_id(project, s.spectrum_id)) for s in spectra
+        (replace(s, spectrum_id=qualify_spectrum_id(project, s.spectrum_id)) for s in spectra),
+        source=json.loads(json.dumps(source)),
     )
+
+
+def read_spectra_source(
+    source: Mapping,
+    *,
+    directory: str | Path | None = None,
+    on_change: str = "warn",
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+) -> SpectrumSet:
+    """Repeat the read recorded in the ``source`` of spectra made by :func:`read_spectra` (from
+    the spectra, a spectra file or a results bundle), from the recorded data directory or from
+    ``directory`` (data that has moved, or a record of the name only). Every input is compared
+    with its record: a changed one (data updated between runs) is read with a warning
+    (``on_change='warn'``) or refused (``'error'``, :class:`~hxex.io.ReadError`), and the new
+    record keeps its earlier identity under ``previous``. Unchanged, the record stays as it was.
+    """
+    fmt = source.get("reader")
+    if fmt not in ("hxexpress", "specexport", "pooled"):
+        raise ValueError(f"not a read_spectra record: reader {fmt!r}")
+    if on_change not in CHANGE_ACTIONS:
+        raise ValueError(f"on_change must be one of {', '.join(CHANGE_ACTIONS)}")
+    root = Path(directory) if directory is not None else Path(source["data_dir"])
+    if not root.is_dir():
+        raise ReadError(f"{root} not found (give the directory that holds the data)")
+    return _read(
+        [PeptideEntry.from_dict(e) for e in source["entries"]], root, fmt,
+        project=source["project"], fulldeut_time=source["fulldeut_time"],
+        undeut_time=source["undeut_time"], samples=source.get("samples"),
+        peptide_ranges=source.get("peptide_ranges"), recorded_dir=source["data_dir"],
+        record_paths=source.get("record_paths", "path"), known=source.get("files", {}),
+        on_change=on_change, progress=progress, cancel=cancel,
+    )
+
+
+def read_source(source: Mapping, **kwargs) -> SpectrumSet:
+    """Repeat any recorded read: :func:`~hxex.io.read_mzml_source` for an mzML read,
+    :func:`read_spectra_source` for the folder formats (``kwargs`` as those take)."""
+    if source.get("reader") == "mzml":
+        from .mzml import read_mzml_source
+
+        return read_mzml_source(source, **kwargs)
+    return read_spectra_source(source, **kwargs)

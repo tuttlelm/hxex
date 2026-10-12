@@ -43,7 +43,10 @@ run's file `name`, `size`, `checksum` and `algorithm`: the indexed mzML file's o
 it has one, else SHA-256). `hxex.io.read_mzml_source` reads it again, finding the files by
 path, relative to a data root, or by name in a directory; a file whose size or checksum
 differs is read with a warning, or refused with `on_change="error"`, and its new entry in
-`files` keeps the old identity under `previous`), and
+`files` keeps the old identity under `previous`; for `read_spectra` (HX-Express, SpecExport,
+pooled) the format, project, data directory, entries, filters, control times and `files` (each
+entry's input: an HX-Express file, or a SpecExport folder identified as a whole), repeated by
+`hxex.io.read_spectra_source`; `hxex.io.read_source` repeats either kind), and
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
 ## Tables

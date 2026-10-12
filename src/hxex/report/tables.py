@@ -36,6 +36,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     else:
         for name in names:
             cols[name] = np.array([""] * m)
+    cols.update(_target_columns(results))
     status = results.review.status_of(fit) if results.review is not None else None
     cols["status"] = status if status is not None else np.array(["unreviewed"] * m)
     if results.quality is not None:
@@ -45,6 +46,31 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
                      if getattr(q, n)[i]) for i in range(m)
         ])
     return cols
+
+
+TARGET_COLUMNS = ("fragment", "ms_level", "activation", "precursor_mz", "precursor_charge")
+
+
+def _target_columns(results: Results) -> dict[str, np.ndarray]:
+    """For spectra read from mzML, how each measurement's scans were chosen: the fragment (for
+    example ``c-1:4``, empty for a peptide), the MS level, the activation and the precursor
+    (empty or NaN where the target set none). Nothing for other data."""
+    source = results.settings.spectra_source if results.settings is not None else None
+    if not source or source.get("reader") != "mzml" or "series" not in source:
+        return {}
+    from ..io.mzml import mzml_series_targets
+
+    targets = mzml_series_targets(source)
+    rows = [targets.get(int(d)) for d in results.fit.data_id]
+    return {
+        "fragment": np.array([dict(t.entry.extra).get("fragment", "") if t else "" for t in rows]),
+        "ms_level": np.array([t.ms_level if t else 0 for t in rows], dtype=np.int64),
+        "activation": np.array([(t.activation or "") if t else "" for t in rows]),
+        "precursor_mz": np.array([t.precursor_mz if t and t.precursor_mz is not None
+                                  else np.nan for t in rows], dtype=float),
+        "precursor_charge": np.array([t.precursor_charge if t and t.precursor_charge is not None
+                                      else 0 for t in rows], dtype=np.int64),
+    }
 
 
 def _populations(results: Results, i: int, k: int):

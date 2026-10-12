@@ -69,6 +69,18 @@ class PeptideEntry:
     def __post_init__(self):
         object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
 
+    def to_dict(self) -> dict:
+        out = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+        out["extra"] = dict(self.extra)
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> PeptideEntry:
+        unknown = set(data) - {f.name for f in dataclasses.fields(cls)}
+        if unknown:
+            raise ValueError(f"unknown entry field(s): {', '.join(sorted(unknown))}")
+        return cls(**data)
+
 
 @dataclass(frozen=True)
 class Spectrum:

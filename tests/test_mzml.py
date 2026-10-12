@@ -591,3 +591,33 @@ def test_a_run_can_replace_the_targets_scan_conditions(tmp_path):
     np.testing.assert_array_equal(read_mzml_source(s.source).intensity, s.intensity)
     with pytest.raises(ValueError, match="precursor_charge"):
         MzmlRun(un, "S", precursor_charge="any")
+
+
+def test_result_tables_name_the_fragment_and_precursor(tmp_path):
+    """Results of an mzML read carry how each measurement's scans were chosen."""
+    from hxex.fit import FitConfig
+    from hxex.io import open_bundle
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import PickerConfig
+    from hxex.report import Results, spectra_table
+    from hxex.run import RunConfig, run
+
+    path = write_mzml(tmp_path / "f.mzML", time_course(n=6, ms2_every=2))
+    frag = MzmlTarget(dataclasses.replace(ENTRY, extra={"fragment": "c:10"}), ms_level=2,
+                      activation="ETD", precursor_mz=1012.0, precursor_charge=20)
+    spectra = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
+    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise=100.0), quality=None,
+                    fit=FitConfig(k_min=1, k_max=1, adam_steps=50, n_restarts=1,
+                                  backend=Backend("cpu", "float64"),
+                                  noise=NoiseConfig("gaussian", percent=3.0)))
+    res = run(spectra, cfg, out=tmp_path / "b", keep_spectra=False)
+    with open_bundle(tmp_path / "b") as b:
+        from_bundle = Results.from_bundle(b)
+    for results in (Results.from_run(res), from_bundle):
+        t = spectra_table(results)
+        ms2 = t["ms_level"] == 2
+        assert ms2.sum() == 3 and (~ms2).sum() == 6
+        assert set(t["fragment"][ms2]) == {"c:10"} and set(t["fragment"][~ms2]) == {""}
+        assert set(t["activation"][ms2]) == {"ETD"} and set(t["precursor_charge"][ms2]) == {20}
+        assert set(t["precursor_mz"][ms2]) == {1012.0} and np.isnan(t["precursor_mz"][~ms2]).all()

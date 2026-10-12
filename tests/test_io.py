@@ -389,6 +389,65 @@ def test_read_spectra_specexport(specroot):
     assert list(s.time_idx()[s.data_id == 0]) == [0, 1, 1, 2]
 
 
+def same_spectra(a, b):
+    assert list(a.spectrum_id) == list(b.spectrum_id) and list(a.data_id) == list(b.data_id)
+    np.testing.assert_array_equal(a.mz, b.mz)
+    np.testing.assert_array_equal(a.intensity, b.intensity)
+    np.testing.assert_array_equal(a.time, b.time)
+
+
+def test_read_spectra_records_the_read_and_repeats_it(hxdir, tmp_path_factory, caplog):
+    entries = hio.scan(hxdir, "hxexpress")
+    s = hio.read_spectra(entries, hxdir, "hxexpress", project="proj", samples=["B"],
+                         fulldeut_time=500.0)
+    src = s.source
+    assert src["reader"] == "hxexpress" and src["data_dir"] == str(hxdir)
+    assert src["samples"] == ["B"] and src["fulldeut_time"] == 500.0
+    assert [PeptideEntry.from_dict(e) for e in src["entries"]] == entries
+    name = entries[1].file
+    assert list(src["files"]) == [name] and src["files"][name] == hio.file_identity(hxdir / name)
+    again = hio.read_spectra_source(src)
+    same_spectra(again, s)
+    assert again.source == src and hio.read_source(src).source == src
+    # moved, recorded by name only, then an input updated between runs
+    moved = tmp_path_factory.mktemp("moved")
+    for e in entries:
+        (moved / e.file).write_bytes((hxdir / e.file).read_bytes())
+    named = hio.read_spectra(entries, hxdir, "hxexpress", project="proj", record_paths="name")
+    assert named.source["data_dir"] == hxdir.name
+    same_spectra(hio.read_spectra_source(named.source, directory=moved), named)
+    with pytest.raises(hio.ReadError, match="not found"):
+        hio.read_spectra_source(named.source)
+    write_xlsx(moved / name, body=[[r[0], (r[1] or 0) * 2 if r[1] else r[1], *r[2:]]
+                                   for r in BODY])
+    with caplog.at_level(logging.WARNING, logger="hxex.io.identity"):
+        changed = hio.read_spectra_source(src, directory=moved)
+    assert "has changed since it was read" in caplog.text
+    assert changed.source["files"][name]["previous"] == src["files"][name]
+    with pytest.raises(hio.ReadError, match="has changed"):
+        hio.read_spectra_source(src, directory=moved, on_change="error")
+    with pytest.raises(ValueError, match="record_paths"):
+        hio.read_spectra(entries, hxdir, "hxexpress", project="proj", record_paths="relative")
+    with pytest.raises(ValueError, match="not a read_spectra record"):
+        hio.read_spectra_source({"reader": "other"})
+
+
+def test_a_specexport_folder_is_identified_as_a_whole(specroot):
+    entries = hio.scan(specroot, "specexport")
+    s = hio.read_spectra(entries, specroot, "specexport", project="proj")
+    folder = specroot / "S1" / "0002-0005-KVLA"
+    ident = s.source["files"]["S1/0002-0005-KVLA"]
+    assert ident == hio.directory_identity(folder) and ident["n_files"] == 7
+    assert ident["algorithm"] == "sha256-tree"
+    same_spectra(hio.read_spectra_source(s.source), s)
+    (folder / "notes.txt").write_text("changed")  # any file in the folder counts
+    assert hio.directory_identity(folder)["checksum"] != ident["checksum"]
+    (folder / "notes.txt").rename(folder / "renamed.txt")
+    assert hio.directory_identity(folder)["n_files"] == 7
+    with pytest.raises(hio.ReadError, match="has changed"):
+        hio.read_spectra_source(s.source, on_change="error")
+
+
 def test_empty_spectrum_set():
     s = SpectrumSet.from_spectra([])
     assert len(s) == 0 and len(s.mz) == 0 and len(s.time_idx()) == 0

@@ -28,7 +28,6 @@ the same sums made by OpenMS (see docs/PLAN.md item 33).
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import re
@@ -45,6 +44,7 @@ from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, plan_bins
 from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
 from .errors import ReadError
+from .identity import CHANGE_ACTIONS, compare_identity, file_identity
 
 log = logging.getLogger(__name__)
 
@@ -532,15 +532,14 @@ class MzmlTarget:
     def to_dict(self) -> dict:
         out = {f.name: getattr(self, f.name) for f in fields(self)}
         e = self.entry
-        out["entry"] = {f.name: getattr(e, f.name) for f in fields(e)}
-        out["entry"]["extra"] = dict(e.extra)
+        out["entry"] = e.to_dict()
         out["rt_window"] = None if self.rt_window is None else list(self.rt_window)
         return out
 
     @classmethod
     def from_dict(cls, data: Mapping) -> MzmlTarget:
         values = _known(cls, data, "target")
-        values["entry"] = PeptideEntry(**_known(PeptideEntry, values["entry"], "entry"))
+        values["entry"] = PeptideEntry.from_dict(values["entry"])
         if values.get("rt_window") is not None:
             values["rt_window"] = tuple(float(x) for x in values["rt_window"])
         return cls(**values)
@@ -648,27 +647,6 @@ def _target_label(t: MzmlTarget) -> str:
         f"-pz{t.precursor_charge}" if t.precursor_charge is not None else "",
     ])
     return f"{e.peptide_range}-{e.peptide}-z{e.charge}{mod}{scans}"
-
-
-def file_identity(path: str | Path) -> dict:
-    """What identifies an input file regardless of where it is: its ``name``, ``size`` (bytes)
-    and a ``checksum`` with its ``algorithm``. An indexed mzML file's own checksum
-    (``<fileChecksum>``, SHA-1, written by the converter) is used when there is one, as it costs
-    nothing to read; otherwise the SHA-256 of the whole file is computed."""
-    path = Path(path)
-    size = path.stat().st_size
-    with path.open("rb") as fh:
-        fh.seek(max(0, size - 4096))
-        m = re.search(rb"<fileChecksum>\s*([0-9a-fA-F]{40})\s*</fileChecksum>", fh.read())
-        if m:
-            return {"name": path.name, "size": size, "algorithm": "mzml-sha1",
-                    "checksum": m.group(1).decode().lower()}
-        fh.seek(0)
-        digest = hashlib.sha256()
-        while chunk := fh.read(1 << 24):
-            digest.update(chunk)
-    return {"name": path.name, "size": size, "algorithm": "sha256",
-            "checksum": digest.hexdigest()}
 
 
 PATH_MODES = ("path", "relative", "name")
@@ -851,7 +829,6 @@ def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:
     return {int(s["data_id"]): targets[int(s["target"])] for s in source["series"]}
 
 
-CHANGE_ACTIONS = ("warn", "error")
 
 
 def read_mzml_source(
@@ -891,17 +868,7 @@ def read_mzml_source(
             p = root / p
         if not p.is_file():
             raise MzmlError(f"{p} not found (give the directory that holds the data files)")
-        now = file_identity(p)
-        if known is not None and any(now[k] != known[k] for k in ("size", "algorithm",
-                                                                    "checksum")):
-            if on_change == "error":
-                raise MzmlError(f"{p} has changed since it was read (its size or checksum "
-                                "differs)")
-            log.warning("%s has changed since it was read (its size or checksum differs); "
-                        "reading it as it is now", p)
-            now = {**now, "previous": {k: v for k, v in known.items() if k != "previous"}}
-        elif known is not None:
-            now = dict(known)
+        now = compare_identity(p, known, on_change, MzmlError)
         opened.append(p)
         identities.append(now)
     recorded = [str(r.path) for r in runs]  # as the original read recorded them
