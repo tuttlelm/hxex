@@ -457,23 +457,54 @@ def sum_centroid(scans: Sequence[tuple[np.ndarray, np.ndarray]], ppm: float = 10
 
 # --- runs, targets and the spectra they give --------------------------------------------------
 
+# a run's scan condition that is left to the targets
+TARGET = "target"
+SCAN_CONDITIONS = ("activation", "precursor_mz", "precursor_charge", "filter_contains",
+                   "filter_excludes")
+
+
 @dataclass(frozen=True)
 class MzmlRun:
     """One mzML file of an experiment: its ``sample`` and replicate ``rep``. ``time`` is the
     labelling time of the whole file (an LC-MS file per time point, or a control file at the
     control's time), or None when every scan has its own time (the scan time plus
-    ``time_offset``, in seconds)."""
+    ``time_offset``, in seconds).
+
+    The scan conditions ``activation``, ``precursor_mz``, ``precursor_charge``,
+    ``filter_contains`` and ``filter_excludes`` are the targets' (``'target'``, the default)
+    unless set here, which replaces that condition of every target for this file only (None
+    removes it). For example, a control file acquired with a constant ``sid=1.00`` takes
+    ``filter_excludes=None`` while the kinetics files exclude ``sid``, and a file that records a
+    wrong precursor charge takes ``precursor_charge=None``."""
 
     path: str | Path
     sample: str
     rep: int = 1
     time: float | None = None
     time_offset: float = 0.0
+    activation: str | None = TARGET
+    precursor_mz: float | str | None = TARGET
+    precursor_charge: int | str | None = TARGET
+    filter_contains: str | None = TARGET
+    filter_excludes: str | None = TARGET
+
+    def __post_init__(self):
+        for name in ("precursor_mz", "precursor_charge"):
+            if isinstance(getattr(self, name), str) and getattr(self, name) != TARGET:
+                raise ValueError(f"{name} must be a number, None or {TARGET!r}")
+
+    def conditions(self, target: MzmlTarget) -> dict:
+        """The scan conditions of ``target`` in this file (this run's where it sets them)."""
+        return {name: getattr(target, name) if getattr(self, name) == TARGET
+                else getattr(self, name) for name in SCAN_CONDITIONS}
 
     def to_dict(self) -> dict:
-        return {"path": str(self.path), "sample": self.sample, "rep": int(self.rep),
-                "time": None if self.time is None else float(self.time),
-                "time_offset": float(self.time_offset)}
+        out = {"path": str(self.path), "sample": self.sample, "rep": int(self.rep),
+               "time": None if self.time is None else float(self.time),
+               "time_offset": float(self.time_offset)}
+        out.update({name: getattr(self, name) for name in SCAN_CONDITIONS
+                    if getattr(self, name) != TARGET})  # only those set, as older records
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping) -> MzmlRun:
@@ -728,12 +759,10 @@ def _read_mzml(
         f = MzmlFile(opened[n_run])
         table = f.scans()
         chosen = [
-            table.select(ms_level=t.ms_level, activation=t.activation,
-                         precursor_mz=t.precursor_mz, precursor_tol=config.precursor_tol,
-                         precursor_charge=t.precursor_charge,
+            table.select(ms_level=t.ms_level, precursor_tol=config.precursor_tol,
                          time_range=t.rt_window if run.time is not None else (
                              None if config.min_time is None else (config.min_time, np.inf)),
-                         filter_contains=t.filter_contains, filter_excludes=t.filter_excludes)
+                         **run.conditions(t))
             for t in targets
         ]
         # the scans of every spectrum, per target, before anything is read (so that sampling a

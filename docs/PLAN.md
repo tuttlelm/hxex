@@ -1395,8 +1395,10 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     reference). Not examined further. Data quirks met: another undeuterated file records 3+ for its 2+
     precursor (as in item 39), and two peptides' undeuterated files have `sid=1.00` on every scan while the kinetics files mark in-source activation with
     `sid=`, so one `filter_excludes='sid'` cannot serve both: the comparison read them separately.
-    A run's targets apply to every file, so hxex has no way yet to give the control files other
-    scan conditions (open).
+    Since then a run can replace the targets' scan conditions for its file (`MzmlRun`:
+    `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes`; the
+    default `'target'` keeps the target's, None removes the condition; recorded with the read):
+    one read with `filter_excludes=None` on the control gives the same spectra.
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

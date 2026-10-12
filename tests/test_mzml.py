@@ -4,6 +4,7 @@ both experiment layouts, and an end-to-end run. A real file can be checked with
 HXEX_MZML_EXAMPLE (an mzML file written by ThermoRawFileParser)."""
 
 import base64
+import dataclasses
 import hashlib
 import json
 import logging
@@ -555,3 +556,38 @@ def test_files_are_identified_and_paths_recorded_as_asked(tmp_path, caplog):
                   data_root=tmp_path / "elsewhere", record_paths="relative")
     with pytest.raises(ValueError, match="record_paths"):
         read_mzml(runs, [MzmlTarget(ENTRY)], project="p", record_paths="absolute")
+
+
+def test_a_run_can_replace_the_targets_scan_conditions(tmp_path):
+    """A control file acquired with sid=1.00 throughout and a wrong precursor charge, read with
+    kinetics files that mark in-source activation with sid=: the run sets its own conditions."""
+    etd = ("MS:1000598", "electron transfer dissociation")
+    mz, y = profile_envelope(2, 1.0, 1e4)
+
+    def ms2(t, filt, charge):
+        return {"mz": mz, "intensity": y, "time": t, "ms_level": 2, "filter": filt,
+                "precursor": (777.4, charge, *etd)}
+
+    un = write_mzml(tmp_path / "un.mzML", [ms2(0.1 * k, "sid=1.00 etd", 3) for k in range(3)])
+    kin = write_mzml(tmp_path / "kin.mzML", [ms2(0.5 + 0.1 * k, "sid=20.00 etd" if k % 2 else
+                                                 "etd", 2) for k in range(6)])
+    target = MzmlTarget(ENTRY, ms_level=2, activation="ETD", precursor_charge=2,
+                        filter_excludes="sid")
+    with pytest.raises(MzmlError, match="no spectra"):  # the target's conditions miss the control
+        read_mzml([MzmlRun(un, "S", time=0.0)], [target], project="p")
+    control = MzmlRun(un, "S", time=0.0, filter_excludes=None, precursor_charge=None)
+    s = read_mzml([control, MzmlRun(kin, "S")], [target], project="p")
+    assert list(s.time[:1]) == [0.0] and s.spectrum_id[0].endswith("scans0-2")  # all 3 summed
+    assert len(s) == 1 + 3  # the kinetics file keeps the target's conditions: no sid scans
+    assert control.conditions(target) == {
+        "activation": "ETD", "precursor_mz": None, "precursor_charge": None,
+        "filter_contains": None, "filter_excludes": None}
+    # recorded with the read, and only the conditions that were set
+    assert s.source["runs"][0] == {**MzmlRun(str(un), "S", time=0.0).to_dict(),
+                                   "filter_excludes": None, "precursor_charge": None}
+    assert "filter_excludes" not in s.source["runs"][1]
+    assert MzmlRun.from_dict(s.source["runs"][0]) == dataclasses.replace(control, path=str(un))
+    from hxex.io import read_mzml_source
+    np.testing.assert_array_equal(read_mzml_source(s.source).intensity, s.intensity)
+    with pytest.raises(ValueError, match="precursor_charge"):
+        MzmlRun(un, "S", precursor_charge="any")

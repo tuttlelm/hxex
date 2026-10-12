@@ -33,7 +33,8 @@ of every file.
 `n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
-null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset),
+null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and
+the scan conditions the run sets instead of the targets'),
 targets (entry, MS level, activation, precursor, retention window, filter text), mzML settings,
 picker settings, modification registry, `series` (each `data_id` with its sample and target
 position, which ties a result to its precursor and activation), `record_paths` (`path` as
