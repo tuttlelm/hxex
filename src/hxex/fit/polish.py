@@ -12,6 +12,8 @@ is 1 for Gaussian noise and ``1 / pred`` (the Fisher information) for Poisson no
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import torch
 from torch.func import jacfwd, vmap
@@ -71,7 +73,13 @@ def lm_polish(
                 pr = _predict_one(t, bb, sw, nm, k)
                 return pr, pr
 
-            jac, pred = vmap(jacfwd(f, has_aux=True), in_dims=(0, 0, 1, 0))(th, b, shape_w, n_max)
+            with warnings.catch_warnings():
+                # torch's own forward-mode rules are built with torch.jit.script, which recent
+                # torch deprecates: the warning (once per process) is about torch, not hxex
+                warnings.filterwarnings("ignore", message=r".*torch\.jit\.script.*deprecated",
+                                        category=FutureWarning)
+                jac, pred = vmap(jacfwd(f, has_aux=True), in_dims=(0, 0, 1, 0))(
+                    th, b, shape_w, n_max)
             return pred, jac
 
         def loss_of(th):
