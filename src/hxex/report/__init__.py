@@ -9,6 +9,18 @@ importing this package also imports PyTorch.
 
 from .curves import component_curves
 from .figures import PlotConfig, select_series, series_figures, write_figures
+from .overview import (
+    controls_overview_data,
+    k_comparison_data,
+    k_selection_data,
+    overview_figures,
+    plot_controls_overview,
+    plot_k_comparison,
+    plot_k_selection,
+    plot_quality_overview,
+    quality_overview_data,
+    write_overview,
+)
 from .results import Results, Settings
 from .series import (
     Reference,
@@ -39,14 +51,23 @@ __all__ = [
     "Settings",
     "component_curves",
     "components_table",
+    "controls_overview_data",
     "find_series",
     "format_table",
+    "k_comparison_data",
+    "k_selection_data",
     "load_reference",
+    "overview_figures",
+    "plot_controls_overview",
+    "plot_k_comparison",
+    "plot_k_selection",
     "plot_populations",
+    "plot_quality_overview",
     "plot_series_spectra",
     "plot_spectrum",
     "plot_uptake",
     "population_data",
+    "quality_overview_data",
     "select_series",
     "series_figures",
     "series_info",
@@ -57,5 +78,6 @@ __all__ = [
     "uptake_table",
     "write_csv",
     "write_figures",
+    "write_overview",
     "write_tables",
 ]

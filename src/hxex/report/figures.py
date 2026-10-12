@@ -40,7 +40,8 @@ class PlotConfig:
     ``populations`` and ``uptake``; ``show`` the layers of the spectra; ``x`` and ``scale`` the
     uptake axis; ``corrected`` the back-exchange correction (None: when the results have
     controls); ``format`` is ``pdf`` (one file per series, one page per kind), ``svg`` or ``png``
-    (one file per kind)."""
+    (one file per kind). ``overview`` also writes the run's overviews (K selection, controls,
+    quality) as ``hxex_overview``."""
 
     series: str | tuple[int, ...] = "flagged"
     kinds: tuple[str, ...] = KINDS
@@ -50,6 +51,7 @@ class PlotConfig:
     corrected: bool | None = None
     format: str = "pdf"
     dpi: int = 200
+    overview: bool = True
 
     def __post_init__(self):
         if not isinstance(self.series, str):
@@ -133,12 +135,18 @@ def write_figures(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> list[Path]:
-    """Write the figures of the series selected by ``config`` into ``directory`` and return the
-    files. A series' figures are made and released one by one."""
+    """Write the run's overviews (if ``config.overview``) and the figures of the series selected
+    by ``config`` into ``directory``, and return the files. A series' figures are made and
+    released one by one."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     chosen = select_series(results, config.series)
     written: list[Path] = []
+    if config.overview:
+        from .overview import write_overview
+
+        written += write_overview(results, directory / f"hxex_overview.{config.format}",
+                                  dpi=config.dpi)
     for n, data_id in enumerate(chosen):
         check_cancel(cancel)
         stem = f"hxex_{data_id}_{_slug(series_info(results, data_id)['label'])}"

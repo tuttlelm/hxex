@@ -1174,8 +1174,17 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     overlay of the population map carries the same guides at 0 and at the number of amides as
     the single cells, and the raw line is broken across large gaps in m/z. Not stored: the
     input file paths or checksums (the ids hold only file names; an open question, since a path
-    can reveal a local layout). Not built yet: the K comparison plot, the controls, quality and K-selection overviews, the
-    sequence-coverage uptake map and state comparison (butterfly) plots.
+    can reveal a local layout).
+    **K comparison and run overviews:** `plot_k_comparison` draws one spectrum at every K tried
+    (loss, the selection score relative to the best, the minimum-population rule, the selected
+    and the reviewer's K); `plot_controls_overview` (retention and undeuterated means with their
+    limits, fallback reasons), `plot_quality_overview` (flag counts; fit against intensity as the
+    share of flagged spectra per grid cell, since overlapping markers cannot show which kind
+    dominates where thousands of spectra pile up, with sparse cells as points; the thresholds;
+    flagged share per sample) and `plot_k_selection` (selected K, and the K in
+    effect at each time point) summarise a run; `write_figures` writes them as `hxex_overview`
+    (`PlotConfig.overview`, on by default). Not built yet: the sequence-coverage uptake map and
+    state comparison (butterfly) plots.
 
 32. **Large-dataset benchmark (Phase 4 target, 2026-10-11).** An unpublished SpecExport dataset of
     26,333 spectra (five samples, 1,372 series, six time points including both controls, up to

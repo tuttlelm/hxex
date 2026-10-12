@@ -358,15 +358,18 @@ def test_select_series(results):
 
 
 def test_figure_files(results, tmp_path):
-    files = write_figures(results, tmp_path / "pdf", PlotConfig(series="all"))
+    files = write_figures(results, tmp_path / "pdf", PlotConfig(series="all", overview=False))
     assert len(files) == 2 and all(f.suffix == ".pdf" and f.stat().st_size > 5000 for f in files)
     assert b"/Count 3" in files[0].read_bytes()  # one page for each kind
     png = write_figures(results, tmp_path / "png",
-                        PlotConfig(series=(1,), kinds=("uptake",), format="png", dpi=50))
+                        PlotConfig(series=(1,), kinds=("uptake",), format="png", dpi=50,
+                                   overview=False))
     assert [f.name.endswith("_uptake.png") for f in png] == [True]
-    assert write_figures(results, tmp_path / "none", PlotConfig()) == []  # nothing flagged
+    only_overview = write_figures(results, tmp_path / "none", PlotConfig())  # nothing flagged
+    assert [f.name for f in only_overview] == ["hxex_overview.pdf"]
     seen = []
-    write_figures(results, tmp_path / "p", PlotConfig(series="all", kinds=("uptake",)),
+    write_figures(results, tmp_path / "p",
+                  PlotConfig(series="all", kinds=("uptake",), overview=False),
                   progress=lambda d, t: seen.append((d, t)))
     assert seen == [(1, 2), (2, 2)]
 
@@ -387,9 +390,10 @@ def test_a_run_writes_figures_when_asked(tmp_path):
     plots = PlotConfig(series="all", kinds=("uptake", "populations"))
     cfg = config(bootstrap=None, plots=plots)
     run(raw, cfg, out=tmp_path / "bundle")
-    assert len(list((tmp_path / "bundle_figures").glob("*.pdf"))) == 2
+    assert len(list((tmp_path / "bundle_figures").glob("hxex_[0-9]*.pdf"))) == 2
+    assert (tmp_path / "bundle_figures" / "hxex_overview.pdf").exists()
     run(raw, cfg, figures_dir=tmp_path / "elsewhere")
-    assert len(list((tmp_path / "elsewhere").glob("*.pdf"))) == 2
+    assert len(list((tmp_path / "elsewhere").glob("hxex_[0-9]*.pdf"))) == 2
     with pytest.raises(ValueError, match="figures_dir or out"):
         run(raw, cfg)  # nowhere to write: refused before any work
     none = run(raw, config(bootstrap=None), out=tmp_path / "plain")
@@ -691,3 +695,104 @@ def test_series_table_and_finding_series(results):
     bare = series_table(Results(measurements=results.measurements, fit=results.fit))
     assert list(bare["sample"]) == ["", ""] and np.isnan(bare["retention"]).all()
     assert list(bare["controls"]) == ["", ""]
+
+
+# --- K comparison and run overviews -------------------------------------------------------------
+
+def test_k_comparison(results):
+    from hxex.report import k_comparison_data, plot_k_comparison
+
+    sid = str(results.fit.spectrum_id[8])
+    d = k_comparison_data(sid, results)
+    assert d["k_values"] == (1, 2) and d["criterion"] == "bic"
+    assert np.nanmin(d["delta"][np.isfinite(d["delta"])]) == 0.0
+    assert d["selected"] == results.fit.selected_K[8] == d["effective"]
+    np.testing.assert_array_equal(d["bic"], [results.fit.fits[k].bic[8] for k in (1, 2)])
+    fig = plot_k_comparison(sid, results)
+    assert len(fig.axes) == 2 and "component:2" in gids(fig)
+    sel = fig.axes[d["k_values"].index(d["selected"])].get_title()
+    assert "selected" in sel and "ΔBIC +0.0" in sel
+    assert len(plot_k_comparison(sid, results, ks=[2]).axes) == 1
+    with pytest.raises(ValueError, match="not fitted"):
+        plot_k_comparison(sid, results, ks=[4])
+    other = 2 if d["selected"] == 1 else 1
+    reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=other))
+    titles = [ax.get_title() for ax in plot_k_comparison(sid, reviewed).axes]
+    assert any("reviewer's choice" in t for t in titles)
+
+
+def test_controls_overview(results):
+    from hxex.report import controls_overview_data, plot_controls_overview
+
+    d = controls_overview_data(results)
+    assert d["n_series"] == 2 and d["measured"] == 2 and sum(d["reasons"].values()) == 0
+    np.testing.assert_allclose(d["retention"], results.controls.retention)  # m0 and mFD measured
+    fig = plot_controls_overview(results)
+    assert {"retention", "m0", "reasons", "limits"} <= gids(fig)
+    with pytest.raises(ValueError, match="no controls"):
+        plot_controls_overview(Results(measurements=results.measurements, fit=results.fit))
+
+
+def test_quality_overview(results):
+    from hxex.report import plot_quality_overview, quality_overview_data
+
+    d = quality_overview_data(results)
+    assert d["n"] == len(results.fit) and d["n_flagged"] == int(results.quality.flagged.sum())
+    assert d["samples"] == ["S"] and d["flagged_share"].shape == (1,)
+    fig = plot_quality_overview(results)
+    assert {"counts", "spectra", "samples", "limits"} <= gids(fig)
+    flagged = [c for c in fig.axes[1].collections if c.get_gid() == "flagged"]
+    assert flagged and len(flagged[0].get_facecolors()) == 0  # open circles
+    with pytest.raises(ValueError, match="no quality"):
+        quality_overview_data(Results(measurements=results.measurements, fit=results.fit))
+
+
+def test_k_selection_overview(results):
+    from hxex.report import k_selection_data, plot_k_selection
+
+    d = k_selection_data(results)
+    assert d["selected"].sum() == len(results.fit) == d["effective"].sum()
+    assert d["time_labels"] == ["UN", "60", "FD"] and not d["reviewed"]
+    np.testing.assert_allclose(d["share"].sum(axis=1), 1.0)
+    assert {"selected", "share:1", "share:2"} <= gids(plot_k_selection(results))
+    sid = str(results.fit.spectrum_id[3])
+    other = 2 if results.fit.selected_K[3] == 1 else 1
+    reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=other))
+    d2 = k_selection_data(reviewed)
+    assert d2["reviewed"] and not np.array_equal(d2["selected"], d2["effective"])
+    assert "effective" in gids(plot_k_selection(reviewed))
+
+
+def test_overviews_are_written_with_the_figures(results, tmp_path):
+    from hxex.report import overview_figures, write_overview
+
+    assert set(overview_figures(results)) == {"k_selection", "controls", "quality"}
+    bare = Results(measurements=results.measurements, fit=results.fit)
+    assert set(overview_figures(bare)) == {"k_selection"}
+    pdf = write_overview(results, tmp_path / "o.pdf")
+    assert pdf == [tmp_path / "o.pdf"] and b"/Count 3" in pdf[0].read_bytes()
+    pngs = write_overview(results, tmp_path / "o.png", dpi=40)
+    assert sorted(p.name for p in pngs) == ["o_controls.png", "o_k_selection.png", "o_quality.png"]
+    files = write_figures(results, tmp_path / "f", PlotConfig(series=(0,), kinds=("uptake",)))
+    assert [f.name for f in files][0] == "hxex_overview.pdf" and len(files) == 2
+    none = write_figures(results, tmp_path / "n", PlotConfig(overview=False))
+    assert none == []
+
+
+def test_flagged_share_grid():
+    from hxex.report.overview import flagged_share_grid
+
+    rng = np.random.default_rng(0)
+    x = 10 ** rng.normal(0, 0.3, 2000)
+    y = 10 ** rng.normal(0, 0.3, 2000)
+    flagged = x < 0.5  # flagged exactly in the low-intensity corner
+    g = flagged_share_grid(np.append(x, [np.nan, -1.0]), np.append(y, [1.0, 1.0]),
+                           np.append(flagged, [True, True]), bins=10, min_count=5)
+    assert g["count"].sum() == 2000  # the non-finite and negative values are left out
+    assert g["count"].shape == g["share"].shape == (10, 10)
+    full = g["count"] >= 5
+    shares = g["share"][full]
+    assert np.all((shares >= 0) & (shares <= 1)) and shares.max() > 0.9 and shares.min() == 0
+    assert np.nansum(g["share"] * g["count"]) == pytest.approx(flagged.sum())
+    assert g["sparse_in_grid"] == len(g["sparse_x"]) == int(g["count"][~full].sum())
+    assert flagged_share_grid([np.nan], [1.0], [True]) is None
