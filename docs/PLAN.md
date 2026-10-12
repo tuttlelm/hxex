@@ -1271,6 +1271,16 @@ CSVs or mzML if wanted.
      review layer rather than replace them;
    - comparing states (samples) per residue and time, and averaging over user-defined regions
      of the sequence (`plot_comparison`, `group_fits`);
+   - **comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons
+     across bundles as across samples within one. Possible today only by hand (open each
+     bundle, `find_series` by sample, range and charge, draw with `ax=` side by side). Needed:
+     matching series across runs by identity (sequence with modifications, charge; never by
+     `data_id`, which is a position within its run) with a check that they agree; overlays
+     with one colour per run (the uptake plot colours by replicate); differences per peptide and
+     time with propagated uncertainty, and difference or butterfly plots; a comparison of the
+     runs' settings (manifests) that warns where they differ in ways that matter (picker, noise
+     model, control times and limits); and a rule for a peptide and time fitted with one
+     population in one run and two in another (shared with the one-or-two-population choice);
    - recomputing uptake without spectra marked bad (`recalc_uptake`; here the review layer's
      rejections) and combining runs (`combine_batch_data`);
    - export of the uptake table in the format other tools read (`hdexa_to_pyhdx` writes the
