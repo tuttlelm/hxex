@@ -1133,7 +1133,10 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     `Reference` / `load_reference` overlay known populations (the Bimodal solutions file). Every
     plot has a `*_data` function returning its arrays, every artist a `gid` (`component:2`,
     `band`, ...) and `Results.with_review` replaces the review layer without copying anything,
-    so a GUI can redraw, toggle and review without changes here. **Tables** (CSV, no pandas):
+    so a GUI can redraw, toggle and review without changes here. **Tables** (CSV, no pandas): per series (`series_table`: sample, peptide, charge, counts of
+    spectra, flagged, rejected and multi-population spectra, control status and retention; with
+    `find_series` to select series by sample, range, charge or flags, and `format_table` to print
+    any table as plain text),
     per spectrum (`data_fits` style, wide), per spectrum and population (tidy) and the
     replicate-averaged uptake (rejected spectra left out). **Files:** `PlotConfig` (series
     `flagged` by default, `all` or a list; kinds; layers; axis; format) and `write_figures` write

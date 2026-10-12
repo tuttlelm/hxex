@@ -333,14 +333,14 @@ def test_a_rejected_spectrum_leaves_the_uptake_average(results):
 
 def test_csv_files(results, tmp_path):
     files = write_tables(results, tmp_path / "t")
-    assert [f.name for f in files] == ["spectra.csv", "components.csv", "uptake.csv"]
-    with files[1].open() as fh:
+    assert [f.name for f in files] == ["series.csv", "spectra.csv", "components.csv", "uptake.csv"]
+    with files[2].open() as fh:
         rows = list(csv.DictReader(fh))
     comp = components_table(results)
     assert len(rows) == len(comp["rank"]) and rows[0]["spectrum_id"] == comp["spectrum_id"][0]
     assert float(rows[0]["mean"]) == pytest.approx(comp["mean"][0])
     nocontrols = Results(measurements=results.measurements, fit=results.fit)
-    with write_tables(nocontrols, tmp_path / "n")[1].open() as fh:
+    with write_tables(nocontrols, tmp_path / "n")[2].open() as fh:
         assert next(csv.DictReader(fh))["mean_corrected"] == ""  # NaN is an empty cell
 
 
@@ -664,3 +664,30 @@ def test_controls_are_recognised_at_any_time_as_in_a_reverse_experiment(results)
     titles = [ax.get_title() for ax in plot_series_spectra(rev, 0, show=("picked",)).axes]
     assert any(t.startswith("FD, rep") for t in titles)
     assert any(t.startswith("UN, rep") for t in titles)
+
+
+def test_series_table_and_finding_series(results):
+    from hxex.report import find_series, format_table, series_table
+
+    t = series_table(results)
+    assert list(t["data_id"]) == [0, 1] and list(t["n_spectra"]) == [8, 8]
+    assert set(t["peptide"]) == {"RDKVQKEYAL"} and list(t["charge"]) == [2, 2]
+    assert list(t["controls"]) == ["measured", "measured"] and not t["fallback"].any()
+    np.testing.assert_allclose(t["retention"], results.controls.retention)
+    assert list(t["n_multi"]) == [int((results.effective_K[results.fit.data_id == d] > 1).sum())
+                                  for d in (0, 1)]
+    assert find_series(results) == [0, 1] and find_series(results, samples=["S"]) == [0, 1]
+    assert find_series(results, samples=["other"]) == [] and find_series(results, charges=[3]) == []
+    assert find_series(results, flagged=True) == []
+    rejected = results.with_review(
+        ReviewTable.empty().update(str(results.fit.spectrum_id[12]), status="rejected"))
+    assert series_table(rejected)["n_rejected"].tolist() == [0, 1]
+    assert find_series(rejected, flagged=True) == [1] == select_series(rejected)
+    text = format_table(t)
+    assert text.splitlines()[0].split()[:3] == ["data_id", "sample", "peptide_range"]
+    assert len(text.splitlines()) == 3
+    assert format_table(t, limit=1).splitlines()[-1] == "... and 1 more"
+    assert len(format_table(t, rows=[1]).splitlines()) == 2
+    bare = series_table(Results(measurements=results.measurements, fit=results.fit))
+    assert list(bare["sample"]) == ["", ""] and np.isnan(bare["retention"]).all()
+    assert list(bare["controls"]) == ["", ""]

@@ -21,7 +21,16 @@ from .series import (
     uptake_data,
 )
 from .spectrum import plot_spectrum, spectrum_data
-from .tables import components_table, spectra_table, uptake_table, write_csv, write_tables
+from .tables import (
+    components_table,
+    find_series,
+    format_table,
+    series_table,
+    spectra_table,
+    uptake_table,
+    write_csv,
+    write_tables,
+)
 
 __all__ = [
     "PlotConfig",
@@ -30,6 +39,8 @@ __all__ = [
     "Settings",
     "component_curves",
     "components_table",
+    "find_series",
+    "format_table",
     "load_reference",
     "plot_populations",
     "plot_series_spectra",
@@ -39,6 +50,7 @@ __all__ = [
     "select_series",
     "series_figures",
     "series_info",
+    "series_table",
     "spectra_table",
     "spectrum_data",
     "uptake_data",

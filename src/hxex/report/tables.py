@@ -9,6 +9,7 @@ reviewer's choice, else the selected K). Means are in deuterons beyond natural a
 from __future__ import annotations
 
 import csv
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -142,6 +143,100 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
 
+def series_table(results: Results) -> dict[str, np.ndarray]:
+    """One row per series (a peptide at one charge in one sample), ordered by ``data_id``:
+    ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
+    picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
+    (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
+    (``measured``, or the fallback reasons; empty without controls), ``retention`` (the one used;
+    NaN without controls) and ``fallback``."""
+    fit = results.fit
+    ids = np.unique(fit.data_id)
+    b = results.binned
+    where = {str(s): j for j, s in enumerate(b.spectrum_id)} if b is not None else {}
+    flagged = results.quality.flagged if results.quality is not None else np.zeros(len(fit), bool)
+    rejected = (results.review.status_of(fit) == "rejected" if results.review is not None
+                else np.zeros(len(fit), bool))
+    multi = results.effective_K > 1
+    cols: dict[str, list] = {n: [] for n in (
+        "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
+        "n_rejected", "n_multi", "controls", "retention", "fallback")}
+    ctrl = results.controls
+    ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
+    for d in ids:
+        members = np.flatnonzero(fit.data_id == d)
+        j = where.get(str(fit.spectrum_id[members[0]]))
+        r = ctrl_rows.get(int(d))
+        values = {
+            "data_id": int(d),
+            "sample": "" if j is None else str(b.sample[j]),
+            "peptide_range": "" if j is None else str(b.peptide_range[j]),
+            "peptide": "" if j is None else str(b.peptide[j]),
+            "charge": 0 if j is None else int(b.charge[j]),
+            "n_spectra": len(members), "n_flagged": int(flagged[members].sum()),
+            "n_rejected": int(rejected[members].sum()), "n_multi": int(multi[members].sum()),
+            "controls": "" if r is None else ("measured" if not ctrl.fallback[r]
+                                              else str(ctrl.flags[r])),
+            "retention": np.nan if r is None else float(ctrl.retention[r]),
+            "fallback": False if r is None else bool(ctrl.fallback[r]),
+        }
+        for name, value in values.items():
+            cols[name].append(value)
+    out = {name: np.array(values) for name, values in cols.items()}
+    for name in ("sample", "peptide_range", "peptide", "controls"):
+        out[name] = out[name].astype(str)
+    return out
+
+
+def find_series(
+    results: Results,
+    *,
+    samples: Sequence[str] | None = None,
+    peptide_ranges: Sequence[str] | None = None,
+    charges: Sequence[int] | None = None,
+    flagged: bool = False,
+) -> list[int]:
+    """The ``data_id`` of the series that match every filter given (None: no filter).
+    ``flagged`` keeps only series with a flagged or rejected spectrum or a control that fell
+    back (the same rule as ``select_series(results, 'flagged')``)."""
+    t = series_table(results)
+    keep = np.ones(len(t["data_id"]), dtype=bool)
+    if samples is not None:
+        keep &= np.isin(t["sample"], [str(x) for x in samples])
+    if peptide_ranges is not None:
+        keep &= np.isin(t["peptide_range"], [str(x) for x in peptide_ranges])
+    if charges is not None:
+        keep &= np.isin(t["charge"], [int(x) for x in charges])
+    if flagged:
+        keep &= (t["n_flagged"] > 0) | (t["n_rejected"] > 0) | t["fallback"]
+    return [int(d) for d in t["data_id"][keep]]
+
+
+def format_table(
+    columns: dict[str, np.ndarray], rows: Sequence[int] | None = None, limit: int | None = 40,
+    width: int = 30,
+) -> str:
+    """Columns as aligned plain text (for a notebook or a terminal): the ``rows`` given (default
+    all), at most ``limit`` of them (None: no limit), each cell cut at ``width`` characters."""
+    names = list(columns)
+    n = len(columns[names[0]]) if names else 0
+    order = list(range(n)) if rows is None else [int(r) for r in rows]
+    shown = order if limit is None else order[:limit]
+
+    def cell(value) -> str:
+        if isinstance(value, (float, np.floating)):
+            return "" if not np.isfinite(value) else f"{float(value):.3g}"
+        return str(value)[:width]
+
+    text = [[cell(columns[c][i]) for c in names] for i in shown]
+    widths = [max([len(c), *(len(r[k]) for r in text)]) for k, c in enumerate(names)]
+    lines = ["  ".join(c.ljust(w) for c, w in zip(names, widths, strict=True))]
+    lines += ["  ".join(v.ljust(w) for v, w in zip(r, widths, strict=True)) for r in text]
+    if len(shown) < len(order):
+        lines.append(f"... and {len(order) - len(shown)} more")
+    return "\n".join(lines)
+
+
 def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
     """Write columns of equal length as a CSV file with a header; NaN is written as empty."""
     path = Path(path)
@@ -162,10 +257,12 @@ def _cell(value) -> str:
 
 
 def write_tables(results: Results, directory: str | Path) -> list[Path]:
-    """Write ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into ``directory``."""
+    """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
+    ``directory``."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     return [
+        write_csv(series_table(results), directory / "series.csv"),
         write_csv(spectra_table(results), directory / "spectra.csv"),
         write_csv(components_table(results), directory / "components.csv"),
         write_csv(uptake_table(results), directory / "uptake.csv"),
