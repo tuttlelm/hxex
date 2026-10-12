@@ -1249,8 +1249,39 @@ CSVs or mzML if wanted.
    correction, quality flags, their bundle tables and the run stage). On the Bimodal
    unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
    it matters for the reported means.
-2. **Phase 4 (reports and plots): in progress** (item 31; the large-dataset benchmark is item 32). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
-3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
+2. **Phase 4 (reports and plots): done except the sequence-coverage map**, which moves to the
+   post-fitting analysis below (item 31; the large-dataset benchmark, item 32, met the Phase 4
+   target). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is
+   still open.
+3. **Post-fitting analysis, together with the sequence-coverage map (planned; not designed yet).**
+   Analyses that start from the fitted results and work on the protein rather than on one
+   spectrum. The owner will give further references when this starts; pyHXExpress's
+   `hxex_utils.py` (reference copy, see CLAUDE.local.md) already has some of it:
+   - coverage map: peptides as bars along the sequence, coloured by uptake (or a population's
+     uptake) at each time and state (`plot_coverage`);
+   - residue-level values from overlapping peptides: a per-residue relative uptake (RFU)
+     averaged over the peptides that cover it, with the redundancy (how many peptides cover a
+     residue) and the resolution (the length of the shortest one) (`plot_rfu_residue`,
+     `plot_resred`); for two populations it assumes the more protected populations of
+     overlapping peptides belong together, which needs thought beyond two;
+   - choosing between the one- and two-population description of each peptide and time from
+     the fixed-K fits and their errors (a population fraction above a minimum, standard errors
+     below a limit at a stated confidence), falling back to the one-population value
+     (`choose_fits`); here this would build on the selected K, the fixed-K bootstraps and the
+     review layer rather than replace them;
+   - comparing states (samples) per residue and time, and averaging over user-defined regions
+     of the sequence (`plot_comparison`, `group_fits`);
+   - recomputing uptake without spectra marked bad (`recalc_uptake`; here the review layer's
+     rejections) and combining runs (`combine_batch_data`);
+   - export of the uptake table in the format other tools read (`hdexa_to_pyhdx` writes the
+     DynamX-like table pyHDX expects).
+   **Decided (owner, 2026-10-12):** these tools are rewritten to fit hxex (its result types, no
+   pandas in the core, explicit configs), and the parts pyHXExpress does through pyHDX
+   (residue-level averaging, the uptake-table conversion) are rewritten too, so neither pyHDX nor
+   proplot becomes a dependency; plots use matplotlib, like the rest of `hxex.report`. Rejected or flagged spectra, the back-exchange correction and the
+   population identity by rank all carry into these analyses and need decisions when this is
+   designed.
+4. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5
    validation; fragment-ion amide counts (see "Risks and open decisions").
