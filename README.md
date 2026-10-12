@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tuttlelm/hxex/main/docs/images/hxex_logo_dark.svg">
-    <img src="https://raw.githubusercontent.com/tuttlelm/hxex/main/docs/images/hxex_logo.svg" alt="hxex logo: the h is a bimodal spectrum" width="420">
+    <img src="https://raw.githubusercontent.com/tuttlelm/hxex/main/docs/images/hxex_logo.svg" alt="hxex logo: the h is a bimodal spectrum" width="150">
   </picture>
 </p>
 
