@@ -60,6 +60,7 @@ class ProgressLog:
     estimate is for the current stage only). It logs when a stage starts, then at most every
     ``interval`` seconds, and when everything is done.
 
+    ``name`` labels an operation that does not name its stages (``'progress'`` by default).
     ``logger`` defaults to the ``hxex.progress`` logger and ``level`` to INFO; ``clock`` (seconds)
     is for tests."""
 
@@ -67,6 +68,7 @@ class ProgressLog:
         self,
         logger: logging.Logger | None = None,
         *,
+        name: str | None = None,
         interval: float = 30.0,
         level: int = logging.INFO,
         clock: Callable[[], float] = time.monotonic,
@@ -75,6 +77,7 @@ class ProgressLog:
             raise ValueError("interval must be >= 0")
         self.logger = logger if logger is not None else logging.getLogger("hxex.progress")
         self.interval, self.level, self.clock = interval, level, clock
+        self.name = name
         self.began = self.clock()
         self.stage: str | None = None
         self.span = (0.0, 0.0)  # the stage's units
@@ -99,7 +102,11 @@ class ProgressLog:
                 if self.stage is not None:
                     self.logger.log(self.level, "%s: done in %s", self.stage,
                                     format_duration(now - self.stage_began))
-                self.logger.log(self.level, "done in %s", format_duration(now - self.began))
+                done_in = format_duration(now - self.began)
+                if self.name is not None and self.stage is None:
+                    self.logger.log(self.level, "%s: done in %s", self.name, done_in)
+                else:
+                    self.logger.log(self.level, "done in %s", done_in)
             return
         if now - self.last < self.interval:
             return
@@ -108,5 +115,6 @@ class ProgressLog:
         frac = min(max((done - start) / (end - start), 0.0), 1.0) if end > start else 0.0
         spent = now - (self.stage_began if self.stage is not None else self.began)
         left = f", about {format_duration(spent / frac * (1 - frac))} left" if frac > 0 else ""
-        self.logger.log(self.level, "%s: %.0f%% after %s%s", self.stage or "progress",
+        self.logger.log(self.level, "%s: %.0f%% after %s%s",
+                        self.stage or self.name or "progress",
                         100 * frac, format_duration(spent), left)

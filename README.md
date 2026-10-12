@@ -3,8 +3,9 @@
 Multimodal binomial-mixture analysis of HDX-MS spectra: from spectra (raw or exported) to
 binned deuterium sticks to fitted populations with uncertainties and plots.
 
-**Status: early development (Phase 0, repository scaffold).** Nothing is usable yet. The
-project plan is in [`docs/PLAN.md`](docs/PLAN.md).
+**Status: early development.** Reading, picking, fitting, bootstrapping, reports and the
+command line work; nothing is released yet. The project plan is in
+[`docs/PLAN.md`](docs/PLAN.md).
 
 `hxex` is the planned successor to
 [pyHXExpress](https://github.com/tuttlelm/pyHXExpress). It is standalone and does not depend
@@ -35,6 +36,22 @@ pip install torch --index-url https://download.pytorch.org/whl/cu126
 ```
 
 These wheels are several gigabytes; on a slow connection add `--default-timeout=600` to `pip`.
+
+## Command line
+
+A run is described by a TOML project file:
+
+```bash
+hxex init --format specexport -o hxex.toml   # a project file with every default; edit it
+hxex check hxex.toml                         # what would be read, and any problem
+hxex run hxex.toml                           # read, pick, fit, bootstrap; bundle and tables
+hxex info results                            # what the results bundle holds
+hxex report results --figures                # figures (and --tables) from the bundle
+hxex resume results                          # finish a run stopped during its bootstrap
+```
+
+Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes to stderr;
+Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had started.
 
 ## Thermo raw files (optional)
 

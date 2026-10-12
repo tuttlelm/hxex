@@ -494,8 +494,8 @@ def run(
         boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
     except BaseException:
         if checkpoint:
-            log.warning("the bootstrap did not finish: the fits are in %s, and "
-                        "hxex.run.resume_bootstrap adds the bootstrap to them", out)
+            log.warning("the bootstrap did not finish: the fits are in %s; 'hxex resume' (or "
+                        "hxex.run.resume_bootstrap) adds the bootstrap to them", out)
         raise
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,

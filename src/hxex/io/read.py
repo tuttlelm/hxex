@@ -115,7 +115,7 @@ def _read(entries, root: Path, fmt: str, *, project, fulldeut_time, undeut_time,
     files: dict[str, dict] = {}
     for done, (data_id, entry) in enumerate(jobs):
         check_cancel(cancel)
-        log.info("reading %s %s z=%d", entry.sample, entry.peptide_range, entry.charge)
+        log.debug("reading %s %s z=%d", entry.sample, entry.peptide_range, entry.charge)
         rel = _input_path(fmt, entry)
         if rel not in files:  # several entries can share one HX-Express file
             if not (root / rel).exists():

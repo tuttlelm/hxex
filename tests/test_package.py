@@ -22,6 +22,7 @@ SUBMODULES = [
     "hxex.bootstrap",
     "hxex.run",
     "hxex.cli",
+    "hxex.config",
 ]
 
 
@@ -45,8 +46,9 @@ def test_cli_version(capsys):
     assert hxex.__version__ in capsys.readouterr().out
 
 
-def test_cli_no_arguments_runs():
-    assert cli.main([]) == 0
+def test_cli_without_a_command_shows_the_commands(capsys):
+    assert cli.main([]) == 2
+    assert "run" in capsys.readouterr().err
 
 
 def test_core_dependencies_import():

@@ -812,16 +812,24 @@ def _read_runs(
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
 
 
+def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
+                 config: MzmlConfig) -> np.ndarray:
+    """Positions (in ``table``, one file's scans) of the scans of ``target`` in ``run``, as
+    :func:`read_mzml` chooses them: the MS level and the scan conditions (the run's where it sets
+    them), within the retention window for a run with a fixed time, or after
+    ``config.min_time``."""
+    if run.time is not None:
+        time_range = target.rt_window
+    else:
+        time_range = None if config.min_time is None else (config.min_time, np.inf)
+    return table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
+                        time_range=time_range, **run.conditions(target))
+
+
 def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config) -> None:
     """Add the spectra of every target in the open file ``f`` (one run) to ``spectra``."""
     table = f.scans()
-    chosen = [
-        table.select(ms_level=t.ms_level, precursor_tol=config.precursor_tol,
-                     time_range=t.rt_window if run.time is not None else (
-                         None if config.min_time is None else (config.min_time, np.inf)),
-                     **run.conditions(t))
-        for t in targets
-    ]
+    chosen = [target_scans(table, run, t, config) for t in targets]
     # the scans of every spectrum, per target, before anything is read (so that sampling a
     # large file reads only the scans it keeps)
     plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []

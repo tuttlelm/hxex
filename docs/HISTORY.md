@@ -1297,6 +1297,31 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       nothing is written, as before. `FitResult.select` (the inverse of `merge`) splits a stored
       fit into chunks. The bundle is written twice (6 s on the benchmark).
 
+45. **Command line and project file (`hxex.cli`, `hxex.config`; owner's decisions of 2026-10-12).**
+    - One TOML project file (no YAML, so no new dependency: `tomllib` reads it, the template is
+      written as text): `project`; `[input]` with the format (`specexport`, `hxexpress`,
+      `pooled`, `mzml`, `thermo`), the folder and filters, or for scan files a peptide table
+      (pyHXExpress's metadf) with `[input.target]` scan conditions, optional `[input.fragments]`
+      (the fragment syntax of `hxex.fragments`, expanded by `fragment_targets`), `[input.scans]`
+      (`MzmlConfig`) and `[[input.runs]]`; a folder format may also take the table instead of
+      finding files by name (the Bimodal set needs it); `[run]`, the `RunConfig` sections laid
+      over their defaults key by key; `[output]` (bundle, tables, figures, notes). A key left
+      out keeps its default; `false` stands for None (TOML has no null), and a `[run.bootstrap]`,
+      `[run.controls]` or `[run.plots]` table turns its stage on. Relative paths are relative
+      to the project file. Unknown keys are refused, as by the configs' own `from_dict`.
+    - Commands: `init` (a template with every default, per format; it reads back as the
+      defaults), `check` (the settings, and the entries or, for scan files, each run's scans per
+      target, as `read_mzml` chooses them: `hxex.io.mzml.target_scans`), `run` (read, run, tables;
+      `--bundle`, `--overwrite`, `--device`), `resume` (`resume_bootstrap`), `report` (tables
+      and figures from a bundle) and `info` (what a bundle holds, `--verify`). Messages and
+      progress (`ProgressLog`, every 30 s or `--progress-every`) go to stderr, results to stdout;
+      exit status 0, 1 (an error, as a message), 2 (usage), 130 (stopped). Ctrl-C stops after
+      the current step; a second one aborts.
+    - Checked on the Bimodal set (566 spectra, K = 1 to 2, bootstrap N = 5, CPU): 1 min 33 s in
+      all (read 3 s, pick 1 s, fit 32 s, bootstrap 55 s), selected K 193/373. Ctrl-C during the
+      bootstrap stopped within 5 s and left the fit bundle; `hxex resume` completed it with the
+      same K distribution. The per-entry "reading" message of the folder readers is now debug.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

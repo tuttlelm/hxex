@@ -116,7 +116,8 @@ and what its readers and picker do) is in `docs/HISTORY.md`.
 - `bootstrap`.
 - `run`: chunking by device and orchestration.
 - `report`: tables and plots.
-- `cli`, plus a TOML or YAML configuration file.
+- `cli`, plus a TOML or YAML configuration file. Decided: TOML only (`hxex.config`, read with
+  the standard library's `tomllib`; item 45).
 
 The binned table is the interchange point. Each stage can run independently, so users can
 start from their own sticks.
@@ -331,7 +332,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   which moves to the post-fitting analysis (see "Next steps"). Bootstrap at fixed K (item 30);
   the large-dataset benchmark met the 10,000-fit target (item 32). HX-Express-style output of a
   run is open.
-- **Command line:** `hxex.cli` is still a placeholder (`hxex --version` works).
+- **Command line: done** (item 45): `hxex init`, `check`, `run`, `resume`, `report` and `info`,
+  driven by a TOML project file (`hxex.config`).
 - **Phase 5 (validation and release):** no work recorded yet; its replicate check is to decide
   the noise model.
 - **Phase 6 (extra input): partly done, ahead of order.** The mzML reader with scan summing
