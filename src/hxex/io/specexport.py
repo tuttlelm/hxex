@@ -23,7 +23,8 @@ from ..spectra import PeptideEntry, Spectrum
 from ._common import clean_spectrum, to_number
 from .entries import filter_entries, read_fasta_sequence, sort_entries
 from .errors import ReadError
-from .times import DEFAULT_FULLDEUT_TIME, parse_specexport_time
+from .hxexpress import _warn_control_clash
+from .times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME, parse_specexport_time
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ def read_specexport_dir(
     *,
     data_id: int = 0,
     fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
+    undeut_time: float = DEFAULT_UNDEUT_TIME,
     id_prefix: str | None = None,
 ) -> list[Spectrum]:
     """Read every spectrum of ``entry``'s charge in one peptide directory.
@@ -127,11 +129,13 @@ def read_specexport_dir(
     for path in spec_dir.glob("*.csv"):
         parsed = parse_specexport_filename(path.name)
         if parsed is not None and parsed[2] == entry.charge:
-            found.append((parse_specexport_time(parsed[0], fulldeut_time), parsed[1], path))
+            found.append((parse_specexport_time(parsed[0], fulldeut_time, undeut_time),
+                          parsed[1], path, parsed[0]))
     if not found:
         raise ReadError(f"{spec_dir}: no spectrum files for charge {entry.charge}")
+    _warn_control_clash(spec_dir, [(token, t) for t, _, _, token in found])
     spectra = []
-    for time, rep, path in sorted(found, key=lambda t: (t[0], t[1], t[2].name)):
+    for time, rep, path, _ in sorted(found, key=lambda t: (t[0], t[1], t[2].name)):
         mz, intensity = clean_spectrum(*_read_two_columns(path))
         spectra.append(
             Spectrum(

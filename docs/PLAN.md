@@ -1143,6 +1143,15 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     population along the time course (linking each to the nearest mean at the next time) could
     be done entirely from the results as a post-processing step and is a possible later option
     (it fails when populations appear, vanish, cross or change K, so rank stays the default).
+    **Experiments run the other way** (deuterated at the start, then exchanged into H2O, so the
+    fully deuterated control comes first) are handled by the control times alone: the controls
+    and the correction never assumed an order, and the plots now recognise a control by its time
+    (within `atol`) rather than by being the latest; the undeuterated control is labelled `UN`.
+    The readers take `undeut_time` as well as `fulldeut_time` for the control labels
+    (`undeut`/`Non`, `TD`/`Full`), so a real 0 s time point can be kept apart from the
+    undeuterated control (for example `undeut_time=-1`); a clash is logged as a warning, and equal
+    control times are refused. In such an experiment `m0_max` may need raising if the
+    undeuterated control is the last time point (it keeps the deuterium of the residual D2O).
     **Colours.** Okabe-Ito colours (distinguishable with red-green colour blindness; checked by
     simulating deutan and protan vision) for the populations (`COLORS`, by rank of the mean) and
     the replicates (beyond six populations the colours repeat with the next line style and hollow

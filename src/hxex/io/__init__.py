@@ -25,7 +25,12 @@ from .specexport import (
     read_specexport_dir,
     scan_specexport,
 )
-from .times import DEFAULT_FULLDEUT_TIME, parse_hxexpress_time, parse_specexport_time
+from .times import (
+    DEFAULT_FULLDEUT_TIME,
+    DEFAULT_UNDEUT_TIME,
+    parse_hxexpress_time,
+    parse_specexport_time,
+)
 
 __all__ = [
     "load_spectra",
@@ -39,6 +44,7 @@ __all__ = [
     "write_bundle",
     "CandidateMatch",
     "DEFAULT_FULLDEUT_TIME",
+    "DEFAULT_UNDEUT_TIME",
     "ReadError",
     "filter_entries",
     "parse_hxexpress_filename",

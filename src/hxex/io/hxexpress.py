@@ -17,7 +17,12 @@ from ..spectra import PeptideEntry, Spectrum
 from ._common import clean_spectrum, to_number
 from .entries import filter_entries, sort_entries
 from .errors import ReadError
-from .times import DEFAULT_FULLDEUT_TIME, parse_hxexpress_time
+from .times import (
+    DEFAULT_FULLDEUT_TIME,
+    DEFAULT_UNDEUT_TIME,
+    is_control_label,
+    parse_hxexpress_time,
+)
 
 log = logging.getLogger(__name__)
 
@@ -101,10 +106,13 @@ def read_hxexpress_file(
     *,
     data_id: int = 0,
     fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
+    undeut_time: float = DEFAULT_UNDEUT_TIME,
 ) -> list[Spectrum]:
     """Read every spectrum in one HX-Express file.
 
-    Spectra come in column order. ``rep`` counts the spectra with the same time so far.
+    Spectra come in column order. ``rep`` counts the spectra with the same time so far. A
+    control label and a time label that give the same time are logged as a warning (they cannot
+    be told apart afterwards; set ``undeut_time`` or ``fulldeut_time`` to another value).
     """
     path = Path(path)
     rows = _read_rows(path)
@@ -119,10 +127,12 @@ def read_hxexpress_file(
     if not labelled:
         raise ReadError(f"{path}: first row has no time labels")
     seen: Counter[float] = Counter()
+    _warn_control_clash(path, [(label, parse_hxexpress_time(label, fulldeut_time, undeut_time))
+                               for _, label in labelled if _parses(label)])
     spectra = []
     for col, label in labelled:
         try:
-            time = parse_hxexpress_time(label, fulldeut_time)
+            time = parse_hxexpress_time(label, fulldeut_time, undeut_time)
         except ReadError as exc:
             raise ReadError(f"{path}, column {col + 1}: {exc}") from exc
         seen[time] += 1
@@ -139,3 +149,24 @@ def read_hxexpress_file(
             )
         )
     return spectra
+
+
+def _parses(label: str) -> bool:
+    try:
+        parse_hxexpress_time(label)
+    except ReadError:
+        return False
+    return True
+
+
+def _warn_control_clash(where, labelled_times) -> None:
+    """Warn when a control label and a time label give the same time (shared with SpecExport)."""
+    control = {t for label, t in labelled_times if is_control_label(label)}
+    timed = {t for label, t in labelled_times if not is_control_label(label)}
+    clash = sorted(control & timed)
+    if clash:
+        log.warning(
+            "%s: a control and a time point both have time %s, so they cannot be told apart; "
+            "set undeut_time or fulldeut_time to a value no time point has (for example -1)",
+            where, ", ".join(f"{t:g}" for t in clash),
+        )

@@ -184,12 +184,24 @@ def _err(value: float) -> float | None:
     return float(value) if np.isfinite(value) else None
 
 
-def _time_text(results: Results, t: float) -> str:
-    """A time for a title: ``FD`` for the fully deuterated control, else seconds."""
+def _control_role(results: Results, t: float) -> str | None:
+    """``'FD'`` or ``'UN'`` if ``t`` is the fully deuterated or undeuterated control time (matched
+    within the controls' ``atol``, so the controls may be at any time, as in an experiment that
+    starts deuterated and exchanges into H2O), else None."""
     ctrl = results.controls
-    if ctrl is not None and ctrl.config.fd_time is not None and t >= ctrl.config.fd_time:
+    if ctrl is None:
+        return None
+    cfg = ctrl.config
+    if cfg.fd_time is not None and abs(t - cfg.fd_time) <= cfg.atol:
         return "FD"
-    return f"{t:g} s"
+    if cfg.undeut_time is not None and abs(t - cfg.undeut_time) <= cfg.atol:
+        return "UN"
+    return None
+
+
+def _time_text(results: Results, t: float) -> str:
+    """A time for a title: ``FD`` or ``UN`` for a control, else seconds."""
+    return _control_role(results, t) or f"{t:g} s"
 
 
 def _control_row(results: Results, data_id: int) -> int | None:
@@ -358,7 +370,9 @@ def uptake_data(
     spectrum and population: ``index`` (position in the results), ``time``, ``time_index``,
     ``rep``, ``rank``, ``mean`` (corrected if asked and possible), ``mean_se``, ``fraction``,
     ``fraction_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
-    controls) and ``fd_time`` (the fully deuterated time of the controls, or None)."""
+    controls), ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
+    control, matched to the control times) and ``fd_time`` (the fully deuterated time of the
+    controls, or None)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (
         "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "fraction",
@@ -385,6 +399,7 @@ def uptake_data(
         "m0": None if row is None else float(ctrl.m0[row]),
         "mfd": None if row is None else float(ctrl.mfd[row]),
         "fd_time": None if ctrl is None else ctrl.config.fd_time,
+        "role": np.array([_control_role(results, float(t)) or "" for t in out["time"]], dtype=str),
         "control_fallback": None if row is None else bool(ctrl.fallback[row]),
     })
     return out
@@ -408,7 +423,8 @@ def plot_uptake(
     mean, and each replicate has its own colour).
 
     ``x='time'`` plots against the measured time (``scale='linear'`` or ``'log'``; a log axis
-    leaves out times of 0 or less, and the fully deuterated control is drawn as a line, not a
+    leaves out times of 0 or less, and the fully deuterated control, recognised by its time
+    whether it comes first or last, is drawn as a line, not a
     point). ``x='index'`` plots against the position of the time point in the series (0, 1, 2,
     ..., labelled with the times), with every time point including the controls, as for the
     test data sets. ``corrected`` (default: if the results have controls) uses the back-exchange
@@ -422,8 +438,7 @@ def plot_uptake(
     d = uptake_data(results, data_id, corrected=corrected, components=components, k=k)
     fig = ax.figure if ax is not None else Figure(figsize=(6.5, 4.5))
     ax = ax if ax is not None else fig.subplots()
-    fd_time = d["fd_time"]
-    is_fd = np.zeros(len(d["time"]), dtype=bool) if fd_time is None else d["time"] >= fd_time
+    is_fd = d["role"] == "FD"
     keep = np.ones(len(d["time"]), dtype=bool) if x == "index" else ~is_fd
     if x == "time" and scale == "log":
         keep &= d["time"] > 0
@@ -454,7 +469,8 @@ def plot_uptake(
         labels = []
         for t in ticks:
             time = d["time"][d["time_index"] == t][0]
-            labels.append("FD" if fd_time is not None and time >= fd_time else f"{time:g}")
+            role = d["role"][d["time_index"] == t][0]
+            labels.append(role or f"{time:g}")
         ax.set_xticks(ticks, labels, rotation=45 if len(ticks) > 8 else 0, fontsize=8)
         ax.set_xlabel("time point (s)")
     else:

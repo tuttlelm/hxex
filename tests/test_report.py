@@ -228,7 +228,7 @@ def test_uptake_components_and_k(results):
 def test_plot_uptake_axes(results):
     by_index = plot_uptake(results, 0, x="index")
     ax = by_index.axes[0]
-    assert [t.get_text() for t in ax.get_xticklabels()] == ["0", "60", "FD"]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["UN", "60", "FD"]
     assert {"rep:1", "rep:2", "rep:3", "limits"} <= gids(by_index)
     assert ax.get_ylabel().endswith("corrected)")
     by_time = plot_uptake(results, 0, x="time", corrected=False)
@@ -644,3 +644,23 @@ def test_populations_beyond_the_palette_change_line_style(results, monkeypatch):
     cells = plot_populations(results, 0, k=2, overlay=False).axes
     hollow = [a for ax in cells for a in ax.get_lines() if a.get_gid() == "pop:2"]
     assert hollow and all(a.get_fillstyle() == "none" for a in hollow)
+
+
+def test_controls_are_recognised_at_any_time_as_in_a_reverse_experiment(results):
+    """Deuterated first, then exchanged into H2O: the fully deuterated control at time 0 and the
+    undeuterated one at the end. The plots must find them by their times, not by order."""
+    from hxex.controls import ControlConfig, fit_controls
+
+    swapped = fit_controls(results.fit, results.measurements.n_max / 1.2,
+                           ControlConfig(undeut_time=1e6, fd_time=0.0))
+    rev = Results(measurements=results.measurements, fit=results.fit, controls=swapped,
+                  binned=results.binned)
+    by_index = plot_uptake(rev, 0, x="index")
+    assert [t.get_text() for t in by_index.axes[0].get_xticklabels()] == ["FD", "60", "UN"]
+    by_time = plot_uptake(rev, 0, x="time", corrected=False)
+    pts = [a for a in by_time.axes[0].get_children() if a.get_gid() == "rep:1"][0]
+    assert sorted(pts.get_offsets()[:, 0]) == [60.0, 1e6]  # the control at 0 s is a line now
+    assert list(uptake_data(rev, 0)["role"][:3]) == ["FD"] * 3
+    titles = [ax.get_title() for ax in plot_series_spectra(rev, 0, show=("picked",)).axes]
+    assert any(t.startswith("FD, rep") for t in titles)
+    assert any(t.startswith("UN, rep") for t in titles)

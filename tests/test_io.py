@@ -10,6 +10,7 @@ skipped when the variables are not set.
 
 import csv
 import io
+import logging
 import os
 import zipfile
 from collections import defaultdict
@@ -160,6 +161,30 @@ def test_read_hxexpress_fulldeut_time(tmp_path):
     write_xlsx(tmp_path / "a.xlsx")
     sp = hio.read_hxexpress_file(tmp_path / "a.xlsx", ENTRY, fulldeut_time=123.0)
     assert sp[-1].time == 123.0
+
+
+def test_the_undeuterated_label_time_is_user_set(tmp_path, caplog):
+    assert hio.parse_hxexpress_time("undeut", undeut_time=-1.0) == -1.0
+    assert hio.parse_specexport_time("Non", undeut_time=-1.0) == -1.0
+    assert hio.parse_hxexpress_time("undeut") == 0.0 == hio.parse_specexport_time("Non")
+    # a reverse experiment: a real 0 s time point next to the undeuterated control
+    write_xlsx(tmp_path / "r.xlsx", header=["undeut", None, "0 s", None, "TD", None])
+    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
+        sp = hio.read_hxexpress_file(tmp_path / "r.xlsx", ENTRY)
+    assert "cannot be told apart" in caplog.text and [s.time for s in sp][:2] == [0.0, 0.0]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
+        sp = hio.read_hxexpress_file(tmp_path / "r.xlsx", ENTRY, undeut_time=-1.0)
+    assert caplog.text == "" and [s.time for s in sp] == [-1.0, 0.0, 1e6]
+
+
+def test_read_spectra_refuses_equal_control_times(specroot):
+    with pytest.raises(ValueError, match="must differ"):
+        hio.read_spectra(hio.scan(specroot, "specexport"), specroot, "specexport",
+                         project="proj", undeut_time=5.0, fulldeut_time=5.0)
+    s = hio.read_spectra(hio.scan(specroot, "specexport"), specroot, "specexport",
+                         project="proj", undeut_time=-1.0)
+    assert -1.0 in set(s.time.tolist()) and 0.0 not in set(s.time.tolist())
 
 
 def test_read_hxexpress_errors(tmp_path):
