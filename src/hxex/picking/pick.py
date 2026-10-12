@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Peak picking at predicted deuterium positions (ExMS spacing).
+"""Peak picking at predicted deuterium positions.
 
-For each spectrum the bins sit at ``undeut_mz + n * ExMS spacing / z``. Each bin takes the
-tallest point inside a +/- ppm window. Picking covers every bin up to a limit set by the amide
-count and ends ``zero_filling`` bins after the last bin that reaches the noise threshold, so a
-valley inside a multimodal envelope never ends picking early (pyHXExpress stopped after a
-cumulative count of below-threshold bins).
+Bin ``n`` is the isotope cluster of nominal mass +n. By default its position is the cluster's
+abundance-weighted mass from the composition (the composition ladder); pyHXExpress's ExMS
+spacing is an option and also gives the first pass that estimates the deuteration level. Each
+bin takes the tallest point inside a +/- ppm window (docs/PEAK_PICKING.md). Picking covers
+every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the last bin
+that reaches the noise threshold, so a valley inside a multimodal envelope never ends picking
+early (pyHXExpress stopped after a cumulative count of below-threshold bins).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.stats import binom
 
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
@@ -30,10 +33,16 @@ EXMS_DELTA_M = (1.003355, 1.003355, 1.004816, 1.004816, 1.006277)
 
 @dataclass(frozen=True)
 class BinPlan:
-    """Where the bins of one peptide are: predicted m/z for bins ``0..n``, and the amide count."""
+    """Where the bins of one peptide are: predicted m/z for bins ``0..n`` (ExMS ladder), and the
+    amide count; for the composition ladder also the undeuterated m/z, the charge, the number
+    of exchangeable sites and the natural isotope clusters (abundance, mass offset in Da)."""
 
     pred_mz: np.ndarray
     max_namides: int
+    undeut_mz: float = float("nan")
+    charge: int = 0
+    n_sites: int = 0
+    clusters: tuple[np.ndarray, np.ndarray] | None = None
 
 
 @dataclass(frozen=True)
@@ -85,7 +94,7 @@ def plan_bins(
         rules=config.amide_rules,
         registry=registry,
     )
-    shape = chem.natural_abundance(
+    shape, offsets = chem.isotope_clusters(
         peptide,
         spec.ion_type,
         mod=spec,
@@ -93,9 +102,48 @@ def plan_bins(
         rules=config.amide_rules,
         registry=registry,
     )
+    sites = chem.exchangeable_sites(
+        peptide, mod=spec, ion_type=spec.ion_type, nterm_subtract=config.nterm_subtract,
+        rules=config.amide_rules, registry=registry,
+    )
     n_bins = amides + spec.hex + len(shape) - 1 + config.zero_filling
     undeut = chem.mz(peptide, charge, spec.ion_type, mod=spec, registry=registry)
-    return BinPlan(predicted_mz(undeut, charge, n_bins), amides)
+    return BinPlan(predicted_mz(undeut, charge, n_bins), amides, undeut, charge, sites,
+                   (shape, offsets))
+
+
+COMPOSITION_PASSES = 2  # estimates of the deuteration level for the composition ladder
+D_MINUS_H = 2.01410177812 - 1.00782503207  # mass of deuterium minus hydrogen (Da)
+
+
+def composition_mz(plan: BinPlan, deuteration: float) -> np.ndarray:
+    """Predicted m/z of every bin of ``plan`` from the composition: bin ``n`` is the cluster of
+    nominal mass +n, the natural isotope clusters convolved with a binomial distribution of
+    deuterium over the exchangeable sites with mean ``deuteration``, and sits at the cluster's
+    abundance-weighted mass. Bins beyond the clusters' reach continue by one deuterium step."""
+    shape, offsets = plan.clusters
+    n = len(plan.pred_mz)
+    s = plan.n_sites
+    p = min(max(deuteration / s, 1e-9), 1 - 1e-9) if s > 0 else 0.0
+    k = np.arange(s + 1)
+    d = binom.pmf(k, s, p) if s > 0 else np.array([1.0])
+    weight = np.zeros(n)
+    mass = np.zeros(n)
+    for j, (a, off) in enumerate(zip(shape, offsets, strict=True)):
+        idx = j + k
+        keep = idx < n
+        w = d[keep] * a
+        weight[idx[keep]] += w
+        mass[idx[keep]] += w * (k[keep] * D_MINUS_H + off)
+    known = weight > 1e-12 * weight.max()
+    out = np.full(n, np.nan)
+    out[known] = mass[known] / weight[known]
+    first = int(np.flatnonzero(known)[0])
+    out[:first] = out[first] - (first - np.arange(first)) * D_MINUS_H  # not reached in practice
+    for i in range(first + 1, n):
+        if not known[i]:
+            out[i] = out[i - 1] + D_MINUS_H
+    return plan.undeut_mz + out / plan.charge
 
 
 def envelope(
@@ -177,6 +225,19 @@ def pick_spectrum(
 
     pred = plan.pred_mz
     values = _bin_values(mz, intensity, pred, config)
+    if config.ladder == "composition" and plan.clusters is not None:
+        # the deuteration level from a first pass with the ExMS ladder, then the composition
+        # ladder; the level is estimated once more from those picks (a first pass that missed
+        # peaks biases it), and the bins are picked again
+        natural = float((np.arange(len(plan.clusters[0])) * plan.clusters[0]).sum())
+        for _ in range(COMPOSITION_PASSES):
+            strong = np.where(values >= threshold, values, 0.0)
+            if strong.sum() <= 0:
+                break
+            centre = float((np.arange(len(strong)) * strong).sum() / strong.sum())
+            level = min(max(centre - natural, 0.0), float(plan.n_sites))
+            pred = composition_mz(plan, level)
+            values = _bin_values(mz, intensity, pred, config)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1

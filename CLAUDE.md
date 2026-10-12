@@ -59,7 +59,8 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
   `fit`, `report`, `noise`, `controls`, `bootstrap`, `run`, `cli`). Each docstring says what
   it will contain and in which phase. Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
-- `tests/`, `docs/`, `.github/workflows/` (`ci.yml`, `publish.yml`).
+- `tests/`, `docs/` (`PLAN.md`, `BUNDLE.md`, `PEAK_PICKING.md`, `RELEASING.md`),
+  `.github/workflows/` (`ci.yml`, `publish.yml`).
 
 Machine-specific notes (local paths to the pyHXExpress reference code and test data, tooling
 quirks) are in `CLAUDE.local.md`, which is not committed.

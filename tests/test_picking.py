@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Peak-picker tests: synthetic spectra for the logic, and pyHXExpress output as the oracle.
 
+The logic tests place their peaks on the ExMS ladder and pin ``ladder="exms"``; so do the
+oracle comparisons, since pyHXExpress uses that ladder. The composition ladder (the default) is
+tested in its own section.
+
 The golden file (HXEX_PICKER_GOLDEN, made by tests/golden/make_picker_golden.py; it holds
 unpublished data and is not in the repository) has raw spectra and the reference
 ``peak_picker`` output from an October 2026 pyHXExpress run (Zero_Filling 3, setNoise 50,
@@ -15,6 +19,7 @@ import json
 import os
 import zipfile
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -31,11 +36,12 @@ from hxex.picking import (
     plan_bins,
     predicted_mz,
 )
+from hxex.picking.pick import D_MINUS_H, composition_mz
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE = "RDKVQKEYAL"  # 10 residues
-CFG = PickerConfig(zero_filling=3, noise=100.0)
-GOLDEN_CFG = PickerConfig(zero_filling=3, noise=50.0, nterm_subtract=2)
+CFG = PickerConfig(ladder="exms", zero_filling=3, noise=100.0)
+GOLDEN_CFG = PickerConfig(ladder="exms", zero_filling=3, noise=50.0, nterm_subtract=2)
 
 
 def sticks(plan, heights, spread=0.002):
@@ -90,7 +96,7 @@ def test_plan_bins_modification_and_ion_type():
 
 
 def test_plan_bins_with_ptm_and_nterm_subtract():
-    plan = plan_bins("acKPEPTIDE", 2, config=PickerConfig(nterm_subtract=2))
+    plan = plan_bins("acKPEPTIDE", 2, config=PickerConfig(ladder="exms", nterm_subtract=2))
     assert plan.max_namides == chem.count_amides("acKPEPTIDE", nterm_subtract=2) == 5
     assert plan.pred_mz[0] == chem.mz("acKPEPTIDE", 2)
 
@@ -154,7 +160,7 @@ def test_resolution_ppm():
     mz = np.array([plan.pred_mz[0] * (1 + 30e-6)])
     y = np.array([500.0])
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 500.0
-    narrow = PickerConfig(zero_filling=3, noise=100.0, resolution_ppm=20.0)
+    narrow = PickerConfig(ladder="exms", zero_filling=3, noise=100.0, resolution_ppm=20.0)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=narrow).intensity[0] == 0.0
 
 
@@ -175,7 +181,8 @@ def test_shoulder_rejection_applies_to_windows_with_many_points():
     # a window with fewer than shoulder_min_points points is treated as stick data
     mz, y = profile(plan, np.linspace(100, 1000, 9), n=9)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 1000.0
-    lenient = PickerConfig(zero_filling=3, noise=100.0, shoulder_min_points=20)
+    lenient = PickerConfig(ladder="exms", zero_filling=3, noise=100.0,
+                           shoulder_min_points=20)
     mz, y = profile(plan, rising)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=lenient).intensity[0] == 1000.0
 
@@ -203,12 +210,13 @@ def test_unsorted_input_is_sorted():
 def test_noise_threshold_absolute_and_percent():
     plan = plan_bins(PEPTIDE, 2, config=CFG)
     mz, y = sticks(plan, {0: 100000.0, 1: 800.0})
-    percent = PickerConfig(zero_filling=3, noise_percent=1.0)
+    percent = PickerConfig(ladder="exms", zero_filling=3, noise_percent=1.0)
     p = pick_spectrum(mz, y, PEPTIDE, 2, config=percent)
     assert p.threshold == pytest.approx(0.01 * 100000.0) and len(p.mz) == 0 + 1 + 3
-    zero = PickerConfig(zero_filling=3, noise=0, noise_percent=1.0)  # 0 means "use the percent"
+    # 0 means "use the percent"
+    zero = PickerConfig(ladder="exms", zero_filling=3, noise=0, noise_percent=1.0)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=zero).threshold == p.threshold
-    absolute = PickerConfig(zero_filling=3, noise=50.0)
+    absolute = PickerConfig(ladder="exms", zero_filling=3, noise=50.0)
     q = pick_spectrum(mz, y, PEPTIDE, 2, config=absolute)
     assert q.threshold == 50.0 and len(q.mz) == 1 + 1 + 3
 
@@ -222,7 +230,7 @@ def test_flags_for_empty_and_noise_only_spectra():
                                PEPTIDE, 2, config=CFG)
     assert noise_only.no_signal and not noise_only.empty  # below threshold, but not all zero
     no_data = pick_spectrum(np.array([]), np.array([]), PEPTIDE, 2,
-                            config=PickerConfig(zero_filling=3, noise_percent=1.0))
+                            config=PickerConfig(ladder="exms", zero_filling=3, noise_percent=1.0))
     assert np.isnan(no_data.threshold) and no_data.no_signal
 
 
@@ -266,7 +274,7 @@ def test_envelope_columns_follow_the_reference_formulas():
 # --- configuration --------------------------------------------------------------------------
 
 def test_config_round_trip_and_json():
-    cfg = PickerConfig(zero_filling=3, noise=50.0, nterm_subtract=2,
+    cfg = PickerConfig(ladder="exms", zero_filling=3, noise=50.0, nterm_subtract=2,
                        amide_rules=chem.AmideRules({"c": 1}))
     data = json.loads(json.dumps(cfg.to_dict()))
     assert PickerConfig.from_dict(data) == cfg
@@ -458,3 +466,62 @@ def test_whole_run_matches_pyhxexpress():
             float(rows[0]["env_width"]), float(rows[0]["env_symm"]), int(rows[0]["max_namides"]),
         )
     assert dropped <= 5
+
+
+# --- the composition ladder (the default) ------------------------------------------------------
+
+
+def test_isotope_clusters_have_the_natural_spacing():
+    shape, offset = chem.isotope_clusters(PEPTIDE)
+    assert shape.sum() == pytest.approx(1.0) and offset[0] == 0.0
+    np.testing.assert_allclose(shape, chem.natural_abundance(PEPTIDE))  # the same envelope
+    steps = np.diff(offset)
+    # nominal-mass clusters mix 13C (1.00336), 15N (0.99703), 18O and 34S: about 1.0025 Da
+    assert np.all((steps > 1.0020) & (steps < 1.0030)) and np.all(np.diff(steps) < 0)
+
+
+def test_composition_ladder_follows_the_deuteration_level():
+    plan = plan_bins(PEPTIDE, 2, config=PickerConfig())
+    shape, offset = plan.clusters
+    undeut = composition_mz(plan, 0.0)
+    # no deuterium: every bin at its natural cluster (to the numerical floor of the binomial)
+    k = len(shape)
+    np.testing.assert_allclose(undeut[:k], plan.undeut_mz + offset / 2, rtol=0, atol=2e-5)
+    assert undeut[0] == pytest.approx(plan.undeut_mz)
+    # fully labelled: the middle of the envelope is made of deuterium steps
+    full = composition_mz(plan, float(plan.n_sites))
+    mid = np.diff(full)[2:plan.n_sites - 2] * 2
+    np.testing.assert_allclose(mid, D_MINUS_H, atol=2e-3)
+    # the ExMS ladder lies between the two: too wide for undeuterated bins
+    assert np.all(np.diff(plan.pred_mz)[3:k] > np.diff(undeut)[3:k])
+    # beyond the clusters' reach the ladder continues by one deuterium step
+    tail = np.diff(undeut)[-3:] * 2
+    np.testing.assert_allclose(tail, D_MINUS_H, atol=1e-6)
+
+
+def test_picking_with_the_composition_ladder_finds_peaks_off_the_exms_ladder():
+    """Peaks placed at their composition positions are found in a narrow window, where the ExMS
+    ladder misses them; the picked m/z are the composition positions."""
+    narrow = PickerConfig(zero_filling=3, noise=100.0, resolution_ppm=4.0)
+    plan = plan_bins(PEPTIDE, 2, config=narrow)
+    level = 5.0
+    pos = composition_mz(plan, level)
+    heights = 1e4 * np.exp(-0.5 * ((np.arange(len(pos)) - (level + 1)) / 1.5) ** 2)
+    mz = np.concatenate([p + np.array([-0.0005, 0.0, 0.0005]) for p in pos])
+    y = np.concatenate([h * np.array([0.3, 1.0, 0.3]) for h in heights])
+    comp = pick_spectrum(mz, y, PEPTIDE, 2, config=narrow, plan=plan)
+    exms = pick_spectrum(mz, y, PEPTIDE, 2, config=replace(narrow, ladder="exms"), plan=plan)
+    strong = heights[: len(comp.intensity)] > 100
+    np.testing.assert_allclose(comp.intensity[strong], heights[: len(comp.intensity)][strong],
+                               rtol=1e-9)
+    assert (exms.intensity[: strong.sum()] == 0).sum() > 0  # the ExMS windows miss some peaks
+    # the reported m/z are the second pass's positions, close to the composition ones
+    p = pos[: len(comp.mz)]
+    assert np.max(np.abs(comp.mz[strong] - p[strong]) / p[strong] * 1e6) < 1.5
+
+
+def test_ladder_setting():
+    assert PickerConfig().ladder == "composition"
+    assert PickerConfig.from_dict(PickerConfig(ladder="exms").to_dict()).ladder == "exms"
+    with pytest.raises(ValueError, match="ladder"):
+        PickerConfig(ladder="other")

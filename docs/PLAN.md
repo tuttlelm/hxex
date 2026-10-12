@@ -1236,6 +1236,26 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     filter string as a userParam. Not done yet: fragment target lists (Phase 6, with the
     unverified fragment amide counts).
 
+34. **Peak picker: the composition ladder (owner's decision of 2026-10-12; method in
+    docs/PEAK_PICKING.md).** The shoulder rule turned out to be a symptom: on an intact protein it
+    removed genuine apexes because the predicted positions had drifted from the peaks. The ExMS
+    ladder (a fixed 1.003355 / 1.004816 / 1.006277 Da) does not match real isotope clusters, which
+    mix deuterium (1.00628 Da) with natural heavy isotopes (about 1.0025 Da per step); measured
+    steps were 1.001 to 1.0025 Da for undeuterated and 1.0044 to 1.0054 Da for deuterated
+    peptides. **Default now (a deliberate difference from pyHXExpress):** each bin at the
+    abundance-weighted mass of its cluster, the natural isotope clusters of the composition
+    (brainpy) convolved with a binomial deuterium distribution whose level comes from a first pass
+    with the ExMS ladder and is estimated twice (`PickerConfig.ladder`, `exms` keeps the old
+    ladder; the pyHXExpress oracle tests pin it). No peak is assigned to a bin to set the positions
+    (the owner's objection to recalibrating spectra from their own peaks). Results: intact ions in
+    high-resolution scans within about 1 ppm (ExMS up to +2.2 ppm), fragments 95 % inside their
+    windows (ExMS 50 %), the intact protein's real peaks lost to the shoulder rule 339 to 17,
+    peptide SpecExport data and the Bimodal accuracy unchanged. An apex rule (tallest local maximum
+    in the window) was tried and dropped: on coarse peptide data it zeroed real peaks lying outside
+    their windows. Open: the shoulder rule; per-spectrum offsets (diagnostic planned, calibration
+    from the undeuterated control possible); constant offsets of -14 to -49 ppm for fragment ion
+    types (`c-1`, `z-dot`, `M-NH3`), to be settled with the fragment ion verification.
+
     | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
     |---|---|---|
     | Read and pick | 31 s | 31 s |

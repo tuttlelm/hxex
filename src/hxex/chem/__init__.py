@@ -12,7 +12,7 @@ from .amides import (
     count_amides,
     exchangeable_sites,
 )
-from .composition import composition, mz, natural_abundance, neutral_mass
+from .composition import composition, isotope_clusters, mz, natural_abundance, neutral_mass
 from .ions import check_ion_type, ion_types
 from .modifications import (
     DEFAULT_MODIFICATIONS,
@@ -39,6 +39,7 @@ __all__ = [
     "exchangeable_sites",
     "ion_types",
     "mz",
+    "isotope_clusters",
     "natural_abundance",
     "neutral_mass",
     "parse_modification",

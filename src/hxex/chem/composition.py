@@ -72,6 +72,35 @@ def mz(
     return mass.Composition(comp).mass(charge=charge)
 
 
+def isotope_clusters(
+    sequence: str,
+    ion_type: str = "M",
+    *,
+    mod: ModificationSpec | None = None,
+    nterm_subtract: int = 1,
+    npeaks: int | None = None,
+    rules: AmideRules = DEFAULT_AMIDE_RULES,
+    registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The natural-abundance isotope clusters of :func:`natural_abundance` with their masses:
+    ``(shape, offset)``, the abundance of each nominal-mass cluster (sums to 1) and its
+    abundance-weighted mass relative to the first cluster (Da). Each cluster mixes isotopologues
+    of one nominal mass (13C, 15N, 18O, 34S, ...), so the offsets are not multiples of one
+    spacing (about 1.002 to 1.003 Da per step for peptides and proteins)."""
+    comp = composition(sequence, ion_type, mod=mod, registry=registry)
+    n_ex = exchangeable_sites(
+        sequence, mod=mod, ion_type=ion_type, nterm_subtract=nterm_subtract, rules=rules,
+        registry=registry,
+    )
+    if comp.get("H", 0) < n_ex:
+        raise ChemistryError(f"{n_ex} exchangeable sites exceed the {comp.get('H', 0)} hydrogens")
+    comp["H"] -= n_ex
+    peaks = isotopic_variants(comp, npeaks=npeaks, charge=1)
+    shape = np.array([p.intensity for p in peaks], dtype=float)
+    masses = np.array([p.mz for p in peaks], dtype=float)  # charge 1: mass + one proton
+    return shape / shape.sum(), masses - masses[0]
+
+
 def natural_abundance(
     sequence: str,
     ion_type: str = "M",
