@@ -205,6 +205,7 @@ def plot_spectrum(
     k: int | None = None,
     components: Sequence[int] | None = None,
     ax: Axes | None = None,
+    rax: Axes | None = None,
     residual: bool = False,
     band: bool = True,
     component_band: bool = True,
@@ -236,10 +237,10 @@ def plot_spectrum(
     (``COLORS``, then the same colours with another line style beyond ``len(COLORS)``
     populations, see :func:`population_style`; the population map uses the same ones).
     ``xaxis`` is ``'mz'`` (default when raw data is drawn or the picked table is available) or
-    ``'n_deut'``.
-    ``residual`` adds a panel of picked minus fit. With ``ax`` the spectrum is drawn there (no
-    residual panel). Every artist has a ``gid``: ``raw``, ``picked``, ``fit``, ``band``,
-    ``component:<rank>``, ``component_band:<rank>`` and ``residual``.
+    ``'n_deut'``. ``residual`` adds a panel of picked minus fit. With ``ax`` the spectrum is
+    drawn there, and with ``residual`` its residuals in ``rax``, which must then be given. Every
+    artist has a ``gid``: ``raw``, ``picked``, ``fit``, ``band``, ``component:<rank>``,
+    ``component_band:<rank>`` and ``residual``.
     """
     if picked_style not in ("auto", "window", "stick"):
         raise ValueError("picked_style must be 'auto', 'window' or 'stick'")
@@ -271,7 +272,10 @@ def plot_spectrum(
         else:
             ax, rax = fig.subplots(), None
     else:
-        fig, rax = ax.figure, None
+        fig = ax.figure
+        if residual and rax is None:
+            raise ValueError("with ax given, residuals need their own axes: pass rax")
+        rax = rax if residual else None
     peak = max([
         float(np.max(layer[key])) for layer, key in ((raw, "intensity"), (picked, "intensity"),
                                                      (fit, "total")) if layer is not None

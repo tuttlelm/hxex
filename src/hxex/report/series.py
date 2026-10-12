@@ -136,14 +136,20 @@ def _layout(info: dict, columns: int | None) -> tuple[int, int, list[tuple[int, 
     return math.ceil(n / ncols), ncols, [(i // ncols, i % ncols) for i in range(n)], False
 
 
-def _grid(info: dict, size: tuple[float, float], columns: int | None):
+def _grid(info: dict, size: tuple[float, float], columns: int | None, residual: bool = False):
+    """The figure and, for each spectrum, its axes (and its residual axes below it, or None)."""
     nrows, ncols, positions, _ = _layout(info, columns)
-    fig = Figure(figsize=(size[0] * ncols, size[1] * nrows))
-    axes = fig.subplots(nrows, ncols, squeeze=False)
-    cells = {int(info["rows"][i]): axes[r, c] for i, (r, c) in enumerate(positions)}
-    for ax in axes.ravel():
-        if ax not in cells.values():
-            ax.set_visible(False)
+    height = size[1] * (1.3 if residual else 1.0)
+    fig = Figure(figsize=(size[0] * ncols, height * nrows))
+    grid = fig.add_gridspec(nrows, ncols)
+    cells = {}
+    for i, (r, c) in enumerate(positions):
+        if residual:
+            sub = grid[r, c].subgridspec(2, 1, height_ratios=[3, 1], hspace=0.08)
+            ax = fig.add_subplot(sub[0])
+            cells[int(info["rows"][i])] = (ax, fig.add_subplot(sub[1], sharex=ax))
+        else:
+            cells[int(info["rows"][i])] = (fig.add_subplot(grid[r, c]), None)
     return fig, cells
 
 
@@ -155,20 +161,25 @@ def plot_series_spectra(
     components: Sequence[int] | None = None,
     k: int | None = None,
     columns: int | None = None,
+    residual: bool = False,
     cell: tuple[float, float] = (4.5, 3.0),
     **kwargs,
 ) -> Figure:
     """A grid of spectra: with replicates a row per time and a column per replicate, otherwise
     the time course wrapped into ``columns`` columns (see :func:`_layout`; see
-    :func:`plot_spectrum` for the keyword arguments, which are passed on). Spectra whose layers
-    cannot be drawn are left blank."""
+    :func:`plot_spectrum` for the keyword arguments, which are passed on). ``residual`` puts the
+    residuals of each spectrum (picked minus fit) in a small panel under it; it needs the picked
+    and fit layers. Spectra whose layers cannot be drawn are left blank."""
     info = series_info(results, data_id)
-    fig, cells = _grid(info, cell, columns)
-    for i, ax in cells.items():
+    fig, cells = _grid(info, cell, columns, residual)
+    for i, (ax, rax) in cells.items():
         sid = str(results.fit.spectrum_id[i])
         try:
-            plot_spectrum(sid, results, show=show, k=k, components=components, ax=ax,
-                          legend=False, **kwargs)
+            plot_spectrum(sid, results, show=show, k=k, components=components, ax=ax, rax=rax,
+                          residual=residual, legend=False, **kwargs)
+            if rax is not None:
+                ax.tick_params(labelbottom=False)
+                ax.set_xlabel("")
         except ValueError as exc:
             ax.text(0.5, 0.5, str(exc), ha="center", va="center", fontsize=6, wrap=True,
                     transform=ax.transAxes)
@@ -176,7 +187,8 @@ def plot_series_spectra(
         ax.set_title(f"{_time_text(results, info['times'][pos])}, rep {info['reps'][pos]}",
                      fontsize=8)
     fig.suptitle(info["label"], fontsize=10)
-    fig.tight_layout()
+    # keep a band at the top for the series title (the layout does not count it in nested grids)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.4 / fig.get_figheight()))
     return fig
 
 

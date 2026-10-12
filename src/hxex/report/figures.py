@@ -41,7 +41,9 @@ class PlotConfig:
     uptake axis; ``corrected`` the back-exchange correction (None: when the results have
     controls); ``format`` is ``pdf`` (one file per series, one page per kind), ``svg`` or ``png``
     (one file per kind). ``overview`` also writes the run's overviews (K selection, controls,
-    quality) as ``hxex_overview``."""
+    quality) as ``hxex_overview``. ``residual`` adds a residual panel under every spectrum of the
+    spectra grid. ``dpi`` (300) sets the resolution of PNG files and of any raster image inside
+    PDF or SVG files."""
 
     series: str | tuple[int, ...] = "flagged"
     kinds: tuple[str, ...] = KINDS
@@ -50,8 +52,9 @@ class PlotConfig:
     scale: str = "linear"
     corrected: bool | None = None
     format: str = "pdf"
-    dpi: int = 200
+    dpi: int = 300
     overview: bool = True
+    residual: bool = False
 
     def __post_init__(self):
         if not isinstance(self.series, str):
@@ -116,7 +119,9 @@ def series_figures(
     for kind in config.kinds:
         if kind == "spectra":
             out[kind] = plot_series_spectra(results, data_id, show=config.show,
-                                            corrected=config.corrected)
+                                            corrected=config.corrected,
+                                            residual=config.residual and "fit" in config.show
+                                            and "picked" in config.show)
         elif kind == "populations":
             out[kind] = plot_populations(results, data_id, corrected=config.corrected,
                                          reference=reference)

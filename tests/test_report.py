@@ -428,7 +428,9 @@ def test_grid_layout_wraps_a_single_replicate_time_course():
 def test_columns_option_on_the_series_plots(results):
     fig = plot_series_spectra(results, 0, show=("picked", "fit"), columns=3)
     shown = [ax for ax in fig.axes if ax.get_visible()]
-    assert len(shown) == 8 and len(fig.axes) == 9  # three rows of three, one cell unused
+    assert len(shown) == 8 and len(fig.axes) == 8  # three rows of three; the unused cell is empty
+    rows = sorted({round(ax.get_position().y0, 3) for ax in fig.axes})
+    assert len(rows) == 3
     pops = plot_populations(results, 0, columns=2)
     assert sum(ax.get_visible() for ax in pops.axes) == 8 and len(pops.axes) == 8  # no overlay
 
@@ -796,3 +798,27 @@ def test_flagged_share_grid():
     assert np.nansum(g["share"] * g["count"]) == pytest.approx(flagged.sum())
     assert g["sparse_in_grid"] == len(g["sparse_x"]) == int(g["count"][~full].sum())
     assert flagged_share_grid([np.nan], [1.0], [True]) is None
+
+
+def test_residual_panels_in_the_grid_and_the_plot_config(results, tmp_path):
+    fig = plot_series_spectra(results, 0, show=("picked", "fit"), residual=True)
+    assert len(fig.axes) == 16  # a residual panel under each of the eight spectra
+    assert sum("residual" in {a.get_gid() for a in ax.get_children()} for ax in fig.axes) == 8
+    sid = str(results.fit.spectrum_id[3])
+    from matplotlib.figure import Figure as F
+    ax, rax = F().subplots(2, 1)
+    plot_spectrum(sid, results, show=("picked", "fit"), ax=ax, rax=rax, residual=True)
+    assert "residual" in {a.get_gid() for a in rax.get_children()}
+    with pytest.raises(ValueError, match="pass rax"):
+        plot_spectrum(sid, results, show=("picked", "fit"), ax=F().subplots(), residual=True)
+    assert PlotConfig().dpi == 300 and PlotConfig().residual is False
+    cfg = PlotConfig(series=(0,), kinds=("spectra",), residual=True, overview=False, dpi=60)
+    assert PlotConfig.from_dict(cfg.to_dict()) == cfg
+    from hxex.report import series_figures
+    with_res = series_figures(results, 0, cfg)["spectra"]
+    assert len(with_res.axes) == 16
+    # without the fit layer there is nothing to subtract: the residual setting is ignored
+    no_fit = series_figures(results, 0, PlotConfig(kinds=("spectra",), show=("picked",),
+                                                   residual=True))["spectra"]
+    assert len(no_fit.axes) == 8
+    assert write_figures(results, tmp_path / "r", cfg)[0].stat().st_size > 5000

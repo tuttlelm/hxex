@@ -1139,7 +1139,8 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     any table as plain text),
     per spectrum (`data_fits` style, wide), per spectrum and population (tidy) and the
     replicate-averaged uptake (rejected spectra left out). **Files:** `PlotConfig` (series
-    `flagged` by default, `all` or a list; kinds; layers; axis; format) and `write_figures` write
+    `flagged` by default, `all` or a list; kinds; layers; axis; format; `residual` panels under
+    the spectra, off by default; `dpi` 300) and `write_figures` write
     one multipage PDF per series (or SVG/PNG per kind), made and released one series at a time;
     `RunConfig.plots` (off by default) writes them as part of a run. **Populations are
     identified by the rank of the mean at each time point, sorted independently**; tracking a
