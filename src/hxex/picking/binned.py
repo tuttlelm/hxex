@@ -10,7 +10,7 @@ import numpy as np
 
 from ..spectra import _check_mask, ragged_mask, time_index
 
-_FLAT = ("mz", "intensity", "n_deut", "offsets")
+_FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
 
 
 @dataclass(frozen=True)
@@ -18,11 +18,16 @@ class BinnedSet:
     """Picked bins for many spectra. Bin ``j`` of spectrum ``i`` is element
     ``offsets[i] + j`` of ``mz``, ``intensity`` and ``n_deut``.
 
-    ``mz`` is the *predicted* m/z of the bin (as in pyHXExpress's ``alldeutdata``), not the
-    observed position. ``env_width`` is in mass units, ``max_namides`` is the backbone amide
-    count (without user-specified ``Hex`` sites). Per-spectrum flags: ``empty`` (all picked
-    intensities zero, the criterion pyHXExpress uses to drop a SpecExport spectrum), ``no_signal``
-    (no bin reaches the threshold) and ``capped`` (the bin limit cut the zero filling short).
+    ``mz`` is the *predicted* m/z of the bin (as in pyHXExpress's ``alldeutdata``); ``peak_mz``
+    is where the picked peak was found (NaN for an empty bin, and throughout for tables read
+    from elsewhere), and ``mz_offset_ppm`` (per spectrum) the intensity-weighted median of the
+    picked peaks' distance from their predicted m/z, in ppm, over the bins at or above the
+    threshold: an offset common to every spectrum of a series points to a wrong composition
+    (for example a terminal group or an ion type), one common to a file to the calibration.
+    ``env_width`` is in mass units, ``max_namides`` is the backbone amide count (without
+    user-specified ``Hex`` sites). Per-spectrum flags: ``empty`` (all picked intensities zero,
+    the criterion pyHXExpress uses to drop a SpecExport spectrum), ``no_signal`` (no bin
+    reaches the threshold) and ``capped`` (the bin limit cut the zero filling short).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -51,6 +56,14 @@ class BinnedSet:
     data_id: np.ndarray
     time: np.ndarray
     modification: np.ndarray
+    peak_mz: np.ndarray | None = None
+    mz_offset_ppm: np.ndarray | None = None
+
+    def __post_init__(self):
+        if self.peak_mz is None:
+            object.__setattr__(self, "peak_mz", np.full(len(self.mz), np.nan))
+        if self.mz_offset_ppm is None:
+            object.__setattr__(self, "mz_offset_ppm", np.full(len(self.offsets) - 1, np.nan))
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -87,5 +100,6 @@ class BinnedSet:
             intensity=self.intensity[bins],
             n_deut=self.n_deut[bins],
             offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
+            peak_mz=self.peak_mz[bins],
             **out,
         )

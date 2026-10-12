@@ -17,6 +17,7 @@ from matplotlib.figure import Figure
 
 from ..controls import correct_means
 from ..picking import BinnedSet
+from ..quality import FLAG_NAMES
 from ..spectra import SpectrumSet
 from .curves import component_curves
 from .results import Results
@@ -368,7 +369,7 @@ def _title(results: Results | None, d: dict) -> str:
             if status != "unreviewed":
                 notes.append(status)
         if results is not None and results.quality is not None and results.quality.flagged[i]:
-            flags = [n for n in ("poor_fit", "low_intensity", "noise_outlier")
+            flags = [n for n in FLAG_NAMES
                      if getattr(results.quality, n)[i]]
             notes.append("flags: " + ", ".join(flags))
     return "\n".join([str(d["spectrum_id"]), "  ".join(notes)]) if notes else str(d["spectrum_id"])

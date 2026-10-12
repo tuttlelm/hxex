@@ -99,10 +99,43 @@ def test_tokenisation():
     assert chem.parse_sequence("pSpTpYK") == ("pS", "pT", "pY", "K")
 
 
-@pytest.mark.parametrize("bad", ["", "PEP TIDE", "PEPzzKTIDE", "pEPTIDE", "PEPTIDE1", "peptide"])
+@pytest.mark.parametrize("bad", ["", "PEP TIDE", "PEPzzKTIDE", "pEPTIDE", "PEPTIDE1", "peptide",
+                                 "PEPTIDE-NH3", "Xx-PEPTIDE", "A-B-C-D", "PEPTIDE-", "-NH2"])
 def test_bad_sequences(bad):
     with pytest.raises(chem.SequenceError):
         chem.parse_sequence(bad)
+
+
+def test_terminal_groups():
+    assert chem.split_termini("RPKPQQFFGLM-NH2") == ("H-", "RPKPQQFFGLM", "-NH2")
+    assert chem.split_termini("Ac-PEacKTIDE") == ("Ac-", "PEacKTIDE", "-OH")
+    assert chem.split_termini("Ac-PEPTIDE-NH2") == ("Ac-", "PEPTIDE", "-NH2")
+    assert chem.split_termini("PEPTIDE") == ("H-", "PEPTIDE", "-OH")
+    assert chem.join_termini("H-", ("F", "acK"), "-NH2") == "FacK-NH2"
+    assert chem.join_termini("Ac-", ("F",), "-OH") == "Ac-F"
+    assert chem.parse_sequence("Ac-PEacK-NH2") == ("P", "E", "acK")
+    # terminal groups are not residues: the amide count is unchanged
+    assert chem.count_amides("RPKPQQFFGLM-NH2") == chem.count_amides("RPKPQQFFGLM")
+
+
+@pytest.mark.parametrize("ion_type", ["M", "b", "c-1", "y", "z-dot", "x"])
+def test_c_terminal_amide_matches_pyteomics(ion_type):
+    seq = "RPKPQQFFGLM-NH2"  # substance P
+    assert chem.mz(seq, 2, ion_type) == pytest.approx(
+        mass.calculate_mass(sequence=seq, ion_type=ion_type, charge=2), abs=1e-6)
+    # -OH replaced by -NH2: one O fewer, one N and one H more
+    d = {k: chem.composition(seq, ion_type).get(k, 0) - chem.composition(seq[:-4], ion_type)
+         .get(k, 0) for k in "CHNO"}
+    assert d == {"C": 0, "H": 1, "N": 1, "O": -1}
+
+
+def test_n_terminal_acetyl():
+    # pyteomics reads "Ac" as the element actinium, so compare with the composition instead
+    d = {k: chem.composition("Ac-PEPTIDE", "b").get(k, 0) - chem.composition("PEPTIDE", "b")
+         .get(k, 0) for k in "CHNO"}
+    assert d == {"C": 2, "H": 2, "N": 0, "O": 1}
+    assert chem.mz("Ac-PEPTIDE", 1, "b") - chem.mz("PEPTIDE", 1, "b") == pytest.approx(
+        42.010565, abs=1e-5)
 
 
 @pytest.mark.parametrize(

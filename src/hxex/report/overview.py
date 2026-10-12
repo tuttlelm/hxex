@@ -11,6 +11,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
+from ..quality import FLAG_NAMES
 from .results import Results
 from .series import _control_role
 from .spectrum import COLORS, FIT_COLOR, plot_spectrum
@@ -18,7 +19,7 @@ from .tables import _index_columns
 
 FALLBACK_REASONS = ("m0_missing", "m0_high", "fd_missing", "retention_low", "retention_high",
                     "no_amides")
-QUALITY_FLAGS = ("poor_fit", "low_intensity", "noise_outlier")
+QUALITY_FLAGS = FLAG_NAMES
 GOOD = "#999999"  # unflagged points and measured controls
 
 

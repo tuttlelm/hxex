@@ -1194,6 +1194,27 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     K = 1 to 3 with noise estimated from replicates; bootstrap N = 20 at fixed K = 1 and 2;
     controls and quality flags. 152 spectra were dropped (empty or no signal), 26,181 fitted.
 
+    | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
+    |---|---|---|
+    | Read and pick | 31 s | 31 s |
+    | Fit, K = 1 to 3 | 4.9 min | 77.4 min (16x slower) |
+    | Bootstrap, controls, quality | 41.6 min | not finished (stopped after about 3 h on one fifth of the data) |
+    | Bundle write (332 MB with raw spectra) | 6 s | |
+    | Peak memory | 7.1 GB GPU, 3.9 GB RAM | |
+
+    The whole GPU run took about 48 minutes, so the Phase 4 target (10,000 fits in a measured
+    time on stated hardware) is met. CPU and GPU select the same K distribution (K = 1/2/3:
+    21,950/3,953/278 on CPU, 21,903/4,008/270 on GPU). On the CPU PyTorch used 24 threads at about
+    20 cores' load; part of the time is single-threaded Python (k-means starts, bookkeeping), and
+    float32 would roughly halve the arithmetic: both are possible speed-ups, not done. The CPU is
+    fine for fits but not for full bootstraps at this size. **Controls:** 283 of 1,372 series fell
+    back to theoretical values, 186 because the series has no fully deuterated spectrum; the
+    retention of the series that passed was 0.64 (0.56 to 0.72 for the middle 80 %), much lower
+    than on the Bimodal set (0.81 to 1.00), so the default lower limit of 0.5 is close to this
+    dataset's normal range (44 series below it). The limits are settings; whether to derive them
+    per dataset is open. Quality flags: 1,497 spectra (5.7 %; poor fit 264, low intensity 633,
+    replicate outlier 835).
+
 33. **mzML reader (`hxex.io.mzml`; owner's decisions of 2026-10-12, needed before fragment data).**
     A small mzML 1.1 reader written with the standard library (no lxml, so no new dependency):
     plain or indexed files, uncompressed or zlib 32/64-bit arrays, profile or centroid scans;
@@ -1274,33 +1295,108 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     c′ (z•) and two thirds c+1 (z′); misfit below 3 % with three types against 80 to 97 % with one;
     deuteration of c fragments within 0.07 D of pyHXExpress for 10 of 11, z fragments 0.05 to
     0.23 D higher (open). The mzML reader gained `filter_excludes` and `filter_contains` on
-    targets (scan types such as with or without in-source activation, Thermo's `sid=`; activation short
-    names now match exactly, so `ETD` no longer also selects EThcD scans), `min_time` (leave out
+    targets (scan types such as with or without in-source activation, Thermo's `sid=`;
+    activation short names now match exactly, so `ETD` no longer also selects EThcD scans),
+    `min_time` (leave out
     early time points) and `max_spectra` (time points sampled evenly in log time, only those
     scans read), for the kinetics runs. Next: the z offset, the other fragmentation types and
-    peptides, fragment target generation from the residue-tokenised sequence (including C-terminal
-    amides such as SubstanceP's `-NH2`), and exchange-rate fitting.
+    peptides, fragment target generation (done, item 36), and exchange-rate fitting.
 
-    | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
-    |---|---|---|
-    | Read and pick | 31 s | 31 s |
-    | Fit, K = 1 to 3 | 4.9 min | 77.4 min (16x slower) |
-    | Bootstrap, controls, quality | 41.6 min | not finished (stopped after about 3 h on one fifth of the data) |
-    | Bundle write (332 MB with raw spectra) | 6 s | |
-    | Peak memory | 7.1 GB GPU, 3.9 GB RAM | |
+36. **Fragment targets and terminal groups (`hxex.fragments`, `hxex.chem`; 2026-10-12).**
+    Sequences may carry terminal groups in modX style (`Ac-PEPTIDE`, `PEPTIDE-NH2`); the
+    groups known are `H-`, `Ac-`, `-OH` and `-NH2`, and they change the composition but not the
+    residues or the amide count. The m/z with `-NH2` equals pyteomics' for every ion type tested;
+    pyteomics reads `Ac` as actinium, so `Ac-` is checked against its composition instead.
+    `fragment_entries` turns a parent entry and a list in pyHXExpress's syntax
+    (`'c-1:ALL z-dot:2-6 M'`) into one entry per fragment and charge, sliced by residue, N-terminal
+    ions keeping the parent's N-terminal group and C-terminal ions its C-terminal group; `extra`
+    names the parent and the fragment, and is kept in the mzML read record. `fragment_targets`
+    makes the MS2 targets. On all 100 pyHXExpress fragment lists of two peptides of the private fragment dataset
+    (back-exchange kinetics of five peptides) every row is among the generated entries (same sequence with
+    terminal group, range, charge and ion type). **Deliberate differences** from
+    `hxex_fragments.py`: residues are tokens (it slices characters); `ALL` and open ranges are
+    lengths 1 to the number of residues (it used `start_seq` to `end_seq`, the same only when the
+    parent starts at 1); a parent `modification` other than `ion_type:M` is refused rather than
+    copied to every fragment (a composition change, extra sites or an explicit m/z cannot be
+    assigned to fragments). The default charge limit is the parent's charge minus one, as in
+    pyHXExpress; some of its lists were made without it (`limit_charge=False`).
+    **Unresolved (the owner cannot check the sample; that peptide is set aside and the others are
+    used instead):** the spectra of one peptide (11 residues, a C-terminal amide in its metadata) match the C-terminal free acid, not the
+    amide given in the metadata (MS1 of the equilibrium run: no peak at the amide's monoisotopic
+    m/z, and the series fits the acid within 5 ppm against -10 to -23 ppm as the amide; the
+    isolation windows hold the whole envelope, item 38). In the MS2 spectra the unreacted
+    precursor is at the acid's m/z (intensity 9,795 against 9 at the amide's at one charge, 7,358
+    against 134 at another), two z ions match the acid (-0.5 and -11 ppm) and no amidated one is
+    present, while the c ions (holding both glutamines) fit without a shift, so it is not a glutamine deamidation. With `-NH2` the z bins are 0.984 Da light, about
+    one deuterium.
 
-    The whole GPU run took about 48 minutes, so the Phase 4 target (10,000 fits in a measured
-    time on stated hardware) is met. CPU and GPU select the same K distribution (K = 1/2/3:
-    21,950/3,953/278 on CPU, 21,903/4,008/270 on GPU). On the CPU PyTorch used 24 threads at about
-    20 cores' load; part of the time is single-threaded Python (k-means starts, bookkeeping), and
-    float32 would roughly halve the arithmetic: both are possible speed-ups, not done. The CPU is
-    fine for fits but not for full bootstraps at this size. **Controls:** 283 of 1,372 series fell
-    back to theoretical values, 186 because the series has no fully deuterated spectrum; the
-    retention of the series that passed was 0.64 (0.56 to 0.72 for the middle 80 %), much lower
-    than on the Bimodal set (0.81 to 1.00), so the default lower limit of 0.5 is close to this
-    dataset's normal range (44 series below it). The limits are settings; whether to derive them
-    per dataset is open. Quality flags: 1,497 spectra (5.7 %; poor fit 264, low intensity 633,
-    replicate outlier 835).
+37. **Where the peaks were found: the m/z screen (2026-10-12; docs/PEAK_PICKING.md).** The picker
+    records each picked peak's position (`BinnedSet.peak_mz`, the apex refined by a parabola on
+    profile data) and each spectrum's intensity-weighted median offset from the predictions
+    (`mz_offset_ppm`); the bundle keeps both. A new quality flag, `mz_shift`, marks a series whose
+    median offset is more than `QualityConfig.max_mz_offset_ppm` (15; None turns it off) from the
+    median over all series, which removes the calibration. It was prompted by the peptide of item 36:
+    the ion-type mixture fitted the wrongly composed z ions well enough, while their peaks sat 23
+    to 41 ppm off (within 3 ppm as the acid; fragments of the 12-residue peptide within 2 ppm). On 3,000 spectra of
+    the intact-peptide benchmark the calibration offset is +5.5 ppm and 2 % of series are flagged,
+    mostly with a consistent offset (spread 3 to 8 ppm), which points to a wrong assignment rather
+    than noise; what they are was not examined.
+
+38. **Precursor isolation windows (2026-10-12).** The scan table now has each MS2 scan's
+    isolation window (`isolation_lower`, `isolation_upper`, from mzML's isolationWindow). A window
+    that cuts the precursor's isotope envelope would change the fragments' envelopes (long
+    fragments more), and as the envelope moves with deuteration the cut would change along a time
+    course. Measured on the private fragment dataset ( the fraction of the precursor's envelope inside
+    the window, natural isotopes and binomial deuteration of the backbone amides): the kinetics
+    files (+/- 5 m/z) keep it whole at every level for every peptide and charge, except the 24-residue
+    peptide at 3+ above about 75 % deuteration (0.94 at 75 %, 0.64 at 90 %) and, at 90 %, two
+    others at 2+ (0.97 and 0.99). The undeuterated controls (+/- 1 to 2.5 m/z, different centres) keep their
+    undeuterated envelope whole except the 8-residue peptide's (+/- 1 m/z: 0.98 at
+    3+, 0.89 at 2+), whose
+    reference envelopes therefore lose some heavy isotopes. So isolation does not explain the
+    heavier ion types of the long fragments of item 35. Not modelled; to revisit if data with
+    narrow windows on deuterated samples come up.
+
+39. **The 12-residue peptide, all fragmentation types against pyHXExpress (2026-10-12; private
+    fragment dataset).**
+    hxex read the undeuterated control and both kinetics replicates per type, generated
+    pyHXExpress's fragment list (`fragment_targets`), fitted K = 1 with ion-type mixtures (three
+    components) and was compared with pyHXExpress's uncorrected deuteration at the same scans
+    (pyHXExpress settings: no N-terminal subtraction, 40 ppm, noise as a percentage). The m/z screen
+    flagged the precursor-related species (`M-NH3`, full-length `z`) at about -30 ppm, and weak
+    series without a good mixture.
+    - ETD 3+: c fragments within 0.07 D (lengths 2 to 9), z fragments 0.05 to 0.23 D higher (as in
+      item 35).
+    - ETD 4+: 2+ c fragments within 0.03 D, z fragments 0.0 to 0.25 D higher; 1+ c6 to c9 0.35 to
+      0.6 D **lower**. For the same fragment from the 3+ and the 4+ precursor, hxex agrees with
+      itself (c8, c9 within about 0.15 D at every time) while pyHXExpress's 4+ values are 0.3 to
+      0.6 D above its own 3+ values and level off near 0.7 D instead of decaying: the difference is
+      pyHXExpress's.
+    - Both programs see c4 higher (0.45 against 0.14 D at the start) and z6, z8 about 0.6 D lower
+      from the 4+ precursor than from the 3+: a property of the data (for example hydrogen
+      scrambling depending on the precursor charge), not of either program; open.
+    - EThcD 2+: the undeuterated file records charge 3 for its 2+ precursor, so a
+      charge filter selected nothing; `fragment_targets(precursor_charge=None)` selects by the
+      other conditions. Then z7, z8 0.11 D higher. Only 8 fragments in pyHXExpress's list.
+    - UVPD 3+: a1 to a4 within 0.07 D; a5 to a7 (2+) 0.1 to 0.2 D higher with a wide spread; few
+      x fragments, mostly without a good mixture.
+
+40. **Three more peptides against pyHXExpress (2026-10-12; private fragment dataset).**
+    As item 39, seven acquisition types ("Low", no in-source activation): 8 residues: ETD 3+,
+    EThcD 2+, UVPD 3+; 14 residues: EThcD 2+, UVPD 2+; 24 residues: ETD 5+, EThcD 3+. Every fragment of pyHXExpress's
+    lists was generated (238). The equilibrium ("Final") run, summed, served as the fallback
+    reference where the undeuterated one failed or did not exist (UVPD of the 8- and 14-residue peptides). For
+    usable fragments (a good mixture, no m/z flag), the median difference from pyHXExpress's
+    uncorrected deuteration was within 0.03 D for c, a and z ions of the 8- and 24-residue peptides (c: 82 to
+    100 % of fragments within 0.1 D); the 14-residue peptide's z ions were 0.13 D higher (0 to
+    0.23), like the ETD 3+ z ions of item 39 (the open z offset, item 35). Larger single differences: the 24-residue peptide's c13 to c20 0.5 to 0.7 D
+    lower on few matched points (6 to 15; pyHXExpress fitted 16 sampled times), the precursor ions
+    (`M`) of the 8- and 24-residue peptides (-0.5 to -0.7 D, +0.2 D), and one x ion (-0.9 D, fallback
+    reference). Not examined further. Data quirks met: another undeuterated file records 3+ for its 2+
+    precursor (as in item 39), and two peptides' undeuterated files have `sid=1.00` on every scan while the kinetics files mark in-source activation with
+    `sid=`, so one `filter_excludes='sid'` cannot serve both: the comparison read them separately.
+    A run's targets apply to every file, so hxex has no way yet to give the control files other
+    scan conditions (open).
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

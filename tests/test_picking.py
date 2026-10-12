@@ -14,6 +14,7 @@ directory (``allrawdata_*.zip`` and ``alldeutdata_*.csv``) for the same checks o
 """
 
 import csv
+import dataclasses
 import io
 import json
 import os
@@ -525,3 +526,66 @@ def test_ladder_setting():
     assert PickerConfig.from_dict(PickerConfig(ladder="exms").to_dict()).ladder == "exms"
     with pytest.raises(ValueError, match="ladder"):
         PickerConfig(ladder="other")
+
+
+# --- where the peaks were found -------------------------------------------------------------
+
+def gaussian_profile(plan, heights, shift_ppm, step=0.0004, sigma=0.0015):
+    """Profile peaks (points every ``step``, not centred on the peak) at every bin, moved by
+    ``shift_ppm``."""
+    mz = []
+    for i in heights:
+        centre = plan.pred_mz[i] * (1 + shift_ppm * 1e-6)
+        mz.append(centre + 0.00013 + np.arange(-12, 13) * step)
+    mz = np.concatenate(mz)
+    y = np.zeros_like(mz)
+    for i, h in heights.items():
+        centre = plan.pred_mz[i] * (1 + shift_ppm * 1e-6)
+        y += h * np.exp(-0.5 * ((mz - centre) / sigma) ** 2)
+    return mz, y
+
+
+@pytest.mark.parametrize("shift", [0.0, 12.0, -20.0])
+def test_peak_positions_and_the_offset(shift):
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    heights = {0: 400.0, 1: 1000.0, 2: 700.0, 3: 50.0}  # bin 3 is below the threshold
+    mz, y = gaussian_profile(plan, heights, shift)
+    p = pick_spectrum(mz, y, PEPTIDE, 2, config=CFG)
+    found = 1e6 * (p.peak_mz[:3] - p.mz[:3]) / p.mz[:3]
+    np.testing.assert_allclose(found, shift, atol=1.0)  # the parabola finds the apex
+    assert p.mz_offset_ppm == pytest.approx(shift, abs=1.0)
+    assert np.isnan(p.peak_mz[4:]).all()  # zero-filled bins have no peak
+    # centroided data: the point itself
+    sticks_mz = plan.pred_mz[:3] * (1 + shift * 1e-6)
+    c = pick_spectrum(sticks_mz, np.array([400.0, 1000.0, 700.0]), PEPTIDE, 2, config=CFG)
+    np.testing.assert_allclose(c.peak_mz[:3], sticks_mz)
+    assert c.mz_offset_ppm == pytest.approx(shift, abs=1e-6)
+
+
+def test_offset_is_intensity_weighted_and_nan_without_signal():
+    from hxex.picking.pick import mz_offset_ppm
+
+    pred = np.array([500.0, 500.5, 501.0])
+    peak = pred * (1 + np.array([2.0, 30.0, 2.0]) * 1e-6)
+    assert mz_offset_ppm(peak, pred, np.array([100.0, 1000.0, 100.0]), 50.0) == pytest.approx(30)
+    assert mz_offset_ppm(peak, pred, np.array([1000.0, 100.0, 1000.0]), 50.0) == pytest.approx(2)
+    assert np.isnan(mz_offset_ppm(peak, pred, np.array([10.0, 10.0, 10.0]), 50.0))
+    p = pick_spectrum(np.array([1.0]), np.array([0.0]), PEPTIDE, 2, config=CFG)
+    assert np.isnan(p.mz_offset_ppm) and np.isnan(p.peak_mz).all()
+
+
+def test_binned_set_keeps_peak_positions():
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    entry = PeptideEntry("f", "S", PEPTIDE, "1-10", 1, 10, 2)
+    spectra = SpectrumSet.from_spectra([
+        Spectrum(*gaussian_profile(plan, {0: 500.0, 1: 900.0}, s), entry, 10.0 * k, 1,
+                 spectrum_id=f"p:{k}") for k, s in enumerate((5.0, -8.0, 0.0))])
+    b = pick_spectra(spectra, CFG)
+    np.testing.assert_allclose(b.mz_offset_ppm, [5.0, -8.0, 0.0], atol=1.0)
+    assert len(b.peak_mz) == len(b.mz)
+    sub = b.select(np.array([False, True, True]))
+    np.testing.assert_array_equal(sub.peak_mz, b.peak_mz[b.offsets[1]:])
+    np.testing.assert_array_equal(sub.mz_offset_ppm, b.mz_offset_ppm[1:])
+    # a table from elsewhere has no positions
+    bare = dataclasses.replace(b, peak_mz=None, mz_offset_ppm=None)
+    assert np.isnan(bare.peak_mz).all() and np.isnan(bare.mz_offset_ppm).all()

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from ..controls import correct_means
+from ..quality import FLAG_NAMES
 from .results import Results
 from .series import _reps
 
@@ -40,7 +41,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     if results.quality is not None:
         q = results.quality
         cols["flags"] = np.array([
-            ";".join(n for n in ("poor_fit", "low_intensity", "noise_outlier")
+            ";".join(n for n in FLAG_NAMES
                      if getattr(q, n)[i]) for i in range(m)
         ])
     return cols

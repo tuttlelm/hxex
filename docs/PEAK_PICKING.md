@@ -137,7 +137,8 @@ half a bin after about 120.
 ## The intensity of a bin
 
 Each bin takes the tallest point within `resolution_ppm` of its predicted m/z (default +/- 50 ppm).
-The reported m/z of the bin is the predicted one, not the position of that point.
+The reported m/z of the bin is the predicted one; where the peak was found is reported separately
+(see "Where the peaks were found").
 
 **Shoulder rule (from pyHXExpress).** If the window holds `shoulder_min_points` (10) or more points
 and its tallest point is the first or the last of the window, the bin is set to 0, on the reasoning
@@ -147,6 +148,28 @@ zeroed 339 bins above 5 % of the maximum in 68 spectra (genuine apexes 15 to 20 
 predictions); with the composition ladder 17. It is kept for compatibility; whether it helps is an
 open question (see "Limitations"). Windows with fewer points (stick or coarse profile data) are not
 affected.
+
+## Where the peaks were found
+
+The position of each picked peak is recorded (`peak_mz`): the m/z of the tallest point, refined to
+the vertex of the parabola through it and its two neighbours when both lie in the same window and
+are evenly spaced (profile data; centroided data keep the point itself). Each spectrum gets an
+offset, `mz_offset_ppm`: the intensity-weighted median of `(peak - predicted) / predicted` over the
+bins at or above the threshold. The picker uses neither; they are a diagnostic.
+
+An offset shared by the spectra of one file is the instrument's calibration. An offset shared by
+every spectrum of one series, and not by the others, means the peaks are not where the composition
+puts them: a wrong sequence, terminal group, modification or ion type, or another species. Such a
+series still picks "successfully" (with a 50 ppm window a peak one composition step away is caught
+one bin off), and an ion-type mixture fitted to the undeuterated control can absorb the error, so
+the fit alone does not reveal it. The quality screen `mz_shift` flags a series whose median offset
+is more than `max_mz_offset_ppm` (15) from the median over all series. Measured (private data):
+
+| Data | Offsets |
+|---|---|
+| Fragments, right composition (ETD, Orbitrap; well-fitted c and z ions of two peptides) | -3 to +2 ppm |
+| The same z ions with a wrong C-terminus (`-NH2` on an acid; 0.984 Da instead of one isotope step) | -23 to -41 ppm |
+| Intact peptides (SpecExport, 3,000 spectra) | median +5.5 ppm (calibration); 90 % of spectra from -5 to +14.5 ppm; 2 % of series beyond 15 ppm from the run median, mostly consistent within the series |
 
 ## Noise threshold and extent
 
@@ -158,7 +181,8 @@ below-threshold bins). Values below the threshold are kept as they are.
 
 ## Output
 
-Per bin: the predicted m/z, the intensity and n. Per spectrum: the envelope width (charge times the
+Per bin: the predicted m/z, the intensity, n and where the peak was found. Per spectrum: the m/z
+offset, the envelope width (charge times the
 m/z width at `env_threshold` of the tallest bin), the envelope symmetry, the amide count, the
 threshold used, and three flags: `empty` (every picked intensity is 0), `no_signal` (no bin reaches
 the threshold) and `capped` (the bin limit cut the zero filling short). Nothing is dropped by the
@@ -216,7 +240,7 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
   predictions (calibration and sampling), and about 6 % of strong peaks lie outside a +/- 50 ppm
   window. The window then holds only a flank of the peak, and the bin is underestimated. hxex does
   not shift spectra to fit the data, because that would assume every peak near a prediction belongs
-  to the ion; a diagnostic (apex offsets per spectrum as a quality flag) is planned instead, and a
+  to the ion; the offsets are reported instead (see "Where the peaks were found"), and a
   calibration from the undeuterated control (whose isotope pattern is known) is an option to
   consider.
 - **The shoulder rule** is unvalidated: it was designed against overlapping species but cannot tell

@@ -52,6 +52,8 @@ class PickedSpectrum:
     mz: np.ndarray
     intensity: np.ndarray
     n_deut: np.ndarray
+    peak_mz: np.ndarray
+    mz_offset_ppm: float
     env_width: float
     env_symm: float
     max_namides: int
@@ -185,12 +187,15 @@ def envelope(
 
 def _bin_values(
     mz: np.ndarray, y: np.ndarray, pred: np.ndarray, config: PickerConfig
-) -> np.ndarray:
-    """Window maximum for every bin (0 where the window is empty or rejected as a shoulder)."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Window maximum for every bin (0 where the window is empty or rejected as a shoulder),
+    and where it is: the m/z of the maximum, refined by a parabola through it and its two
+    neighbours in the spectrum when they are lower (NaN where the value is 0)."""
     factors = 1.0 + np.array([-1.0, 1.0]) * config.resolution_ppm / 1e6
     lo = np.searchsorted(mz, pred * factors[0], side="left")
     hi = np.searchsorted(mz, pred * factors[1], side="right")
     values = np.zeros(len(pred))
+    where = np.full(len(pred), np.nan)
     for i, (a, b) in enumerate(zip(lo, hi, strict=True)):
         window = y[a:b]
         if len(window) == 0:
@@ -199,7 +204,40 @@ def _bin_values(
         if len(window) >= config.shoulder_min_points and top in (0, len(window) - 1):
             continue  # the maximum is at the window edge: a shoulder of a neighbouring peak
         values[i] = window[top]
-    return values
+        if values[i] > 0:
+            where[i] = _apex(mz, y, a + top, a, b)
+    return values, where
+
+
+def _apex(mz: np.ndarray, y: np.ndarray, j: int, a: int, b: int) -> float:
+    """The m/z of the local maximum at point ``j`` of the window ``a:b``: the vertex of the
+    parabola through it and its neighbours when both are inside the window, lower and evenly
+    spaced (profile data), else the point itself (centroided data, or an edge)."""
+    if a < j < b - 1 and y[j - 1] < y[j] > y[j + 1] and y[j - 1] > 0 and y[j + 1] > 0:
+        x0, x1, x2 = mz[j - 1], mz[j], mz[j + 1]
+        if max(x1 - x0, x2 - x1) < 2.5 * min(x1 - x0, x2 - x1):  # no gap in the profile
+            y0, y1, y2 = y[j - 1], y[j], y[j + 1]
+            den = (x0 - x1) * (x0 - x2) * (x1 - x2)
+            a = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den
+            b = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den
+            if a < 0:
+                return float(min(max(-b / (2 * a), x0), x2))
+    return float(mz[j])
+
+
+def mz_offset_ppm(peak_mz: np.ndarray, pred_mz: np.ndarray, intensity: np.ndarray,
+                  threshold: float) -> float:
+    """How far the picked peaks are from their predicted m/z: the intensity-weighted median of
+    ``(peak - predicted) / predicted`` in ppm over the bins at or above ``threshold`` (NaN if
+    there are none)."""
+    keep = np.isfinite(peak_mz) & (intensity >= threshold) & (intensity > 0)
+    if not keep.any():
+        return float("nan")
+    ppm = 1e6 * (peak_mz[keep] - pred_mz[keep]) / pred_mz[keep]
+    w = intensity[keep]
+    order = np.argsort(ppm)
+    cum = np.cumsum(w[order])
+    return float(ppm[order][np.searchsorted(cum, 0.5 * cum[-1])])
 
 
 def pick_spectrum(
@@ -230,7 +268,7 @@ def pick_spectrum(
         threshold = float("nan")
 
     pred = plan.pred_mz
-    values = _bin_values(mz, intensity, pred, config)
+    values, where = _bin_values(mz, intensity, pred, config)
     if config.ladder == "composition" and plan.clusters is not None:
         # the deuteration level from a first pass with the ExMS ladder, then the composition
         # ladder; the level is estimated once more from those picks (a first pass that missed
@@ -243,12 +281,13 @@ def pick_spectrum(
             centre = float((np.arange(len(strong)) * strong).sum() / strong.sum())
             level = min(max(centre - natural, 0.0), float(plan.n_sites))
             pred = composition_mz(plan, level)
-            values = _bin_values(mz, intensity, pred, config)
+            values, where = _bin_values(mz, intensity, pred, config)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1
     end = min(max(last, 0) + config.zero_filling, n_last)
     picked_mz, picked_y = pred[: end + 1], values[: end + 1]
+    peak_mz = where[: end + 1]
 
     width = symm = float("nan")
     if len(picked_y):
@@ -260,6 +299,8 @@ def pick_spectrum(
         mz=picked_mz,
         intensity=picked_y,
         n_deut=np.arange(end + 1, dtype=np.int64),
+        peak_mz=peak_mz,
+        mz_offset_ppm=mz_offset_ppm(peak_mz, picked_mz, picked_y, threshold),
         env_width=width,
         env_symm=symm,
         max_namides=plan.max_namides,
@@ -316,6 +357,8 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         mz=np.concatenate([p.mz for p in picked]) if picked else empty,
         intensity=np.concatenate([p.intensity for p in picked]) if picked else empty,
         n_deut=np.concatenate([p.n_deut for p in picked]) if picked else empty.astype(np.int64),
+        peak_mz=np.concatenate([p.peak_mz for p in picked]) if picked else empty,
+        mz_offset_ppm=cat("mz_offset_ppm", np.float64),
         offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
         env_width=cat("env_width", np.float64),
         env_symm=cat("env_symm", np.float64),

@@ -57,7 +57,8 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
 
 - `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,
   `fit`, `report`, `noise`, `controls`, `bootstrap`, `run`, `cli`). Each docstring says what
-  it will contain and in which phase. Shared contracts: `spectra.py` (spectrum and entry
+  it will contain and in which phase. `fragments` makes fragment-ion entries and mzML
+  targets from a parent peptide. Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
 - `tests/`, `docs/` (`PLAN.md`, `BUNDLE.md`, `PEAK_PICKING.md`, `RELEASING.md`),
   `.github/workflows/` (`ci.yml`, `publish.yml`).

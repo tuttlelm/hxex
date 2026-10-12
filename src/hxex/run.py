@@ -290,6 +290,7 @@ def analyse(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     progress_range: tuple[float, float] = (0.0, float(UNITS)),
+    mz_offset_ppm: np.ndarray | None = None,
 ) -> tuple[
     FitResult,
     BootstrapResult | None,
@@ -298,7 +299,8 @@ def analyse(
     QualityFlags | None,
 ]:
     """Fit (and bootstrap) ``data`` in chunks of whole series, then the controls and the quality
-    flags of the merged result. The chunking does not change the result."""
+    flags of the merged result (``mz_offset_ppm``, the picker's offset of every measurement,
+    for the m/z screen). The chunking does not change the result."""
     k_max = config.fit.k_max
     itemsize = config.fit.backend.torch_dtype().itemsize
     chunks = plan_chunks(data, k_max, itemsize, default_budget(config), config.max_chunk)
@@ -344,7 +346,9 @@ def analyse(
     controls = None
     if config.controls is not None:
         controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls)
-    quality = assess_quality(data, fit, config.quality) if config.quality is not None else None
+    quality = None
+    if config.quality is not None:
+        quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
     return fit, boot, by_k, controls, quality
 
 
@@ -417,6 +421,7 @@ def run(
     fit, boot, by_k, controls, quality = analyse(
         measurements, config, progress=progress, cancel=cancel,
         progress_range=(UNITS * pick_share, float(UNITS)),
+        mz_offset_ppm=binned.mz_offset_ppm[kept],
     )
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,

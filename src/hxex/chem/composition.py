@@ -11,9 +11,11 @@ from .amides import DEFAULT_AMIDE_RULES, AmideRules, exchangeable_sites
 from .ions import check_ion_type
 from .modifications import (
     DEFAULT_MODIFICATIONS,
+    TERMINAL_GROUPS,
     ChemistryError,
     ModificationRegistry,
     parse_sequence,
+    split_termini,
 )
 from .spec import ModificationSpec
 
@@ -27,13 +29,20 @@ def composition(
 ) -> dict[str, int]:
     """Neutral elemental composition of the ion (pyteomics is the reference).
 
-    ``mod.composition`` is added; ``mod.hex`` and ``mod.undeut_mz`` do not affect it.
+    Terminal groups other than ``H-`` and ``-OH`` (such as the C-terminal amide ``-NH2``) replace
+    the default ones. ``mod.composition`` is added; ``mod.hex`` and ``mod.undeut_mz`` do not
+    affect it.
     """
     check_ion_type(ion_type)
     residues = parse_sequence(sequence, registry)
+    nterm, _, cterm = split_termini(sequence)
     comp = mass.Composition(
         parsed_sequence=["H-", *residues, "-OH"], aa_comp=registry.aa_comp, ion_type=ion_type
     )
+    for group, default in ((nterm, "H-"), (cterm, "-OH")):
+        if group != default:
+            comp = (comp + mass.Composition(dict(TERMINAL_GROUPS[group]))
+                    - mass.Composition(dict(TERMINAL_GROUPS[default])))
     if mod is not None:
         comp = comp + mass.Composition(dict(mod.composition))
     return {k: v for k, v in comp.items() if v != 0}

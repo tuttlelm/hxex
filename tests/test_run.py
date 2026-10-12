@@ -159,6 +159,13 @@ def test_the_bundle_is_written_and_records_the_run(tmp_path):
         assert len(b.binned()) == len(raw) and len(b.fit()) == len(raw) - 1
         np.testing.assert_array_equal(b.quality().poor_fit, res.quality.poor_fit)
         assert b.controls().config == cfg.controls
+        # where the peaks were found, and the m/z screen, go with the bundle
+        np.testing.assert_array_equal(b.binned().peak_mz, res.binned.peak_mz)
+        np.testing.assert_array_equal(b.binned().mz_offset_ppm, res.binned.mz_offset_ppm)
+        assert np.isfinite(res.binned.peak_mz).any()
+        np.testing.assert_array_equal(b.quality().mz_offset, res.quality.mz_offset)
+        np.testing.assert_array_equal(b.quality().mz_shift, res.quality.mz_shift)
+        assert np.isfinite(res.quality.mz_offset).all()
     plain = run(raw, config(controls=None, quality=None, bootstrap=None), out=tmp_path / "p",
                 keep_spectra=False)
     with open_bundle(tmp_path / "p") as b:

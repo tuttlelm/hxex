@@ -3,6 +3,11 @@
 
 The registry is a private, immutable object. It is handed to pyteomics through the ``aa_comp``
 argument; pyteomics' global residue tables are never edited.
+
+A sequence may carry terminal groups in modX style: an N-terminal group ending in ``-``
+(``Ac-PEPTIDE``) and a C-terminal group starting with ``-`` (``RPKPQQFFGLM-NH2``, the
+C-terminal amide). The groups known are in :data:`TERMINAL_GROUPS`; the default termini are
+``H-`` and ``-OH``.
 """
 
 from __future__ import annotations
@@ -16,6 +21,14 @@ from pyteomics import mass
 
 _LABEL = re.compile(r"[a-z]*[A-Z]")
 _MOD_LABEL = re.compile(r"[a-z]+[A-Z]")
+
+# elemental composition of the terminal groups (the defaults are H- and -OH)
+TERMINAL_GROUPS: Mapping[str, Mapping[str, int]] = {
+    "H-": {"H": 1},
+    "Ac-": {"C": 2, "H": 3, "O": 1},
+    "-OH": {"O": 1, "H": 1},
+    "-NH2": {"N": 1, "H": 2},
+}
 
 
 class ChemistryError(ValueError):
@@ -129,15 +142,46 @@ DEFAULT_MODIFICATIONS = (
 )
 
 
+def split_termini(sequence: str) -> tuple[str, str, str]:
+    """``(N-terminal group, residues, C-terminal group)`` of a modX sequence, the groups
+    defaulting to ``'H-'`` and ``'-OH'``: ``'RPKPQQFFGLM-NH2'`` -> ``('H-', 'RPKPQQFFGLM',
+    '-NH2')``. Raises :class:`SequenceError` for a group not in :data:`TERMINAL_GROUPS`."""
+    parts = (sequence or "").split("-")
+    if len(parts) == 1:
+        return "H-", parts[0], "-OH"
+    if len(parts) == 3:
+        nterm, core, cterm = f"{parts[0]}-", parts[1], f"-{parts[2]}"
+    elif len(parts) == 2 and f"{parts[0]}-" in TERMINAL_GROUPS:
+        nterm, core, cterm = f"{parts[0]}-", parts[1], "-OH"
+    elif len(parts) == 2:
+        nterm, core, cterm = "H-", parts[0], f"-{parts[1]}"
+    else:
+        raise SequenceError(f"cannot read the terminal groups of {sequence!r}")
+    if not core:
+        raise SequenceError(f"no residues in {sequence!r}")
+    for group in (nterm, cterm):
+        if group not in TERMINAL_GROUPS:
+            raise SequenceError(f"unknown terminal group {group!r} in {sequence!r}; known: "
+                                f"{', '.join(TERMINAL_GROUPS)}")
+    return nterm, core, cterm
+
+
+def join_termini(nterm: str, residues, cterm: str) -> str:
+    """The modX sequence of ``residues`` with these terminal groups (defaults left out)."""
+    return "".join([nterm if nterm != "H-" else "", *residues, cterm if cterm != "-OH" else ""])
+
+
 def parse_sequence(
     sequence: str, registry: ModificationRegistry = DEFAULT_MODIFICATIONS
 ) -> tuple[str, ...]:
     """Split a modX sequence into residue labels, e.g. ``'PEPacKTIDE'`` -> 8 residues.
+    Terminal groups (:func:`split_termini`) are not residues and are left out.
 
     Raises :class:`SequenceError` for empty sequences and unknown residues.
     """
     if not sequence:
         raise SequenceError("empty sequence")
+    sequence = split_termini(sequence)[1]
     residues: list[str] = []
     pos = 0
     while pos < len(sequence):

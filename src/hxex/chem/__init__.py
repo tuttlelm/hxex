@@ -24,11 +24,14 @@ from .composition import (
 from .ions import check_ion_type, ion_types
 from .modifications import (
     DEFAULT_MODIFICATIONS,
+    TERMINAL_GROUPS,
     ChemistryError,
     IonTypeError,
     ModificationRegistry,
     SequenceError,
+    join_termini,
     parse_sequence,
+    split_termini,
 )
 from .spec import ModificationSpec, parse_modification
 
@@ -41,6 +44,7 @@ __all__ = [
     "ModificationRegistry",
     "ModificationSpec",
     "SequenceError",
+    "TERMINAL_GROUPS",
     "check_ion_type",
     "composition",
     "count_amides",
@@ -53,5 +57,7 @@ __all__ = [
     "natural_abundance",
     "neutral_mass",
     "parse_modification",
+    "join_termini",
     "parse_sequence",
+    "split_termini",
 ]

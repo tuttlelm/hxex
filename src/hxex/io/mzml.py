@@ -55,6 +55,9 @@ _SCAN_TIME = "MS:1000016"
 _FILTER = "MS:1000512"
 _SELECTED_MZ = "MS:1000744"
 _CHARGE = "MS:1000041"
+_ISOLATION_TARGET = "MS:1000827"
+_ISOLATION_LOWER = "MS:1000828"
+_ISOLATION_UPPER = "MS:1000829"
 _CENTROID = "MS:1000127"
 _PROFILE = "MS:1000128"
 _MZ_ARRAY = "MS:1000514"
@@ -90,8 +93,9 @@ class Scan:
     """One scan: its position ``index`` and ``id`` in the file, ``ms_level``, ``time`` (s),
     ``filter`` (the vendor filter string, may be empty), ``precursor_mz`` and
     ``precursor_charge`` (NaN and 0 without a precursor), ``activation`` (names of the activation
-    methods, lower case), ``centroid`` (True, False, or None if not stated), and the arrays (empty
-    when they were not read)."""
+    methods, lower case), ``centroid`` (True, False, or None if not stated), the arrays (empty
+    when they were not read) and ``isolation``, the precursor isolation window as absolute m/z
+    (lower, upper; NaN when the file does not state it)."""
 
     index: int
     id: str
@@ -104,6 +108,7 @@ class Scan:
     centroid: bool | None
     mz: np.ndarray
     intensity: np.ndarray
+    isolation: tuple[float, float] = (np.nan, np.nan)
 
 
 def _cv(elem) -> dict[str, tuple[str, str]]:
@@ -161,9 +166,16 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
         filt = scv.get(_FILTER, ("", ""))[0] or _user_param(scan, "filter string")
     if not filt:
         filt = _user_param(elem, "filter string")  # OpenMS writes it on the spectrum
-    pmz, pz, activation = np.nan, 0, ()
+    pmz, pz, activation, isolation = np.nan, 0, (), (np.nan, np.nan)
     prec = elem.find(f"{_NS}precursorList/{_NS}precursor")
     if prec is not None:
+        window = prec.find(f"{_NS}isolationWindow")
+        if window is not None:
+            wcv = _cv(window)
+            if _ISOLATION_TARGET in wcv:
+                centre = float(wcv[_ISOLATION_TARGET][0])
+                isolation = (centre - float(wcv.get(_ISOLATION_LOWER, ("nan", ""))[0]),
+                             centre + float(wcv.get(_ISOLATION_UPPER, ("nan", ""))[0]))
         ion = prec.find(f"{_NS}selectedIonList/{_NS}selectedIon")
         if ion is not None:
             icv = _cv(ion)
@@ -192,7 +204,8 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
             for lo, hi in mz_windows:
                 keep |= (mz >= lo) & (mz <= hi)
             mz, intensity = mz[keep], intensity[keep]
-    return Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, mz, intensity)
+    return Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, mz, intensity,
+                isolation)
 
 
 def iter_scans(
@@ -226,7 +239,8 @@ def iter_scans(
 class ScanTable:
     """The scans of a file without their arrays, as columns: ``index``, ``id``, ``ms_level``,
     ``time`` (s), ``filter``, ``precursor_mz``, ``precursor_charge``, ``activation`` (names
-    joined with ``;``) and ``centroid`` (1, 0, or -1 if not stated)."""
+    joined with ``;``), ``centroid`` (1, 0, or -1 if not stated) and the precursor isolation
+    window, ``isolation_lower`` and ``isolation_upper`` (absolute m/z, NaN if not stated)."""
 
     index: np.ndarray
     id: np.ndarray
@@ -237,6 +251,8 @@ class ScanTable:
     precursor_charge: np.ndarray
     activation: np.ndarray
     centroid: np.ndarray
+    isolation_lower: np.ndarray
+    isolation_upper: np.ndarray
 
     def __len__(self) -> int:
         return len(self.index)
@@ -308,6 +324,8 @@ class MzmlFile:
                 activation=np.array([";".join(s.activation) for s in rows], dtype=str),
                 centroid=np.array([-1 if s.centroid is None else int(s.centroid) for s in rows],
                                   dtype=np.int64),
+                isolation_lower=np.array([s.isolation[0] for s in rows], dtype=np.float64),
+                isolation_upper=np.array([s.isolation[1] for s in rows], dtype=np.float64),
             )
         return self._table
 

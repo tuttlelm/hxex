@@ -117,3 +117,28 @@ def test_inputs_are_checked_and_the_config_round_trips(run):
     for bad in ({"poor_fit_factor": 1.0}, {"min_series_fits": 1}, {"min_intensity": 1.5}):
         with pytest.raises(ValueError):
             QualityConfig(**bad)
+
+
+def test_a_series_whose_peaks_are_shifted_is_flagged_mz_shift(run):
+    meas, fit = run
+    # four series (the fixture has one)
+    fit = dataclasses.replace(fit, data_id=np.arange(len(fit)) % 4)
+    meas = dataclasses.replace(meas, data_id=fit.data_id)
+    series = np.unique(fit.data_id)
+    rng = np.random.default_rng(0)
+    offsets = 6.0 + rng.normal(0.0, 2.0, len(fit))  # a calibration offset of +6 ppm
+    moved = fit.data_id == series[0]
+    offsets[moved] += 25.0  # e.g. a wrong C-terminus
+    offsets[(fit.data_id == series[1]) & (np.arange(len(fit)) % 2 == 0)] = np.nan
+    q = assess_quality(meas, fit, mz_offset_ppm=offsets)
+    assert (q.mz_shift == moved).all() and (q.flagged >= q.mz_shift).all()
+    assert q.mz_offset[moved] == pytest.approx(np.full(moved.sum(), 25.0), abs=3.0)
+    assert np.isfinite(q.mz_offset).all() and np.abs(q.mz_offset[~moved]).max() < 3.0
+    off = assess_quality(meas, fit, QualityConfig(max_mz_offset_ppm=None), mz_offset_ppm=offsets)
+    assert not off.mz_shift.any() and np.isfinite(off.mz_offset).all()
+    plain = assess_quality(meas, fit)  # without the picker's offsets: not assessed
+    assert np.isnan(plain.mz_offset).all() and not plain.mz_shift.any()
+    with pytest.raises(ValueError, match="one value per measurement"):
+        assess_quality(meas, fit, mz_offset_ppm=offsets[:-1])
+    with pytest.raises(ValueError, match="max_mz_offset_ppm"):
+        QualityConfig(max_mz_offset_ppm=0)

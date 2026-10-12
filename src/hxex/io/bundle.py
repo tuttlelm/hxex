@@ -42,7 +42,7 @@ from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
-from ..quality import QualityConfig, QualityFlags
+from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
 from ..spectra import SpectrumSet
 from ._arrow import (
     _col,
@@ -121,7 +121,9 @@ def _binned_table(b: BinnedSet) -> pa.Table:
     cols["mz"] = _flat_ragged(b.mz, b.offsets, pa.float64())
     cols["intensity"] = _flat_ragged(b.intensity, b.offsets, pa.float64())
     cols["n_deut"] = _flat_ragged(b.n_deut, b.offsets, pa.int64())
+    cols["peak_mz"] = _flat_ragged(b.peak_mz, b.offsets, pa.float64())
     per_spectrum = (
+        ("mz_offset_ppm", np.float64),
         ("env_width", np.float64), ("env_symm", np.float64), ("threshold", np.float64),
         ("max_namides", np.int64), ("empty", bool), ("no_signal", bool), ("capped", bool),
     )
@@ -257,9 +259,9 @@ def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
 
 def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
-    for name in ("deviance", "deviance_rel", "intensity", "intensity_rel"):
+    for name in ("deviance", "deviance_rel", "intensity", "intensity_rel", "mz_offset"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
-    for name in ("poor_fit", "low_intensity", "noise_outlier"):
+    for name in FLAG_NAMES:
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
     cols["flagged"] = pa.array(np.asarray(q.flagged, dtype=bool))
     return pa.table(cols)
@@ -273,6 +275,9 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         deviance=f("deviance"), deviance_rel=f("deviance_rel"), intensity=f("intensity"),
         intensity_rel=f("intensity_rel"), poor_fit=b("poor_fit"),
         low_intensity=b("low_intensity"), noise_outlier=b("noise_outlier"),
+        # written before the m/z screen: left to the defaults (not assessed)
+        mz_offset=f("mz_offset") if "mz_offset" in table.column_names else None,
+        mz_shift=b("mz_shift") if "mz_shift" in table.column_names else None,
     )
 
 
@@ -798,6 +803,11 @@ class Bundle:
         mz, offsets = _ragged_read(t, "mz")
         intensity, _ = _ragged_read(t, "intensity")
         n_deut, _ = _ragged_read(t, "n_deut")
+        # bundles written before the picker recorded peak positions have neither column
+        peak_mz = (np.asarray(_ragged_read(t, "peak_mz")[0], dtype=np.float64)
+                   if "peak_mz" in t.column_names else None)
+        offset = (np.asarray(_col(t, "mz_offset_ppm"), dtype=np.float64)
+                  if "mz_offset_ppm" in t.column_names else None)
         return BinnedSet(
             mz=np.asarray(mz, dtype=np.float64), intensity=np.asarray(intensity, dtype=np.float64),
             n_deut=np.asarray(n_deut, dtype=np.int64), offsets=offsets,
@@ -808,6 +818,7 @@ class Bundle:
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
             capped=np.asarray(_col(t, "capped"), dtype=bool), **_index_arrays(t),
+            peak_mz=peak_mz, mz_offset_ppm=offset,
         )
 
     def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:

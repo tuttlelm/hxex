@@ -60,7 +60,11 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
         if "precursor" in s:
             pmz, pz, acc, name = s["precursor"]
             prec = (
-                '<precursorList count="1"><precursor><selectedIonList count="1"><selectedIon>'
+                '<precursorList count="1"><precursor><isolationWindow>'
+                f'<cvParam cvRef="MS" accession="MS:1000827" value="{pmz}"/>'
+                '<cvParam cvRef="MS" accession="MS:1000828" value="2.5"/>'
+                '<cvParam cvRef="MS" accession="MS:1000829" value="1.5"/></isolationWindow>'
+                '<selectedIonList count="1"><selectedIon>'
                 '<cvParam cvRef="MS" accession="MS:1000744" name="selected ion m/z" '
                 f'value="{pmz}"/>'
                 f'<cvParam cvRef="MS" accession="MS:1000041" name="charge state" value="{pz}"/>'
@@ -153,6 +157,8 @@ def test_scan_table(tmp_path):
     assert t.time[0] == 30.0 and t.time[1] == pytest.approx((0.5 + 0.01) * 60)  # s and minutes
     assert t.precursor_charge[1] == 20 and t.precursor_mz[1] == 1012.0
     assert np.isnan(t.precursor_mz[0]) and t.precursor_charge[0] == 0
+    assert (t.isolation_lower[1], t.isolation_upper[1]) == (1009.5, 1013.5)
+    assert np.isnan(t.isolation_lower[0]) and np.isnan(t.isolation_upper[0])  # MS1: no window
     assert t.activation[1] == "electron transfer dissociation"  # collision energy is not one
     assert list(t.centroid) == [0] * 6 and "ms2" in t.filter[1]
     assert list(t.select(ms_level=2)) == [1, 4]
