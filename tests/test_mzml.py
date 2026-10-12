@@ -1,0 +1,354 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""mzML reader: synthetic files written here (every encoding the reader supports), summing,
+both experiment layouts, and an end-to-end run. A real file can be checked with
+HXEX_MZML_EXAMPLE (an mzML file written by ThermoRawFileParser)."""
+
+import base64
+import logging
+import os
+import zlib
+
+import numpy as np
+import pytest
+
+from hxex.io import (
+    MzmlConfig,
+    MzmlError,
+    MzmlFile,
+    MzmlRun,
+    MzmlTarget,
+    iter_scans,
+    read_mzml,
+    sum_centroid,
+    sum_profile,
+)
+from hxex.picking import plan_bins
+from hxex.spectra import PeptideEntry
+
+NS = "http://psi.hupo.org/ms/mzml"
+PEPTIDE, CHARGE = "RDKVQKEYAL", 2
+ENTRY = PeptideEntry("", "", PEPTIDE, "0001-0010", 1, 10, CHARGE)
+
+
+def _array(values, accession, *, float64=True, compress=True, numpress=False):
+    raw = np.asarray(values, dtype="<f8" if float64 else "<f4").tobytes()
+    if compress:
+        raw = zlib.compress(raw)
+    params = [f'<cvParam cvRef="MS" accession="{accession}" name="array" value=""/>',
+              f'<cvParam cvRef="MS" accession="{"MS:1000523" if float64 else "MS:1000521"}" '
+              'name="float" value=""/>',
+              f'<cvParam cvRef="MS" accession="{"MS:1000574" if compress else "MS:1000576"}" '
+              'name="compression" value=""/>']
+    if numpress:
+        params.append('<cvParam cvRef="MS" accession="MS:1002312" name="numpress" value=""/>')
+    text = base64.b64encode(raw).decode()
+    return (f'<binaryDataArray encodedLength="{len(text)}">{"".join(params)}'
+            f"<binary>{text}</binary></binaryDataArray>")
+
+
+def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpress=False):
+    """scans: dicts with mz, intensity, time (minutes unless unit='s'), and optionally ms_level,
+    filter, centroid (bool), precursor (m/z, charge, activation accession and name)."""
+    parts = []
+    for i, s in enumerate(scans):
+        unit = ("UO:0000010", "second") if s.get("unit") == "s" else ("UO:0000031", "minute")
+        kind = "MS:1000127" if s.get("centroid") else "MS:1000128"
+        prec = ""
+        if "precursor" in s:
+            pmz, pz, acc, name = s["precursor"]
+            prec = (
+                '<precursorList count="1"><precursor><selectedIonList count="1"><selectedIon>'
+                '<cvParam cvRef="MS" accession="MS:1000744" name="selected ion m/z" '
+                f'value="{pmz}"/>'
+                f'<cvParam cvRef="MS" accession="MS:1000041" name="charge state" value="{pz}"/>'
+                "</selectedIon></selectedIonList><activation>"
+                f'<cvParam cvRef="MS" accession="{acc}" name="{name}" value=""/>'
+                '<cvParam cvRef="MS" accession="MS:1000045" name="collision energy" value="20"/>'
+                "</activation></precursor></precursorList>"
+            )
+        parts.append(
+            f'<spectrum id="scan={i + 1}" index="{i}" defaultArrayLength="{len(s["mz"])}">'
+            '<cvParam cvRef="MS" accession="MS:1000511" name="ms level" '
+            f'value="{s.get("ms_level", 1)}"/>'
+            f'<cvParam cvRef="MS" accession="{kind}" name="spectrum type" value=""/>'
+            '<scanList count="1"><scan>'
+            '<cvParam cvRef="MS" accession="MS:1000016" name="scan start time" '
+            f'value="{s["time"]}" '
+            f'unitAccession="{unit[0]}" unitName="{unit[1]}"/>'
+            '<cvParam cvRef="MS" accession="MS:1000512" name="filter string" '
+            f'value="{s.get("filter", "")}"/>'
+            "</scan></scanList>" + prec +
+            '<binaryDataArrayList count="2">'
+            + _array(s["mz"], "MS:1000514", float64=float64, compress=compress, numpress=numpress)
+            + _array(s["intensity"], "MS:1000515", float64=float64, compress=compress,
+                     numpress=numpress)
+            + "</binaryDataArrayList></spectrum>"
+        )
+    body = (f'<mzML xmlns="{NS}" version="1.1.0"><run id="r"><spectrumList count="{len(scans)}">'
+            + "".join(parts) + '</spectrumList><chromatogramList count="1"><chromatogram id="TIC" '
+            'index="0" defaultArrayLength="0"/></chromatogramList></run></mzML>')
+    if not indexed:
+        path.write_text('<?xml version="1.0" encoding="utf-8"?>' + body)
+        return path
+    head = f'<?xml version="1.0" encoding="utf-8"?><indexedmzML xmlns="{NS}">'
+    doc = (head + body).encode()
+    offsets, start = [], 0
+    while (pos := doc.find(b"<spectrum ", start)) >= 0:
+        offsets.append(pos)
+        start = pos + 1
+    index = ('<indexList count="1"><index name="spectrum">'
+             + "".join(f'<offset idRef="scan={i + 1}">{o}</offset>' for i, o in enumerate(offsets))
+             + "</index></indexList>")
+    index_offset = len(doc)
+    path.write_bytes(doc + (index + f"<indexListOffset>{index_offset}</indexListOffset>"
+                            "</indexedmzML>").encode())
+    return path
+
+
+def profile_envelope(center_bin, width, height, *, shift=0.0, gap_points=True):
+    """A profile spectrum of the test peptide: a narrow Gaussian peak at each predicted bin, with
+    nothing written between peaks (as Thermo leaves out zero stretches)."""
+    plan = plan_bins(PEPTIDE, CHARGE)
+    mz, y = [], []
+    for b, pmz in enumerate(plan.pred_mz):
+        h = height * np.exp(-0.5 * ((b - center_bin) / width) ** 2)
+        if h < 1:
+            continue
+        x = pmz + shift + np.arange(-0.012, 0.0121, 0.002)
+        mz.append(x)
+        y.append(h * np.exp(-0.5 * ((x - pmz - shift) / 0.004) ** 2))
+    return np.concatenate(mz), np.concatenate(y)
+
+
+def time_course(n=6, start=0.5, step=0.5, ms2_every=0):
+    """Scans whose deuteration grows with the scan time; optional ETD scans in between."""
+    scans = []
+    for k in range(n):
+        mz, y = profile_envelope(1 + k, 1.0, 1e5, shift=1e-4 * k)
+        scans.append({"mz": mz, "intensity": y, "time": start + step * k,
+                      "filter": "FTMS + p ESI Full ms"})
+        if ms2_every and k % ms2_every == 0:
+            fmz, fy = profile_envelope(1 + k, 1.0, 5e4)
+            scans.append({"mz": fmz, "intensity": fy, "time": start + step * k + 0.01,
+                          "ms_level": 2, "filter": "FTMS + p ESI Full ms2 1012.0@etd20.00",
+                          "precursor": (1012.0, 20, "MS:1000598",
+                                        "electron transfer dissociation")})
+    return scans
+
+
+# --- the file ---------------------------------------------------------------------------------
+
+def test_scan_table(tmp_path):
+    scans = time_course(n=4, ms2_every=2)
+    scans[0]["unit"] = "s"
+    scans[0]["time"] = 30.0
+    f = MzmlFile(write_mzml(tmp_path / "a.mzML", scans))
+    t = f.scans()
+    assert len(t) == 6 and list(t.ms_level) == [1, 2, 1, 1, 2, 1]
+    assert t.time[0] == 30.0 and t.time[1] == pytest.approx((0.5 + 0.01) * 60)  # s and minutes
+    assert t.precursor_charge[1] == 20 and t.precursor_mz[1] == 1012.0
+    assert np.isnan(t.precursor_mz[0]) and t.precursor_charge[0] == 0
+    assert t.activation[1] == "electron transfer dissociation"  # collision energy is not one
+    assert list(t.centroid) == [0] * 6 and "ms2" in t.filter[1]
+    assert list(t.select(ms_level=2)) == [1, 4]
+    assert list(t.select(activation="ETD")) == [1, 4] and list(t.select(activation="HCD")) == []
+    assert list(t.select(precursor_mz=1012.4, precursor_tol=0.5, precursor_charge=20)) == [1, 4]
+    assert list(t.select(precursor_mz=1013.0, precursor_tol=0.5)) == []
+    assert list(t.select(ms_level=1, time_range=(0, 60))) == [0, 2]
+    assert list(t.select(filter_contains="@etd")) == [1, 4]
+
+
+def test_filter_string_as_a_user_param(tmp_path):
+    """OpenMS writes the filter string as a userParam of the spectrum."""
+    path = write_mzml(tmp_path / "o.mzML", time_course(n=1))
+    cv = ('<cvParam cvRef="MS" accession="MS:1000512" name="filter string" '
+          'value="FTMS + p ESI Full ms"/>')
+    text = path.read_text().replace(cv, "")
+    text = text.replace("<scanList", '<userParam name="filter string" type="xsd:string" '
+                        'value="FTMS + p ESI Full ms"/><scanList', 1)
+    path.write_text(text)
+    assert MzmlFile(path).scans().filter[0] == "FTMS + p ESI Full ms"
+
+
+@pytest.mark.parametrize("float64", [True, False])
+@pytest.mark.parametrize("compress", [True, False])
+def test_arrays_in_every_supported_encoding(tmp_path, float64, compress):
+    scans = time_course(n=2)
+    path = write_mzml(tmp_path / "e.mzML", scans, float64=float64, compress=compress)
+    got = list(iter_scans(path))
+    for s, want in zip(got, scans, strict=True):
+        tol = 0 if float64 else 1e-6
+        np.testing.assert_allclose(s.mz, want["mz"], rtol=tol)
+        np.testing.assert_allclose(s.intensity, want["intensity"], rtol=tol)
+        assert s.mz.dtype == np.float64
+
+
+def test_unsupported_and_broken_files(tmp_path):
+    with pytest.raises(MzmlError, match="numpress"):
+        list(iter_scans(write_mzml(tmp_path / "n.mzML", time_course(n=1), numpress=True)))
+    bad = tmp_path / "bad.mzML"
+    bad.write_text("<mzML><run><spectrumList>")
+    with pytest.raises(MzmlError, match="not a readable mzML"):
+        list(iter_scans(bad))
+    with pytest.raises(MzmlError, match="no such file"):
+        MzmlFile(tmp_path / "missing.mzML")
+
+
+@pytest.mark.parametrize("indexed", [True, False])
+def test_single_scans_by_index(tmp_path, indexed):
+    scans = time_course(n=5, ms2_every=2)
+    f = MzmlFile(write_mzml(tmp_path / "i.mzML", scans, indexed=indexed))
+    assert bool(f._index_offsets()) == indexed
+    every = list(iter_scans(f.path))
+    for i in (0, 3, len(scans) - 1):
+        one = f.scan(i)
+        assert one.index == i and one.time == every[i].time
+        np.testing.assert_array_equal(one.mz, every[i].mz)
+    lo, hi = every[0].mz[3], every[0].mz[10]
+    cut = f.scan(0, mz_window=(lo, hi))
+    assert cut.mz.min() >= lo and cut.mz.max() <= hi and len(cut.mz) == 8
+    with pytest.raises(MzmlError, match="no scan"):
+        MzmlFile(write_mzml(tmp_path / "j.mzML", scans)).scan(99)
+
+
+# --- summing ----------------------------------------------------------------------------------
+
+def test_profile_sum_keeps_gaps_empty():
+    a = profile_envelope(2, 1.0, 1e4)
+    b = profile_envelope(2, 1.0, 1e4, shift=0.001)  # the same peaks, sampled half a step off
+    mz, y = sum_profile([a, b])
+    # one grid with the scans' spacing, not the union of points: the shifted scan only adds a few
+    # points at the end of each peak, where the first scan has no data
+    n_peaks = len(a[0]) // 13
+    assert len(a[0]) < len(mz) <= len(a[0]) + n_peaks < len(np.union1d(a[0], b[0]))
+    assert y.max() == pytest.approx(2 * a[1].max(), rel=0.05)
+    plan = plan_bins(PEPTIDE, CHARGE)
+    for pmz in plan.pred_mz:  # every peak of the sum is about twice the peak of one scan
+        near_a, near = np.abs(a[0] - pmz) < 0.01, np.abs(mz - pmz) < 0.01
+        if near_a.any() and a[1][near_a].max() > 100:
+            assert y[near].max() == pytest.approx(2 * a[1][near_a].max(), rel=0.05)
+    # between two peaks (a stretch neither scan wrote) the sum stays zero
+    middle = (plan.pred_mz[1] + plan.pred_mz[2]) / 2
+    grid = np.linspace(middle - 0.1, middle + 0.1, 50)
+    from hxex.io.mzml import _resample
+    assert np.all(_resample(a[0], a[1], grid, 3.0) == 0)
+    np.testing.assert_array_equal(sum_profile([a])[1], a[1])
+    assert sum_profile([])[0].size == 0
+    # where the scan with most points has no data, the other scan's points join the grid
+    c = (a[0][: len(a[0]) // 2], a[1][: len(a[0]) // 2])
+    d = (a[0] + 0.001, a[1])
+    mz2, _ = sum_profile([d, c])
+    assert len(d[0]) <= len(mz2) <= len(d[0]) + n_peaks  # c lies inside d's data (but its ends)
+    outside = (a[0][-20:] + 5, a[1][-20:])
+    assert sum_profile([c, outside])[0].size == len(c[0]) + 20  # beyond c's range: all added
+
+
+def test_centroid_sum_merges_within_ppm():
+    a = (np.array([500.0, 600.0]), np.array([10.0, 20.0]))
+    b = (np.array([500.002, 600.5]), np.array([30.0, 5.0]))  # 4 ppm away, and a new peak
+    mz, y = sum_centroid([a, b], ppm=10)
+    np.testing.assert_allclose(mz, [500.0015, 600.0, 600.5])
+    np.testing.assert_allclose(y, [40.0, 20.0, 5.0])
+    assert len(sum_centroid([a, b], ppm=1)[0]) == 4
+
+
+# --- spectra from runs ------------------------------------------------------------------------
+
+def test_scan_time_layout_each_every_and_windows(tmp_path):
+    path = write_mzml(tmp_path / "c.mzML", time_course(n=6, ms2_every=2))
+    target = MzmlTarget(ENTRY)
+    runs = [MzmlRun(path, "WT", rep=1, time_offset=5.0)]
+    each = read_mzml(runs, [target], project="p")
+    assert len(each) == 6 and list(each.time) == [5.0 + 60 * (0.5 + 0.5 * k) for k in range(6)]
+    assert set(each.sample) == {"WT"} and set(each.rep) == {1} and set(each.data_id) == {0}
+    assert len(set(each.spectrum_id)) == 6 and each.spectrum_id[0].startswith("p:WT/c.mzML/")
+    plan = plan_bins(PEPTIDE, CHARGE)
+    mz0, _ = each.spectrum(0)
+    assert mz0.min() >= plan.pred_mz.min() - 2 and mz0.max() <= plan.pred_mz.max() + 2
+    every = read_mzml(runs, [target], project="p", config=MzmlConfig(group="every", every=4))
+    assert len(every) == 2
+    assert every.time[0] == pytest.approx(5.0 + 60 * np.mean([0.5, 1, 1.5, 2]))
+    # the file positions of the first and the last summed MS1 scan (ETD scans are in between)
+    assert every.spectrum_id[0].endswith("scans0-5")
+    windows = read_mzml(runs, [target], project="p",
+                        config=MzmlConfig(group="windows", windows=[(0, 70), (80, 200)]))
+    assert len(windows) == 2
+
+
+def test_fragment_targets_need_their_scans(tmp_path, caplog):
+    path = write_mzml(tmp_path / "f.mzML", time_course(n=6, ms2_every=2))
+    frag = MzmlTarget(ENTRY, ms_level=2, activation="ETD", precursor_mz=1012.0,
+                      precursor_charge=20)
+    s = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
+    assert sorted(set(s.data_id)) == [0, 1]
+    assert (s.data_id == 0).sum() == 3 and (s.data_id == 1).sum() == 6
+    hcd = MzmlTarget(ENTRY, ms_level=2, activation="HCD")
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        s2 = read_mzml([MzmlRun(path, "WT")], [hcd, MzmlTarget(ENTRY)], project="p")
+    assert "no scan for target" in caplog.text and len(s2) == 6
+    with pytest.raises(MzmlError, match="no spectra"):
+        read_mzml([MzmlRun(path, "WT")], [hcd], project="p")
+
+
+def test_fixed_time_layout_sums_the_retention_window(tmp_path):
+    lc = time_course(n=6)  # an LC-MS file: the scans are an elution profile, not a time course
+    runs = [MzmlRun(write_mzml(tmp_path / "t60.mzML", lc), "WT", rep=1, time=60.0),
+            MzmlRun(write_mzml(tmp_path / "t60b.mzML", lc), "WT", rep=2, time=60.0),
+            MzmlRun(write_mzml(tmp_path / "un.mzML", lc), "WT", rep=1, time=0.0)]
+    target = MzmlTarget(ENTRY, rt_window=(60.0, 120.0))  # scans at 60, 90 and 120 s
+    s = read_mzml(runs, [target], project="p")
+    assert len(s) == 3 and list(s.time) == [60.0, 60.0, 0.0] and list(s.rep) == [1, 2, 1]
+    assert set(s.data_id) == {0}  # one series: the same sample and target
+    assert s.spectrum_id[0].endswith("scans1-3")
+    one = read_mzml(runs[:1], [MzmlTarget(ENTRY, rt_window=(60.0, 60.0))], project="p")
+    whole = read_mzml(runs[:1], [MzmlTarget(ENTRY)], project="p")  # no window: every scan
+    assert one.spectrum(0)[1].max() < s.spectrum(0)[1].max() < whole.spectrum(0)[1].max()
+
+
+def test_config_and_arguments_are_checked(tmp_path):
+    for bad in ({"group": "some"}, {"every": 0}, {"group": "windows"}, {"windows": [(5, 1)]},
+                {"gap_factor": 1.0}, {"sum_ppm": 0}):
+        with pytest.raises(ValueError):
+            MzmlConfig(**bad)
+    path = write_mzml(tmp_path / "x.mzML", time_course(n=1))
+    with pytest.raises(ValueError, match="at least one"):
+        read_mzml([], [MzmlTarget(ENTRY)], project="p")
+    with pytest.raises(ValueError):
+        read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="bad:name")
+
+
+def test_mzml_spectra_run_end_to_end(tmp_path):
+    """Read, pick and fit: the fitted deuteration must grow along the scan time course."""
+    from hxex.fit import FitConfig
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import PickerConfig
+    from hxex.run import RunConfig, run
+
+    path = write_mzml(tmp_path / "e2e.mzML", time_course(n=6))
+    spectra = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p")
+    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise=100.0),
+                    fit=FitConfig(k_min=1, k_max=1, adam_steps=150, n_restarts=2,
+                                  backend=Backend("cpu", "float64"),
+                                  noise=NoiseConfig("gaussian", percent=3.0)),
+                    quality=None)
+    res = run(spectra, cfg)
+    means = res.fit.fits[1].means[:, 0]
+    assert len(means) == 6 and np.all(np.diff(means) > 0.5)
+
+
+# --- a real file --------------------------------------------------------------------------------
+
+REAL = os.environ.get("HXEX_MZML_EXAMPLE")
+
+
+@pytest.mark.skipif(not REAL, reason="HXEX_MZML_EXAMPLE not set")
+def test_a_real_thermo_file():
+    f = MzmlFile(REAL)
+    t = f.scans()
+    assert len(t) > 0 and set(t.ms_level) <= {1, 2} and np.all(np.diff(t.time) >= 0)
+    if (t.ms_level == 2).any():
+        assert any("dissociation" in a for a in t.activation[t.ms_level == 2])
+    one = f.scan(len(t) // 2)
+    assert one.index == len(t) // 2 and len(one.mz) == len(one.intensity) > 0
+    assert np.all(np.diff(one.mz) > 0)

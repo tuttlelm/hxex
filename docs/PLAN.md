@@ -459,7 +459,7 @@ results, library-first is right.
 | 3. Controls and results | Controls, noise reference, the back-exchange method, quality flags | Method decided on real data; flags documented |
 | 4. Scale and reporting | Chunking by device, bootstrap, plots from saved results, tables | A 10,000-fit run within a measured time on stated hardware; replots from a saved bundle match direct plots |
 | 5. Validation and release | Real-data replicate check, docs, examples | Release 0.1 |
-| 6. Extra input | Fragment-table generation, mzML, then Thermo raw; better peak picking | Each has golden tests |
+| 6. Extra input | Fragment-table generation, Thermo raw (mzML is done, item 33); better peak picking | Each has golden tests |
 | 7. GUI (after Phase 4) | Results viewer and review tool; later a run launcher | Opens a saved bundle, browses fits, saves review flags without refitting |
 
 ## Phase 0 status
@@ -1194,6 +1194,48 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     K = 1 to 3 with noise estimated from replicates; bootstrap N = 20 at fixed K = 1 and 2;
     controls and quality flags. 152 spectra were dropped (empty or no signal), 26,181 fitted.
 
+33. **mzML reader (`hxex.io.mzml`; owner's decisions of 2026-10-12, needed before fragment data).**
+    A small mzML 1.1 reader written with the standard library (no lxml, so no new dependency):
+    plain or indexed files, uncompressed or zlib 32/64-bit arrays, profile or centroid scans;
+    numpress files are refused with a clear message. Thermo `.raw` files are converted outside
+    hxex (ThermoRawFileParser, the command is in the module docstring); reading `.raw` directly
+    stays a Phase 6 item. `MzmlFile` gives the scan table (MS level, time in seconds, filter
+    string, precursor m/z and charge, activation, profile or centroid; no arrays) and single
+    scans through the file's index. `read_mzml(runs, targets)` gives a `SpectrumSet` for targets
+    (peptides, the intact protein or fragment ions, selected by MS level, activation such as
+    ETD, precursor and retention window) in **both layouts**: a run without a fixed time makes
+    each scan, or each group of scans (every N, or time windows), a time point at the mean scan
+    time plus an offset (continuous labelling, as in the top-down examples); a run with a fixed
+    time (an LC-MS file per labelling time, or a control file) sums each target's scans within
+    its retention window into one spectrum. Summing is built in (no more pre-summed files):
+    profile scans are interpolated onto the union of their m/z points without bridging the
+    stretches the vendor left out, centroided peaks are merged within a ppm tolerance. A series
+    is a sample and a target; replicate runs share it. Checked on a real Thermo file (Orbitrap,
+    885 scans, ETD MS2 with precursor 1012 at charge 20): scan table in 0.5 s, one scan by index
+    in 0.2 s, the intact protein (charge 20) as 23 sums of 20 MS1 scans in 2.7 s, picked in every
+    spectrum (204 bins), with the deuteration falling along the run (a back-exchange
+    experiment). **Kinetics runs (owner, 2026-10-12):** the time course data run from D2O to
+    H2O; the scan times may need adjusting for kinetics fits (an offset exists, `time_offset`);
+    early time points are poor in some datasets and need a way to be excluded; large files
+    should be sampled (some time points, for example spaced in log time) rather than read whole.
+    **Summing checked against OpenMS** (the same file summed 10 MS1 scans at a time by
+    OpenMS SpectraMerger, 68 sums; our sums rebuilt from the same component scans, compared in
+    the intact protein's window): the first version summed on the union of the scans' m/z points,
+    which was 7 times denser than any scan, because scans of one acquisition have the same
+    spacing but grids offset by up to half a step (0.1 step at the median); profile scans are now
+    resampled onto one grid with the scans' own spacing (the densest scan's points plus the
+    others' where it has no data), like OpenMS. Result: same time (the mean scan time), area
+    within 0.3 to 0.5 %, profile correlation 0.9999, picked bins with the median ratio 1.00 (0.95
+    to 1.01 for the middle 80 % of bins above 5 % of the maximum), envelope centre within 0.03 to
+    0.11 bins. **Picker finding:** on these summed intact-protein spectra (charge 20, 20 ppm
+    window, about 8 points per window) the shoulder rule (a window of 10 or more points whose
+    maximum is at its edge is dropped) removed 18 to 23 genuine isotope peaks per OpenMS sum and
+    1 to 5 per ours, moving the envelope centre by up to 1.4 bins; the rule was unvalidated (no
+    earlier dataset had windows that full) and needs a decision for high-resolution profile data
+    (`PickerConfig.shoulder_min_points` turns it off for now). Also fixed: OpenMS writes the
+    filter string as a userParam. Not done yet: fragment target lists (Phase 6, with the
+    unverified fragment amide counts).
+
     | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
     |---|---|---|
     | Read and pick | 31 s | 31 s |
@@ -1285,6 +1327,11 @@ CSVs or mzML if wanted.
      rejections) and combining runs (`combine_batch_data`);
    - export of the uptake table in the format other tools read (`hdexa_to_pyhdx` writes the
      DynamX-like table pyHDX expects).
+   - **exchange rates from time courses** (owner, 2026-10-12): for continuous-labelling or
+     back-exchange kinetics with the scan time as the exchange time (fragment-level data such as
+     c and z ions, see CLAUDE.local.md), fit an exponential decay (or rise) of each fragment's
+     deuterium over time, with a constant model as the alternative, and turn consecutive
+     fragments into per-residue rates; the reference is pyHXExpress's kinetics notebooks.
    **Decided (owner, 2026-10-12):** these tools are rewritten to fit hxex (its result types, no
    pandas in the core, explicit configs), and the parts pyHXExpress does through pyHDX
    (residue-level averaging, the uptake-table conversion) are rewritten too, so neither pyHDX nor

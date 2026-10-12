@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Readers for the input formats (HX-Express spreadsheets, HDExaminer SpecExport, pooled folders).
 
-Readers return raw spectra (:class:`hxex.spectra.SpectrumSet`); peak picking is separate. Later:
-mzML, Thermo raw, and the results bundle (Parquet, one row per spectrum).
+Readers return raw spectra (:class:`hxex.spectra.SpectrumSet`); peak picking is separate. mzML
+files are read by :mod:`hxex.io.mzml` (scans, summing, peptides and fragments). Later: Thermo
+raw directly (convert to mzML for now).
 """
 
 from .entries import (
@@ -17,6 +18,18 @@ from .hxexpress import (
     parse_hxexpress_filename,
     read_hxexpress_file,
     scan_hxexpress,
+)
+from .mzml import (
+    MzmlConfig,
+    MzmlError,
+    MzmlFile,
+    MzmlRun,
+    MzmlTarget,
+    ScanTable,
+    iter_scans,
+    read_mzml,
+    sum_centroid,
+    sum_profile,
 )
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
 from .read import read_spectra, scan
@@ -33,6 +46,16 @@ from .times import (
 )
 
 __all__ = [
+    "MzmlConfig",
+    "MzmlError",
+    "MzmlFile",
+    "MzmlRun",
+    "MzmlTarget",
+    "ScanTable",
+    "iter_scans",
+    "read_mzml",
+    "sum_centroid",
+    "sum_profile",
     "load_spectra",
     "save_spectra",
     "spectra_info",
