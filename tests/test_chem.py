@@ -121,8 +121,11 @@ def test_terminal_groups():
 @pytest.mark.parametrize("ion_type", ["M", "b", "c-1", "y", "z-dot", "x"])
 def test_c_terminal_amide_matches_pyteomics(ion_type):
     seq = "RPKPQQFFGLM-NH2"  # substance P
-    assert chem.mz(seq, 2, ion_type) == pytest.approx(
-        mass.calculate_mass(sequence=seq, ion_type=ion_type, charge=2), abs=1e-6)
+    # the group given to pyteomics explicitly (older pyteomics cannot read it from the sequence)
+    table = {**mass.std_aa_comp, "-NH2": mass.Composition(formula="NH2")}
+    parsed = ["H-", *"RPKPQQFFGLM", "-NH2"]
+    assert chem.mz(seq, 2, ion_type) == pytest.approx(mass.calculate_mass(
+        parsed_sequence=parsed, ion_type=ion_type, charge=2, aa_comp=table), abs=1e-6)
     # -OH replaced by -NH2: one O fewer, one N and one H more
     d = {k: chem.composition(seq, ion_type).get(k, 0) - chem.composition(seq[:-4], ion_type)
          .get(k, 0) for k in "CHNO"}
