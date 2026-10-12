@@ -27,7 +27,8 @@ signal never reach the fit and are handled before it.
   wrong sequence, terminal group, modification or ion type, or a different species. On fragment
   data with the right composition the series are within about 3 ppm; a wrong C-terminus moved
   them by 23 to 41 ppm; on an intact-peptide dataset 2 % of series were beyond 15 ppm
-  (docs/PLAN.md). Not assessed without the picker's offsets (a binned table read from elsewhere).
+  (docs/HISTORY.md item 37). Not assessed without the picker's offsets (a binned table read from
+  elsewhere).
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift")
 
 @dataclass(frozen=True)
 class QualityConfig:
-    """Thresholds of the screens (defaults set on the tubulin data, see docs/PLAN.md)."""
+    """Thresholds of the screens (defaults set on the tubulin data, see docs/HISTORY.md item 28)."""
 
     poor_fit_factor: float = 10.0
     min_deviance: float = 1.0

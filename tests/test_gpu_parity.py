@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """CPU and GPU agree. These tests need CUDA and are skipped without it (CI has no GPU); the
-numbers they check were measured on an RTX A4500 and are recorded in docs/PLAN.md.
+numbers they check were measured on an RTX A4500 and are recorded in docs/HISTORY.md.
 
 The float32 GPU fit and the float64 CPU fit take different numerical paths through a non-convex
 optimisation, so the agreement is checked statistically for the full set (selected K, loss, the
 share of spectra whose means move) and strictly for clear synthetic data. A fit depends only on
-its own data and seed (see docs/PLAN.md), so the GPU does not change which spectra are
+its own data and seed (see docs/HISTORY.md), so the GPU does not change which spectra are
 affected by which.
 """
 

@@ -38,7 +38,7 @@ class ControlConfig:
 
     A time of None means that the data has no control of that kind. The defaults of the limits are
     those of the notebook the method comes from; on the Bimodal data they hardly matter (see
-    docs/PLAN.md).
+    docs/HISTORY.md item 27).
     """
 
     undeut_time: float | None = None

@@ -12,7 +12,7 @@ from hxex import chem
 
 GOLDEN = json.loads((Path(__file__).parent / "golden" / "chem_reference.json").read_text())
 
-# Documented deliberate differences (docs/PLAN.md, "Sequence syntax and PTMs", item 1): the
+# Documented deliberate differences (docs/HISTORY.md, "Sequence syntax and PTMs", item 1): the
 # reference slices by characters, so a modified residue among the first residues shifts the
 # N-terminal proline window when nterm_subtract = 2.
 AMIDE_DIFFERENCES = {("acKPEPTIDE", 2): 5, ("pTPEpYPEPK", 2): 4}

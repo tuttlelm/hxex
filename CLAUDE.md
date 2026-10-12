@@ -7,8 +7,10 @@ pyHXExpress (it does not depend on it). Early development: Phases 0 to 3 are don
 results bundle and CPU/GPU parity, then controls, quality flags and the `run` stage). Phase 4
 (`report`: plots, tables and figure files) is in progress.
 
-The plan, decisions and phases are in `docs/PLAN.md`. Read it before designing anything, and
-do not copy it here. Release steps are in `docs/RELEASING.md`.
+The plan, decisions, phases, status and the deliberate differences from pyHXExpress are in
+`docs/PLAN.md`. Read it before designing anything, and do not copy it here. The dated findings
+and measurements behind them are in `docs/HISTORY.md`; read the relevant item when a task needs
+the evidence. Release steps are in `docs/RELEASING.md`.
 
 ## Setup and commands
 
@@ -60,7 +62,7 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
   it will contain and in which phase. `fragments` makes fragment-ion entries and mzML
   targets from a parent peptide. Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
-- `tests/`, `docs/` (`PLAN.md`, `BUNDLE.md`, `PEAK_PICKING.md`, `RELEASING.md`),
+- `tests/`, `docs/` (`PLAN.md`, `HISTORY.md`, `BUNDLE.md`, `PEAK_PICKING.md`, `RELEASING.md`),
   `.github/workflows/` (`ci.yml`, `publish.yml`).
 
 Machine-specific notes (local paths to the pyHXExpress reference code and test data, tooling

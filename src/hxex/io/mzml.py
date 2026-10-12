@@ -22,7 +22,7 @@ targets (a peptide, the intact protein or a fragment ion, each a
 Times are in seconds. Summing profile scans interpolates them onto one common m/z grid with the
 scans' own spacing, without bridging the stretches a vendor left out (they are zero); summing
 centroided scans merges peaks within ``sum_ppm``. On a real file, sums of 10 MS1 scans agree with
-the same sums made by OpenMS (see docs/PLAN.md item 33).
+the same sums made by OpenMS (see docs/HISTORY.md item 33).
 """
 
 from __future__ import annotations
