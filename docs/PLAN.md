@@ -1274,7 +1274,8 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     c′ (z•) and two thirds c+1 (z′); misfit below 3 % with three types against 80 to 97 % with one;
     deuteration of c fragments within 0.07 D of pyHXExpress for 10 of 11, z fragments 0.05 to
     0.23 D higher (open). The mzML reader gained `filter_excludes` and `filter_contains` on
-    targets (scan types such as with or without supplemental activation), `min_time` (leave out
+    targets (scan types such as with or without in-source activation, Thermo's `sid=`; activation short
+    names now match exactly, so `ETD` no longer also selects EThcD scans), `min_time` (leave out
     early time points) and `max_spectra` (time points sampled evenly in log time, only those
     scans read), for the kinetics runs. Next: the z offset, the other fragmentation types and
     peptides, fragment target generation from the residue-tokenised sequence (including C-terminal

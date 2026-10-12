@@ -141,7 +141,9 @@ class RunResult:
     where ``kept`` is False were dropped and are not in ``measurements`` or ``fit``;
     ``dropped_reason`` says why (``empty`` or ``no_signal``). ``bootstrap`` is at each
     measurement's selected K; ``bootstrap_by_k`` (when ``BootstrapConfig.ks`` asks for it) has
-    the fixed-K bootstrap of every measurement at each K requested."""
+    the fixed-K bootstrap of every measurement at each K requested. ``spectra_source`` is how the
+    raw spectra were read (their :attr:`~hxex.spectra.SpectrumSet.source`), written to the
+    bundle even when the spectra are not."""
 
     config: RunConfig
     binned: BinnedSet
@@ -154,6 +156,7 @@ class RunResult:
     controls: ControlTable | None
     quality: QualityFlags | None
     envelopes: EnvelopeTable | None = None
+    spectra_source: dict | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -196,6 +199,8 @@ class RunResult:
             picker_config=self.config.picker,
             controls=self.controls, quality=self.quality, envelopes=self.envelopes,
             run_config=self.config.to_dict(),
+            spectra_source=self.spectra_source if spectra is None or spectra.source is None
+            else spectra.source,
             project=project, notes=notes, overwrite=overwrite,
         )
 
@@ -417,6 +422,7 @@ def run(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes,
+        spectra_source=None if raw is None or raw.source is None else dict(raw.source),
     )
     if out is not None:
         result.write(out, spectra=raw if keep_spectra else None, project=project, notes=notes,

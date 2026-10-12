@@ -104,6 +104,11 @@ class SpectrumSet:
 
     Spectrum ``i`` is ``mz[offsets[i]:offsets[i + 1]]`` and the same slice of ``intensity``.
     The index arrays are parallel, one element per spectrum.
+
+    ``source`` records how the spectra were read, as plain JSON-compatible data (a reader that
+    selects and sums scans, such as :func:`hxex.io.read_mzml`, sets it so the read can be
+    repeated); it is kept by :meth:`select`, spectra files and results bundles, and is None when
+    nothing was recorded.
     """
 
     mz: np.ndarray
@@ -122,6 +127,7 @@ class SpectrumSet:
     data_id: np.ndarray
     time: np.ndarray
     modification: np.ndarray
+    source: Mapping | None = field(default=None, compare=False)
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -154,17 +160,20 @@ class SpectrumSet:
         fields = {
             f.name: getattr(self, f.name)
             for f in dataclasses.fields(self)
-            if f.name not in ("mz", "intensity", "offsets")
+            if f.name not in ("mz", "intensity", "offsets", "source")
         }
         return SpectrumSet(
             mz=self.mz[pts],
             intensity=self.intensity[pts],
             offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
             **{k: v[keep] for k, v in fields.items()},
+            source=self.source,
         )
 
     @classmethod
-    def from_spectra(cls, spectra: Iterable[Spectrum]) -> SpectrumSet:
+    def from_spectra(
+        cls, spectra: Iterable[Spectrum], source: Mapping | None = None
+    ) -> SpectrumSet:
         spectra = list(spectra)
         sizes = [len(s.mz) for s in spectra]
         offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64)
@@ -186,4 +195,5 @@ class SpectrumSet:
             data_id=np.array([s.data_id for s in spectra], dtype=np.int64),
             time=np.array([s.time for s in spectra], dtype=np.float64),
             modification=np.array([s.entry.modification for s in spectra], dtype=str),
+            source=source,
         )

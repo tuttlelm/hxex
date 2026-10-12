@@ -17,6 +17,7 @@ results), ``binned``, ``spectra`` (raw), ``review``, ``controls``,
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -393,6 +394,7 @@ def write_bundle(
     quality: QualityFlags | None = None,
     envelopes: EnvelopeTable | None = None,
     run_config: dict | None = None,
+    spectra_source: Mapping | None = None,
     project: str | None = None,
     notes: str = "",
     overwrite: bool = False,
@@ -403,8 +405,13 @@ def write_bundle(
     bundle is written next to its final place and moved there when complete, so a failed write
     leaves nothing behind. An existing bundle is only replaced with ``overwrite=True`` (a
     directory that is not a bundle is never removed). ``project`` is recorded in the manifest.
+    ``spectra_source`` (how the raw spectra were read, see
+    :attr:`~hxex.spectra.SpectrumSet.source`; by default that of ``spectra``) is recorded in the
+    manifest whether or not the spectra are stored.
     """
     path = Path(path)
+    if spectra_source is None and spectra is not None:
+        spectra_source = spectra.source
     if len(measurements) != len(fit) or not np.array_equal(
         measurements.spectrum_id, fit.spectrum_id
     ):
@@ -477,6 +484,7 @@ def write_bundle(
                 "quality": None if quality is None else quality.config.to_dict(),
                 "envelope": None if envelopes is None else envelopes.config.to_dict(),
                 "run": run_config,
+                "spectra_source": None if spectra_source is None else dict(spectra_source),
             },
             "files": files,
         }
@@ -807,9 +815,16 @@ class Bundle:
         if not self.has("spectra"):
             return None
         if ids is not None and len(ids) == 0:
-            return SpectrumSet.from_spectra([])
+            return SpectrumSet.from_spectra([], source=self.spectra_source())
         filters = None if ids is None else [("spectrum_id", "in", [str(i) for i in ids])]
-        return _spectra_from_table(self._table("spectra", filters=filters))
+        return dataclasses.replace(_spectra_from_table(self._table("spectra", filters=filters)),
+                                   source=self.spectra_source())
+
+    def spectra_source(self) -> dict | None:
+        """How the raw spectra were read (for example the runs, targets and settings of
+        :func:`~hxex.io.read_mzml`, which :func:`~hxex.io.read_mzml_source` repeats), or None if
+        it was not recorded. Present even when the spectra themselves were not stored."""
+        return self.manifest["configs"].get("spectra_source")
 
     def components_table(self) -> dict[str, np.ndarray]:
         """The tidy table of every fit with its intervals (as written for other tools)."""

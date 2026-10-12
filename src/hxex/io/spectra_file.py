@@ -5,13 +5,16 @@
 exactly. The layout is the one of ``spectra.parquet`` in a results bundle (one row per
 spectrum, the index columns and the lists ``mz`` and ``intensity``; see docs/BUNDLE.md), so the
 two are interchangeable and the file is readable from R and Julia. The file metadata records the
-format, the project, the time of writing, the hxex version and a SHA-256 of the contents
-(checked on a full load). This module needs numpy and pyarrow only, not torch.
+format, the project, the time of writing, the hxex version, a SHA-256 of the contents (checked
+on a full load) and, when the spectra have one, their ``source`` (how they were read, as JSON).
+This module needs numpy and pyarrow only, not torch.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import json
 import os
 import tempfile
 from collections.abc import Sequence
@@ -76,7 +79,7 @@ def save_spectra(
             f"{path} exists" + (" and is a directory" if path.is_dir() else
                                 " (use overwrite=True to replace it)")
         )
-    table = _spectra_table(spectra).replace_schema_metadata({
+    meta = {
         _PREFIX + "kind": KIND,
         _PREFIX + "schema_version": str(SCHEMA_VERSION),
         _PREFIX + "project": project if project is not None else _project_of(spectra.spectrum_id),
@@ -84,7 +87,10 @@ def save_spectra(
         _PREFIX + "hxex_version": _hxex_version(),
         _PREFIX + "n_spectra": str(len(spectra)),
         _PREFIX + "content_sha256": content_digest(spectra),
-    })
+    }
+    if spectra.source is not None:
+        meta[_PREFIX + "source"] = json.dumps(spectra.source)
+    table = _spectra_table(spectra).replace_schema_metadata(meta)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".tmp-", dir=path.parent)
     os.close(fd)
@@ -134,8 +140,9 @@ def load_spectra(
         missing = [c for c in _REQUIRED if c not in schema.names]
         if missing:
             raise ReadError(f"{path} is not a spectra file: missing column(s) {', '.join(missing)}")
+        source = json.loads(info["source"]) if "source" in info else None
         if ids is not None and len(ids) == 0:
-            return SpectrumSet.from_spectra([])
+            return SpectrumSet.from_spectra([], source=source)
         filters = None if ids is None else [("spectrum_id", "in", [str(i) for i in ids])]
         spectra = _spectra_from_table(pq.read_table(path, filters=filters))
     except (OSError, pa.ArrowException) as exc:
@@ -143,4 +150,4 @@ def load_spectra(
     if verify and ids is None and "content_sha256" in info:
         if content_digest(spectra) != info["content_sha256"]:
             raise ReadError(f"{path} does not match its checksum: the file is damaged")
-    return spectra
+    return dataclasses.replace(spectra, source=source)

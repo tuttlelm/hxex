@@ -31,7 +31,18 @@ of every file.
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
 `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
 `n_measurements`, `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
-`to_dict` of each config; the fit config includes the noise settings and the device), and
+`to_dict` of each config; the fit config includes the noise settings and the device;
+`spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
+null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset),
+targets (entry, MS level, activation, precursor, retention window, filter text), mzML settings,
+picker settings, modification registry, `series` (each `data_id` with its sample and target
+position, which ties a result to its precursor and activation), `record_paths` (`path` as
+given, `relative` to a data root, or `name` only, for results to be shared) and `files` (each
+run's file `name`, `size`, `checksum` and `algorithm`: the indexed mzML file's own SHA-1 when
+it has one, else SHA-256). `hxex.io.read_mzml_source` reads it again, finding the files by
+path, relative to a data root, or by name in a directory; a file whose size or checksum
+differs is read with a warning, or refused with `on_change="error"`, and its new entry in
+`files` keeps the old identity under `previous`), and
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
 ## Tables
@@ -80,6 +91,7 @@ The layout is that of `spectra.parquet` above (the same columns and types), so t
 interchangeable: `load_spectra` also reads the `spectra.parquet` of a bundle. The Parquet file
 metadata (keys prefixed `hxex.`) records `kind` (`hxex-spectra`), `schema_version`, `project`,
 `created`, `hxex_version`, `n_spectra` and `content_sha256` (a hash of the ids, times and every
-m/z and intensity, checked on a full load; a partial load by `ids` cannot be checked).
+m/z and intensity, checked on a full load; a partial load by `ids` cannot be checked) and,
+when the spectra carry one, `source` (JSON, as `spectra_source` in the bundle manifest).
 Writing is atomic and replaces an existing file only with `overwrite=True`. These two functions
 need numpy and pyarrow only (not torch). `spectra_info(path)` returns the metadata.

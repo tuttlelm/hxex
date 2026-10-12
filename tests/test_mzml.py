@@ -4,6 +4,8 @@ both experiment layouts, and an end-to-end run. A real file can be checked with
 HXEX_MZML_EXAMPLE (an mzML file written by ThermoRawFileParser)."""
 
 import base64
+import hashlib
+import json
 import logging
 import os
 import zlib
@@ -17,6 +19,7 @@ from hxex.io import (
     MzmlFile,
     MzmlRun,
     MzmlTarget,
+    file_identity,
     iter_scans,
     read_mzml,
     sum_centroid,
@@ -100,8 +103,10 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
              + "".join(f'<offset idRef="scan={i + 1}">{o}</offset>' for i, o in enumerate(offsets))
              + "</index></indexList>")
     index_offset = len(doc)
-    path.write_bytes(doc + (index + f"<indexListOffset>{index_offset}</indexListOffset>"
-                            "</indexedmzML>").encode())
+    # the file's own SHA-1, of everything up to and including the opening checksum tag
+    doc += (index + f"<indexListOffset>{index_offset}</indexListOffset><fileChecksum>").encode()
+    sha1 = hashlib.sha1(doc).hexdigest()
+    path.write_bytes(doc + f"{sha1}</fileChecksum></indexedmzML>".encode())
     return path
 
 
@@ -152,6 +157,7 @@ def test_scan_table(tmp_path):
     assert list(t.centroid) == [0] * 6 and "ms2" in t.filter[1]
     assert list(t.select(ms_level=2)) == [1, 4]
     assert list(t.select(activation="ETD")) == [1, 4] and list(t.select(activation="HCD")) == []
+    assert list(t.select(activation="transfer")) == [1, 4]  # free text: part of a name
     assert list(t.select(precursor_mz=1012.4, precursor_tol=0.5, precursor_charge=20)) == [1, 4]
     assert list(t.select(precursor_mz=1013.0, precursor_tol=0.5)) == []
     assert list(t.select(ms_level=1, time_range=(0, 60))) == [0, 2]
@@ -282,6 +288,12 @@ def test_fragment_targets_need_their_scans(tmp_path, caplog):
     s = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
     assert sorted(set(s.data_id)) == [0, 1]
     assert (s.data_id == 0).sum() == 3 and (s.data_id == 1).sum() == 6
+    # the precursor and activation stay with every fragment spectrum and series
+    assert all("@ETD-p1012-pz20/scan" in i for i in s.spectrum_id[s.data_id == 0])
+    assert not any("@" in i for i in s.spectrum_id[s.data_id == 1])
+    from hxex.io import load_spectra, mzml_series_targets, save_spectra
+    saved = load_spectra(save_spectra(s, tmp_path / "f.parquet"))
+    assert mzml_series_targets(saved.source) == {0: frag, 1: MzmlTarget(ENTRY)}
     hcd = MzmlTarget(ENTRY, ms_level=2, activation="HCD")
     with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
         s2 = read_mzml([MzmlRun(path, "WT")], [hcd, MzmlTarget(ENTRY)], project="p")
@@ -332,9 +344,81 @@ def test_mzml_spectra_run_end_to_end(tmp_path):
                                   backend=Backend("cpu", "float64"),
                                   noise=NoiseConfig("gaussian", percent=3.0)),
                     quality=None)
-    res = run(spectra, cfg)
+    res = run(spectra, cfg, out=tmp_path / "b", keep_spectra=True)
     means = res.fit.fits[1].means[:, 0]
     assert len(means) == 6 and np.all(np.diff(means) > 0.5)
+    # the spectra read from mzML survive a spectra file and a bundle, and run again the same way
+    from hxex.io import load_spectra, open_bundle, save_spectra
+    saved = load_spectra(save_spectra(spectra, tmp_path / "s.parquet"))
+    with open_bundle(tmp_path / "b") as b:
+        stored = b.spectra()
+    for again in (saved, stored):
+        assert list(again.spectrum_id) == list(spectra.spectrum_id)
+        np.testing.assert_array_equal(again.mz, spectra.mz)
+        np.testing.assert_array_equal(again.intensity, spectra.intensity)
+        np.testing.assert_array_equal(again.time, spectra.time)
+        np.testing.assert_allclose(run(again, cfg).fit.fits[1].means[:, 0], means, atol=1e-6)
+        assert again.source == spectra.source
+
+
+def test_the_read_is_recorded_and_repeated(tmp_path):
+    """The runs, targets and settings of a read go with the spectra (and into spectra files and
+    bundles, stored spectra or not), and read_mzml_source repeats the read from them."""
+    from hxex.fit import FitConfig
+    from hxex.io import load_spectra, open_bundle, read_mzml_source, save_spectra
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import PickerConfig
+    from hxex.run import RunConfig, run
+
+    path = write_mzml(tmp_path / "a.mzML", time_course(n=6))
+    picker = PickerConfig(zero_filling=3, noise=100.0)
+    target = MzmlTarget(ENTRY, ms_level=1, filter_excludes="sid", rt_window=None)
+    config = MzmlConfig(group="every", every=2, mz_margin=1.5)
+    runs = [MzmlRun(path, "WT", rep=1, time_offset=30.0)]
+    spectra = read_mzml(runs, [target], project="p", config=config, picker=picker)
+    src = spectra.source
+    assert src["reader"] == "mzml" and src["project"] == "p"
+    assert MzmlTarget.from_dict(src["targets"][0]) == target
+    assert MzmlConfig.from_dict(src["config"]) == config
+    assert MzmlRun.from_dict(src["runs"][0]) == MzmlRun(str(path), "WT", time_offset=30.0)
+    assert PickerConfig.from_dict(src["picker"]) == picker
+    assert spectra.select(spectra.time > spectra.time.min()).source == src
+
+    def same(a, b):
+        assert list(a.spectrum_id) == list(b.spectrum_id) and a.source == b.source
+        np.testing.assert_array_equal(a.mz, b.mz)
+        np.testing.assert_array_equal(a.intensity, b.intensity)
+        np.testing.assert_array_equal(a.time, b.time)
+
+    same(read_mzml_source(src), spectra)
+    same(read_mzml_source(load_spectra(save_spectra(spectra, tmp_path / "s.parquet")).source),
+         spectra)
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    path.rename(moved / path.name)
+    again = read_mzml_source(src, directory=moved)
+    np.testing.assert_array_equal(again.intensity, spectra.intensity)
+
+    cfg = RunConfig(picker=picker, quality=None,
+                    fit=FitConfig(k_min=1, k_max=1, adam_steps=50, n_restarts=1,
+                                  backend=Backend("cpu", "float64"),
+                                  noise=NoiseConfig("gaussian", percent=3.0)))
+    res = run(again, cfg, out=tmp_path / "b", keep_spectra=False)
+    assert res.spectra_source == again.source
+    with open_bundle(tmp_path / "b") as b:
+        assert b.spectra() is None and b.spectra_source() == again.source
+        same(read_mzml_source(b.spectra_source(), directory=moved), again)
+    with pytest.raises(ValueError, match="not an mzML read"):
+        read_mzml_source({"reader": "specexport"})
+    with pytest.raises(ValueError, match="unknown"):
+        MzmlConfig.from_dict({"bogus": 1})
+    with pytest.raises(ValueError, match="unknown"):
+        MzmlTarget.from_dict({**target.to_dict(), "bogus": 1})
+    rt = MzmlTarget(ENTRY, rt_window=(60.0, 120.0), activation="ETD", precursor_charge=3)
+    assert MzmlTarget.from_dict(json.loads(json.dumps(rt.to_dict()))) == rt
+    w = MzmlConfig(group="windows", windows=((0, 10), (10, 30)), max_spectra=5)
+    assert MzmlConfig.from_dict(json.loads(json.dumps(w.to_dict()))) == w
 
 
 # --- a real file --------------------------------------------------------------------------------
@@ -385,3 +469,83 @@ def test_filter_exclusion_earliest_time_and_log_sampling(tmp_path):
     fixed = read_mzml([MzmlRun(path, "WT", time=60.0)], [MzmlTarget(ENTRY)], project="p",
                       config=MzmlConfig(max_spectra=2))
     assert len(fixed) == 1
+
+
+def test_activation_short_names_are_exact(tmp_path):
+    """Thermo writes EThcD as ETD plus supplemental beam-type CID: 'ETD' must not select it."""
+    etd = ("MS:1000598", "electron transfer dissociation")
+    scans = time_course(n=2)
+    mz, y = profile_envelope(2, 1.0, 1e4)
+    scans += [{"mz": mz, "intensity": y, "time": 2.0, "ms_level": 2, "filter": "etd",
+               "precursor": (777.4, 2, *etd)},
+              {"mz": mz, "intensity": y, "time": 2.1, "ms_level": 2, "filter": "ethcd",
+               "precursor": (777.4, 2, *etd)},
+              {"mz": mz, "intensity": y, "time": 2.2, "ms_level": 2, "filter": "hcd",
+               "precursor": (777.4, 2, "MS:1000422", "beam-type collision-induced dissociation")}]
+    path = write_mzml(tmp_path / "a.mzML", scans)
+    text = path.read_text()
+    # give the second ETD scan the supplemental HCD that Thermo writes for EThcD
+    extra = ('<cvParam cvRef="MS" accession="MS:1002678" '
+             'name="supplemental beam-type collision-induced dissociation" value=""/>')
+    first = text.index('name="electron transfer dissociation"', text.index('id="scan=4"'))
+    end = text.index("/>", first) + 2
+    path.write_text(text[:end] + extra + text[end:])
+    t = MzmlFile(path).scans()
+    assert list(t.select(activation="ETD")) == [2]
+    assert list(t.select(activation="EThcD")) == [3]
+    assert list(t.select(activation="HCD")) == [4]
+    assert list(t.select(activation="dissociation")) == [2, 3, 4]
+
+
+def test_files_are_identified_and_paths_recorded_as_asked(tmp_path, caplog):
+    """Every file's size and checksum go with the spectra; a repeated read finds the files
+    (by recorded path, relative to a data root, or by name in a directory) and flags a file
+    that changed (data updated between runs)."""
+    from hxex.io import read_mzml_source
+
+    data = tmp_path / "data"
+    data.mkdir()
+    plain = write_mzml(data / "plain.mzML", time_course(n=4))
+    indexed = write_mzml(data / "indexed.mzML", time_course(n=4), indexed=True)
+    ident = file_identity(plain)
+    assert ident == {"name": "plain.mzML", "size": plain.stat().st_size, "algorithm": "sha256",
+                     "checksum": hashlib.sha256(plain.read_bytes()).hexdigest()}
+    own = file_identity(indexed)  # the converter's checksum, read from the end of the file
+    assert own["algorithm"] == "mzml-sha1" and len(own["checksum"]) == 40
+    raw = indexed.read_bytes()
+    assert own["checksum"] == hashlib.sha1(raw[: raw.index(b"<fileChecksum>") + 14]).hexdigest()
+
+    runs = [MzmlRun("plain.mzML", "WT"), MzmlRun("indexed.mzML", "WT", rep=2)]
+    s = read_mzml(runs, [MzmlTarget(ENTRY)], project="p", data_root=data,
+                  record_paths="relative")
+    assert [r["path"] for r in s.source["runs"]] == ["plain.mzML", "indexed.mzML"]
+    assert s.source["files"] == [ident, own] and s.source["record_paths"] == "relative"
+    assert read_mzml_source(s.source, data_root=data).source == s.source
+    with pytest.raises(MzmlError, match="not found"):
+        read_mzml_source(s.source)  # relative paths need the data root
+
+    named = read_mzml([MzmlRun(plain, "WT")], [MzmlTarget(ENTRY)], project="p",
+                      record_paths="name")
+    assert named.source["runs"][0]["path"] == "plain.mzML"
+    assert str(tmp_path) not in json.dumps(named.source)  # nothing about where the data lives
+    np.testing.assert_array_equal(read_mzml_source(named.source, directory=data).intensity,
+                                  named.intensity)
+
+    full = read_mzml([MzmlRun(plain, "WT")], [MzmlTarget(ENTRY)], project="p")
+    assert full.source["runs"][0]["path"] == str(plain)
+    plain.write_bytes(plain.read_bytes().replace(b"</mzML>", b"</mzML>\n"))  # updated data
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        again = read_mzml_source(full.source)
+    assert "has changed since it was read" in caplog.text
+    assert again.source["files"] == [{**file_identity(plain), "previous": ident}]
+    with pytest.raises(MzmlError, match="has changed"):
+        read_mzml_source(full.source, on_change="error")
+    with pytest.raises(ValueError, match="on_change"):
+        read_mzml_source(full.source, on_change="ignore")
+    with pytest.raises(ValueError, match="needs a data_root"):
+        read_mzml(runs, [MzmlTarget(ENTRY)], project="p", record_paths="relative")
+    with pytest.raises(ValueError, match="not inside the data root"):
+        read_mzml([MzmlRun(plain, "WT")], [MzmlTarget(ENTRY)], project="p",
+                  data_root=tmp_path / "elsewhere", record_paths="relative")
+    with pytest.raises(ValueError, match="record_paths"):
+        read_mzml(runs, [MzmlTarget(ENTRY)], project="p", record_paths="absolute")

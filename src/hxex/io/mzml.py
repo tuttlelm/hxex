@@ -28,11 +28,13 @@ the same sums made by OpenMS (see docs/PLAN.md item 33).
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import logging
 import re
 import zlib
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -63,14 +65,19 @@ _ZLIB = "MS:1000574"
 _NO_COMPRESSION = "MS:1000576"
 _NUMPRESS = {"MS:1002312", "MS:1002313", "MS:1002314", "MS:1002746", "MS:1002747", "MS:1002748"}
 _TIME_UNITS = {"UO:0000010": 1.0, "UO:0000031": 60.0, "UO:0000028": 1e-3, "UO:0000032": 3600.0}
-# short names for the activation methods, matched against the activation cvParam names
+# short names of the activation methods: the exact sets of activation cvParam names a scan of
+# that kind has (Thermo writes EThcD as ETD plus supplemental beam-type CID; some converters use
+# the single EThcD term)
 ACTIVATIONS = {
-    "ETD": "electron transfer dissociation",
-    "ECD": "electron capture dissociation",
-    "CID": "collision-induced dissociation",
-    "HCD": "beam-type collision-induced dissociation",
-    "ETHCD": "electron transfer/higher-energy collision dissociation",
-    "UVPD": "ultraviolet photodissociation",
+    "ETD": ({"electron transfer dissociation"},),
+    "ECD": ({"electron capture dissociation"},),
+    "CID": ({"collision-induced dissociation"},),
+    "HCD": ({"beam-type collision-induced dissociation"},),
+    "ETHCD": ({"electron transfer dissociation",
+               "supplemental beam-type collision-induced dissociation"},
+              {"electron transfer/higher-energy collision dissociation"}),
+    "ETCID": ({"electron transfer dissociation", "supplemental collision-induced dissociation"},),
+    "UVPD": ({"ultraviolet photodissociation"},),
 }
 
 
@@ -247,17 +254,22 @@ class ScanTable:
         filter_excludes: str | None = None,
     ) -> np.ndarray:
         """Positions (into this table) of the scans that match every condition given.
-        ``activation`` is a short name (``ETD``, ``HCD``, ``CID``, ``ECD``, ``EThcD``, ``UVPD``)
-        or any text found in the activation names; ``time_range`` is in seconds, inclusive;
+        ``activation`` is a short name, matched exactly (``ETD`` is ETD alone, not EThcD; ``HCD``,
+        ``CID``, ``ECD``, ``EThcD``, ``ETciD``, ``UVPD``), or other text, found in any of the
+        scan's activation names; ``time_range`` is in seconds, inclusive;
         ``filter_contains`` and ``filter_excludes`` test the vendor filter string (for example
-        ``'sid'`` separates scans with supplemental activation)."""
+        Thermo's ``sid=`` marks scans with in-source activation)."""
         keep = np.ones(len(self), dtype=bool)
         if ms_level is not None:
             keep &= self.ms_level == ms_level
         if activation is not None:
-            want = ACTIVATIONS.get(activation.upper(), activation).lower()
-            names = [str(a).split(";") for a in self.activation]
-            keep &= np.array([want in n for n in names], dtype=bool)
+            names = [set(filter(None, str(a).split(";"))) for a in self.activation]
+            exact = ACTIVATIONS.get(activation.upper())
+            if exact is not None:  # the scan's activation is exactly that method
+                keep &= np.array([any(n == e for e in exact) for n in names], dtype=bool)
+            else:  # free text: found in any activation name
+                want = activation.lower()
+                keep &= np.array([any(want in x for x in n) for n in names], dtype=bool)
         if precursor_mz is not None:
             keep &= np.abs(self.precursor_mz - precursor_mz) <= precursor_tol
         if precursor_charge is not None:
@@ -440,6 +452,15 @@ class MzmlRun:
     time: float | None = None
     time_offset: float = 0.0
 
+    def to_dict(self) -> dict:
+        return {"path": str(self.path), "sample": self.sample, "rep": int(self.rep),
+                "time": None if self.time is None else float(self.time),
+                "time_offset": float(self.time_offset)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> MzmlRun:
+        return cls(**_known(cls, data, "run"))
+
 
 @dataclass(frozen=True)
 class MzmlTarget:
@@ -458,6 +479,22 @@ class MzmlTarget:
     rt_window: tuple[float, float] | None = None
     filter_contains: str | None = None
     filter_excludes: str | None = None
+
+    def to_dict(self) -> dict:
+        out = {f.name: getattr(self, f.name) for f in fields(self)}
+        e = self.entry
+        out["entry"] = {f.name: getattr(e, f.name) for f in fields(e)}
+        out["entry"]["extra"] = dict(e.extra)
+        out["rt_window"] = None if self.rt_window is None else list(self.rt_window)
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> MzmlTarget:
+        values = _known(cls, data, "target")
+        values["entry"] = PeptideEntry(**_known(PeptideEntry, values["entry"], "entry"))
+        if values.get("rt_window") is not None:
+            values["rt_window"] = tuple(float(x) for x in values["rt_window"])
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -498,6 +535,24 @@ class MzmlConfig:
             raise ValueError("need mz_margin >= 0, sum_ppm > 0, gap_factor > 1 and "
                              "precursor_tol >= 0")
 
+    def to_dict(self) -> dict:
+        out = asdict(self)
+        out["windows"] = [list(w) for w in self.windows]
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> MzmlConfig:
+        values = _known(cls, data, "mzML setting")
+        values["windows"] = tuple(tuple(w) for w in values.get("windows", ()))
+        return cls(**values)
+
+
+def _known(cls, data: Mapping, what: str) -> dict:
+    unknown = set(data) - {f.name for f in fields(cls)}
+    if unknown:
+        raise ValueError(f"unknown {what} field(s): {', '.join(sorted(unknown))}")
+    return dict(data)
+
 
 def _groups(times: np.ndarray, config: MzmlConfig) -> list[np.ndarray]:
     """Positions (into the selected scans, in time order) of the scans of each spectrum."""
@@ -533,9 +588,52 @@ def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: f
     return float(plan.pred_mz.min()) - margin, float(plan.pred_mz.max()) + margin
 
 
-def _target_label(e: PeptideEntry) -> str:
+def _target_label(t: MzmlTarget) -> str:
+    """The target in spectrum ids: the entry, then (for fragments) how the scans were chosen,
+    for example ``1-5-RDKVQ-z1-ion_type:c@ETD-pz3``."""
+    e = t.entry
     mod = f"-{e.modification.replace(' ', '_')}" if e.modification else ""
-    return f"{e.peptide_range}-{e.peptide}-z{e.charge}{mod}"
+    scans = "".join([
+        f"@{t.activation}" if t.activation else "",
+        f"-p{t.precursor_mz:g}" if t.precursor_mz is not None else "",
+        f"-pz{t.precursor_charge}" if t.precursor_charge is not None else "",
+    ])
+    return f"{e.peptide_range}-{e.peptide}-z{e.charge}{mod}{scans}"
+
+
+def file_identity(path: str | Path) -> dict:
+    """What identifies an input file regardless of where it is: its ``name``, ``size`` (bytes)
+    and a ``checksum`` with its ``algorithm``. An indexed mzML file's own checksum
+    (``<fileChecksum>``, SHA-1, written by the converter) is used when there is one, as it costs
+    nothing to read; otherwise the SHA-256 of the whole file is computed."""
+    path = Path(path)
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        fh.seek(max(0, size - 4096))
+        m = re.search(rb"<fileChecksum>\s*([0-9a-fA-F]{40})\s*</fileChecksum>", fh.read())
+        if m:
+            return {"name": path.name, "size": size, "algorithm": "mzml-sha1",
+                    "checksum": m.group(1).decode().lower()}
+        fh.seek(0)
+        digest = hashlib.sha256()
+        while chunk := fh.read(1 << 24):
+            digest.update(chunk)
+    return {"name": path.name, "size": size, "algorithm": "sha256",
+            "checksum": digest.hexdigest()}
+
+
+PATH_MODES = ("path", "relative", "name")
+
+
+def _recorded_path(path: Path, data_root: Path | None, mode: str) -> str:
+    if mode == "name":
+        return path.name
+    if mode == "relative":
+        try:
+            return path.resolve().relative_to(data_root.resolve()).as_posix()
+        except ValueError:
+            raise ValueError(f"{path} is not inside the data root {data_root}") from None
+    return str(path)
 
 
 def read_mzml(
@@ -546,6 +644,8 @@ def read_mzml(
     config: MzmlConfig = MzmlConfig(),  # noqa: B008
     picker: PickerConfig = DEFAULT_PICKER_CONFIG,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    data_root: str | Path | None = None,
+    record_paths: str = "path",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> SpectrumSet:
@@ -555,8 +655,50 @@ def read_mzml(
     predicted bins of ``picker`` plus ``config.mz_margin``). A series (``data_id``) is a sample and
     a target; replicate runs of a sample share it. A target with no matching scan in a run is
     skipped with a warning. ``spectrum_id`` is ``PROJECT:SAMPLE/FILE/TARGET/scan<i>`` (or
-    ``scans<first>-<last>`` for a sum).
+    ``scans<first>-<last>`` for a sum), where ``TARGET`` names the entry and, when given, the
+    activation and the precursor (``@ETD-pz3``).
+
+    The spectra's ``source`` records the arguments (runs, targets, ``config``, ``picker``,
+    ``registry`` and ``project``), so that :func:`read_mzml_source` repeats the read, the target
+    of every series (``series``: ``data_id`` to sample and target position; see
+    :func:`mzml_series_targets`), which ties each result to its precursor and activation, and
+    the identity of every file (``files``, see :func:`file_identity`), checked when the read is
+    repeated.
+
+    A relative run path is taken relative to ``data_root`` (when given). ``record_paths`` says
+    how run paths are recorded: ``'path'`` as given, ``'relative'`` relative to ``data_root``
+    (every file must be inside it), ``'name'`` the file name only (nothing about where the data
+    lives, for results to be shared; the read is repeated with ``directory``).
     """
+    if record_paths not in PATH_MODES:
+        raise ValueError(f"record_paths must be one of {', '.join(PATH_MODES)}")
+    if record_paths == "relative" and data_root is None:
+        raise ValueError("record_paths='relative' needs a data_root")
+    root = None if data_root is None else Path(data_root)
+    opened = [Path(r.path) if root is None else root / r.path for r in runs]
+    recorded = [_recorded_path(p, root, record_paths) for p in opened]
+    return _read_mzml(runs, opened, recorded, None, record_paths, targets, project=project,
+                      config=config, picker=picker, registry=registry, progress=progress,
+                      cancel=cancel)
+
+
+def _read_mzml(
+    runs: Sequence[MzmlRun],
+    opened: Sequence[Path],
+    recorded: Sequence[str],
+    identities: Sequence[dict] | None,
+    record_paths: str,
+    targets: Sequence[MzmlTarget],
+    *,
+    project: str,
+    config: MzmlConfig,
+    picker: PickerConfig,
+    registry: chem.ModificationRegistry,
+    progress: ProgressHook | None,
+    cancel: CancelHook | None,
+) -> SpectrumSet:
+    """:func:`read_mzml` with the files to open (``opened``), the paths to record, and the file
+    identities when they are already known (else they are computed)."""
     qualify_spectrum_id(project, "")
     if not runs or not targets:
         raise ValueError("read_mzml needs at least one run and one target")
@@ -565,7 +707,7 @@ def read_mzml(
     spectra: list[Spectrum] = []
     for n_run, run in enumerate(runs):
         check_cancel(cancel)
-        f = MzmlFile(run.path)
+        f = MzmlFile(opened[n_run])
         table = f.scans()
         chosen = [
             table.select(ms_level=t.ms_level, activation=t.activation,
@@ -600,7 +742,7 @@ def read_mzml(
                                                    keep=lambda m, wanted=needed: m.index in wanted)}
         for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
             if plan is None:
-                log.warning("%s: no scan for target %s", f.path.name, _target_label(target.entry))
+                log.warning("%s: no scan for target %s", f.path.name, _target_label(target))
                 continue
             lo, hi = windows[t_i]
             key = (run.sample, t_i)
@@ -626,7 +768,7 @@ def read_mzml(
                 scan_text = f"scan{first}" if len(scans) == 1 else f"scans{first}-{last}"
                 time = (float(run.time) if run.time is not None
                         else float(np.mean([s.time for s in scans])) + run.time_offset)
-                local = f"{run.sample}/{f.path.name}/{_target_label(entry)}/{scan_text}"
+                local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
                 spectra.append(Spectrum(
                     mz, y, entry, time, run.rep, data_id=data_id,
                     label=f"{f.path.name} {scan_text}",
@@ -635,4 +777,92 @@ def read_mzml(
         report(progress, n_run + 1, len(runs))
     if not spectra:
         raise MzmlError("no spectra: no scan matched any target in any run")
-    return SpectrumSet.from_spectra(spectra)
+    source = {
+        "reader": "mzml",
+        "project": project,
+        "runs": [replace(r, path=p).to_dict() for r, p in zip(runs, recorded, strict=True)],
+        "record_paths": record_paths,
+        "files": list(identities) if identities is not None else [
+            file_identity(p) for p in opened],
+        "targets": [t.to_dict() for t in targets],
+        "config": config.to_dict(),
+        "picker": picker.to_dict(),
+        "registry": registry.to_dict(),
+        "series": [{"data_id": d, "sample": sample, "target": t_i}
+                   for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
+    }
+    # as stored (tuples become lists), so a record read back from a file compares equal
+    return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
+
+
+def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:
+    """The target (entry, MS level, activation, precursor) of every series (``data_id``) of
+    spectra read by :func:`read_mzml`, from their ``source`` (or a bundle's ``spectra_source``)."""
+    if source.get("reader") != "mzml":
+        raise ValueError(f"not an mzML read: reader {source.get('reader')!r}")
+    targets = [MzmlTarget.from_dict(t) for t in source["targets"]]
+    return {int(s["data_id"]): targets[int(s["target"])] for s in source["series"]}
+
+
+CHANGE_ACTIONS = ("warn", "error")
+
+
+def read_mzml_source(
+    source: Mapping,
+    *,
+    directory: str | Path | None = None,
+    data_root: str | Path | None = None,
+    on_change: str = "warn",
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+) -> SpectrumSet:
+    """Repeat the read recorded in the ``source`` of spectra made by :func:`read_mzml` (from the
+    spectra themselves, a spectra file or a results bundle).
+
+    A file is looked up by name in ``directory`` when given (for data that has moved, or a
+    record of names only), else at its recorded path, relative paths being taken relative to
+    ``data_root`` (or the working directory). Each file's size and checksum
+    (:func:`file_identity`) are compared with the record. A file that changed (data updated
+    between runs) is read with a warning (``on_change='warn'``, the default) or refused
+    (``'error'``, :class:`MzmlError`); either way the new spectra's ``source`` records the file
+    as it is now, with the identity it had before under ``previous``, so the change stays
+    visible in their spectra files and bundles. Unchanged, the record stays as it was."""
+    if source.get("reader") != "mzml":
+        raise ValueError(f"not an mzML read: reader {source.get('reader')!r}")
+    if on_change not in CHANGE_ACTIONS:
+        raise ValueError(f"on_change must be one of {', '.join(CHANGE_ACTIONS)}")
+    runs = [MzmlRun.from_dict(r) for r in source["runs"]]  # "series" is derived, not an input
+    files = source.get("files") or [None] * len(runs)
+    root = None if data_root is None else Path(data_root)
+    opened, identities = [], []
+    for r, known in zip(runs, files, strict=True):
+        check_cancel(cancel)
+        p = Path(r.path)
+        if directory is not None:
+            p = Path(directory) / p.name
+        elif not p.is_absolute() and root is not None:
+            p = root / p
+        if not p.is_file():
+            raise MzmlError(f"{p} not found (give the directory that holds the data files)")
+        now = file_identity(p)
+        if known is not None and any(now[k] != known[k] for k in ("size", "algorithm",
+                                                                    "checksum")):
+            if on_change == "error":
+                raise MzmlError(f"{p} has changed since it was read (its size or checksum "
+                                "differs)")
+            log.warning("%s has changed since it was read (its size or checksum differs); "
+                        "reading it as it is now", p)
+            now = {**now, "previous": {k: v for k, v in known.items() if k != "previous"}}
+        elif known is not None:
+            now = dict(known)
+        opened.append(p)
+        identities.append(now)
+    recorded = [str(r.path) for r in runs]  # as the original read recorded them
+    return _read_mzml(
+        runs, opened, recorded, identities, source.get("record_paths", "path"),
+        [MzmlTarget.from_dict(t) for t in source["targets"]],
+        project=source["project"], config=MzmlConfig.from_dict(source["config"]),
+        picker=PickerConfig.from_dict(source["picker"]),
+        registry=chem.ModificationRegistry.from_dict(source["registry"]),
+        progress=progress, cancel=cancel,
+    )
