@@ -1165,6 +1165,34 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     can reveal a local layout). Not built yet: the K comparison plot, the controls, quality and K-selection overviews, the
     sequence-coverage uptake map and state comparison (butterfly) plots.
 
+32. **Large-dataset benchmark (Phase 4 target, 2026-10-11).** An unpublished SpecExport dataset of
+    26,333 spectra (five samples, 1,372 series, six time points including both controls, up to
+    four replicates), kept outside the repository. Settings as in its pyHXExpress runs (picker:
+    zero filling 3, noise 50, N-terminal subtraction 2, 50 ppm, envelope threshold 0.1); fit
+    K = 1 to 3 with noise estimated from replicates; bootstrap N = 20 at fixed K = 1 and 2;
+    controls and quality flags. 152 spectra were dropped (empty or no signal), 26,181 fitted.
+
+    | Stage | GPU (RTX A4500, float32) | CPU (Threadripper 3960X, 24 cores, float64) |
+    |---|---|---|
+    | Read and pick | 31 s | 31 s |
+    | Fit, K = 1 to 3 | 4.9 min | 77.4 min (16x slower) |
+    | Bootstrap, controls, quality | 41.6 min | not finished (stopped after about 3 h on one fifth of the data) |
+    | Bundle write (332 MB with raw spectra) | 6 s | |
+    | Peak memory | 7.1 GB GPU, 3.9 GB RAM | |
+
+    The whole GPU run took about 48 minutes, so the Phase 4 target (10,000 fits in a measured
+    time on stated hardware) is met. CPU and GPU select the same K distribution (K = 1/2/3:
+    21,950/3,953/278 on CPU, 21,903/4,008/270 on GPU). On the CPU PyTorch used 24 threads at about
+    20 cores' load; part of the time is single-threaded Python (k-means starts, bookkeeping), and
+    float32 would roughly halve the arithmetic: both are possible speed-ups, not done. The CPU is
+    fine for fits but not for full bootstraps at this size. **Controls:** 283 of 1,372 series fell
+    back to theoretical values, 186 because the series has no fully deuterated spectrum; the
+    retention of the series that passed was 0.64 (0.56 to 0.72 for the middle 80 %), much lower
+    than on the Bimodal set (0.81 to 1.00), so the default lower limit of 0.5 is close to this
+    dataset's normal range (44 series below it). The limits are settings; whether to derive them
+    per dataset is open. Quality flags: 1,497 spectra (5.7 %; poor fit 264, low intensity 633,
+    replicate outlier 835).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
@@ -1199,7 +1227,7 @@ CSVs or mzML if wanted.
    correction, quality flags, their bundle tables and the run stage). On the Bimodal
    unfolding-like spectra the correction raised "both populations recovered" from 22 % to 71 %, so
    it matters for the reported means.
-2. **Phase 4 (reports and plots): in progress** (item 31). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
+2. **Phase 4 (reports and plots): in progress** (item 31; the large-dataset benchmark is item 32). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is still open.
 3. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5
