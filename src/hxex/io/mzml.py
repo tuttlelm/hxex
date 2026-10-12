@@ -3,9 +3,10 @@
 
 A small mzML 1.1 reader written with the standard library (no lxml): plain or indexed files,
 uncompressed or zlib-compressed 32- or 64-bit arrays, profile or centroid scans. Numpress
-compression is not supported and is reported. Thermo ``.raw`` files are converted first, for
-example with ThermoRawFileParser (``mono ThermoRawFileParser.exe -i=FILE.raw -b=FILE.mzML -f=1
--p``; ``-f=1`` writes mzML and ``-p`` keeps profile data); converting is not part of hxex.
+compression is not supported and is reported. Thermo ``.raw`` files are read directly by
+:mod:`hxex.io.thermo` (with Thermo's RawFileReader), or converted first, for example with
+ThermoRawFileParser (``mono ThermoRawFileParser.exe -i=FILE.raw -b=FILE.mzML -f=1 -p``; ``-f=1``
+writes mzML and ``-p`` keeps profile data), which gives the same scans.
 
 :class:`MzmlFile` gives the scan table (no arrays) and single scans; :func:`read_mzml` turns the
 scans of several files into raw spectra (:class:`~hxex.spectra.SpectrumSet`) for a list of
@@ -257,6 +258,24 @@ class ScanTable:
     def __len__(self) -> int:
         return len(self.index)
 
+    @classmethod
+    def from_scans(cls, rows: Sequence[Scan]) -> ScanTable:
+        """The table of ``rows`` (their arrays are not kept)."""
+        return cls(
+            index=np.array([s.index for s in rows], dtype=np.int64),
+            id=np.array([s.id for s in rows], dtype=str),
+            ms_level=np.array([s.ms_level for s in rows], dtype=np.int64),
+            time=np.array([s.time for s in rows], dtype=np.float64),
+            filter=np.array([s.filter for s in rows], dtype=str),
+            precursor_mz=np.array([s.precursor_mz for s in rows], dtype=np.float64),
+            precursor_charge=np.array([s.precursor_charge for s in rows], dtype=np.int64),
+            activation=np.array([";".join(s.activation) for s in rows], dtype=str),
+            centroid=np.array([-1 if s.centroid is None else int(s.centroid) for s in rows],
+                              dtype=np.int64),
+            isolation_lower=np.array([s.isolation[0] for s in rows], dtype=np.float64),
+            isolation_upper=np.array([s.isolation[1] for s in rows], dtype=np.float64),
+        )
+
     def select(
         self,
         *,
@@ -312,21 +331,7 @@ class MzmlFile:
 
     def scans(self) -> ScanTable:
         if self._table is None:
-            rows = list(iter_scans(self.path, read_arrays=False))
-            self._table = ScanTable(
-                index=np.array([s.index for s in rows], dtype=np.int64),
-                id=np.array([s.id for s in rows], dtype=str),
-                ms_level=np.array([s.ms_level for s in rows], dtype=np.int64),
-                time=np.array([s.time for s in rows], dtype=np.float64),
-                filter=np.array([s.filter for s in rows], dtype=str),
-                precursor_mz=np.array([s.precursor_mz for s in rows], dtype=np.float64),
-                precursor_charge=np.array([s.precursor_charge for s in rows], dtype=np.int64),
-                activation=np.array([";".join(s.activation) for s in rows], dtype=str),
-                centroid=np.array([-1 if s.centroid is None else int(s.centroid) for s in rows],
-                                  dtype=np.int64),
-                isolation_lower=np.array([s.isolation[0] for s in rows], dtype=np.float64),
-                isolation_upper=np.array([s.isolation[1] for s in rows], dtype=np.float64),
-            )
+            self._table = ScanTable.from_scans(list(iter_scans(self.path, read_arrays=False)))
         return self._table
 
     def _index_offsets(self) -> dict[int, int]:
@@ -346,6 +351,24 @@ class MzmlFile:
                         found = re.findall(r"<offset[^>]*>(\d+)</offset>", block.group(1))
                         self._offsets = {n: int(off) for n, off in enumerate(found)}
         return self._offsets
+
+    def read_scans(
+        self, indices, mz_windows: Sequence[tuple[float, float]] | None = None
+    ) -> dict[int, Scan]:
+        """The scans at the positions ``indices``, with their arrays (only the points inside
+        ``mz_windows`` when given), by position; read in one pass through the file."""
+        wanted = {int(i) for i in indices}
+        return {s.index: s for s in iter_scans(self.path, mz_windows=mz_windows,
+                                               keep=lambda m: m.index in wanted)}
+
+    def close(self) -> None:
+        """Nothing to release (the file is opened for each read); as :class:`ThermoFile`."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def scan(self, index: int, mz_window: tuple[float, float] | None = None) -> Scan:
         """The scan at position ``index`` (as in the scan table), with its arrays."""
@@ -697,19 +720,45 @@ def read_mzml(
     (every file must be inside it), ``'name'`` the file name only (nothing about where the data
     lives, for results to be shared; the read is repeated with ``directory``).
     """
+    opened, recorded = _run_paths(runs, data_root, record_paths)
+    return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
+                      project=project, config=config, picker=picker, registry=registry,
+                      progress=progress, cancel=cancel)
+
+
+def _run_paths(runs: Sequence[MzmlRun], data_root, record_paths: str):
+    """The paths to open and the paths to record of ``runs`` (see :func:`read_mzml`)."""
     if record_paths not in PATH_MODES:
         raise ValueError(f"record_paths must be one of {', '.join(PATH_MODES)}")
     if record_paths == "relative" and data_root is None:
         raise ValueError("record_paths='relative' needs a data_root")
     root = None if data_root is None else Path(data_root)
     opened = [Path(r.path) if root is None else root / r.path for r in runs]
-    recorded = [_recorded_path(p, root, record_paths) for p in opened]
-    return _read_mzml(runs, opened, recorded, None, record_paths, targets, project=project,
-                      config=config, picker=picker, registry=registry, progress=progress,
-                      cancel=cancel)
+    return opened, [_recorded_path(p, root, record_paths) for p in opened]
 
 
-def _read_mzml(
+@dataclass(frozen=True)
+class _ScanFormat:
+    """A format of scan files read with runs and targets: the ``reader`` name recorded in the
+    spectra's source, ``what`` (for messages), ``open`` (path -> a context manager with
+    ``path``, ``scans()`` and ``read_scans()``, as :class:`MzmlFile`), the ``error`` raised, and
+    ``extra`` (open file -> more for the record, called for the first file)."""
+
+    reader: str
+    what: str
+    open: object
+    error: type
+    extra: object = None
+
+
+_MZML = _ScanFormat("mzml", "an mzML", MzmlFile, MzmlError)
+# the readers whose spectra carry runs, targets and series (:func:`read_mzml` and
+# :func:`hxex.io.read_thermo`)
+SCAN_READERS = ("mzml", "thermo")
+
+
+def _read_runs(
+    fmt: _ScanFormat,
     runs: Sequence[MzmlRun],
     opened: Sequence[Path],
     recorded: Sequence[str],
@@ -724,86 +773,28 @@ def _read_mzml(
     progress: ProgressHook | None,
     cancel: CancelHook | None,
 ) -> SpectrumSet:
-    """:func:`read_mzml` with the files to open (``opened``), the paths to record, and the file
-    identities when they are already known (else they are computed)."""
+    """:func:`read_mzml` (or another format's read) with the files to open (``opened``), the
+    paths to record, and the file identities when they are already known (else they are
+    computed)."""
     qualify_spectrum_id(project, "")
     if not runs or not targets:
-        raise ValueError("read_mzml needs at least one run and one target")
+        raise ValueError(f"read_{fmt.reader} needs at least one run and one target")
     windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
     series: dict[tuple[str, int], int] = {}
     spectra: list[Spectrum] = []
+    extra: dict = {}
     for n_run, run in enumerate(runs):
         check_cancel(cancel)
-        f = MzmlFile(opened[n_run])
-        table = f.scans()
-        chosen = [
-            table.select(ms_level=t.ms_level, precursor_tol=config.precursor_tol,
-                         time_range=t.rt_window if run.time is not None else (
-                             None if config.min_time is None else (config.min_time, np.inf)),
-                         **run.conditions(t))
-            for t in targets
-        ]
-        # the scans of every spectrum, per target, before anything is read (so that sampling a
-        # large file reads only the scans it keeps)
-        plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
-        for rows in chosen:
-            if not len(rows):
-                plans.append(None)
-                continue
-            order = rows[np.argsort(table.time[rows], kind="stable")]
-            groups = [np.arange(len(order))] if run.time is not None else _groups(
-                table.time[order], config)
-            if run.time is None and config.max_spectra is not None and len(groups) > 1:
-                centre = np.array([table.time[order][g].mean() for g in groups])
-                groups = [groups[i] for i in _sample_log(centre, config.max_spectra)]
-            plans.append((order, groups))
-        needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
-                  for i in g}
-        if not needed:
-            log.warning("%s: no scan matches any target", f.path.name)
-            report(progress, n_run + 1, len(runs))
-            continue
-        by_index = {s.index: s for s in iter_scans(f.path, mz_windows=windows,
-                                                   keep=lambda m, wanted=needed: m.index in wanted)}
-        for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
-            if plan is None:
-                log.warning("%s: no scan for target %s", f.path.name, _target_label(target))
-                continue
-            lo, hi = windows[t_i]
-            key = (run.sample, t_i)
-            data_id = series.setdefault(key, len(series))
-            entry = replace(target.entry, sample=run.sample)
-            order, groups = plan
-            for g in groups:
-                scans = [by_index[int(table.index[order[i]])] for i in g]
-                parts = []
-                for s in scans:
-                    inside = (s.mz >= lo) & (s.mz <= hi)
-                    parts.append((s.mz[inside], s.intensity[inside]))
-                centroid = all(s.centroid for s in scans)
-                if len(parts) == 1:
-                    mz, y = parts[0]
-                elif centroid:
-                    mz, y = sum_centroid(parts, config.sum_ppm)
-                else:
-                    mz, y = sum_profile(parts, config.gap_factor)
-                order_mz = np.argsort(mz, kind="stable")
-                mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
-                first, last = scans[0].index, scans[-1].index
-                scan_text = f"scan{first}" if len(scans) == 1 else f"scans{first}-{last}"
-                time = (float(run.time) if run.time is not None
-                        else float(np.mean([s.time for s in scans])) + run.time_offset)
-                local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
-                spectra.append(Spectrum(
-                    mz, y, entry, time, run.rep, data_id=data_id,
-                    label=f"{f.path.name} {scan_text}",
-                    spectrum_id=qualify_spectrum_id(project, local),
-                ))
+        with fmt.open(opened[n_run]) as f:
+            if fmt.extra is not None and not extra:
+                extra = fmt.extra(f)
+            _read_run(f, run, targets, windows, series, spectra, project=project,
+                      config=config)
         report(progress, n_run + 1, len(runs))
     if not spectra:
-        raise MzmlError("no spectra: no scan matched any target in any run")
+        raise fmt.error("no spectra: no scan matched any target in any run")
     source = {
-        "reader": "mzml",
+        "reader": fmt.reader,
         "project": project,
         "runs": [replace(r, path=p).to_dict() for r, p in zip(runs, recorded, strict=True)],
         "record_paths": record_paths,
@@ -815,20 +806,86 @@ def _read_mzml(
         "registry": registry.to_dict(),
         "series": [{"data_id": d, "sample": sample, "target": t_i}
                    for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
+        **extra,
     }
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
 
 
+def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config) -> None:
+    """Add the spectra of every target in the open file ``f`` (one run) to ``spectra``."""
+    table = f.scans()
+    chosen = [
+        table.select(ms_level=t.ms_level, precursor_tol=config.precursor_tol,
+                     time_range=t.rt_window if run.time is not None else (
+                         None if config.min_time is None else (config.min_time, np.inf)),
+                     **run.conditions(t))
+        for t in targets
+    ]
+    # the scans of every spectrum, per target, before anything is read (so that sampling a
+    # large file reads only the scans it keeps)
+    plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
+    for rows in chosen:
+        if not len(rows):
+            plans.append(None)
+            continue
+        order = rows[np.argsort(table.time[rows], kind="stable")]
+        groups = [np.arange(len(order))] if run.time is not None else _groups(
+            table.time[order], config)
+        if run.time is None and config.max_spectra is not None and len(groups) > 1:
+            centre = np.array([table.time[order][g].mean() for g in groups])
+            groups = [groups[i] for i in _sample_log(centre, config.max_spectra)]
+        plans.append((order, groups))
+    needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
+              for i in g}
+    if not needed:
+        log.warning("%s: no scan matches any target", f.path.name)
+        return
+    by_index = f.read_scans(sorted(needed), windows)
+    for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
+        if plan is None:
+            log.warning("%s: no scan for target %s", f.path.name, _target_label(target))
+            continue
+        lo, hi = windows[t_i]
+        key = (run.sample, t_i)
+        data_id = series.setdefault(key, len(series))
+        entry = replace(target.entry, sample=run.sample)
+        order, groups = plan
+        for g in groups:
+            scans = [by_index[int(table.index[order[i]])] for i in g]
+            parts = []
+            for s in scans:
+                inside = (s.mz >= lo) & (s.mz <= hi)
+                parts.append((s.mz[inside], s.intensity[inside]))
+            centroid = all(s.centroid for s in scans)
+            if len(parts) == 1:
+                mz, y = parts[0]
+            elif centroid:
+                mz, y = sum_centroid(parts, config.sum_ppm)
+            else:
+                mz, y = sum_profile(parts, config.gap_factor)
+            order_mz = np.argsort(mz, kind="stable")
+            mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
+            first, last = scans[0].index, scans[-1].index
+            scan_text = f"scan{first}" if len(scans) == 1 else f"scans{first}-{last}"
+            time = (float(run.time) if run.time is not None
+                    else float(np.mean([s.time for s in scans])) + run.time_offset)
+            local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
+            spectra.append(Spectrum(
+                mz, y, entry, time, run.rep, data_id=data_id,
+                label=f"{f.path.name} {scan_text}",
+                spectrum_id=qualify_spectrum_id(project, local),
+            ))
+
+
 def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:
     """The target (entry, MS level, activation, precursor) of every series (``data_id``) of
-    spectra read by :func:`read_mzml`, from their ``source`` (or a bundle's ``spectra_source``)."""
-    if source.get("reader") != "mzml":
-        raise ValueError(f"not an mzML read: reader {source.get('reader')!r}")
+    spectra read by :func:`read_mzml` or :func:`hxex.io.read_thermo`, from their ``source`` (or
+    a bundle's ``spectra_source``)."""
+    if source.get("reader") not in SCAN_READERS:
+        raise ValueError(f"not an mzML or Thermo read: reader {source.get('reader')!r}")
     targets = [MzmlTarget.from_dict(t) for t in source["targets"]]
     return {int(s["data_id"]): targets[int(s["target"])] for s in source["series"]}
-
-
 
 
 def read_mzml_source(
@@ -851,8 +908,23 @@ def read_mzml_source(
     (``'error'``, :class:`MzmlError`); either way the new spectra's ``source`` records the file
     as it is now, with the identity it had before under ``previous``, so the change stays
     visible in their spectra files and bundles. Unchanged, the record stays as it was."""
-    if source.get("reader") != "mzml":
-        raise ValueError(f"not an mzML read: reader {source.get('reader')!r}")
+    return _repeat_read(_MZML, source, directory=directory, data_root=data_root,
+                        on_change=on_change, progress=progress, cancel=cancel)
+
+
+def _repeat_read(
+    fmt: _ScanFormat,
+    source: Mapping,
+    *,
+    directory: str | Path | None,
+    data_root: str | Path | None,
+    on_change: str,
+    progress: ProgressHook | None,
+    cancel: CancelHook | None,
+) -> SpectrumSet:
+    """:func:`read_mzml_source` for the format ``fmt``."""
+    if source.get("reader") != fmt.reader:
+        raise ValueError(f"not {fmt.what} read: reader {source.get('reader')!r}")
     if on_change not in CHANGE_ACTIONS:
         raise ValueError(f"on_change must be one of {', '.join(CHANGE_ACTIONS)}")
     runs = [MzmlRun.from_dict(r) for r in source["runs"]]  # "series" is derived, not an input
@@ -867,13 +939,13 @@ def read_mzml_source(
         elif not p.is_absolute() and root is not None:
             p = root / p
         if not p.is_file():
-            raise MzmlError(f"{p} not found (give the directory that holds the data files)")
-        now = compare_identity(p, known, on_change, MzmlError)
+            raise fmt.error(f"{p} not found (give the directory that holds the data files)")
+        now = compare_identity(p, known, on_change, fmt.error)
         opened.append(p)
         identities.append(now)
     recorded = [str(r.path) for r in runs]  # as the original read recorded them
-    return _read_mzml(
-        runs, opened, recorded, identities, source.get("record_paths", "path"),
+    return _read_runs(
+        fmt, runs, opened, recorded, identities, source.get("record_paths", "path"),
         [MzmlTarget.from_dict(t) for t in source["targets"]],
         project=source["project"], config=MzmlConfig.from_dict(source["config"]),
         picker=PickerConfig.from_dict(source["picker"]),

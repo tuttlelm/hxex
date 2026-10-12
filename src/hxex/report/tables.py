@@ -52,13 +52,15 @@ TARGET_COLUMNS = ("fragment", "ms_level", "activation", "precursor_mz", "precurs
 
 
 def _target_columns(results: Results) -> dict[str, np.ndarray]:
-    """For spectra read from mzML, how each measurement's scans were chosen: the fragment (for
-    example ``c-1:4``, empty for a peptide), the MS level, the activation and the precursor
-    (empty or NaN where the target set none). Nothing for other data."""
+    """For spectra read from mzML or Thermo raw files, how each measurement's scans were
+    chosen: the fragment (for example ``c-1:4``, empty for a peptide), the MS level, the
+    activation and the precursor (empty or NaN where the target set none). Nothing for other
+    data."""
     source = results.settings.spectra_source if results.settings is not None else None
-    if not source or source.get("reader") != "mzml" or "series" not in source:
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
         return {}
-    from ..io.mzml import mzml_series_targets
 
     targets = mzml_series_targets(source)
     rows = [targets.get(int(d)) for d in results.fit.data_id]

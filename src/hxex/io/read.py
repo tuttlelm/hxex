@@ -188,9 +188,14 @@ def read_spectra_source(
 
 def read_source(source: Mapping, **kwargs) -> SpectrumSet:
     """Repeat any recorded read: :func:`~hxex.io.read_mzml_source` for an mzML read,
-    :func:`read_spectra_source` for the folder formats (``kwargs`` as those take)."""
+    :func:`~hxex.io.read_thermo_source` for a Thermo raw read, :func:`read_spectra_source` for
+    the folder formats (``kwargs`` as those take)."""
     if source.get("reader") == "mzml":
         from .mzml import read_mzml_source
 
         return read_mzml_source(source, **kwargs)
+    if source.get("reader") == "thermo":
+        from .thermo import read_thermo_source
+
+        return read_thermo_source(source, **kwargs)
     return read_spectra_source(source, **kwargs)

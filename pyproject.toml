@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 # GNU GPL version 3 or (at your option) any later version. pyHXExpress's repository declares
 # plain GPL-3.0 without "or later" wording; hxex deliberately adds it.
 license = "GPL-3.0-or-later"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "LICENSE-EXCEPTION"]
 authors = [{ name = "Lisa M Tuttle" }]
 keywords = ["HDX-MS", "mass spectrometry", "hydrogen deuterium exchange", "binomial mixture"]
 classifiers = [
@@ -43,6 +43,11 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.6",
+]
+# reading Thermo .raw files (hxex.io.thermo); also needs a .NET runtime and Thermo's
+# RawFileReader assemblies, which are not Python packages
+thermo = [
+    "pythonnet>=3.0.3",
 ]
 
 [project.scripts]

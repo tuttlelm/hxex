@@ -2,8 +2,8 @@
 """Readers for the input formats (HX-Express spreadsheets, HDExaminer SpecExport, pooled folders).
 
 Readers return raw spectra (:class:`hxex.spectra.SpectrumSet`); peak picking is separate. mzML
-files are read by :mod:`hxex.io.mzml` (scans, summing, peptides and fragments). Later: Thermo
-raw directly (convert to mzML for now).
+files are read by :mod:`hxex.io.mzml` (scans, summing, peptides and fragments), and Thermo raw
+files the same way by :mod:`hxex.io.thermo` (with Thermo's RawFileReader, not part of hxex).
 """
 
 from .entries import (
@@ -42,6 +42,7 @@ from .specexport import (
     read_specexport_dir,
     scan_specexport,
 )
+from .thermo import ThermoError, ThermoFile, read_thermo, read_thermo_source
 from .times import (
     DEFAULT_FULLDEUT_TIME,
     DEFAULT_UNDEUT_TIME,
@@ -56,12 +57,16 @@ __all__ = [
     "MzmlRun",
     "MzmlTarget",
     "ScanTable",
+    "ThermoError",
+    "ThermoFile",
     "directory_identity",
     "file_identity",
     "iter_scans",
     "mzml_series_targets",
     "read_mzml",
     "read_mzml_source",
+    "read_thermo",
+    "read_thermo_source",
     "sum_centroid",
     "sum_profile",
     "load_spectra",

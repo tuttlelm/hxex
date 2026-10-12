@@ -36,8 +36,25 @@ pip install torch --index-url https://download.pytorch.org/whl/cu126
 
 These wheels are several gigabytes; on a slow connection add `--default-timeout=600` to `pip`.
 
+## Thermo raw files (optional)
+
+`hxex.io.read_thermo` reads Thermo `.raw` files directly, without converting them to mzML. It
+uses Thermo's RawFileReader, which is not part of hxex and is under Thermo's own license. It
+needs:
+
+- `pip install "hxex[thermo]"` (pythonnet);
+- a .NET runtime: Mono on Linux and macOS, the .NET Framework on Windows (built in), or .NET 8
+  or newer with `PYTHONNET_RUNTIME=coreclr`;
+- `ThermoFisher.CommonCore.Data.dll` and `ThermoFisher.CommonCore.RawFileReader.dll`, for
+  example from a [ThermoRawFileParser](https://github.com/compomics/ThermoRawFileParser) release,
+  in a directory named by `HXEX_THERMO_DIR` (or passed as `thermo_dir`).
+
 ## License
 
 GNU General Public License, version 3 or (at your option) any later version
 (`GPL-3.0-or-later`; see [`LICENSE`](LICENSE) for the version 3 text). pyHXExpress's repository
 declares GPL-3.0 without the "or later" option.
+
+Additional permission under GPL version 3 section 7: hxex may be linked or combined with Thermo
+Fisher Scientific's RawFileReader, which is not GPL, and the result conveyed (see
+[`LICENSE-EXCEPTION`](LICENSE-EXCEPTION)). RawFileReader itself stays under Thermo's license.

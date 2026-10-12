@@ -39,8 +39,10 @@ replace pyHXExpress for new users while staying comparable with it.
   hxex differs from it by the author's choice: the "or later" option is added in
   `pyproject.toml`, the README and an SPDX header in every source file. Every runtime
   dependency was checked and is compatible with GPL v3 (see "Phase 0 status"). Thermo's
-  raw-file reader, if added later, is under Thermo's own license terms, which need review
-  before it is bundled or required.
+  RawFileReader is under Thermo's own license: hxex reads `.raw` files with it only through an
+  optional extra (pythonnet) and assemblies the user supplies; it is never bundled, downloaded
+  or required. A GPL section 7 permission (`LICENSE-EXCEPTION`, owner's decision of 2026-10-12)
+  allows linking or combining hxex with it; Thermo's own terms are still open (item 43).
 - **Minimum Python version: 3.11** (`requires-python = ">=3.11"`), with CI on 3.11 to 3.14
   (and 3.15 once it is final). Python 3.10 reaches end of life in October 2026, and PyTorch
   2.15 requires 3.11 or newer.
@@ -303,7 +305,7 @@ from the start would be better are in `docs/HISTORY.md` under this heading.
 | 3. Controls and results | Controls, noise reference, the back-exchange method, quality flags | Method decided on real data; flags documented |
 | 4. Scale and reporting | Chunking by device, bootstrap, plots from saved results, tables | A 10,000-fit run within a measured time on stated hardware; replots from a saved bundle match direct plots |
 | 5. Validation and release | Real-data replicate check, docs, examples | Release 0.1 |
-| 6. Extra input | Fragment-table generation, Thermo raw (mzML is done, item 33); better peak picking | Each has golden tests |
+| 6. Extra input | Fragment-table generation, Thermo raw (mzML and Thermo raw are done, items 33 and 43); better peak picking | Each has golden tests |
 | 7. GUI (after Phase 4) | Results viewer and review tool; later a run launcher | Opens a saved bundle, browses fits, saves review flags without refitting |
 
 ## Status
@@ -336,8 +338,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   (item 33), the composition ladder in the picker (item 34), ion-type mixtures for fragments
   (item 35), fragment targets and terminal groups (item 36), the m/z screen (item 37), precursor
   isolation windows (item 38), fragment comparisons with pyHXExpress and the closure test (items
-  39 to 41), and read records for every format (item 42). Open: fragment-ion amide counts, the
-  z-fragment offset, the shoulder rule, reading Thermo `.raw` directly.
+  39 to 41), read records for every format (item 42) and Thermo `.raw` files read directly
+  (item 43). Open: fragment-ion amide counts, the z-fragment offset, the shoulder rule.
 - **Phase 7 (GUI): not started.** The review layer, the `*_data` functions, the artists' `gid`s
   and `Results.with_review` are in place for it (item 31).
 
@@ -560,6 +562,11 @@ Planned, not built:
 - **Thermo raw** needs a vendor library or a third-party reader, with licensing to check.
   Update: `.raw` files are converted outside hxex (ThermoRawFileParser) and read as mzML; reading
   `.raw` directly stays a Phase 6 item (item 33).
+  Update: `read_thermo` reads `.raw` files directly with Thermo's RawFileReader through
+  pythonnet (optional extra `hxex[thermo]`; the assemblies are the user's), item 43. A GPL
+  section 7 permission for linking with the RawFileReader is in `LICENSE-EXCEPTION`. Open:
+  Thermo's clause 2.1 (no "reflection"; pythonnet calls .NET through reflection, as other
+  open-source readers that use these assemblies do).
 - **CPU time for large bootstrap runs** may need user guidance (smaller N, fewer restarts).
   Update: confirmed by the benchmark (item 32): the CPU is fine for fits but not for full
   bootstraps at that size; float32 and less single-threaded Python are possible speed-ups, not

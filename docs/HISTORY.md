@@ -1231,6 +1231,50 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       series (of 51 series of those ranges), which points at the peptide rather than a spectrum.
       Individual series were not examined.
 
+43. **Thermo `.raw` files read directly (`hxex.io.thermo`; owner's decisions of 2026-10-12).**
+    - Approach: Thermo's own RawFileReader (.NET assemblies `ThermoFisher.CommonCore.Data` and
+      `.RawFileReader`) called through pythonnet, as in the Apache-2.0 project
+      wilburnlab/constellation (which has no format decoding of its own). No `.exe` and no
+      conversion step. pythonnet is the optional extra `hxex[thermo]` (lower bound 3.0.3, checked
+      to load the assemblies); the runtime is pythonnet's choice (Mono on Linux and macOS, the
+      .NET Framework on Windows, .NET 8+ with `PYTHONNET_RUNTIME=coreclr`; only Mono 6.12 was
+      tested). The assemblies are the user's (they come with ThermoRawFileParser), found through
+      `thermo_dir` or `HXEX_THERMO_DIR`; hxex never bundles or downloads them. A pure-Python
+      decoder of the format was rejected as too large and fragile for now.
+    - API: `ThermoFile` mirrors `MzmlFile` (`scans()`, `scan()`, `read_scans()`); `read_thermo`
+      takes the same `MzmlRun`, `MzmlTarget` and `MzmlConfig` as `read_mzml` and shares its code
+      (the per-run loop and the repeat are now format-independent in `hxex.io.mzml`). The record
+      has `reader: "thermo"` plus `thermo_reader` (the RawFileReader version); `read_source` and
+      the result tables' target columns accept it. Unit tests use a stand-in for the
+      RawFileReader; `HXEX_THERMO_EXAMPLE` (a `.raw` with its ThermoRawFileParser `.mzML` beside
+      it) plus `HXEX_THERMO_DIR` compare a real file.
+    - Matching ThermoRawFileParser 1.4.5 (`-p`) needed three details: the arrays are the scan's
+      segmented data read *with* the scan statistics (without them the m/z values move by about
+      0.2 ppm); `IncludeReferenceAndExceptionData` must be on, as ThermoRawFileParser sets it
+      (else lock-mass and reference peaks are zero: up to 145 points per scan); and a symbolic
+      link must be resolved before opening (the RawFileReader otherwise fails with an overflow).
+      A NumPy view of a .NET array (buffer protocol) crashes Mono at interpreter exit, so arrays
+      are copied.
+    - Checked against ThermoRawFileParser's mzML on four Orbitrap files: two top-down HDX files
+      (885 and 105 scans, ETD MS2), an infusion file with ETD, EThcD and MS3 (2,147 scans) and a
+      data-dependent top-down file with ion-trap HCD and MS3 (7,264 scans). Every scan's id, MS
+      level, filter, precursor m/z and charge, isolation window and centroid flag agree (times
+      to 1e-12 relative, as the mzML writes minutes as text), and the arrays of 120 scans per
+      file are identical in m/z and agree in intensity within the mzML's precision. Scan table:
+      0.5, 1.0 and 2.4 s against 0.4, 0.4 and 1.0 s from the mzML.
+    - One deliberate difference: the activation of MS3 scans is that of the last stage (the one
+      that made the scan, for example ETD after HCD; EThcD as ETD plus supplemental beam-type
+      CID). ThermoRawFileParser writes the last stage in the infusion file but the first stage
+      (HCD) for the 1,517 data-dependent MS3 scans, so the two disagree there; MS1 and MS2 agree
+      everywhere.
+    - License: the owner added a GPL section 7 permission to link or combine hxex with the
+      RawFileReader and convey the result (`LICENSE-EXCEPTION`, shipped with `LICENSE`; the
+      SPDX expression stays `GPL-3.0-or-later`, as SPDX has no identifier for a custom
+      exception). Open: Thermo's license forbids "reflection" (clause 2.1), which is how
+      pythonnet calls .NET. Alternatives if that matters: a compiled C# bridge called through
+      .NET hosting (as the Rust `thermorawfilereader` does), a helper process, or decoding the
+      format; or a written answer from Thermo.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
