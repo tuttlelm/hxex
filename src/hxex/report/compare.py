@@ -27,7 +27,7 @@ from ..analysis import (
     ResidueMap,
 )
 from ..analysis.settings import OVERLAY_VALUES
-from .coverage import SAMPLE_STYLES
+from .coverage import MARK_LINE, SAMPLE_STYLES
 from .residues import _when
 
 INCREASE, DECREASE, NEUTRAL = "#c0392b", "#1f5fa8", "#b5b5b5"
@@ -41,7 +41,7 @@ def _marks(ax: Axes, annotations: Annotations | None, label_sites: bool = True) 
     if annotations is None:
         return
     for x in annotations.marks():
-        ax.axvline(x, color="#8c8c8c", linewidth=1.0, linestyle="--", zorder=1)
+        ax.axvline(x, **MARK_LINE)
     if label_sites:
         for site in annotations.sites:
             if site.label:

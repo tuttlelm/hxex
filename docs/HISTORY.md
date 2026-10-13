@@ -1584,7 +1584,9 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     keeps one; the figure shows WT's two points and D3's average, the K=1 values are compared
     (D3 lower by 0.22 +- 0.02) and `compare_choices` records the disagreement. The peptides over
     residue 63 contain the S59D site, so their sequences differ between WT and D3 and they are
-    not compared as peptides; only the residue level compares that region.
+    not compared as peptides; only the residue level compares that region. The region and site lines of
+    every residue plot (profiles, choice, redundancy and resolution, comparisons) are now the
+    same grey dashed lines (`hxex.report.coverage.MARK_LINE`; owner).
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

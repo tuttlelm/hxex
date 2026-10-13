@@ -20,6 +20,7 @@ from matplotlib.figure import Figure
 from scipy.stats import norm
 
 from ..analysis import ResidueMap
+from .coverage import MARK_LINE
 
 # (K, rank) -> colour of its line and band, and its legend label (the owner's figures)
 PROFILE_STYLES = {
@@ -87,7 +88,7 @@ def plot_residue_profile(
     if not drawn:
         raise ValueError(f"no residue values of {sample!r} at time {time:g}")
     for x0 in marks:
-        ax.axvline(x0, color="#8f86c4", linewidth=1.2, zorder=1)
+        ax.axvline(x0, **MARK_LINE)
     ax.set_xlim(0, length if length is not None else n_res)
     ax.set_ylim(0, max(1.1, top * 1.05))
     ax.set_xlabel("residue")
@@ -178,7 +179,7 @@ def plot_population_choice(
     n_res = int(x.max())
     for ax in (top, bottom):
         for x0 in marks:
-            ax.axvline(x0, color="#8f86c4", linewidth=1.2, zorder=1)
+            ax.axvline(x0, **MARK_LINE)
         ax.grid(color="#e5e5e5", linewidth=0.8)
     finite = np.concatenate([getattr(choice, f"fD_{n}")[rows] for n in ("avg", "low", "high")])
     finite = finite[np.isfinite(finite)]

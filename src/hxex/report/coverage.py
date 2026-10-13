@@ -34,6 +34,9 @@ FD_COLORS = (
 FD_CMAP = LinearSegmentedColormap.from_list("hxex_fD", FD_COLORS)
 FD_CMAP.set_bad("#d0d0d0")
 # one colour, marker and marker size per sample (the reference sample first, in black)
+# the dashed grey lines at region boundaries and sites, the same in every residue plot (owner)
+MARK_LINE = {"color": "#8c8c8c", "linewidth": 1.0, "linestyle": "--", "zorder": 1}
+
 SAMPLE_STYLES = (
     ("#000000", "s", 3.5), ("#1f77b4", "o", 4.5), ("#d62728", "o", 6.0), ("#17becf", "o", 7.0),
     ("#9467bd", "v", 5.0), ("#ff7f0e", "^", 5.0), ("#2ca02c", "D", 4.0), ("#8c564b", "P", 5.0),
@@ -211,7 +214,7 @@ def plot_redundancy_resolution(
         ax.set_ylim(bottom=0)
         ax.grid(color="#e5e5e5", linewidth=0.8)
         for x in marks:
-            ax.axvline(x, color="#999999", linestyle="--", linewidth=1.2, zorder=1)
+            ax.axvline(x, **MARK_LINE)
         for x in sorted(prolines):
             ax.text(x, 0.01, "P", transform=ax.get_xaxis_transform(), ha="center",
                     va="bottom", fontsize=7, fontweight="bold")
