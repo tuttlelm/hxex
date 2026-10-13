@@ -7,6 +7,7 @@ save them. The curves are computed in NumPy, but the result types come from ``hx
 importing this package also imports PyTorch.
 """
 
+from .analysis import write_analysis
 from .compare import (
     plot_peptide_differences,
     plot_region_bars,
@@ -60,6 +61,7 @@ from .tables import (
 )
 
 __all__ = [
+    "write_analysis",
     "plot_peptide_differences",
     "plot_region_bars",
     "plot_residue_comparison",

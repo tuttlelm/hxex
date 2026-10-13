@@ -1472,6 +1472,18 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     of about 120 is significant at 4 s (median -0.07). A tendency, not a per-peptide result,
     with these (Poisson-loss) fits.
 
+52. **`hxex analyse` and the `[analysis]` settings (2026-10-13).** `hxex.analysis.AnalysisConfig`
+    (reference sample and order, times, K values, FASTA per sample, coverage times, redundancy
+    count, filters, choice limits, alpha, regions and sites, figure format, output directory),
+    read from the project file's `[analysis]` section (`[[analysis.regions]]`,
+    `[[analysis.sites]]`, `filters = false`), and `hxex.report.write_analysis`, which writes the
+    tables (species uptake, residues, coverage, populations, the peptide, residue and population
+    comparisons, regions) and the figures (coverage grids, redundancy and resolution, choice
+    profiles per sample and time, residue and population comparisons, stacked Woods plots per
+    sample, region bars). `hxex analyse PROJECT` (or a bundle with the default settings;
+    `--bundle`, `--out`, `--reference`, `--format`, `--threads`). On the intact-peptide
+    benchmark (5 samples, 5 time points): 8 tables and 66 figures in 38 s on the CPU.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

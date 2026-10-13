@@ -158,7 +158,8 @@ def compare_peptides(
         raise ValueError("populations are compared at K >= 2")
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
     ks = (1, K) if K != 1 else (1,)
-    groups, *_ = _records(results, ks, exclude_flagged, filters)
+    # quiet: species_uptake reports what the filters left out
+    groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True)
     by_sample: dict[str, dict[tuple, np.ndarray]] = {}
     ses: dict[tuple, np.ndarray] = {}
     for key, recs in groups.items():

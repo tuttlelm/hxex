@@ -55,6 +55,8 @@ hxex run hxex.toml                           # read, pick, fit, bootstrap; bundl
 hxex info results                            # what the results bundle holds
 hxex report results --figures                # figures (and --tables) from the bundle
 hxex resume results                          # finish a run stopped during its bootstrap
+hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,
+                                             # populations, comparisons ([analysis])
 ```
 
 Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes to stderr;

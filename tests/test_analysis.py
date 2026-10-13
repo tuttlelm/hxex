@@ -486,3 +486,89 @@ def test_population_comparison_per_residue():
 
     fig = residue_comparison_figure(cmp, ["V"], 4.0)
     assert fig.axes[0].get_ylabel() == "population (low D)"
+
+
+# --- the whole analysis: settings, files and the command line -----------------------------------
+
+@pytest.fixture(scope="module")
+def two_sample_bundle(tmp_path_factory):
+    """A bundle of two samples (the synthetic run's series 1 renamed V)."""
+    import dataclasses
+
+    raw = raw_spectra(n_series=2)
+    raw = dataclasses.replace(raw, sample=np.where(raw.data_id == 1, "V", "S"))
+    out = tmp_path_factory.mktemp("analysis") / "bundle"
+    run(raw, config(), out=out)
+    return out
+
+
+def test_analysis_config_checks_and_round_trips():
+    from hxex.analysis import AnalysisConfig, Annotations, Region
+
+    c = AnalysisConfig(reference="S", times=[4], fasta={"S": "s.fasta"},
+                       annotations=Annotations(regions=(Region("A", 1, 5),)))
+    assert AnalysisConfig.from_dict(c.to_dict()) == c
+    assert AnalysisConfig.from_dict({"filters": False}).filters is None
+    for bad in ({"ks": (2,)}, {"coverage_times": "late"}, {"format": "jpg"}, {"alpha": 2},
+                {"redundancy": "charges"}, {"reference": "X", "samples": ["S"]}):
+        with pytest.raises(ValueError):
+            AnalysisConfig(**bad)
+    with pytest.raises(ValueError, match="unknown"):
+        AnalysisConfig.from_dict({"colour": "red"})
+
+
+def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
+    from hxex.analysis import AnalysisConfig, Annotations, Region, Site
+    from hxex.io import open_bundle
+    from hxex.report import write_analysis
+
+    seen = []
+    cfg = AnalysisConfig(reference="S", format="png",
+                         annotations=Annotations(regions=(Region("all", 1, 10),),
+                                                 sites=(Site(5, "x"),)))
+    with open_bundle(two_sample_bundle) as b:
+        written = write_analysis(Results.from_bundle(b), cfg, tmp_path / "a",
+                                 progress=lambda d, t: seen.append((d, t)))
+    names = {p.name for p in written}
+    for table in ("species_uptake", "residues", "coverage", "populations", "compare_peptides",
+                  "compare_residues", "compare_populations", "regions"):
+        assert f"{table}.csv" in names
+    assert "coverage_S.png" in names and "redundancy_resolution.png" in names
+    assert any(n.startswith("choice_V_") for n in names)
+    assert any(n.startswith("compare_residues_") for n in names)
+    assert seen[-1][0] == seen[-1][1] == len(written)
+    assert all(p.stat().st_size > 0 for p in written)
+    with open_bundle(two_sample_bundle) as b, pytest.raises(ValueError, match="no reference"):
+        write_analysis(Results.from_bundle(b), AnalysisConfig(reference="X"), tmp_path / "b")
+
+
+def test_analyse_command(two_sample_bundle, tmp_path, capsys):
+    from hxex import cli
+
+    out = tmp_path / "plain"
+    assert cli.main(["-q", "analyse", str(two_sample_bundle), "--out", str(out),
+                     "--format", "svg"]) == 0
+    assert (out / "species_uptake.csv").is_file() and not (out / "compare_peptides.csv").exists()
+    assert any(p.suffix == ".svg" for p in out.iterdir())
+    assert "table(s)" in capsys.readouterr().out
+    project = tmp_path / "hxex.toml"
+    project.write_text(f"""project = "p"
+[input]
+format = "specexport"
+data_dir = "d"
+[output]
+bundle = "{two_sample_bundle}"
+[analysis]
+reference = "S"
+format = "png"
+out = "from_project"
+[[analysis.regions]]
+name = "all"
+start = 1
+end = 10
+""")
+    assert cli.main(["-q", "analyse", str(project)]) == 0
+    assert (tmp_path / "from_project" / "regions.csv").is_file()
+    assert (tmp_path / "from_project" / "compare_peptides.csv").is_file()
+    project.write_text(project.read_text() + "[analysis.extra]\n")
+    assert cli.main(["-q", "analyse", str(project)]) == 1  # an unknown key is an error

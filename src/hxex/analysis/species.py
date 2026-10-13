@@ -146,7 +146,7 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
     return mean, float(np.sqrt(var / n))
 
 
-def _records(results, ks, exclude_flagged, filters):
+def _records(results, ks, exclude_flagged, filters, quiet=False):
     """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
     end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
     rep)``; with whether the values are corrected, ``nterm_subtract`` and the undeuterated time."""
@@ -188,7 +188,7 @@ def _records(results, ks, exclude_flagged, filters):
                 mean_se[i] = boot.mean_se[i, :k][order[i]]
                 frac_se[i] = boot.population_se[i, :k][order[i]]
         no_boot = int(np.isnan(mean_se[keep, 0]).sum())
-        if k >= 2 and no_boot:
+        if k >= 2 and no_boot and not quiet:
             log.warning("K=%d: %d of %d spectra have no bootstrap, so their standard errors come "
                         "only from the scatter of replicates (or are unknown): too small for the "
                         "choice between one and two populations (run the bootstrap at K=1 and "
@@ -237,7 +237,7 @@ def _records(results, ks, exclude_flagged, filters):
                     unordered.add(base + (k,))
             dropped["k1_between_ranks"] = len(unordered)
             groups = {key: recs for key, recs in groups.items() if key[:7] not in unordered}
-        if any(dropped.values()):
+        if any(dropped.values()) and not quiet:
             log.info("K >= 2 descriptions left out: %d spectra with a population outside "
                      "[%g, %g], %d with a component above fD %g; %d species and times with "
                      "an fD error of %g or more, %d with the K=1 value outside the ranks",

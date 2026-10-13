@@ -14,9 +14,10 @@ Status (2026-10-13): phase 1 in progress. Built: the species uptake table
 profiles (`hxex.report.residues`), the one-or-two-population choice per residue
 (`choose_populations`, `plot_population_choice`; phase 2), and comparisons within a run
 (`compare_peptides`, `compare_residues`, `region_summary`, `Annotations`; the residue overlay,
-Woods and region bar plots in `hxex.report.compare`; phase 3). Next: the `[analysis]` section of
-the project file and a command-line command, then comparing separate runs (phase 4). The
-peptide (MS1) branch comes first.
+Woods and region bar plots in `hxex.report.compare`; phase 3), and the `[analysis]` section of
+the project file (`AnalysisConfig`) with `hxex analyse`, which writes every table and figure
+(`hxex.report.write_analysis`). Next: comparing separate runs (phase 4). The peptide (MS1)
+branch comes first.
 
 ## Ground rules
 

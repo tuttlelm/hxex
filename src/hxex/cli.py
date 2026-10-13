@@ -9,6 +9,7 @@
     hxex resume BUNDLE                      add the bootstrap to a run that stopped during it
     hxex report BUNDLE                      tables and figures from a saved bundle
     hxex info BUNDLE                        what a bundle holds
+    hxex analyse PROJECT|BUNDLE             the post-fitting analysis: tables and figures
 
 The project file is described in :mod:`hxex.config`. Progress and messages go to stderr through
 ``logging`` (``-q`` for warnings only, ``-v`` for more); results and summaries go to stdout.
@@ -87,6 +88,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="which series to draw (default: the run's plot setting, else flagged)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
+
+    p = sub.add_parser("analyse", aliases=["analyze"],
+                       help="the post-fitting analysis of a bundle: tables and figures")
+    p.add_argument("source", metavar="PROJECT|BUNDLE",
+                   help="a project file (its [analysis] settings and output.bundle) or a bundle")
+    p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
+    p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
+                                 "bundle's name + _analysis)")
+    p.add_argument("--reference", help="the reference sample (instead of [analysis] reference)")
+    p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
+                   help="figure file format")
+    _threads_option(p)
 
     p = sub.add_parser("info", help="what a results bundle holds")
     p.add_argument("bundle")
@@ -414,8 +427,61 @@ def cmd_info(args) -> int:
     return 0
 
 
+def _is_bundle(path: Path) -> bool:
+    return path.suffix == ".zip" or (path.is_dir() and (path / "manifest.json").is_file())
+
+
+def cmd_analyse(args) -> int:
+    import dataclasses
+
+    from .analysis import AnalysisConfig
+    from .hooks import ProgressLog
+    from .io import open_bundle
+    from .report import Results, write_analysis
+
+    source = Path(args.source)
+    threads = args.threads
+    if _is_bundle(source):
+        bundle, config, base = source, AnalysisConfig(), Path(".")
+    else:
+        from .config import load_project
+
+        project = load_project(source)
+        config = project.analysis if project.analysis is not None else AnalysisConfig()
+        bundle = Path(args.bundle) if args.bundle else project.output.bundle
+        base = source.resolve().parent
+        threads = threads if threads is not None else project.threads
+        if bundle is None:
+            log.error("no bundle: set output.bundle or give --bundle")
+            return EXIT_ERROR
+    if args.bundle and _is_bundle(source):
+        bundle = Path(args.bundle)
+    changes = {}
+    if args.reference:
+        changes["reference"] = args.reference
+    if args.fig_format:
+        changes["format"] = args.fig_format
+    if changes:
+        config = dataclasses.replace(config, **changes)
+    out = Path(args.out) if args.out else Path(config.out) if config.out else bundle.with_name(
+        bundle.name + "_analysis")
+    stop = _Stop()
+    with open_bundle(bundle) as b, stop.installed(), _threads(threads):
+        if b.pending:
+            log.warning("%s is waiting for its %s; the analysis uses what it holds",
+                        bundle, ", ".join(b.pending))
+        written = write_analysis(Results.from_bundle(b), config, out, base=base,
+                                 progress=ProgressLog(name="analysis",
+                                                      interval=args.progress_every),
+                                 cancel=stop)
+    tables = sum(1 for p in written if p.suffix == ".csv")
+    _say(f"{tables} table(s) and {len(written) - tables} figure(s) in {out}")
+    return 0
+
+
 COMMANDS = {"init": cmd_init, "check": cmd_check, "run": cmd_run, "resume": cmd_resume,
-            "report": cmd_report, "info": cmd_info}
+            "report": cmd_report, "info": cmd_info, "analyse": cmd_analyse,
+            "analyze": cmd_analyse}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

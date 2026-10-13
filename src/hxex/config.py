@@ -18,6 +18,9 @@
     [output]
     bundle = "results"          # the results bundle
 
+    [analysis]                  # the post-fitting analysis (hxex analyse; hxex.analysis)
+    reference = "WT"
+
 A key left out keeps its default. TOML has no null: ``false`` stands for None where a setting
 can be None (an optional stage, a scan condition a run removes, an unset limit). Relative paths
 are taken relative to the project file's directory. :func:`load_project` reads and checks the
@@ -192,6 +195,7 @@ class Project:
     output: OutputSettings
     path: Path | None = None
     threads: int | None = None
+    analysis: object = None  # hxex.analysis.AnalysisConfig, or None without an [analysis]
 
 
 def _path(base: Path, value, where: str) -> Path | None:
@@ -319,7 +323,8 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     """A :class:`Project` from the parsed TOML ``data``; relative paths are taken relative to
     ``base``."""
     base = Path(base)
-    _check_keys(data, {"project", "threads", "input", "run", "output"}, "the project file")
+    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis"},
+                "the project file")
     name = data.get("project")
     if not isinstance(name, str) or not name or ":" in name:
         raise ProjectError("project must be a name (non-empty text without ':')")
@@ -337,7 +342,44 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
                                 or threads < 1):
         raise ProjectError("threads must be a whole number of at least 1")
-    return Project(name, _input_from(data["input"], base), run, output, path, threads)
+    analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
+    return Project(name, _input_from(data["input"], base), run, output, path, threads, analysis)
+
+
+ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
+                 "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
+                 "exclude_flagged", "format", "out")
+
+
+def _analysis_from(data: Mapping, base: Path):
+    """The :class:`hxex.analysis.AnalysisConfig` of an ``[analysis]`` table (relative paths from
+    ``base``)."""
+    from .analysis import AnalysisConfig
+
+    _check_keys(data, ANALYSIS_KEYS, "[analysis]")
+    values = {k: v for k, v in data.items() if k not in ("regions", "sites")}
+    fasta = values.get("fasta")
+    if isinstance(fasta, str):
+        values["fasta"] = str(_path(base, fasta, "analysis.fasta"))
+    elif isinstance(fasta, Mapping):
+        values["fasta"] = {str(k): str(_path(base, v, f"analysis.fasta.{k}"))
+                           for k, v in fasta.items()}
+    if "out" in values:
+        values["out"] = str(_path(base, values["out"], "analysis.out"))
+    if "filters" in values and isinstance(values["filters"], Mapping):
+        from .analysis import SpeciesFilters
+
+        values["filters"] = {**SpeciesFilters().__dict__, **values["filters"]}
+    if "choice" in values:
+        from .analysis import ChoiceConfig
+
+        values["choice"] = {**ChoiceConfig().to_dict(), **values["choice"]}
+    values["annotations"] = {"regions": list(data.get("regions", [])),
+                             "sites": list(data.get("sites", []))}
+    try:
+        return AnalysisConfig.from_dict(values)
+    except (TypeError, ValueError) as exc:
+        raise ProjectError(f"[analysis]: {exc}") from exc
 
 
 def load_project(path: str | Path) -> Project:
@@ -556,6 +598,35 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "tables = true                    # CSV tables beside the bundle, or a directory",
         "figures = false                  # figures beside the bundle, or a directory",
         'notes = ""',
+        "",
+        "# The post-fitting analysis (hxex analyse): uncomment to use. Regions and sites are",
+        "# yours to define for the protein; nothing is derived.",
+        "# [analysis]",
+        '# reference = "WT"                # the sample the others are compared with',
+        '# samples = ["WT", "variant"]     # which samples, in this order (default: all)',
+        "# times = [4.0, 60.0]             # time points of the per-time figures (default: all",
+        "#                                 # but the fully deuterated control)",
+        '# fasta = "protein.fasta"         # or one per sample: [analysis.fasta] WT = "wt.fasta"',
+        '# coverage_times = "undeuterated" # or "all", or a list of times',
+        '# redundancy = "peptides"         # or "spectra"',
+        "# alpha = 0.05                    # significance of the comparisons",
+        '# format = "pdf"                  # or "png", "svg"',
+        "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
+        "# min_population = 0.05",
+        "# max_fD_se = 0.25",
+        "# max_fD = 1.1",
+        "# k1_between_ranks = true",
+        "# [analysis.choice]               # the choice between one and two populations",
+        "# confidence = 0.5",
+        "# max_fD_se = 0.25",
+        "# min_population = 0.05",
+        "# [[analysis.regions]]",
+        '# name = "N-terminal region"',
+        "# start = 1",
+        "# end = 63",
+        "# [[analysis.sites]]",
+        "# residue = 19",
+        '# label = "S19"',
         "",
         "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
         "# section turns that stage on; uncomment one to use it.",

@@ -35,9 +35,11 @@ from .residues import (
     exchanging_residues,
     residue_map,
 )
+from .settings import AnalysisConfig
 from .species import SpeciesFilters, SpeciesUptake, species_uptake
 
 __all__ = [
+    "AnalysisConfig",
     "Annotations",
     "PeptideComparison",
     "Region",
