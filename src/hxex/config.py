@@ -4,6 +4,7 @@
 ::
 
     project = "name"            # prefixes every spectrum id
+    threads = 12                # optional: CPU threads for the command (default: PyTorch's)
 
     [input]                     # what to read, by format
     format = "specexport"       # specexport, hxexpress, pooled, mzml or thermo
@@ -181,13 +182,16 @@ def _beside(bundle: Path | None, value: Path | bool, suffix: str) -> Path | None
 @dataclass(frozen=True)
 class Project:
     """A project file, checked: ``project`` (the spectrum-id prefix), ``input``, ``run`` and
-    ``output``; ``path`` is the file itself."""
+    ``output``; ``threads``, the CPU threads of a command that runs it (None: PyTorch's
+    default; a setting of the process, so the command line applies it, not the library);
+    ``path`` is the file itself."""
 
     project: str
     input: InputSettings
     run: RunConfig
     output: OutputSettings
     path: Path | None = None
+    threads: int | None = None
 
 
 def _path(base: Path, value, where: str) -> Path | None:
@@ -315,7 +319,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     """A :class:`Project` from the parsed TOML ``data``; relative paths are taken relative to
     ``base``."""
     base = Path(base)
-    _check_keys(data, {"project", "input", "run", "output"}, "the project file")
+    _check_keys(data, {"project", "threads", "input", "run", "output"}, "the project file")
     name = data.get("project")
     if not isinstance(name, str) or not name or ":" in name:
         raise ProjectError("project must be a name (non-empty text without ':')")
@@ -329,7 +333,11 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         from .report.figures import PlotConfig
 
         run = replace(run, plots=PlotConfig())
-    return Project(name, _input_from(data["input"], base), run, output, path)
+    threads = data.get("threads")
+    if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
+                                or threads < 1):
+        raise ProjectError("threads must be a whole number of at least 1")
+    return Project(name, _input_from(data["input"], base), run, output, path, threads)
 
 
 def load_project(path: str | Path) -> Project:
@@ -536,6 +544,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# \"not set\" where a setting can be unset. Relative paths are relative to this file.",
         "",
         f'project = "{project}"              # prefixes every spectrum id',
+        "# threads = 12                    # CPU threads (default: PyTorch's, the physical",
+        "#                                 # cores); 12 was fastest on a 24-core CPU",
         "",
         input_text,
         "",

@@ -1355,9 +1355,10 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       defaults: fit in 17.1 min (77.4 before), selected K 21,906/4,008/267 (GPU run:
       21,903/4,008/270; old CPU run: 21,950/3,953/278), the same K as the GPU run for 99.75 %.
       The full test suite, the slow regression tests and the GPU parity tests pass.
-    - Not done: the k-means starts (scipy, per measurement in Python, about 10 % of a fit) and
-      a thread setting (process-wide in PyTorch, so for the command line rather than the
-      library).
+    - Threads: `threads = N` in the project file or `--threads N` (`run`, `resume`, `report`;
+      the flag wins) sets PyTorch's CPU threads for that command and restores them afterwards.
+      The library does not set them (a process-wide setting); the default stays PyTorch's.
+    - Not done: the k-means starts (scipy, per measurement in Python, about 10 % of a fit).
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

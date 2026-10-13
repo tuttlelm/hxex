@@ -177,3 +177,27 @@ def test_errors_are_messages_not_tracebacks(tmp_path, capsys):
     p = mzml_project(tmp_path)
     (tmp_path / "run1.mzML").unlink()
     assert cli.main(["check", str(p)]) == 1
+
+
+def test_threads_are_set_for_the_command_only(tmp_path, capsys):
+    import torch
+
+    before = torch.get_num_threads()
+    path = mzml_project(tmp_path)
+    text = path.read_text().replace('project = "cli"', 'project = "cli"\nthreads = 3')
+    path.write_text(text)
+    assert load_project(path).threads == 3
+    assert cli.main(["run", str(path)]) == 0
+    assert "using 3 CPU thread(s)" in capsys.readouterr().err
+    assert torch.get_num_threads() == before  # restored
+    assert cli.main(["run", "--overwrite", "--threads", "2", str(path)]) == 0  # the flag wins
+    assert "using 2 CPU thread(s)" in capsys.readouterr().err
+    assert cli.main(["report", "--threads", "1", str(tmp_path / "out")]) == 0
+    assert torch.get_num_threads() == before
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["run", "--threads", "0", str(path)])
+    assert exc.value.code == 2
+    for bad in ("0", "2.5", "true", '"4"'):
+        with pytest.raises(ProjectError, match="threads"):
+            project_from(tomllib.loads(f'project = "p"\nthreads = {bad}\n[input]\n'
+                                       'format = "specexport"\ndata_dir = "d"\n'), tmp_path)

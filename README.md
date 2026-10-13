@@ -58,7 +58,9 @@ hxex resume results                          # finish a run stopped during its b
 ```
 
 Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes to stderr;
-Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had started.
+Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had started. On the CPU,
+`--threads N` (or `threads = N` in the project file) sets the number of threads; about half the
+physical cores was fastest on a 24-core machine.
 
 ## Thermo raw files (optional)
 

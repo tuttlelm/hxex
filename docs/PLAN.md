@@ -577,9 +577,9 @@ Planned, not built:
   bootstraps at that size; float32 and less single-threaded Python are possible speed-ups, not
   done.
   Update: the CPU fit of that benchmark went from 77.4 to 17.1 min (item 46: the integer
-  convolution, float32, measured chunk memory). Not done: the k-means starts (single-threaded
-  Python, about 10 % of a fit) and the thread count (12 threads beat the default 24 by 7 to
-  15 % on a 24-core CPU).
+  convolution, float32, measured chunk memory). The command line takes a thread count (12 beat
+  the default 24 by 7 to 15 % on a 24-core CPU). Not done: the k-means starts (single-threaded
+  Python, about 10 % of a fit).
 - **Memory and plots at 10,000+ fits:** figures must be selective by default.
   Resolved: `PlotConfig` draws the `flagged` series by default and `write_figures` makes and
   releases one series at a time (item 31).

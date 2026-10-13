@@ -66,9 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true", help="replace an existing bundle")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
+    _threads_option(p)
 
     p = sub.add_parser("resume", help="add the bootstrap to a bundle that is waiting for it")
     p.add_argument("bundle")
+    _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="also write the tables (default: beside the bundle)")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
@@ -76,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("report", help="write tables and figures from a saved bundle")
     p.add_argument("bundle")
+    _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the tables (default: beside the bundle)")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
@@ -89,6 +92,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("bundle")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
     return parser
+
+
+def _threads_option(p) -> None:
+    p.add_argument("--threads", type=_positive_int, metavar="N",
+                   help="CPU threads (default: the project file's threads, else PyTorch's)")
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
+
+@contextlib.contextmanager
+def _threads(n: int | None):
+    """PyTorch's CPU threads set to ``n`` while a command runs (restored afterwards; None leaves
+    PyTorch's choice). The setting is the process's, which the command line owns."""
+    if n is None:
+        yield
+        return
+    import torch
+
+    before = torch.get_num_threads()
+    torch.set_num_threads(n)
+    log.info("using %d CPU thread(s)", n)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(before)
 
 
 @contextlib.contextmanager
@@ -259,7 +292,8 @@ def cmd_run(args) -> int:
         config = dataclasses.replace(config, fit=dataclasses.replace(
             config.fit, backend=Backend(args.device, b.dtype)))
     stop = _Stop()
-    with stop.installed():
+    threads = args.threads if args.threads is not None else project.threads
+    with stop.installed(), _threads(threads):
         log.info("reading the %s input of %s", project.input.format, project.project)
         spectra = read_input(project, progress=ProgressLog(name="read",
                                                            interval=args.progress_every),
@@ -295,7 +329,7 @@ def cmd_resume(args) -> int:
 
     bundle = Path(args.bundle)
     stop = _Stop()
-    with stop.installed():
+    with stop.installed(), _threads(args.threads):
         result = resume_bootstrap(
             bundle, figures_dir=_beside(bundle, args.figures, "_figures"),
             progress=ProgressLog(interval=args.progress_every), cancel=stop)
@@ -323,7 +357,7 @@ def cmd_report(args) -> int:
     if tables is None and figures is None:
         tables = _beside(bundle, True, "_tables")
     stop = _Stop()
-    with open_bundle(bundle) as b, stop.installed():
+    with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
         if b.pending:
             log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
                         ", ".join(b.pending))
