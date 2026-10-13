@@ -1576,6 +1576,16 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     binomial produces (misfit 3 % against 0.1 to 0.3 %); they now use the peptide's natural
     isotope envelope.
 
+58. **The overlay filter is on by default; the one-vs-two rule by example (owner, 2026-10-13).**
+    `overlay_two_only` defaults to true (the user can turn it off). The filter applies per
+    sample: each sample's K=2 points are drawn only where its own choice keeps two
+    populations. Example (Gaussian refit, residue 63 at 60 s): WT keeps two populations (low 0.44,
+    high 0.80, average 0.68); D3's average 0.47 lies outside its K=2 values (0.30, 0.46), so it
+    keeps one; the figure shows WT's two points and D3's average, the K=1 values are compared
+    (D3 lower by 0.22 +- 0.02) and `compare_choices` records the disagreement. The peptides over
+    residue 63 contain the S59D site, so their sequences differ between WT and D3 and they are
+    not compared as peptides; only the residue level compares that region.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

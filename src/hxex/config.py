@@ -617,7 +617,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# redundancy = "peptides"         # or "spectra"',
         "# alpha = 0.05                    # significance of the comparisons",
         '# overlay = ["low", "high"]       # by-residue comparisons: K=2 low/high and/or "avg"',
-        "# overlay_two_only = false        # K=2 values only where two populations are chosen",
+        "# overlay_two_only = true         # K=2 values only where two populations are chosen",
         '# format = "pdf"                  # or "png", "svg"',
         "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
         "# min_population = 0.05",

@@ -201,9 +201,9 @@ Plots (matplotlib, returning figures):
   (reference chosen by the owner, 2026-10-13: one panel per sample against the reference in
   black, points with capped standard-error bars, no lines), showing any of the K=2 low and high
   values (the default, as in the reference) and the K=1 average (open points), set by
-  `[analysis] overlay` (`residue_overlay_figure`), optionally the K=2 values only where the
-  choice keeps two populations, as in the reference (`overlay_two_only`, owner 2026-10-13); the plots of the other comparisons wait for
-  the owner's current references;
+  `[analysis] overlay` (`residue_overlay_figure`); by default the K=2 values only where the choice
+  keeps two populations, as in the reference, under the user's control (`overlay_two_only`, owner
+  2026-10-13); the plots of the other comparisons wait for the owner's current references;
 - region bar charts (fD and populations per region and sample, with error bars);
 - an optional annotation strip under the residue axis (domains, sites);
 - annotations are protein-specific and user-defined, never derived: named regions (name, first

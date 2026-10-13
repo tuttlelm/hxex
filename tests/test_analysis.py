@@ -761,8 +761,8 @@ def test_residue_overlay_shows_the_chosen_values():
     with pytest.raises(ValueError, match="no residue values"):
         plot_residue_overlay(rm, "WT", "D3", 60.0)
     assert AnalysisConfig(overlay=["avg"], ks=[1]).overlay == ("avg",)
-    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]},
-                {"overlay": ["avg"], "ks": [1], "overlay_two_only": True}):
+    assert AnalysisConfig().overlay_two_only  # K=2 values only where two populations are chosen
+    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]}):
         with pytest.raises(ValueError, match="overlay"):
             AnalysisConfig(**bad)
     # only where two populations are chosen: D3's residue 6 has its K=1 value outside its ranks
