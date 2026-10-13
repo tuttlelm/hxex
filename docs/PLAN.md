@@ -334,8 +334,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   run is open.
 - **Command line: done** (item 45): `hxex init`, `check`, `run`, `resume`, `report` and `info`,
   driven by a TOML project file (`hxex.config`).
-- **Phase 5 (validation and release):** no work recorded yet; its replicate check is to decide
-  the noise model.
+- **Phase 5 (validation and release):** no work recorded yet. The noise model is decided ahead
+  of it: the Gaussian loss (owner, 2026-10-13; HISTORY items 55 and 56).
 - **Phase 6 (extra input): partly done, ahead of order.** The mzML reader with scan summing
   (item 33), the composition ladder in the picker (item 34), ion-type mixtures for fragments
   (item 35), fragment targets and terminal groups (item 36), the m/z screen (item 37), precursor
@@ -501,8 +501,7 @@ Planned, not built:
    questions are in `docs/ANALYSIS.md`.
 4. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
-   (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5
-   validation; fragment-ion amide counts (see "Risks and open decisions").
+   (fractions only) mode for unfolding studies; fragment-ion amide counts (see "Risks and open decisions").
 
 ## Risks and open decisions
 
@@ -524,8 +523,9 @@ Planned, not built:
   estimate it, probably from baseline bins. The peak picker's noise threshold should
   connect to it.
   Update: the noise can be estimated per series from replicates
-  (`NoiseConfig(estimate='replicates')`, HISTORY "Phase 2 status"); the choice of noise model is
-  left to the Phase 5 validation.
+  (`NoiseConfig(estimate='replicates')`, HISTORY "Phase 2 status"). Decided (owner, 2026-10-13):
+  the Gaussian loss, the default; the replicate estimate fits with the Poisson loss, which
+  splits K=2 badly on real data (HISTORY items 49 and 55).
 - **Dependency footprint.** PyTorch is large. CPU-only wheels help, but an install story for
   Windows and Mac users needs testing.
   Update: CI installs and tests the CPU wheels on Windows and macOS (HISTORY "Phase 0 status").

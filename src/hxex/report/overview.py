@@ -154,7 +154,9 @@ def plot_controls_overview(results: Results) -> Figure:
 
 def quality_overview_data(results: Results) -> dict:
     """The quality flags of a run: the count of each flag and of flagged spectra, the
-    ``deviance_rel`` and ``intensity_rel`` of every spectrum with ``flagged``, the thresholds,
+    ``fit_rel`` (the ``poor_fit`` statistic: ``misfit_rel``, or ``deviance_rel`` for flags written
+    before it; ``fit_label`` names it) and ``intensity_rel`` of every spectrum with ``flagged``,
+    the thresholds,
     and the share of flagged spectra per sample (``samples``, ``flagged_share``; one group
     ``''`` without the picked table)."""
     q = results.quality
@@ -166,7 +168,10 @@ def quality_overview_data(results: Results) -> dict:
     return {
         "counts": {n: int(getattr(q, n).sum()) for n in QUALITY_FLAGS},
         "n_flagged": int(q.flagged.sum()), "n": len(q),
-        "deviance_rel": q.deviance_rel, "intensity_rel": q.intensity_rel, "flagged": q.flagged,
+        "fit_rel": q.misfit_rel if np.isfinite(q.misfit_rel).any() else q.deviance_rel,
+        "fit_label": ("misfit / series median" if np.isfinite(q.misfit_rel).any()
+                      else "deviance / series median"),
+        "intensity_rel": q.intensity_rel, "flagged": q.flagged,
         "poor_fit_factor": q.config.poor_fit_factor, "min_intensity": q.config.min_intensity,
         "samples": samples, "flagged_share": share,
     }
@@ -203,7 +208,7 @@ def flagged_share_grid(x, y, flagged, bins: int = 40, min_count: int = 5) -> dic
 
 def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 5) -> Figure:
     """The quality flags of a run: how many spectra carry each flag; each spectrum's fit
-    (deviance relative to its series) against its intensity (relative to its replicates), as the
+    (misfit relative to its series) against its intensity (relative to its replicates), as the
     share of flagged spectra in each cell of a ``bins`` x ``bins`` grid (cells with fewer than
     ``min_count`` spectra show the spectra as points instead), with the thresholds; and the
     share of flagged spectra per sample."""
@@ -217,7 +222,7 @@ def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 
         a1.text(n, y, f" {n} ({100 * n / max(d['n'], 1):.1f} %)", va="center", fontsize=8)
     a1.set_title(f"quality flags of {d['n']:,} spectra", fontsize=9)
     a1.set_xlabel("spectra")
-    g = flagged_share_grid(d["intensity_rel"], d["deviance_rel"], d["flagged"], bins=bins,
+    g = flagged_share_grid(d["intensity_rel"], d["fit_rel"], d["flagged"], bins=bins,
                            min_count=min_count)
     if g is not None:
         share = np.ma.masked_where(g["count"] < min_count, 100 * g["share"])
@@ -234,7 +239,7 @@ def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 
     a2.set_xscale("log")
     a2.set_yscale("log")
     a2.set_xlabel("intensity / mean of the other replicates")
-    a2.set_ylabel("deviance / series median")
+    a2.set_ylabel(d["fit_label"])
     n_both = 0 if g is None else int(g["count"].sum())
     a2.set_title(f"fit against intensity ({n_both:,} spectra with both); colour: share\n"
                  f"flagged; sparse cells as points (grey: kept, open: flagged)", fontsize=9)

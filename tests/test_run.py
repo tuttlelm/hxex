@@ -18,7 +18,7 @@ from hxex.picking import PickerConfig, pick_spectra, plan_bins
 from hxex.quality import QualityConfig
 from hxex.run import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
-from test_bundle import envelope
+from test_bundle import envelope, natural
 from test_picking import sticks
 
 PEPTIDE = "RDKVQKEYAL"
@@ -35,7 +35,9 @@ def raw_spectra(n_series=3, project="proj", empty=None):
         entry = PeptideEntry(f"f{s}.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2)
         for k, (t, rep, centre, width) in enumerate(LAYOUT):
             height = 4e4 * (0.9 + 0.1 * (k % 3))
-            mz, y = sticks(plan, envelope(plan, centre + 0.1 * s, width, height))
+            peaks = (natural(plan, height) if t == 0.0
+                     else envelope(plan, centre + 0.1 * s, width, height))
+            mz, y = sticks(plan, peaks)
             y = y + np.random.default_rng(100 * s + k).normal(0, 15, len(y))
             if empty == (s, k):
                 y = np.zeros_like(y)

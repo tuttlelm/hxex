@@ -173,14 +173,16 @@ def test_fit_uses_the_estimate_where_there_are_replicates_and_the_fallback_elsew
     res = fit_models(meas, cfg)
     est = res.noise_estimate
     assert est is not None and est.estimated[:12].all() and not est.estimated[12:].any()
-    assert list(res.noise_kind[:12]) == ["poisson"] * 12
-    assert list(res.noise_kind[12:]) == ["gaussian"] * 4  # the fallback is the configured model
-    np.testing.assert_allclose(res.obs_scale[:12], est.gain[:12])
+    # the loss stays Gaussian (docs/HISTORY.md item 57): an estimated series gets the sd its gain
+    # gives at the spectrum's mean intensity, the others the configured level
+    assert set(res.noise_kind) == {"gaussian"}
+    np.testing.assert_allclose(res.obs_scale[:12], [np.sqrt(est.gain[i] * np.mean(o))
+                                                    for i, o in enumerate(meas.observed[:12])])
     np.testing.assert_allclose(res.obs_scale[12:], [0.01 * o.max() for o in meas.observed[12:]])
     assert np.all(np.isfinite(res.grid("nll")))
-    # the BIC penalty uses the right N for each model
-    assert res.sample_size[12] == len(BINS) and res.sample_size[0] == pytest.approx(
-        meas.observed[0].sum() / est.gain[0])
+    assert np.all(res.sample_size == len(BINS))  # the BIC's N is the number of bins
+    with pytest.raises(ValueError, match="Gaussian noise level"):
+        NoiseConfig("poisson", percent=None, estimate="replicates")
 
 
 def test_without_the_option_nothing_changes():

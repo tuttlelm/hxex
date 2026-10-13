@@ -41,12 +41,13 @@ class NoiseConfig:
 
     ``estimate='replicates'`` estimates the noise of each series (one peptide at one charge, with
     its controls and time points) from its replicate spectra (:func:`estimate_noise`): variance
-    equal to a gain times the intensity, so the series is fitted with the Poisson model and that
-    gain as its scale. It needs at least ``min_replicated`` time points with two or more
-    replicates; a series without that falls back to the settings above, as if ``estimate`` were
-    not set. ``min_share`` is the smallest share of a spectrum's total intensity a bin must have
-    to be used, and a replicate whose score exceeds ``outlier_score`` is flagged and left out of
-    the estimate.
+    equal to a gain times the intensity. The loss stays Gaussian: each spectrum of the series gets
+    the sd ``sqrt(gain x its mean bin intensity)`` (the Poisson loss split two populations badly on
+    real data, docs/HISTORY.md items 49, 55 to 57); it needs the gaussian model. A series needs at
+    least ``min_replicated`` time points with two or more replicates; one without that falls back to
+    the settings above, as if ``estimate`` were not set. ``min_share`` is the smallest share of a
+    spectrum's total intensity a bin must have to be used, and a replicate whose score exceeds
+    ``outlier_score`` is flagged and left out of the estimate.
     """
 
     model: str = "gaussian"
@@ -81,6 +82,9 @@ class NoiseConfig:
             raise ValueError("percent must be > 0")
         if self.estimate not in (None, "replicates"):
             raise ValueError("estimate must be None or 'replicates'")
+        if self.estimate and self.model != "gaussian":
+            raise ValueError("estimate='replicates' sets a Gaussian noise level: use the "
+                             "gaussian model")
         if self.min_replicated < 1:
             raise ValueError("min_replicated must be at least 1")
         if not 0.0 < self.min_share < 1.0:

@@ -260,7 +260,8 @@ def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
 
 def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
-    for name in ("deviance", "deviance_rel", "intensity", "intensity_rel", "mz_offset"):
+    for name in ("deviance", "deviance_rel", "misfit", "misfit_rel", "intensity",
+                 "intensity_rel", "mz_offset"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
     for name in FLAG_NAMES:
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
@@ -279,6 +280,9 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         # written before the m/z screen: left to the defaults (not assessed)
         mz_offset=f("mz_offset") if "mz_offset" in table.column_names else None,
         mz_shift=b("mz_shift") if "mz_shift" in table.column_names else None,
+        # written before the misfit statistic: NaN
+        misfit=f("misfit") if "misfit" in table.column_names else None,
+        misfit_rel=f("misfit_rel") if "misfit_rel" in table.column_names else None,
     )
 
 

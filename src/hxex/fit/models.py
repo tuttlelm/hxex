@@ -44,13 +44,17 @@ def fit_models(
     kinds = [config.noise.model] * m
     estimate = None
     if config.noise.estimate:
-        # series with enough replicates use the Poisson model with their estimated gain as the
-        # scale; the others keep the noise settings above
+        # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
+        # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the
+        # expected sum of squared residuals is the estimated one); the others keep the noise
+        # settings above. The Poisson loss is never chosen here (docs/HISTORY.md item 57).
         estimate = estimate_noise(
             data.bins, data.observed, data.data_id, data.time, config.noise
         )
-        scale = np.where(estimate.estimated, estimate.gain, scale)
-        kinds = ["poisson" if u else config.noise.model for u in estimate.estimated]
+        mean_intensity = np.array([float(np.mean(o)) for o in data.observed])
+        sd = np.sqrt(estimate.gain * mean_intensity)
+        usable = estimate.estimated & np.isfinite(sd) & (sd > 0)
+        scale = np.where(usable, sd, scale)
         n_series = len(np.unique(data.data_id))
         n_est = len(np.unique(data.data_id[estimate.estimated]))
         log.info("noise estimated from replicates for %d of %d series", n_est, n_series)

@@ -113,8 +113,8 @@ in the published work; where it matters, a component is named by its rank.
   intact-peptide benchmark they bring the K=2 residue values in line with the owner's
   pyHXExpress analysis (HISTORY item 49). The K=2 split depends on the noise model: the Poisson
   loss of the replicate noise estimate puts a small component in the high-mass tail, least
-  squares (the default, and pyHXExpress) a moderate split; the choice is the Phase 5 noise-model
-  decision.
+  squares (the default, and pyHXExpress) a moderate split. Decided (owner, 2026-10-13): the
+  Gaussian loss (HISTORY items 55 and 56).
 - **Combining** replicates and charge states: the mean, with the standard error
   `sqrt(max(mean(se_i^2), s^2) / n)` (the larger of the bootstrap variance and the observed
   scatter, so neither counts twice). **Charge trend** flag: the lowest and highest charge state
@@ -201,7 +201,8 @@ Plots (matplotlib, returning figures):
   (reference chosen by the owner, 2026-10-13: one panel per sample against the reference in
   black, points with capped standard-error bars, no lines), showing any of the K=2 low and high
   values (the default, as in the reference) and the K=1 average (open points), set by
-  `[analysis] overlay` (`residue_overlay_figure`); the plots of the other comparisons wait for
+  `[analysis] overlay` (`residue_overlay_figure`), optionally the K=2 values only where the
+  choice keeps two populations, as in the reference (`overlay_two_only`, owner 2026-10-13); the plots of the other comparisons wait for
   the owner's current references;
 - region bar charts (fD and populations per region and sample, with error bars);
 - an optional annotation strip under the residue axis (domains, sites);

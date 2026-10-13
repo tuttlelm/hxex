@@ -5,15 +5,17 @@ The flags only mark spectra; nothing is dropped here (see :mod:`hxex.run`, and t
 of the results bundle for the manual decision). Spectra that the picker marked empty or without
 signal never reach the fit and are handled before it.
 
-- ``poor_fit``: the fit is much worse than the others of its series. The statistic is the reduced
-  deviance of the selected-K fit (``sum((obs - fit)^2)`` for Gaussian noise, the Poisson deviance
-  for Poisson noise, in the noise-scaled units, divided by ``bins - 3K``). Its absolute value is
-  not used: it is 1 only if the noise level and the model are exactly right, and on real data the
-  median is several times that, so a spectrum is compared with the median of its own series
-  (needs ``min_series_fits`` assessed spectra in the series) and must also exceed
-  ``min_deviance`` (a fit that is better than the noise model implies is not poor, however
-  clean the rest of its series is: on the Bimodal data 11 of 12 relative-only flags were fits
-  with deviance below 0.6).
+- ``poor_fit``: the fit is much worse than the others of its series. The statistic is the
+  misfit of the selected-K fit relative to the spectrum's own intensity, ``sum((obs - fit)^2) /
+  sum(obs^2)`` (raw intensities; it does not depend on the noise model), compared with the
+  median of its own series (needs ``min_series_fits`` assessed spectra in the series). A
+  spectrum's reduced deviance (``sum((obs - fit)^2)`` for Gaussian noise, the Poisson deviance
+  for Poisson noise, in the noise-scaled units, divided by ``bins - 3K``) is not compared within
+  the series, because at one noise level per series it grows with the height of the peaks: the
+  undeuterated controls, the most peaked spectra, were flagged for the same relative misfit
+  (docs/HISTORY.md item 57). It must still exceed ``min_deviance`` (a fit that is better than
+  the noise model implies is not poor, however clean the rest of its series is: on the Bimodal
+  data 11 of 12 relative-only flags were fits with deviance below 0.6).
 - ``low_intensity``: the total intensity of the spectrum is below ``min_intensity`` times the
   mean of the other replicates at the same time point (needs one other replicate; spectra without
   replicates are not assessed, because the total legitimately changes along a time course).
@@ -84,11 +86,13 @@ class QualityConfig:
 class QualityFlags:
     """The statistics and flags of every measurement (arrays of one entry per measurement).
 
-    ``deviance`` is the reduced deviance of the selected-K fit and ``deviance_rel`` its ratio to
-    the median of the series; ``intensity`` is the total intensity and ``intensity_rel`` its ratio
-    to the mean of the other replicates at the same time; ``mz_offset`` is the series' m/z offset
-    relative to the run, in ppm. NaN where not assessed (the flag is False there). ``flagged`` is
-    True where any flag is set.
+    ``deviance`` is the reduced deviance of the selected-K fit and ``deviance_rel`` its ratio to the
+    median of the series; ``misfit`` is ``sum((obs - fit)^2) / sum(obs^2)`` of that fit and
+    ``misfit_rel`` its ratio to the median of the series (the ``poor_fit`` statistic; NaN in flags
+    read from a bundle written before it); ``intensity`` is the total intensity and
+    ``intensity_rel`` its ratio to the mean of the other replicates at the same time; ``mz_offset``
+    is the series' m/z offset relative to the run, in ppm. NaN where not assessed (the flag is False
+    there). ``flagged`` is True where any flag is set.
     """
 
     config: QualityConfig
@@ -102,10 +106,13 @@ class QualityFlags:
     noise_outlier: np.ndarray
     mz_offset: np.ndarray | None = None
     mz_shift: np.ndarray | None = None
+    misfit: np.ndarray | None = None
+    misfit_rel: np.ndarray | None = None
 
-    def __post_init__(self):  # flags read from a bundle written before the m/z screen
-        if self.mz_offset is None:
-            object.__setattr__(self, "mz_offset", np.full(len(self.spectrum_id), np.nan))
+    def __post_init__(self):  # flags read from a bundle written before the m/z screen or misfit
+        for name in ("mz_offset", "misfit", "misfit_rel"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         if self.mz_shift is None:
             object.__setattr__(self, "mz_shift", np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -122,8 +129,15 @@ class QualityFlags:
 
 def reduced_deviance(meas: Measurements, fit: FitResult) -> np.ndarray:
     """The reduced deviance of every measurement at its selected K (NaN where ``bins <= 3K``)."""
+    return fit_statistics(meas, fit)[0]
+
+
+def fit_statistics(meas: Measurements, fit: FitResult) -> tuple[np.ndarray, np.ndarray]:
+    """The reduced deviance and the misfit ``sum((obs - fit)^2) / sum(obs^2)`` (raw
+    intensities) of every measurement at its selected K (NaN where ``bins <= 3K``)."""
     backend = Backend("cpu", "float64")
     out = np.full(len(fit), np.nan)
+    misfit = np.full(len(fit), np.nan)
     for k in fit.k_values:
         idx = np.flatnonzero(fit.selected_K == k)
         if not len(idx):
@@ -153,7 +167,10 @@ def reduced_deviance(meas: Measurements, fit: FitResult) -> np.ndarray:
             else:
                 total = ((obs - p) ** 2).sum()
             out[i] = total / dof
-    return out
+            power = float((obs**2).sum())
+            if power > 0:  # the same in raw units: the scale cancels
+                misfit[i] = float(((obs - p) ** 2).sum()) / power
+    return out, misfit
 
 
 def series_mz_offset(data_id: np.ndarray, offset_ppm: np.ndarray) -> np.ndarray:
@@ -188,9 +205,10 @@ def assess_quality(
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
         raise ValueError("the measurements and the fit must be for the same spectra")
     m = len(fit)
-    deviance = reduced_deviance(meas, fit)
+    deviance, misfit = fit_statistics(meas, fit)
     total = np.array([float(np.sum(o)) for o in meas.observed])
     deviance_rel = np.full(m, np.nan)
+    misfit_rel = np.full(m, np.nan)
     intensity_rel = np.full(m, np.nan)
     time = np.asarray(fit.time, dtype=float)
     for s in np.unique(fit.data_id):
@@ -200,6 +218,9 @@ def assess_quality(
             median = np.median(deviance[assessed])
             if median > 0:
                 deviance_rel[assessed] = deviance[assessed] / median
+            median = np.median(misfit[assessed])
+            if median > 0:
+                misfit_rel[assessed] = misfit[assessed] / median
         for t in np.unique(time[rows]):
             same = rows[time[rows] == t]
             if len(same) < 2:
@@ -223,8 +244,9 @@ def assess_quality(
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
-        poor_fit=(np.nan_to_num(deviance_rel) > config.poor_fit_factor)
+        poor_fit=(np.nan_to_num(misfit_rel) > config.poor_fit_factor)
         & (np.nan_to_num(deviance) > config.min_deviance),
         low_intensity=np.nan_to_num(intensity_rel, nan=1.0) < config.min_intensity,
         noise_outlier=noise_outlier, mz_offset=mz_offset, mz_shift=mz_shift,
+        misfit=misfit, misfit_rel=misfit_rel,
     )

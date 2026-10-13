@@ -1514,6 +1514,68 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     matches the reference; the K=2 values differ because the fits differ (item 49). The dashed lines of
     regions and sites in the comparison plots are grey (owner), not purple.
 
+55. **Why the 4 s by-residue comparison differed from the owner's figure (2026-10-13;
+    intact-peptide benchmark, owner's `2pop_vsWT_byresidue_4s` against hxex's).** In order of
+    effect: (1) **The noise model of the stored fits.** The run estimated the noise from
+    replicates, so most spectra were fitted with the Poisson loss (item 49), which often puts the
+    second component in the high-mass tail (fD 1.4 to 2.4, population 2 to 10 %); the filters then
+    drop that peptide's K=2 description. Around residue 40 this removed most of D3's peptides
+    (12 of about 20 between residues 33 and 50), and the residue values came from the few left,
+    which are lower: over residues 35 to 50 the median D3 - WT difference was +0.07 (low) and
+    -0.01 (high) against the owner's +0.10 and +0.11. Refitted with the Gaussian loss (picked
+    spectra at 0 s, 4 s and the fully deuterated control, every sample, K = 1 and 2, 20-draw
+    bootstrap; 7 min on the GPU; `hxex_private/HSPB5_benchmark/gauss_4s`), the peptide fits match
+    pyHXExpress's (for example 33-47 D3: 0.46 and 0.94 against 0.42 and 0.90), the peptides are
+    kept, and the difference is +0.08 and +0.06, the increase in both populations visible again.
+    (2) **Which residues are drawn.** The owner's figure shows only residues `choose_fits` calls
+    bimodal (both errors and the lever-rule population's error below 0.25, population 0.10 to
+    0.90); hxex's overlay shows every residue with K=2 values (about 148 per sample against
+    about 100), most visibly residues 118 to 175. (3) **Error sizes**: the owner's K=2 high
+    errors are about twice hxex's (median 0.08 to 0.11 against 0.04 to 0.05): pyHDX gets the
+    per-spectrum `Dabs_std` with replicates and charge states as separate rows, while hxex gives
+    the standard error of their mean (about 4 spectra per peptide). Larger errors fail the
+    bimodal test more often. (4) Smaller: some short peptides (33-38, 34-38, 34-48 for D3) still
+    split differently after the refit; pyHXExpress reports the bootstrap mean within `Pop_Thresh`
+    rather than the main fit (item 49); the notebook drops spectra with fD below 0.1 after time
+    0 and those on the owner's manual quality list. Back-exchange correction is not a source:
+    the amide counts are equal, and where both fits agree the values agree.
+
+56. **Decided: the Gaussian loss (owner, 2026-10-13).** After item 55, the owner chose the
+    Gaussian loss (least squares on the scaled spectrum, as pyHXExpress) definitively. It is
+    already the default (`NoiseConfig(model='gaussian', percent=3.0)`, no estimate); the
+    benchmark had used `estimate='replicates'`, which fits every series with replicates with the
+    Poisson loss. The benchmark is refitted with the Gaussian loss
+    (`hxex_private/HSPB5_benchmark/gauss_full`) and the examples regenerated from it.
+
+57. **The replicate noise estimate keeps the Gaussian loss; overlay filter (owner, 2026-10-13).**
+    `NoiseConfig(estimate='replicates')` used to fit every series it could estimate with the
+    Poisson loss (its gain as the scale), which is what put the benchmark on the Poisson loss.
+    Owner's choice (of: keep it Gaussian, warn, or remove it): it now only sets the Gaussian
+    level, `sd = sqrt(gain x the spectrum's mean bin intensity)` (variance = gain x intensity,
+    so the expected sum of squared residuals is the estimated one), and it refuses the Poisson
+    model. Under a constant sd per spectrum the fitted values do not depend on the sd; it sets
+    the BIC choice of K and the size of the bootstrap noise. Outlier flagging is unchanged.
+    The by-residue overlay can draw the K=2 values only where the choice keeps two populations
+    (`choice=` on `plot_residue_overlay` and `residue_overlay_figure`; `[analysis]
+    overlay_two_only`, default false), as in the owner's figure; the average is never filtered.
+    `write_analysis` now draws a population comparison panel only for samples with values at
+    that time (it raised before when one had none).
+    Under the Gaussian loss the `poor_fit` flag caught undeuterated controls: at one noise level
+    per series a spectrum's deviance grows with its peak height, and the controls are the most
+    peaked spectra, so a small relative misfit gave them a large deviance against the series
+    median (306 of the 320 flagged at 0 s in the 4 s refit were K=1 fits). Decided (owner): judge
+    the fit relative to the spectrum's intensity. `poor_fit` now compares the misfit
+    `sum((obs - fit)^2) / sum(obs^2)` (raw intensities, independent of the noise model) with the
+    series median (factor 10, as before), and keeps the absolute `min_deviance` guard; the
+    deviance and its ratio stay as statistics, and `QualityFlags` and the bundle gain `misfit`
+    and `misfit_rel` (NaN when read from older bundles; the quality overview plots `misfit_rel`).
+    On the benchmark, Gaussian refit (24 min on the GPU): flagged at 0 s 1.4 % (deviance rule
+    13.0 %), at the other times 0.4 to 0.8 % (0.7 to 1.6 %); 183 in all against 711, 152 of them
+    flagged by both. On the stored Poisson fits the two rules flag about as many (303 and 264).
+    The test fixtures drew their undeuterated controls as a Gaussian near bin 0, which no
+    binomial produces (misfit 3 % against 0.1 to 0.3 %); they now use the peptide's natural
+    isotope envelope.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

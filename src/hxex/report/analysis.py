@@ -70,10 +70,18 @@ def _stem(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\s]', "_", name)
 
 
-def _has_overlay(residues, sample: str, time: float, show) -> bool:
-    """Whether ``sample`` has a residue value at ``time`` among the overlay values ``show``."""
-    return any((residues.where(sample=sample, time=time, K=k, rank=rank)
-                & np.isfinite(residues.fD)).any() for k, rank in (OVERLAY_VALUES[v] for v in show))
+def _has_overlay(residues, sample: str, time: float, show, choice=None) -> bool:
+    """Whether ``sample`` has a residue value at ``time`` among the overlay values ``show``
+    (the K=2 ones only where ``choice``, if given, keeps two populations)."""
+    for k, rank in (OVERLAY_VALUES[v] for v in show):
+        rows = residues.where(sample=sample, time=time, K=k, rank=rank) & np.isfinite(residues.fD)
+        if choice is not None and k >= 2:
+            two = choice.where(sample=sample, time=time) & np.asarray(choice.two_populations,
+                                                                      dtype=bool)
+            rows &= np.isin(residues.residue, choice.residue[two])
+        if rows.any():
+            return True
+    return False
 
 
 def _fd_times(results) -> list[float]:
@@ -191,16 +199,20 @@ def write_analysis(
         stack = list(comparisons.items())
         for t in times:
             label = _time_label(t, undeut)
-            shown = [s for s in others if _has_overlay(residues, s, t, config.overlay)]
-            if shown and _has_overlay(residues, config.reference, t, config.overlay):
-                jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown:
+            only = choice if config.overlay_two_only else None
+            shown = [s for s in others if _has_overlay(residues, s, t, config.overlay, only)]
+            if shown and _has_overlay(residues, config.reference, t, config.overlay, only):
+                jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, config.reference, shown, t, show=config.overlay,
-                                 annotations=ann, length=length, undeut_time=undeut)))
-            if others and pop_cmp is not None and pop_cmp.where(time=t).any():
+                                 choice=only, annotations=ann, length=length,
+                                 undeut_time=undeut)))
+            with_pop = [s for s in others
+                        if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
+            if with_pop:
                 jobs.append((f"compare_populations_{label}",
-                             lambda t=t: residue_comparison_figure(
-                                 pop_cmp, others, t, annotations=ann, length=length,
+                             lambda t=t, with_pop=with_pop: residue_comparison_figure(
+                                 pop_cmp, with_pop, t, annotations=ann, length=length,
                                  undeut_time=undeut)))
             for s in others:
                 if all(c.where(sample=s, time=t).any() for _, c in stack):

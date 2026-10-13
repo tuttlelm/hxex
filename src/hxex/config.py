@@ -348,7 +348,8 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
 
 ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
                  "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
-                 "exclude_flagged", "format", "out", "runs", "overlay")
+                 "exclude_flagged", "format", "out", "runs", "overlay",
+                 "overlay_two_only")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -616,6 +617,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# redundancy = "peptides"         # or "spectra"',
         "# alpha = 0.05                    # significance of the comparisons",
         '# overlay = ["low", "high"]       # by-residue comparisons: K=2 low/high and/or "avg"',
+        "# overlay_two_only = false        # K=2 values only where two populations are chosen",
         '# format = "pdf"                  # or "png", "svg"',
         "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
         "# min_population = 0.05",

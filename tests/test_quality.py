@@ -28,8 +28,9 @@ def test_a_clean_run_is_not_flagged(run):
     q = assess_quality(meas, fit)
     assert len(q) == len(fit) and not q.flagged.any()
     assert np.isfinite(q.deviance).all() and np.isfinite(q.deviance_rel).all()
+    assert np.isfinite(q.misfit).all() and np.isfinite(q.misfit_rel).all()
     assert np.isfinite(q.intensity_rel).all()  # every time point of the fixture is replicated
-    assert np.median(q.deviance_rel) == pytest.approx(1.0, abs=0.5)
+    assert np.median(q.misfit_rel) == pytest.approx(1.0, abs=0.5)
 
 
 def test_a_spectrum_that_the_fit_does_not_describe_is_flagged_poor_fit(run):
@@ -50,7 +51,7 @@ def test_a_fit_better_than_the_noise_model_is_never_poor(run):
     bad = replace_observed(meas, i, spoiled)
     assert assess_quality(bad, fit).poor_fit[i]
     q = assess_quality(bad, fit, QualityConfig(min_deviance=1e9))
-    assert q.deviance_rel[i] > 10 and not q.poor_fit.any()
+    assert q.misfit_rel[i] > 10 and not q.poor_fit.any()
 
 
 def test_a_weak_spectrum_is_flagged_low_intensity_and_only_it(run):
@@ -83,7 +84,7 @@ def test_unreplicated_time_points_and_small_series_are_not_assessed(run):
     assert np.isnan(q.intensity_rel[sub_fit.time == 1e6]).all()
     assert not q.low_intensity[sub_fit.time == 1e6].any()
     q = assess_quality(sub_meas, sub_fit, QualityConfig(min_series_fits=50))
-    assert np.isnan(q.deviance_rel).all() and not q.poor_fit.any()
+    assert np.isnan(q.misfit_rel).all() and not q.poor_fit.any()
 
 
 def test_noise_outliers_are_passed_through(run):

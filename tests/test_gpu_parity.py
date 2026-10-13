@@ -96,14 +96,13 @@ def test_a_measurement_does_not_depend_on_the_others_on_the_gpu():
 
 
 @needs_cuda
-def test_mixed_noise_models_the_estimate_and_the_polish_run_on_the_gpu():
+def test_the_noise_estimate_and_the_polish_run_on_the_gpu():
     meas = measurements_with_replicates()
     kw = dict(noise=NoiseConfig("gaussian", percent=1.0, estimate="replicates"), k_max=2,
               adam_steps=120, n_restarts=2)
     cpu = fit_models(meas, FitConfig(backend=CPU64, **kw))
     gpu = fit_models(meas, FitConfig(backend=GPU32, **kw))
-    assert list(gpu.noise_kind) == list(cpu.noise_kind) and set(gpu.noise_kind) == {
-        "poisson", "gaussian"}
+    assert set(gpu.noise_kind) == set(cpu.noise_kind) == {"gaussian"}
     np.testing.assert_allclose(gpu.obs_scale, cpu.obs_scale)  # the estimate does not use the GPU
     assert np.all(np.isfinite(gpu.grid("nll"))) and list(gpu.selected_K) == list(cpu.selected_K)
 

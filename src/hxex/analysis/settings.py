@@ -36,7 +36,8 @@ class AnalysisConfig:
     beside the bundle); ``runs``: separate runs to compare (run name -> bundle; empty: the one
     run), whose samples are then named ``run:sample`` everywhere (``reference``, ``samples``,
     ``fasta``); ``overlay``: the values the by-residue comparison figures show, any of
-    ``'low'`` and ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1)."""
+    ``'low'`` and ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw
+    the K=2 values only where the choice keeps two populations (the owner's figure)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -55,6 +56,7 @@ class AnalysisConfig:
     out: str | None = None
     runs: Mapping[str, str] | None = None
     overlay: tuple[str, ...] = ("low", "high")
+    overlay_two_only: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
@@ -63,6 +65,9 @@ class AnalysisConfig:
         if any(OVERLAY_VALUES[v][0] not in self.ks for v in self.overlay):
             raise ValueError("overlay shows K=2 values ('low', 'high'): include 2 in ks, or "
                              "set overlay = ['avg']")
+        if self.overlay_two_only and 2 not in self.ks:
+            raise ValueError("overlay_two_only needs the choice between one and two populations: "
+                             "include 2 in ks")
         if self.runs is not None:
             object.__setattr__(self, "runs", {str(k): str(v) for k, v in self.runs.items()})
             for name in self.runs:

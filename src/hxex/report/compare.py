@@ -21,6 +21,7 @@ from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 from ..analysis import (
     Annotations,
     PeptideComparison,
+    PopulationChoice,
     RegionTable,
     ResidueComparison,
     ResidueMap,
@@ -133,6 +134,7 @@ def plot_residue_overlay(
     time: float,
     *,
     show: Sequence[str] = ("low", "high"),
+    choice: PopulationChoice | None = None,
     style_index: int = 1,
     annotations: Annotations | None = None,
     length: int | None = None,
@@ -142,8 +144,10 @@ def plot_residue_overlay(
     """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, in the
     owner's ``2pop_vsWT_byresidue`` style: points with capped standard-error bars, no lines, the
     sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'`` (the K=2 ranks
-    1 and 2, filled points) and ``'avg'`` (K=1, open points). Point groups have the gid
-    ``overlay:<sample>:<value>``."""
+    1 and 2, filled points) and ``'avg'`` (K=1, open points). With ``choice``
+    (:func:`hxex.analysis.choose_populations`), the K=2 values are drawn only where the choice
+    keeps two populations, as in the owner's figure; the average is always drawn. Point groups
+    have the gid ``overlay:<sample>:<value>``."""
     unknown = [v for v in show if v not in OVERLAY_VALUES]
     if unknown or not show:
         raise ValueError(f"show must be some of {', '.join(OVERLAY_VALUES)}")
@@ -159,6 +163,8 @@ def plot_residue_overlay(
             k, rank = OVERLAY_VALUES[value]
             rows = residues.where(sample=name, time=time, K=k, rank=rank) & np.isfinite(
                 residues.fD)
+            if choice is not None and k >= 2:
+                rows &= np.isin(residues.residue, _two_population_residues(choice, name, time))
             if not rows.any():
                 continue
             drawn += 1
@@ -193,6 +199,12 @@ def plot_residue_overlay(
     return fig
 
 
+def _two_population_residues(choice: PopulationChoice, sample: str, time: float) -> np.ndarray:
+    """The residues where ``choice`` keeps two populations for ``sample`` at ``time``."""
+    rows = choice.where(sample=sample, time=time) & np.asarray(choice.two_populations, dtype=bool)
+    return choice.residue[rows]
+
+
 def residue_overlay_figure(
     residues: ResidueMap,
     reference: str,
@@ -200,19 +212,22 @@ def residue_overlay_figure(
     time: float,
     *,
     show: Sequence[str] = ("low", "high"),
+    choice: PopulationChoice | None = None,
     annotations: Annotations | None = None,
     length: int | None = None,
     undeut_time: float | None = None,
 ) -> Figure:
     """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``
-    (the owner's ``2pop_vsWT_byresidue`` figure); each sample keeps its colour."""
+    (the owner's ``2pop_vsWT_byresidue`` figure); each sample keeps its colour. ``choice``
+    filters the K=2 values as in :func:`plot_residue_overlay`."""
     samples = [s for s in samples if s != reference]
     if not samples:
         raise ValueError("no sample to compare with the reference")
     fig = Figure(figsize=(6.5, 3.0 * len(samples)), layout="constrained")
     axes = fig.subplots(len(samples), 1, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
-        plot_residue_overlay(residues, reference, sample, time, show=show, style_index=n + 1,
+        plot_residue_overlay(residues, reference, sample, time, show=show, choice=choice,
+                             style_index=n + 1,
                              annotations=annotations, length=length, undeut_time=undeut_time,
                              ax=ax)
     return fig

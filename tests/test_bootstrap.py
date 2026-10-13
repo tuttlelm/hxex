@@ -171,7 +171,7 @@ def test_poisson_noise_model_resamples_counts():
 
 
 
-def test_the_bootstrap_handles_mixed_noise_models():
+def test_the_bootstrap_handles_estimated_noise():
     meas = measurements_with_replicates()
     cfg = FitConfig(noise=NoiseConfig("gaussian", percent=1.0, estimate="replicates"),
                     backend=CPU, k_max=1, adam_steps=100, n_restarts=1, polish_steps=0)

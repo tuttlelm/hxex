@@ -616,15 +616,15 @@ def test_runs_are_analysed_like_samples(results):
 def test_settings_that_matter_are_reported(results, caplog):
     from hxex.analysis import RunSet, compare_settings
 
-    other = _with_settings(results, **{"fit.noise.model": "poisson", "fit.seed": 7,
+    other = _with_settings(results, **{"fit.noise.percent": 5.0, "fit.seed": 7,
                                        "max_chunk": 10})
     with caplog.at_level("WARNING", logger="hxex.analysis.runs"):
         diff = compare_settings({"A": results, "B": other})
     got = {str(s): (bool(m), list(v)) for s, m, v in zip(diff.setting, diff.matters, diff.values,
                                                           strict=True)}
-    assert got == {"fit.noise.model": (True, ["gaussian", "poisson"]),
+    assert got == {"fit.noise.percent": (True, ["3.0", "5.0"]),
                    "fit.seed": (False, ["0", "7"])}  # max_chunk is ignored
-    assert "fit.noise.model" in caplog.text and "fit.seed" not in caplog.text
+    assert "fit.noise.percent" in caplog.text and "fit.seed" not in caplog.text
     assert list(diff.columns()) == ["setting", "matters", "A", "B"]
     shifted = _with_settings(results, **{"picker.nterm_subtract": 2})
     with pytest.raises(ValueError, match="N-terminal"):
@@ -761,6 +761,19 @@ def test_residue_overlay_shows_the_chosen_values():
     with pytest.raises(ValueError, match="no residue values"):
         plot_residue_overlay(rm, "WT", "D3", 60.0)
     assert AnalysisConfig(overlay=["avg"], ks=[1]).overlay == ("avg",)
-    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]}):
+    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]},
+                {"overlay": ["avg"], "ks": [1], "overlay_two_only": True}):
         with pytest.raises(ValueError, match="overlay"):
             AnalysisConfig(**bad)
+    # only where two populations are chosen: D3's residue 6 has its K=1 value outside its ranks
+    import dataclasses
+
+    from hxex.analysis import choose_populations
+
+    odd = (rm.sample == "D3") & (rm.residue == 6) & (rm.K == 1)
+    choice = choose_populations(dataclasses.replace(rm, fD=np.where(odd, 0.75, rm.fD)))
+    kept = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("low", "high", "avg"), choice=choice)
+    lines = {line.get_gid(): line for line in kept.axes[0].lines if line.get_gid()}
+    assert list(lines["overlay:D3:high"].get_xdata()) == [3, 4]
+    assert list(lines["overlay:WT:high"].get_xdata()) == [3, 4, 6]
+    assert list(lines["overlay:D3:avg"].get_xdata()) == [3, 4, 6]  # the average is never filtered

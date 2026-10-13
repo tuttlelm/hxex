@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import hxex.io.bundle as bundle_module
+from hxex import chem
 from hxex.bootstrap import BootstrapConfig, bootstrap
 from hxex.fit import FitConfig, Measurements, fit_models
 from hxex.io import BundleError, ReviewTable, open_bundle, write_bundle
@@ -29,6 +30,15 @@ def envelope(plan, centre, width, height):
             for i in bins if height * np.exp(-0.5 * ((i - centre) / width) ** 2) > 20}
 
 
+def natural(plan, height):
+    """The peptide's natural isotope envelope (an undeuterated control) with tallest peak
+    ``height``: a spectrum the model can describe exactly, unlike a Gaussian near bin 0."""
+    shape = chem.isotope_clusters(PEPTIDE)[0]
+    shape = shape / shape.max()
+    return {int(i): float(height * shape[i]) for i in range(min(len(shape), len(plan.pred_mz)))
+            if height * shape[i] > 20}
+
+
 def build_run(project="proj", n_boot=4):
     plan = plan_bins(PEPTIDE, 2, config=CFG)
     entry = PeptideEntry("f.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2)
@@ -36,7 +46,9 @@ def build_run(project="proj", n_boot=4):
               (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]
     spectra = []
     for k, (t, rep, centre, width) in enumerate(layout):
-        mz, y = sticks(plan, envelope(plan, centre, width, 4e4 * (0.9 + 0.1 * (k % 3))))
+        height = 4e4 * (0.9 + 0.1 * (k % 3))
+        peaks = natural(plan, height) if t == 0.0 else envelope(plan, centre, width, height)
+        mz, y = sticks(plan, peaks)
         y = y + np.random.default_rng(k).normal(0, 15, len(y))
         spectra.append(Spectrum(mz, y, entry, t, rep, data_id=0, label=f"c{k}",
                                 spectrum_id=f"{project}:f.xlsx#{k + 1}"))
@@ -91,7 +103,7 @@ def assert_fit_equal(a, b):
 def test_the_run_has_what_the_bundle_must_keep(run):
     raw, binned, meas, fit, boot = run
     assert fit.noise_estimate is not None and fit.noise_estimate.estimated.all()
-    assert set(fit.noise_kind) == {"poisson"} and boot.draws is not None
+    assert set(fit.noise_kind) == {"gaussian"} and boot.draws is not None
     assert meas.references[0] == (0, 1, 2)  # the replicate undeuterated controls
 
 
@@ -416,7 +428,8 @@ def test_quality_flags_are_kept(tmp_path, run):
     with open_bundle(path) as b:
         got = b.quality()
         assert got.config == q.config
-        for name in ("spectrum_id", "deviance", "deviance_rel", "intensity", "intensity_rel",
+        for name in ("spectrum_id", "deviance", "deviance_rel", "misfit", "misfit_rel",
+                     "intensity", "intensity_rel",
                      "poor_fit", "low_intensity", "noise_outlier", "flagged"):
             assert_arrays_equal(getattr(got, name), getattr(q, name))
     with open_bundle(written_no_controls(tmp_path, run)) as b:
