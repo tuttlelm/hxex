@@ -43,7 +43,7 @@ def selected_loss(res):
 
 def ordered(res):
     """Means and fractions at the selected K, components ordered by mean (NaN-padded)."""
-    means, fracs = res.selected("means"), res.selected("fractions")
+    means, fracs = res.selected("means"), res.selected("populations")
     order = np.argsort(np.where(np.isnan(means), np.inf, means), axis=1)
     return np.take_along_axis(means, order, axis=1), np.take_along_axis(fracs, order, axis=1)
 

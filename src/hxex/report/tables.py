@@ -76,41 +76,41 @@ def _target_columns(results: Results) -> dict[str, np.ndarray]:
 
 
 def _populations(results: Results, i: int, k: int):
-    """Ranked means, fractions and their standard errors, and the corrected means (or None)."""
+    """Ranked means, populations and their standard errors, and the corrected means (or None)."""
     kf = results.fit.fits[k]
     order = np.argsort(kf.means[i])
-    mean, frac = kf.means[i][order], kf.fractions[i][order]
+    mean, frac = kf.means[i][order], kf.populations[i][order]
     boot = results.bootstrap_for(i, k)
     nan = np.full(k, np.nan)
     mean_se = boot.mean_se[i, :k][order] if boot is not None else nan
-    frac_se = boot.frac_se[i, :k][order] if boot is not None else nan
+    population_se = boot.population_se[i, :k][order] if boot is not None else nan
     corrected = corrected_se = None
     if results.controls is not None:
         c = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :],
                           se=mean_se[None, :])
         corrected, corrected_se = c.mean[0], c.se[0]
-    return mean, frac, mean_se, frac_se, corrected, corrected_se
+    return mean, frac, mean_se, population_se, corrected, corrected_se
 
 
 def components_table(results: Results) -> dict[str, np.ndarray]:
     """One row per spectrum and population at the K in effect: the index columns, ``K``,
-    ``rank``, ``mean``, ``mean_se``, ``mean_corrected``, ``mean_corrected_se``, ``fraction``,
-    ``fraction_se``."""
+    ``rank``, ``mean``, ``mean_se``, ``mean_corrected``, ``mean_corrected_se``, ``population``,
+    ``population_se``."""
     index = _index_columns(results)
     ks = results.effective_K
     pick: list[int] = []
     cols: dict[str, list] = {n: [] for n in (
-        "K", "rank", "mean", "mean_se", "mean_corrected", "mean_corrected_se", "fraction",
-        "fraction_se")}
+        "K", "rank", "mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
+        "population_se")}
     for i, k in enumerate(ks):
-        mean, frac, mean_se, frac_se, cor, cor_se = _populations(results, i, int(k))
+        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, i, int(k))
         for c in range(int(k)):
             pick.append(i)
             for name, value in (
                 ("K", int(k)), ("rank", c + 1), ("mean", mean[c]), ("mean_se", mean_se[c]),
                 ("mean_corrected", np.nan if cor is None else cor[c]),
                 ("mean_corrected_se", np.nan if cor_se is None else cor_se[c]),
-                ("fraction", frac[c]), ("fraction_se", frac_se[c]),
+                ("population", frac[c]), ("population_se", population_se[c]),
             ):
                 cols[name].append(value)
     out = {name: values[pick] for name, values in index.items()}
@@ -120,9 +120,10 @@ def components_table(results: Results) -> dict[str, np.ndarray]:
 
 def spectra_table(results: Results) -> dict[str, np.ndarray]:
     """One row per spectrum, in the spirit of pyHXExpress's ``data_fits``: the index columns,
-    ``K``, ``centroid`` and ``centroid_corrected`` (the fraction-weighted mean of the populations)
-    and ``mean_<r>``, ``mean_corrected_<r>``, ``fraction_<r>``, ``fraction_se_<r>`` for each rank
-    ``r`` up to the largest K (empty where the spectrum has fewer populations)."""
+    ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
+    components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
+    ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
+    fewer components)."""
     out = dict(_index_columns(results))
     ks = results.effective_K
     k_max = int(ks.max())
@@ -131,16 +132,16 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     centroid = np.full(m, np.nan)
     centroid_cor = np.full(m, np.nan)
     wide = {f"{n}_{r}": np.full(m, np.nan) for r in range(1, k_max + 1)
-            for n in ("mean", "mean_corrected", "fraction", "fraction_se")}
+            for n in ("mean", "mean_corrected", "population", "population_se")}
     for i, k in enumerate(ks):
-        mean, frac, _, frac_se, cor, _ = _populations(results, i, int(k))
+        mean, frac, _, population_se, cor, _ = _populations(results, i, int(k))
         centroid[i] = (mean * frac).sum()
         if cor is not None:
             centroid_cor[i] = (cor * frac).sum()
         for c in range(int(k)):
             r = c + 1
-            wide[f"mean_{r}"][i], wide[f"fraction_{r}"][i] = mean[c], frac[c]
-            wide[f"fraction_se_{r}"][i] = frac_se[c]
+            wide[f"mean_{r}"][i], wide[f"population_{r}"][i] = mean[c], frac[c]
+            wide[f"population_se_{r}"][i] = population_se[c]
             if cor is not None:
                 wide[f"mean_corrected_{r}"][i] = cor[c]
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
@@ -151,7 +152,7 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
 def uptake_table(results: Results) -> dict[str, np.ndarray]:
     """Replicate-averaged populations: one row per series, time and population rank with the
     number of replicates ``n``, the mean of the (corrected) means and its standard deviation over
-    replicates (NaN with one replicate), and the mean fraction. Spectra are the ones accepted by
+    replicates (NaN with one replicate), and the mean population. Spectra are the ones accepted by
     the reviewer or not yet reviewed."""
     comp = components_table(results)
     mean = comp["mean_corrected"] if results.controls is not None else comp["mean"]
@@ -161,14 +162,14 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
                    zip(comp["data_id"][ok], comp["time"][ok], comp["rank"][ok], strict=True)})
     for d, t, r in keys:
         sel = ok & (comp["data_id"] == d) & (comp["time"] == t) & (comp["rank"] == r)
-        values, fractions = mean[sel], comp["fraction"][sel]
+        values, fractions = mean[sel], comp["population"][sel]
         first = np.flatnonzero(sel)[0]
         rows.append((d, t, r, str(comp["sample"][first]), str(comp["peptide"][first]),
                      str(comp["peptide_range"][first]), int(len(values)), float(values.mean()),
                      float(values.std(ddof=1)) if len(values) > 1 else np.nan,
                      float(fractions.mean())))
     names = ("data_id", "time", "rank", "sample", "peptide", "peptide_range", "n", "mean",
-             "mean_sd", "fraction")
+             "mean_sd", "population")
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
 

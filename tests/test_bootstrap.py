@@ -88,7 +88,7 @@ def test_result_structure_and_sanity(small):
     meas, res, b = small
     assert isinstance(b, BootstrapResult) and len(b) == 2
     assert list(b.n_success) == [10, 10] and list(b.selected_K) == [2, 2]
-    for arr in (b.A_se, b.n_se, b.p_se, b.mean_se, b.frac_se):
+    for arr in (b.A_se, b.n_se, b.p_se, b.mean_se, b.population_se):
         assert arr.shape == (2, 3)  # padded to the largest K tried
         assert np.all(arr[:, :2] > 0) and np.all(np.isnan(arr[:, 2]))
     assert b.mean_ci.shape == (2, 3, 2)
@@ -222,7 +222,7 @@ def test_table_adds_the_interval_columns_for_the_selected_k(small):
     t = b.table(res, selected_only=False)
     base = res.table()
     assert len(t["fit_K"]) == len(base["fit_K"])
-    for name in ("amplitude", "n", "p", "mean", "population_fraction"):
+    for name in ("amplitude", "n", "p", "mean", "population"):
         for suffix in ("se", "ci_lo", "ci_hi"):
             assert f"{name}_{suffix}" in t
     sel = t["is_selected"]
@@ -248,7 +248,7 @@ def test_standard_errors_match_the_spread_over_independent_noise_realisations():
     res = fit_models(meas, cfg)
     order = np.argsort(res.fits[2].means, axis=1)
     means = np.take_along_axis(res.fits[2].means, order, axis=1)
-    frac = np.take_along_axis(res.fits[2].fractions, order, axis=1)
+    frac = np.take_along_axis(res.fits[2].populations, order, axis=1)
     pick = [0, 1, 2]
     sub = Measurements.from_arrays([meas.bins[i] for i in pick], [meas.observed[i] for i in pick],
                                    [meas.shapes[i] for i in pick], meas.n_max[pick],
@@ -257,6 +257,6 @@ def test_standard_errors_match_the_spread_over_independent_noise_realisations():
     b = bootstrap(sub, sub_fit, BootstrapConfig(n_boot=50))
     o = np.argsort(sub_fit.fits[2].means, axis=1)
     boot_mean = np.mean([b.mean_se[i][o[i]] for i in range(3)], axis=0)
-    boot_frac = np.mean([b.frac_se[i][o[i]] for i in range(3)], axis=0)
+    boot_frac = np.mean([b.population_se[i][o[i]] for i in range(3)], axis=0)
     np.testing.assert_allclose(boot_mean / means.std(axis=0, ddof=1), 1.0, atol=0.3)
     np.testing.assert_allclose(boot_frac / frac.std(axis=0, ddof=1), 1.0, atol=0.3)

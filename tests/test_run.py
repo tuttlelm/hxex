@@ -267,7 +267,7 @@ def test_fixed_k_bootstrap_agrees_with_the_selected_k_bootstrap(whole):
     assert all((by_k[k].selected_K == k).all() for k in by_k)
     plain = bootstrap(res.measurements, res.fit, cfg)
     again = selected_from(res.fit, by_k)
-    for name in ("mean_se", "frac_se", "mean_ci", "n_success", "curve_hi", "curve_offsets"):
+    for name in ("mean_se", "population_se", "mean_ci", "n_success", "curve_hi", "curve_offsets"):
         np.testing.assert_allclose(getattr(again, name), getattr(plain, name), rtol=1e-6,
                                    atol=1e-8, equal_nan=True)
     with pytest.raises(ValueError, match="not fitted"):
@@ -302,8 +302,8 @@ def test_the_bundle_keeps_the_fixed_k_bootstrap(tmp_path):
         assert b.bootstrap_ks() == [1, 2] and b.has("bootstrap_k_draws")
         for k in (1, 2):
             got, want = b.bootstrap(k), res.bootstrap_by_k[k]
-            for name in ("selected_K", "n_success", "mean_se", "mean_ci", "frac_se", "curve_lo",
-                         "curve_offsets"):
+            for name in ("selected_K", "n_success", "mean_se", "mean_ci", "population_se",
+                         "curve_lo", "curve_offsets"):
                 np.testing.assert_array_equal(getattr(got, name), getattr(want, name))
             np.testing.assert_array_equal(got.draws.n, want.draws.n)
         np.testing.assert_array_equal(b.bootstrap().mean_se, res.bootstrap.mean_se)

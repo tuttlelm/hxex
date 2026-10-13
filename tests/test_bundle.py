@@ -108,8 +108,8 @@ def test_everything_round_trips_exactly(written, run):
         assert_fit_equal(b.fit(), fit)
         got_b = b.bootstrap()
         assert got_b.config == boot.config
-        for name in ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se",
-                     "A_ci", "n_ci", "p_ci", "mean_ci", "frac_ci", "curve_lo", "curve_hi",
+        for name in ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
+                     "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci", "curve_lo", "curve_hi",
                      "curve_offsets"):
             assert_arrays_equal(getattr(got_b, name), getattr(boot, name))
         for name in ("A", "n", "p", "ok"):
@@ -165,7 +165,7 @@ def test_the_manifest(written, run):
     raw, binned, meas, fit, boot = run
     with open_bundle(written) as b:
         m = b.manifest
-        assert m["kind"] == "hxex-results-bundle" and m["schema_version"] == 1
+        assert m["kind"] == "hxex-results-bundle" and m["schema_version"] == 2
         assert b.project == "proj" and m["n_measurements"] == len(meas)
         assert m["k_values"] == [1, 2] and set(m["versions"]) >= {"hxex", "torch", "numpy"}
         assert m["configs"]["fit"] == fit.config.to_dict()

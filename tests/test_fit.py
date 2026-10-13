@@ -218,7 +218,7 @@ def test_recovers_k_means_and_fractions(fitted):
         fit = res.fits[len(means)]
         order = np.argsort(fit.means[m])
         np.testing.assert_allclose(fit.means[m][order], means, atol=0.5)
-        np.testing.assert_allclose(fit.fractions[m][order], fracs, atol=0.06)
+        np.testing.assert_allclose(fit.populations[m][order], fracs, atol=0.06)
 
 
 def test_amplitudes_are_in_the_data_units(fitted):
@@ -249,7 +249,7 @@ def test_table(fitted):
     only = res.table(selected_only=True)
     assert len(only["fit_K"]) == int(res.selected_K.sum()) and only["is_selected"].all()
     rows = (only["measurement"] == 1)
-    np.testing.assert_allclose(only["population_fraction"][rows].sum(), 1.0)
+    np.testing.assert_allclose(only["population"][rows].sum(), 1.0)
     assert sorted(only["k_ordered"][rows]) == [1, 2]
     means, rank = only["mean"][rows], only["k_ordered"][rows]
     assert means[rank == 1] < means[rank == 2]

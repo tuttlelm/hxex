@@ -260,7 +260,7 @@ def test_population_plots_and_components(results):
     sid = str(results.fit.spectrum_id[8])
     d = population_data(results, sid, k=2)
     assert d["draws"] is None  # this run did not keep the draws
-    assert d["corrected"] and np.isclose(d["centroid"], (d["mean"] * d["fraction"]).sum())
+    assert d["corrected"] and np.isclose(d["centroid"], (d["mean"] * d["population"]).sum())
     fig = plot_populations(results, 0, k=2, components=[2])
     assert {"pop:2", "centroid", "limits"} <= gids(fig) and "pop:1" not in gids(fig)
     n_cells = sum(ax.get_visible() for ax in fig.axes)
@@ -305,14 +305,14 @@ def test_tables_have_the_documented_columns_and_values(results):
     comp, spec, up = components_table(results), spectra_table(results), uptake_table(results)
     ks = results.effective_K
     assert len(comp["rank"]) == ks.sum() and len(spec["K"]) == len(results)
-    assert {"mean", "mean_corrected", "mean_corrected_se", "fraction", "status", "flags",
+    assert {"mean", "mean_corrected", "mean_corrected_se", "population", "status", "flags",
             "peptide", "rep"} <= set(comp)
     assert (comp["peptide"] == "RDKVQKEYAL").all() and set(comp["rep"]) == {1, 2, 3}
     k_max = int(ks.max())
-    assert f"mean_{k_max}" in spec and f"fraction_se_{k_max}" in spec
+    assert f"mean_{k_max}" in spec and f"population_se_{k_max}" in spec
     i = 8
     sel = comp["spectrum_id"] == spec["spectrum_id"][i]
-    assert np.isclose(spec["centroid"][i], (comp["mean"][sel] * comp["fraction"][sel]).sum())
+    assert np.isclose(spec["centroid"][i], (comp["mean"][sel] * comp["population"][sel]).sum())
     assert np.isclose(spec["mean_corrected_1"][i], comp["mean_corrected"][sel][0])
     # the replicate average: three replicates at 60 s
     row = (up["data_id"] == 0) & (up["time"] == 60) & (up["rank"] == 1)

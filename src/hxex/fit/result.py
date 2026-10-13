@@ -21,7 +21,7 @@ class KFit:
     ``log_A`` (scaled units), ``n_raw`` and ``logit_p`` are the optimiser's own parameters, kept
     so that a fit can be resumed (nested starts, bootstrap). ``nll``, ``bic`` and ``aic`` are
     per measurement, in the units of the scaled likelihood. ``passes_min_pop`` is False where
-    any population fraction is below ``FitConfig.min_population``.
+    any population (a component's share) is below ``FitConfig.min_population``.
     """
 
     k: int
@@ -37,8 +37,8 @@ class KFit:
     passes_min_pop: np.ndarray
 
     @property
-    def fractions(self) -> np.ndarray:
-        """Population fraction ``A_k / sum(A)`` of every component, ``(M, K)``."""
+    def populations(self) -> np.ndarray:
+        """Population (share of the molecules) ``A_k / sum(A)`` of every component, ``(M, K)``."""
         return self.A / np.maximum(self.A.sum(axis=1, keepdims=True), 1e-10)
 
     @property
@@ -146,7 +146,7 @@ class FitResult:
         return np.column_stack([getattr(self.fits[k], name) for k in self.k_values])
 
     def selected(self, name: str) -> np.ndarray:
-        """``A``, ``n``, ``p``, ``means`` or ``fractions`` at each measurement's selected K,
+        """``A``, ``n``, ``p``, ``means`` or ``populations`` at each measurement's selected K,
         ``(M, k_max)``, padded with NaN beyond that K."""
         width = max(self.k_values)
         out = np.full((len(self), width), np.nan)
@@ -165,7 +165,7 @@ class FitResult:
         for k in self.k_values:
             fit = self.fits[k]
             order = np.argsort(np.argsort(fit.means, axis=1), axis=1) + 1
-            frac = fit.fractions
+            frac = fit.populations
             for m in range(len(self)):
                 is_sel = bool(self.selected_K[m] == k)
                 if selected_only and not is_sel:
@@ -177,7 +177,7 @@ class FitResult:
                         "selected_K": self.selected_K[m], "fit_K": k, "is_selected": is_sel,
                         "component": c + 1, "k_ordered": order[m, c],
                         "amplitude": fit.A[m, c], "n": fit.n[m, c], "p": fit.p[m, c],
-                        "population_fraction": frac[m, c], "mean": fit.n[m, c] * fit.p[m, c],
+                        "population": frac[m, c], "mean": fit.n[m, c] * fit.p[m, c],
                         "variance": fit.n[m, c] * fit.p[m, c] * (1.0 - fit.p[m, c]),
                         "nll": fit.nll[m], "bic": fit.bic[m], "aic": fit.aic[m],
                         "passes_min_population": bool(fit.passes_min_pop[m]),
@@ -196,6 +196,6 @@ _KFIT_ARRAYS = (
 
 _TABLE_COLUMNS = (
     "measurement", "spectrum_id", "data_id", "time", "selected_K", "fit_K", "is_selected",
-    "component", "k_ordered", "amplitude", "n", "p", "population_fraction", "mean", "variance",
+    "component", "k_ordered", "amplitude", "n", "p", "population", "mean", "variance",
     "nll", "bic", "aic", "passes_min_population",
 )

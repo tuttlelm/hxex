@@ -32,18 +32,18 @@ REP_COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9")
 @dataclass(frozen=True)
 class Reference:
     """Known populations of a test data set, to draw next to the fitted ones: for each time, the
-    known means as a fraction of the number of exchangeable amides and the known fractions."""
+    known means as fractional deuteration (per exchangeable amide) and the known populations."""
 
     times: np.ndarray
-    level: np.ndarray  # (T, P) fraction of n_amides, NaN where the population is absent
-    fraction: np.ndarray  # (T, P)
+    level: np.ndarray  # (T, P) fractional deuteration, NaN where the component is absent
+    population: np.ndarray  # (T, P)
 
     def at(self, time: float, n_amides: float, atol: float = 1e-6):
-        """(means in D, fractions) of the populations known at ``time``, or None."""
+        """(means in D, populations) of the components known at ``time``, or None."""
         hit = np.flatnonzero(np.abs(self.times - time) <= atol)
         if not len(hit):
             return None
-        lv, fr = self.level[hit[0]], self.fraction[hit[0]]
+        lv, fr = self.level[hit[0]], self.population[hit[0]]
         keep = np.isfinite(lv) & np.isfinite(fr) & (fr > 0)
         return lv[keep] * n_amides, fr[keep]
 
@@ -231,19 +231,19 @@ def population_data(
     corrected: bool | None = None,
     components: Sequence[int] | None = None,
 ) -> dict:
-    """Populations of one spectrum for the population map: ``mean`` and ``fraction`` of every
-    population by rank (``mean_se``, ``fraction_se``), the ``draws`` of the bootstrap as
-    ``(n, K, 2)`` (mean, fraction; None if not kept), ``centroid`` (fraction-weighted mean),
+    """Populations of one spectrum for the population map: ``mean`` and ``population`` of every
+    population by rank (``mean_se``, ``population_se``), the ``draws`` of the bootstrap as
+    ``(n, K, 2)`` (mean, population; None if not kept), ``centroid`` (population-weighted mean),
     ``corrected`` (whether the means are back-exchange corrected), ``n_amides`` and ``shown``."""
     i = results.find(spectrum_id)
     k = int(results.effective_K[i] if k is None else k)
     kf = results.fit.fits[k]
     order = np.argsort(kf.means[i])
-    mean, frac = kf.means[i][order], kf.fractions[i][order]
+    mean, frac = kf.means[i][order], kf.populations[i][order]
     boot = results.bootstrap_for(i, k)
     nan = np.full(k, np.nan)
     mean_se = boot.mean_se[i, :k][order] if boot is not None else nan
-    frac_se = boot.frac_se[i, :k][order] if boot is not None else nan
+    population_se = boot.population_se[i, :k][order] if boot is not None else nan
     draws = None
     if boot is not None and boot.draws is not None:
         d = boot.draws
@@ -268,8 +268,8 @@ def population_data(
         use = False
     shown = list(range(1, k + 1)) if components is None else sorted(int(c) for c in components)
     return {
-        "spectrum_id": spectrum_id, "index": i, "k": k, "mean": mean, "fraction": frac,
-        "mean_se": mean_se, "fraction_se": frac_se, "draws": draws,
+        "spectrum_id": spectrum_id, "index": i, "k": k, "mean": mean, "population": frac,
+        "mean_se": mean_se, "population_se": population_se, "draws": draws,
         "centroid": float((mean * frac).sum()), "corrected": use, "n_amides": n_amides,
         "shown": shown,
     }
@@ -292,8 +292,8 @@ def _draw_population_map(ax: Axes, d: dict, title: str | None) -> None:
         if d["draws"] is not None:
             ax.scatter(d["draws"][:, c, 0], d["draws"][:, c, 1], s=8, color=color, alpha=0.3,
                        lw=0, gid=f"draws:{rank}")
-        ax.errorbar(d["mean"][c], d["fraction"][c], xerr=_err(d["mean_se"][c]),
-                    yerr=_err(d["fraction_se"][c]),
+        ax.errorbar(d["mean"][c], d["population"][c], xerr=_err(d["mean_se"][c]),
+                    yerr=_err(d["population_se"][c]),
                     color=color, marker="o", ms=5, lw=1.5, fillstyle=style["fillstyle"],
                     label=f"pop {rank}", gid=f"pop:{rank}")
     ax.scatter([d["centroid"]], [1.0], marker="*", s=90, color="darkorange", zorder=1,
@@ -319,7 +319,7 @@ def plot_populations(
     cell: tuple[float, float] = (4.0, 3.0),
 ) -> Figure:
     """The population map of a series, laid out like :func:`plot_series_spectra`: each cell the
-    fraction against the deuterium level of every population (bootstrap draws when kept, mean
+    population against the deuterium level of every component (bootstrap draws when kept, mean
     with standard errors, the centroid as a star), and, in the time by replicate layout with
     ``overlay``, a last column that superimposes the replicates. ``reference`` marks the known
     populations (open circles)."""
@@ -351,8 +351,8 @@ def plot_populations(
             for rank in d["shown"]:
                 c = rank - 1
                 # the colour is the population's (as in the single cells), the shape the replicate
-                ov.errorbar(d["mean"][c], d["fraction"][c], xerr=_err(d["mean_se"][c]),
-                            yerr=_err(d["fraction_se"][c]), marker=REP_MARKERS[r_idx % 6], ms=5,
+                ov.errorbar(d["mean"][c], d["population"][c], xerr=_err(d["mean_se"][c]),
+                            yerr=_err(d["population_se"][c]), marker=REP_MARKERS[r_idx % 6], ms=5,
                             lw=1, color=population_style(rank)["color"],
                             fillstyle=population_style(rank)["fillstyle"],
                             gid=f"overlay:{info['reps'][pos]}")
@@ -380,15 +380,15 @@ def uptake_data(
 ) -> dict:
     """The populations of every spectrum of a series along the time course, one row per
     spectrum and population: ``index`` (position in the results), ``time``, ``time_index``,
-    ``rep``, ``rank``, ``mean`` (corrected if asked and possible), ``mean_se``, ``fraction``,
-    ``fraction_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
+    ``rep``, ``rank``, ``mean`` (corrected if asked and possible), ``mean_se``, ``population``,
+    ``population_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
     controls), ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
     control, matched to the control times) and ``fd_time`` (the fully deuterated time of the
     controls, or None)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (
-        "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "fraction",
-        "fraction_se")}
+        "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "population",
+        "population_se")}
     use = False
     for pos, i in enumerate(info["rows"]):
         d = population_data(results, str(results.fit.spectrum_id[i]), k=k, corrected=corrected,
@@ -399,8 +399,8 @@ def uptake_data(
             for name, value in (
                 ("index", i), ("time", info["times"][pos]), ("time_index", info["time_index"][pos]),
                 ("rep", info["reps"][pos]), ("rank", rank), ("mean", d["mean"][c]),
-                ("mean_se", d["mean_se"][c]), ("fraction", d["fraction"][c]),
-                ("fraction_se", d["fraction_se"][c]),
+                ("mean_se", d["mean_se"][c]), ("population", d["population"][c]),
+                ("population_se", d["population_se"][c]),
             ):
                 cols[name].append(value)
     out: dict = {n: np.array(v) for n, v in cols.items()}
@@ -431,7 +431,7 @@ def plot_uptake(
     legend: bool = True,
 ) -> Figure:
     """Deuterium uptake of every population along the time course (the markers have an area that
-    grows with the population's fraction, error bars are the bootstrap standard errors of the
+    grows with the population, error bars are the bootstrap standard errors of the
     mean, and each replicate has its own colour).
 
     ``x='time'`` plots against the measured time (``scale='linear'`` or ``'log'``; a log axis
@@ -462,7 +462,7 @@ def plot_uptake(
         ax.errorbar(xs[sel], d["mean"][sel],
                     yerr=np.where(np.isfinite(d["mean_se"][sel]), d["mean_se"][sel], 0.0),
                     fmt="none", ecolor=color, elinewidth=1.2, capsize=0, gid=f"errors:rep{r}")
-        ax.scatter(xs[sel], d["mean"][sel], s=20 + 160 * np.nan_to_num(d["fraction"][sel]),
+        ax.scatter(xs[sel], d["mean"][sel], s=20 + 160 * np.nan_to_num(d["population"][sel]),
                    color=color, marker="v", alpha=0.9, label=f"rep {r}", gid=f"rep:{r}")
     if reference is not None and d["n_amides"] is not None:
         for t in np.unique(d["time"][keep]):

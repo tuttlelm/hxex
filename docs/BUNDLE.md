@@ -24,7 +24,7 @@ of every file.
   own parameters (`log_A`, `n_raw`, `logit_p`) are in the noise-scaled units the fit works in.
 - Per-measurement values that depend on K are lists of K values in the order of the original
   fit's components. Where a table pads to the largest K tried (`k_max`), the padding is NaN.
-- `mean` is `n * p` in deuterons and `population fraction` is `A_k / sum(A)`.
+- `mean` is `n * p` in deuterons and `population` (a component's share) is `A_k / sum(A)`.
 
 ## manifest.json
 
@@ -62,7 +62,7 @@ entry's input: an HX-Express file, or a SpecExport folder identified as a whole)
 | `fit.parquet` | measurement | `measurement`, `spectrum_id`, `data_id`, `time`, `selected_K`, `obs_scale` (the noise scale the spectrum was divided by), `sample_size` (the N of the BIC), `n_max`, `noise_kind` (`gaussian` or `poisson`), `score` (selection criterion for each K tried, inf where the population filter rejected it) |
 | `fit_k.parquet` | measurement and K | `measurement`, `fit_K`, `A`, `n`, `p` (lists of K), `log_A`, `n_raw`, `logit_p` (the optimiser's parameters), `nll`, `bic`, `aic`, `passes_min_pop` |
 | `noise_estimate.parquet` | measurement | when the noise was estimated from replicates: `gain`, `estimated`, `reason` (why a series was not estimated), `score` (consistency with replicates), `outlier` (flagged), `n_replicated` |
-| `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `frac_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `frac_ci` (lists of `k_max * 2`: low and high of each component); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin); `component_lo`, `component_hi` (the same band for each population, `K * bins` values: population by population in the order of the original fit; absent in bundles written before they were added) |
+| `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `population_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `population_ci` (lists of `k_max * 2`: low and high of each component); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin); `component_lo`, `component_hi` (the same band for each population, `K * bins` values: population by population in the order of the original fit; absent in bundles written before they were added) |
 | `bootstrap_draws.parquet` | measurement | optional individual fits at the selected K: `A`, `n`, `p` (lists of `n_boot * k_max`, draw-major), `ok` (list of `n_boot`) |
 | `bootstrap_k.parquet` | measurement and K | the fixed-K bootstrap (`BootstrapConfig.ks`): the columns of `bootstrap` plus `fit_K`; every measurement has a row for each K requested, and `selected_K` equals `fit_K` |
 | `bootstrap_k_draws.parquet` | measurement and K | the draws of the fixed-K bootstrap when kept: the columns of `bootstrap_draws` plus `fit_K` |
@@ -87,7 +87,9 @@ one that was fitted.
 
 ## Versioning
 
-`schema_version` is an integer. New optional tables and columns are additions and do not change
+`schema_version` is an integer (2 since 2026-10-13: a component's share is `population`, its
+bootstrap columns `population_se` and `population_ci`, where version 1 had `frac_se` and
+`frac_ci`; hxex reads both). New optional tables and columns are additions and do not change
 it; a reader ignores tables and columns it does not know. An incompatible change raises it, and
 `open_bundle` refuses a bundle with a higher version than it knows, with a message to upgrade.
 Control identification and back-exchange values (Phase 3) will be added as further tables.

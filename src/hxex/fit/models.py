@@ -31,7 +31,7 @@ def fit_models(
 
     Each spectrum is divided by its noise scale (:func:`hxex.noise.noise_scale`) before fitting,
     and the fitted amplitudes are returned in the original intensity units. A K is rejected for a
-    measurement if one of its populations has a fraction below ``config.min_population``; if
+    measurement if one of its components has a population below ``config.min_population``; if
     every K is rejected the smallest K is selected. With one K there is no selection. If
     ``config.noise.estimate`` is set, the noise of each series with enough replicates is estimated
     from them (see :func:`hxex.noise.estimate_noise`); the result keeps the estimate and the flags.

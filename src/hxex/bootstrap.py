@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Parametric bootstrap: uncertainties on populations, fractions and the fitted curve.
+"""Parametric bootstrap: uncertainties on the components, their populations and the curve.
 
 For every measurement the fitted curve is resampled with the noise model of the fit (Gaussian
 with unit sd on the noise-scaled spectrum, or Poisson) and refitted at the measurement's selected
 K, starting from the original fit. Components are matched to the original fit by their mean
 ``n * p``, which identifies a population (the variance must not enter the matching: for components
 of similar variance it swaps the labels). Standard errors and percentile intervals are reported for
-the amplitude, ``n``, ``p``, the mean ``n * p`` and the population fraction, plus a per-bin band of
+the amplitude, ``n``, ``p``, the mean ``n * p`` and the population (share), plus a per-bin band of
 the total fitted curve (which accounts for the correlation between components). For weakly
 populated components ``n`` and ``p`` are strongly anticorrelated, so their intervals can be wide
-while the mean and the fraction stay well determined.
+while the mean and the population stay well determined.
 
 Measurements are independent: a resample that fails for one measurement is dropped for that
 measurement only (``n_success`` counts the ones that count; a measurement whose own fit failed is
@@ -131,12 +131,12 @@ class BootstrapResult:
     n_se: np.ndarray
     p_se: np.ndarray
     mean_se: np.ndarray
-    frac_se: np.ndarray
+    population_se: np.ndarray
     A_ci: np.ndarray
     n_ci: np.ndarray
     p_ci: np.ndarray
     mean_ci: np.ndarray
-    frac_ci: np.ndarray
+    population_ci: np.ndarray
     curve_lo: np.ndarray
     curve_hi: np.ndarray
     curve_offsets: np.ndarray
@@ -188,8 +188,8 @@ class BootstrapResult:
                 for name in ("A", "n", "p", "ok")
             ))
         comp = _splice_components(parts, where)
-        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se", "A_ci",
-                 "n_ci", "p_ci", "mean_ci", "frac_ci")
+        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
+                 "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")
         return cls(
             config=parts[0].config, **{name: cat(name) for name in names},
             curve_lo=np.concatenate(lo), curve_hi=np.concatenate(hi),
@@ -223,8 +223,8 @@ class BootstrapResult:
             lo.append(self.curve_lo[a:b])
             hi.append(self.curve_hi[a:b])
             offsets.append(offsets[-1] + (b - a))
-        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "frac_se", "A_ci",
-                 "n_ci", "p_ci", "mean_ci", "frac_ci")
+        names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
+                 "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")
         draws = None
         if self.draws is not None:
             draws = BootstrapDraws(*(getattr(self.draws, n)[rows] for n in ("A", "n", "p", "ok")))
@@ -241,7 +241,7 @@ class BootstrapResult:
         """``fit.table()`` with the interval columns added for the rows at this result's K (NaN
         for the other rows; the selected K, or the K of a fixed-K result): ``<name>_se``,
         ``<name>_ci_lo`` and ``<name>_ci_hi`` for ``amplitude``, ``n``, ``p``, ``mean`` and
-        ``population_fraction``, and ``n_bootstrap``."""
+        ``population``, and ``n_bootstrap``."""
         return interval_table(fit, [self], selected_only=selected_only)
 
 
@@ -269,7 +269,7 @@ def interval_table(
     first such result if several, which agree). Rows without one are NaN."""
     base = fit.table(selected_only=selected_only)
     rows = len(base["measurement"])
-    names = ("amplitude", "n", "p", "mean", "population_fraction")
+    names = ("amplitude", "n", "p", "mean", "population")
     cols = {f"{name}_{suffix}": np.full(rows, np.nan)
             for name in names for suffix in ("se", "ci_lo", "ci_hi")}
     cols["n_bootstrap"] = np.full(rows, np.nan)
@@ -281,7 +281,7 @@ def interval_table(
             sources = {
                 "amplitude": (res.A_se, res.A_ci), "n": (res.n_se, res.n_ci),
                 "p": (res.p_se, res.p_ci), "mean": (res.mean_se, res.mean_ci),
-                "population_fraction": (res.frac_se, res.frac_ci),
+                "population": (res.population_se, res.population_ci),
             }
             cols["n_bootstrap"][r] = res.n_success[m]
             for name, (se, ci) in sources.items():
@@ -442,8 +442,8 @@ def bootstrap(
     return BootstrapResult(
         config=config, selected_K=fit.selected_K.copy(), n_success=ok.sum(axis=1),
         A_se=stats["A"][0], n_se=stats["n"][0], p_se=stats["p"][0], mean_se=stats["mean"][0],
-        frac_se=stats["frac"][0], A_ci=stats["A"][1], n_ci=stats["n"][1], p_ci=stats["p"][1],
-        mean_ci=stats["mean"][1], frac_ci=stats["frac"][1], curve_lo=curve_lo,
+        population_se=stats["frac"][0], A_ci=stats["A"][1], n_ci=stats["n"][1], p_ci=stats["p"][1],
+        mean_ci=stats["mean"][1], population_ci=stats["frac"][1], curve_lo=curve_lo,
         curve_hi=curve_hi, curve_offsets=offsets, draws=draws, component_lo=comp_lo,
         component_hi=comp_hi, component_offsets=comp_offsets,
     )

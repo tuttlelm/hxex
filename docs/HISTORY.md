@@ -1360,6 +1360,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       The library does not set them (a process-wide setting); the default stays PyTorch's.
     - Not done: the k-means starts (scipy, per measurement in Python, about 10 % of a fit).
 
+47. **Nomenclature (owner's decision of 2026-10-13, following published precedent).** A component's
+    share of the molecules is its `population` (was `fraction`): `KFit.populations`,
+    `BootstrapResult.population_se` and `population_ci`, the tables' `population`,
+    `population_se`, `population_<r>` and `population_se_<r>`, the tidy tables' `population`
+    (was `population_fraction`), and the plot data and labels. Deuteration is `mean`, the absolute
+    deuterium in deuterons (back-exchange corrected when there are controls), and `fD`, the
+    fractional deuteration `mean / n_amides` (0 to 1), of a component or of any grouping. Components
+    are named by K and rank, not slow and fast, and the values mean the same for forward
+    labelling and reverse exchange. The bundle schema is version 2 (bootstrap columns
+    `population_se` and `population_ci`, version 1 `frac_se` and `frac_ci`); hxex reads both
+    (checked on the intact-peptide benchmark bundle, version 1). `min_population` kept its name.
+    The full table of names and their equivalents in pyHXExpress and pyHDX is in
+    `docs/ANALYSIS.md` ("Nomenclature").
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

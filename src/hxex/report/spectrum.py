@@ -111,8 +111,8 @@ def spectrum_data(
       ``mz * ppm / 1e6``; None if the picker's ``resolution_ppm`` is unknown: it is read from the
       results' settings, or given as ``resolution_ppm``);
     - ``fit``: ``k``, ``total`` (the whole fit), ``components`` (``(K, bins)``, ascending mean;
-      ``shown`` lists the ranks, from 1, that were asked for), ``mean`` and ``fraction`` with
-      ``mean_se`` and ``fraction_se`` (NaN without a bootstrap), ``corrected`` (back-exchange
+      ``shown`` lists the ranks, from 1, that were asked for), ``mean`` and ``population`` with
+      ``mean_se`` and ``population_se`` (NaN without a bootstrap), ``corrected`` (back-exchange
       corrected means, or None without controls), ``band`` (``(2, bins)`` or None),
       ``component_band`` (``(K, 2, bins)``, the same band for each population, or None) and
       ``index`` (the position in the results).
@@ -173,12 +173,12 @@ def _fit_data(results: Results, spectrum_id: str, k: int | None, shown) -> dict:
     curves = component_curves(
         bins, kf.A[i][order], kf.n[i][order], kf.p[i][order], results.measurements.shapes[i]
     )
-    mean, frac = kf.means[i][order], kf.fractions[i][order]
+    mean, frac = kf.means[i][order], kf.populations[i][order]
     nan = np.full(k, np.nan)
-    mean_se, frac_se, band, component_band = nan, nan, None, None
+    mean_se, population_se, band, component_band = nan, nan, None, None
     boot = results.bootstrap_for(i, k)
     if boot is not None:
-        mean_se, frac_se = boot.mean_se[i, :k][order], boot.frac_se[i, :k][order]
+        mean_se, population_se = boot.mean_se[i, :k][order], boot.population_se[i, :k][order]
         lo, hi = boot.curve_band(i)
         if len(lo) == len(bins):
             band = np.vstack([lo, hi])
@@ -190,8 +190,8 @@ def _fit_data(results: Results, spectrum_id: str, k: int | None, shown) -> dict:
         corrected = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :]).mean[0]
     return {
         "index": i, "k": k, "bins": bins, "total": curves.sum(axis=0), "components": curves,
-        "shown": shown, "mean": mean, "fraction": frac, "mean_se": mean_se,
-        "fraction_se": frac_se, "corrected": corrected, "band": band,
+        "shown": shown, "mean": mean, "population": frac, "mean_se": mean_se,
+        "population_se": population_se, "corrected": corrected, "band": band,
         "component_band": component_band,
     }
 
@@ -349,7 +349,7 @@ def _label(fit: dict, c: int, corrected: bool) -> str:
     text = f"pop {c + 1}: {fit['mean'][c]:.2f}"
     if np.isfinite(fit["mean_se"][c]):
         text += f" ± {fit['mean_se'][c]:.2f}"
-    text += f" D, {100 * fit['fraction'][c]:.0f}%"
+    text += f" D, {100 * fit['population'][c]:.0f}%"
     if corrected:
         text += f" (corr. {fit['corrected'][c]:.2f})"
     return text

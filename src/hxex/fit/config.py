@@ -19,7 +19,7 @@ class FitConfig:
 
     ``k_min`` to ``k_max``: the numbers of populations to try (1 to 3, 2 to 3, only 1, only 2).
     With one K there is no model selection. ``criterion`` selects K among those tried;
-    ``min_population`` rejects a K in which any population has a fraction below it (0 turns the
+    ``min_population`` rejects a K in which any component's population is below it (0 turns the
     filter off; with one K it is only reported).
 
     Each K is fitted from ``n_restarts`` starting points: restart 0 is the (K-1)-population

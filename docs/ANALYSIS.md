@@ -21,11 +21,11 @@ Decided with the owner (2026-10-12 and 2026-10-13):
   CLAUDE.local.md for its location); its bugs are not copied (see "Reference notes").
 - Rejected spectra (review layer) are always left out and the reviewer's K overrides are
   honoured; uptake is back-exchange corrected by default (`hxex.controls`); populations are
-  identified by rank, 1 being the lowest deuterium content (see "D content" below).
+  identified by rank, 1 being the lowest deuteration (see "Nomenclature" below).
 - Analyses run on one results bundle, or on several for the run comparisons, and are configured
   by an `[analysis]` section of the project file and a command-line command.
 - Fragment data (MS2, MS3) is analysed differently from peptide data (MS1) and gets its own
-  branch. Population fractions shared by a parent's fragments are a post-processing step, not a
+  branch. Populations shared by a parent's fragments are a post-processing step, not a
   joint fit in the engine (owner, 2026-10-13).
 
 ## Structure
@@ -40,16 +40,33 @@ effective K, or a fixed K from the fixed-K bootstraps):
   fragment label, parent (for fragments; an MS3 fragment's parent is an MS2 fragment, so
   positions on the protein follow the chain of parents), activation, precursor charge;
 - position on the protein: first and last residue;
-- values: the corrected deuterium content (fraction of the exchangeable amides that carry
-  deuterium) and its standard error, population fraction and its standard error, the number of
-  replicates and charge states combined, flags.
+- values: the absolute deuteration `mean` (deuterons) and the fractional deuteration `fD`
+  (`mean / n_amides`), each with its standard error, the `population` (share) and its standard
+  error, the number of replicates and charge states combined, flags.
 
-**D content** (owner, 2026-10-13): values are deuterium content, the fraction of the
-exchangeable amides that carry deuterium, and plots label them "D content". An experiment may be
-forward labelling (H to D) or reverse exchange (D to H, as in back-exchange kinetics); D content
-means the same in both, so no setting says which. Populations are ranked by D content (1 =
-lowest, the fit's own ranking) and named low-D and high-D, not slow and fast: which of them is
-the protected one (low-D in forward labelling, high-D in reverse exchange) is for the reader.
+Values mean the same for forward labelling (H to D) and reverse exchange (D to H, as in
+back-exchange kinetics), so no setting says which (owner, 2026-10-13). Components are named by K
+and rank (1 = lowest deuteration, the fit's own ranking), not slow and fast: which of them is the
+protected one (the low one in forward labelling, the high one in reverse exchange) is for the
+reader.
+
+### Nomenclature
+
+Owner, 2026-10-13, following published precedent; used throughout hxex (fit results, bootstrap,
+tables, bundle, plots and these analyses):
+
+| Quantity | hxex name | Plot label | Reference names |
+|---|---|---|---|
+| number of components fitted | `K` | K | ncurves, fixed1pop / fixed2pops |
+| component order | `rank` (1 = lowest deuteration) | rank | pop1 / pop2 (slow / fast) |
+| a component's share of the molecules | `population` (and `population_se`) | population | pop, p_slow, p_fast, frac |
+| absolute deuteration (deuterons beyond natural abundance, 0 to about `n_amides`) | `mean` (`n * p`); back-exchange corrected when there are controls | deuterium | Dabs, centroid, D content |
+| fractional deuteration (per exchangeable amide, 0 to 1), of a component or of any grouping (peptide, region, residue) | `fD` (`mean / n_amides`) | fD (fractional deuteration) | fD, rfu, D-uptake, %D / 100 |
+| exchangeable amides | `n_amides` | exchangeable amides | max_namides, Nex (as a count) |
+| binomial parameters of a component | `n`, `p` | n, p | Nex, mu |
+
+"Population" names both a component ("two populations") and its share ("population 0.62"), as
+in the published work; where it matters, a component is named by its rank.
 
 ### Peptide branch (MS1; first)
 
@@ -62,9 +79,9 @@ the protected one (low-D in forward labelling, high-D in reverse exchange) is fo
 - **One or two populations** (pyHXExpress `choose_fits`): per residue (or peptide) and time,
   the two-population description is kept when the populations are separated at a stated
   confidence (`(high - low) - z (se_low + se_high) >= 0`), both standard errors are below a
-  limit and the low-D fraction (from the lever rule with the one-population value) is inside
-  `[min_pop, 1 - min_pop]`; otherwise the one-population value is used. Output: fD_low, fD_high,
-  fD_avg and p_low (the low-D population's fraction), with standard errors. Built on the selected K, the fixed-K bootstraps and
+  limit and the rank-1 population (from the lever rule with the K=1 fD) is inside
+  `[min_pop, 1 - min_pop]`; otherwise the K=1 value is used. Output: fD at K=2 rank 1 and rank 2
+  and at K=1, and the K=2 rank-1 population, with standard errors. Built on the selected K, the fixed-K bootstraps and
   the review layer.
 - **Comparisons within a run.** Differences between samples (a reference sample against each
   other) per peptide and per residue, with propagated standard errors and a significance rule;
@@ -80,9 +97,9 @@ How fragment data differs, and what this branch does about it:
   from differences, estimated as a least-squares fit of per-residue deuteration (between 0 and 1)
   to all fragments of a parent at once, with the closure as a check.
 - **Populations belong to the parent.** A fragment's populations are its parent's molecules, so
-  the population fraction is shared by all fragments of a parent; a fragment that does not
+  the population is shared by all fragments of a parent; a fragment that does not
   span the region where the populations differ looks like one population. The one-or-two
-  choice is therefore made with fractions from the parent (or shared across its fragments) in
+  choice is therefore made with populations from the parent (or shared across its fragments) in
   post-processing, not fragment by fragment.
 - **Scrambling.** Only low-scrambling activation (ETD, ECD, UVPD) gives site-specific values;
   the activation is carried and a scrambling check is part of the branch.
@@ -112,10 +129,10 @@ Plots (matplotlib, returning figures):
   full; colour bar, light vertical grid lines every 25 residues, no y axis; a grid of samples,
   times and ranks;
 - residue profiles: the ranks' curves with uncertainty bands, the one-population value, the
-  chosen description as markers sized by fraction, and a fraction panel below;
+  chosen description as markers sized by population, and a population panel below;
 - redundancy and resolution strips (uncovered residues and prolines marked);
 - comparisons: overlays and stacks (a reference sample against each other), difference plots;
-- region bar charts (uptake and fractions per region and sample, with error bars);
+- region bar charts (fD and populations per region and sample, with error bars);
 - an optional annotation strip under the residue axis (domains, sites);
 - for fragments: cleavage maps, uptake against fragment length (c ions, and the parent minus
   z ions), closure plots, comparisons between activations and precursor charges.
@@ -139,7 +156,7 @@ Plots (matplotlib, returning figures):
 1. The species uptake table (peptides), the residue level, the coverage map, the redundancy and
    resolution strips, and residue profiles.
 2. The one-or-two-population choice and its figures (residue profiles with the chosen
-   description and fractions; fraction maps per sample).
+   description and populations; population maps per sample).
 3. Comparisons within a run, region bar charts, difference plots.
 4. Comparing separate runs.
 5. Export, recomputing and combining.
@@ -149,7 +166,7 @@ Plots (matplotlib, returning figures):
 ## Validation
 
 - Synthetic data with known answers for every layer (known residue deuteration, known
-  populations and fractions).
+  components and populations).
 - Residue values against pyHDX 0.4.3 on the same peptides (installed outside hxex; see
   CLAUDE.local.md), as a test oracle only.
 - A visual check against the owner's existing figures, recomputed from the intact-peptide
@@ -191,7 +208,7 @@ What it does and what not to copy:
   uses pyHDX's per-residue averaging, coverage plot and coverage matrix; populations become
   separate pyHDX states (`sample_pop1`, `sample_pop2`, and a fixed-one-population run for the
   average). It has no significance testing, no kinetics and no protection factors.
-- `choose_fits` propagates the error of the population fraction with an unsquared derivative in
+- `choose_fits` propagates the error of the population with an unsquared derivative in
   one term (`((avg - p1) / (p2 - p1)**2) * sd2**2`); `group_fits` repeats it and averages
   standard errors instead of propagating them.
 - `plot_resred` takes the residue numbers of the first state for every state, and overwrites

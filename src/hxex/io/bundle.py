@@ -61,7 +61,7 @@ from ._arrow import (
 )
 
 log = logging.getLogger(__name__)
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: a component's share is "population" (was "frac"/"fraction")
 KIND = "hxex-results-bundle"
 MANIFEST = "manifest.json"
 PENDING_STAGES = ("bootstrap",)  # stages a bundle can be written without, to add later
@@ -210,7 +210,7 @@ def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.
         "selected_K": pa.array(np.asarray(b.selected_K, dtype=np.int64)),
         "n_success": pa.array(np.asarray(b.n_success, dtype=np.int64)),
     }
-    for name in ("A", "n", "p", "mean", "frac"):
+    for name in ("A", "n", "p", "mean", "population"):
         cols[f"{name}_se"] = _ragged(_rows(getattr(b, f"{name}_se")), pa.float64())
         cols[f"{name}_ci"] = _ragged(_rows(getattr(b, f"{name}_ci")), pa.float64())
     cols["curve_lo"] = _flat_ragged(b.curve_lo, b.curve_offsets, pa.float64())
@@ -780,9 +780,11 @@ class Bundle:
 
         t = part(name)
         arrays: dict[str, np.ndarray] = {}
-        for stat in ("A", "n", "p", "mean", "frac"):
-            arrays[f"{stat}_se"] = _matrix(t, f"{stat}_se", k_max)
-            arrays[f"{stat}_ci"] = _matrix(t, f"{stat}_ci", 2 * k_max).reshape(-1, k_max, 2)
+        for stat in ("A", "n", "p", "mean", "population"):
+            # schema 1 called the population "frac"
+            col = stat if stat != "population" or "population_se" in t.column_names else "frac"
+            arrays[f"{stat}_se"] = _matrix(t, f"{col}_se", k_max)
+            arrays[f"{stat}_ci"] = _matrix(t, f"{col}_ci", 2 * k_max).reshape(-1, k_max, 2)
         lo, offsets = _ragged_read(t, "curve_lo")
         hi, _ = _ragged_read(t, "curve_hi")
         comp: dict[str, np.ndarray] = {}
