@@ -23,6 +23,7 @@ states disagree systematically (see :func:`species_uptake`).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 
@@ -30,6 +31,36 @@ import numpy as np
 
 from .. import chem
 from ..controls import correct_means
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SpeciesFilters:
+    """Which K >= 2 descriptions the analysis trusts (K = 1 is never filtered), following the
+    owner's pyHXExpress practice (docs/ANALYSIS.md).
+
+    Per spectrum, before replicates and charge states are combined: every population within
+    ``[min_population, 1 - min_population]``, and no component deuterated beyond ``max_fD``
+    (its ``n * p`` over the exchangeable amides, back-exchange corrected when the run has
+    controls, as reported: more than full deuteration is not physical; the fit itself allows
+    ``n`` up to the run's ``n_max_factor`` times the amides). Per species and time, after
+    combining: every rank's ``fD`` standard error below ``max_fD_se`` (unknown errors pass),
+    and, with ``k1_between_ranks``, the K = 1 value between the lowest and the highest rank
+    (``fD_low < fD_avg < fD_high``; needs K = 1 among the K analysed): a split whose average
+    does not lie between its populations does not describe the same molecules."""
+
+    min_population: float = 0.05
+    max_fD_se: float = 0.25
+    max_fD: float = 1.1
+    k1_between_ranks: bool = True
+
+    def __post_init__(self):
+        if not 0 <= self.min_population < 0.5:
+            raise ValueError("min_population must be in [0, 0.5)")
+        if self.max_fD_se <= 0 or self.max_fD <= 0:
+            raise ValueError("max_fD_se and max_fD must be positive")
+
 
 # a charge trend: the lowest and highest charge differ by more than this many combined standard
 # errors, in the same direction, at this share of the times both were measured (and at least two)
@@ -120,9 +151,12 @@ def species_uptake(
     ks: Sequence[int] = (1, 2),
     *,
     exclude_flagged: bool = False,
+    filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
 ) -> SpeciesUptake:
     """The species uptake table of ``results`` (:class:`hxex.report.Results`) at each fixed K in
-    ``ks`` (K values the run fitted).
+    ``ks`` (K values the run fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
+    which K >= 2 descriptions are kept; a species and time whose description is not kept has no
+    rows at that K.
 
     ``charge_trend`` is True for every row of a species (sample, peptide and modification, K and
     rank) whose lowest and highest charge states, wherever both were measured, differ by more
@@ -154,6 +188,7 @@ def species_uptake(
 
     # one record per spectrum and rank, then grouped by species, time, K and rank
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
+    dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0}
     for k in ks:
         kf = fit.fits[k]
         order = np.argsort(kf.means, axis=1)
@@ -169,7 +204,15 @@ def species_uptake(
         if controls is not None:
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se
-        for i in np.flatnonzero(keep):
+        usable = keep.copy()
+        if filters is not None and k >= 2:
+            lo = filters.min_population
+            bad_pop = np.any((fracs < lo) | (fracs > 1 - lo), axis=1) & keep
+            bad_fd = np.any(means / n_amides[:, None] > filters.max_fD, axis=1) & keep
+            dropped["population"] += int(bad_pop.sum())
+            dropped["fD"] += int((bad_fd & ~bad_pop).sum())
+            usable &= ~(bad_pop | bad_fd)
+        for i in np.flatnonzero(usable):
             j = rows[i]
             key = (str(binned.sample[j]), str(binned.peptide[j]), str(binned.modification[j]),
                    int(binned.start_seq[j]), int(binned.end_seq[j]), float(fit.time[i]), k)
@@ -179,6 +222,35 @@ def species_uptake(
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
                 ))
 
+    if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
+        worst: dict[tuple, float] = {}
+        for key, recs in groups.items():
+            if key[6] >= 2:
+                _, se = _combine(np.array([r[0] for r in recs]), np.array([r[1] for r in recs]))
+                worst[key[:7]] = max(worst.get(key[:7], 0.0), se if np.isfinite(se) else 0.0)
+        too_wide = {key for key, se in worst.items() if se >= filters.max_fD_se}
+        dropped["fD_se"] = len(too_wide)
+        groups = {key: recs for key, recs in groups.items() if key[:7] not in too_wide}
+        if filters.k1_between_ranks and 1 in ks:  # the K=1 value between the K >= 2 ranks
+            value = {key: _combine(np.array([r[0] for r in recs]),
+                                   np.array([r[1] for r in recs]))[0]
+                     for key, recs in groups.items()}
+            unordered = set()
+            for key in value:
+                base, k, rank = key[:6], key[6], key[7]
+                if k < 2 or rank != 1 or base + (1, 1) not in value or base + (k, k) not in value:
+                    continue
+                if not value[key] < value[base + (1, 1)] < value[base + (k, k)]:
+                    unordered.add(base + (k,))
+            dropped["k1_between_ranks"] = len(unordered)
+            groups = {key: recs for key, recs in groups.items() if key[:7] not in unordered}
+        if any(dropped.values()):
+            log.info("K >= 2 descriptions left out: %d spectra with a population outside "
+                     "[%g, %g], %d with a component above fD %g; %d species and times with "
+                     "an fD error of %g or more, %d with the K=1 value outside the ranks",
+                     dropped["population"], filters.min_population, 1 - filters.min_population,
+                     dropped["fD"], filters.max_fD, dropped["fD_se"], filters.max_fD_se,
+                     dropped["k1_between_ranks"])
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     for key, recs in sorted(groups.items()):

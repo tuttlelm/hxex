@@ -10,6 +10,7 @@ from matplotlib.patches import Rectangle
 
 from hxex.analysis import (
     SequenceMismatch,
+    SpeciesFilters,
     SpeciesUptake,
     coverage_table,
     exchanging_residues,
@@ -18,7 +19,7 @@ from hxex.analysis import (
 )
 from hxex.analysis.species import _combine, _is_trend
 from hxex.io.bundle import ReviewTable
-from hxex.report import Results
+from hxex.report import Results, plot_residue_profile
 from hxex.report.coverage import (
     FD_CMAP,
     autowrap,
@@ -153,6 +154,37 @@ def test_rejected_spectra_are_left_out(results):
     assert int(up.n_spectra.sum()) == int(full.n_spectra.sum()) - 1
 
 
+def test_filters_keep_only_credible_k2_descriptions(results, caplog):
+    import logging
+
+    none = species_uptake(results, ks=(1, 2), filters=None)
+    default = species_uptake(results, ks=(1, 2))
+    assert len(default.select(default.K == 1)) == len(none.select(none.K == 1))  # K=1 untouched
+    assert len(default) <= len(none)
+    # every kept K=2 population within the limits, and every component's n is fine
+    k2 = default.select(default.K == 2)
+    assert np.all((k2.population >= 0.05) & (k2.population <= 0.95))
+    # the K=1 value lies between the ranks of every kept K=2 description
+    for s, p, t in set(zip(k2.sample, k2.peptide, k2.time, strict=True)):
+        row = default.where(sample=s, time=t) & (default.peptide == p)
+        low, high = (default.fD[row & (default.K == 2) & (default.rank == r)][0] for r in (1, 2))
+        avg = default.fD[row & (default.K == 1)][0]
+        assert low < avg < high
+    unordered = species_uptake(results, ks=(1, 2), filters=SpeciesFilters(k1_between_ranks=False))
+    assert (unordered.K == 2).sum() >= (default.K == 2).sum()
+    with caplog.at_level(logging.INFO, logger="hxex.analysis.species"):
+        strict = species_uptake(results, ks=(1, 2), filters=SpeciesFilters(max_fD=0.5))
+    # no kept K=2 spectrum had a component above fD 0.5, so its combined values are not either
+    assert (strict.K == 2).sum() < (default.K == 2).sum()
+    assert np.all(strict.fD[strict.K == 2] <= 0.5 + 1e-12)
+    assert "above fD 0.5" in caplog.text
+    tight = species_uptake(results, ks=(2,), filters=SpeciesFilters(max_fD_se=1e-9))
+    assert np.all(~np.isfinite(tight.fD_se) | (tight.fD_se < 1e-9))
+    for bad in ({"min_population": 0.5}, {"max_fD_se": 0}, {"max_fD": -1}):
+        with pytest.raises(ValueError):
+            SpeciesFilters(**bad)
+
+
 def test_combining_counts_neither_variance_twice():
     mean, se = _combine(np.array([1.0, 1.2, 0.8]), np.array([0.01, 0.01, 0.01]))
     assert mean == pytest.approx(1.0) and se == pytest.approx(0.2 / np.sqrt(3))  # scatter wins
@@ -208,3 +240,32 @@ def test_redundancy_and_resolution_plot():
     assert np.isnan(y[4]) and y[7] == 2  # the proline is a gap; residue 8 has both peptides
     with pytest.raises(ValueError, match="no sample"):
         plot_redundancy_resolution(cov, samples=["X"])
+
+
+def test_residue_profile():
+    rows = [("S", "AKLPGSTV", 2, 4.0, 0.3, 0.02), ("S", "GSTVED", 6, 4.0, 0.6, 0.04)]
+    up = table(rows)
+    k2 = table(rows)  # the same peptides as K=2 rank 1 and 2
+    import dataclasses
+
+    both = SpeciesUptake(**{f.name: np.concatenate([getattr(up, f.name)] + [
+        getattr(k2, f.name) if f.name not in ("K", "rank", "fD") else
+        {"K": np.full(2, 2), "rank": np.full(2, r), "fD": k2.fD + 0.1 * r}[f.name]
+        for r in (1, 2)]) for f in dataclasses.fields(SpeciesUptake)
+        if f.name not in ("nterm_subtract", "undeut_time")}, nterm_subtract=1)
+    rm = residue_map(both, sequences=SEQUENCE)
+    fig = plot_residue_profile(rm, "S", 4.0, marks=(7,), undeut_time=0.0)
+    ax = fig.axes[0]
+    gids = [line.get_gid() for line in ax.lines if line.get_gid()]
+    assert gids == ["fD:K1:rank1", "fD:K2:rank1", "fD:K2:rank2"]
+    assert len(ax.collections) == 3  # one band per curve
+    assert any(t.get_text() == "S 4 s" for t in ax.texts)
+    k1 = next(line for line in ax.lines if line.get_gid() == "fD:K1:rank1")
+    y = np.asarray(k1.get_ydata(), dtype=float)
+    assert np.isnan(y[4]) and y[7] == pytest.approx(rm.fD[(rm.residue == 8) & (rm.K == 1)][0])
+    no_band = plot_residue_profile(rm, "S", 4.0, band=0, show=((1, 1),))
+    assert len(no_band.axes[0].collections) == 0
+    with pytest.raises(ValueError, match="no residue values"):
+        plot_residue_profile(rm, "S", 60.0)
+    with pytest.raises(ValueError, match="band"):
+        plot_residue_profile(rm, "S", 4.0, band=1.0)

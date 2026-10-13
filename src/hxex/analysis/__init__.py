@@ -15,12 +15,13 @@ from .residues import (
     exchanging_residues,
     residue_map,
 )
-from .species import SpeciesUptake, species_uptake
+from .species import SpeciesFilters, SpeciesUptake, species_uptake
 
 __all__ = [
     "CoverageTable",
     "ResidueMap",
     "SequenceMismatch",
+    "SpeciesFilters",
     "SpeciesUptake",
     "coverage_table",
     "exchanging_residues",

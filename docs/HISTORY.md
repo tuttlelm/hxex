@@ -1397,6 +1397,42 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       2 s; 70 species flagged for a charge trend; 52 of 5,542 K = 1 values above fD 1.05, mostly
       at late times (series whose fully deuterated control fell back or is low).
 
+49. **The K=2 components depend on the noise model (2026-10-13; intact-peptide benchmark, WT at
+    4 s, 1,034 spectra).** Residue profiles of the K=2 description put the high-deuteration
+    population at fD 1.0 to 1.6, against 0.4 to 0.9 in the owner's pyHXExpress analysis (K=1 and
+    the K=2 low population agreed: correlation 0.96 and 0.89 with the owner's residue values;
+    the high population 0.11). Peptide by peptide (uncorrected, main fits): hxex's high component
+    had a median population of 0.06 (below 0.05 in 495 spectra) and fD 0.86 (above 1 in 422),
+    with n at its bound (1.2 times the amides, the same bound as pyHXExpress's `Nex_Max_Scale`)
+    in 780; pyHXExpress's had population 0.34 and fD 0.45. Scored by least squares on hxex's
+    spectra, pyHXExpress's solution was better in 905 of 1,034, which first looked like an
+    optimiser trap in hxex; **under hxex's own loss it is not**: the run estimated the noise from
+    replicates, so 1,024 of these spectra were fitted with the Poisson loss, under which the
+    stored fit beats pyHXExpress's solution in 1,025 of 1,034, and hxex's optimiser started from
+    pyHXExpress's solution moves away from it in 1,006 and ends at the stored loss (median
+    difference 0). The Poisson loss weights the low-intensity tail more than least squares
+    (pyHXExpress, `Y_ERR = 1`) and is best served by a small component reaching into the high
+    mass tail; that many starts end at the same loss also shows the K=2 split is poorly
+    determined here. **Refitted with the Gaussian noise model** (every WT spectrum, K = 1 and 2,
+    191 s on the CPU) hxex agrees with pyHXExpress: high component fD 0.40 and population 0.40
+    (pyHXExpress 0.45 and 0.34), fD above 1 in 46 (54), within 0.1 in both fD and population of
+    pyHXExpress in 638 of 1,034 (232 with Poisson), correlation 0.75 (0.23). The selected K
+    barely moved (K=1/2: 696/338 against 702/300 and 32 at K=3). Also from pyHXExpress's code:
+    its reported `Dabs_k` and `pop_k` are means over the bootstrap draws whose populations lie
+    within `Pop_Thresh` and `1 - Pop_Thresh`, not the main fit. Open for the owner: the noise
+    model for K=2 decompositions (the Phase 5 choice). Decided (owner): the fit's bound on `n`
+    stays a user setting, and the analysis filters K >= 2 descriptions (`SpeciesFilters`): per
+    spectrum, populations within 5 to 95 % and no component above fD 1.1; per peptide and time,
+    fD error below 0.25. With them, the WT 4 s residue values against the owner's
+    (`B5phospho_fitsdf_byres`): stored Poisson fits, 106 peptides keep K=2, correlation 0.96
+    (K=1), 0.94 (rank 1), 0.84 (rank 2; medians 0.63 and 0.62); Gaussian refit, 181 peptides,
+    0.98, 0.96 and 0.93 (rank 2 medians 0.56 and 0.62). (A first version filtered on the fitted
+    `n` above 1.1 times the amides, which kept only 50 peptides and correlated 0.70; the owner
+    meant `n * p`, the reported deuteration.) The K=1-between-ranks filter (per peptide and time, K=1 value
+    between the K=2 ranks) removes 388 descriptions over the whole benchmark (stored fits) and
+    100 over WT (Gaussian refit), but at WT 4 s only one and none, so the correlations above do
+    not change. (Setting `SpeciesFilters.k1_between_ranks`.)
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

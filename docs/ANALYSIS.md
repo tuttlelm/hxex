@@ -10,7 +10,9 @@ analyses.
 Status (2026-10-13): phase 1 in progress. Built: the species uptake table
 (`hxex.analysis.species_uptake`), residue-level values (`residue_map`), coverage tables
 (`coverage_table`), the coverage map and the redundancy/resolution plot
-(`hxex.report.coverage`). Next: residue profiles. The peptide (MS1) branch comes first.
+(`hxex.report.coverage`), the filters of K >= 2 descriptions (`SpeciesFilters`) and residue
+profiles (`hxex.report.residues`). Next: the one-or-two-population choice (phase 2). The peptide
+(MS1) branch comes first.
 
 ## Ground rules
 
@@ -90,6 +92,23 @@ in the published work; where it matters, a component is named by its rank.
   peptides, or spectra (replicates and charge states) on request, as the owner's earlier
   figures did. The coverage map draws one bar per peptide (charge states and replicates
   combined) in the owner's style (the CET-L20 "gouldian" colour scale pyHDX uses).
+- **Why fixed K** (owner, 2026-10-13): the best-K fit judges each spectrum on its own (K=1 only
+  says that spectrum does not justify more); since many spectra report on each residue, the
+  fixed K=1 and K=2 fits are aggregated per rank, and whether the data support more than one
+  population is judged per residue (or region). The K=1 fit stands for the average, which holds
+  while the populations are not far apart.
+- **Filters of K >= 2 descriptions** (`SpeciesFilters`; the owner's pyHXExpress practice,
+  2026-10-13): per spectrum before combining, every population within 5 to 95 % and no
+  component above fD 1.1 (`n * p` over the amides, as reported: beyond full deuteration is not
+  physical; the fit's own bound on `n` stays the run setting `n_max_factor`); per peptide and
+  time after combining, every rank's fD error below 0.25 and the K=1 value between the lowest
+  and highest rank (`k1_between_ranks`, owner 2026-10-13: the same condition the population choice applies
+  per residue, here also per peptide). K=1 is not filtered. On the
+  intact-peptide benchmark they bring the K=2 residue values in line with the owner's
+  pyHXExpress analysis (HISTORY item 49). The K=2 split depends on the noise model: the Poisson
+  loss of the replicate noise estimate puts a small component in the high-mass tail, least
+  squares (the default, and pyHXExpress) a moderate split; the choice is the Phase 5 noise-model
+  decision.
 - **Combining** replicates and charge states: the mean, with the standard error
   `sqrt(max(mean(se_i^2), s^2) / n)` (the larger of the bootstrap variance and the observed
   scatter, so neither counts twice). **Charge trend** flag: the lowest and highest charge state
@@ -98,10 +117,13 @@ in the published work; where it matters, a component is named by its rank.
 - **One or two populations** (pyHXExpress `choose_fits`): per residue (or peptide) and time,
   the two-population description is kept when the populations are separated at a stated
   confidence (`(high - low) - z (se_low + se_high) >= 0`), both standard errors are below a
-  limit and the rank-1 population (from the lever rule with the K=1 fD) is inside
-  `[min_pop, 1 - min_pop]`; otherwise the K=1 value is used. Output: fD at K=2 rank 1 and rank 2
-  and at K=1, and the K=2 rank-1 population, with standard errors. Built on the selected K, the fixed-K bootstraps and
-  the review layer.
+  limit (0.25), the K=1 value lies between them (`fD_low < fD_avg < fD_high`, with `fD_avg`
+  from the K=1 fits; owner, 2026-10-13), and the rank-1 population from the lever rule,
+  `(fD_high - fD_avg) / (fD_high - fD_low)`, is inside `[min_pop, 1 - min_pop]`; otherwise the
+  K=1 value is used. Output: fD at K=2 rank 1 and rank 2 and at K=1, and the K=2 rank-1
+  population, with standard errors (the error of the lever-rule population propagated
+  correctly, unlike `choose_fits`). Built on the fixed-K values, the filters above and the review
+  layer.
 - **Comparisons within a run.** Differences between samples (a reference sample against each
   other) per peptide and per residue, with propagated standard errors and a significance rule;
   averages over user-defined regions of the sequence (pyHXExpress `group_fits`).
