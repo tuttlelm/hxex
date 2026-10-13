@@ -62,15 +62,77 @@ def log_binom_pmf(b: torch.Tensor, n: torch.Tensor, p: torch.Tensor) -> torch.Te
     return torch.where(valid, log_pmf, torch.full_like(log_pmf, -1e10))
 
 
+@dataclass(frozen=True)
+class IntegerGrid:
+    """Bins that are whole numbers (0 or more), prepared for :func:`convolve`: the integers
+    ``0 .. U-1`` the pmf is needed at (``u``, ``(U, 1, 1)``), and for each shape point ``j`` and
+    bin ``b`` the integer ``b - j`` (``index``, ``(L*B, M, 1)``, clamped at 0) and whether it
+    is at least 0 (``inside``, ``(L, B, M, 1)``). ``consecutive`` is True when every
+    measurement's bins are ``0, 1, 2, ...`` (then the shifts are slices, see :func:`convolve`),
+    and ``real`` (``(B, M, 1)``) marks the bins that are not padding."""
+
+    u: torch.Tensor
+    index: torch.Tensor
+    inside: torch.Tensor
+    consecutive: bool = False
+    real: torch.Tensor | None = None
+
+
+def integer_grid(b: torch.Tensor, length: int) -> IntegerGrid | None:
+    """The :class:`IntegerGrid` of the bins ``b`` (``(B, M)``) for shapes of ``length`` points,
+    or None if a bin is not a whole number of 0 or more (then :func:`convolve` evaluates the
+    pmf at every shifted bin)."""
+    if b.numel() == 0 or not bool(torch.equal(b, b.round())) or bool((b < 0).any()):
+        return None
+    n_bins, m = b.shape
+    j = torch.arange(length, device=b.device).view(length, 1, 1)
+    shifted = b.long().unsqueeze(0) - j  # (L, B, M)
+    rows = torch.arange(n_bins, dtype=b.dtype, device=b.device).unsqueeze(1)
+    # consecutive: each column is 0, 1, ..., n-1 and then zeros (the padding)
+    real = (b == rows).long().cumprod(dim=0).bool()
+    consecutive = bool(((b == rows) | (~real & (b == 0))).all())
+    if consecutive:
+        u = rows.view(-1, 1, 1)
+    else:
+        u = torch.arange(int(b.max()) + 1, dtype=b.dtype, device=b.device).view(-1, 1, 1)
+    return IntegerGrid(u=u, index=shifted.clamp(min=0).reshape(length * n_bins, m, 1),
+                       inside=(shifted >= 0).unsqueeze(3), consecutive=consecutive,
+                       real=real.unsqueeze(2))
+
+
 def convolve(
-    b: torch.Tensor, n: torch.Tensor, p: torch.Tensor, shape_w: torch.Tensor
+    b: torch.Tensor,
+    n: torch.Tensor,
+    p: torch.Tensor,
+    shape_w: torch.Tensor,
+    grid: IntegerGrid | None = None,
 ) -> torch.Tensor:
     """Each binomial component convolved with its shape: ``sum_j D[j] * B(b - j; n, p)``.
 
     ``b`` is ``(B, M)``, ``n`` and ``p`` are ``(M, K)``, ``shape_w`` is ``(L, M, K)`` (see
     :func:`shape_weights`). Returns ``(B, M, K)``. The shape index is vectorised.
+
+    With ``grid`` (:func:`integer_grid` of ``b``; the bins are whole numbers), the pmf is
+    evaluated once at each integer and gathered for every shifted bin, instead of once per
+    shift and bin: the same values, about ``L`` times fewer special-function evaluations. When
+    every measurement's bins are ``0, 1, 2, ...`` the shifted pmfs are windows of one padded
+    array (no gather); padded positions (bin 0, masked out of every loss) get the value of bin
+    0 as before.
     """
     length, m, k = shape_w.shape
+    if grid is not None and grid.consecutive:
+        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k))  # (B, M, K)
+        pmf = torch.where(valid, log_pmf.exp(), torch.zeros_like(log_pmf))
+        padded = torch.cat([pmf.new_zeros(length - 1, m, k), pmf], dim=0)
+        windows = padded.unfold(0, length, 1)  # (B, M, K, L): pmf at b - (L-1) + i
+        out = (windows * shape_w.flip(0).permute(1, 2, 0)).sum(dim=-1)
+        return torch.where(grid.real, out, out[:1])  # padding is bin 0, as row 0
+    if grid is not None:
+        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k))  # (U, M, K)
+        pmf = torch.where(valid, log_pmf.exp(), torch.zeros_like(log_pmf))
+        shifted = pmf.gather(0, grid.index.expand(-1, -1, k)).view(length, b.shape[0], m, k)
+        shifted = torch.where(grid.inside, shifted, torch.zeros_like(shifted))
+        return (shape_w.unsqueeze(1) * shifted).sum(dim=0)
     j = torch.arange(length, dtype=b.dtype, device=b.device).view(length, 1, 1, 1)
     bj = b.unsqueeze(0).unsqueeze(3) - j  # (L, B, M, 1)
     log_pmf, valid = _log_binom(bj, n.view(1, 1, m, k), p.view(1, 1, m, k))
@@ -190,6 +252,7 @@ class MixtureBatch(nn.Module):
         self.n_raw = nn.Parameter(n_raw.clone())
         self.logit_p = nn.Parameter(logit_p.clone())
         self.set_noise_kind(noise_kind)
+        self.grid = integer_grid(batch.b, shape_w.shape[0])  # None for non-integer bins
 
     def set_noise_kind(self, noise_kind: str | Sequence[str]) -> None:
         """Change the noise model: one name for all measurements, or one per measurement."""
@@ -222,12 +285,13 @@ class MixtureBatch(nn.Module):
 
     def predict(self) -> torch.Tensor:
         """Predicted intensity at every (padded) bin, ``(B_max, M)``."""
-        conv = convolve(self.b, self.ns, self.ps, self.shape_w)
+        conv = convolve(self.b, self.ns, self.ps, self.shape_w, self.grid)
         return (self.amplitudes.unsqueeze(0) * conv).sum(dim=2)
 
     def components(self) -> torch.Tensor:
         """Predicted intensity of every component, ``(B_max, M, K)``."""
-        return self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w)
+        return self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
+                                                       self.grid)
 
     def nll(self, obs: torch.Tensor) -> torch.Tensor:
         """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``."""

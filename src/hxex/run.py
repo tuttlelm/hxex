@@ -68,9 +68,13 @@ UNITS = 1000  # the ``total`` of the progress hook
 _FINISH = 10  # the last units: controls, quality flags, writing, figures
 CPU_BUDGET = 4 * 2**30  # bytes per chunk on the CPU unless set
 GPU_SHARE = 0.5  # share of the free GPU memory used by one chunk unless set
-# memory of the fit (the bootstrap needs less) in units of one pmf array: measured on the GPU,
-# the peak was 5.2 to 5.9 times 12 such arrays for 94 to 542 Bimodal measurements (float32)
-WORK_FACTOR = 75.0
+# memory of the fit (the bootstrap needs less) in units of one pmf array (shape points x bins x
+# components per measurement). Bins that are whole numbers (every picked spectrum) use the
+# integer convolution: peaks of 7.6 to 9.2 arrays measured on the CPU and the GPU for 945 and
+# 3,727 measurements (docs/HISTORY.md item 46), so 12. Other bins evaluate the pmf at every
+# shifted bin: 5.2 to 5.9 times 12 arrays on the GPU for 94 to 542 Bimodal measurements, so 75.
+WORK_FACTOR = 12.0
+WORK_FACTOR_DIRECT = 75.0
 
 
 @dataclass(frozen=True)
@@ -219,12 +223,20 @@ class RunResult:
         )
 
 
-def chunk_bytes(n_bins: int, shape_len: int, k_max: int, n: int, itemsize: int) -> float:
+def chunk_bytes(n_bins: int, shape_len: int, k_max: int, n: int, itemsize: int,
+                factor: float = WORK_FACTOR) -> float:
     """Estimated memory of a chunk of ``n`` measurements with ``n_bins`` bins and shapes of
     ``shape_len`` entries: the array of the binomial pmf of every shape position, bin and
-    population, times the number of such arrays alive at once (``WORK_FACTOR``, from a
-    measurement of the peak GPU memory of the fit, which grows linearly with the chunk)."""
-    return float(itemsize) * WORK_FACTOR * n_bins * shape_len * k_max * n
+    population, times the number of such arrays alive at once (``factor``: ``WORK_FACTOR`` for
+    whole-number bins, ``WORK_FACTOR_DIRECT`` otherwise; measured peaks, which grow linearly
+    with the chunk)."""
+    return float(itemsize) * factor * n_bins * shape_len * k_max * n
+
+
+def _work_factor(data: Measurements) -> float:
+    """The memory factor of ``data``: whole-number bins use the integer convolution."""
+    whole = all(len(b) == 0 or (np.all(b == np.round(b)) and b.min() >= 0) for b in data.bins)
+    return WORK_FACTOR if whole else WORK_FACTOR_DIRECT
 
 
 def default_budget(config: RunConfig) -> int:
@@ -248,6 +260,7 @@ def plan_chunks(
     Series are ordered by their widest spectrum so that a chunk has similar widths, which keeps
     the padding small; the groups cover every measurement once."""
     shape_len = max(len(s) for s in data.shapes)
+    factor = _work_factor(data)
     widths = np.array([len(b) for b in data.bins])
     series = [np.flatnonzero(data.data_id == s) for s in np.unique(data.data_id)]
     series.sort(key=lambda rows: -int(widths[rows].max()))
@@ -257,7 +270,8 @@ def plan_chunks(
     for rows in series:
         if current:
             width = max(int(widths[r].max()) for r in [*current, rows])
-            fits = chunk_bytes(width, shape_len, k_max, count + len(rows), itemsize) <= budget
+            fits = chunk_bytes(width, shape_len, k_max, count + len(rows), itemsize,
+                               factor) <= budget
             if max_chunk is not None and count + len(rows) > max_chunk:
                 fits = False
             if not fits:
@@ -269,7 +283,8 @@ def plan_chunks(
         chunks.append(current)
     out = [np.sort(np.concatenate(group)) for group in chunks]
     for rows in out:
-        need = chunk_bytes(int(widths[rows].max()), shape_len, k_max, len(rows), itemsize)
+        need = chunk_bytes(int(widths[rows].max()), shape_len, k_max, len(rows), itemsize,
+                           factor)
         if need > budget:
             log.warning(
                 "a chunk of %d measurements needs about %.1f GiB, over the budget of %.1f GiB "

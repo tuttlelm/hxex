@@ -442,6 +442,9 @@ and "Phase 2 status"):
 
 - Device and dtype are explicit engine settings, not module globals; the single-measurement code
   path and `mean_bounds` are dropped.
+- float32 by default on the CPU as well as the GPU (the prototype used float64 on the CPU):
+  1.5 times faster, and the selected K agrees with the GPU run for 99.75 % of the intact-peptide
+  benchmark; `dtype = "float64"` remains an option (item 46).
 - `n_max` is `n_max_factor` times the exchangeable sites (default 1.2).
 - Gradient clipping per measurement, no L-BFGS (`lbfgs_steps=0`; a per-measurement
   Levenberg-Marquardt polish instead), so a spectrum's fit does not depend on the rest of the
@@ -573,6 +576,10 @@ Planned, not built:
   Update: confirmed by the benchmark (item 32): the CPU is fine for fits but not for full
   bootstraps at that size; float32 and less single-threaded Python are possible speed-ups, not
   done.
+  Update: the CPU fit of that benchmark went from 77.4 to 17.1 min (item 46: the integer
+  convolution, float32, measured chunk memory). Not done: the k-means starts (single-threaded
+  Python, about 10 % of a fit) and the thread count (12 threads beat the default 24 by 7 to
+  15 % on a 24-core CPU).
 - **Memory and plots at 10,000+ fits:** figures must be selective by default.
   Resolved: `PlotConfig` draws the `flagged` series by default and `write_figures` makes and
   releases one series at a time (item 31).

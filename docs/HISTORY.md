@@ -1237,8 +1237,9 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       wilburnlab/constellation (which has no format decoding of its own). No `.exe` and no
       conversion step. pythonnet is the optional extra `hxex[thermo]` (lower bound 3.0.3, checked
       to load the assemblies); the runtime is pythonnet's choice (Mono on Linux and macOS, the
-      .NET Framework on Windows, .NET 8+ with `PYTHONNET_RUNTIME=coreclr`; only Mono 6.12 was
-      tested). The assemblies are the user's (they come with ThermoRawFileParser), found through
+      .NET Framework on Windows, .NET 8+ with `PYTHONNET_RUNTIME=coreclr`; Mono 6.12 tested here,
+      and the owner confirmed Windows 11 with both the built-in .NET Framework and .NET 8 on
+      2026-10-13). The assemblies are the user's (they come with ThermoRawFileParser), found through
       `thermo_dir` or `HXEX_THERMO_DIR`; hxex never bundles or downloads them. A pure-Python
       decoder of the format was rejected as too large and fragile for now.
     - API: `ThermoFile` mirrors `MzmlFile` (`scans()`, `scan()`, `read_scans()`); `read_thermo`
@@ -1321,6 +1322,42 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
       all (read 3 s, pick 1 s, fit 32 s, bootstrap 55 s), selected K 193/373. Ctrl-C during the
       bootstrap stopped within 5 s and left the fit bundle; `hxex resume` completed it with the
       same K distribution. The per-entry "reading" message of the folder readers is now debug.
+
+46. **CPU speed (2026-10-13; intact-peptide benchmark, Threadripper 3960X, 24 cores).** A fit of
+    100 series (1,847 measurements, K = 1 to 3, the benchmark's settings) took 272 s on the CPU in
+    float64 with PyTorch's default 24 threads, 20 cores busy throughout. Profiled, the binomial
+    convolution was most of it: the pmf was evaluated (two `lgamma`, an `exp`) at every shape
+    point and bin, an `(L, B, M, K)` array per step.
+    - **Integer convolution** (`hxex.model.integer_grid`, `IntegerGrid`): picked bins are whole
+      numbers, so `b - j` takes only `B` values. The pmf is evaluated once per integer and the
+      shifts are windows of one padded array (`unfold`) when every measurement's bins are 0, 1,
+      2, ... (all picked data), or gathered otherwise; other bins keep the direct evaluation.
+      The values are the same (bitwise on the benchmark subset; tests check values to 1e-13 and
+      gradients to 1e-9 for all three paths); padded positions keep their bin-0 value.
+      `MixtureBatch` builds the grid once. A batched matrix product and a grouped 1-D
+      convolution were tried and were slower than the gather.
+    - **Polish**: the Levenberg-Marquardt Jacobian came from `vmap(jacfwd)` per measurement on
+      the direct convolution; it is now 3K forward-mode passes of the batched model (one per
+      parameter column; each measurement depends on its own row only), with the integer path.
+    - Timings of the 100 series: 272 s, then 143 s (gather), 130 s (batched polish), 86 s
+      (windows), all float64 with 24 threads, losses equal to 6 digits; float32: 56.5 s (24
+      threads), 52.5 s (12). Threads in float64: 8: 79 s, 12: 73 s, 24: 86 s, 48: 174 s (the
+      48 are hardware threads of 24 cores).
+    - **float32 by default on the CPU** (`Backend.dtype = "auto"` is now float32 everywhere; the
+      prototype used float64 on the CPU). On the 100 series it changed the selected K of 3
+      measurements (1,386/438/23 to 1,389/438/20).
+    - **Chunk memory**: the run stage sized CPU chunks with a factor measured for the direct
+      convolution (75 pmf-sized arrays per measurement). Measured peaks with the integer
+      convolution: 9.2 on the CPU (945 and 3,727 measurements, float32) and 7.6 to 8.5 on the
+      GPU, so `WORK_FACTOR` is 12 (75, `WORK_FACTOR_DIRECT`, for non-integer bins): about six
+      times larger chunks for the same budget.
+    - **The whole benchmark** (26,181 measurements) through `analyse` on the CPU with the
+      defaults: fit in 17.1 min (77.4 before), selected K 21,906/4,008/267 (GPU run:
+      21,903/4,008/270; old CPU run: 21,950/3,953/278), the same K as the GPU run for 99.75 %.
+      The full test suite, the slow regression tests and the GPU parity tests pass.
+    - Not done: the k-means starts (scipy, per measurement in Python, about 10 % of a fit) and
+      a thread setting (process-wide in PyTorch, so for the command line rather than the
+      library).
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

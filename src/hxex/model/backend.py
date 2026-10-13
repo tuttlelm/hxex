@@ -17,8 +17,10 @@ class Backend:
     """Device and dtype of every tensor the engine creates (nothing is set globally).
 
     ``device``: ``'auto'`` (CUDA if available, else CPU), ``'cpu'``, ``'cuda'`` or ``'cuda:N'``.
-    ``dtype``: ``'auto'`` (float32 on CUDA, float64 on CPU, as the prototype did), ``'float32'``
-    or ``'float64'``.
+    ``dtype``: ``'auto'`` (float32, on the GPU and on the CPU), ``'float32'`` or ``'float64'``.
+    The prototype used float64 on the CPU; float32 is about 1.5 times faster there and selects the
+    same K for all but a few measurements in a thousand (docs/HISTORY.md item 46), so float64 is
+    the setting to choose for the last digits.
     """
 
     device: str = "auto"
@@ -41,7 +43,7 @@ class Backend:
 
     def torch_dtype(self) -> torch.dtype:
         if self.dtype == "auto":
-            return torch.float32 if self.torch_device().type == "cuda" else torch.float64
+            return torch.float32
         return getattr(torch, self.dtype)
 
     def tensor(self, x: Any) -> torch.Tensor:

@@ -8,11 +8,13 @@ Device and precision are an explicit :class:`Backend`, never global.
 from .backend import Backend
 from .mixture import (
     NOISE_KINDS,
+    IntegerGrid,
     MixtureBatch,
     PaddedBatch,
     aic,
     bic,
     convolve,
+    integer_grid,
     log_binom_pmf,
     logit,
     n_params,
@@ -24,11 +26,13 @@ from .mixture import (
 __all__ = [
     "NOISE_KINDS",
     "Backend",
+    "IntegerGrid",
     "MixtureBatch",
     "PaddedBatch",
     "aic",
     "bic",
     "convolve",
+    "integer_grid",
     "log_binom_pmf",
     "logit",
     "noise_loss",

@@ -15,6 +15,7 @@ from hxex.model import (
     aic,
     bic,
     convolve,
+    integer_grid,
     log_binom_pmf,
     logit,
     n_params,
@@ -44,12 +45,11 @@ def gold_inputs(backend=CPU64):
 
 def test_backend_resolution():
     cpu = Backend("cpu")
-    assert cpu.torch_device().type == "cpu" and cpu.torch_dtype() == torch.float64
-    assert Backend("cpu", "float32").torch_dtype() == torch.float32
+    assert cpu.torch_device().type == "cpu" and cpu.torch_dtype() == torch.float32  # the default
+    assert Backend("cpu", "float64").torch_dtype() == torch.float64  # the option
     auto = Backend()
     expected = "cuda" if torch.cuda.is_available() else "cpu"
-    assert auto.torch_device().type == expected
-    assert auto.torch_dtype() == (torch.float32 if expected == "cuda" else torch.float64)
+    assert auto.torch_device().type == expected and auto.torch_dtype() == torch.float32
 
 
 def test_backend_tensor_and_serialisation():
@@ -300,3 +300,42 @@ def test_mixture_loss_is_continuous_in_n_with_finite_gradients():
         assert torch.isfinite(m.n_raw.grad).all()
         out.append(loss.item())
     assert abs(out[1] - out[0]) < 1e-3
+
+
+@pytest.mark.parametrize("layout", ["consecutive", "integer", "fractional"])
+def test_the_fast_convolutions_equal_the_direct_one(layout):
+    """With whole-number bins the pmf is evaluated once per integer (gathered, or as windows when
+    every measurement's bins are 0, 1, 2, ...): the same values and gradients as evaluating it at
+    every shifted bin, padding included."""
+    rng = np.random.default_rng(3)
+    sizes = [12, 7, 20, 1, 15]
+    if layout == "consecutive":
+        bins = [np.arange(s, dtype=float) for s in sizes]
+    elif layout == "integer":  # whole numbers, but not 0, 1, 2, ... (an offset and a gap)
+        bins = [np.arange(s, dtype=float) + 2 for s in sizes]
+        bins[2] = np.delete(np.arange(21, dtype=float), 5)
+    else:
+        bins = [np.arange(s, dtype=float) + 0.5 for s in sizes]
+    obs = [rng.uniform(0, 5, len(b)) for b in bins]
+    shapes = [rng.uniform(0.1, 1, int(rng.integers(1, 9))) for _ in bins]
+    k = 3
+    batch = PaddedBatch.from_arrays(bins, obs, np.full(len(bins), 25.0), CPU64)
+    shape_w = shape_weights(shapes, k, CPU64)
+    grid = integer_grid(batch.b, shape_w.shape[0])
+    assert (grid is None) == (layout == "fractional")
+    if grid is not None:
+        assert grid.consecutive == (layout == "consecutive")
+    n = torch.tensor(rng.uniform(0.3, 24, (len(bins), k)), requires_grad=True)
+    p = torch.tensor(rng.uniform(0.05, 0.9, (len(bins), k)), requires_grad=True)
+    direct = convolve(batch.b, n, p, shape_w)
+    fast = convolve(batch.b, n, p, shape_w, grid)
+    np.testing.assert_allclose(fast.detach().numpy(), direct.detach().numpy(), rtol=1e-13,
+                               atol=1e-300)
+    weights = torch.tensor(rng.normal(size=direct.shape))
+    g_direct = torch.autograd.grad((direct * weights).sum(), (n, p))
+    g_fast = torch.autograd.grad((convolve(batch.b, n, p, shape_w, grid) * weights).sum(), (n, p))
+    for a, b in zip(g_fast, g_direct, strict=True):
+        np.testing.assert_allclose(a.numpy(), b.numpy(), rtol=1e-9, atol=1e-12)
+    zeros = CPU64.tensor(np.zeros((len(bins), k)))
+    model = MixtureBatch(batch, shape_w, zeros, zeros, zeros)
+    assert (model.grid is None) == (layout == "fractional")

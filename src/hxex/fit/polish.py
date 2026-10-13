@@ -16,19 +16,20 @@ import warnings
 
 import numpy as np
 import torch
-from torch.func import jacfwd, vmap
+from torch.func import jvp
 
 from ..hooks import CancelHook, check_cancel
-from ..model import MixtureBatch, convolve, noise_loss
+from ..model import MixtureBatch, convolve, integer_grid, noise_loss
 
 
-def _predict_one(theta, b, shape_w, n_max, k):
-    """Prediction ``(B,)`` of one measurement from ``theta = [log_A, n_raw, logit_p]``."""
-    amp = torch.exp(theta[:k])
-    n = n_max * torch.sigmoid(theta[k : 2 * k])
-    p = torch.sigmoid(theta[2 * k :])
-    conv = convolve(b.unsqueeze(1), n.unsqueeze(0), p.unsqueeze(0), shape_w.unsqueeze(1))
-    return (amp * conv[:, 0, :]).sum(dim=-1)
+def _predict(theta, b, shape_w, n_max, k, grid):
+    """Predictions ``(M, B)`` of every measurement from its row of ``theta = [log_A, n_raw,
+    logit_p]`` (``(M, 3K)``); ``b`` is ``(B, M)``."""
+    amp = torch.exp(theta[:, :k])
+    n = n_max.unsqueeze(1) * torch.sigmoid(theta[:, k : 2 * k])
+    p = torch.sigmoid(theta[:, 2 * k :])
+    conv = convolve(b, n, p, shape_w, grid)  # (B, M, K)
+    return (amp.unsqueeze(0) * conv).sum(dim=2).T
 
 
 def _loss(pred, obs, mask, is_gaussian):
@@ -68,23 +69,30 @@ def lm_polish(
     eye = torch.eye(p_dim, dtype=theta_all.dtype, device=theta_all.device)
 
     def make_fns(b, shape_w, n_max, mask, obs_m, is_gauss):
-        def pred_and_jac(th):
-            def f(t, bb, sw, nm):
-                pr = _predict_one(t, bb, sw, nm, k)
-                return pr, pr
+        bt = b.T  # (B, M), as the model holds it
+        grid = integer_grid(bt, shape_w.shape[0])
 
+        def predict(th):
+            return _predict(th, bt, shape_w, n_max, k, grid)
+
+        def pred_and_jac(th):
+            # each measurement's prediction depends on its own row only, so one forward-mode
+            # pass per parameter column gives that column of every measurement's Jacobian
+            cols = []
             with warnings.catch_warnings():
                 # torch's own forward-mode rules are built with torch.jit.script, which recent
                 # torch deprecates: the warning (once per process) is about torch, not hxex
                 warnings.filterwarnings("ignore", message=r".*torch\.jit\.script.*deprecated",
                                         category=FutureWarning)
-                jac, pred = vmap(jacfwd(f, has_aux=True), in_dims=(0, 0, 1, 0))(
-                    th, b, shape_w, n_max)
-            return pred, jac
+                for q in range(p_dim):
+                    tangent = torch.zeros_like(th)
+                    tangent[:, q] = 1.0
+                    pred, col = jvp(predict, (th,), (tangent,))
+                    cols.append(col)
+            return pred, torch.stack(cols, dim=2)  # (M, B), (M, B, 3K)
 
         def loss_of(th):
-            pred = vmap(_predict_one, in_dims=(0, 0, 1, 0, None))(th, b, shape_w, n_max, k)
-            return _loss(pred, obs_m, mask, is_gauss)
+            return _loss(predict(th), obs_m, mask, is_gauss)
 
         return pred_and_jac, loss_of
 
