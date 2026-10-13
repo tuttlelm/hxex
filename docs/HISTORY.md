@@ -1484,6 +1484,22 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     `--bundle`, `--out`, `--reference`, `--format`, `--threads`). On the intact-peptide
     benchmark (5 samples, 5 time points): 8 tables and 66 figures in 38 s on the CPU.
 
+53. **Comparing separate runs (phase 4; 2026-10-13).** `hxex.analysis.RunSet` holds several runs'
+    results by name and relabels their samples `run:sample`; `species_uptake` and
+    `compare_peptides` (and so the residue map, the choice, the comparisons, regions and
+    `write_analysis`) take it like one run. Also `compare_settings` (where the recorded run
+    settings differ, and which differences matter), `check_identity` (species whose position or
+    amide count differs between runs), `compare_choices` (residues whose one-or-two choice
+    differs; also written within a run), `plot_butterfly`, `[analysis.runs]` and
+    `hxex analyse NAME=BUNDLE ...`. Figure file names replace characters a file system refuses
+    (the `:`) with `_`. Check on the intact-peptide benchmark loaded twice as runs A and B:
+    `A:WT` against `B:<variant>` reproduces the within-run WT against each variant exactly (3,872
+    peptide-time rows; deltas, p values, significance and `delta_crit` 0.1119 identical), with
+    no identity or settings differences; 5.6 s against 2.5 s within the run. Only one run of the
+    benchmark exists, so differences between genuinely separate runs are not yet measured.
+    Undecided: the rule for one population in one run and two in the other (ANALYSIS.md
+    "Later parts", recommended: K=1 always, K=2 where both keep it, disagreements reported).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

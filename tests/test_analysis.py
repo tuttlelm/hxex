@@ -572,3 +572,158 @@ end = 10
     assert (tmp_path / "from_project" / "compare_peptides.csv").is_file()
     project.write_text(project.read_text() + "[analysis.extra]\n")
     assert cli.main(["-q", "analyse", str(project)]) == 1  # an unknown key is an error
+
+
+# --- separate runs ------------------------------------------------------------------------------
+
+def _with_settings(results, **changes):
+    """``results`` whose recorded run settings have ``changes`` (dotted names)."""
+    import copy
+    import dataclasses
+
+    configs = copy.deepcopy(results.settings.configs)
+    for name, value in changes.items():
+        *path, last = name.split(".")
+        node = configs["run"]
+        for part in path:
+            node = node[part]
+        node[last] = value
+    return dataclasses.replace(results, settings=dataclasses.replace(results.settings,
+                                                                     configs=configs))
+
+
+def test_runs_are_analysed_like_samples(results):
+    from hxex.analysis import RunSet, check_identity, compare_peptides, compare_settings
+
+    rs = RunSet({"A": results, "B": results})
+    up = species_uptake(rs)
+    assert set(up.sample.tolist()) == {"A:S", "B:S"}
+    a, b = up.select(up.sample == "A:S"), up.select(up.sample == "B:S")
+    np.testing.assert_array_equal(a.fD, b.fD)
+    np.testing.assert_array_equal(a.fD_se, b.fD_se)
+    pc = compare_peptides(rs, "A:S")
+    assert set(pc.sample.tolist()) == {"B:S"} and len(pc) == len(set(a.time.tolist()))
+    np.testing.assert_allclose(pc.delta, 0.0)
+    assert not pc.significant.any()
+    assert len(check_identity(up)) == 0 and len(compare_settings(rs)) == 0
+    with pytest.raises(ValueError, match="samples: A:S, B:S"):
+        compare_peptides(rs, "S")
+    for bad in ({}, {"a:b": results}, {"": results}):
+        with pytest.raises(ValueError):
+            RunSet(bad)
+
+
+def test_settings_that_matter_are_reported(results, caplog):
+    from hxex.analysis import RunSet, compare_settings
+
+    other = _with_settings(results, **{"fit.noise.model": "poisson", "fit.seed": 7,
+                                       "max_chunk": 10})
+    with caplog.at_level("WARNING", logger="hxex.analysis.runs"):
+        diff = compare_settings({"A": results, "B": other})
+    got = {str(s): (bool(m), list(v)) for s, m, v in zip(diff.setting, diff.matters, diff.values,
+                                                          strict=True)}
+    assert got == {"fit.noise.model": (True, ["gaussian", "poisson"]),
+                   "fit.seed": (False, ["0", "7"])}  # max_chunk is ignored
+    assert "fit.noise.model" in caplog.text and "fit.seed" not in caplog.text
+    assert list(diff.columns()) == ["setting", "matters", "A", "B"]
+    shifted = _with_settings(results, **{"picker.nterm_subtract": 2})
+    with pytest.raises(ValueError, match="N-terminal"):
+        species_uptake(RunSet({"A": results, "B": shifted}))
+
+
+def test_identity_is_checked_between_runs():
+    import dataclasses
+
+    from hxex.analysis import check_identity
+
+    up = table([("A:S", "AKLPGSTV", 2, 4.0, 0.3, 0.01), ("B:S", "AKLPGSTV", 3, 4.0, 0.3, 0.01),
+                ("A:S", "GSTVED", 6, 4.0, 0.6, 0.01), ("B:V", "GSTVED", 6, 4.0, 0.6, 0.01),
+                ("A:S", "TVEDRWQ", 8, 4.0, 0.6, 0.01), ("B:S", "TVEDRWQ", 8, 4.0, 0.6, 0.01)])
+    up = dataclasses.replace(up, n_amides=np.array([10.0, 10.0, 10.0, 10.0, 6.0, 5.0]))
+    check = check_identity(up)
+    issues = {(str(p), str(r)): (str(s), str(i)) for p, r, s, i in zip(
+        check.peptide, check.run, check.start, check.issue, strict=True)}
+    assert issues == {("AKLPGSTV", "A"): ("2", "position"), ("AKLPGSTV", "B"): ("3", "position"),
+                      ("TVEDRWQ", "A"): ("8", "amides"), ("TVEDRWQ", "B"): ("8", "amides")}
+
+
+def test_differing_population_choices_are_reported():
+    import dataclasses
+
+    from hxex.analysis import ResidueMap, choose_populations, compare_choices
+
+    rows = [(r, *v) for r in range(1, 4) for v in ((1, 1, 0.4, 0.01), (2, 1, 0.2, 0.01),
+                                                     (2, 2, 0.6, 0.01))]
+    outside = [(r, *v) for r in range(1, 4) for v in ((1, 1, 0.7, 0.01), (2, 1, 0.2, 0.01),
+                                                        (2, 2, 0.6, 0.01))]
+    m, v = choice_map(rows), choice_map(outside)
+    both = ResidueMap(**{f.name: np.concatenate([getattr(m, f.name), getattr(v, f.name)])
+                         for f in dataclasses.fields(ResidueMap)})
+    both = dataclasses.replace(both, sample=np.array(["A:S"] * 9 + ["B:S"] * 9))
+    cc = compare_choices(choose_populations(both), "A:S")
+    assert len(cc) == 3 and cc.two_reference.all() and not cc.two.any() and not cc.agree.any()
+    assert set(cc.reason.tolist()) == {"K=1 outside"}
+    with pytest.raises(ValueError, match="no reference"):
+        compare_choices(choose_populations(both), "S")
+
+
+def test_butterfly_plot():
+    from hxex.analysis import PeptideComparison
+    from hxex.report import plot_butterfly
+
+    n = 4
+    pc = PeptideComparison(
+        sample=np.array(["B:S"] * n), peptide=np.array(["GSTVED", "AKLPGSTV"] * 2),
+        modification=np.array([""] * n), start=np.array([6, 2, 6, 2]),
+        end=np.array([11, 9, 11, 9]), time=np.array([4.0, 4.0, 60.0, 60.0]),
+        value_reference=np.array([0.3, 0.2, 0.6, 0.5]), value_reference_se=np.full(n, 0.01),
+        value=np.array([0.4, 0.2, 0.7, 0.5]), value_se=np.full(n, 0.01),
+        delta=np.array([0.1, 0.0, 0.1, 0.0]), delta_se=np.full(n, 0.01), t=np.zeros(n),
+        p=np.array([0.01, 0.9, 0.01, 0.9]), n_reference=np.full(n, 3), n=np.full(n, 3),
+        significant=np.array([True, False, True, False]), reference="A:S", delta_crit=0.05)
+    fig = plot_butterfly(pc, "B:S")
+    top, bottom = fig.axes
+    lines = {line.get_gid(): line for line in top.lines if line.get_gid()}
+    assert set(lines) == {"butterfly:4:reference", "butterfly:4:sample",
+                          "butterfly:60:reference", "butterfly:60:sample"}
+    # peptides in order of position: 2-9 first
+    np.testing.assert_allclose(lines["butterfly:60:reference"].get_ydata(), [0.5, 0.6])
+    np.testing.assert_allclose(lines["butterfly:60:sample"].get_ydata(), [-0.5, -0.7])
+    assert [t.get_text() for t in bottom.get_xticklabels()] == ["2-9", "6-11"]
+    assert len(plot_butterfly(pc, "B:S", times=[60.0]).axes[0].get_legend().texts) == 1
+    with pytest.raises(ValueError, match="no comparison"):
+        plot_butterfly(pc, "C:S")
+
+
+def test_analyse_separate_runs(two_sample_bundle, tmp_path, capsys):
+    from hxex import cli
+
+    out = tmp_path / "runs"
+    assert cli.main(["-q", "analyse", f"A={two_sample_bundle}", f"B={two_sample_bundle}",
+                     "--reference", "A:S", "--out", str(out), "--format", "png"]) == 0
+    names = {p.name for p in out.iterdir()}
+    for table in ("run_settings", "run_identity", "compare_peptides", "compare_choices"):
+        assert f"{table}.csv" in names
+    assert {"coverage_A_S.png", "butterfly_B_S.png", "butterfly_A_V.png"} <= names
+    rows = (out / "compare_peptides.csv").read_text().splitlines()[1:]
+    assert {r.split(",")[1] for r in rows} == {"A:V", "B:S", "B:V"}  # the compared samples
+    project = tmp_path / "hxex.toml"
+    project.write_text(f"""project = "p"
+[input]
+format = "specexport"
+data_dir = "d"
+[analysis]
+reference = "one:S"
+samples = ["one:S", "two:S"]
+format = "png"
+out = "from_runs"
+[analysis.runs]
+one = "{two_sample_bundle}"
+two = "{two_sample_bundle}"
+""")
+    assert cli.main(["-q", "analyse", str(project)]) == 0
+    assert (tmp_path / "from_runs" / "butterfly_two_S.png").is_file()
+    assert not (tmp_path / "from_runs" / "butterfly_one_V.png").exists()
+    project.write_text(project.read_text().replace('one = "', '"o:ne" = "'))
+    assert cli.main(["-q", "analyse", str(project)]) == 1
+    assert "run name 'o:ne'" in capsys.readouterr().err

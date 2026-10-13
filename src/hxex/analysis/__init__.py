@@ -6,7 +6,9 @@ species (peptide or fragment), time and rank at a fixed K, replicates and charge
 combined; :func:`residue_map` turns the peptides into residue-level values, and
 :func:`coverage_table` gives each sample's redundancy and resolution per residue;
 :func:`choose_populations` decides per residue whether two populations are supported;
-:func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples.
+:func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples;
+a :class:`RunSet` of several runs is analysed like one run whose samples are ``run:sample``
+(:func:`compare_settings`, :func:`check_identity` and :func:`compare_choices` check it).
 """
 
 from .compare import (
@@ -35,12 +37,28 @@ from .residues import (
     exchanging_residues,
     residue_map,
 )
+from .runs import (
+    ChoiceComparison,
+    IdentityCheck,
+    RunSet,
+    SettingsComparison,
+    check_identity,
+    compare_choices,
+    compare_settings,
+)
 from .settings import AnalysisConfig
 from .species import SpeciesFilters, SpeciesUptake, species_uptake
 
 __all__ = [
     "AnalysisConfig",
     "Annotations",
+    "ChoiceComparison",
+    "IdentityCheck",
+    "RunSet",
+    "SettingsComparison",
+    "check_identity",
+    "compare_choices",
+    "compare_settings",
     "PeptideComparison",
     "Region",
     "RegionTable",

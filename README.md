@@ -57,6 +57,7 @@ hxex report results --figures                # figures (and --tables) from the b
 hxex resume results                          # finish a run stopped during its bootstrap
 hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,
                                              # populations, comparisons ([analysis])
+hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs
 ```
 
 Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes to stderr;

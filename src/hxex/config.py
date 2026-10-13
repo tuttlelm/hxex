@@ -348,7 +348,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
 
 ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
                  "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
-                 "exclude_flagged", "format", "out")
+                 "exclude_flagged", "format", "out", "runs")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -366,6 +366,11 @@ def _analysis_from(data: Mapping, base: Path):
                            for k, v in fasta.items()}
     if "out" in values:
         values["out"] = str(_path(base, values["out"], "analysis.out"))
+    if "runs" in values:
+        if not isinstance(values["runs"], Mapping):
+            raise ProjectError("[analysis.runs] must be a table of run name = bundle")
+        values["runs"] = {str(k): str(_path(base, v, f"analysis.runs.{k}"))
+                          for k, v in values["runs"].items()}
     if "filters" in values and isinstance(values["filters"], Mapping):
         from .analysis import SpeciesFilters
 
@@ -627,6 +632,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [[analysis.sites]]",
         "# residue = 19",
         '# label = "S19"',
+        "# [analysis.runs]                 # compare separate runs: samples become run:sample",
+        '# A = "runA.zip"                  # (reference = "A:WT"); default: this project\'s bundle',
+        '# B = "../other/runB.zip"',
         "",
         "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
         "# section turns that stage on; uncomment one to use it.",

@@ -5,15 +5,20 @@ the figures, as :class:`hxex.analysis.AnalysisConfig` says (what ``hxex analyse`
 Tables: ``species_uptake.csv``, ``residues.csv``, ``coverage.csv``, ``populations.csv`` (the
 choice between one and two populations; with K=2), and with a reference sample
 ``compare_peptides.csv`` (K=1 fD, and with K=2 each rank's fD and the rank-1 population),
-``compare_residues.csv``, ``compare_populations.csv`` and, with regions, ``regions.csv``.
+``compare_residues.csv``, ``compare_populations.csv`` and ``compare_choices.csv``, with
+regions ``regions.csv``, and for several runs (a :class:`hxex.analysis.RunSet`) ``run_settings.csv``
+(where their settings differ) and ``run_identity.csv`` (species whose identity differs).
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
 ``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>``,
-``compare_populations_<time>``, ``woods_<sample>_<time>`` and ``regions_<time>``.
+``compare_populations_<time>``, ``woods_<sample>_<time>``, ``butterfly_<sample>`` and
+``regions_<time>``. Characters a file name cannot hold (the ``:`` of ``run:sample``) become
+``_``.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import fields
 from pathlib import Path
 
@@ -21,10 +26,14 @@ import numpy as np
 
 from ..analysis import (
     AnalysisConfig,
+    RunSet,
+    check_identity,
     choose_populations,
+    compare_choices,
     compare_peptides,
     compare_populations,
     compare_residues,
+    compare_settings,
     coverage_table,
     region_summary,
     residue_map,
@@ -32,7 +41,12 @@ from ..analysis import (
 )
 from ..analysis.settings import UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from .compare import plot_region_bars, residue_comparison_figure, woods_figure
+from .compare import (
+    plot_butterfly,
+    plot_region_bars,
+    residue_comparison_figure,
+    woods_figure,
+)
 from .coverage import coverage_figure, plot_redundancy_resolution
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
@@ -49,6 +63,21 @@ def _time_label(time: float, undeut: float) -> str:
     return "undeuterated" if np.isclose(time, undeut) else f"{time:g}s"
 
 
+def _stem(name: str) -> str:
+    """``name`` as a file name on every system."""
+    return re.sub(r'[<>:"/\\|?*\s]', "_", name)
+
+
+def _fd_times(results) -> list[float]:
+    """The fully deuterated control times of the run (or of every run of a RunSet)."""
+    out = []
+    for r in results.runs.values() if isinstance(results, RunSet) else [results]:
+        run = r.settings.run if r.settings is not None else None
+        if run is not None and run.controls is not None and run.controls.fd_time is not None:
+            out.append(float(run.controls.fd_time))
+    return out
+
+
 def write_analysis(
     results,
     config: AnalysisConfig,
@@ -58,8 +87,9 @@ def write_analysis(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> list[Path]:
-    """Compute the analysis of ``results`` (:class:`hxex.report.Results`) and write its tables
-    and figures into ``directory``; returns the files. Relative FASTA paths are taken from
+    """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
+    :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
+    ``directory``; returns the files. Relative FASTA paths are taken from
     ``base``. ``progress(done, total)`` counts the files."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -72,7 +102,8 @@ def write_analysis(
         raise ValueError(f"no sample(s) {', '.join(missing)} in the results")
     if config.reference:
         if config.reference not in present:
-            raise ValueError(f"no reference sample {config.reference!r} in the results")
+            raise ValueError(f"no reference sample {config.reference!r} in the results "
+                             f"(samples: {', '.join(present)})")
         samples = [config.reference] + [s for s in samples if s != config.reference]
     up = up.select(np.isin(up.sample, samples))
     sequences = config.sequences(base)
@@ -82,10 +113,9 @@ def write_analysis(
                               time=coverage_time)
     choice = choose_populations(residues, config.choice) if 2 in config.ks else None
     length = int(residues.residue.max())
-    run = results.settings.run if results.settings is not None else None
-    fd_time = run.controls.fd_time if run is not None and run.controls is not None else None
+    fd_times = _fd_times(results)
     times = list(config.times) or [t for t in sorted(set(up.time.tolist()))
-                                   if fd_time is None or not np.isclose(t, fd_time)]
+                                   if not any(np.isclose(t, f) for f in fd_times)]
     undeut = up.undeut_time
     ann = config.annotations
     marks = ann.marks()
@@ -93,6 +123,9 @@ def write_analysis(
                                "coverage": coverage.columns()}
     if choice is not None:
         tables["populations"] = choice.columns()
+    if isinstance(results, RunSet):
+        tables["run_settings"] = compare_settings(results).columns()
+        tables["run_identity"] = check_identity(up).columns()
     comparisons = {}
     if config.reference:
         ref = config.reference
@@ -124,6 +157,7 @@ def write_analysis(
                 choice, ref, alpha=config.alpha,
                 delta_crit=comparisons["K=2 rank 1 (low D) population"].delta_crit)
             tables["compare_populations"] = _columns(pop_cmp)
+            tables["compare_choices"] = compare_choices(choice, ref).columns()
     regions = None
     if ann.regions:
         regions = region_summary(residues, ann)
@@ -161,6 +195,13 @@ def write_analysis(
                 if all(c.where(sample=s, time=t).any() for _, c in stack):
                     jobs.append((f"woods_{s}_{label}", lambda s=s, t=t: woods_figure(
                         stack, s, t, annotations=ann, length=length, undeut_time=undeut)))
+        k1 = comparisons["K=1 fD"]
+        drawn = [t for t in times if not np.isclose(t, undeut)]
+        for s in others:
+            if drawn and k1.where(sample=s, time=drawn).any():
+                jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
+                    k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
+                    undeut_time=undeut)))
     if regions is not None:
         for t in times:
             if (regions.time == t).any():
@@ -175,7 +216,7 @@ def write_analysis(
         report(progress, n + 1, total)
     for n, (stem, draw) in enumerate(jobs):
         check_cancel(cancel)
-        path = directory / f"{stem}.{config.format}"
+        path = directory / f"{_stem(stem)}.{config.format}"
         draw().savefig(path, dpi=150, bbox_inches="tight")
         written.append(path)
         report(progress, len(tables) + n + 1, total)

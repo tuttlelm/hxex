@@ -11,6 +11,7 @@ from pathlib import Path
 from .compare import Annotations
 from .populations import ChoiceConfig
 from .residues import COUNTS
+from .runs import SEPARATOR
 from .species import SpeciesFilters
 
 FORMATS = ("pdf", "png", "svg")
@@ -30,7 +31,9 @@ class AnalysisConfig:
     ``'spectra'``; ``weight_exponent`` of the residue averaging; ``filters`` (None: none) and
     ``choice`` limits; ``alpha`` of the comparisons; ``annotations`` (regions, sites);
     ``exclude_flagged``; ``format`` of the figure files; ``out``, the output directory (None:
-    beside the bundle)."""
+    beside the bundle); ``runs``: separate runs to compare (run name -> bundle; empty: the one
+    run), whose samples are then named ``run:sample`` everywhere (``reference``, ``samples``,
+    ``fasta``)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -47,8 +50,15 @@ class AnalysisConfig:
     exclude_flagged: bool = False
     format: str = "pdf"
     out: str | None = None
+    runs: Mapping[str, str] | None = None
 
     def __post_init__(self):
+        if self.runs is not None:
+            object.__setattr__(self, "runs", {str(k): str(v) for k, v in self.runs.items()})
+            for name in self.runs:
+                if not name or SEPARATOR in name:
+                    raise ValueError(f"run name {name!r}: must be non-empty without "
+                                     f"{SEPARATOR!r}")
         object.__setattr__(self, "samples", tuple(str(s) for s in self.samples))
         object.__setattr__(self, "times", tuple(float(t) for t in self.times))
         object.__setattr__(self, "ks", tuple(int(k) for k in self.ks))

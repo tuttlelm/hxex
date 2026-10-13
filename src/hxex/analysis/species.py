@@ -149,7 +149,13 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
 def _records(results, ks, exclude_flagged, filters, quiet=False):
     """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
     end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
-    rep)``; with whether the values are corrected, ``nterm_subtract`` and the undeuterated time."""
+    rep)``; with whether each sample's values are corrected (sample -> bool),
+    ``nterm_subtract`` and the undeuterated time. ``results`` may be a
+    :class:`hxex.analysis.RunSet` (its samples are then labelled ``run:sample``)."""
+    from .runs import RunSet
+
+    if isinstance(results, RunSet):
+        return results._records(ks, exclude_flagged, filters, quiet)
     fit, binned = results.fit, results.binned
     if binned is None:
         raise ValueError("the species uptake table needs the picked table (results.binned)")
@@ -245,7 +251,8 @@ def _records(results, ks, exclude_flagged, filters, quiet=False):
                      dropped["fD"], filters.max_fD, dropped["fD_se"], filters.max_fD_se,
                      dropped["k1_between_ranks"])
     undeut = run.reference_time if run is not None else float(np.min(fit.time))
-    return groups, controls is not None, int(nterm), float(undeut)
+    corrected = {str(s): controls is not None for s in np.unique(binned.sample)}
+    return groups, corrected, int(nterm), float(undeut)
 
 
 def species_uptake(
@@ -255,8 +262,9 @@ def species_uptake(
     exclude_flagged: bool = False,
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
 ) -> SpeciesUptake:
-    """The species uptake table of ``results`` (:class:`hxex.report.Results`) at each fixed K in
-    ``ks`` (K values the run fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
+    """The species uptake table of ``results`` (:class:`hxex.report.Results`, or a
+    :class:`hxex.analysis.RunSet` of several runs) at each fixed K in ``ks`` (K values the run
+    fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
     which K >= 2 descriptions are kept; a species and time whose description is not kept has no
     rows at that K.
 
@@ -287,7 +295,7 @@ def species_uptake(
             ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
-            ("corrected", corrected), ("charge_trend", False),
+            ("corrected", corrected[sample]), ("charge_trend", False),
         ):
             cols[name].append(value)
         if len(charges) > 1:

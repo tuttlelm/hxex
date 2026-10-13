@@ -149,7 +149,9 @@ def compare_peptides(
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
     docstring for the hybrid rule). The values are those of
-    :func:`hxex.analysis.species_uptake` with the same filters."""
+    :func:`hxex.analysis.species_uptake` with the same filters. ``results`` may be a
+    :class:`hxex.analysis.RunSet` (samples ``run:sample``; ``delta_crit`` is then pooled over
+    every run)."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if quantity not in QUANTITIES:
@@ -170,7 +172,8 @@ def compare_peptides(
             [x[at] for x in recs])
         ses[(sample, peptide, mod, start, end, time)] = np.array([x[at + 1] for x in recs])
     if reference not in by_sample:
-        raise ValueError(f"no reference sample {reference!r} at K={K} rank {rank}")
+        raise ValueError(f"no reference sample {reference!r} at K={K} rank {rank} (samples: "
+                         f"{', '.join(sorted(by_sample))})")
     # the pooled standard deviation of replicate spectra and the typical replicate count
     num = den = 0.0
     counts = []

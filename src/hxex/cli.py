@@ -9,7 +9,7 @@
     hxex resume BUNDLE                      add the bootstrap to a run that stopped during it
     hxex report BUNDLE                      tables and figures from a saved bundle
     hxex info BUNDLE                        what a bundle holds
-    hxex analyse PROJECT|BUNDLE             the post-fitting analysis: tables and figures
+    hxex analyse PROJECT|BUNDLE...          the post-fitting analysis: tables and figures
 
 The project file is described in :mod:`hxex.config`. Progress and messages go to stderr through
 ``logging`` (``-q`` for warnings only, ``-v`` for more); results and summaries go to stdout.
@@ -91,12 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("analyse", aliases=["analyze"],
                        help="the post-fitting analysis of a bundle: tables and figures")
-    p.add_argument("source", metavar="PROJECT|BUNDLE",
-                   help="a project file (its [analysis] settings and output.bundle) or a bundle")
+    p.add_argument("source", metavar="PROJECT|BUNDLE", nargs="+",
+                   help="a project file (its [analysis] settings, and [analysis.runs] or "
+                        "output.bundle), a bundle, or several bundles to compare as separate "
+                        "runs (NAME=BUNDLE, or BUNDLE named after its file; samples become "
+                        "NAME:sample)")
     p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis)")
-    p.add_argument("--reference", help="the reference sample (instead of [analysis] reference)")
+    p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
+                                       "run:sample for several runs)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
     _threads_option(p)
@@ -431,31 +435,54 @@ def _is_bundle(path: Path) -> bool:
     return path.suffix == ".zip" or (path.is_dir() and (path / "manifest.json").is_file())
 
 
+def _run_source(text: str) -> tuple[str, Path]:
+    """``(name, bundle)`` of a ``NAME=BUNDLE`` or ``BUNDLE`` argument."""
+    name, sep, path = text.partition("=")
+    if sep and name and not Path(text).exists():
+        return name, Path(path)
+    path = Path(text)
+    return (path.name if path.is_dir() else path.stem), path
+
+
 def cmd_analyse(args) -> int:
+    import contextlib
     import dataclasses
 
-    from .analysis import AnalysisConfig
+    from .analysis import AnalysisConfig, RunSet
     from .hooks import ProgressLog
     from .io import open_bundle
     from .report import Results, write_analysis
 
-    source = Path(args.source)
     threads = args.threads
-    if _is_bundle(source):
-        bundle, config, base = source, AnalysisConfig(), Path(".")
+    first = Path(_run_source(args.source[0])[1])
+    if len(args.source) > 1 or _is_bundle(first):
+        runs = dict(_run_source(s) for s in args.source)
+        if len(runs) < len(args.source):
+            log.error("two runs have the same name: give NAME=BUNDLE")
+            return EXIT_ERROR
+        if len(args.source) == 1 and _is_bundle(Path(args.source[0])):
+            runs = {"": first}  # one bundle, not named: its samples keep their names
+        config, base = AnalysisConfig(), Path(".")
+        if args.bundle:
+            if len(runs) > 1:
+                log.error("--bundle takes the place of a single bundle")
+                return EXIT_ERROR
+            runs = {"": Path(args.bundle)}
     else:
         from .config import load_project
 
-        project = load_project(source)
+        project = load_project(first)
         config = project.analysis if project.analysis is not None else AnalysisConfig()
-        bundle = Path(args.bundle) if args.bundle else project.output.bundle
-        base = source.resolve().parent
+        base = first.resolve().parent
         threads = threads if threads is not None else project.threads
-        if bundle is None:
-            log.error("no bundle: set output.bundle or give --bundle")
-            return EXIT_ERROR
-    if args.bundle and _is_bundle(source):
-        bundle = Path(args.bundle)
+        if config.runs and not args.bundle:
+            runs = {name: Path(path) for name, path in config.runs.items()}
+        else:
+            bundle = Path(args.bundle) if args.bundle else project.output.bundle
+            if bundle is None:
+                log.error("no bundle: set output.bundle, [analysis.runs] or give --bundle")
+                return EXIT_ERROR
+            runs = {"": bundle}
     changes = {}
     if args.reference:
         changes["reference"] = args.reference
@@ -463,14 +490,23 @@ def cmd_analyse(args) -> int:
         changes["format"] = args.fig_format
     if changes:
         config = dataclasses.replace(config, **changes)
-    out = Path(args.out) if args.out else Path(config.out) if config.out else bundle.with_name(
-        bundle.name + "_analysis")
+    several = len(runs) > 1 or "" not in runs
+    lead = next(iter(runs.values()))
+    out = Path(args.out) if args.out else Path(config.out) if config.out else lead.with_name(
+        "runs_analysis" if several else lead.name + "_analysis")
     stop = _Stop()
-    with open_bundle(bundle) as b, stop.installed(), _threads(threads):
-        if b.pending:
-            log.warning("%s is waiting for its %s; the analysis uses what it holds",
-                        bundle, ", ".join(b.pending))
-        written = write_analysis(Results.from_bundle(b), config, out, base=base,
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(stop.installed())
+        stack.enter_context(_threads(threads))
+        opened = {}
+        for name, path in runs.items():
+            b = stack.enter_context(open_bundle(path))
+            if b.pending:
+                log.warning("%s is waiting for its %s; the analysis uses what it holds",
+                            path, ", ".join(b.pending))
+            opened[name] = Results.from_bundle(b)
+        results = RunSet(opened) if several else opened[""]
+        written = write_analysis(results, config, out, base=base,
                                  progress=ProgressLog(name="analysis",
                                                       interval=args.progress_every),
                                  cancel=stop)

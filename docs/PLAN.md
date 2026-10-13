@@ -491,7 +491,8 @@ Planned, not built:
    post-fitting analysis below (item 31; the large-dataset benchmark, item 32, met the Phase 4
    target). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is
    still open.
-3. **Post-fitting analysis (designed 2026-10-13; not built yet): see `docs/ANALYSIS.md`.**
+3. **Post-fitting analysis (designed 2026-10-13; phases 1 to 4 of its peptide branch built,
+   including comparisons between runs): see `docs/ANALYSIS.md`.**
    Analyses that work on the protein rather than on one spectrum: coverage map, residue-level
    uptake per population, the one-or-two-population choice, comparisons between samples and
    between runs, region summaries, kinetics and export. A peptide (MS1) branch comes first and a

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Plots of comparisons within a run (docs/ANALYSIS.md, phase 3): a reference sample against the
-others residue by residue, peptide differences (Woods plot) and region bar charts. Samples keep
+"""Plots of comparisons (docs/ANALYSIS.md, phases 3 and 4; between samples of a run or between
+runs): a reference sample against the others residue by residue, peptide differences (Woods and
+butterfly plots) and region bar charts. Samples keep
 one colour and marker each (:data:`hxex.report.coverage.SAMPLE_STYLES`, the reference first, in
 black). Functions return figures and never show them."""
 
@@ -9,10 +10,12 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Sequence
 
+import matplotlib
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
+from matplotlib.ticker import FuncFormatter
 
 from ..analysis import Annotations, PeptideComparison, RegionTable, ResidueComparison
 from .coverage import SAMPLE_STYLES
@@ -211,6 +214,89 @@ def plot_region_bars(
     ax.set_axisbelow(True)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(samples), frameon=False,
               fontsize=8)
+    return fig
+
+
+def plot_butterfly(
+    comparison: PeptideComparison,
+    sample: str,
+    *,
+    times: Sequence[float] | None = None,
+    undeut_time: float | None = None,
+    max_labels: int = 60,
+) -> Figure:
+    """The butterfly plot of ``sample`` against the reference: every peptide in order of its
+    position, the reference's value upwards and the sample's downwards, one line per time (a
+    sequential colour per time), with the differences below (filled where significant,
+    ``+-delta_crit`` dashed). ``times`` default to all of the comparison but the undeuterated
+    one. Lines have the gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
+    ``difference:<time>``."""
+    rows = comparison.where(sample=sample)
+    if not rows.any():
+        raise ValueError(f"no comparison of {sample!r}")
+    if times is None:
+        times = [t for t in sorted(set(comparison.time[rows].tolist()))
+                 if undeut_time is None or not np.isclose(t, undeut_time)]
+    times = [float(t) for t in times]
+    if not times:
+        raise ValueError(f"no time to draw for {sample!r}")
+    def key(i):
+        return (int(comparison.start[i]), int(comparison.end[i]), str(comparison.peptide[i]),
+                str(comparison.modification[i]))
+
+    keys = sorted({key(i) for i in np.flatnonzero(rows)})
+    position = {k: n for n, k in enumerate(keys)}
+    fig = Figure(figsize=(max(6.0, min(0.12 * len(keys) + 2.0, 16.0)), 5.5),
+                 layout="constrained")
+    top, bottom = fig.subplots(2, 1, sharex=True, height_ratios=(2, 1))
+    cmap = matplotlib.colormaps["viridis"]
+    for n, t in enumerate(times):
+        here = np.flatnonzero(rows & (comparison.time == t))
+        if not len(here):
+            continue
+        x = np.array([position[key(i)] for i in here])
+        colour = cmap(n / max(len(times) - 1, 1) * 0.9)
+
+        def spread(values, x=x):  # every peptide's place, NaN where not measured (a gap)
+            out = np.full(len(keys), np.nan)
+            out[x] = values
+            return out
+
+        line = {"color": colour, "marker": "o", "markersize": 2.5, "linewidth": 1.0}
+        (up,) = top.plot(spread(comparison.value_reference[here]), label=_when(t, undeut_time),
+                         **line)
+        (down,) = top.plot(spread(-comparison.value[here]), **line)
+        up.set_gid(f"butterfly:{t:g}:reference")
+        down.set_gid(f"butterfly:{t:g}:sample")
+        (diff,) = bottom.plot(spread(comparison.delta[here]), color=colour, linewidth=0.8)
+        diff.set_gid(f"difference:{t:g}")
+        sig = comparison.significant[here].astype(bool)
+        bottom.scatter(x[sig], comparison.delta[here][sig], color=colour, s=14, zorder=3)
+        bottom.scatter(x[~sig], comparison.delta[here][~sig], facecolors="none",
+                       edgecolors=colour, s=10, linewidths=0.7, zorder=3)
+    top.axhline(0, color="#000000", linewidth=0.8)
+    top.set_ylim(-1.1, 1.1)
+    top.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(v):g}"))
+    top.set_ylabel(_label(comparison.quantity))
+    top.text(0.005, 0.98, comparison.reference, transform=top.transAxes, ha="left", va="top",
+             fontsize=9)
+    top.text(0.005, 0.02, sample, transform=top.transAxes, ha="left", va="bottom", fontsize=9)
+    top.grid(color="#e5e5e5", linewidth=0.8)
+    top.legend(loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
+               ncol=len(times))
+    if np.isfinite(comparison.delta_crit):
+        for y in (comparison.delta_crit, -comparison.delta_crit):
+            bottom.axhline(y, color="#555555", linestyle="--", linewidth=0.9, zorder=1)
+    bottom.axhline(0, color="#000000", linewidth=0.8, zorder=1)
+    what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"
+    bottom.set_ylabel(what)
+    bottom.grid(color="#e5e5e5", linewidth=0.8)
+    step = max(1, int(np.ceil(len(keys) / max_labels)))
+    ticks = np.arange(0, len(keys), step)
+    bottom.set_xticks(ticks, [f"{keys[i][0]}-{keys[i][1]}" for i in ticks], rotation=90,
+                      fontsize=6)
+    bottom.set_xlim(-0.5, len(keys) - 0.5)
+    bottom.set_xlabel("peptide (residues)")
     return fig
 
 
