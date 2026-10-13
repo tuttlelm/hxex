@@ -4,9 +4,16 @@
 :func:`species_uptake` gives the fractional deuteration (``fD``) and population of every
 species (peptide or fragment), time and rank at a fixed K, replicates and charge states
 combined; :func:`residue_map` turns the peptides into residue-level values, and
-:func:`coverage_table` gives each sample's redundancy and resolution per residue.
+:func:`coverage_table` gives each sample's redundancy and resolution per residue;
+:func:`choose_populations` decides per residue whether two populations are supported.
 """
 
+from .populations import (
+    ChoiceConfig,
+    PopulationChoice,
+    choose_populations,
+    lever_population,
+)
 from .residues import (
     CoverageTable,
     ResidueMap,
@@ -18,13 +25,17 @@ from .residues import (
 from .species import SpeciesFilters, SpeciesUptake, species_uptake
 
 __all__ = [
+    "ChoiceConfig",
     "CoverageTable",
+    "PopulationChoice",
     "ResidueMap",
     "SequenceMismatch",
     "SpeciesFilters",
     "SpeciesUptake",
+    "choose_populations",
     "coverage_table",
     "exchanging_residues",
+    "lever_population",
     "residue_map",
     "species_uptake",
 ]

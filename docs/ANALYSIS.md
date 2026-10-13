@@ -10,9 +10,10 @@ analyses.
 Status (2026-10-13): phase 1 in progress. Built: the species uptake table
 (`hxex.analysis.species_uptake`), residue-level values (`residue_map`), coverage tables
 (`coverage_table`), the coverage map and the redundancy/resolution plot
-(`hxex.report.coverage`), the filters of K >= 2 descriptions (`SpeciesFilters`) and residue
-profiles (`hxex.report.residues`). Next: the one-or-two-population choice (phase 2). The peptide
-(MS1) branch comes first.
+(`hxex.report.coverage`), the filters of K >= 2 descriptions (`SpeciesFilters`), residue
+profiles (`hxex.report.residues`), and the one-or-two-population choice per residue
+(`choose_populations`, `plot_population_choice`; phase 2). Next: comparisons within a run
+(phase 3). The peptide (MS1) branch comes first.
 
 ## Ground rules
 
@@ -123,7 +124,11 @@ in the published work; where it matters, a component is named by its rank.
   K=1 value is used. Output: fD at K=2 rank 1 and rank 2 and at K=1, and the K=2 rank-1
   population, with standard errors (the error of the lever-rule population propagated
   correctly, unlike `choose_fits`). Built on the fixed-K values, the filters above and the review
-  layer.
+  layer. As built (`ChoiceConfig`: confidence 0.5, error limit 0.25, population 5 to 95 %), the
+  reason a residue keeps K=1 is recorded (no K=2, not separated, error, K=1 outside,
+  population). The tests need bootstrap standard errors at K=1 and K=2
+  (`BootstrapConfig.ks`): without them only the scatter of replicates is left, which is far too
+  small, and nearly every residue passes (`species_uptake` warns).
 - **Comparisons within a run.** Differences between samples (a reference sample against each
   other) per peptide and per residue, with propagated standard errors and a significance rule;
   averages over user-defined regions of the sequence (pyHXExpress `group_fits`).

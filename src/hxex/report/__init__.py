@@ -28,7 +28,7 @@ from .overview import (
     quality_overview_data,
     write_overview,
 )
-from .residues import PROFILE_STYLES, plot_residue_profile
+from .residues import PROFILE_STYLES, plot_population_choice, plot_residue_profile
 from .results import Results, Settings
 from .series import (
     Reference,
@@ -54,6 +54,7 @@ from .tables import (
 
 __all__ = [
     "PROFILE_STYLES",
+    "plot_population_choice",
     "plot_residue_profile",
     "FD_CMAP",
     "autowrap",

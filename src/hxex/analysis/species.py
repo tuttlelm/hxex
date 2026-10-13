@@ -201,6 +201,12 @@ def species_uptake(
             if boot is not None:
                 mean_se[i] = boot.mean_se[i, :k][order[i]]
                 frac_se[i] = boot.population_se[i, :k][order[i]]
+        no_boot = int(np.isnan(mean_se[keep, 0]).sum())
+        if k >= 2 and no_boot:
+            log.warning("K=%d: %d of %d spectra have no bootstrap, so their standard errors come "
+                        "only from the scatter of replicates (or are unknown): too small for the "
+                        "choice between one and two populations (run the bootstrap at K=1 and "
+                        "K=2, BootstrapConfig.ks)", k, no_boot, int(keep.sum()))
         if controls is not None:
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se

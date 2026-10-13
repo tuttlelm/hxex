@@ -1433,6 +1433,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     100 over WT (Gaussian refit), but at WT 4 s only one and none, so the correlations above do
     not change. (Setting `SpeciesFilters.k1_between_ranks`.)
 
+50. **The one-or-two-population choice (phase 2; 2026-10-13).** `choose_populations` applies the
+    tests of `choose_fits` per residue (separation at 50 % confidence, both errors below 0.25,
+    the K=1 value between the ranks, lever-rule population within 5 to 95 %), with the
+    population error propagated from all three values (checked against numerical derivatives);
+    `plot_population_choice` draws the owner's `rfufits` figure (curves solid where chosen and
+    dashed elsewhere, chosen markers sized by population, K=1 as open circles, a population
+    panel). Against the owner's choice (`B5phospho_fitsdf_byres`, WT, 156 residues), from the
+    stored fits (Poisson loss, fixed-K bootstraps): two populations at 126, 117, 98 and 100
+    residues (4 s, 60 s, 1,800 s, 72,000 s) against 90, 104, 94 and 93, the same choice at 120,
+    123, 100 and 105, populations correlated 0.5 to 0.6 (the K=2 split differs with the loss,
+    item 49). The WT Gaussian refit had no bootstrap: its errors came from the scatter of
+    replicates only and two populations passed at 150 to 155 of 156 residues, so the choice
+    needs the bootstrap (`species_uptake` now warns without one).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

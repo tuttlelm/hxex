@@ -269,3 +269,87 @@ def test_residue_profile():
         plot_residue_profile(rm, "S", 60.0)
     with pytest.raises(ValueError, match="band"):
         plot_residue_profile(rm, "S", 4.0, band=1.0)
+
+
+# --- the choice between one and two populations -------------------------------------------------
+
+def test_lever_population_and_its_error():
+    from hxex.analysis import lever_population
+
+    p, se = lever_population(0.4, 0.2, 0.6, 0.01, 0.02, 0.03)
+    assert p == pytest.approx(0.5)  # (0.6 - 0.4) / (0.6 - 0.2)
+    eps = 1e-7  # the error from numerical derivatives
+    grads = []
+    for i in range(3):
+        x = [0.4, 0.2, 0.6]
+        x[i] += eps
+        grads.append((lever_population(*x, 0, 0, 0)[0] - p) / eps)
+    assert se == pytest.approx(np.sqrt(sum((g * e) ** 2 for g, e in zip(
+        grads, (0.01, 0.02, 0.03), strict=True))), rel=1e-5)
+    assert np.isnan(lever_population(0.4, 0.6, 0.6, 0, 0, 0)[0])  # no split
+
+
+def choice_map(rows):
+    """A residue map from (residue, K, rank, fD, fD_se) for one sample and time."""
+    from hxex.analysis import ResidueMap
+
+    n = len(rows)
+    cols = {"sample": np.array(["S"] * n), "time": np.full(n, 4.0),
+            "K": np.array([r[1] for r in rows]), "rank": np.array([r[2] for r in rows]),
+            "residue": np.array([r[0] for r in rows]), "aa": np.array(["A"] * n),
+            "fD": np.array([r[3] for r in rows], dtype=float),
+            "fD_se": np.array([r[4] for r in rows], dtype=float),
+            "redundancy": np.ones(n, dtype=np.int64), "resolution": np.ones(n),
+            "proline": np.zeros(n, dtype=bool), "covered": np.ones(n, dtype=bool)}
+    return ResidueMap(**cols)
+
+
+def test_choose_populations_applies_every_test():
+    from hxex.analysis import ChoiceConfig, choose_populations
+
+    cases = {  # residue: (avg, low, high, se) -> expected reason ('' = two populations)
+        1: ((0.40, 0.20, 0.60, 0.02), ""),
+        2: ((0.40, 0.38, 0.42, 0.05), "not separated"),
+        3: ((0.40, 0.10, 0.70, 0.30), "error"),
+        4: ((0.65, 0.20, 0.60, 0.02), "K=1 outside"),
+        5: ((0.59, 0.20, 0.60, 0.01), "population"),  # 2.5 % low-D
+    }
+    rows = []
+    for r, ((avg, low, high, se), _) in cases.items():
+        rows += [(r, 1, 1, avg, se), (r, 2, 1, low, se), (r, 2, 2, high, se)]
+    rows.append((6, 1, 1, 0.3, 0.02))  # no K=2 at all
+    ch = choose_populations(choice_map(rows))
+    got = dict(zip(ch.residue.tolist(), ch.reason.tolist(), strict=True))
+    for r, (_, why) in cases.items():
+        assert got[r] == why, r
+    assert got[6] == "no K=2"
+    assert list(ch.two_populations) == [True, False, False, False, False, False]
+    assert ch.population_low[0] == pytest.approx(0.5) and np.isnan(ch.population_low[3])
+    loose = choose_populations(choice_map(rows), ChoiceConfig(confidence=0, max_fD_se=1,
+                                                              min_population=0.01))
+    assert dict(zip(loose.residue.tolist(), loose.two_populations.tolist(), strict=True)) == {
+        1: True, 2: True, 3: True, 4: False, 5: True, 6: False}
+    with pytest.raises(ValueError):
+        ChoiceConfig(confidence=1.0)
+
+
+def test_population_choice_figure():
+    from hxex.analysis import choose_populations
+    from hxex.report import plot_population_choice
+
+    rows = []
+    for r in range(1, 11):  # two populations at 1-5, one at 6-10
+        two = r <= 5
+        rows += [(r, 1, 1, 0.4, 0.02), (r, 2, 1, 0.2 if two else 0.39, 0.02),
+                 (r, 2, 2, 0.6 if two else 0.41, 0.02)]
+    ch = choose_populations(choice_map(rows))
+    fig = plot_population_choice(ch, "S", 4.0, marks=(5.5,))
+    top, bottom = fig.axes[:2]
+    gids = {c.get_gid(): c for c in top.collections if c.get_gid()}
+    assert len(gids["chosen:low"].get_offsets()) == 5 and len(gids["chosen:avg"].get_offsets()) == 5
+    pops = [c for c in bottom.collections if c.get_gid() == "population:low"][0].get_offsets()
+    np.testing.assert_allclose(np.asarray(pops)[:, 1], 0.5)
+    solid = next(line for line in top.lines if line.get_gid() == "fD:low")
+    assert np.isnan(np.asarray(solid.get_ydata(), dtype=float)[7])  # dashed where K=1 chosen
+    with pytest.raises(ValueError, match="no choice"):
+        plot_population_choice(ch, "S", 60.0)
