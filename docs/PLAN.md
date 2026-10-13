@@ -491,49 +491,13 @@ Planned, not built:
    post-fitting analysis below (item 31; the large-dataset benchmark, item 32, met the Phase 4
    target). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is
    still open.
-3. **Post-fitting analysis, together with the sequence-coverage map (planned; not designed yet).**
-   Analyses that start from the fitted results and work on the protein rather than on one
-   spectrum. The owner will give further references when this starts; pyHXExpress's
-   `hxex_utils.py` (reference copy, see CLAUDE.local.md) already has some of it:
-   - coverage map: peptides as bars along the sequence, coloured by uptake (or a population's
-     uptake) at each time and state (`plot_coverage`);
-   - residue-level values from overlapping peptides: a per-residue relative uptake (RFU)
-     averaged over the peptides that cover it, with the redundancy (how many peptides cover a
-     residue) and the resolution (the length of the shortest one) (`plot_rfu_residue`,
-     `plot_resred`); for two populations it assumes the more protected populations of
-     overlapping peptides belong together, which needs thought beyond two;
-   - choosing between the one- and two-population description of each peptide and time from
-     the fixed-K fits and their errors (a population fraction above a minimum, standard errors
-     below a limit at a stated confidence), falling back to the one-population value
-     (`choose_fits`); here this would build on the selected K, the fixed-K bootstraps and the
-     review layer rather than replace them;
-   - comparing states (samples) per residue and time, and averaging over user-defined regions
-     of the sequence (`plot_comparison`, `group_fits`);
-   - **comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons
-     across bundles as across samples within one. Possible today only by hand (open each
-     bundle, `find_series` by sample, range and charge, draw with `ax=` side by side). Needed:
-     matching series across runs by identity (sequence with modifications, charge; never by
-     `data_id`, which is a position within its run) with a check that they agree; overlays
-     with one colour per run (the uptake plot colours by replicate); differences per peptide and
-     time with propagated uncertainty, and difference or butterfly plots; a comparison of the
-     runs' settings (manifests) that warns where they differ in ways that matter (picker, noise
-     model, control times and limits); and a rule for a peptide and time fitted with one
-     population in one run and two in another (shared with the one-or-two-population choice);
-   - recomputing uptake without spectra marked bad (`recalc_uptake`; here the review layer's
-     rejections) and combining runs (`combine_batch_data`);
-   - export of the uptake table in the format other tools read (`hdexa_to_pyhdx` writes the
-     DynamX-like table pyHDX expects).
-   - **exchange rates from time courses** (owner, 2026-10-12): for continuous-labelling or
-     back-exchange kinetics with the scan time as the exchange time (fragment-level data such as
-     c and z ions, see CLAUDE.local.md), fit an exponential decay (or rise) of each fragment's
-     deuterium over time, with a constant model as the alternative, and turn consecutive
-     fragments into per-residue rates; the reference is pyHXExpress's kinetics notebooks.
-   **Decided (owner, 2026-10-12):** these tools are rewritten to fit hxex (its result types, no
-   pandas in the core, explicit configs), and the parts pyHXExpress does through pyHDX
-   (residue-level averaging, the uptake-table conversion) are rewritten too, so neither pyHDX nor
-   proplot becomes a dependency; plots use matplotlib, like the rest of `hxex.report`. Rejected or flagged spectra, the back-exchange correction and the
-   population identity by rank all carry into these analyses and need decisions when this is
-   designed.
+3. **Post-fitting analysis (designed 2026-10-13; not built yet): see `docs/ANALYSIS.md`.**
+   Analyses that work on the protein rather than on one spectrum: coverage map, residue-level
+   uptake per population, the one-or-two-population choice, comparisons between samples and
+   between runs, region summaries, kinetics and export. A peptide (MS1) branch comes first and a
+   fragment (MS2, MS3) branch after it; pyHXExpress's `hxex_utils.py` is the reference for the
+   peptide analyses, rewritten for hxex without pyHDX or proplot. Phases, decisions and open
+   questions are in `docs/ANALYSIS.md`.
 4. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; the choice of noise model for the Phase 5
