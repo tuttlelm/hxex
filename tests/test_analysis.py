@@ -557,7 +557,7 @@ def test_analyse_command(two_sample_bundle, tmp_path, capsys):
 format = "specexport"
 data_dir = "d"
 [output]
-bundle = "{two_sample_bundle}"
+bundle = "{two_sample_bundle.as_posix()}"
 [analysis]
 reference = "S"
 format = "png"
@@ -718,8 +718,8 @@ samples = ["one:S", "two:S"]
 format = "png"
 out = "from_runs"
 [analysis.runs]
-one = "{two_sample_bundle}"
-two = "{two_sample_bundle}"
+one = "{two_sample_bundle.as_posix()}"
+two = "{two_sample_bundle.as_posix()}"
 """)
     assert cli.main(["-q", "analyse", str(project)]) == 0
     assert (tmp_path / "from_runs" / "butterfly_two_S.png").is_file()
