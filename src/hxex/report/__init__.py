@@ -7,6 +7,13 @@ save them. The curves are computed in NumPy, but the result types come from ``hx
 importing this package also imports PyTorch.
 """
 
+from .coverage import (
+    FD_CMAP,
+    autowrap,
+    coverage_figure,
+    plot_coverage,
+    plot_redundancy_resolution,
+)
 from .curves import component_curves
 from .figures import PlotConfig, select_series, series_figures, write_figures
 from .overview import (
@@ -45,6 +52,11 @@ from .tables import (
 )
 
 __all__ = [
+    "FD_CMAP",
+    "autowrap",
+    "coverage_figure",
+    "plot_coverage",
+    "plot_redundancy_resolution",
     "PlotConfig",
     "Reference",
     "Results",

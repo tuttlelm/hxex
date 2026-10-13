@@ -1,0 +1,240 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The species uptake table: fractional deuteration per sample, species, time and rank.
+
+A species is a peptide (or the intact protein, or a fragment ion): its sequence with
+modifications and its position on the protein. Its values come from the fits at a fixed number
+of populations ``K`` (every measurement is fitted at every K; the standard errors come from the
+fixed-K bootstrap, or from the selected-K one where that K was selected), so that the populations
+of overlapping peptides can be compared rank by rank. Components are ranked by their
+fractional deuteration, 1 the lowest.
+
+Two measures of deuteration, as in the fit: ``mean``, the absolute deuterium (deuterons beyond
+natural abundance, from 0 to about ``n_amides``), back-exchange corrected when the run has
+controls (``corrected``), and ``fD``, the **fractional deuteration**, ``mean / n_amides`` (0 to
+1). Both mean the same for forward labelling and for reverse exchange (docs/ANALYSIS.md).
+
+Spectra the review rejected are left out; flagged ones are kept unless ``exclude_flagged``. The
+replicates and charge states of a species at one time are combined: the value is their mean and
+its standard error ``sqrt(max(mean(se_i^2), s^2) / n)``, the larger of the measurements' own
+(bootstrap) variance and their observed scatter ``s^2``, so that neither is counted twice; with one
+measurement it is that measurement's standard error. ``charge_trend`` flags a species whose charge
+states disagree systematically (see :func:`species_uptake`).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, fields
+
+import numpy as np
+
+from .. import chem
+from ..controls import correct_means
+
+# a charge trend: the lowest and highest charge differ by more than this many combined standard
+# errors, in the same direction, at this share of the times both were measured (and at least two)
+TREND_Z = 2.0
+TREND_SHARE = 0.5
+
+
+_SCALARS = ("nterm_subtract", "undeut_time")  # settings of the table, not columns
+
+
+@dataclass(frozen=True)
+class SpeciesUptake:
+    """One row per sample, species, time, ``K`` and ``rank`` (columns of equal length).
+
+    Identity: ``sample``, ``peptide`` (modX), ``modification``, ``kind`` (``'peptide'``, or
+    ``'fragment'`` for an ion type other than ``M``), ``start`` and ``end`` (residues on the
+    protein, inclusive). Values: ``time``, ``K``, ``rank``, ``mean`` and ``mean_se`` (deuterons),
+    ``fD`` and ``fD_se`` (``mean / n_amides``),
+    ``population`` and ``population_se`` (the component's share), ``n_amides`` (exchangeable
+    amides),
+    ``n_spectra``, ``n_charges``, ``corrected`` and ``charge_trend``. ``nterm_subtract`` (the
+    N-terminal residues that do not count) and ``undeut_time`` (the undeuterated control's time,
+    which coverage, redundancy and resolution refer to) are the run's.
+    """
+
+    sample: np.ndarray
+    peptide: np.ndarray
+    modification: np.ndarray
+    kind: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+    time: np.ndarray
+    K: np.ndarray
+    rank: np.ndarray
+    mean: np.ndarray
+    mean_se: np.ndarray
+    fD: np.ndarray
+    fD_se: np.ndarray
+    population: np.ndarray
+    population_se: np.ndarray
+    n_amides: np.ndarray
+    n_spectra: np.ndarray
+    n_charges: np.ndarray
+    corrected: np.ndarray
+    charge_trend: np.ndarray
+    nterm_subtract: int = 1
+    undeut_time: float = 0.0
+
+    def __len__(self) -> int:
+        return len(self.sample)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        """The table as columns (for :func:`hxex.report.write_csv`)."""
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.name not in _SCALARS}
+
+    def select(self, mask) -> SpeciesUptake:
+        mask = np.asarray(mask)
+        return SpeciesUptake(**{f.name: getattr(self, f.name)[mask] for f in fields(self)
+                                if f.name not in _SCALARS},
+                             nterm_subtract=self.nterm_subtract, undeut_time=self.undeut_time)
+
+    def where(self, *, sample=None, time=None, K=None, rank=None, kind=None) -> np.ndarray:
+        """Rows matching every condition given (a value, or a list of values)."""
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank),
+                            ("kind", kind)):
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
+                keep &= np.isin(getattr(self, name), values)
+        return keep
+
+
+def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
+    """Mean of ``values`` and its standard error (see the module docstring)."""
+    n = len(values)
+    mean = float(np.mean(values))
+    finite = ses[np.isfinite(ses)]
+    own = float(np.mean(finite**2)) if len(finite) else np.nan
+    if n == 1:
+        return mean, float(ses[0])
+    scatter = float(np.var(values, ddof=1))
+    var = scatter if not np.isfinite(own) else max(own, scatter)
+    return mean, float(np.sqrt(var / n))
+
+
+def species_uptake(
+    results,
+    ks: Sequence[int] = (1, 2),
+    *,
+    exclude_flagged: bool = False,
+) -> SpeciesUptake:
+    """The species uptake table of ``results`` (:class:`hxex.report.Results`) at each fixed K in
+    ``ks`` (K values the run fitted).
+
+    ``charge_trend`` is True for every row of a species (sample, peptide and modification, K and
+    rank) whose lowest and highest charge states, wherever both were measured, differ by more
+    than ``TREND_Z`` combined standard errors in the same direction at more than ``TREND_SHARE``
+    of those times, and at two times at least: more likely a systematic effect (an overlapping
+    species, a wrong charge assignment) than noise.
+    """
+    fit, binned = results.fit, results.binned
+    if binned is None:
+        raise ValueError("the species uptake table needs the picked table (results.binned)")
+    missing = [k for k in ks if k not in fit.fits]
+    if missing:
+        raise ValueError(f"K = {missing} were not fitted (fitted: {list(fit.k_values)})")
+    run = results.settings.run if results.settings is not None else None
+    factor = run.n_max_factor if run is not None else 1.2
+    picker = results.settings.picker if results.settings is not None else None
+    nterm = picker.nterm_subtract if picker is not None else 1
+    index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
+    rows = np.array([index[str(s)] for s in fit.spectrum_id])
+    keep = np.ones(len(fit), dtype=bool)
+    if results.review is not None:
+        keep &= results.review.status_of(fit) != "rejected"
+    if exclude_flagged and results.quality is not None:
+        keep &= ~np.asarray(results.quality.flagged, dtype=bool)
+    controls = results.controls
+    n_amides = np.asarray(results.measurements.n_max, dtype=float) / factor
+    if controls is not None:
+        n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
+
+    # one record per spectrum and rank, then grouped by species, time, K and rank
+    groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
+    for k in ks:
+        kf = fit.fits[k]
+        order = np.argsort(kf.means, axis=1)
+        means = np.take_along_axis(kf.means, order, axis=1)
+        fracs = np.take_along_axis(kf.populations, order, axis=1)
+        mean_se = np.full_like(means, np.nan)
+        frac_se = np.full_like(means, np.nan)
+        for i in range(len(fit)):
+            boot = results.bootstrap_for(i, k)
+            if boot is not None:
+                mean_se[i] = boot.mean_se[i, :k][order[i]]
+                frac_se[i] = boot.population_se[i, :k][order[i]]
+        if controls is not None:
+            c = correct_means(controls, fit.data_id, means, se=mean_se)
+            means, mean_se = c.mean, c.se
+        for i in np.flatnonzero(keep):
+            j = rows[i]
+            key = (str(binned.sample[j]), str(binned.peptide[j]), str(binned.modification[j]),
+                   int(binned.start_seq[j]), int(binned.end_seq[j]), float(fit.time[i]), k)
+            for r in range(k):
+                groups.setdefault(key + (r + 1,), []).append((
+                    means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
+                    frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
+                ))
+
+    cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
+    by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
+    for key, recs in sorted(groups.items()):
+        sample, peptide, mod, start, end, time, k, rank = key
+        v = np.array([r[0] for r in recs])
+        s = np.array([r[1] for r in recs])
+        f = np.array([r[2] for r in recs])
+        fs = np.array([r[3] for r in recs])
+        d, d_se = _combine(v, s)
+        fr, fr_se = _combine(f, fs)
+        charges = sorted({r[4] for r in recs})
+        amides = float(np.mean([r[5] for r in recs]))  # the same for every spectrum of a species
+        ion = chem.parse_modification(mod).ion_type
+        for name, value in (
+            ("sample", sample), ("peptide", peptide), ("modification", mod),
+            ("kind", "peptide" if ion == "M" else "fragment"), ("start", start), ("end", end),
+            ("time", time), ("K", k), ("rank", rank), ("mean", d * amides),
+            ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
+            ("population", fr), ("population_se", fr_se), ("n_amides", amides),
+            ("n_spectra", len(recs)), ("n_charges", len(charges)),
+            ("corrected", controls is not None), ("charge_trend", False),
+        ):
+            cols[name].append(value)
+        if len(charges) > 1:
+            per = by_charge.setdefault((sample, peptide, mod, k, rank), {})
+            low = [(r[0], r[1]) for r in recs if r[4] == charges[0]]
+            high = [(r[0], r[1]) for r in recs if r[4] == charges[-1]]
+            a, b = _combine(*map(np.array, zip(*low, strict=True))), _combine(
+                *map(np.array, zip(*high, strict=True)))
+            per[len(per)] = [a, b]
+    trend = {key for key, times in by_charge.items() if _is_trend(list(times.values()))}
+    out = {name: np.array(values) for name, values in cols.items()}
+    species = list(zip(out["sample"], out["peptide"], out["modification"], out["K"], out["rank"],
+                       strict=True))
+    out["charge_trend"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in trend
+                                    for a, b, c, d, e in species], dtype=bool)
+    for name in ("start", "end", "K", "rank", "n_spectra", "n_charges"):
+        out[name] = out[name].astype(np.int64)
+    for name in ("time", "mean", "mean_se", "fD", "fD_se", "population", "population_se",
+                 "n_amides"):
+        out[name] = out[name].astype(np.float64)
+    out["corrected"] = out["corrected"].astype(bool)
+    undeut = run.reference_time if run is not None else float(np.min(fit.time))
+    return SpeciesUptake(**out, nterm_subtract=int(nterm), undeut_time=float(undeut))
+
+
+def _is_trend(pairs: list) -> bool:
+    """Whether the (lowest charge, highest charge) values at each time differ systematically."""
+    diffs = []
+    for (a, sa), (b, sb) in pairs:
+        se = np.hypot(sa, sb) if np.isfinite(sa) and np.isfinite(sb) else np.nan
+        if np.isfinite(se) and se > 0:
+            diffs.append((b - a) / se)
+    if len(diffs) < 2:
+        return False
+    diffs = np.array(diffs)
+    up, down = int(np.sum(diffs > TREND_Z)), int(np.sum(diffs < -TREND_Z))
+    hits = max(up, down)
+    return hits >= 2 and hits > TREND_SHARE * len(diffs)

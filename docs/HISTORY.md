@@ -1374,6 +1374,29 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     The full table of names and their equivalents in pyHXExpress and pyHDX is in
     `docs/ANALYSIS.md` ("Nomenclature").
 
+48. **Post-fitting analysis, phase 1 (2026-10-13; design in docs/ANALYSIS.md).**
+    - `hxex.analysis.species_uptake(results, ks)`: one row per sample, peptide (or fragment),
+      time, fixed K and rank, with `mean` (deuterons, back-exchange corrected), `fD`
+      (`mean / n_amides`), `population` and their standard errors, replicates and charge states
+      combined (`sqrt(max(mean(se_i^2), s^2) / n)`), a charge-trend flag, the run's
+      `nterm_subtract` and undeuterated time; rejected spectra left out.
+    - `residue_map` (per time) and `coverage_table` (per sample, at the undeuterated control by
+      default or chosen times; redundancy counted in peptides or spectra), optionally checked
+      against a FASTA sequence per sample.
+    - Checked against pyHDX 0.4.3 (run from its own code on 192 peptides of one sample at 4 s of
+      the intact-peptide benchmark, K = 1): residue fD and its standard error agree to 2e-16,
+      redundancy and resolution are identical at every exchanging residue. pyHDX leaves 33 more
+      residues of 173 empty, every one among the first `nterm_subtract` residues of some other
+      peptide (it decides exchange once for the protein; hxex per peptide). The resolution of
+      the owner's earlier figures (11 at residues 153 to 165 for most samples) came from
+      pyHXExpress's `plot_resred`, which took the first state's residue numbers for every state;
+      pyHDX and hxex give 4 to 6 there.
+    - `hxex.report.coverage`: `plot_coverage` and `coverage_figure` (pyHDX's wrapped layout,
+      one bar per peptide, gouldian colours embedded with attribution, CC BY 4.0) and
+      `plot_redundancy_resolution` (the owner's overlay style). On the benchmark: 16,626 rows in
+      2 s; 70 species flagged for a charge trend; 52 of 5,542 K = 1 values above fD 1.05, mostly
+      at late times (series whose fully deuterated control fell back or is low).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

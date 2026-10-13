@@ -7,7 +7,10 @@ is the design; `docs/PLAN.md` ("Next steps") keeps the status and points here, a
 and measurements go in `docs/HISTORY.md` as usual. Read this file before working on these
 analyses.
 
-Status: designed (2026-10-13); nothing built yet. The peptide (MS1) branch comes first.
+Status (2026-10-13): phase 1 in progress. Built: the species uptake table
+(`hxex.analysis.species_uptake`), residue-level values (`residue_map`), coverage tables
+(`coverage_table`), the coverage map and the redundancy/resolution plot
+(`hxex.report.coverage`). Next: residue profiles. The peptide (MS1) branch comes first.
 
 ## Ground rules
 
@@ -76,6 +79,22 @@ in the published work; where it matters, a component is named by its rank.
   uncovered residues). The pyHDX method, for reference: each peptide weighs
   `1 / (its exchanging residues)` (raised to a weight exponent, 1 by default), normalised per
   residue, and standard deviations add in quadrature with the same weights.
+  As built: the same values as pyHDX 0.4.3 to machine precision, and the same redundancy and
+  resolution (HISTORY item 48). One deliberate difference: pyHDX decides once for the whole
+  protein whether a residue exchanges, so a residue that is among the first `nterm_subtract`
+  residues of any peptide gets no value at all; hxex decides per peptide, so such a residue
+  still gets a value from the peptides in which its amide counts (33 more residues of 173 on
+  the intact-peptide benchmark, otherwise identical).
+- **Coverage, redundancy and resolution** are judged on the peptides of the undeuterated control
+  by default, or of time points the user chooses (owner, 2026-10-13); redundancy counts
+  peptides, or spectra (replicates and charge states) on request, as the owner's earlier
+  figures did. The coverage map draws one bar per peptide (charge states and replicates
+  combined) in the owner's style (the CET-L20 "gouldian" colour scale pyHDX uses).
+- **Combining** replicates and charge states: the mean, with the standard error
+  `sqrt(max(mean(se_i^2), s^2) / n)` (the larger of the bootstrap variance and the observed
+  scatter, so neither counts twice). **Charge trend** flag: the lowest and highest charge state
+  differ by more than 2 combined standard errors in the same direction at more than half of
+  the times both were measured, and at two times at least.
 - **One or two populations** (pyHXExpress `choose_fits`): per residue (or peptide) and time,
   the two-population description is kept when the populations are separated at a stated
   confidence (`(high - low) - z (se_low + se_high) >= 0`), both standard errors are below a
@@ -134,6 +153,10 @@ Plots (matplotlib, returning figures):
 - comparisons: overlays and stacks (a reference sample against each other), difference plots;
 - region bar charts (fD and populations per region and sample, with error bars);
 - an optional annotation strip under the residue axis (domains, sites);
+- annotations are protein-specific and user-defined, never derived: named regions (name, first
+  and last residue) and sites (residue, label) in the `[analysis]` section of the project file,
+  used consistently by every residue plot (dashed lines at region boundaries and sites, the
+  annotation strip) and by the region bar charts (owner, 2026-10-13);
 - for fragments: cleavage maps, uptake against fragment length (c ions, and the parent minus
   z ions), closure plots, comparisons between activations and precursor charges.
 
