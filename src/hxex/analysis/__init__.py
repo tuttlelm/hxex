@@ -5,9 +5,22 @@
 species (peptide or fragment), time and rank at a fixed K, replicates and charge states
 combined; :func:`residue_map` turns the peptides into residue-level values, and
 :func:`coverage_table` gives each sample's redundancy and resolution per residue;
-:func:`choose_populations` decides per residue whether two populations are supported.
+:func:`choose_populations` decides per residue whether two populations are supported;
+:func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples.
 """
 
+from .compare import (
+    Annotations,
+    PeptideComparison,
+    Region,
+    RegionTable,
+    ResidueComparison,
+    Site,
+    compare_peptides,
+    compare_populations,
+    compare_residues,
+    region_summary,
+)
 from .populations import (
     ChoiceConfig,
     PopulationChoice,
@@ -25,6 +38,16 @@ from .residues import (
 from .species import SpeciesFilters, SpeciesUptake, species_uptake
 
 __all__ = [
+    "Annotations",
+    "PeptideComparison",
+    "Region",
+    "RegionTable",
+    "ResidueComparison",
+    "Site",
+    "compare_peptides",
+    "compare_populations",
+    "compare_residues",
+    "region_summary",
     "ChoiceConfig",
     "CoverageTable",
     "PopulationChoice",

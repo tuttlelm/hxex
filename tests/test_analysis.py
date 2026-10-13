@@ -353,3 +353,136 @@ def test_population_choice_figure():
     assert np.isnan(np.asarray(solid.get_ydata(), dtype=float)[7])  # dashed where K=1 chosen
     with pytest.raises(ValueError, match="no choice"):
         plot_population_choice(ch, "S", 60.0)
+
+
+# --- comparisons within a run -------------------------------------------------------------------
+
+def test_annotations_round_trip_and_marks():
+    from hxex.analysis import Annotations, Region, Site
+
+    ann = Annotations(regions=(Region("A", 1, 10), Region("B", 11, 20)), sites=(Site(5, "S5"),))
+    assert Annotations.from_dict(ann.to_dict()) == ann
+    assert ann.marks() == [0.5, 5.0, 10.5, 20.5]
+    with pytest.raises(ValueError):
+        Region("bad", 5, 4)
+    with pytest.raises(ValueError, match="unknown"):
+        Annotations.from_dict({"domains": []})
+
+
+def test_compare_peptides_with_the_hybrid_rule(results):
+    # the synthetic run has one sample; make a second by renaming one series
+    import dataclasses
+
+    from hxex.analysis import compare_peptides
+
+    binned = results.binned
+    shifted = dataclasses.replace(binned, sample=np.where(binned.data_id == 1, "V", "S"))
+    pc = compare_peptides(dataclasses.replace(results, binned=shifted), "S")
+    assert set(pc.sample.tolist()) == {"V"} and len(pc) == len(set(pc.time.tolist()))
+    np.testing.assert_allclose(pc.delta, pc.value - pc.value_reference)
+    assert np.isfinite(pc.delta_crit) and pc.delta_crit > 0
+    # significant only where both the test and the threshold agree
+    assert np.all(~pc.significant | ((pc.p < pc.alpha) & (np.abs(pc.delta) > pc.delta_crit)))
+    with pytest.raises(ValueError, match="no reference"):
+        compare_peptides(results, "X")
+    # the population of a K=2 rank, compared the same way
+    pop = compare_peptides(dataclasses.replace(results, binned=shifted), "S", K=2, rank=1,
+                           quantity="population")
+    assert pop.quantity == "population" and pop.K == 2
+    assert np.all((pop.value >= 0.05) & (pop.value <= 0.95))  # the filters still apply
+    with pytest.raises(ValueError, match="K >= 2"):
+        compare_peptides(results, "S", quantity="population")
+    with pytest.raises(ValueError, match="quantity"):
+        compare_peptides(results, "S", quantity="mean")
+
+
+def test_residue_comparison_and_regions():
+    from hxex.analysis import Region, compare_residues, region_summary
+
+    up = table([("R", "AKLPGSTV", 2, 4.0, 0.30, 0.01), ("V", "AKLPGSTV", 2, 4.0, 0.50, 0.01),
+                ("W", "AKLPGSTV", 2, 4.0, 0.31, 0.01)])
+    rm = residue_map(up, sequences=SEQUENCE)
+    rc = compare_residues(rm, "R", delta_crit=0.1)
+    v = rc.where(sample="V") & (rc.residue == 6)
+    assert rc.delta[v][0] == pytest.approx(0.2) and rc.significant[v][0]
+    assert not rc.significant[rc.where(sample="W")].any()  # 0.01 apart: within delta_crit
+    regions = region_summary(rm, [Region("N", 1, 5), Region("M", 6, 9), Region("C", 15, 19)])
+    m = (regions.sample == "V") & (regions.region == "M")
+    assert regions.fD[m][0] == pytest.approx(0.5) and regions.n_residues[m][0] == 4
+    assert regions.coverage[m][0] == pytest.approx(1.0)
+    n_row = (regions.sample == "V") & (regions.region == "N")  # residue 5 is a proline
+    assert regions.n_residues[n_row][0] == 2 and regions.coverage[n_row][0] == pytest.approx(0.4)
+    assert np.isnan(regions.fD[(regions.sample == "V") & (regions.region == "C")][0])
+
+
+def test_comparison_plots():
+    from hxex.analysis import (
+        Annotations,
+        PeptideComparison,
+        Region,
+        Site,
+        compare_residues,
+        region_summary,
+    )
+    from hxex.report import (
+        plot_peptide_differences,
+        plot_region_bars,
+        residue_comparison_figure,
+    )
+
+    up = table([("R", "AKLPGSTV", 2, 4.0, 0.30, 0.01), ("V", "AKLPGSTV", 2, 4.0, 0.50, 0.01)])
+    rm = residue_map(up, sequences=SEQUENCE)
+    rc = compare_residues(rm, "R", delta_crit=0.1)
+    ann = Annotations(regions=(Region("long region name", 1, 9),), sites=(Site(5, "P5"),))
+    fig = residue_comparison_figure(rc, ["V"], 4.0, annotations=ann)
+    assert any(p.get_gid() == "significant:6" for p in fig.axes[0].patches)
+    pc = PeptideComparison(
+        sample=np.array(["V", "V"]), peptide=np.array(["AKLPGSTV", "GSTVED"]),
+        modification=np.array(["", ""]), start=np.array([2, 6]), end=np.array([9, 11]),
+        time=np.array([4.0, 4.0]), value_reference=np.array([0.3, 0.6]),
+        value_reference_se=np.array([0.01, 0.01]), value=np.array([0.5, 0.62]),
+        value_se=np.array([0.01, 0.01]),
+        delta=np.array([0.2, 0.02]), delta_se=np.array([0.01, 0.01]), t=np.array([5.0, 0.5]),
+        p=np.array([0.001, 0.6]), n_reference=np.array([3, 3]), n=np.array([3, 3]),
+        significant=np.array([True, False]), reference="R", delta_crit=0.1)
+    woods = plot_peptide_differences(pc, "V", 4.0, annotations=ann)
+    lines = {line.get_gid(): line for line in woods.axes[0].lines if line.get_gid()}
+    assert set(lines) == {"peptide:2-9", "peptide:6-11"}
+    bars = plot_region_bars(region_summary(rm, ann), 4.0, samples=["R", "V"])
+    gids = {p.get_gid() for p in bars.axes[0].patches}
+    assert {"region:R:long region name", "region:V:long region name"} <= gids
+    with pytest.raises(ValueError, match="no comparison"):
+        plot_peptide_differences(pc, "V", 60.0)
+    from hxex.report import woods_figure
+
+    stacked = woods_figure([("K=1", pc), ("again", pc)], "V", 4.0)
+    assert [ax.get_title(loc="left") for ax in stacked.axes] == ["K=1", "again"]
+
+
+def test_population_comparison_per_residue():
+    from hxex.analysis import choose_populations, compare_populations
+
+    rows = []
+    for high in (0.6, 0.45):  # R, then V (whose average is nearer its high population)
+        for r in range(1, 6):
+            rows += [(r, 1, 1, 0.4, 0.01), (r, 2, 1, 0.2, 0.01), (r, 2, 2, high, 0.01)]
+    m = choice_map(rows[:15])
+    v = choice_map(rows[15:])
+    import dataclasses
+
+    from hxex.analysis import ResidueMap
+
+    both = ResidueMap(**{f.name: np.concatenate([getattr(m, f.name), getattr(v, f.name)])
+                         for f in dataclasses.fields(ResidueMap)})
+    both = dataclasses.replace(both, sample=np.array(["R"] * 15 + ["V"] * 15))
+    ch = choose_populations(both)
+    cmp = compare_populations(ch, "R")
+    assert cmp.quantity == "population" and len(cmp) == 5
+    # R: (0.6 - 0.4) / 0.4 = 0.5 low-D; V: (0.45 - 0.4) / 0.25 = 0.2
+    np.testing.assert_allclose(cmp.value_reference, 0.5)
+    np.testing.assert_allclose(cmp.value, 0.2)
+    assert cmp.significant.all()
+    from hxex.report import residue_comparison_figure
+
+    fig = residue_comparison_figure(cmp, ["V"], 4.0)
+    assert fig.axes[0].get_ylabel() == "population (low D)"

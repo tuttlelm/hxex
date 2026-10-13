@@ -1447,6 +1447,31 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     replicates only and two populations passed at 150 to 155 of 156 residues, so the choice
     needs the bootstrap (`species_uptake` now warns without one).
 
+51. **Comparisons within a run (phase 3; 2026-10-13).** `compare_peptides` (hybrid rule:
+    Welch's test on the replicate spectra and a global `delta_crit`), `compare_residues`,
+    `region_summary` and `Annotations` (user-defined regions and sites); plots: reference
+    against each sample residue by residue (the owner's `vsWT_byresidue`), the Woods plot, and
+    region bars (`RFUbarplots`). `species_uptake` was split into the per-spectrum records (which
+    the Welch test needs) and their combination, with identical output on the benchmark. On the
+    intact-peptide benchmark against WT (K=1): `delta_crit` 0.112 fD (4 replicate spectra
+    typically); significant peptides at 4 s, 60 s, 1,800 s and 72,000 s: S19D 10, 13, 13, 11 of
+    about 175; S45D 8, 9, 16, 18; S59D 11, 11, 12, 14; D3 20, 19, 31, 52 of about 142, mostly
+    higher uptake, in the N-terminal region; at 4 s the S59D residue differences cluster at
+    residues 59 to 65. Region values at 4 s match the owner's `RFUbarplots` (FR-A about 0.35,
+    the beta regions 0.2 to 0.3, L9,CTR about 0.8; regions from the owner's notebook, used only
+    for the private examples).
+    Population-resolved, D3 against WT: at K=2, only 39 to 49 peptides have a description that
+    passes the filters in both samples at a time, and the replicate scatter of each rank's fD is
+    larger (`delta_crit` 0.24 and 0.23 against 0.11 at K=1), so 0 to 7 are significant. For 17
+    N-terminal peptides (ending by residue 60) with K=2 in both, D3's average fD is higher by a
+    median 0.14 at 4 s while the low-D state's fD differs by only 0.03 and its population is
+    lower by 0.17 (in 13 of 17): fewer molecules in the protected state rather than more
+    deuterium in either; by 20 h no difference. Compared with the hybrid rule, though, the
+    populations are too uncertain for single peptides: their pooled replicate scatter gives a
+    `delta_crit` of 0.48 (no peptide significant; median shift -0.09 at 4 s), and per residue 1
+    of about 120 is significant at 4 s (median -0.07). A tendency, not a per-peptide result,
+    with these (Poisson-loss) fits.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

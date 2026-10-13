@@ -11,9 +11,12 @@ Status (2026-10-13): phase 1 in progress. Built: the species uptake table
 (`hxex.analysis.species_uptake`), residue-level values (`residue_map`), coverage tables
 (`coverage_table`), the coverage map and the redundancy/resolution plot
 (`hxex.report.coverage`), the filters of K >= 2 descriptions (`SpeciesFilters`), residue
-profiles (`hxex.report.residues`), and the one-or-two-population choice per residue
-(`choose_populations`, `plot_population_choice`; phase 2). Next: comparisons within a run
-(phase 3). The peptide (MS1) branch comes first.
+profiles (`hxex.report.residues`), the one-or-two-population choice per residue
+(`choose_populations`, `plot_population_choice`; phase 2), and comparisons within a run
+(`compare_peptides`, `compare_residues`, `region_summary`, `Annotations`; the residue overlay,
+Woods and region bar plots in `hxex.report.compare`; phase 3). Next: the `[analysis]` section of
+the project file and a command-line command, then comparing separate runs (phase 4). The
+peptide (MS1) branch comes first.
 
 ## Ground rules
 
@@ -131,7 +134,19 @@ in the published work; where it matters, a component is named by its rank.
   small, and nearly every residue passes (`species_uptake` warns).
 - **Comparisons within a run.** Differences between samples (a reference sample against each
   other) per peptide and per residue, with propagated standard errors and a significance rule;
-  averages over user-defined regions of the sequence (pyHXExpress `group_fits`).
+  averages over user-defined regions of the sequence (pyHXExpress `group_fits`). As built:
+  differences in fD at a fixed K and rank (K=1 by default); per peptide and time the hybrid rule
+  (Hageman and Weis 2019; owner, 2026-10-13): Welch's t-test on the replicate spectra with
+  `p < 0.05` and `|delta|` above `delta_crit = t(1 - alpha/2, 2n - 2) s_pooled sqrt(2/n)` (the
+  pooled standard deviation of replicate spectra over every peptide, time and sample, `n` the
+  typical replicate count); per residue, `|delta| / se` above the normal quantile and `|delta|`
+  above the peptides' `delta_crit`. A region's value is the mean of its residues and its error
+  the mean of their errors (residues share peptides, so the error does not shrink with the
+  region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13): a
+  K=2 rank's population per peptide (`compare_peptides(..., quantity='population')`, the same
+  hybrid rule) and the lever-rule population per residue (`compare_populations`), to see whether
+  a sample shifts the balance between the populations rather than their deuteration; the
+  comparison tables carry their `quantity` (`value`, `value_reference` and their errors).
 
 ### Fragment branch (MS2, MS3; after the peptide branch)
 
@@ -243,12 +258,10 @@ Owner, 2026-10-13:
 Recommendation first:
 
 1. Spectra with quality flags: kept by default, with an option to leave them out.
-2. Significance for comparisons: a hybrid rule (a difference threshold and a Welch test across
-   replicates); or a threshold on the difference over its standard error.
-3. Whether the undeuterated and fully deuterated controls appear as panels in the residue
+2. Whether the undeuterated and fully deuterated controls appear as panels in the residue
    figures (the owner's figures show them).
-4. Three populations: ranks 1 to 3 are shown, but the choice is between one and two only, for now.
-5. The stitched-sequence option (decision 4 above).
+3. Three populations: ranks 1 to 3 are shown, but the choice is between one and two only, for now.
+4. The stitched-sequence option (decision 4 above).
 
 ## Reference notes (pyHXExpress `hxex_utils.py`)
 

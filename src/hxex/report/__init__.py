@@ -7,6 +7,13 @@ save them. The curves are computed in NumPy, but the result types come from ``hx
 importing this package also imports PyTorch.
 """
 
+from .compare import (
+    plot_peptide_differences,
+    plot_region_bars,
+    plot_residue_comparison,
+    residue_comparison_figure,
+    woods_figure,
+)
 from .coverage import (
     FD_CMAP,
     autowrap,
@@ -53,6 +60,11 @@ from .tables import (
 )
 
 __all__ = [
+    "plot_peptide_differences",
+    "plot_region_bars",
+    "plot_residue_comparison",
+    "residue_comparison_figure",
+    "woods_figure",
     "PROFILE_STYLES",
     "plot_population_choice",
     "plot_residue_profile",

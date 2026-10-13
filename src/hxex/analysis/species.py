@@ -146,24 +146,10 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
     return mean, float(np.sqrt(var / n))
 
 
-def species_uptake(
-    results,
-    ks: Sequence[int] = (1, 2),
-    *,
-    exclude_flagged: bool = False,
-    filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
-) -> SpeciesUptake:
-    """The species uptake table of ``results`` (:class:`hxex.report.Results`) at each fixed K in
-    ``ks`` (K values the run fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
-    which K >= 2 descriptions are kept; a species and time whose description is not kept has no
-    rows at that K.
-
-    ``charge_trend`` is True for every row of a species (sample, peptide and modification, K and
-    rank) whose lowest and highest charge states, wherever both were measured, differ by more
-    than ``TREND_Z`` combined standard errors in the same direction at more than ``TREND_SHARE``
-    of those times, and at two times at least: more likely a systematic effect (an overlapping
-    species, a wrong charge assignment) than noise.
-    """
+def _records(results, ks, exclude_flagged, filters):
+    """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
+    end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
+    rep)``; with whether the values are corrected, ``nterm_subtract`` and the undeuterated time."""
     fit, binned = results.fit, results.binned
     if binned is None:
         raise ValueError("the species uptake table needs the picked table (results.binned)")
@@ -226,6 +212,7 @@ def species_uptake(
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
+                    int(binned.rep[j]),
                 ))
 
     if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
@@ -257,6 +244,29 @@ def species_uptake(
                      dropped["population"], filters.min_population, 1 - filters.min_population,
                      dropped["fD"], filters.max_fD, dropped["fD_se"], filters.max_fD_se,
                      dropped["k1_between_ranks"])
+    undeut = run.reference_time if run is not None else float(np.min(fit.time))
+    return groups, controls is not None, int(nterm), float(undeut)
+
+
+def species_uptake(
+    results,
+    ks: Sequence[int] = (1, 2),
+    *,
+    exclude_flagged: bool = False,
+    filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+) -> SpeciesUptake:
+    """The species uptake table of ``results`` (:class:`hxex.report.Results`) at each fixed K in
+    ``ks`` (K values the run fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
+    which K >= 2 descriptions are kept; a species and time whose description is not kept has no
+    rows at that K.
+
+    ``charge_trend`` is True for every row of a species (sample, peptide and modification, K and
+    rank) whose lowest and highest charge states, wherever both were measured, differ by more
+    than ``TREND_Z`` combined standard errors in the same direction at more than ``TREND_SHARE``
+    of those times, and at two times at least: more likely a systematic effect (an overlapping
+    species, a wrong charge assignment) than noise.
+    """
+    groups, corrected, nterm, undeut = _records(results, ks, exclude_flagged, filters)
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     for key, recs in sorted(groups.items()):
@@ -277,7 +287,7 @@ def species_uptake(
             ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
-            ("corrected", controls is not None), ("charge_trend", False),
+            ("corrected", corrected), ("charge_trend", False),
         ):
             cols[name].append(value)
         if len(charges) > 1:
@@ -299,8 +309,7 @@ def species_uptake(
                  "n_amides"):
         out[name] = out[name].astype(np.float64)
     out["corrected"] = out["corrected"].astype(bool)
-    undeut = run.reference_time if run is not None else float(np.min(fit.time))
-    return SpeciesUptake(**out, nterm_subtract=int(nterm), undeut_time=float(undeut))
+    return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
 
 
 def _is_trend(pairs: list) -> bool:
