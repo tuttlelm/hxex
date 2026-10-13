@@ -21,7 +21,7 @@ Decided with the owner (2026-10-12 and 2026-10-13):
   CLAUDE.local.md for its location); its bugs are not copied (see "Reference notes").
 - Rejected spectra (review layer) are always left out and the reviewer's K overrides are
   honoured; uptake is back-exchange corrected by default (`hxex.controls`); populations are
-  identified by rank, 1 being the lowest uptake (the slow, protected population).
+  identified by rank, 1 being the lowest deuterium content (see "D content" below).
 - Analyses run on one results bundle, or on several for the run comparisons, and are configured
   by an `[analysis]` section of the project file and a command-line command.
 - Fragment data (MS2, MS3) is analysed differently from peptide data (MS1) and gets its own
@@ -40,9 +40,16 @@ effective K, or a fixed K from the fixed-K bootstraps):
   fragment label, parent (for fragments; an MS3 fragment's parent is an MS2 fragment, so
   positions on the protein follow the chain of parents), activation, precursor charge;
 - position on the protein: first and last residue;
-- values: corrected relative uptake (fraction of the exchangeable amides) and its standard
-  error, population fraction and its standard error, the number of replicates and charge
-  states combined, flags.
+- values: the corrected deuterium content (fraction of the exchangeable amides that carry
+  deuterium) and its standard error, population fraction and its standard error, the number of
+  replicates and charge states combined, flags.
+
+**D content** (owner, 2026-10-13): values are deuterium content, the fraction of the
+exchangeable amides that carry deuterium, and plots label them "D content". An experiment may be
+forward labelling (H to D) or reverse exchange (D to H, as in back-exchange kinetics); D content
+means the same in both, so no setting says which. Populations are ranked by D content (1 =
+lowest, the fit's own ranking) and named low-D and high-D, not slow and fast: which of them is
+the protected one (low-D in forward labelling, high-D in reverse exchange) is for the reader.
 
 ### Peptide branch (MS1; first)
 
@@ -54,10 +61,10 @@ effective K, or a fixed K from the fixed-K bootstraps):
   residue, and standard deviations add in quadrature with the same weights.
 - **One or two populations** (pyHXExpress `choose_fits`): per residue (or peptide) and time,
   the two-population description is kept when the populations are separated at a stated
-  confidence (`(fast - slow) - z (se_slow + se_fast) >= 0`), both standard errors are below a
-  limit and the slow fraction (from the lever rule with the one-population value) is inside
-  `[min_pop, 1 - min_pop]`; otherwise the one-population value is used. Output: fD_slow, fD_fast,
-  fD_avg and p_slow, with standard errors. Built on the selected K, the fixed-K bootstraps and
+  confidence (`(high - low) - z (se_low + se_high) >= 0`), both standard errors are below a
+  limit and the low-D fraction (from the lever rule with the one-population value) is inside
+  `[min_pop, 1 - min_pop]`; otherwise the one-population value is used. Output: fD_low, fD_high,
+  fD_avg and p_low (the low-D population's fraction), with standard errors. Built on the selected K, the fixed-K bootstraps and
   the review layer.
 - **Comparisons within a run.** Differences between samples (a reference sample against each
   other) per peptide and per residue, with propagated standard errors and a significance rule;
