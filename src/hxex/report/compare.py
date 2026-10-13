@@ -14,10 +14,18 @@ import matplotlib
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 
-from ..analysis import Annotations, PeptideComparison, RegionTable, ResidueComparison
+from ..analysis import (
+    Annotations,
+    PeptideComparison,
+    RegionTable,
+    ResidueComparison,
+    ResidueMap,
+)
+from ..analysis.settings import OVERLAY_VALUES
 from .coverage import SAMPLE_STYLES
 from .residues import _when
 
@@ -32,12 +40,12 @@ def _marks(ax: Axes, annotations: Annotations | None, label_sites: bool = True) 
     if annotations is None:
         return
     for x in annotations.marks():
-        ax.axvline(x, color="#8f86c4", linewidth=1.0, linestyle="--", zorder=1)
+        ax.axvline(x, color="#8c8c8c", linewidth=1.0, linestyle="--", zorder=1)
     if label_sites:
         for site in annotations.sites:
             if site.label:
                 ax.text(site.residue, 1.0, site.label, transform=ax.get_xaxis_transform(),
-                        ha="center", va="bottom", fontsize=7, color="#5b4fa8")
+                        ha="center", va="bottom", fontsize=7, color="#4d4d4d")
 
 
 def _label(quantity: str) -> str:
@@ -115,6 +123,98 @@ def residue_comparison_figure(
         if n < len(samples) - 1:
             ax.set_xlabel("")
     axes[-1].set_xlabel("residue")
+    return fig
+
+
+def plot_residue_overlay(
+    residues: ResidueMap,
+    reference: str,
+    sample: str,
+    time: float,
+    *,
+    show: Sequence[str] = ("low", "high"),
+    style_index: int = 1,
+    annotations: Annotations | None = None,
+    length: int | None = None,
+    undeut_time: float | None = None,
+    ax: Axes | None = None,
+) -> Figure:
+    """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, in the
+    owner's ``2pop_vsWT_byresidue`` style: points with capped standard-error bars, no lines, the
+    sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'`` (the K=2 ranks
+    1 and 2, filled points) and ``'avg'`` (K=1, open points). Point groups have the gid
+    ``overlay:<sample>:<value>``."""
+    unknown = [v for v in show if v not in OVERLAY_VALUES]
+    if unknown or not show:
+        raise ValueError(f"show must be some of {', '.join(OVERLAY_VALUES)}")
+    if ax is None:
+        fig = Figure(figsize=(7.5, 3.0))
+        ax = fig.add_subplot()
+    else:
+        fig = ax.figure
+    drawn = 0
+    for n, (name, index) in enumerate(((reference, 0), (sample, style_index))):
+        colour = _style(index)[0]
+        for value in show:
+            k, rank = OVERLAY_VALUES[value]
+            rows = residues.where(sample=name, time=time, K=k, rank=rank) & np.isfinite(
+                residues.fD)
+            if not rows.any():
+                continue
+            drawn += 1
+            bars = ax.errorbar(
+                residues.residue[rows], residues.fD[rows],
+                yerr=np.nan_to_num(residues.fD_se[rows]), fmt="o",
+                markersize=3.0 if n == 0 else 4.0, color=colour,
+                markerfacecolor="white" if value == "avg" else colour,
+                markeredgewidth=0.8, ecolor=colour, elinewidth=0.9, capsize=2.0,
+                capthick=0.9, alpha=0.85, zorder=3 + n)
+            bars.lines[0].set_gid(f"overlay:{name}:{value}")
+    if not drawn:
+        raise ValueError(f"no residue values of {reference!r} or {sample!r} at time {time:g}")
+    _marks(ax, annotations, label_sites=False)
+    ax.set_xlim(0, length if length is not None else int(residues.residue.max()))
+    ax.set_ylim(-0.05, 1.05)
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.xaxis.set_minor_locator(AutoMinorLocator(4))
+    ax.set_xlabel("Residue")
+    ax.set_ylabel(", ".join(rf"fD$_{{\rm {v}}}$" for v in show))
+    ax.grid(color="#e5e5e5", linewidth=0.8)
+    handles = [Line2D([], [], linestyle="none", marker="o", markersize=6,
+                      color=_style(i)[0], label=name)
+               for name, i in ((reference, 0), (sample, style_index))]
+    if "avg" in show and len(show) > 1:
+        handles.append(Line2D([], [], linestyle="none", marker="o", markersize=6,
+                              color="#555555", markerfacecolor="white", label="avg (K=1)"))
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
+              ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
+    ax.text(1.0, 1.02, _when(time, undeut_time), transform=ax.transAxes, ha="right",
+            va="bottom", fontsize=9)
+    return fig
+
+
+def residue_overlay_figure(
+    residues: ResidueMap,
+    reference: str,
+    samples: Sequence[str],
+    time: float,
+    *,
+    show: Sequence[str] = ("low", "high"),
+    annotations: Annotations | None = None,
+    length: int | None = None,
+    undeut_time: float | None = None,
+) -> Figure:
+    """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``
+    (the owner's ``2pop_vsWT_byresidue`` figure); each sample keeps its colour."""
+    samples = [s for s in samples if s != reference]
+    if not samples:
+        raise ValueError("no sample to compare with the reference")
+    fig = Figure(figsize=(6.5, 3.0 * len(samples)), layout="constrained")
+    axes = fig.subplots(len(samples), 1, squeeze=False)[:, 0]
+    for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
+        plot_residue_overlay(residues, reference, sample, time, show=show, style_index=n + 1,
+                             annotations=annotations, length=length, undeut_time=undeut_time,
+                             ax=ax)
     return fig
 
 

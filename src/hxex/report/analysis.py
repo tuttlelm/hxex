@@ -9,7 +9,8 @@ choice between one and two populations; with K=2), and with a reference sample
 regions ``regions.csv``, and for several runs (a :class:`hxex.analysis.RunSet`) ``run_settings.csv``
 (where their settings differ) and ``run_identity.csv`` (species whose identity differs).
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
-``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>``,
+``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>`` (the
+values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
 ``compare_populations_<time>``, ``woods_<sample>_<time>``, ``butterfly_<sample>`` and
 ``regions_<time>``. Characters a file name cannot hold (the ``:`` of ``run:sample``) become
 ``_``.
@@ -39,12 +40,13 @@ from ..analysis import (
     residue_map,
     species_uptake,
 )
-from ..analysis.settings import UNDEUTERATED
+from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from .compare import (
     plot_butterfly,
     plot_region_bars,
     residue_comparison_figure,
+    residue_overlay_figure,
     woods_figure,
 )
 from .coverage import coverage_figure, plot_redundancy_resolution
@@ -66,6 +68,12 @@ def _time_label(time: float, undeut: float) -> str:
 def _stem(name: str) -> str:
     """``name`` as a file name on every system."""
     return re.sub(r'[<>:"/\\|?*\s]', "_", name)
+
+
+def _has_overlay(residues, sample: str, time: float, show) -> bool:
+    """Whether ``sample`` has a residue value at ``time`` among the overlay values ``show``."""
+    return any((residues.where(sample=sample, time=time, K=k, rank=rank)
+                & np.isfinite(residues.fD)).any() for k, rank in (OVERLAY_VALUES[v] for v in show))
 
 
 def _fd_times(results) -> list[float]:
@@ -183,9 +191,12 @@ def write_analysis(
         stack = list(comparisons.items())
         for t in times:
             label = _time_label(t, undeut)
-            if others and res_cmp.where(time=t).any():
-                jobs.append((f"compare_residues_{label}", lambda t=t: residue_comparison_figure(
-                    res_cmp, others, t, annotations=ann, length=length, undeut_time=undeut)))
+            shown = [s for s in others if _has_overlay(residues, s, t, config.overlay)]
+            if shown and _has_overlay(residues, config.reference, t, config.overlay):
+                jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown:
+                             residue_overlay_figure(
+                                 residues, config.reference, shown, t, show=config.overlay,
+                                 annotations=ann, length=length, undeut_time=undeut)))
             if others and pop_cmp is not None and pop_cmp.where(time=t).any():
                 jobs.append((f"compare_populations_{label}",
                              lambda t=t: residue_comparison_figure(

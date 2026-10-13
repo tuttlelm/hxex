@@ -727,3 +727,40 @@ two = "{two_sample_bundle.as_posix()}"
     project.write_text(project.read_text().replace('one = "', '"o:ne" = "'))
     assert cli.main(["-q", "analyse", str(project)]) == 1
     assert "run name 'o:ne'" in capsys.readouterr().err
+
+
+def test_residue_overlay_shows_the_chosen_values():
+    from hxex.analysis import AnalysisConfig, ResidueMap
+    from hxex.report import plot_residue_overlay, residue_overlay_figure
+
+    rows = []  # (sample, residue, K, rank, fD)
+    for sample, shift in (("WT", 0.0), ("D3", 0.1)):
+        for r in (3, 4, 6):
+            rows += [(sample, r, 1, 1, 0.4 + shift), (sample, r, 2, 1, 0.2 + shift),
+                     (sample, r, 2, 2, 0.6 + shift)]
+    n = len(rows)
+    rm = ResidueMap(sample=np.array([r[0] for r in rows]), time=np.full(n, 4.0),
+                    K=np.array([r[2] for r in rows]), rank=np.array([r[3] for r in rows]),
+                    residue=np.array([r[1] for r in rows]), aa=np.array(["A"] * n),
+                    fD=np.array([r[4] for r in rows]), fD_se=np.full(n, 0.02),
+                    redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
+                    proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool))
+    fig = plot_residue_overlay(rm, "WT", "D3", 4.0)
+    lines = {line.get_gid(): line for line in fig.axes[0].lines if line.get_gid()}
+    assert set(lines) == {"overlay:WT:low", "overlay:WT:high", "overlay:D3:low",
+                          "overlay:D3:high"}
+    np.testing.assert_allclose(lines["overlay:D3:high"].get_ydata(), 0.7)
+    assert lines["overlay:WT:low"].get_linestyle() == "None"  # points, no lines
+    every = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("avg", "low", "high"))
+    avg = next(line for line in every.axes[0].lines if line.get_gid() == "overlay:D3:avg")
+    assert avg.get_markerfacecolor() == "white"
+    assert "avg (K=1)" in [t.get_text() for t in every.axes[0].get_legend().texts]
+    assert len(residue_overlay_figure(rm, "WT", ["WT", "D3"], 4.0).axes) == 1
+    with pytest.raises(ValueError, match="show"):
+        plot_residue_overlay(rm, "WT", "D3", 4.0, show=("mean",))
+    with pytest.raises(ValueError, match="no residue values"):
+        plot_residue_overlay(rm, "WT", "D3", 60.0)
+    assert AnalysisConfig(overlay=["avg"], ks=[1]).overlay == ("avg",)
+    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]}):
+        with pytest.raises(ValueError, match="overlay"):
+            AnalysisConfig(**bad)

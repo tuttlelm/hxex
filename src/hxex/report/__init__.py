@@ -13,7 +13,9 @@ from .compare import (
     plot_peptide_differences,
     plot_region_bars,
     plot_residue_comparison,
+    plot_residue_overlay,
     residue_comparison_figure,
+    residue_overlay_figure,
     woods_figure,
 )
 from .coverage import (
@@ -67,7 +69,9 @@ __all__ = [
     "plot_peptide_differences",
     "plot_region_bars",
     "plot_residue_comparison",
+    "plot_residue_overlay",
     "residue_comparison_figure",
+    "residue_overlay_figure",
     "woods_figure",
     "PROFILE_STYLES",
     "plot_population_choice",

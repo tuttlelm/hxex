@@ -192,9 +192,17 @@ Plots (matplotlib, returning figures):
   full; colour bar, light vertical grid lines every 25 residues, no y axis; a grid of samples,
   times and ranks;
 - residue profiles: the ranks' curves with uncertainty bands, the one-population value, the
-  chosen description as markers sized by population, and a population panel below;
+  chosen description as markers sized by population, and a population panel below (the choice
+  figure, `plot_population_choice`, one sample per figure: confirmed by the owner, 2026-10-13, as
+  the way to judge the one-or-two choice; comparisons between samples belong in other plots);
 - redundancy and resolution strips (uncovered residues and prolines marked);
 - comparisons: overlays and stacks (a reference sample against each other), difference plots;
+  the by-residue comparison of samples follows the owner's `2pop_vsWT_byresidue` figure
+  (reference chosen by the owner, 2026-10-13: one panel per sample against the reference in
+  black, points with capped standard-error bars, no lines), showing any of the K=2 low and high
+  values (the default, as in the reference) and the K=1 average (open points), set by
+  `[analysis] overlay` (`residue_overlay_figure`); the plots of the other comparisons wait for
+  the owner's current references;
 - region bar charts (fD and populations per region and sample, with error bars);
 - an optional annotation strip under the residue axis (domains, sites);
 - annotations are protein-specific and user-defined, never derived: named regions (name, first

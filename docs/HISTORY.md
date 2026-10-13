@@ -1500,6 +1500,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     Undecided: the rule for one population in one run and two in the other (ANALYSIS.md
     "Later parts", recommended: K=1 always, K=2 where both keep it, disagreements reported).
 
+54. **By-residue comparison plot from the owner's reference (2026-10-13).** The owner's
+    current reference for comparing samples residue by residue is
+    `B5_phospho_2pop_vsWT_byresidue_72000s_26Aug2026` (one panel per variant against WT in
+    black, points with capped error bars, no lines, both K=2 values); the owner asked for any of
+    low, high and average to be selectable. Built as `plot_residue_overlay` and
+    `residue_overlay_figure` (`show`, and `[analysis] overlay`, default `["low", "high"]`; the
+    K=1 average as open points); `hxex analyse` now draws the fD `compare_residues_<time>`
+    figures with it (the earlier K=1 comparison with significance bands stays for the
+    population comparison). The owner also said that many plots so far followed older versions
+    of their figures, so every new plot type now starts from a reference the owner supplies, and
+    confirmed the choice figure (one sample per figure) as it is. On the benchmark the style
+    matches the reference; the K=2 values differ because the fits differ (item 49). The dashed lines of
+    regions and sites in the comparison plots are grey (owner), not purple.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

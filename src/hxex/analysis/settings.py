@@ -16,6 +16,8 @@ from .species import SpeciesFilters
 
 FORMATS = ("pdf", "png", "svg")
 UNDEUTERATED = "undeuterated"
+# the values a by-residue comparison can show: name -> (K, rank)
+OVERLAY_VALUES = {"low": (2, 1), "high": (2, 2), "avg": (1, 1)}
 
 
 @dataclass(frozen=True)
@@ -33,7 +35,8 @@ class AnalysisConfig:
     ``exclude_flagged``; ``format`` of the figure files; ``out``, the output directory (None:
     beside the bundle); ``runs``: separate runs to compare (run name -> bundle; empty: the one
     run), whose samples are then named ``run:sample`` everywhere (``reference``, ``samples``,
-    ``fasta``)."""
+    ``fasta``); ``overlay``: the values the by-residue comparison figures show, any of
+    ``'low'`` and ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -51,8 +54,15 @@ class AnalysisConfig:
     format: str = "pdf"
     out: str | None = None
     runs: Mapping[str, str] | None = None
+    overlay: tuple[str, ...] = ("low", "high")
 
     def __post_init__(self):
+        object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
+        if not self.overlay or any(v not in OVERLAY_VALUES for v in self.overlay):
+            raise ValueError(f"overlay must be some of {', '.join(OVERLAY_VALUES)}")
+        if any(OVERLAY_VALUES[v][0] not in self.ks for v in self.overlay):
+            raise ValueError("overlay shows K=2 values ('low', 'high'): include 2 in ks, or "
+                             "set overlay = ['avg']")
         if self.runs is not None:
             object.__setattr__(self, "runs", {str(k): str(v) for k, v in self.runs.items()})
             for name in self.runs:
