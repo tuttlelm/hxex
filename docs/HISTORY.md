@@ -1638,6 +1638,23 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     recomputed under these defaults: 219 fallbacks instead of 250, and around residue 60 at 4 s
     the K=2 values of S59D and D3 close to the owner's.
 
+62. **The remaining K=2 low-population gap is a filter difference; hxex's filtering kept (owner,
+    2026-10-13).** After items 59 to 61, hxex's K=2 low population around residue 60 at 4 s was
+    still about 0.14 below the owner's (WT, S59D, D3). On the same fits (`gauss_full_v2`), only
+    the filtering of K=2 descriptions was varied, against the owner's residue values (median
+    hxex - owner, low; residues 55-68 at 4 s / all residues, samples and times): hxex's filters
+    (a spectrum's whole K=2 description is dropped when a component fails) -0.142 / -0.038; no
+    filters -0.070 / -0.028; the owner's notebook (each population row dropped on its own when
+    its fD is above 1.1 or below -0.1, so the low row of a spectrum whose high component fails is
+    kept) -0.082 / -0.028; the notebook with its further rule dropping every row with fD below
+    0.1 after time 0 -0.046 / -0.004 (high population about -0.05 / -0.01 throughout). So the
+    gap comes from the filters: per-row filtering accounts for about 0.06 and the fD < 0.1 rule,
+    which removes the lowest low-population values, for about 0.04; the remaining -0.05 around
+    residue 60 matches the peptide-level fit differences of a few short peptides (55-62, 58-65).
+    Owner: hxex's filtering stays as it is, being justified (a description with an unphysical
+    component is not trusted for either component, and genuinely protected states with fD below
+    0.1 are not removed).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
