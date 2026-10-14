@@ -1727,6 +1727,29 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     Unverified: neutral-loss variants (follow their base ion), the hydrogen moved in c-1/z+1,
     oxazolone b ions (owner: keep L - 1).
 
+66. **Neutral losses, the c-1 hydrogen and b ions (owner, 2026-10-14).** A count changes the
+    fractional deuteration (one amide in five or six is 17 to 20 %) and which residue a
+    difference names, not the measured deuterium; the fit cap and the shape barely. (1) A lost
+    NH3 takes a counted amide only when it is the cleavage-site nitrogen: from a side chain
+    (K, R, N, Q) or the N-terminal amine it takes back-exchanged hydrogens. Neutral-loss
+    variants follow their base ion, except `c-NH3`, whose NH3 is most plausibly the c ion's
+    terminal NH2 (it is then a b ion, and its composition says so); M-NH3 (ETD's charge-reduced
+    precursor) would hold one amide fewer only with `nterm_subtract = 0` and an NH3 from the
+    N-terminal amine. Neutral-loss ions go into residue differences only after checking. (2) The
+    c radical (`c-1`) has given a hydrogen atom to its z partner (z+1). Were it the cleavage-site
+    amide's, a c-1 ion would lose that residue's deuterium. In the private fragment dataset (the
+    8-residue probe, low-energy ETD, first 15 s) c-1 plus its z-dot partner equals the precursor
+    (3.29, 3.33 and 3.17 D against 3.33 D where the cleavage-site residue holds 0.56, 0.95 and
+    0.98 D; the sums would be about 2.77, 2.38 and 2.35), so the hydrogen moved is not a
+    deuterated amide's, for the ion measured as c-1 (it may mix c-dot and c'). z+1 is untested
+    (the fits use z-dot). (3) a = b - CO: both hold the nitrogens of residues 1 to L, which
+    supports L - 1, but the linear (acylium) and oxazolone b ions have the same formula. In the
+    oxazolone (the usual structure of collisional b ions) residue L's nitrogen is in the ring
+    with a double bond to the previous carbonyl carbon and carries the mobile proton (from the
+    solvent) instead of its own hydrogen: L - 2. Kept: L - 1 (`AmideRules({"b": False})` for
+    L - 2); collisional b and y ions are scrambled and are not for residue values, and UVPD a
+    ions (a direct Calpha-C cut) keep residue L's N-H.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

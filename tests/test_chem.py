@@ -255,9 +255,10 @@ def test_amide_counts_by_ion_type():
     compositions). PEPTIDEK starts with a proline, which has no amide H."""
     assert chem.count_amides("AEPTIDEK") == 6
     for ion_type in chem.ion_types():
-        want = {"c": 7, "x": 7, "y": 7}.get(ion_type[0], 6)
+        c = ion_type[0] == "c" and ion_type != "c-NH3"  # c-NH3 has lost the next residue's NH2
+        want = 7 if c or ion_type[0] in "xy" else 6
         assert chem.count_amides("AEPTIDEK", ion_type=ion_type) == want, ion_type
-        want = {"c": 7}.get(ion_type[0], 6)
+        want = 7 if c else 6
         assert chem.count_amides("PEPTIDEK", ion_type=ion_type) == want, ion_type
 
 

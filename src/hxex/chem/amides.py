@@ -15,9 +15,14 @@ kept). A fragment ion carries the N-H of the residues it contains, except at the
 
 These are the backbone nitrogens of each ion type's composition (pyteomics: L + 1 for the c
 ions, L for a, b, x and y, L - 1 for the z ions), so the count follows from the formula. The
-neutral-loss variants (``-H2O``, ``-NH3``) follow their base ion: the lost NH3 may come from a
-side chain (K, R, N, Q) as well as the backbone, so they are UNVERIFIED (docs/PLAN.md, "Risks and
-open decisions"), and :class:`AmideRules` can set any ion type's boundary amide.
+neutral-loss variants (``-H2O``, ``-NH3``) follow their base ion, since a lost NH3 mostly comes
+from a side chain (K, R, N, Q) or the N-terminal amine, whose hydrogens are not counted; except
+``c-NH3``, whose NH3 is taken to be the cleavage-site NH2 (it is then a b ion). These are
+UNVERIFIED (docs/PLAN.md, "Risks and open decisions"); :class:`AmideRules` sets any ion type's
+cleavage-site amide. In ``c-1`` (the c radical, which gave a hydrogen atom to its z partner) the
+hydrogen moved is not an amide's (HISTORY item 66). b ions are counted as linear (L - 1 from
+residue 2); an oxazolone b ion has replaced residue L's N-H with the mobile proton (L - 2,
+``AmideRules({"b": False})``), and collisional b and y ions are scrambled anyway.
 
 Consecutive fragments therefore differ by one residue's amide, at the cleavage site: c_k - c_(k-1)
 is the amide of residue ``k + 1``, b_k - b_(k-1) and a_k - a_(k-1) that of residue ``k``, and for
@@ -46,8 +51,9 @@ _SC_ONE = frozenset("STYCDEHW")
 _SC_TWO = frozenset("RKQN")
 
 # whether an ion type holds the N-H at its cleavage site, by the first letter of its name (the
-# backbone nitrogens of its composition)
+# backbone nitrogens of its composition), and the ion types that differ from their letter
 _BOUNDARY = {"a": False, "b": False, "c": True, "x": True, "y": True, "z": False}
+_BOUNDARY_BY_TYPE = {"c-NH3": False}  # the cleavage-site NH2 lost: a b ion
 
 
 @dataclass(frozen=True)
@@ -55,9 +61,9 @@ class AmideRules:
     """Per ion type, whether the fragment holds the amide N-H at its cleavage site (the
     "boundary" amide): for an N-terminal ion the N-H of the residue after it, for a C-terminal
     ion the N-H of its own first residue. The default follows the ion type's composition (c, x
-    and y: yes; a, b and z: no; variants such as ``c-1`` or ``z-dot`` as their letter); entries
-    here replace it, e.g. ``AmideRules.from_dict({"y-NH3": False})``. Parent-type ions have no
-    boundary."""
+    and y: yes; a, b and z: no; variants such as ``c-1`` or ``z-dot`` as their letter, except
+    ``c-NH3``: no); entries here replace it, e.g. ``AmideRules.from_dict({"y-NH3": False})``.
+    Parent-type ions have no boundary."""
 
     boundary: Mapping[str, bool] = field(default_factory=lambda: MappingProxyType({}))
 
@@ -74,7 +80,8 @@ class AmideRules:
         """Whether ``ion_type`` holds the N-H at its cleavage site (False for parent-type ions)."""
         if ion_terminus(ion_type) == "M":
             return False
-        return self.boundary.get(ion_type, _BOUNDARY[ion_type[0]])
+        return self.boundary.get(ion_type,
+                                 _BOUNDARY_BY_TYPE.get(ion_type, _BOUNDARY[ion_type[0]]))
 
     def with_boundary(self, ion_type: str, keeps: bool) -> AmideRules:
         """Return a copy with ``ion_type``'s boundary amide set to ``keeps``."""

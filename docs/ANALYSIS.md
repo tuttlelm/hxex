@@ -181,7 +181,7 @@ How fragment data differs, and what this branch does about it:
 - **Scrambling.** Only low-scrambling activation (ETD, ECD, UVPD) gives site-specific values;
   the activation is carried and a scrambling check is part of the branch.
 - **Amide counts per ion type** follow the structure (PLAN, "Risks and open decisions"; HISTORY
-  item 65), awaiting the owner's confirmation: per-residue values come from
+  items 65 and 66; neutral-loss ions and `z+1` unverified): per-residue values come from
   `hxex.fragments.amide_difference`, which names the residues a difference of two fragments
   measures (c_k minus c_(k-1) is residue k + 1; z_j minus z_(j-1) the residue after z_j's
   first) and refuses differences that are not a set of residues.

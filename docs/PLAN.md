@@ -518,11 +518,14 @@ Planned, not built:
   the parent, plus at the cleavage site the next residue's for c ions and its own first
   residue's for x and y ions (not for a, b, z); these are the backbone nitrogens of each ion
   type's composition, checked for every ion type and length in `tests/test_fragments.py`.
-  Prolines and the parent's first `nterm_subtract` residues do not count. Still UNVERIFIED:
-  the neutral-loss variants (`-H2O`, `-NH3`), which follow their base ion although the NH3 may
-  come from the backbone; the hydrogen moved between c and z in `c-1`/`z+1` (taken not to be
-  an amide's); and b ions as oxazolones (which would hold one amide fewer; the owner chose to
-  keep L - 1). `AmideRules` sets the cleavage-site amide of any ion type.
+  Prolines and the parent's first `nterm_subtract` residues do not count. Decided by the owner
+  (HISTORY item 66): neutral-loss variants follow their base ion (a lost NH3 is mostly a side
+  chain's or the N-terminal amine's), except `c-NH3`, counted as a b ion; in `c-1` the hydrogen
+  given to the z partner is not an amide's (measured); b ions hold L - 1 (linear; an oxazolone
+  would hold L - 2, `AmideRules({"b": False})`). Still UNVERIFIED: the neutral-loss rule itself
+  (use those ions in residue differences only after checking) and the hydrogen received by
+  `z+1` (no data). Collisional (CID, HCD) b and y ions are scrambled and are not for residue
+  values. `AmideRules` sets the cleavage-site amide of any ion type.
 - **Back-exchange correction is unresolved.** On the simulated test data the intermediate
   points looked less back-exchanged than the fully deuterated control. It needs real data
   before it becomes a default.

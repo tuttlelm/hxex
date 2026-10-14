@@ -135,8 +135,10 @@ def test_amides_are_the_backbone_nitrogens_of_the_composition(parent, nterm):
     entry = PeptideEntry("f", "S", parent, f"1-{n}", 1, n, 2)
     for ion in chem.ion_types():
         side = ion_terminus(ion)
-        # neutral-loss variants follow their base ion (the lost NH3 may be a side chain's)
-        base = ion.split("-")[0] if ("H2O" in ion or "NH3" in ion) else ion
+        # neutral-loss variants follow their base ion (the lost NH3 taken to be a side chain's),
+        # except c-NH3, which has lost its cleavage-site NH2 (as its composition says)
+        neutral_loss = ("H2O" in ion or "NH3" in ion) and ion != "c-NH3"
+        base = ion.split("-")[0] if neutral_loss else ion
         for length in [n] if side == "M" else range(1, n):
             part = parent[:length] if side != "C" else parent[n - length:]
             backbone = mass.Composition(sequence=part, ion_type=base)["N"] - sum(
