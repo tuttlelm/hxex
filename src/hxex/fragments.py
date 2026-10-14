@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import chem
 from .spectra import PeptideEntry
@@ -267,6 +267,7 @@ def fragment_targets(
     filter_excludes: str | None = None,
     rt_window: tuple[float, float] | None = None,
     limit_charge: bool = True,
+    label: str | None = None,
     picker=None,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
 ):
@@ -281,7 +282,8 @@ def fragment_targets(
     default (``'parent'``), or a charge, or None to select scans whatever charge they record
     (some files record a wrong one). ``preactivation`` selects MS3 scans by the activation before
     the last stage (``'HCD'``; ``'none'`` for none). The other scan conditions are those of the
-    target (for example ``activation='ETD'``, ``filter_excludes='sid'``)."""
+    target (for example ``activation='ETD'``, ``filter_excludes='sid'``). ``label`` names the
+    condition (kept in each entry's ``extra`` as ``condition``, and in the spectrum ids)."""
     from .io.mzml import MzmlTarget
 
     if isinstance(precursor_charge, str) and precursor_charge != "parent":
@@ -293,10 +295,12 @@ def fragment_targets(
     pz = parent.charge if precursor_charge == "parent" else precursor_charge
     pmz = (parent_mz_range(parent, picker=picker, registry=registry)
            if parent_mz == "parent" else parent_mz)
+    entries = fragment_entries(parent, fragments, limit_charge=limit_charge, registry=registry)
+    if label is not None:
+        entries = [replace(e, extra={**e.extra, "condition": label}) for e in entries]
     return [
         MzmlTarget(e, ms_level=ms_level, activation=activation, precursor_mz=precursor_mz,
                    precursor_charge=pz, rt_window=rt_window, filter_contains=filter_contains,
                    filter_excludes=filter_excludes, parent_mz=pmz, preactivation=preactivation)
-        for e in fragment_entries(parent, fragments, limit_charge=limit_charge,
-                                  registry=registry)
+        for e in entries
     ]

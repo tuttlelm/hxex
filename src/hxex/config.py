@@ -112,9 +112,13 @@ def run_config_from(data: Mapping) -> RunConfig:
 @dataclass(frozen=True)
 class FragmentSettings:
     """Fragment targets made from every peptide of the table (``ions`` in the syntax of
-    :mod:`hxex.fragments`, for example ``'c-1:ALL z-dot:ALL'``), with their scan conditions."""
+    :mod:`hxex.fragments`, for example ``'c-1:ALL z-dot:ALL'``), with their scan conditions and
+    an optional ``label`` naming the condition (``'gentle'``; kept with each entry as
+    ``condition``). A project may have several (``[[input.fragments]]``), for example the same
+    ions with and without in-source activation."""
 
     ions: str
+    label: str | None = None
     ms_level: int = 2
     activation: str | None = None
     preactivation: str | None = None
@@ -150,7 +154,7 @@ class InputSettings:
     runs: tuple[MzmlRun, ...] = ()
     parents: bool = True
     target: dict = field(default_factory=dict)
-    fragments: FragmentSettings | None = None
+    fragments: tuple[FragmentSettings, ...] = ()
     scans: MzmlConfig = MzmlConfig()  # noqa: RUF009
     data_root: Path | None = None
     thermo_dir: Path | None = None
@@ -230,6 +234,23 @@ def _window(value, where: str, unit: str = "[start, end] in seconds"):
     return (float(value[0]), float(value[1]))
 
 
+def _fragment_settings(block) -> FragmentSettings:
+    """One ``[input.fragments]`` table."""
+    if not isinstance(block, Mapping):
+        raise ProjectError("input.fragments must be a table or an array of tables")
+    frag = dict(block)
+    _check_keys(frag, {f.name for f in fields(FragmentSettings)}, "[input.fragments]")
+    if "ions" not in frag:
+        raise ProjectError("input.fragments needs ions (for example \"c-1:ALL z-dot:ALL\")")
+    frag = {k: _none(v) for k, v in frag.items()}
+    if "rt_window" in frag:
+        frag["rt_window"] = _window(frag["rt_window"], "input.fragments.rt_window")
+    if frag.get("parent_mz") not in (None, "parent"):
+        frag["parent_mz"] = _window(frag["parent_mz"], "input.fragments.parent_mz",
+                                    "\"parent\", [low, high] (m/z) or false")
+    return FragmentSettings(**frag)
+
+
 def _input_from(data: Mapping, base: Path) -> InputSettings:
     names = {f.name for f in fields(InputSettings)}
     _check_keys(data, names, "[input]")
@@ -281,21 +302,11 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
     if target.get("parent_mz") is not None:
         target["parent_mz"] = _window(target["parent_mz"], "input.target.parent_mz",
                                       "[low, high] (m/z) or false")
-    fragments = None
-    if data.get("fragments"):
-        frag = dict(data["fragments"])
-        _check_keys(frag, {f.name for f in fields(FragmentSettings)}, "[input.fragments]")
-        if "ions" not in frag:
-            raise ProjectError("input.fragments needs ions (for example \"c-1:ALL z-dot:ALL\")")
-        frag = {k: _none(v) for k, v in frag.items()}
-        if "rt_window" in frag:
-            frag["rt_window"] = _window(frag["rt_window"], "input.fragments.rt_window")
-        if frag.get("parent_mz") not in (None, "parent"):
-            frag["parent_mz"] = _window(frag["parent_mz"], "input.fragments.parent_mz",
-                                        "\"parent\", [low, high] (m/z) or false")
-        fragments = FragmentSettings(**frag)
+    blocks = data.get("fragments") or []
+    fragments = tuple(_fragment_settings(b) for b in
+                      ([blocks] if isinstance(blocks, Mapping) else blocks))
     parents = bool(data.get("parents", True))
-    if not parents and fragments is None:
+    if not parents and not fragments:
         raise ProjectError("parents = false needs [input.fragments]: there would be no target")
     scans = data.get("scans", {})
     try:
@@ -413,7 +424,7 @@ def load_project(path: str | Path) -> Project:
 
 def scan_targets(project: Project) -> list[MzmlTarget]:
     """The targets of an mzML or Thermo project: each peptide of the table (if ``parents``),
-    and its fragments (if ``[input.fragments]``)."""
+    and its fragments (one set per ``[input.fragments]`` table)."""
     from .fragments import fragment_targets
     from .io.entries import read_peptide_table
 
@@ -422,14 +433,13 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
     for entry in read_peptide_table(inp.peptides):
         if inp.parents:
             targets.append(MzmlTarget(entry, **inp.target))
-        if inp.fragments is not None:
-            f = inp.fragments
+        for f in inp.fragments:
             targets += fragment_targets(
                 entry, f.ions, ms_level=f.ms_level, activation=f.activation,
                 preactivation=f.preactivation, parent_mz=f.parent_mz,
                 precursor_mz=f.precursor_mz, precursor_charge=f.precursor_charge,
                 filter_contains=f.filter_contains, filter_excludes=f.filter_excludes,
-                rt_window=f.rt_window, limit_charge=f.limit_charge,
+                rt_window=f.rt_window, limit_charge=f.limit_charge, label=f.label,
                 picker=project.run.picker, registry=project.run.registry,
             )
     if not targets:
@@ -560,8 +570,9 @@ ms_level = 1
 # rt_window = [60.0, 180.0]      # seconds, for runs with a fixed time
 # filter_excludes = "sid"        # leave out scans whose filter contains this
 
-# [input.fragments]              # fragment ions of every peptide
-# ions = "c-1:ALL z-dot:ALL"
+# [[input.fragments]]            # fragment ions of every peptide (repeat the table for
+# ions = "c-1:ALL z-dot:ALL"     # other conditions, e.g. with and without in-source activation)
+# label = "gentle"               # names the condition in tables and figures
 # ms_level = 2                   # 3 for MS3 scans
 # activation = "ETD"             # of the last stage
 # preactivation = "HCD"          # MS3: the activation before the last stage ("none" for none)

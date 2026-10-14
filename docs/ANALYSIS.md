@@ -172,28 +172,40 @@ How fragment data differs, and what this branch does about it:
   C-terminal ions (x, y, z) from its C-terminus; consecutive fragments differ by one residue, and
   `c_n + z_(N-n)` should equal the parent (the closure test, HISTORY item 41). Residue values come
   from differences, estimated as a least-squares fit of per-residue deuteration (between 0 and 1)
-  to all fragments of a parent at once, with the closure as a check.
+  to all fragments of a parent at once, with the closure as a check. Built (2026-10-14,
+  `hxex.analysis.fragments`, HISTORY item 67): the K = 1 fragment table, ladder steps,
+  scan-matched differences, decay fits and the bounded least squares, with the ladder kinetics
+  figure (`hxex.report.ladder_kinetics_figure`). Owner (2026-10-14): these
+  simple ladder values are wanted as a comparison for the owner's own method of deriving
+  single-residue exchange rates and scrambling, which is unpublished and kept outside the
+  repository until it is; hxex supplies its inputs (fragment and precursor deuteration per
+  activation setting) but does not implement it.
 - **Populations belong to the parent.** A fragment's populations are its parent's molecules, so
   the population is shared by all fragments of a parent; a fragment that does not
-  span the region where the populations differ looks like one population. The one-or-two
-  choice is therefore made with populations from the parent (or shared across its fragments) in
-  post-processing, not fragment by fragment.
+  span the region where the populations differ looks like one population. How to handle this is
+  not yet known (owner): start with K=1 fits; once exchange is resolved to single amides,
+  decide whether a single or a double exponential is needed.
 - **Scrambling.** Only low-scrambling activation (ETD, ECD, UVPD) gives site-specific values;
-  the activation is carried and a scrambling check is part of the branch.
+  the activation is carried. The scrambling measure belongs to the owner's method above.
 - **Amide counts per ion type** follow the structure (PLAN, "Risks and open decisions"; HISTORY
   items 65 and 66; neutral-loss ions and `z+1` unverified): per-residue values come from
   `hxex.fragments.amide_difference`, which names the residues a difference of two fragments
   measures (c_k minus c_(k-1) is residue k + 1; z_j minus z_(j-1) the residue after z_j's
   first) and refuses differences that are not a set of residues.
 - **Controls** are per fragment and per fragmentation type (an undeuterated run per type and a
-  final equilibrium run); per-residue back-exchange can come from fully deuterated fragments.
-- **Variants of one fragment**: charge states and ion-type variants (c and c-1, z-dot and z+1)
-  are combined; precursor charge is kept as a separate condition by default (fragment
-  deuteration differed by precursor charge, HISTORY items 39 to 41).
+  final equilibrium run). Back-exchange may not be fully correctable (in back-exchange
+  kinetics the final run is back-exchanged to about 0 D), so theoretical references may be
+  needed instead (owner); some kinetics runs have spurious early time points from the setup.
+- **Variants of one fragment**: charge states are kept separate for now (owner: they may give
+  different exchange rates), as is the precursor charge (fragment deuteration differed by
+  precursor charge, HISTORY items 39 to 41); ion-type variants (c and c-1, z-dot and z+1) are
+  still to be decided.
 - **Kinetics.** For continuous-labelling or back-exchange kinetics with the scan time as the
   exchange time: an exponential decay (or rise) of each fragment's deuterium with a constant
-  model as the alternative, and per-residue rates from consecutive fragments. The reference is
-  pyHXExpress's kinetics notebooks; the owner provides references when this branch starts.
+  model as the alternative, and per-residue rates from consecutive fragments. Plots (owner):
+  clean D content against time, with the traces of chosen fragment ions or of chosen
+  differences (`amide_difference`). The reference is pyHXExpress's kinetics notebooks; the
+  owner provides references when this branch starts.
 
 ### Common output and plots
 

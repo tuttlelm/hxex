@@ -831,7 +831,9 @@ def _target_label(t: MzmlTarget) -> str:
         f"-p{t.precursor_mz:g}" if t.precursor_mz is not None else "",
         f"-pz{t.precursor_charge}" if t.precursor_charge is not None else "",
     ])
-    return f"{e.peptide_range}-{e.peptide}-z{e.charge}{mod}{scans}"
+    condition = dict(e.extra).get("condition")
+    return f"{e.peptide_range}-{e.peptide}-z{e.charge}{mod}{scans}" + (
+        f"-{condition.replace(' ', '_')}" if condition else "")
 
 
 PATH_MODES = ("path", "relative", "name")

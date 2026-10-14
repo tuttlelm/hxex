@@ -1750,6 +1750,30 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     L - 2); collisional b and y ions are scrambled and are not for residue values, and UVPD a
     ions (a direct Calpha-C cut) keep residue L's N-H.
 
+67. **Fragment ladder kinetics, the simple way (2026-10-14).** `hxex.analysis.fragments`:
+    `fragment_uptake` (K = 1 deuteration of every fragment-ion spectrum of an mzML or Thermo
+    run, with its condition, parent, fragment label, charges and amide count), `ladder_steps`
+    (one row per step of an ion series in residue order, with the residues it measures, or why
+    a residue has none: block, proline, N-terminal, no ion), `difference_trace` (two fragments
+    matched scan by scan within a condition, errors in quadrature), `fit_decay`
+    (`A exp(-k t) + C` from several starting rates, `resolved` False when `k t_last < 0.1` or
+    `k t_first > 3`: a decay too slow for the range is fitted as a straight line with a tiny
+    rate and huge amplitude and offset), `fit_residues` (bounded least squares over all
+    fragments, with which residues the fragments isolate). `hxex.report.ladder_kinetics_figure`
+    follows the owner's reference layout: precursor ions on top, one row per step (fragments
+    and difference; the difference with its fit). Projects take several `[[input.fragments]]`
+    tables, each with a `label` naming its condition (gentle and harsh scans of one file
+    against one undeuterated control). An ion without exchangeable amides (z1) is fitted with
+    the cap of one site. On the 8-residue probe of the private fragment dataset (ETD 3+, 12,910
+    spectra, 32 s on the GPU), the c-1 ladder resolves residues 4 to 8 in both conditions (gentle:
+    D4 2.8e-3, I5 6.0e-3, V6 1.9e-3, I7 6.3e-4, K8 2.1e-3 per s); the z-dot ladder agrees for
+    D4, I5 and K8-ish but gives V6 and I7 unresolved in one condition each; least squares at
+    100 s (gentle): D4 0.03, I5 0.42, V6 0.83, I7 0.89, K8 0.58 D per amide. The owner's
+    reference figure assigns c_(k-1) -> c_k to residue k; its rates equal these, one residue
+    lower (c3 -> c4 6.2e-3 against I5 6.0e-3, and so on), so the difference is the residue
+    assignment (item 65); the owner confirmed that the reference figure assigned the residues
+    wrongly and hxex's assignment is right.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

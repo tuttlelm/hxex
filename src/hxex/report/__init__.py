@@ -27,6 +27,7 @@ from .coverage import (
 )
 from .curves import component_curves
 from .figures import PlotConfig, select_series, series_figures, write_figures
+from .fragments import ladder_kinetics_figure
 from .overview import (
     controls_overview_data,
     k_comparison_data,
@@ -64,6 +65,7 @@ from .tables import (
 )
 
 __all__ = [
+    "ladder_kinetics_figure",
     "write_analysis",
     "plot_butterfly",
     "plot_peptide_differences",

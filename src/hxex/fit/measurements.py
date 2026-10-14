@@ -117,7 +117,8 @@ class Measurements:
         ``shapes`` replaces the envelope of some series (``data_id``), for example an ion-type
         mixture or an inferred envelope (:mod:`hxex.picking.envelope`).
 
-        ``n_max = n_max_factor * exchangeable sites`` (amides plus user ``Hex``); the shape is
+        ``n_max = n_max_factor * exchangeable sites`` (amides plus user ``Hex``; at least one site,
+        for fragment ions without any); the shape is
         the natural-abundance envelope of the peptide and ion type (``chem.natural_abundance``);
         the references are the spectra of the same series (``data_id``) at ``undeut_time``.
         ``nterm_subtract`` and ``amide_rules`` should be those used for picking.
@@ -147,7 +148,9 @@ class Measurements:
             series = int(binned.data_id[i])
             shape_list.append(np.asarray(shapes[series], dtype=np.float64)
                               if series in shapes else shape_cache[key])
-            n_max.append(n_max_factor * sites_cache[key])
+            # an ion without exchangeable sites (a z ion of one residue) is fitted with the cap of
+            # one: its mass shift can still be measured (scrambling)
+            n_max.append(n_max_factor * max(sites_cache[key], 1))
         return cls(
             bins=tuple(bins), observed=tuple(observed), shapes=tuple(shape_list),
             n_max=np.asarray(n_max, dtype=np.float64),
