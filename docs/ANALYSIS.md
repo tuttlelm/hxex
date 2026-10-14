@@ -49,8 +49,10 @@ per sample, species, time and population rank, under a given description (the se
 effective K, or a fixed K from the fixed-K bootstraps):
 
 - identity: the sequence with modifications, kind (peptide, intact, fragment), ion type and
-  fragment label, parent (for fragments; an MS3 fragment's parent is an MS2 fragment, so
-  positions on the protein follow the chain of parents), activation, precursor charge;
+  fragment label, parent (for fragments: the ion isolated from the full scan, also for MS3
+  scans that heat the precursor and fragment it again; only an MS3 fragment of an MS2 fragment,
+  not built, would need the chain of parents), MS level, pre-activation (HCD before the last
+  stage), activation, precursor charge;
 - position on the protein: first and last residue;
 - values: the absolute deuteration `mean` (deuterons) and the fractional deuteration `fD`
   (`mean / n_amides`), each with its standard error, the `population` (share) and its standard
@@ -178,8 +180,11 @@ How fragment data differs, and what this branch does about it:
   post-processing, not fragment by fragment.
 - **Scrambling.** Only low-scrambling activation (ETD, ECD, UVPD) gives site-specific values;
   the activation is carried and a scrambling check is part of the branch.
-- **Amide counts per ion type** are unverified (PLAN, "Risks and open decisions") and must be
-  settled before per-residue values from fragments are trusted.
+- **Amide counts per ion type** follow the structure (PLAN, "Risks and open decisions"; HISTORY
+  item 65), awaiting the owner's confirmation: per-residue values come from
+  `hxex.fragments.amide_difference`, which names the residues a difference of two fragments
+  measures (c_k minus c_(k-1) is residue k + 1; z_j minus z_(j-1) the residue after z_j's
+  first) and refuses differences that are not a set of residues.
 - **Controls** are per fragment and per fragmentation type (an undeuterated run per type and a
   final equilibrium run); per-residue back-exchange can come from fully deuterated fragments.
 - **Variants of one fragment**: charge states and ion-type variants (c and c-1, z-dot and z+1)

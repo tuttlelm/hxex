@@ -276,7 +276,7 @@ def test_envelope_columns_follow_the_reference_formulas():
 
 def test_config_round_trip_and_json():
     cfg = PickerConfig(ladder="exms", zero_filling=3, noise=50.0, nterm_subtract=2,
-                       amide_rules=chem.AmideRules({"c": 1}))
+                       amide_rules=chem.AmideRules({"c": False}))
     data = json.loads(json.dumps(cfg.to_dict()))
     assert PickerConfig.from_dict(data) == cfg
     assert PickerConfig.from_dict({}) == PickerConfig()

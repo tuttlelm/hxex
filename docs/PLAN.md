@@ -378,6 +378,14 @@ Chemistry (HISTORY "Phase 1 status: `hxex.chem`"):
   (`H:1` sets H to 1, `Hex:1` replaces the amide count instead of adding to it).
 - The natural-abundance shape follows the ion-type composition; the reference uses the
   default-termini composition (identical for `M` and `y`; "Ion types", HISTORY "Ion types").
+- Fragment amides are counted by position in the parent (HISTORY item 65): c, x and y ions hold
+  one amide more than the reference's peptide rule (the cleavage-site N-H), and
+  `nterm_subtract` applies to the parent's first residues, not to a C-terminal fragment's (the
+  reference subtracts a z ion's first residue by its rule, which is right for z by
+  coincidence, and wrong for y and x, and for z with `Nterm_subtract` other than 1).
+- Fragment lists stop at `n - 1` residues (a full-length c or z ion is not a fragment) and leave
+  out c ions before a proline and z ions starting with one (not made by electron-based
+  dissociation).
 
 Readers (HISTORY "Phase 1 status: readers"):
 
@@ -491,7 +499,7 @@ Planned, not built:
    post-fitting analysis below (item 31; the large-dataset benchmark, item 32, met the Phase 4
    target). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is
    still open.
-3. **Post-fitting analysis (designed 2026-10-13; phases 1 to 4 of its peptide branch built,
+3. **Post-fitting analysis (designed 2026-10-13; phases 1 to 5 of its peptide branch built,
    including comparisons between runs): see `docs/ANALYSIS.md`.**
    Analyses that work on the protein rather than on one spectrum: coverage map, residue-level
    uptake per population, the one-or-two-population choice, comparisons between samples and
@@ -505,14 +513,16 @@ Planned, not built:
 
 ## Risks and open decisions
 
-- **UNVERIFIED: exchangeable amide count for fragment ions.** Every ion type uses the pyHXExpress
-  rule (`AmideRules` offsets are all 0), which is only expected to hold for `M`, `b` and `y`.
-  The values for `c`, `z` and the other types are unconfirmed and must not be treated as
-  validated. Planned checks: derive the exchangeable N-H groups per ion type from structure
-  and record them as tests; check the ETD/ECD-HDX literature conventions; and compare the
-  predicted and measured maximum deuteration of fragments against a fully deuterated control
-  (needs fragment data; none is in the test set, which is intact peptides only). Deferred by
-  the owner until the ETD data is ready to be examined.
+- **Exchangeable amide count for fragment ions: by structure, awaiting the owner's
+  confirmation (HISTORY item 65).** A fragment holds the backbone N-H of its residues, placed in
+  the parent, plus at the cleavage site the next residue's for c ions and its own first
+  residue's for x and y ions (not for a, b, z); these are the backbone nitrogens of each ion
+  type's composition, checked for every ion type and length in `tests/test_fragments.py`.
+  Prolines and the parent's first `nterm_subtract` residues do not count. Still UNVERIFIED:
+  the neutral-loss variants (`-H2O`, `-NH3`), which follow their base ion although the NH3 may
+  come from the backbone; the hydrogen moved between c and z in `c-1`/`z+1` (taken not to be
+  an amide's); and b ions as oxazolones (which would hold one amide fewer; the owner chose to
+  keep L - 1). `AmideRules` sets the cleavage-site amide of any ion type.
 - **Back-exchange correction is unresolved.** On the simulated test data the intermediate
   points looked less back-exchanged than the fully deuterated control. It needs real data
   before it becomes a default.

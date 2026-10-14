@@ -9,6 +9,7 @@ tokenised, not counted as characters. Every function takes an ion type (default 
 from .amides import (
     DEFAULT_AMIDE_RULES,
     AmideRules,
+    amide_positions,
     count_amides,
     exchangeable_sites,
 )
@@ -21,7 +22,7 @@ from .composition import (
     natural_abundance,
     neutral_mass,
 )
-from .ions import check_ion_type, ion_types
+from .ions import check_ion_type, ion_terminus, ion_types
 from .modifications import (
     DEFAULT_MODIFICATIONS,
     TERMINAL_GROUPS,
@@ -47,8 +48,10 @@ __all__ = [
     "TERMINAL_GROUPS",
     "check_ion_type",
     "composition",
+    "amide_positions",
     "count_amides",
     "exchangeable_sites",
+    "ion_terminus",
     "ion_types",
     "mz",
     "H_ATOM",

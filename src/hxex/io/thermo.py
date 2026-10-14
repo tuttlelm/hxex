@@ -51,6 +51,7 @@ from .mzml import (
     MzmlTarget,
     Scan,
     ScanTable,
+    Stage,
     _read_runs,
     _repeat_read,
     _run_paths,
@@ -88,14 +89,16 @@ class ThermoError(ReadError):
 class Reaction:
     """One precursor reaction of a scan event: the precursor ``mass`` (m/z), the isolation
     ``width`` and ``offset`` (m/z), the ``activation`` (Thermo's enum name, for example
-    ``ElectronTransferDissociation``) and ``multiple``, whether it is an additional activation
-    of the stage before (EThcD's HCD)."""
+    ``ElectronTransferDissociation``), ``multiple``, whether it is an additional activation
+    of the stage before (EThcD's HCD), and the ``energy`` (collision energy, or the value Thermo
+    gives other activations)."""
 
     mass: float
     width: float
     offset: float
     activation: str
     multiple: bool
+    energy: float = np.nan
 
 
 @dataclass(frozen=True)
@@ -119,26 +122,32 @@ class ScanInfo:
 
 def scan_from_info(info: ScanInfo, first: int = 1) -> Scan:
     """The :class:`~hxex.io.mzml.Scan` (without arrays) of ``info``, as ThermoRawFileParser
-    writes it to mzML. ``first`` is the file's first scan number (position 0)."""
+    writes it to mzML, plus every stage of an MSn scan (``stages``; ThermoRawFileParser writes
+    the last only). ``first`` is the file's first scan number (position 0)."""
     ms_level = info.ms_order if info.ms_order >= 1 else 2
     pmz, activation, isolation = np.nan, (), (np.nan, np.nan)
+    stages: list[Stage] = []
     if ms_level > 1 and info.reactions:
-        # the last stage: the last reaction that is not an additional activation, and those
-        # that follow it
-        start = max((i for i, r in enumerate(info.reactions) if not r.multiple), default=0)
-        stage = info.reactions[start:]
-        main = stage[0]
-        names = [_ACTIVATION_NAMES.get(main.activation, main.activation.lower())]
-        for r in stage[1:]:
-            if info.supplemental and r.activation in _SUPPLEMENTAL:
-                names.append(_SUPPLEMENTAL[r.activation])
-            else:
-                names.append(_ACTIVATION_NAMES.get(r.activation, r.activation.lower()))
-        activation = tuple(sorted(set(names)))
-        centre = main.mass + main.offset
-        if main.width > 0:
-            isolation = (centre - main.width / 2, centre + main.width / 2)
-        pmz = info.mono_mz if info.mono_mz > 0 else main.mass
+        # a stage is a reaction that is not an additional activation, with those that follow it
+        starts = [i for i, r in enumerate(info.reactions) if not r.multiple] or [0]
+        for n, start in enumerate(starts):
+            stage = info.reactions[start:starts[n + 1] if n + 1 < len(starts) else None]
+            main = stage[0]
+            names = [_ACTIVATION_NAMES.get(main.activation, main.activation.lower())]
+            for r in stage[1:]:
+                if info.supplemental and r.activation in _SUPPLEMENTAL:
+                    names.append(_SUPPLEMENTAL[r.activation])
+                else:
+                    names.append(_ACTIVATION_NAMES.get(r.activation, r.activation.lower()))
+            centre = main.mass + main.offset
+            window = ((centre - main.width / 2, centre + main.width / 2) if main.width > 0
+                      else (np.nan, np.nan))
+            stages.append(Stage(main.mass, window, tuple(sorted(set(names))), main.energy))
+        # the last stage made the scan
+        last = stages[-1]
+        activation, isolation = last.activation, last.isolation
+        pmz = info.mono_mz if info.mono_mz > 0 else last.mz
+        stages[-1] = replace(last, mz=float(pmz))
     return Scan(
         index=info.number - first,
         id=f"controllerType=0 controllerNumber=1 scan={info.number}",
@@ -152,6 +161,7 @@ def scan_from_info(info: ScanInfo, first: int = 1) -> Scan:
         mz=np.empty(0),
         intensity=np.empty(0),
         isolation=isolation,
+        stages=tuple(stages),
     )
 
 
@@ -252,7 +262,7 @@ class _RawFileReader:
             r = event.GetReaction(i)
             reactions.append(Reaction(float(r.PrecursorMass), float(r.IsolationWidth),
                                       float(r.IsolationWidthOffset), str(r.ActivationType),
-                                      bool(r.MultipleActivation)))
+                                      bool(r.MultipleActivation), float(r.CollisionEnergy)))
         return ScanInfo(
             number=number,
             ms_order=int(event.MSOrder),

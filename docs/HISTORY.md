@@ -1673,6 +1673,60 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     standard errors (the replicate scatter) and enter the Welch test as replicate noise. The
     export to pyHDX's DynamX-like format (`hdexa_to_pyhdx`) is not needed (owner).
 
+64. **Fragments tied to their parent; MS3 stages (2026-10-14).** In a private bottom-up dataset
+    (an LC-MS file per labelling time, targeted peptides fragmented in MS2 and MS3), each
+    precursor is acquired as plain ETD or EThcD MS2, as MS2 after in-source activation (`sid=`),
+    and as MS3 that heats the precursor with HCD (energies 5 to 35), isolates the same m/z again
+    and fragments it with ETD or EThcD (`ms3 313.0100@hcd15.00 313.0000@etd25.00`). The parent of
+    such an MS3 scan is the peptide itself. Two gaps were found. (1) Fragment targets had no
+    precursor m/z by default, so in a file with several precursors a peptide's fragments were
+    read from the scans of every precursor of the same charge (single-peptide infusion hid it).
+    (2) The readers kept the last stage only, so an MS3 scan's pre-activation and parent were
+    lost. Now every scan keeps its stages (`Scan.stages`; the scan table gains `parent_mz`,
+    `parent_lower`, `parent_upper`, `preactivation`, `preactivation_energy` and `energy`), and
+    `MzmlTarget` gains `parent_mz` (the parent ion's m/z range, undeuterated to fully deuterated,
+    which the parent's isolation window must overlap, or which its m/z must be within the
+    tolerance of when no window is stated) and `preactivation` (`'HCD'`, `'none'`).
+    `fragment_targets` sets `parent_mz` from the parent by default (`'parent'`) and takes
+    `ms_level`; so does `[input.fragments]`. An isolation window need not contain the parent's
+    monoisotopic m/z (in the fragment kinetics files it is centred up to 3 m/z above it), hence
+    the overlap with the whole envelope rather than a tolerance around one m/z. MS3 series are
+    labelled `-ms3-pre:HCD` and the results tables gain `preactivation`, so they stay separate
+    conditions. ThermoRawFileParser's mzML writes only the last stage of an MS3 scan; the earlier
+    stages are then read from the filter string (without their isolation windows, which the
+    Thermo reader has). On one file of the dataset the two readers agree on every new column
+    except those windows (5,570 scans). The fragment kinetics files select the same scans as
+    before. Not built: an MS3 fragment of an MS2 fragment (a fragment entry as a parent).
+
+65. **Fragment amide counts by position in the parent (2026-10-14).** Until now every ion type
+    used the peptide rule on the fragment's own sequence (pyHXExpress's), and `nterm_subtract`
+    removed a C-terminal fragment's first residues as if they were the parent's N-terminus.
+    By structure a fragment holds the backbone N-H of its residues, and at the cleavage site c
+    ions also hold the next residue's (N-Calpha cut: c = b + NH3), x and y their own first
+    residue's, and a, b and z not (z = y - NH3). The pyteomics compositions agree: with no
+    side-chain nitrogen, c ions have L + 1 nitrogens, a, b, x and y L, z ions L - 1. So c, x
+    and y counted one amide too few, and with the owner's `Nterm_subtract = 0` z ions one too
+    many. Now amides are placed in the parent (`chem.amide_positions`): prolines and the
+    parent's first `nterm_subtract` residues are left out (`nterm_subtract` stays a parent
+    setting, owner); C-terminal fragment entries carry `parent_pos` in their modification so
+    every count (picking, shapes, fits) agrees; `AmideRules` sets the cleavage-site amide per
+    ion type (in place of the integer offsets). `fragments.fragment_amides` lists the residues
+    a fragment holds and `amide_difference` those a difference measures (c_6 - c_5: residue 7;
+    z_6 - z_3: residues n - 4 to n - 2; the parent minus c_k: the complementary z ion), refusing
+    differences that are not a set of residues. Fragment lists stop at n - 1 residues and leave
+    out c ions before a proline and z ions starting with one. Tested for every ion type and
+    length against the compositions, on four parents with prolines and with `nterm_subtract` 0
+    to 2. Evidence in the private fragment dataset (the 8-residue scrambling probe, low-energy
+    ETD, first 15 s of back-exchange kinetics): complementary c and z ions sum to the precursor
+    (2.95 to 3.37 D against 3.33 D), so the ladders fix the differences but not which residue
+    each belongs to; with the structural assignment the c and z ladders give the same
+    per-residue values (after 15 s within about 0.15 D) and the fast and slow residues fall
+    where the probe was designed, the first slow residue one after the His/Asp block, as in the
+    12-residue probe. The MAX runs there are back-exchanged to about 0 D (the experiment
+    deuterates, then dilutes into H2O), and some early time points are spurious (owner).
+    Unverified: neutral-loss variants (follow their base ion), the hydrogen moved in c-1/z+1,
+    oxazolone b ions (owner: keep L - 1).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

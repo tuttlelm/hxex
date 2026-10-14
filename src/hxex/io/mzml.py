@@ -59,6 +59,7 @@ _CHARGE = "MS:1000041"
 _ISOLATION_TARGET = "MS:1000827"
 _ISOLATION_LOWER = "MS:1000828"
 _ISOLATION_UPPER = "MS:1000829"
+_COLLISION_ENERGY = "MS:1000045"
 _CENTROID = "MS:1000127"
 _PROFILE = "MS:1000128"
 _MZ_ARRAY = "MS:1000514"
@@ -90,13 +91,33 @@ class MzmlError(ReadError):
 
 
 @dataclass(frozen=True)
+class Stage:
+    """One isolation and activation stage of an MSn scan: the precursor ``mz``, its isolation
+    window ``isolation`` (absolute m/z, NaN when not stated), the ``activation`` names (lower
+    case, as :attr:`Scan.activation`) and the ``energy`` of the stage's main activation (as the
+    instrument states it; NaN when not stated)."""
+
+    mz: float
+    isolation: tuple[float, float] = (np.nan, np.nan)
+    activation: tuple[str, ...] = ()
+    energy: float = np.nan
+
+
+@dataclass(frozen=True)
 class Scan:
     """One scan: its position ``index`` and ``id`` in the file, ``ms_level``, ``time`` (s),
     ``filter`` (the vendor filter string, may be empty), ``precursor_mz`` and
     ``precursor_charge`` (NaN and 0 without a precursor), ``activation`` (names of the activation
     methods, lower case), ``centroid`` (True, False, or None if not stated), the arrays (empty
     when they were not read) and ``isolation``, the precursor isolation window as absolute m/z
-    (lower, upper; NaN when the file does not state it)."""
+    (lower, upper; NaN when the file does not state it).
+
+    The precursor, activation and isolation are those of the last stage, the one that made the
+    scan. ``stages`` lists every stage, first to last (empty for MS1): the first is the ion
+    isolated from the full scan (the parent: for a bottom-up or top-down experiment, the peptide
+    or protein), and the activations of the stages before the last are the pre-activation (an
+    MS3 scan that heats the precursor with HCD, isolates it again and fragments it with ETD).
+    An MSn scan whose earlier stages are not stated has fewer than ``ms_level - 1`` stages."""
 
     index: int
     id: str
@@ -110,6 +131,44 @@ class Scan:
     mz: np.ndarray
     intensity: np.ndarray
     isolation: tuple[float, float] = (np.nan, np.nan)
+    stages: tuple[Stage, ...] = ()
+
+
+# Thermo filter-string activation codes, as mzML activation names
+_FILTER_ACTIVATIONS = {
+    "cid": "collision-induced dissociation",
+    "hcd": "beam-type collision-induced dissociation",
+    "etd": "electron transfer dissociation",
+    "ecd": "electron capture dissociation",
+    "uvpd": "ultraviolet photodissociation",
+    "pqd": "pulsed q dissociation",
+}
+_FILTER_STAGE = re.compile(r"(\d+(?:\.\d+)?)((?:@[a-z]+-?\d+(?:\.\d+)?)+)")
+_FILTER_ACT = re.compile(r"@([a-z]+)(-?\d+(?:\.\d+)?)")
+
+
+def filter_stages(filt: str) -> tuple[Stage, ...]:
+    """The stages written in a Thermo filter string (``... ms3 313.0100@hcd15.00
+    313.0000@etd25.00 [...]``): each precursor m/z with its activations and the energy of the
+    first; a further activation of a stage is supplemental when the filter has ``sa`` (EThcD,
+    ``etd50.00@hcd25.00``). The isolation windows are not in the filter (NaN). Empty when the
+    filter states no stage."""
+    m = re.search(r"\bms(\d+)\b(.*?)(\[|$)", filt)
+    if not m or int(m.group(1)) < 2:
+        return ()
+    supplemental = bool(re.search(r"\bsa\b", filt[:m.start()]))
+    stages = []
+    for mz, acts in _FILTER_STAGE.findall(m.group(2)):
+        codes = _FILTER_ACT.findall(acts)
+        names = []
+        for i, (code, _) in enumerate(codes):
+            name = _FILTER_ACTIVATIONS.get(code, code)
+            if i and supplemental and code in ("cid", "hcd"):
+                name = "supplemental " + name
+            names.append(name)
+        stages.append(Stage(float(mz), activation=tuple(sorted(set(names))),
+                            energy=float(codes[0][1])))
+    return tuple(stages)
 
 
 def _cv(elem) -> dict[str, tuple[str, str]]:
@@ -168,8 +227,10 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
     if not filt:
         filt = _user_param(elem, "filter string")  # OpenMS writes it on the spectrum
     pmz, pz, activation, isolation = np.nan, 0, (), (np.nan, np.nan)
-    prec = elem.find(f"{_NS}precursorList/{_NS}precursor")
-    if prec is not None:
+    stages = []
+    # several precursors (MSn written stage by stage) are taken as first to last
+    for prec in elem.findall(f"{_NS}precursorList/{_NS}precursor"):
+        pmz, activation, isolation, energy = np.nan, (), (np.nan, np.nan), np.nan
         window = prec.find(f"{_NS}isolationWindow")
         if window is not None:
             wcv = _cv(window)
@@ -189,6 +250,13 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
             params = act.findall(f"{_NS}cvParam")
             activation = tuple(sorted(p.get("name", "").lower() for p in params
                                       if not p.get("value")))
+            energy = float(_cv(act).get(_COLLISION_ENERGY, ("nan", ""))[0] or "nan")
+        stages.append(Stage(pmz, isolation, activation, energy))
+    if ms_level > 2 and 0 < len(stages) < ms_level - 1:
+        # the earlier stages from the filter string (ThermoRawFileParser writes the last only)
+        written = filter_stages(filt)
+        if len(written) == ms_level - 1:
+            stages = list(written[:ms_level - 1 - len(stages)]) + stages
     mz = intensity = np.empty(0)
     if read_arrays:
         n = int(elem.get("defaultArrayLength", 0))
@@ -206,7 +274,7 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
                 keep |= (mz >= lo) & (mz <= hi)
             mz, intensity = mz[keep], intensity[keep]
     return Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, mz, intensity,
-                isolation)
+                isolation, tuple(stages))
 
 
 def iter_scans(
@@ -236,12 +304,39 @@ def iter_scans(
         raise MzmlError(f"{path}: not a readable mzML file ({exc})") from exc
 
 
+def _parent(s: Scan) -> Stage:
+    """The first stage of ``s`` (its precursor for MS2; NaN when not stated or for MS1)."""
+    if s.ms_level == 2:
+        return Stage(s.precursor_mz, s.isolation)
+    if s.ms_level > 2 and len(s.stages) == s.ms_level - 1:
+        return s.stages[0]
+    return Stage(np.nan)
+
+
+def _preactivation(s: Scan) -> tuple[str, float]:
+    """The activation names (joined with ``;``) and the energy of the stages of ``s`` before the
+    last (``''`` for MS1 and MS2, ``'?'`` when the file does not state them)."""
+    if s.ms_level <= 2:
+        return "", np.nan
+    if len(s.stages) != s.ms_level - 1:
+        return "?", np.nan
+    names = sorted({n for st in s.stages[:-1] for n in st.activation})
+    return ";".join(names), s.stages[0].energy
+
+
 @dataclass(frozen=True)
 class ScanTable:
     """The scans of a file without their arrays, as columns: ``index``, ``id``, ``ms_level``,
     ``time`` (s), ``filter``, ``precursor_mz``, ``precursor_charge``, ``activation`` (names
     joined with ``;``), ``centroid`` (1, 0, or -1 if not stated) and the precursor isolation
-    window, ``isolation_lower`` and ``isolation_upper`` (absolute m/z, NaN if not stated)."""
+    window, ``isolation_lower`` and ``isolation_upper`` (absolute m/z, NaN if not stated), all of
+    the last stage; ``energy``, the energy of the last stage's main activation (NaN if not
+    stated); the parent (the first stage, see :class:`Scan`): ``parent_mz``, ``parent_lower`` and
+    ``parent_upper`` (the same as the precursor for MS2; NaN for MS1, for an MSn scan whose
+    earlier stages are not stated, and for an isolation window not stated); and the
+    pre-activation (the activations of the stages before the last): ``preactivation`` (their
+    names joined with ``;``, empty for none, ``?`` when the file does not state them) and
+    ``preactivation_energy`` (of the first stage, NaN for none)."""
 
     index: np.ndarray
     id: np.ndarray
@@ -254,6 +349,12 @@ class ScanTable:
     centroid: np.ndarray
     isolation_lower: np.ndarray
     isolation_upper: np.ndarray
+    energy: np.ndarray
+    parent_mz: np.ndarray
+    parent_lower: np.ndarray
+    parent_upper: np.ndarray
+    preactivation: np.ndarray
+    preactivation_energy: np.ndarray
 
     def __len__(self) -> int:
         return len(self.index)
@@ -261,6 +362,8 @@ class ScanTable:
     @classmethod
     def from_scans(cls, rows: Sequence[Scan]) -> ScanTable:
         """The table of ``rows`` (their arrays are not kept)."""
+        parents = [_parent(s) for s in rows]
+        pre = [_preactivation(s) for s in rows]
         return cls(
             index=np.array([s.index for s in rows], dtype=np.int64),
             id=np.array([s.id for s in rows], dtype=str),
@@ -274,6 +377,13 @@ class ScanTable:
                               dtype=np.int64),
             isolation_lower=np.array([s.isolation[0] for s in rows], dtype=np.float64),
             isolation_upper=np.array([s.isolation[1] for s in rows], dtype=np.float64),
+            energy=np.array([s.stages[-1].energy if s.stages else np.nan for s in rows],
+                            dtype=np.float64),
+            parent_mz=np.array([p.mz for p in parents], dtype=np.float64),
+            parent_lower=np.array([p.isolation[0] for p in parents], dtype=np.float64),
+            parent_upper=np.array([p.isolation[1] for p in parents], dtype=np.float64),
+            preactivation=np.array([p[0] for p in pre], dtype=str),
+            preactivation_energy=np.array([p[1] for p in pre], dtype=np.float64),
         )
 
     def select(
@@ -287,24 +397,27 @@ class ScanTable:
         time_range: tuple[float, float] | None = None,
         filter_contains: str | None = None,
         filter_excludes: str | None = None,
+        parent_mz: tuple[float, float] | None = None,
+        preactivation: str | None = None,
     ) -> np.ndarray:
         """Positions (into this table) of the scans that match every condition given.
         ``activation`` is a short name, matched exactly (``ETD`` is ETD alone, not EThcD; ``HCD``,
         ``CID``, ``ECD``, ``EThcD``, ``ETciD``, ``UVPD``), or other text, found in any of the
         scan's activation names; ``time_range`` is in seconds, inclusive;
         ``filter_contains`` and ``filter_excludes`` test the vendor filter string (for example
-        Thermo's ``sid=`` marks scans with in-source activation)."""
+        Thermo's ``sid=`` marks scans with in-source activation).
+
+        ``parent_mz`` is the m/z range of the parent ion (lowest and highest m/z of its isotope
+        envelope, undeuterated to fully deuterated): a scan matches when its parent's isolation
+        window overlaps the range, or, when the window is not stated, when its parent m/z is
+        within ``precursor_tol`` of it. ``preactivation`` is matched as ``activation`` against the
+        activations before the last stage; ``'none'`` (or ``''``) asks for scans without one (MS2).
+        A scan whose earlier stages are not stated matches neither condition."""
         keep = np.ones(len(self), dtype=bool)
         if ms_level is not None:
             keep &= self.ms_level == ms_level
         if activation is not None:
-            names = [set(filter(None, str(a).split(";"))) for a in self.activation]
-            exact = ACTIVATIONS.get(activation.upper())
-            if exact is not None:  # the scan's activation is exactly that method
-                keep &= np.array([any(n == e for e in exact) for n in names], dtype=bool)
-            else:  # free text: found in any activation name
-                want = activation.lower()
-                keep &= np.array([any(want in x for x in n) for n in names], dtype=bool)
+            keep &= _activation_match(self.activation, activation)
         if precursor_mz is not None:
             keep &= np.abs(self.precursor_mz - precursor_mz) <= precursor_tol
         if precursor_charge is not None:
@@ -315,7 +428,32 @@ class ScanTable:
             keep &= np.array([filter_contains in str(f) for f in self.filter], dtype=bool)
         if filter_excludes is not None:
             keep &= np.array([filter_excludes not in str(f) for f in self.filter], dtype=bool)
+        if parent_mz is not None:
+            lo, hi = parent_mz
+            window = ~np.isnan(self.parent_lower) & ~np.isnan(self.parent_upper)
+            with np.errstate(invalid="ignore"):
+                overlap = (self.parent_lower <= hi) & (self.parent_upper >= lo)
+                near = (self.parent_mz >= lo - precursor_tol) & (
+                    self.parent_mz <= hi + precursor_tol)
+            keep &= np.where(window, overlap, near)
+        if preactivation is not None:
+            known = self.preactivation != "?"
+            if preactivation.strip().lower() in ("", "none"):
+                keep &= self.preactivation == ""
+            else:
+                keep &= known & _activation_match(self.preactivation, preactivation)
         return np.flatnonzero(keep)
+
+
+def _activation_match(column: np.ndarray, activation: str) -> np.ndarray:
+    """Which rows of an activation column (names joined with ``;``) match ``activation`` (see
+    :meth:`ScanTable.select`)."""
+    names = [set(filter(None, str(a).split(";"))) for a in column]
+    exact = ACTIVATIONS.get(activation.upper())
+    if exact is not None:  # the scan's activation is exactly that method
+        return np.array([any(n == e for e in exact) for n in names], dtype=bool)
+    want = activation.lower()  # free text: found in any activation name
+    return np.array([any(want in x for x in n) for n in names], dtype=bool)
 
 
 class MzmlFile:
@@ -541,7 +679,12 @@ class MzmlTarget:
     ``activation`` (for example ``ETD``), the precursor (``precursor_mz`` within the config's
     tolerance, ``precursor_charge``), the filter string (``filter_contains``,
     ``filter_excludes``) and ``rt_window`` (seconds; for a run with a fixed time the scans summed
-    are those inside it)."""
+    are those inside it). ``activation`` and the precursor are those of the last stage (the one
+    that made the scan). For fragments, ``parent_mz`` is the m/z range of the parent ion (the
+    peptide isolated from the full scan; see :meth:`ScanTable.select`), which ties the
+    fragment's scans to its own parent when a file holds several precursors, and
+    ``preactivation`` the activation before the last stage (``'HCD'`` for an MS3 scan that heats
+    the precursor with HCD before ETD; ``'none'`` for none)."""
 
     entry: PeptideEntry
     ms_level: int = 1
@@ -551,12 +694,26 @@ class MzmlTarget:
     rt_window: tuple[float, float] | None = None
     filter_contains: str | None = None
     filter_excludes: str | None = None
+    parent_mz: tuple[float, float] | None = None
+    preactivation: str | None = None
+
+    def __post_init__(self):
+        if self.parent_mz is not None:
+            lo, hi = (float(x) for x in self.parent_mz)
+            if not lo <= hi:
+                raise ValueError(f"parent_mz must be a range (low, high), got {self.parent_mz}")
+            object.__setattr__(self, "parent_mz", (lo, hi))
 
     def to_dict(self) -> dict:
         out = {f.name: getattr(self, f.name) for f in fields(self)}
         e = self.entry
         out["entry"] = e.to_dict()
         out["rt_window"] = None if self.rt_window is None else list(self.rt_window)
+        for name in ("parent_mz", "preactivation"):  # only when set, as older records
+            if out[name] is None:
+                del out[name]
+        if self.parent_mz is not None:
+            out["parent_mz"] = list(self.parent_mz)
         return out
 
     @classmethod
@@ -565,6 +722,8 @@ class MzmlTarget:
         values["entry"] = PeptideEntry.from_dict(values["entry"])
         if values.get("rt_window") is not None:
             values["rt_window"] = tuple(float(x) for x in values["rt_window"])
+        if values.get("parent_mz") is not None:
+            values["parent_mz"] = tuple(float(x) for x in values["parent_mz"])
         return cls(**values)
 
 
@@ -661,10 +820,13 @@ def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: f
 
 def _target_label(t: MzmlTarget) -> str:
     """The target in spectrum ids: the entry, then (for fragments) how the scans were chosen,
-    for example ``1-5-RDKVQ-z1-ion_type:c@ETD-pz3``."""
+    for example ``1-5-RDKVQ-z1-ion_type:c@ETD-pz3``, or ``...-ms3-pre:HCD@ETD-pz3`` for MS3 scans
+    with HCD before ETD (the parent's m/z range is not part of it: the entry names the parent)."""
     e = t.entry
     mod = f"-{e.modification.replace(' ', '_')}" if e.modification else ""
     scans = "".join([
+        f"-ms{t.ms_level}" if t.ms_level > 2 else "",
+        f"-pre:{t.preactivation}" if t.preactivation is not None else "",
         f"@{t.activation}" if t.activation else "",
         f"-p{t.precursor_mz:g}" if t.precursor_mz is not None else "",
         f"-pz{t.precursor_charge}" if t.precursor_charge is not None else "",
@@ -822,8 +984,15 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
         time_range = target.rt_window
     else:
         time_range = None if config.min_time is None else (config.min_time, np.inf)
-    return table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
-                        time_range=time_range, **run.conditions(target))
+    rows = table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
+                        time_range=time_range, parent_mz=target.parent_mz,
+                        preactivation=target.preactivation, **run.conditions(target))
+    if target.ms_level > 2 and (target.parent_mz is not None or target.preactivation is not None):
+        unknown = (table.ms_level == target.ms_level) & (table.preactivation == "?")
+        if unknown.any():
+            log.warning("%d MS%d scans do not state their earlier stages and are left out of %s",
+                        int(unknown.sum()), target.ms_level, _target_label(target))
+    return rows
 
 
 def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config) -> None:

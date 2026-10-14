@@ -52,16 +52,17 @@ def _array(values, accession, *, float64=True, compress=True, numpress=False):
 
 def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpress=False):
     """scans: dicts with mz, intensity, time (minutes unless unit='s'), and optionally ms_level,
-    filter, centroid (bool), precursor (m/z, charge, activation accession and name)."""
+    filter, centroid (bool), precursor (m/z, charge, activation accession and name) or
+    precursors (several, first stage to last)."""
     parts = []
     for i, s in enumerate(scans):
         unit = ("UO:0000010", "second") if s.get("unit") == "s" else ("UO:0000031", "minute")
         kind = "MS:1000127" if s.get("centroid") else "MS:1000128"
+        precursors = s.get("precursors") or ([s["precursor"]] if "precursor" in s else [])
         prec = ""
-        if "precursor" in s:
-            pmz, pz, acc, name = s["precursor"]
-            prec = (
-                '<precursorList count="1"><precursor><isolationWindow>'
+        for pmz, pz, acc, name in precursors:
+            prec += (
+                '<precursor><isolationWindow>'
                 f'<cvParam cvRef="MS" accession="MS:1000827" value="{pmz}"/>'
                 '<cvParam cvRef="MS" accession="MS:1000828" value="2.5"/>'
                 '<cvParam cvRef="MS" accession="MS:1000829" value="1.5"/></isolationWindow>'
@@ -72,8 +73,10 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
                 "</selectedIon></selectedIonList><activation>"
                 f'<cvParam cvRef="MS" accession="{acc}" name="{name}" value=""/>'
                 '<cvParam cvRef="MS" accession="MS:1000045" name="collision energy" value="20"/>'
-                "</activation></precursor></precursorList>"
+                "</activation></precursor>"
             )
+        if precursors:
+            prec = f'<precursorList count="{len(precursors)}">{prec}</precursorList>'
         parts.append(
             f'<spectrum id="scan={i + 1}" index="{i}" defaultArrayLength="{len(s["mz"])}">'
             '<cvParam cvRef="MS" accession="MS:1000511" name="ms level" '
@@ -621,3 +624,97 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
         assert set(t["fragment"][ms2]) == {"c:10"} and set(t["fragment"][~ms2]) == {""}
         assert set(t["activation"][ms2]) == {"ETD"} and set(t["precursor_charge"][ms2]) == {20}
         assert set(t["precursor_mz"][ms2]) == {1012.0} and np.isnan(t["precursor_mz"][~ms2]).all()
+
+
+ETD = ("MS:1000598", "electron transfer dissociation")
+HCD = ("MS:1000422", "beam-type collision-induced dissociation")
+
+
+def test_msn_stages_parent_and_preactivation(tmp_path):
+    """Every stage of an MS3 scan: from several precursors, or from the filter string when only
+    the last stage is written (as ThermoRawFileParser does)."""
+    def scan(t, level, precursors, filt=""):
+        return {"mz": [100.0, 101.0], "intensity": [1.0, 2.0], "time": t, "ms_level": level,
+                "precursors": precursors, "filter": filt}
+
+    path = write_mzml(tmp_path / "ms3.mzML", [
+        scan(0.1, 2, [(500.0, 2, *ETD)], "FTMS + p ESI Full ms2 500.0000@etd25.00 [100-900]"),
+        scan(0.2, 3, [(500.0, 2, *ETD)],
+             "FTMS + p ESI Full ms3 500.0100@hcd15.00 500.0000@etd25.00 [100-900]"),
+        scan(0.3, 3, [(600.0, 2, "MS:1000598", "electron transfer dissociation")],
+             "FTMS + p ESI sa Full ms3 600.0100@hcd20.00 600.0000@etd50.00@hcd25.00 [100-900]"),
+        scan(0.4, 3, [(700.0, 2, *HCD), (650.0, 2, *ETD)]),  # written stage by stage
+        scan(0.5, 3, [(500.0, 2, *ETD)]),  # earlier stage not stated
+        {"mz": [100.0], "intensity": [1.0], "time": 0.6},
+    ])
+    t = MzmlFile(path).scans()
+    assert list(t.parent_mz[:4]) == [500.0, 500.01, 600.01, 700.0]
+    assert np.isnan(t.parent_mz[4:]).all() and list(t.preactivation[4:]) == ["?", ""]
+    assert list(t.preactivation[:4]) == ["", HCD[1], HCD[1], HCD[1]]
+    assert list(t.preactivation_energy[1:4]) == [15.0, 20.0, 20.0]
+    assert list(t.energy[:2]) == [20.0, 20.0]  # the last stage's, as the precursor states it
+    # the parent window: written for MS2 and for stage-by-stage MS3, not in a filter string
+    assert (t.parent_lower[0], t.parent_upper[0]) == (497.5, 501.5)
+    assert np.isnan(t.parent_lower[1]) and t.parent_lower[3] == 697.5
+    assert list(t.select(ms_level=3, preactivation="HCD")) == [1, 2, 3]
+    assert list(t.select(preactivation="none", ms_level=2)) == [0]
+    assert list(t.select(preactivation="collision")) == [1, 2, 3]  # free text, as activation
+    assert list(t.select(parent_mz=(499.5, 500.2))) == [0, 1]  # overlap, else within tolerance
+    assert list(t.select(parent_mz=(699.0, 701.0))) == [3]
+    assert list(t.select(parent_mz=(640.0, 660.0))) == []  # the last stage is not the parent
+    assert MzmlFile(path).scan(3).stages[0].mz == 700.0
+
+
+def test_filter_stages():
+    from hxex.io.mzml import filter_stages
+
+    st = filter_stages("FTMS + p ESI sa Full ms3 468.9100@hcd20.00 468.9000@etd50.00@hcd25.00 "
+                       "[129.0000-948.0000]")
+    assert [s.mz for s in st] == [468.91, 468.9] and [s.energy for s in st] == [20.0, 50.0]
+    assert st[0].activation == (HCD[1],)
+    assert st[1].activation == (ETD[1], "supplemental " + HCD[1])
+    assert filter_stages("FTMS + p ESI Full ms [100.0000-2000.0000]") == ()
+    assert len(filter_stages("ITMS + c ESI d Full ms2 445.12@cid35.00 [110.00-900.00]")) == 1
+
+
+def test_fragments_take_the_scans_of_their_own_parent(tmp_path, caplog):
+    """A bottom-up file with several precursors of the same charge: each fragment target selects
+    the scans whose parent isolation overlaps its own parent's m/z range."""
+    from hxex.fragments import fragment_targets, parent_mz_range
+    from hxex.io.mzml import target_scans
+
+    lo, hi = parent_mz_range(ENTRY)
+    other = hi + 30.0
+
+    def ms(t, level, pmz, filt=""):
+        prec = [(pmz, CHARGE, *ETD)]
+        return {"mz": [100.0], "intensity": [1.0], "time": t, "ms_level": level,
+                "precursors": prec, "filter": filt}
+
+    path = write_mzml(tmp_path / "bu.mzML", [
+        ms(0.1, 2, lo + 0.5), ms(0.2, 2, other),
+        ms(0.3, 3, lo + 0.5, f"FTMS + p ESI Full ms3 {lo + 0.51:.4f}@hcd10.00 "
+                             f"{lo + 0.5:.4f}@etd25.00 [100-900]"),
+        ms(0.4, 3, other, f"FTMS + p ESI Full ms3 {other:.4f}@hcd10.00 {other:.4f}@etd25.00 "
+                          "[100-900]"),
+        ms(0.5, 3, lo + 0.5),  # earlier stage not stated
+    ])
+    table, run, config = MzmlFile(path).scans(), MzmlRun(path, "S"), MzmlConfig()
+    ms2 = fragment_targets(ENTRY, "c:3:1", activation="ETD")[0]
+    assert ms2.parent_mz == (lo, hi)
+    assert list(target_scans(table, run, ms2, config)) == [0]
+    anyp = fragment_targets(ENTRY, "c:3:1", activation="ETD", parent_mz=None)[0]
+    assert list(target_scans(table, run, anyp, config)) == [0, 1]  # any precursor of charge 2
+    ms3 = fragment_targets(ENTRY, "c:3:1", ms_level=3, preactivation="HCD")[0]
+    with caplog.at_level(logging.WARNING):
+        assert list(target_scans(table, run, ms3, config)) == [2]
+    assert "1 MS3 scans do not state their earlier stages" in caplog.text
+    from hxex.io.mzml import _target_label
+
+    assert _target_label(ms3).endswith("-ms3-pre:HCD-pz2") and "ms" not in _target_label(ms2)
+    assert MzmlTarget.from_dict(ms3.to_dict()) == ms3
+    assert "parent_mz" not in MzmlTarget(ENTRY).to_dict()  # older records stay as they were
+    with pytest.raises(ValueError, match="parent_mz"):
+        fragment_targets(ENTRY, "c:3:1", parent_mz="own")
+    with pytest.raises(ValueError, match="range"):
+        MzmlTarget(ENTRY, parent_mz=(5.0, 1.0))

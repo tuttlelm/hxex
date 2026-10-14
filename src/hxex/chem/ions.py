@@ -18,3 +18,10 @@ def check_ion_type(ion_type: str) -> str:
     if ion_type not in mass.std_ion_comp:
         raise IonTypeError(f"unknown ion type {ion_type!r}; known: {', '.join(ion_types())}")
     return ion_type
+
+
+def ion_terminus(ion_type: str) -> str:
+    """``'N'`` for N-terminal ions (a, b, c), ``'C'`` for C-terminal ions (x, y, z), ``'M'`` for
+    the parent-type ions."""
+    first = check_ion_type(ion_type)[0]
+    return "N" if first in "abc" else "C" if first in "xyz" else "M"

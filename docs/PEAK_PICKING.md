@@ -267,4 +267,4 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
 | `env_threshold` | 0.1 | fraction of the tallest bin at which the envelope width is measured |
 | `nterm_subtract` | 1 | N-terminal residues whose amides are not counted |
 | `shoulder_min_points` | 10 | window size from which the shoulder rule applies |
-| `amide_rules` | default | which residues have an exchangeable amide |
+| `amide_rules` | default | which fragment ion types hold the amide at their cleavage site |

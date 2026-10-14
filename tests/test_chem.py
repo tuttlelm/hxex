@@ -248,40 +248,51 @@ def test_exchangeable_sites_adds_hex():
     assert chem.exchangeable_sites("acKPEPTIDE", mod=spec, nterm_subtract=2) == 5 + 3
 
 
-def test_amide_rules_default_is_pyhxexpress_rule_for_every_ion_type():
+def test_amide_counts_by_ion_type():
+    """AEPTIDEK (proline 3; with nterm_subtract 1, residues 2, 4-8 of the peptide): a c ion also
+    holds the next residue's amide, x and y their first residue's (a C-terminal ion's first
+    residue is not the parent's), z not (see test_fragments.py for every ion type against the
+    compositions). PEPTIDEK starts with a proline, which has no amide H."""
+    assert chem.count_amides("AEPTIDEK") == 6
     for ion_type in chem.ion_types():
-        assert chem.count_amides("PEPTIDEK", ion_type=ion_type) == chem.count_amides("PEPTIDEK")
+        want = {"c": 7, "x": 7, "y": 7}.get(ion_type[0], 6)
+        assert chem.count_amides("AEPTIDEK", ion_type=ion_type) == want, ion_type
+        want = {"c": 7}.get(ion_type[0], 6)
+        assert chem.count_amides("PEPTIDEK", ion_type=ion_type) == want, ion_type
 
 
-def test_amide_rules_offset_applies_only_to_its_ion_type():
-    rules = chem.AmideRules.from_dict({"c": 1, "z": -1})
-    base = chem.count_amides("PEPTIDEK")
-    assert chem.count_amides("PEPTIDEK", ion_type="c", rules=rules) == base + 1
-    assert chem.count_amides("PEPTIDEK", ion_type="z", rules=rules) == base - 1
-    assert chem.count_amides("PEPTIDEK", ion_type="y", rules=rules) == base
-    assert chem.count_amides("PEPTIDEK", rules=rules) == base
-    assert chem.count_amides("PE", ion_type="z", rules=chem.AmideRules({"z": -5})) == 0
+def test_amide_rules_set_the_boundary_for_one_ion_type():
+    rules = chem.AmideRules.from_dict({"c": False, "z": True})
+    assert chem.count_amides("AEPTIDEK", ion_type="c", rules=rules) == 6
+    assert chem.count_amides("AEPTIDEK", ion_type="z", rules=rules) == 7
+    assert chem.count_amides("AEPTIDEK", ion_type="c-1", rules=rules) == 7  # its own default
+    assert chem.count_amides("AEPTIDEK", rules=rules) == 6
 
 
 def test_amide_rules_flow_into_sites_and_shape():
-    rules = chem.AmideRules({"c": 2})
+    rules = chem.AmideRules({"c": False})
     spec = chem.parse_modification("Hex:1")
-    assert chem.exchangeable_sites("PEPTIDEK", mod=spec, ion_type="c", rules=rules) == (
-        chem.count_amides("PEPTIDEK") + 2 + 1
-    )
+    assert chem.exchangeable_sites("PEPTIDEK", mod=spec, ion_type="c") == 7 + 1
+    assert chem.exchangeable_sites("PEPTIDEK", mod=spec, ion_type="c", rules=rules) == 6 + 1
     default = chem.natural_abundance("PEPTIDEK", "c")
-    shifted = chem.natural_abundance("PEPTIDEK", "c", rules=rules)
-    assert not np.allclose(default, shifted[: len(default)])
+    other = chem.natural_abundance("PEPTIDEK", "c", rules=rules)
+    assert not np.allclose(default, other[: len(default)])
+    # the fragment's place in its parent travels in the modification string
+    spec = chem.parse_modification("ion_type:y parent_pos:2")
+    assert spec.parent_pos == 2 and chem.exchangeable_sites(
+        "EPTIDEK", mod=spec, ion_type="y", nterm_subtract=2) == 5
+    with pytest.raises(chem.ChemistryError):
+        chem.parse_modification("parent_pos:0")
 
 
 def test_amide_rules_validation_and_serialisation():
-    rules = chem.AmideRules().with_offset("c", 1)
+    rules = chem.AmideRules().with_boundary("c", False)
     assert chem.AmideRules.from_dict(rules.to_dict()) == rules
     assert chem.DEFAULT_AMIDE_RULES.to_dict() == {}
     with pytest.raises(chem.IonTypeError):
-        chem.AmideRules({"q": 1})
+        chem.AmideRules({"q": True})
     with pytest.raises(chem.ChemistryError):
-        chem.AmideRules({"c": 1.5})
+        chem.AmideRules({"c": 1})  # the integer offsets of earlier versions
     with pytest.raises(chem.IonTypeError):
         chem.count_amides("PEPTIDE", ion_type="q")
 

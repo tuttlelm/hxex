@@ -16,6 +16,7 @@ from hxex.io import (
     MzmlFile,
     MzmlRun,
     MzmlTarget,
+    ScanTable,
     ThermoError,
     ThermoFile,
     mzml_series_targets,
@@ -61,6 +62,11 @@ def test_scan_values_as_thermorawfileparser_writes_them():
            Reaction(600.1, 2.0, 0.0, HCD, True))
     s = scan_from_info(ScanInfo(4, 3, 0.1, "sa", False, ms3, supplemental=True))
     assert s.ms_level == 3 and s.precursor_mz == 600.1
+    # every stage is kept: the parent (HCD of 493.26) and the last (EThcD of 600.1)
+    assert [st.mz for st in s.stages] == [493.26, 600.1]
+    t = ScanTable.from_scans([s])
+    assert t.parent_mz[0] == 493.26 and (t.parent_lower[0], t.parent_upper[0]) == (492.26, 494.26)
+    assert t.preactivation[0] == "beam-type collision-induced dissociation"
     assert s.activation == ("electron transfer dissociation",
                             "supplemental beam-type collision-induced dissociation")
     # parent, neutral-loss and neutral-gain scans (negative orders) count as MS2

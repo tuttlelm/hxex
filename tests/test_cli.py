@@ -109,6 +109,26 @@ def test_project_files_are_checked(tmp_path):
         load_project(tmp_path / "x.toml")
 
 
+def test_fragment_scans_are_tied_to_their_parent(tmp_path):
+    from hxex.config import scan_targets
+    from hxex.fragments import parent_mz_range
+
+    def targets(fragments):
+        path = mzml_project(tmp_path, extra_input=f'[input.fragments]\nions = "c:2-3:1"\n'
+                                                  f"{fragments}")
+        return scan_targets(load_project(path))
+
+    got = targets('ms_level = 3\npreactivation = "HCD"\n')
+    frag = got[1]  # after the peptide itself
+    assert (frag.ms_level, frag.preactivation) == (3, "HCD") and got[0].parent_mz is None
+    picker = load_project(tmp_path / "hxex.toml").run.picker  # the project's bins
+    assert frag.parent_mz == parent_mz_range(got[0].entry, picker=picker)
+    assert targets("parent_mz = false\n")[1].parent_mz is None
+    assert targets("parent_mz = [500.0, 505.5]\n")[1].parent_mz == (500.0, 505.5)
+    with pytest.raises(ProjectError, match="parent_mz"):
+        targets('parent_mz = "own"\n')
+
+
 def test_check_shows_what_would_be_read(tmp_path, capsys):
     path = mzml_project(tmp_path, extra_input='[input.target]\nfilter_excludes = "sid"')
     assert cli.main(["check", str(path)]) == 0

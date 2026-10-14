@@ -99,6 +99,7 @@ def plan_bins(
         nterm_subtract=config.nterm_subtract,
         rules=config.amide_rules,
         registry=registry,
+        parent_pos=spec.parent_pos,
     )
     if clusters is None:
         clusters = chem.isotope_clusters(

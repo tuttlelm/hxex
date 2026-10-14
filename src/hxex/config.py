@@ -115,7 +115,10 @@ class FragmentSettings:
     :mod:`hxex.fragments`, for example ``'c-1:ALL z-dot:ALL'``), with their scan conditions."""
 
     ions: str
+    ms_level: int = 2
     activation: str | None = None
+    preactivation: str | None = None
+    parent_mz: tuple[float, float] | str | None = "parent"
     precursor_mz: float | None = None
     precursor_charge: int | str | None = "parent"
     filter_contains: str | None = None
@@ -126,7 +129,7 @@ class FragmentSettings:
 
 # the scan conditions of the peptides themselves (MzmlTarget without its entry)
 _TARGET_KEYS = ("ms_level", "activation", "precursor_mz", "precursor_charge", "rt_window",
-                "filter_contains", "filter_excludes")
+                "filter_contains", "filter_excludes", "parent_mz", "preactivation")
 
 
 @dataclass(frozen=True)
@@ -218,12 +221,12 @@ def _strings(value, where: str) -> tuple[str, ...] | None:
     return tuple(value)
 
 
-def _window(value, where: str):
+def _window(value, where: str, unit: str = "[start, end] in seconds"):
     value = _none(value)
     if value is None:
         return None
     if not isinstance(value, list) or len(value) != 2:
-        raise ProjectError(f"{where} must be [start, end] in seconds")
+        raise ProjectError(f"{where} must be {unit}")
     return (float(value[0]), float(value[1]))
 
 
@@ -275,6 +278,9 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
     target = {k: _none(v) for k, v in target.items()}
     if "rt_window" in target:
         target["rt_window"] = _window(target["rt_window"], "input.target.rt_window")
+    if target.get("parent_mz") is not None:
+        target["parent_mz"] = _window(target["parent_mz"], "input.target.parent_mz",
+                                      "[low, high] (m/z) or false")
     fragments = None
     if data.get("fragments"):
         frag = dict(data["fragments"])
@@ -284,6 +290,9 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
         frag = {k: _none(v) for k, v in frag.items()}
         if "rt_window" in frag:
             frag["rt_window"] = _window(frag["rt_window"], "input.fragments.rt_window")
+        if frag.get("parent_mz") not in (None, "parent"):
+            frag["parent_mz"] = _window(frag["parent_mz"], "input.fragments.parent_mz",
+                                        "\"parent\", [low, high] (m/z) or false")
         fragments = FragmentSettings(**frag)
     parents = bool(data.get("parents", True))
     if not parents and fragments is None:
@@ -416,10 +425,12 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
         if inp.fragments is not None:
             f = inp.fragments
             targets += fragment_targets(
-                entry, f.ions, activation=f.activation, precursor_mz=f.precursor_mz,
-                precursor_charge=f.precursor_charge, filter_contains=f.filter_contains,
-                filter_excludes=f.filter_excludes, rt_window=f.rt_window,
-                limit_charge=f.limit_charge, registry=project.run.registry,
+                entry, f.ions, ms_level=f.ms_level, activation=f.activation,
+                preactivation=f.preactivation, parent_mz=f.parent_mz,
+                precursor_mz=f.precursor_mz, precursor_charge=f.precursor_charge,
+                filter_contains=f.filter_contains, filter_excludes=f.filter_excludes,
+                rt_window=f.rt_window, limit_charge=f.limit_charge,
+                picker=project.run.picker, registry=project.run.registry,
             )
     if not targets:
         raise ProjectError(f"{inp.peptides}: no peptides")
@@ -551,7 +562,11 @@ ms_level = 1
 
 # [input.fragments]              # fragment ions of every peptide
 # ions = "c-1:ALL z-dot:ALL"
-# activation = "ETD"
+# ms_level = 2                   # 3 for MS3 scans
+# activation = "ETD"             # of the last stage
+# preactivation = "HCD"          # MS3: the activation before the last stage ("none" for none)
+# parent_mz = "parent"           # scans whose parent isolation overlaps the peptide's m/z range
+#                                # ([low, high] to set it, false for any parent)
 # precursor_charge = "parent"    # or a charge, or false for any charge
 # filter_excludes = "sid"
 

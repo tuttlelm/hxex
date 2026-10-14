@@ -12,24 +12,30 @@ from .modifications import ChemistryError
 
 @dataclass(frozen=True)
 class ModificationSpec:
-    """Composition change, extra exchangeable sites, ion type and explicit undeuterated m/z."""
+    """Composition change, extra exchangeable sites, ion type, explicit undeuterated m/z and,
+    for a fragment ion, ``parent_pos``: the position in its parent of the fragment's first
+    residue (1 for N-terminal ions; None when not known), which places the fragment's amides
+    in the parent (see :func:`hxex.chem.count_amides`)."""
 
     composition: MappingProxyType = field(default_factory=lambda: MappingProxyType({}))
     hex: int = 0
     ion_type: str = "M"
     undeut_mz: float | None = None
+    parent_pos: int | None = None
 
 
 def parse_modification(text: str | None) -> ModificationSpec:
     """Parse ``'H:1 Hex:1 ion_type:c undeut_mz:523.1'`` (same syntax as pyHXExpress).
 
     Element keys give composition changes (integers), ``Hex`` adds exchangeable sites,
-    ``ion_type`` selects the ion type, ``undeut_mz`` overrides the computed m/z.
+    ``ion_type`` selects the ion type, ``undeut_mz`` overrides the computed m/z, and
+    ``parent_pos`` (hxex only) places a fragment in its parent.
     """
     composition: dict[str, int] = {}
     hex_sites = 0
     ion_type = "M"
     undeut_mz = None
+    parent_pos = None
     for item in (text or "").split():
         key, sep, value = item.partition(":")
         if not sep or not key or not value:
@@ -41,10 +47,15 @@ def parse_modification(text: str | None) -> ModificationSpec:
                 undeut_mz = float(value)
             elif key == "Hex":
                 hex_sites = int(value)
+            elif key == "parent_pos":
+                parent_pos = int(value)
+                if parent_pos < 1:
+                    raise ChemistryError(f"parent_pos must be at least 1, got {item!r}")
             else:
                 composition[key] = int(value)
         except ValueError as exc:
             if isinstance(exc, ChemistryError):
                 raise
             raise ChemistryError(f"bad value in modification item {item!r}") from exc
-    return ModificationSpec(MappingProxyType(composition), hex_sites, ion_type, undeut_mz)
+    return ModificationSpec(MappingProxyType(composition), hex_sites, ion_type, undeut_mz,
+                            parent_pos)
