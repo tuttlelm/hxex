@@ -123,7 +123,10 @@ def write_analysis(
         samples = [config.reference] + [s for s in samples if s != config.reference]
     up = up.select(np.isin(up.sample, samples))
     sequences = config.sequences(base)
-    residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent)
+    residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent,
+                           modified=config.modified_peptides)
+    # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
+    states = [s for s in dict.fromkeys(residues.sample.tolist()) if s not in samples]
     coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
     coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
                               time=coverage_time)
@@ -146,7 +149,7 @@ def write_analysis(
     if config.reference:
         ref = config.reference
         kw = {"exclude_flagged": config.exclude_flagged, "filters": config.filters,
-              "alpha": config.alpha, "samples": samples}
+              "alpha": config.alpha, "samples": samples, "match": config.peptide_match}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,
@@ -185,7 +188,7 @@ def write_analysis(
             up, samples=[s], times=times, length=length)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
         coverage, samples=samples, marks=marks)))
-    for s in samples:
+    for s in samples + states:
         for t in times:
             label = _time_label(t, undeut)
             if choice is not None and choice.where(sample=s, time=t).any():
@@ -196,18 +199,20 @@ def write_analysis(
                     residues, s, t, marks=marks, length=length, undeut_time=undeut)))
     if config.reference:
         others = [s for s in samples if s != config.reference]
+        residue_others = others + states  # the residue comparisons include the states
         stack = list(comparisons.items())
         for t in times:
             label = _time_label(t, undeut)
             only = choice if config.overlay_two_only else None
-            shown = [s for s in others if _has_overlay(residues, s, t, config.overlay, only)]
+            shown = [s for s in residue_others
+                     if _has_overlay(residues, s, t, config.overlay, only)]
             if shown and _has_overlay(residues, config.reference, t, config.overlay, only):
                 jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, config.reference, shown, t, show=config.overlay,
                                  choice=only, annotations=ann, length=length,
                                  undeut_time=undeut)))
-            with_pop = [s for s in others
+            with_pop = [s for s in residue_others
                         if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
             if with_pop:
                 jobs.append((f"compare_populations_{label}",

@@ -66,7 +66,8 @@ class PopulationChoice:
     ``population_low_se``; ``two_populations`` (the choice) and ``reason`` (why not: one of
     ``REASONS``; empty when two populations are chosen or the residue has no K=1 value either).
     The chosen description is ``fD_low`` and ``fD_high`` where ``two_populations``, else
-    ``fD_avg``."""
+    ``fD_avg``. ``control_fallback``: a peptide behind the residue was corrected with a fallback
+    control."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -82,6 +83,11 @@ class PopulationChoice:
     two_populations: np.ndarray
     reason: np.ndarray
     config: ChoiceConfig = ChoiceConfig()  # noqa: RUF009
+    control_fallback: np.ndarray | None = None
+
+    def __post_init__(self):  # built without it: no fallback
+        if self.control_fallback is None:
+            object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -117,6 +123,7 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
     """The choice for every sample, time and residue of ``residues`` that has a K=1 value or
     K=2 values (see the module docstring)."""
     table: dict[tuple, dict] = {}
+    fell_back: dict[tuple, bool] = {}
     for i in range(len(residues)):
         k, rank = int(residues.K[i]), int(residues.rank[i])
         if (k, rank) not in ((1, 1), (2, 1), (2, 2)):
@@ -124,6 +131,7 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         key = (str(residues.sample[i]), float(residues.time[i]), int(residues.residue[i]))
         name = {(1, 1): "avg", (2, 1): "low", (2, 2): "high"}[(k, rank)]
         table.setdefault(key, {})[name] = (float(residues.fD[i]), float(residues.fD_se[i]))
+        fell_back[key] = fell_back.get(key, False) or bool(residues.control_fallback[i])
     keys = sorted(table)
     nan = (np.nan, np.nan)
 
@@ -155,4 +163,5 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         population_low=np.where(usable, pop, np.nan),
         population_low_se=np.where(usable, pop_se, np.nan), two_populations=two,
         reason=reason.astype(str), config=config,
+        control_fallback=np.array([fell_back[k] for k in keys], dtype=bool),
     )

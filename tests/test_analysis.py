@@ -394,6 +394,20 @@ def test_compare_peptides_with_the_hybrid_rule(results):
         compare_peptides(results, "S", quantity="population")
     with pytest.raises(ValueError, match="quantity"):
         compare_peptides(results, "S", quantity="mean")
+    # a mutated peptide over the same residues: compared by range (the default), not by sequence
+    seq = str(binned.peptide[0])
+    mutant = seq[:3] + ("D" if seq[3] != "D" else "E") + seq[4:]
+    mutated = dataclasses.replace(shifted, peptide=np.where(binned.data_id == 1, mutant, seq))
+    by_range = compare_peptides(dataclasses.replace(results, binned=mutated), "S")
+    assert len(by_range) == len(pc) and not by_range.same_sequence.any()
+    assert set(by_range.peptide.tolist()) == {mutant}
+    assert set(by_range.peptide_reference.tolist()) == {seq}
+    np.testing.assert_allclose(by_range.delta, pc.delta)
+    assert len(compare_peptides(dataclasses.replace(results, binned=mutated), "S",
+                                match="sequence")) == 0
+    assert pc.same_sequence.all()
+    with pytest.raises(ValueError, match="match"):
+        compare_peptides(results, "S", match="position")
 
 
 def test_residue_comparison_and_regions():
@@ -777,3 +791,86 @@ def test_residue_overlay_shows_the_chosen_values():
     assert list(lines["overlay:D3:high"].get_xdata()) == [3, 4]
     assert list(lines["overlay:WT:high"].get_xdata()) == [3, 4, 6]
     assert list(lines["overlay:D3:avg"].get_xdata()) == [3, 4, 6]  # the average is never filtered
+
+
+def test_range_matching_never_crosses_modified_forms():
+    from hxex.analysis.compare import _pairs
+
+    ref = {("AKLPGS", "", 2, 7, 4.0): 0, ("AKLPpS", "", 2, 7, 4.0): 0,
+           ("GSTVED", "", 6, 11, 4.0): 0}
+    other = {("AKLPGS", "", 2, 7, 4.0): 0, ("GSTVDD", "", 6, 11, 4.0): 0,
+             ("TVEDRW", "", 8, 13, 4.0): 0}
+    pairs = _pairs(ref, other, "range")
+    # 2-7: two forms in the reference, so only the identical one; 6-11: one each, a mutation
+    assert pairs == [(("AKLPGS", "", 2, 7, 4.0),) * 2,
+                     (("GSTVED", "", 6, 11, 4.0), ("GSTVDD", "", 6, 11, 4.0))]
+    assert _pairs(ref, other, "sequence") == [(("AKLPGS", "", 2, 7, 4.0),) * 2]
+
+
+def test_values_corrected_differently_are_marked(results):
+    import dataclasses
+
+    from hxex.analysis import PeptideComparison, ResidueMap, compare_peptides
+    from hxex.report import plot_peptide_differences, plot_residue_overlay
+
+    # the flag follows a fallback control from the series to the species and the comparison
+    binned = results.binned
+    shifted = dataclasses.replace(binned, sample=np.where(binned.data_id == 1, "V", "S"))
+    c = results.controls
+    one = dataclasses.replace(c, fallback=np.asarray(c.data_id) == 1)
+    res = dataclasses.replace(results, binned=shifted, controls=one)
+    up = species_uptake(res)
+    assert up.control_fallback[up.sample == "V"].all() and not up.control_fallback[
+        up.sample == "S"].any()
+    pc = compare_peptides(res, "S")
+    assert pc.control_fallback.all() and not pc.control_fallback_reference.any()
+    assert pc.corrected_differently.all()
+    # residues: a star where only one side rests on a fallback control
+    n = 6
+    rm = ResidueMap(sample=np.array(["WT"] * 3 + ["D3"] * 3), time=np.full(n, 4.0),
+                    K=np.ones(n, dtype=int), rank=np.ones(n, dtype=int),
+                    residue=np.array([3, 4, 6] * 2), aa=np.array(["A"] * n),
+                    fD=np.full(n, 0.4), fD_se=np.full(n, 0.02),
+                    redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
+                    proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool),
+                    control_fallback=np.array([False, False, True, False, True, True]))
+    fig = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("avg",))
+    stars = {t.get_gid() for t in fig.axes[0].texts if (t.get_gid() or "").startswith("corr")}
+    assert stars == {"corrected_differently:4"}  # 6 falls back on both sides: the same
+    assert "corrected differently" in [t.get_text() for t in fig.axes[0].get_legend().texts]
+    # peptides: a star over the middle of the peptide
+    woods = PeptideComparison(
+        sample=np.array(["V", "V"]), peptide=np.array(["AKLPGSTV", "GSTVED"]),
+        modification=np.array(["", ""]), start=np.array([2, 6]), end=np.array([9, 11]),
+        time=np.array([4.0, 4.0]), value_reference=np.array([0.3, 0.6]),
+        value_reference_se=np.full(2, 0.01), value=np.array([0.5, 0.62]),
+        value_se=np.full(2, 0.01), delta=np.array([0.2, 0.02]), delta_se=np.full(2, 0.01),
+        t=np.array([5.0, 0.5]), p=np.array([0.001, 0.6]), n_reference=np.full(2, 3),
+        n=np.full(2, 3), significant=np.array([True, False]), reference="R", delta_crit=0.1,
+        control_fallback=np.array([True, False]))
+    ax = plot_peptide_differences(woods, "V", 4.0).axes[0]
+    assert {t.get_gid() for t in ax.texts if t.get_gid()} == {"corrected_differently:5.5"}
+
+
+def test_modified_peptides_are_separate_states_or_combined():
+    from hxex.analysis import AnalysisConfig
+    from hxex.analysis.residues import modified_state
+
+    up = table([("S", "AKLPGSTV", 2, 4.0, 0.3, 0.01), ("S", "AKLPGpSTV", 2, 4.0, 0.5, 0.01)])
+    apart = residue_map(up, sequences=SEQUENCE)  # 'separate', the default
+    assert set(apart.sample.tolist()) == {"S", "S pS7"}
+    at8 = apart.residue == 8
+    assert apart.fD[at8 & (apart.sample == "S")][0] == pytest.approx(0.3)
+    assert apart.fD[at8 & (apart.sample == "S pS7")][0] == pytest.approx(0.5)
+    together = residue_map(up, sequences={"S": SEQUENCE}, modified="combined")
+    assert set(together.sample.tolist()) == {"S"}
+    assert together.fD[together.residue == 8][0] == pytest.approx(0.4)
+    # a state takes its sample's sequence
+    assert residue_map(up, sequences={"S": SEQUENCE}).aa[apart.residue == 1][0] == "M"
+    assert modified_state("acKLpS", 10) == "acK10,pS12" and modified_state("AKL", 1) == ""
+    assert modified_state("AKL", 1, "Hex:1 ion_type:M") == "[Hex:1]"
+    with pytest.raises(ValueError, match="modified"):
+        residue_map(up, modified="apart")
+    assert AnalysisConfig().modified_peptides == "separate"
+    with pytest.raises(ValueError, match="modified_peptides"):
+        AnalysisConfig(modified_peptides="apart")

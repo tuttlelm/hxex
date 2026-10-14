@@ -81,7 +81,9 @@ class SpeciesUptake:
     ``fD`` and ``fD_se`` (``mean / n_amides``),
     ``population`` and ``population_se`` (the component's share), ``n_amides`` (exchangeable
     amides),
-    ``n_spectra``, ``n_charges``, ``corrected`` and ``charge_trend``. ``nterm_subtract`` (the
+    ``n_spectra``, ``n_charges``, ``corrected`` and ``charge_trend``; ``control_fallback``: the
+    back-exchange correction of at least one of its spectra used a fallback control (a missing
+    or rejected control, :mod:`hxex.controls`). ``nterm_subtract`` (the
     N-terminal residues that do not count) and ``undeut_time`` (the undeuterated control's time,
     which coverage, redundancy and resolution refer to) are the run's.
     """
@@ -106,8 +108,13 @@ class SpeciesUptake:
     n_charges: np.ndarray
     corrected: np.ndarray
     charge_trend: np.ndarray
+    control_fallback: np.ndarray | None = None
     nterm_subtract: int = 1
     undeut_time: float = 0.0
+
+    def __post_init__(self):  # built without it: no fallback
+        if self.control_fallback is None:
+            object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -149,7 +156,7 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
 def _records(results, ks, exclude_flagged, filters, quiet=False):
     """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
     end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
-    rep)``; with whether each sample's values are corrected (sample -> bool),
+    rep, control_fallback)``; with whether each sample's values are corrected (sample -> bool),
     ``nterm_subtract`` and the undeuterated time. ``results`` may be a
     :class:`hxex.analysis.RunSet` (its samples are then labelled ``run:sample``)."""
     from .runs import RunSet
@@ -175,8 +182,10 @@ def _records(results, ks, exclude_flagged, filters, quiet=False):
         keep &= ~np.asarray(results.quality.flagged, dtype=bool)
     controls = results.controls
     n_amides = np.asarray(results.measurements.n_max, dtype=float) / factor
+    fell_back = np.zeros(len(fit), dtype=bool)
     if controls is not None:
         n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
+        fell_back = np.asarray(controls.fallback, dtype=bool)[controls.rows(fit.data_id)]
 
     # one record per spectrum and rank, then grouped by species, time, K and rank
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
@@ -218,7 +227,7 @@ def _records(results, ks, exclude_flagged, filters, quiet=False):
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
-                    int(binned.rep[j]),
+                    int(binned.rep[j]), bool(fell_back[i]),
                 ))
 
     if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
@@ -296,6 +305,7 @@ def species_uptake(
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
             ("corrected", corrected[sample]), ("charge_trend", False),
+            ("control_fallback", any(r[7] for r in recs)),
         ):
             cols[name].append(value)
         if len(charges) > 1:
@@ -317,6 +327,7 @@ def species_uptake(
                  "n_amides"):
         out[name] = out[name].astype(np.float64)
     out["corrected"] = out["corrected"].astype(bool)
+    out["control_fallback"] = out["control_fallback"].astype(bool)
     return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
 
 

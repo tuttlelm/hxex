@@ -110,7 +110,7 @@ def controls_overview_data(results: Results) -> dict:
     return {
         "data_id": c.data_id, "retention": retention, "m0": c.m0_measured,
         "fallback": c.fallback.copy(), "reasons": reasons, "measured": int((~c.fallback).sum()),
-        "retention_min": cfg.retention_min, "retention_max": cfg.retention_max,
+        "retention_min": cfg.min_retention, "retention_max": cfg.retention_max,
         "m0_max": cfg.m0_max, "n_series": len(c),
     }
 

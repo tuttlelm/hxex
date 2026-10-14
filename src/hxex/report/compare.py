@@ -49,6 +49,23 @@ def _marks(ax: Axes, annotations: Annotations | None, label_sites: bool = True) 
                         ha="center", va="bottom", fontsize=7, color="#4d4d4d")
 
 
+DIFFERENT_NOTE = "* corrected differently (control fallback)"
+
+
+def _corrected_differently(ax: Axes, xs, *, y: float = 0.995, note: bool = True) -> int:
+    """A ``*`` just inside the top of ``ax`` at each x of ``xs`` (residues or positions where
+    the two compared values were corrected differently: one with a fallback control), and, with
+    ``note``, a note in the lower left; returns how many were drawn."""
+    xs = sorted({float(x) for x in xs})
+    for x in xs:
+        ax.text(x, y, "*", transform=ax.get_xaxis_transform(), ha="center", va="top",
+                fontsize=11, color="#4d4d4d", gid=f"corrected_differently:{x:g}")
+    if xs and note:
+        ax.text(0.005, 0.01, DIFFERENT_NOTE, transform=ax.transAxes, ha="left", va="bottom",
+                fontsize=7, color="#4d4d4d")
+    return len(xs)
+
+
 def _label(quantity: str) -> str:
     return "population (low D)" if quantity == "population" else "fD"
 
@@ -67,7 +84,8 @@ def plot_residue_comparison(
     """The reference (black) and ``sample`` residue by residue at ``time``, in the comparison's
     quantity (``fD``, or the low-D population from :func:`hxex.analysis.compare_populations`),
     with standard-error bars; residues with a significant difference get a band at the top of
-    the axes (red up, blue down)."""
+    the axes (red up, blue down), and residues whose two values were corrected differently (one
+    with a fallback control) a ``*`` below it."""
     rows = comparison.where(sample=sample, time=time)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
@@ -92,6 +110,8 @@ def plot_residue_comparison(
         ax.add_patch(Rectangle((res - 0.5, 0.96), 1.0, 0.04, transform=ax.get_xaxis_transform(),
                                color=INCREASE if d > 0 else DECREASE, linewidth=0,
                                gid=f"significant:{res}"))
+    _corrected_differently(ax, comparison.residue[rows & comparison.corrected_differently],
+                           y=0.955)
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length if length is not None else int(comparison.residue.max()))
     ax.set_ylim(0, 1.1)
@@ -146,8 +166,9 @@ def plot_residue_overlay(
     sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'`` (the K=2 ranks
     1 and 2, filled points) and ``'avg'`` (K=1, open points). With ``choice``
     (:func:`hxex.analysis.choose_populations`), the K=2 values are drawn only where the choice
-    keeps two populations, as in the owner's figure; the average is always drawn. Point groups
-    have the gid ``overlay:<sample>:<value>``."""
+    keeps two populations, as in the owner's figure; the average is always drawn. A ``*`` at the
+    top marks residues drawn for both whose values were corrected differently (one with a
+    fallback control). Point groups have the gid ``overlay:<sample>:<value>``."""
     unknown = [v for v in show if v not in OVERLAY_VALUES]
     if unknown or not show:
         raise ValueError(f"show must be some of {', '.join(OVERLAY_VALUES)}")
@@ -157,6 +178,8 @@ def plot_residue_overlay(
     else:
         fig = ax.figure
     drawn = 0
+    shown: dict[str, set] = {reference: set(), sample: set()}
+    fell_back: dict[str, set] = {reference: set(), sample: set()}
     for n, (name, index) in enumerate(((reference, 0), (sample, style_index))):
         colour = _style(index)[0]
         for value in show:
@@ -168,6 +191,8 @@ def plot_residue_overlay(
             if not rows.any():
                 continue
             drawn += 1
+            shown[name].update(residues.residue[rows].tolist())
+            fell_back[name].update(residues.residue[rows & residues.control_fallback].tolist())
             bars = ax.errorbar(
                 residues.residue[rows], residues.fD[rows],
                 yerr=np.nan_to_num(residues.fD_se[rows]), fmt="o",
@@ -178,6 +203,10 @@ def plot_residue_overlay(
             bars.lines[0].set_gid(f"overlay:{name}:{value}")
     if not drawn:
         raise ValueError(f"no residue values of {reference!r} or {sample!r} at time {time:g}")
+    both = shown[reference] & shown[sample]
+    n_diff = _corrected_differently(
+        ax, [r for r in both if (r in fell_back[reference]) != (r in fell_back[sample])],
+        note=False)
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length if length is not None else int(residues.residue.max()))
     ax.set_ylim(-0.05, 1.05)
@@ -192,6 +221,9 @@ def plot_residue_overlay(
     if "avg" in show and len(show) > 1:
         handles.append(Line2D([], [], linestyle="none", marker="o", markersize=6,
                               color="#555555", markerfacecolor="white", label="avg (K=1)"))
+    if n_diff:
+        handles.append(Line2D([], [], linestyle="none", marker="$*$", markersize=7,
+                              color="#4d4d4d", label="corrected differently"))
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
               ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
     ax.text(1.0, 1.02, _when(time, undeut_time), transform=ax.transAxes, ha="right",
@@ -245,8 +277,9 @@ def plot_peptide_differences(
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
-    grey otherwise, with the standard error as a vertical bar and ``+-delta_crit`` dashed. Bars
-    have the gid ``peptide:<start>-<end>``."""
+    grey otherwise, with the standard error as a vertical bar and ``+-delta_crit`` dashed; a
+    ``*`` at the top over the middle of each peptide whose two values were corrected differently
+    (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``."""
     rows = np.flatnonzero(comparison.where(sample=sample, time=time))
     if not len(rows):
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
@@ -269,6 +302,8 @@ def plot_peptide_differences(
         for y in (comparison.delta_crit, -comparison.delta_crit):
             ax.axhline(y, color="#555555", linestyle="--", linewidth=0.9, zorder=1)
     ax.axhline(0, color="#000000", linewidth=0.8, zorder=1)
+    differ = rows[comparison.corrected_differently[rows]]
+    _corrected_differently(ax, (comparison.start[differ] + comparison.end[differ]) / 2)
     _marks(ax, annotations)
     top = length if length is not None else int(comparison.end[rows].max())
     ax.set_xlim(0, top)
@@ -343,9 +378,10 @@ def plot_butterfly(
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
     sequential colour per time), with the differences below (filled where significant,
-    ``+-delta_crit`` dashed). ``times`` default to all of the comparison but the undeuterated
-    one. Lines have the gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
-    ``difference:<time>``."""
+    ``+-delta_crit`` dashed); a ``*`` at the top over each peptide whose two values were corrected
+    differently at a time drawn (one with a fallback control). ``times`` default to all of the
+    comparison but the undeuterated one. Lines have the gids ``butterfly:<time>:reference``,
+    ``butterfly:<time>:sample`` and ``difference:<time>``."""
     rows = comparison.where(sample=sample)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r}")
@@ -389,6 +425,9 @@ def plot_butterfly(
         bottom.scatter(x[sig], comparison.delta[here][sig], color=colour, s=14, zorder=3)
         bottom.scatter(x[~sig], comparison.delta[here][~sig], facecolors="none",
                        edgecolors=colour, s=10, linewidths=0.7, zorder=3)
+    drawn_rows = np.flatnonzero(rows & np.isin(comparison.time, times)
+                                & comparison.corrected_differently)
+    _corrected_differently(top, [position[key(i)] for i in drawn_rows])
     top.axhline(0, color="#000000", linewidth=0.8)
     top.set_ylim(-1.1, 1.1)
     top.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(v):g}"))

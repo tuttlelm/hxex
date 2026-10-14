@@ -8,9 +8,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from .compare import Annotations
+from .compare import MATCHES, Annotations
 from .populations import ChoiceConfig
-from .residues import COUNTS
+from .residues import COUNTS, MODIFIED
 from .runs import SEPARATOR
 from .species import SpeciesFilters
 
@@ -38,7 +38,12 @@ class AnalysisConfig:
     ``fasta``); ``overlay``: the values the by-residue comparison figures show, any of
     ``'low'`` and ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw
     the K=2 values only where the choice keeps two populations (the owner's figure; the default,
-    owner 2026-10-13; False draws every K=2 value the filters keep)."""
+    owner 2026-10-13; False draws every K=2 value the filters keep); ``peptide_match``: which
+    peptides the peptide comparisons pair, ``'range'`` (the same residues, mutated or not) or
+    ``'sequence'`` (identical sequences only; :func:`hxex.analysis.compare_peptides`);
+    ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the residue
+    level, e.g. ``'WT pS59'``) or ``'combined'`` (averaged with the sample's other peptides;
+    :func:`hxex.analysis.residue_map`)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -58,6 +63,8 @@ class AnalysisConfig:
     runs: Mapping[str, str] | None = None
     overlay: tuple[str, ...] = ("low", "high")
     overlay_two_only: bool = True
+    peptide_match: str = "range"
+    modified_peptides: str = "separate"
 
     def __post_init__(self):
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
@@ -91,6 +98,10 @@ class AnalysisConfig:
             raise ValueError("alpha must be in (0, 1)")
         if self.weight_exponent < 0:
             raise ValueError("weight_exponent must be >= 0")
+        if self.modified_peptides not in MODIFIED:
+            raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
+        if self.peptide_match not in MATCHES:
+            raise ValueError(f"peptide_match must be one of {', '.join(MATCHES)}")
         if self.reference and self.samples and self.reference not in self.samples:
             raise ValueError(f"the reference {self.reference!r} is not among the samples")
 

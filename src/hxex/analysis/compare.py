@@ -82,6 +82,27 @@ def _columns(cls, rows: list[dict]) -> dict:
 
 _SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "K", "rank", "quantity")
 QUANTITIES = ("fD", "population")
+MATCHES = ("range", "sequence")
+
+
+def _pairs(ref: dict, other: dict, match: str) -> list[tuple[tuple, tuple]]:
+    """Pairs ``(reference key, sample key)`` of species keys ``(peptide, modification, start,
+    end, time)``. ``'sequence'``: the same key. ``'range'``: the same start, end and time; where
+    either side has several species there (e.g. a modified and an unmodified form), only those
+    with the same sequence are paired, so forms are never crossed."""
+    if match == "sequence":
+        return [(k, k) for k in sorted(other) if k in ref]
+    by_range: dict[tuple, tuple[list, list]] = {}
+    for side, keys in ((0, ref), (1, other)):
+        for k in keys:
+            by_range.setdefault(k[2:], ([], []))[side].append(k)
+    out = []
+    for _, (a, b) in sorted(by_range.items()):
+        if len(a) == 1 and len(b) == 1:
+            out.append((a[0], b[0]))
+        else:
+            out.extend((k, k) for k in sorted(set(a) & set(b)))
+    return out
 
 
 @dataclass(frozen=True)
@@ -92,7 +113,12 @@ class PeptideComparison:
     (``value - value_reference``) and ``delta_se``, ``t`` and ``p`` (Welch's test on the
     replicate spectra; NaN with fewer than two on a side), ``n_reference`` and ``n`` (spectra) and
     ``significant``; with the ``reference`` sample, ``K``, ``rank``, ``alpha`` and the global
-    ``delta_crit``."""
+    ``delta_crit``. ``peptide`` and ``modification`` are the sample's; ``peptide_reference`` and
+    ``modification_reference`` the reference's, and ``same_sequence`` says whether they are the
+    same (peptides matched by range may differ, e.g. by a mutation; see
+    :func:`compare_peptides`). ``control_fallback_reference`` and ``control_fallback``: whether
+    each side's back-exchange correction used a fallback control; where they differ the two
+    values were corrected differently."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -117,6 +143,30 @@ class PeptideComparison:
     alpha: float = 0.05
     delta_crit: float = 0.0
     quantity: str = "fD"
+    peptide_reference: np.ndarray | None = None
+    modification_reference: np.ndarray | None = None
+    same_sequence: np.ndarray | None = None
+    control_fallback_reference: np.ndarray | None = None
+    control_fallback: np.ndarray | None = None
+
+    def __post_init__(self):  # built without the reference's sequences: the same as the sample's
+        if self.peptide_reference is None:
+            object.__setattr__(self, "peptide_reference", np.asarray(self.peptide))
+        if self.modification_reference is None:
+            object.__setattr__(self, "modification_reference", np.asarray(self.modification))
+        if self.same_sequence is None:
+            object.__setattr__(self, "same_sequence", (
+                (np.asarray(self.peptide_reference) == np.asarray(self.peptide))
+                & (np.asarray(self.modification_reference) == np.asarray(self.modification))))
+        for name in ("control_fallback_reference", "control_fallback"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.zeros(len(self.sample), dtype=bool))
+
+    @property
+    def corrected_differently(self) -> np.ndarray:
+        """Rows whose two values were corrected differently (one with a fallback control)."""
+        return np.asarray(self.control_fallback_reference, dtype=bool) != np.asarray(
+            self.control_fallback, dtype=bool)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -145,15 +195,22 @@ def compare_peptides(
     alpha: float = 0.05,
     exclude_flagged: bool = False,
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+    match: str = "range",
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
     docstring for the hybrid rule). The values are those of
     :func:`hxex.analysis.species_uptake` with the same filters. ``results`` may be a
     :class:`hxex.analysis.RunSet` (samples ``run:sample``; ``delta_crit`` is then pooled over
-    every run)."""
+    every run). ``match`` says which peptides are compared: ``'range'`` (the default; owner,
+    2026-10-13) pairs the peptides over the same residues, so that a peptide containing a mutation
+    is compared with the reference's (``same_sequence`` False), except where a sample has several
+    species over the same residues (a modified and an unmodified form): those are paired only
+    with the same sequence; ``'sequence'`` pairs only identical sequences and modifications."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
+    if match not in MATCHES:
+        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
     if quantity not in QUANTITIES:
         raise ValueError(f"quantity must be one of {', '.join(QUANTITIES)}")
     if quantity == "population" and K < 2:
@@ -164,6 +221,7 @@ def compare_peptides(
     groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True)
     by_sample: dict[str, dict[tuple, np.ndarray]] = {}
     ses: dict[tuple, np.ndarray] = {}
+    fell_back: dict[tuple, bool] = {}
     for key, recs in groups.items():
         sample, peptide, mod, start, end, time, k, r = key
         if (k, r) != (K, rank):
@@ -171,6 +229,7 @@ def compare_peptides(
         by_sample.setdefault(sample, {})[(peptide, mod, start, end, time)] = np.array(
             [x[at] for x in recs])
         ses[(sample, peptide, mod, start, end, time)] = np.array([x[at + 1] for x in recs])
+        fell_back[(sample, peptide, mod, start, end, time)] = any(x[7] for x in recs)
     if reference not in by_sample:
         raise ValueError(f"no reference sample {reference!r} at K={K} rank {rank} (samples: "
                          f"{', '.join(sorted(by_sample))})")
@@ -194,11 +253,10 @@ def compare_peptides(
     ref = by_sample[reference]
     rows = []
     for sample in others:
-        for key, values in sorted(by_sample.get(sample, {}).items()):
-            if key not in ref:
-                continue
-            a, b = ref[key], values
-            ma, sa = _combine(a, ses[(reference, *key)])
+        per = by_sample.get(sample, {})
+        for rkey, key in _pairs(ref, per, match):
+            a, b = ref[rkey], per[key]
+            ma, sa = _combine(a, ses[(reference, *rkey)])
             mb, sb = _combine(b, ses[(sample, *key)])
             if len(a) >= 2 and len(b) >= 2 and (np.var(a) > 0 or np.var(b) > 0):
                 t, p = stats.ttest_ind(b, a, equal_var=False)
@@ -212,7 +270,11 @@ def compare_peptides(
                          "value_reference": ma, "value_reference_se": sa, "value": mb,
                          "value_se": sb, "delta": delta, "delta_se": float(np.hypot(sa, sb)),
                          "t": float(t), "p": float(p), "n_reference": len(a), "n": len(b),
-                         "significant": sig})
+                         "significant": sig, "peptide_reference": rkey[0],
+                         "modification_reference": rkey[1],
+                         "same_sequence": rkey[:2] == key[:2],
+                         "control_fallback_reference": fell_back[(reference, *rkey)],
+                         "control_fallback": fell_back[(sample, *key)]})
     cols = _columns(PeptideComparison, rows) if rows else {
         f.name: np.array([]) for f in fields(PeptideComparison) if f.name not in _SCALAR_FIELDS}
     return PeptideComparison(**cols, reference=reference, K=K, rank=rank, alpha=alpha,
@@ -224,7 +286,8 @@ class ResidueComparison:
     """One row per sample (not the reference), time and residue: ``value_reference`` and
     ``value`` (the ``quantity``) with their ``*_se``, ``delta`` and ``delta_se``, ``z``
     (``delta / delta_se``) and ``significant``; with the ``reference``, ``K``, ``rank``, ``alpha``
-    and the ``delta_crit`` used."""
+    and the ``delta_crit`` used. ``control_fallback_reference`` and ``control_fallback``: whether
+    each side's value rests on a fallback control (see :class:`PeptideComparison`)."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -243,6 +306,19 @@ class ResidueComparison:
     alpha: float = 0.05
     delta_crit: float = 0.0
     quantity: str = "fD"
+    control_fallback_reference: np.ndarray | None = None
+    control_fallback: np.ndarray | None = None
+
+    def __post_init__(self):  # built without them: no fallback
+        for name in ("control_fallback_reference", "control_fallback"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.zeros(len(self.sample), dtype=bool))
+
+    @property
+    def corrected_differently(self) -> np.ndarray:
+        """Rows whose two values were corrected differently (one with a fallback control)."""
+        return np.asarray(self.control_fallback_reference, dtype=bool) != np.asarray(
+            self.control_fallback, dtype=bool)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -257,13 +333,14 @@ class ResidueComparison:
 
 
 def _residue_rows(value: dict, reference: str, alpha: float, delta_crit: float) -> list[dict]:
-    """Rows of a residue comparison from ``(sample, time, residue) -> (value, se)``."""
+    """Rows of a residue comparison from ``(sample, time, residue) -> (value, se,
+    control_fallback)``."""
     z_crit = float(stats.norm.ppf(1 - alpha / 2))
     rows = []
-    for (sample, time, res), (v, e) in sorted(value.items()):
+    for (sample, time, res), (v, e, fb) in sorted(value.items()):
         if sample == reference or (reference, time, res) not in value:
             continue
-        rv, re_ = value[(reference, time, res)]
+        rv, re_, rfb = value[(reference, time, res)]
         if not (np.isfinite(v) and np.isfinite(rv)):
             continue
         delta = v - rv
@@ -272,12 +349,15 @@ def _residue_rows(value: dict, reference: str, alpha: float, delta_crit: float) 
         sig = bool(np.isfinite(z) and abs(z) > z_crit and abs(delta) > delta_crit)
         rows.append({"sample": sample, "time": time, "residue": res, "value_reference": rv,
                      "value_reference_se": re_, "value": v, "value_se": e, "delta": delta,
-                     "delta_se": se, "z": z, "significant": sig})
+                     "delta_se": se, "z": z, "significant": sig,
+                     "control_fallback_reference": rfb, "control_fallback": fb})
     return rows
 
 
 def _residue_comparison(rows, **scalars) -> ResidueComparison:
     names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS]
+    if not rows:
+        return ResidueComparison(**{name: np.array([]) for name in names}, **scalars)
     cols = {name: np.array([r[name] for r in rows]) for name in names}
     return ResidueComparison(**cols, **scalars)
 
@@ -296,9 +376,11 @@ def compare_residues(
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     sel = (residues.K == K) & (residues.rank == rank)
-    value = {(str(s), float(t), int(r)): (float(v), float(e)) for s, t, r, v, e in zip(
-        residues.sample[sel], residues.time[sel], residues.residue[sel], residues.fD[sel],
-        residues.fD_se[sel], strict=True)}
+    value = {(str(s), float(t), int(r)): (float(v), float(e), bool(fb))
+             for s, t, r, v, e, fb in zip(
+                 residues.sample[sel], residues.time[sel], residues.residue[sel],
+                 residues.fD[sel], residues.fD_se[sel], residues.control_fallback[sel],
+                 strict=True)}
     if not any(k[0] == reference for k in value):
         raise ValueError(f"no reference sample {reference!r} at K={K} rank {rank}")
     return _residue_comparison(_residue_rows(value, reference, alpha, delta_crit),
@@ -314,9 +396,10 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
     (:func:`compare_peptides` with ``quantity='population'``)."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    value = {(str(s), float(t), int(r)): (float(v), float(e)) for s, t, r, v, e in zip(
-        choice.sample, choice.time, choice.residue, choice.population_low,
-        choice.population_low_se, strict=True)}
+    value = {(str(s), float(t), int(r)): (float(v), float(e), bool(fb))
+             for s, t, r, v, e, fb in zip(
+                 choice.sample, choice.time, choice.residue, choice.population_low,
+                 choice.population_low_se, choice.control_fallback, strict=True)}
     if not any(k[0] == reference for k in value):
         raise ValueError(f"no reference sample {reference!r} in the choice")
     return _residue_comparison(_residue_rows(value, reference, alpha, delta_crit),

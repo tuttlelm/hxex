@@ -10,9 +10,13 @@ spectrum has ``m0`` near 0, and the centre of the raw envelope must not be used 
 Each control falls back to its theoretical value, and the series is flagged, on its own:
 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
-- ``mFD`` falls back to the number of exchangeable amides when it is missing (``fd_missing``) or
-  when the retention ``(mFD - m0) / n_amides`` is below ``retention_min`` (``retention_low``) or
-  above ``retention_max`` (``retention_high``), with ``m0`` as it is used.
+- ``mFD`` falls back to ``m0 + r * n_amides`` when it is missing (``fd_missing``) or when the
+  retention ``(mFD - m0) / n_amides`` is below ``retention_min`` (``retention_low``; by default
+  half of ``d2o_fraction``) or above ``retention_max`` (``retention_high``), with ``m0`` as it is
+  used. The fallback retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium
+  fraction of the labelling buffer, a user setting) or the median retention of the run's
+  accepted controls (``fd_fallback='median'``; flagged ``fd_median``), which includes the
+  back-exchange the buffer's fraction does not.
 
 A measured control with a single replicate has no uncertainty (flagged ``m0_unreplicated`` or
 ``fd_unreplicated``); a theoretical value is exact. The corrected mean of a population is
@@ -31,6 +35,8 @@ from scipy.stats import norm
 
 from .fit.result import FitResult
 
+FD_FALLBACKS = ("d2o", "median")
+
 
 @dataclass(frozen=True)
 class ControlConfig:
@@ -38,23 +44,39 @@ class ControlConfig:
 
     A time of None means that the data has no control of that kind. The defaults of the limits are
     those of the notebook the method comes from; on the Bimodal data they hardly matter (see
-    docs/HISTORY.md item 27).
+    docs/HISTORY.md item 27). ``d2o_fraction`` is the deuterium fraction of the labelling buffer
+    (often 0.8 to 0.9; the default is pyHXExpress's ``Dfrac``). ``retention_min`` None (the
+    default) means half of it. ``fd_fallback`` is the retention used when a series' fully
+    deuterated control is missing or rejected: ``'d2o'`` (``d2o_fraction``) or ``'median'`` (the
+    median of the run's accepted controls; ``d2o_fraction`` if there are none). See
+    docs/HISTORY.md items 59 and 61.
     """
 
     undeut_time: float | None = None
     fd_time: float | None = None
     m0_max: float = 0.5
-    retention_min: float = 0.5
+    retention_min: float | None = None
     retention_max: float = 1.1
+    d2o_fraction: float = 0.9
+    fd_fallback: str = "d2o"
     atol: float = 1e-6
 
     def __post_init__(self):
         if self.m0_max < 0:
             raise ValueError("m0_max must be >= 0")
-        if not 0 <= self.retention_min < self.retention_max:
+        if not 0 <= self.min_retention < self.retention_max:
             raise ValueError("need 0 <= retention_min < retention_max")
+        if self.fd_fallback not in FD_FALLBACKS:
+            raise ValueError(f"fd_fallback must be one of {', '.join(FD_FALLBACKS)}")
         if self.atol < 0:
             raise ValueError("atol must be >= 0")
+        if not 0 < self.d2o_fraction <= 1:
+            raise ValueError("d2o_fraction must be in (0, 1]")
+
+    @property
+    def min_retention(self) -> float:
+        """The lower retention limit in use (``retention_min``, or half of ``d2o_fraction``)."""
+        return self.d2o_fraction / 2 if self.retention_min is None else self.retention_min
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -149,6 +171,8 @@ def fit_controls(
     cols: dict[str, list] = {name: [] for name in (
         "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd",
         "mfd_se", "retention", "fallback", "flags")}
+    accepted: list[float] = []  # the retention of every accepted control (for 'median')
+    pending: list[int] = []  # rows whose mFD falls back, filled in after the loop
     for s in series:
         rows = np.flatnonzero(fit.data_id == s)
         n_am = np.unique(n_amides[rows])
@@ -171,7 +195,7 @@ def fit_controls(
             flags.append("fd_missing")
         elif n_am > 0:
             ret = (mfd_meas - m0) / n_am
-            if ret < config.retention_min:
+            if ret < config.min_retention:
                 flags.append("retention_low")
             elif ret > config.retention_max:
                 flags.append("retention_high")
@@ -179,7 +203,12 @@ def fit_controls(
                 mfd_ok = True
         else:
             flags.append("no_amides")
-        mfd, mfd_err = (mfd_meas, mfd_se) if mfd_ok else (n_am, 0.0)
+        if mfd_ok:
+            mfd, mfd_err = mfd_meas, mfd_se
+            accepted.append((mfd - m0) / n_am)
+        else:
+            mfd, mfd_err = m0 + config.d2o_fraction * n_am, 0.0
+            pending.append(len(cols["mfd"]))
         if mfd_ok and n_f == 1:
             flags.append("fd_unreplicated")
         fallback = not (m0_ok and mfd_ok)
@@ -191,6 +220,13 @@ def fit_controls(
         }
         for name, value in values.items():
             cols[name].append(value)
+    if config.fd_fallback == "median" and accepted and pending:
+        r = float(np.median(accepted))
+        for i in pending:
+            n_am, m0 = cols["n_amides"][i], cols["m0"][i]
+            cols["mfd"][i] = m0 + r * n_am
+            cols["retention"][i] = r if n_am > 0 else float("nan")
+            cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),

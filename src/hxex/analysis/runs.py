@@ -6,12 +6,12 @@ A :class:`RunSet` holds several runs under names of their own; its samples are l
 ``run:sample`` (:data:`SEPARATOR`), and everything that takes the results of one run
 (:func:`hxex.analysis.species_uptake`, :func:`hxex.analysis.compare_peptides`, and so the
 residue map, the population choice, the comparisons and :func:`hxex.report.write_analysis`) takes
-a ``RunSet`` the same way. Species are matched by identity (sequence with modifications and
-position on the protein; charge states are combined), never by ``data_id``, a position within its
-run; :func:`check_identity` lists the species whose position or amide count differs between runs
-(they are then not matched). :func:`compare_settings` lists where the runs' settings differ and
-which differences matter for comparing them (picker, noise model, K values, bootstrap, controls
-and their limits).
+a ``RunSet`` the same way. Peptides are matched by their residues on the protein (or, on request,
+by identical sequence with modifications; :func:`hxex.analysis.compare_peptides`, charge states
+combined), never by ``data_id``, a position within its run; :func:`check_identity` lists the
+species whose position or amide count differs between runs. :func:`compare_settings` lists
+where the runs' settings differ and which differences matter for comparing them (picker, noise
+model, K values, bootstrap, controls and their limits).
 
 One population in one run and two in another: every spectrum is fitted at every K, so the K=1
 values (the average) are always compared; a K=2 rank or population is compared only where both

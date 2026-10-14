@@ -54,20 +54,28 @@ def test_each_control_falls_back_on_its_own():
     c = table([(0, 0, 2.0), (0, 0, 2.2), (0, 1e6, 8.0), (0, 1e6, 8.2)])
     assert c.m0[0] == 0.0 and c.m0_se[0] == 0.0 and c.mfd[0] == pytest.approx(8.1)
     assert c.flags[0] == "m0_high" and c.fallback[0]
-    # low retention only: mFD -> n_amides, m0 kept
+    # low retention only: mFD -> m0 + d2o_fraction * n_amides (default 0.9), m0 kept
     c = table([(0, 0, 0.1), (0, 0, 0.1), (0, 1e6, 3.0), (0, 1e6, 3.0)])
-    assert c.m0[0] == pytest.approx(0.1) and c.mfd[0] == 10.0 and c.mfd_se[0] == 0.0
+    assert c.m0[0] == pytest.approx(0.1) and c.mfd[0] == pytest.approx(9.1)
+    assert c.mfd_se[0] == 0.0 and c.retention[0] == pytest.approx(0.9)
     assert c.flags[0] == "retention_low"
     c = table([(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 12.0), (0, 1e6, 12.0)])
-    assert c.flags[0] == "retention_high" and c.mfd[0] == 10.0
+    assert c.flags[0] == "retention_high" and c.mfd[0] == pytest.approx(9.0)
 
 
 def test_missing_controls_use_theory_and_are_flagged():
     c = table([(0, 5, 3.0)])
-    assert (c.m0[0], c.mfd[0]) == (0.0, 10.0) and c.fallback[0]
+    assert c.m0[0] == 0.0 and c.mfd[0] == pytest.approx(9.0) and c.fallback[0]
     assert c.flags[0] == "m0_missing;fd_missing"
     assert np.isnan(c.m0_measured[0]) and (c.n_undeut[0], c.n_fd[0]) == (0, 0)
-    assert c.retention[0] == 1.0
+    assert c.retention[0] == pytest.approx(0.9)  # the buffer's D2O fraction
+    # the buffer's fraction is a user setting
+    full = fit_controls(fake_fit([(0, 5, 3.0)]), np.full(1, 10.0),
+                        ControlConfig(undeut_time=0.0, fd_time=1e6, d2o_fraction=0.8))
+    assert full.mfd[0] == pytest.approx(8.0) and full.retention[0] == pytest.approx(0.8)
+    for bad in (0.0, 1.2):
+        with pytest.raises(ValueError, match="d2o_fraction"):
+            ControlConfig(d2o_fraction=bad)
 
 
 def test_unreplicated_controls_have_no_uncertainty_and_are_flagged():
@@ -121,8 +129,27 @@ def test_correction_uncertainty_matches_a_simulation():
 def test_theoretical_controls_add_no_uncertainty_and_nan_stays_nan():
     c = table([(0, 5, 3.0)])
     out = correct_means(c, [0, 0], np.array([4.0, np.nan]), se=np.array([0.5, np.nan]))
-    assert out.control_se[0] == 0.0 and out.se[0] == pytest.approx(0.5)
+    assert out.control_se[0] == 0.0 and out.se[0] == pytest.approx(0.5 / 0.9)
     assert np.isnan(out.mean[1])
+
+
+def test_the_lower_limit_follows_the_buffer_and_the_fallback_can_be_the_median():
+    # retention_min defaults to half of d2o_fraction: 0.45 at 0.9, so a retention of 0.47 is kept
+    rows = [(0, 0, 0.0), (0, 1e6, 4.7), (1, 0, 0.0), (1, 1e6, 6.0), (2, 0, 0.0), (2, 1e6, 7.0),
+            (3, 0, 0.0)]
+    c = table(rows)
+    assert CFG.min_retention == pytest.approx(0.45) and not c.fallback[0]
+    assert c.retention[:3].tolist() == pytest.approx([0.47, 0.6, 0.7])
+    assert c.retention[3] == pytest.approx(0.9) and "fd_missing" in c.flags[3].split(";")
+    # with fd_fallback='median' the missing control takes the median accepted retention (0.6)
+    med = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
+                       ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="median"))
+    assert med.retention[3] == pytest.approx(0.6) and med.mfd[3] == pytest.approx(6.0)
+    assert med.flags[3].split(";")[-2:] == ["fd_missing", "fd_median"] and med.fallback[3]
+    assert ControlConfig(d2o_fraction=0.8).min_retention == pytest.approx(0.4)
+    assert ControlConfig(retention_min=0.3).min_retention == 0.3
+    with pytest.raises(ValueError, match="fd_fallback"):
+        ControlConfig(fd_fallback="mean")
 
 
 def test_config_round_trip_and_checks():

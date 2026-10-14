@@ -1588,6 +1588,56 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     every residue plot (profiles, choice, redundancy and resolution, comparisons) are now the
     same grey dashed lines (`hxex.report.coverage.MARK_LINE`; owner).
 
+59. **Back-exchange controls on the benchmark; the buffer's D2O fraction (2026-10-13).** Around
+    residue 60 at 4 s the K=2 values of S59D and D3 were about half the owner's (high 0.45 to
+    0.6 against 0.8 to 0.88). The peptide fits agree where both use the same correction; the
+    difference is the control: several series over the S59 site (55-62, 55-64, 55-65 in S59D
+    and D3, 49-65 in D3) have a measured retention of 0.475 to 0.50, below `retention_min`
+    (0.5, item 27), so hxex fell back to full retention, i.e. no correction, while pyHXExpress
+    uses the measured value (`UN_TD_corr`, no lower limit) and, when the control is missing, its
+    `Dfrac` (0.9, the buffer's D2O fraction). Over the benchmark 250 of 1,372 series (15 % of
+    the spectra) fell back: 186 without a fully deuterated control, 53 below the limit (median
+    measured retention 0.47; 31 in 0.45 to 0.5), 1 above, 10 other; accepted retention has a
+    median of 0.64 (5 to 95 %: 0.54 to 0.73). Added (owner): `ControlConfig.d2o_fraction`
+    (default 0.9, pyHXExpress's `Dfrac`), the deuterium fraction of the labelling buffer; a
+    missing or rejected fully deuterated control now falls back to `m0 + d2o_fraction *
+    n_amides` instead of `n_amides`. Median |hxex - owner| of the K=1 residue values (Gaussian
+    refit): S59D and D3, residues 55 to 68 at 4 s: 0.203 with the old fallback, 0.185 with
+    `d2o_fraction` 0.9, 0.010 with 0.9 and `retention_min` 0.3; every residue, sample and time:
+    0.023, 0.020 and 0.015. Retention measures the D2O fraction times what survives
+    back-exchange, so here it centres at 0.64, below the buffer's fraction.
+
+60. **Peptides compared by residue range by default (owner, 2026-10-13).** Peptide comparisons
+    matched identical sequences only, so a peptide containing a mutation (S19D, S45D, S59D, D3)
+    was never compared with the reference's; only the residue level covered those stretches.
+    `compare_peptides(match='range')`, now the default (`[analysis] peptide_match`), pairs
+    peptides over the same residues and time and records `peptide_reference`,
+    `modification_reference` and `same_sequence`; where a sample has more than one species over
+    a range (a modified and an unmodified form), only identical sequences are paired.
+    `match='sequence'` keeps identity matching. On the benchmark (Gaussian refit, against WT)
+    this adds 76, 116, 54 and 229 peptide-time comparisons for S19D, S45D, S59D and D3 (13, 20, 9
+    and 39 mutated peptides; 5, 28, 17 and 61 of them significant). PTMs, as built: a modified
+    residue is written in the modX sequence, so a modified peptide is its own species, compared
+    only with the same modified form; at the residue level both forms of a stretch are averaged
+    into the sample's values (open: whether to keep them apart).
+
+61. **Control fallbacks: limit, median option, marks; modified forms as states (owner,
+    2026-10-13).** `ControlConfig.retention_min` defaults to half of `d2o_fraction` (0.45 at
+    0.9; `min_retention` is the limit in use), and `fd_fallback='median'` falls back to the
+    median retention of the run's accepted controls instead of `d2o_fraction` (flagged
+    `fd_median`). Because samples can be corrected differently (one series measured, the other
+    a fallback), the analysis now carries `control_fallback` (species: any of its spectra; residue
+    map and population choice: any covering peptide; comparisons: `control_fallback_reference`,
+    `control_fallback` and `corrected_differently`), and the comparison plots (by-residue
+    overlay, residue and population comparisons, Woods, butterfly) mark such residues or
+    peptides with a `*` at the top. Modified peptides at the residue level: `residue_map(
+    modified='separate')`, the default, makes each modified form a state of its own labelled by
+    its sites (`'WT pS59'`; `modified_state`), so a sample's values come from its unmodified
+    peptides; `'combined'` keeps them together (`[analysis] modified_peptides`). The benchmark
+    examples use `HSPB5_benchmark/gauss_full_v2`, the Gaussian refit with controls and quality
+    recomputed under these defaults: 219 fallbacks instead of 250, and around residue 60 at 4 s
+    the K=2 values of S59D and D3 close to the owner's.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

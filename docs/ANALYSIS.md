@@ -149,6 +149,17 @@ in the published work; where it matters, a component is named by its rank.
   hybrid rule) and the lever-rule population per residue (`compare_populations`), to see whether
   a sample shifts the balance between the populations rather than their deuteration; the
   comparison tables carry their `quantity` (`value`, `value_reference` and their errors).
+  Peptides are paired by residue range by default (owner, 2026-10-13: a peptide containing a
+  mutation is compared with the reference's over the same residues; `same_sequence`,
+  `peptide_reference` say so), or by identical sequence (`match='sequence'`, `[analysis]
+  peptide_match`). Where a sample has several species over one range (a modified and an
+  unmodified form), only identical sequences are paired. Modified residues are written in the
+  modX sequence, so a modified peptide is a species of its own; at the residue level each
+  modified form is by default a state of its own (`'WT pS59'`, `residue_map(modified=
+  'separate')`, `[analysis] modified_peptides`), or is averaged with the sample's other peptides
+  (`'combined'`; owner 2026-10-13: context dependent). Values corrected differently (one side
+  with a fallback control) carry `control_fallback` flags and are marked `*` at the top of the
+  comparison plots.
 
 ### Fragment branch (MS2, MS3; after the peptide branch)
 
@@ -226,9 +237,9 @@ Plots (matplotlib, returning figures):
   As built (phase 4; HISTORY item 53): a `RunSet` (run name -> results) is analysed like one
   run whose samples are `run:sample`, so every table, comparison and figure of phases 1 to 3
   works across runs (`hxex analyse A=a.zip B=b.zip --reference A:WT`, or `[analysis.runs]`).
-  Species are matched by peptide, modification and position (charge states are combined);
-  `check_identity` lists species whose position or amide count differs between runs, which are
-  then not matched. `delta_crit` is pooled over every run. Runs that subtract different numbers
+  Peptides are matched by residue range by default (see "Comparisons within a run"; charge
+  states are combined); `check_identity` lists species whose position or amide count differs
+  between runs. `delta_crit` is pooled over every run. Runs that subtract different numbers
   of N-terminal residues are refused; different undeuterated times or back-exchange correction
   are warned about. `compare_settings` compares the recorded run settings with defaults filled
   in, and warns where they differ in what matters (`MATTERS`: picker, noise model, K values,
