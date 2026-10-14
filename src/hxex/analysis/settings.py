@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .compare import MATCHES, Annotations
+from .fragments import FragmentAnalysis
 from .populations import ChoiceConfig
 from .residues import COUNTS, MODIFIED
 from .runs import SEPARATOR
@@ -49,7 +50,10 @@ class AnalysisConfig:
     :func:`hxex.analysis.species.analysis_controls`; they are also recomputed, with the run's
     settings, when the review rejected a control spectrum); ``merge``: with ``runs``, samples to
     combine across runs (``'run:sample'`` -> label; the same label pools them,
-    :class:`hxex.analysis.RunSet`)."""
+    :class:`hxex.analysis.RunSet`); ``fragments``: the fragment outputs of a run with fragment
+    series (:class:`hxex.analysis.FragmentAnalysis`; ladder figures and rates, closure,
+    per-residue rates; written whenever the run has fragments, None turns them off; fragment
+    series are left out of the peptide analysis)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -73,6 +77,7 @@ class AnalysisConfig:
     modified_peptides: str = "separate"
     controls: Mapping[str, Any] | None = None
     merge: Mapping[str, str] | None = None
+    fragments: FragmentAnalysis | None = FragmentAnalysis()  # noqa: RUF009
 
     def __post_init__(self):
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
@@ -143,7 +148,7 @@ class AnalysisConfig:
         out = {}
         for f in fields(self):
             value = getattr(self, f.name)
-            if f.name in ("filters", "choice"):
+            if f.name in ("filters", "choice", "fragments"):
                 value = None if value is None else value.to_dict() if hasattr(
                     value, "to_dict") else {g.name: getattr(value, g.name)
                                             for g in fields(value)}
@@ -170,5 +175,9 @@ class AnalysisConfig:
             values["choice"] = ChoiceConfig.from_dict(values["choice"])
         if "annotations" in values:
             values["annotations"] = Annotations.from_dict(values["annotations"])
+        if "fragments" in values:
+            f = values["fragments"]
+            values["fragments"] = None if f is None or f is False else (
+                FragmentAnalysis() if f is True else FragmentAnalysis.from_dict(f))
         return cls(**values)
 

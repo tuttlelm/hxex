@@ -29,7 +29,9 @@ from .compare import (
 from .fragments import (
     ClosureTable,
     DecayFit,
+    FragmentAnalysis,
     FragmentUptake,
+    LadderRates,
     LadderStep,
     ResidueFit,
     Trace,
@@ -38,8 +40,10 @@ from .fragments import (
     difference_trace,
     fit_decay,
     fit_residues,
+    fragment_ion_types,
     fragment_trace,
     fragment_uptake,
+    ladder_rates,
     ladder_steps,
 )
 from .populations import (
@@ -73,6 +77,10 @@ __all__ = [
     "closure_table",
     "closure_trace",
     "DecayFit",
+    "FragmentAnalysis",
+    "LadderRates",
+    "fragment_ion_types",
+    "ladder_rates",
     "FragmentUptake",
     "LadderStep",
     "ResidueFit",

@@ -608,3 +608,155 @@ def fit_residues(
     projector = pinv @ a
     identifiable = np.isclose(np.diag(projector), 1.0, atol=1e-8)
     return ResidueFit(np.array(residues), sol.x, identifiable, labels, y - a @ sol.x)
+
+
+# --- the rates of every ladder step, and the analysis settings ----------------------------------
+
+@dataclass(frozen=True)
+class LadderRates:
+    """The decay fit (:func:`fit_decay`) of every single-residue ladder step
+    (:func:`ladder_rates`), one row per sample, parent, precursor charge, condition, ion type,
+    fragment charge and step: the ``residue`` (protein numbering) and its amino acid ``aa``,
+    the fragments (``larger`` minus ``smaller``; ``smaller`` empty for the shortest fragment
+    alone), ``rate`` and ``rate_se`` (1/s), ``amplitude`` and ``offset`` (deuterons), the
+    number of points ``n`` and whether the decay is ``resolved`` in the time range (an
+    unresolved rate means nothing)."""
+
+    sample: np.ndarray
+    parent: np.ndarray
+    parent_start: np.ndarray
+    parent_charge: np.ndarray
+    condition: np.ndarray
+    ion_type: np.ndarray
+    charge: np.ndarray
+    residue: np.ndarray
+    aa: np.ndarray
+    larger: np.ndarray
+    smaller: np.ndarray
+    rate: np.ndarray
+    rate_se: np.ndarray
+    amplitude: np.ndarray
+    offset: np.ndarray
+    n: np.ndarray
+    resolved: np.ndarray
+    min_time: float | None = None
+
+    def __len__(self) -> int:
+        return len(self.residue)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return {f.name: getattr(self, f.name) for f in fields(self)
+                if isinstance(getattr(self, f.name), np.ndarray)}
+
+    def where(self, **conditions) -> np.ndarray:
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in conditions.items():
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, set)) else [value]
+                keep &= np.isin(getattr(self, name), list(values))
+        return keep
+
+
+def fragment_ion_types(uptake: FragmentUptake) -> list[str]:
+    """The fragment ion types of the table (not the precursor ions), N-terminal first."""
+    ions = {str(i) for i in np.unique(uptake.ion_type) if chem.ion_terminus(str(i)) != "M"}
+    return sorted(ions, key=lambda i: (chem.ion_terminus(i) != "N", i))
+
+
+def ladder_rates(
+    uptake: FragmentUptake,
+    *,
+    ion_types: Sequence[str] | None = None,
+    charges: Sequence[int] = (1,),
+    min_time: float | None = None,
+) -> LadderRates:
+    """Fit ``A exp(-k t) + C`` (:func:`fit_decay`, from ``min_time``) to every single-residue
+    step (:func:`ladder_steps`) of the ``ion_types`` (default: every fragment ion type of the
+    table) at the fragment ``charges``, in every sample, parent, precursor charge and
+    condition. The shortest fragment counts as a step when it holds one amide."""
+    ion_types = list(ion_types) if ion_types is not None else fragment_ion_types(uptake)
+    cols: dict[str, list] = {f.name: [] for f in fields(LadderRates) if f.name != "min_time"}
+    groups = sorted({(str(s), str(p), int(z)) for s, p, z in zip(
+        uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
+    for sample, parent, pz in groups:
+        rows = uptake.where(sample=sample, parent=parent, parent_charge=pz)
+        entry = uptake.parent_entry(int(np.flatnonzero(rows)[0]))
+        residues = chem.parse_sequence(parent)
+        conditions = sorted(np.unique(uptake.condition[rows]).tolist())
+        for ion in ion_types:
+            for z in charges:
+                series = rows & uptake.where(ion_type=ion, charge=z)
+                if not series.any():
+                    continue
+                lengths = sorted(set(uptake.length[series].tolist()))
+                for step in ladder_steps(entry, ion, lengths,
+                                         nterm_subtract=uptake.nterm_subtract,
+                                         rules=uptake.amide_rules):
+                    if not step.single:
+                        continue
+                    (residue,) = step.residues
+                    for cond in conditions:
+                        tr = difference_trace(uptake, step.larger, step.smaller, sample=sample,
+                                              parent=parent, parent_charge=pz, condition=cond,
+                                              charge=z).after(1e-9)
+                        if not len(tr):
+                            continue
+                        f = fit_decay(tr, min_time=min_time)
+                        for name, value in (
+                                ("sample", sample), ("parent", parent),
+                                ("parent_start", entry.start_seq), ("parent_charge", pz),
+                                ("condition", cond), ("ion_type", ion), ("charge", z),
+                                ("residue", residue),
+                                ("aa", residues[residue - entry.start_seq]),
+                                ("larger", step.larger), ("smaller", step.smaller or ""),
+                                ("rate", f.rate), ("rate_se", f.rate_se),
+                                ("amplitude", f.amplitude), ("offset", f.offset), ("n", f.n),
+                                ("resolved", f.resolved)):
+                            cols[name].append(value)
+    kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
+             "residue": np.int64, "rate": float, "rate_se": float, "amplitude": float,
+             "offset": float, "n": np.int64, "resolved": bool}
+    return LadderRates(**{name: np.array(v, dtype=kinds.get(name, str))
+                          for name, v in cols.items()}, min_time=min_time)
+
+
+@dataclass(frozen=True)
+class FragmentAnalysis:
+    """The fragment part of a post-fitting analysis (``[analysis.fragments]``; written by
+    :func:`hxex.report.write_analysis` for runs with fragment series): ``ion_types`` (empty:
+    every fragment ion type of the run), the fragment ``charges``, ``min_time`` (s; earlier
+    points are drawn but not fitted), condition ``labels`` for the figures (``{'gentle':
+    'G'}``), the closure ``tolerance`` (deuterons) and ``precursor_charge`` (the closure's
+    precursor; None: the unreacted precursor)."""
+
+    ion_types: tuple[str, ...] = ()
+    charges: tuple[int, ...] = (1,)
+    min_time: float | None = None
+    labels: Mapping[str, str] | None = None
+    tolerance: float = 0.25
+    precursor_charge: int | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "ion_types", tuple(str(i) for i in self.ion_types))
+        for ion in self.ion_types:
+            if chem.ion_terminus(ion) == "M":
+                raise ValueError(f"{ion!r} is not a fragment ion type")
+        object.__setattr__(self, "charges", tuple(int(z) for z in self.charges))
+        if not self.charges or min(self.charges) < 1:
+            raise ValueError("charges must be one or more positive charges")
+        if self.labels is not None:
+            object.__setattr__(self, "labels", {str(k): str(v) for k, v in self.labels.items()})
+        if not self.tolerance > 0:
+            raise ValueError("tolerance must be positive")
+
+    def to_dict(self) -> dict:
+        return {"ion_types": list(self.ion_types), "charges": list(self.charges),
+                "min_time": self.min_time, "labels": dict(self.labels or {}) or None,
+                "tolerance": self.tolerance, "precursor_charge": self.precursor_charge}
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> FragmentAnalysis:
+        unknown = set(data) - {f.name for f in fields(cls)}
+        if unknown:
+            raise ValueError(f"unknown fragment analysis setting(s): {', '.join(sorted(unknown))}")
+        return cls(**dict(data))

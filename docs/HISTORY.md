@@ -1781,6 +1781,22 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     The closure holds at any level of scrambling, so it checks the fragments' fits, not
     scrambling; hxex has no scrambling test (it belongs to the owner's method, tabled).
 
+68. **Fragment outputs in `hxex analyse` (2026-10-14).** For a run with fragment series the
+    analysis writes `fragment_uptake.csv`, `ladder_rates.csv` (`ladder_rates`: the decay fit
+    of every single-residue step per condition, ion type and fragment charge) and `closure.csv`,
+    and per parent (`<sample>_<range>_z<charge>`) the ladder kinetics figure per ion type and
+    fragment charge, a closure figure per complementary pair (c + z - M against time, a panel
+    per condition, the tolerance band) and a per-residue rate figure (rates on a log axis with
+    their errors, ion types by marker and conditions by colour, unresolved fits open along the
+    bottom; fitted amplitudes below). The owner had no reference for the last two and asked for
+    them to be designed. `[analysis.fragments]` (`FragmentAnalysis`: ion types, fragment charges,
+    `min_time`, condition labels, closure tolerance and precursor charge) tunes them and
+    `fragments = false` turns them off. Series read from fragment lists, precursor ions
+    included, are left out of the peptide analysis, which a fragment-only run skips (it would
+    otherwise draw residue maps of precursor ions at every scan time). Several runs (a
+    `RunSet`) get no fragment outputs yet (a warning). On the 8-residue probe: 3 tables and 4
+    figures in 10 s.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

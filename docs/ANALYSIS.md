@@ -175,7 +175,10 @@ How fragment data differs, and what this branch does about it:
   to all fragments of a parent at once, with the closure as a check. Built (2026-10-14,
   `hxex.analysis.fragments`, HISTORY item 67): the K = 1 fragment table, ladder steps,
   scan-matched differences, decay fits, the bounded least squares and the closure test
-  (`closure_table`: c + z, a + x, b + y against the precursor), with the ladder kinetics
+  (`closure_table`: c + z, a + x, b + y against the precursor), the per-step rate table
+  (`ladder_rates`), the closure and per-residue rate figures (no owner reference: designed
+  in hxex, owner 2026-10-14), all written by `hxex analyse` for runs with fragment series
+  (`[analysis.fragments]`; those series are kept out of the peptide analysis), with the ladder kinetics
   figure (`hxex.report.ladder_kinetics_figure`). Owner (2026-10-14): these
   simple ladder values are wanted as a comparison for the owner's own method of deriving
   single-residue exchange rates and scrambling, which is unpublished and kept outside the

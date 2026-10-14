@@ -267,3 +267,109 @@ def test_closure_of_complementary_ions():
     for bad in [("c:4", "y:4"), ("z:4", "c:4"), ("c:3", "z:4")]:
         with pytest.raises(ValueError):
             closure_trace(u, *bad)
+
+
+def stub_run(conditions=("gentle", "harsh")):
+    """A fitted fragment run (the objects fragment_uptake reads) whose fragments are the sums of
+    their residues' decays, every fragment of one condition from the same scans."""
+    from hxex.analysis import fragment_uptake as _  # noqa: F401 (the reader under test)
+
+    targets = []
+    for cond in conditions:
+        targets += fragment_targets(PARENT, "M c:1,2,4,5,6,7:1 z:1,2,3,4,6,7:1",
+                                    activation="ETD", label=cond)
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    data_id, time, means, ids, charge = [], [], [], [], []
+    for i, t in enumerate(targets):
+        label = t.entry.extra["fragment"]
+        held = fragment_amides(PARENT, label)
+        for x in TIMES:
+            data_id.append(i)
+            time.append(x)
+            means.append(sum(residue_d(x, r) for r in held))
+            ids.append(f"p:S/f/{i}/{x:.4f}")
+            charge.append(t.entry.charge)
+    n = len(time)
+    ids = np.array(ids)
+    return SimpleNamespace(
+        settings=SimpleNamespace(spectra_source=source, picker=PickerConfig(nterm_subtract=1)),
+        fit=_Fit(np.array(means), np.array(data_id), np.array(time), ids),
+        binned=SimpleNamespace(spectrum_id=ids, sample=np.full(n, "S"), rep=np.ones(n, int),
+                               charge=np.array(charge)),
+        review=None, quality=None, bootstrap_for=lambda i, k: None)
+
+
+def test_ladder_rates_recover_each_residue():
+    from hxex.analysis import ladder_rates
+
+    u = fragment_uptake(stub_run())
+    rates = ladder_rates(u, min_time=10.0)
+    assert set(rates.ion_type) == {"c", "z"} and set(rates.condition) == {"gentle", "harsh"}
+    c = rates.where(ion_type="c", condition="gentle")
+    assert rates.residue[c].tolist() == [12, 13, 15, 16, 17, 18]  # c1 alone is residue 12
+    assert rates.smaller[c][0] == "" and rates.aa[c].tolist() == list("SHLVFK")
+    for r, k, ok in zip(rates.residue, rates.rate, rates.resolved, strict=True):
+        assert ok and k == pytest.approx(RATES[r], rel=1e-3)
+    assert len(ladder_rates(u, ion_types=["z"], charges=(2,))) == 0
+
+
+def test_fragment_analysis_settings():
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis
+
+    cfg = AnalysisConfig.from_dict({"fragments": {"min_time": 20.0, "labels": {"gentle": "G"},
+                                                  "ion_types": ["c-1"]}})
+    assert cfg.fragments == FragmentAnalysis(ion_types=("c-1",), min_time=20.0,
+                                             labels={"gentle": "G"})
+    assert AnalysisConfig.from_dict(cfg.to_dict()) == cfg
+    assert AnalysisConfig.from_dict({"fragments": False}).fragments is None
+    assert AnalysisConfig().fragments == FragmentAnalysis()
+    import tomllib
+    from pathlib import Path
+
+    from hxex.config import _analysis_from
+
+    toml = tomllib.loads('[analysis.fragments]\ncharges = [1, 2]\nmin_time = 20.0\n'
+                        '[analysis.fragments.labels]\ngentle = "G"\n')
+    parsed = _analysis_from(toml["analysis"], Path("."))
+    assert parsed.fragments.charges == (1, 2) and parsed.fragments.labels == {"gentle": "G"}
+    for bad in ({"ion_types": ["M"]}, {"charges": [0]}, {"tolerance": 0}, {"bogus": 1}):
+        with pytest.raises(ValueError):
+            FragmentAnalysis.from_dict(bad)
+
+
+def test_write_analysis_of_a_fragment_run(tmp_path):
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis
+    from hxex.report import closure_figure, residue_rates_figure, write_analysis
+
+    run = stub_run()
+    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
+                                                                  labels={"gentle": "G"}))
+    written = write_analysis(run, cfg, tmp_path)
+    names = sorted(p.name for p in written)
+    assert names == sorted([
+        "fragment_uptake.csv", "ladder_rates.csv", "closure.csv",
+        "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
+        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
+    assert all(p.stat().st_size > 0 for p in written)
+    # without the fragment outputs a fragment-only run has nothing else to write
+    assert write_analysis(run, AnalysisConfig(fragments=None), tmp_path / "none") == []
+
+    u = fragment_uptake(run)
+    fig = closure_figure(u, "c", "z", precursor_charge=None, tolerance=0.1, min_time=10.0)
+    assert [ax.get_title() for ax in fig.axes] == ["S (Z3)  gentle", "S (Z3)  harsh"]
+    # the stub's precursor ion is read at charge 1, so give it as the precursor's charge
+    fig = closure_figure(u, "c", "z", precursor_charge=1)
+    pts = fig.axes[0].collections
+    assert pts and np.allclose(np.concatenate([c.get_offsets()[:, 1] for c in pts]), 0.0)
+    from hxex.analysis import ladder_rates
+
+    rates = ladder_rates(u, min_time=10.0)
+    fig = residue_rates_figure(rates, labels={"gentle": "G"})
+    top, bottom = fig.axes
+    assert [t.get_text() for t in top.get_legend().get_texts()] == [
+        "G c", "G z", "harsh c", "harsh z"]
+    assert bottom.get_xticklabels()[1].get_text() == "S12"
+    with pytest.raises(ValueError, match="no c and y"):
+        closure_figure(u, "c", "y")

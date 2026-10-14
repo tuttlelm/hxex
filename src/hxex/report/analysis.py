@@ -12,8 +12,11 @@ Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<ti
 ``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>`` (the
 values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
 ``compare_populations_<time>``, ``woods_<sample>_<time>``, ``butterfly_<sample>`` and
-``regions_<time>``. Characters a file name cannot hold (the ``:`` of ``run:sample``) become
-``_``.
+``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
+those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
+``closure.csv`` and per parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
+``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. Characters a file name cannot
+hold (the ``:`` of ``run:sample``) become ``_``.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from .compare import (
     woods_figure,
 )
 from .coverage import coverage_figure, plot_redundancy_resolution
+from .fragments import fragment_outputs
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
 
@@ -94,23 +98,23 @@ def _fd_times(results) -> list[float]:
     return out
 
 
-def write_analysis(
-    results,
-    config: AnalysisConfig,
-    directory: str | Path,
-    *,
-    base: str | Path = ".",
-    progress: ProgressHook | None = None,
-    cancel: CancelHook | None = None,
-) -> list[Path]:
-    """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
-    :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
-    ``directory``; returns the files. Relative FASTA paths are taken from
-    ``base``. ``progress(done, total)`` counts the files."""
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
-                        filters=config.filters, controls=config.controls)
+def _fragment_keys(results) -> tuple[set[tuple], bool]:
+    """(peptide, modification, start, end) of the series read from fragment lists, and whether
+    every series is one."""
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    source = results.settings.spectra_source if results.settings is not None else None
+    if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
+        return set(), False
+    targets = list(mzml_series_targets(source).values())
+    keys = {(t.entry.peptide, t.entry.modification, t.entry.start_seq, t.entry.end_seq)
+            for t in targets if "fragment" in t.entry.extra}
+    return keys, bool(targets) and all("fragment" in t.entry.extra for t in targets)
+
+
+def _peptide_outputs(results, config: AnalysisConfig, base, up):
+    """The tables (name -> columns) and figures (stem -> drawing function) of the peptide
+    analysis of the species table ``up``."""
     present = list(dict.fromkeys(up.sample.tolist()))
     samples = list(config.samples) if config.samples else present
     missing = [s for s in samples if s not in present]
@@ -240,6 +244,48 @@ def write_analysis(
             if (regions.time == t).any():
                 jobs.append((f"regions_{_time_label(t, undeut)}", lambda t=t: plot_region_bars(
                     regions, t, samples=samples)))
+
+    return tables, jobs
+
+
+def write_analysis(
+    results,
+    config: AnalysisConfig,
+    directory: str | Path,
+    *,
+    base: str | Path = ".",
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+) -> list[Path]:
+    """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
+    :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
+    ``directory``; returns the files. Relative FASTA paths are taken from
+    ``base``. ``progress(done, total)`` counts the files."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    frag_tables, frag_jobs, fragment_keys, only_fragments = {}, [], set(), False
+    if isinstance(results, RunSet):
+        if config.fragments is not None and any(
+                _fragment_keys(r)[0] for r in results.runs.values()):
+            log.warning("the fragment outputs are not written for several runs; analyse "
+                        "each run on its own")
+    else:
+        # fragment series (and precursor ions read with them) are not peptides
+        fragment_keys, only_fragments = _fragment_keys(results)
+        if config.fragments is not None and fragment_keys:
+            frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
+    tables, jobs = {}, []
+    if not only_fragments:
+        up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
+                            filters=config.filters, controls=config.controls)
+        if fragment_keys:
+            keys = list(zip(up.peptide.tolist(), up.modification.tolist(), up.start.tolist(),
+                            up.end.tolist(), strict=True))
+            up = up.select(np.array([k not in fragment_keys for k in keys], dtype=bool))
+        if len(up):
+            tables, jobs = _peptide_outputs(results, config, base, up)
+    tables.update(frag_tables)
+    jobs += frag_jobs
 
     written = []
     total = len(tables) + len(jobs)

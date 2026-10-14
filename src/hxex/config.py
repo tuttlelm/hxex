@@ -369,7 +369,8 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
 ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
                  "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
-                 "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge")
+                 "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge",
+                 "fragments")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -673,6 +674,13 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.merge]                # combine runs: these samples become one, pooled",
         '# "A:WT" = "WT"',
         '# "B:WT" = "WT"',
+        "# [analysis.fragments]            # runs with fragment ions (written whenever there are",
+        '# ion_types = ["c-1", "z-dot"]    # some; fragments = false turns them off); default:',
+        "# charges = [1]                   # every fragment ion type, fragment charge 1",
+        "# min_time = 20.0                 # s: earlier points drawn, not fitted",
+        "# tolerance = 0.25                # closure: c + z - M beyond this is flagged (D)",
+        '# [analysis.fragments.labels]     # short condition names in the figures',
+        '# gentle = "G"',
         "",
         "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
         "# section turns that stage on; uncomment one to use it.",
