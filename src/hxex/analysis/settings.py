@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import Any
 
 from .compare import MATCHES, Annotations
 from .populations import ChoiceConfig
@@ -43,7 +44,12 @@ class AnalysisConfig:
     ``'sequence'`` (identical sequences only; :func:`hxex.analysis.compare_peptides`);
     ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the residue
     level, e.g. ``'WT pS59'``) or ``'combined'`` (averaged with the sample's other peptides;
-    :func:`hxex.analysis.residue_map`)."""
+    :func:`hxex.analysis.residue_map`); ``controls``: control settings to change for the analysis
+    (e.g. ``{'d2o_fraction': 0.85}``; the controls are then recomputed from the run's K=1 fits,
+    :func:`hxex.analysis.species.analysis_controls`; they are also recomputed, with the run's
+    settings, when the review rejected a control spectrum); ``merge``: with ``runs``, samples to
+    combine across runs (``'run:sample'`` -> label; the same label pools them,
+    :class:`hxex.analysis.RunSet`)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
@@ -65,6 +71,8 @@ class AnalysisConfig:
     overlay_two_only: bool = True
     peptide_match: str = "range"
     modified_peptides: str = "separate"
+    controls: Mapping[str, Any] | None = None
+    merge: Mapping[str, str] | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
@@ -98,6 +106,18 @@ class AnalysisConfig:
             raise ValueError("alpha must be in (0, 1)")
         if self.weight_exponent < 0:
             raise ValueError("weight_exponent must be >= 0")
+        if self.merge is not None:
+            object.__setattr__(self, "merge", {str(k): str(v) for k, v in self.merge.items()})
+            if not self.runs:
+                raise ValueError("merge combines samples of separate runs: set runs too")
+        if self.controls is not None:
+            from ..controls import ControlConfig
+
+            object.__setattr__(self, "controls", dict(self.controls))
+            unknown = set(self.controls) - {f.name for f in fields(ControlConfig)}
+            if unknown:
+                raise ValueError(f"unknown control setting(s): {', '.join(sorted(unknown))}")
+            ControlConfig(**self.controls)  # the values must be valid on their own
         if self.modified_peptides not in MODIFIED:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
         if self.peptide_match not in MATCHES:

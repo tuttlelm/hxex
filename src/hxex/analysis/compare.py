@@ -196,6 +196,7 @@ def compare_peptides(
     exclude_flagged: bool = False,
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
     match: str = "range",
+    controls: Mapping | None = None,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
@@ -206,7 +207,8 @@ def compare_peptides(
     2026-10-13) pairs the peptides over the same residues, so that a peptide containing a mutation
     is compared with the reference's (``same_sequence`` False), except where a sample has several
     species over the same residues (a modified and an unmodified form): those are paired only
-    with the same sequence; ``'sequence'`` pairs only identical sequences and modifications."""
+    with the same sequence; ``'sequence'`` pairs only identical sequences and modifications.
+    ``controls``: control settings to change (:func:`hxex.analysis.species.analysis_controls`)."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if match not in MATCHES:
@@ -218,7 +220,8 @@ def compare_peptides(
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
     ks = (1, K) if K != 1 else (1,)
     # quiet: species_uptake reports what the filters left out
-    groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True)
+    groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True,
+                          controls_changes=controls)
     by_sample: dict[str, dict[tuple, np.ndarray]] = {}
     ses: dict[tuple, np.ndarray] = {}
     fell_back: dict[tuple, bool] = {}

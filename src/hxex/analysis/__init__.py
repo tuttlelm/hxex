@@ -47,11 +47,12 @@ from .runs import (
     compare_settings,
 )
 from .settings import AnalysisConfig
-from .species import SpeciesFilters, SpeciesUptake, species_uptake
+from .species import SpeciesFilters, SpeciesUptake, analysis_controls, species_uptake
 
 __all__ = [
     "AnalysisConfig",
     "Annotations",
+    "analysis_controls",
     "ChoiceComparison",
     "IdentityCheck",
     "RunSet",

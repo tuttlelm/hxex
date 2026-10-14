@@ -7,7 +7,7 @@ is the design; `docs/PLAN.md` ("Next steps") keeps the status and points here, a
 and measurements go in `docs/HISTORY.md` as usual. Read this file before working on these
 analyses.
 
-Status (2026-10-13): phases 1 to 4 built: the species uptake table
+Status (2026-10-13): phases 1 to 5 built: the species uptake table
 (`hxex.analysis.species_uptake`), residue-level values (`residue_map`), coverage tables
 (`coverage_table`), the coverage map and the redundancy/resolution plot
 (`hxex.report.coverage`), the filters of K >= 2 descriptions (`SpeciesFilters`), residue
@@ -17,8 +17,9 @@ profiles (`hxex.report.residues`), the one-or-two-population choice per residue
 Woods and region bar plots in `hxex.report.compare`; phase 3), and the `[analysis]` section of
 the project file (`AnalysisConfig`) with `hxex analyse`, which writes every table and figure
 (`hxex.report.write_analysis`), and comparisons between separate runs (`RunSet`,
-`compare_settings`, `check_identity`, `compare_choices`, the butterfly plot; phase 4). Next:
-export, recomputing and combining (phase 5). The peptide (MS1) branch comes first.
+`compare_settings`, `check_identity`, `compare_choices`, the butterfly plot; phase 4), and
+recomputing and combining (`analysis_controls`, `[analysis.controls]`, `RunSet(merge=...)`,
+`[analysis.merge]`; phase 5). Next: the fragment branch (phase 6), with the owner's references.
 
 ## Ground rules
 
@@ -253,7 +254,18 @@ Plots (matplotlib, returning figures):
   other sample down, one line per time, differences below) is drawn for every comparison.
 - **Recomputing and combining**: uptake without the spectra the review rejected
   (`recalc_uptake`), and combining runs (`combine_batch_data`).
-- **Export**: the uptake table in the DynamX-like format pyHDX reads (`hdexa_to_pyhdx`).
+  As built (phase 5; HISTORY item 63): rejected spectra were already left out of the uptake;
+  the controls are now recomputed from the run's K=1 fits when the review rejected a control
+  spectrum, or when the analysis changes control settings (`analysis_controls`,
+  `[analysis.controls]`, e.g. `d2o_fraction`), which also applies new control defaults to an
+  existing bundle without refitting. Runs are combined by `RunSet(merge=...)`
+  (`[analysis.merge]`): samples given the same label are one sample, their replicate spectra
+  pooled; the identity check still compares the runs unmerged. Each spectrum keeps its run:
+  the species table lists a merged species' `runs` and `n_spectra_by_run`, and `run_offset`
+  flags one whose runs differ systematically (the charge-trend rule, each run against the
+  first), a batch effect pooling would otherwise hide (owner, 2026-10-13).
+- **Export** to the DynamX-like format pyHDX reads (`hdexa_to_pyhdx`): not needed (owner,
+  2026-10-13).
 
 ## Phases
 
@@ -263,7 +275,7 @@ Plots (matplotlib, returning figures):
    description and populations; population maps per sample).
 3. Comparisons within a run, region bar charts, difference plots.
 4. Comparing separate runs (built).
-5. Export, recomputing and combining.
+5. Recomputing and combining (built; the export was dropped).
 6. The fragment branch, kinetics included (its own detailed design, with the owner's
    references).
 

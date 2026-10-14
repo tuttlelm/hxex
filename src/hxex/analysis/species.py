@@ -23,14 +23,16 @@ states disagree systematically (see :func:`species_uptake`).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
+from typing import Any
 
 import numpy as np
 
 from .. import chem
-from ..controls import correct_means
+from ..controls import ControlConfig, correct_means, fit_controls
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +85,10 @@ class SpeciesUptake:
     amides),
     ``n_spectra``, ``n_charges``, ``corrected`` and ``charge_trend``; ``control_fallback``: the
     back-exchange correction of at least one of its spectra used a fallback control (a missing
-    or rejected control, :mod:`hxex.controls`). ``nterm_subtract`` (the
+    or rejected control, :mod:`hxex.controls`). From a :class:`hxex.analysis.RunSet`: ``runs``
+    (the runs its spectra come from, e.g. ``'A,B'`` for a merged sample; '' for one run),
+    ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
+    systematically; see :func:`species_uptake`). ``nterm_subtract`` (the
     N-terminal residues that do not count) and ``undeut_time`` (the undeuterated control's time,
     which coverage, redundancy and resolution refer to) are the run's.
     """
@@ -109,12 +114,20 @@ class SpeciesUptake:
     corrected: np.ndarray
     charge_trend: np.ndarray
     control_fallback: np.ndarray | None = None
+    runs: np.ndarray | None = None
+    n_spectra_by_run: np.ndarray | None = None
+    run_offset: np.ndarray | None = None
     nterm_subtract: int = 1
     undeut_time: float = 0.0
 
-    def __post_init__(self):  # built without it: no fallback
-        if self.control_fallback is None:
-            object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
+    def __post_init__(self):  # built without them: no fallback, one run
+        n = len(self.sample)
+        for name, empty in (("control_fallback", np.zeros(n, dtype=bool)),
+                            ("runs", np.full(n, "", dtype=object)),
+                            ("n_spectra_by_run", np.full(n, "", dtype=object)),
+                            ("run_offset", np.zeros(n, dtype=bool))):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, empty)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -153,16 +166,58 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
     return mean, float(np.sqrt(var / n))
 
 
-def _records(results, ks, exclude_flagged, filters, quiet=False):
+def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quiet: bool = False):
+    """The controls the analysis uses (:class:`hxex.controls.ControlTable`, or None without
+    controls): those of the run, recomputed from its K=1 fits when the review rejected a control
+    spectrum (so that a rejected control does not count) or when ``changes`` (control settings
+    to change, e.g. ``{'d2o_fraction': 0.85}``) are given. Recomputed controls leave out the
+    rejected spectra and the noise outliers."""
+    stored = results.controls
+    run = results.settings.run if results.settings is not None else None
+    base = stored.config if stored is not None else (run.controls if run is not None else None)
+    if base is None:
+        if not changes:
+            return None
+        base = ControlConfig()
+    fit = results.fit
+    rejected = (np.asarray(results.review.status_of(fit) == "rejected", dtype=bool)
+                if results.review is not None else np.zeros(len(fit), dtype=bool))
+    time = np.asarray(fit.time, dtype=float)
+    at_control = np.zeros(len(fit), dtype=bool)
+    for t in (base.undeut_time, base.fd_time):
+        if t is not None:
+            at_control |= np.abs(time - t) <= base.atol
+    n_rejected = int((rejected & at_control).sum())
+    if stored is not None and not changes and not n_rejected:
+        return stored
+    config = dataclasses.replace(base, **dict(changes or {}))
+    usable = ~rejected
+    if fit.noise_estimate is not None:
+        usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
+    factor = run.n_max_factor if run is not None else 1.2
+    out = fit_controls(fit, np.asarray(results.measurements.n_max, dtype=float) / factor, config,
+                       usable=usable)
+    if not quiet:
+        log.info("controls recomputed (%s): %d of %d series fall back%s",
+                 "; ".join(x for x in (
+                     f"{n_rejected} rejected control spectra left out" if n_rejected else "",
+                     f"settings changed: {', '.join(sorted(changes))}" if changes else "") if x),
+                 int(out.fallback.sum()), len(out),
+                 f" (stored: {int(stored.fallback.sum())})" if stored is not None else "")
+    return out
+
+
+def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
     """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
     end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
-    rep, control_fallback)``; with whether each sample's values are corrected (sample -> bool),
-    ``nterm_subtract`` and the undeuterated time. ``results`` may be a
+    rep, control_fallback, run)`` (run: '' for one run, the run's name in a
+    :class:`hxex.analysis.RunSet`); with whether each sample's values are corrected
+    (sample -> bool), ``nterm_subtract`` and the undeuterated time. ``results`` may be a
     :class:`hxex.analysis.RunSet` (its samples are then labelled ``run:sample``)."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
-        return results._records(ks, exclude_flagged, filters, quiet)
+        return results._records(ks, exclude_flagged, filters, quiet, controls_changes)
     fit, binned = results.fit, results.binned
     if binned is None:
         raise ValueError("the species uptake table needs the picked table (results.binned)")
@@ -180,7 +235,7 @@ def _records(results, ks, exclude_flagged, filters, quiet=False):
         keep &= results.review.status_of(fit) != "rejected"
     if exclude_flagged and results.quality is not None:
         keep &= ~np.asarray(results.quality.flagged, dtype=bool)
-    controls = results.controls
+    controls = analysis_controls(results, controls_changes, quiet=quiet)
     n_amides = np.asarray(results.measurements.n_max, dtype=float) / factor
     fell_back = np.zeros(len(fit), dtype=bool)
     if controls is not None:
@@ -227,7 +282,7 @@ def _records(results, ks, exclude_flagged, filters, quiet=False):
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
-                    int(binned.rep[j]), bool(fell_back[i]),
+                    int(binned.rep[j]), bool(fell_back[i]), "",
                 ))
 
     if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
@@ -270,22 +325,32 @@ def species_uptake(
     *,
     exclude_flagged: bool = False,
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+    controls: Mapping[str, Any] | None = None,
 ) -> SpeciesUptake:
     """The species uptake table of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` of several runs) at each fixed K in ``ks`` (K values the run
     fitted). ``filters`` (:class:`SpeciesFilters`; None for none) decides
     which K >= 2 descriptions are kept; a species and time whose description is not kept has no
-    rows at that K.
+    rows at that K. The back-exchange correction uses :func:`analysis_controls` (``controls``:
+    control settings to change).
 
     ``charge_trend`` is True for every row of a species (sample, peptide and modification, K and
     rank) whose lowest and highest charge states, wherever both were measured, differ by more
     than ``TREND_Z`` combined standard errors in the same direction at more than ``TREND_SHARE``
     of those times, and at two times at least: more likely a systematic effect (an overlapping
     species, a wrong charge assignment) than noise.
+
+    ``run_offset`` (merged runs, :class:`hxex.analysis.RunSet` ``merge``) is True for every row
+    of a species whose spectra come from several runs and one of whose runs differs from the
+    first by more than ``TREND_Z`` combined standard errors in the same direction at more than
+    ``TREND_SHARE`` of the times both were measured, and at two times at least (the charge-trend
+    rule): a difference between runs (a batch effect) that pooling would otherwise hide.
     """
-    groups, corrected, nterm, undeut = _records(results, ks, exclude_flagged, filters)
+    groups, corrected, nterm, undeut = _records(results, ks, exclude_flagged, filters,
+                                                controls_changes=controls)
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
+    by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
         sample, peptide, mod, start, end, time, k, rank = key
         v = np.array([r[0] for r in recs])
@@ -296,6 +361,7 @@ def species_uptake(
         fr, fr_se = _combine(f, fs)
         charges = sorted({r[4] for r in recs})
         amides = float(np.mean([r[5] for r in recs]))  # the same for every spectrum of a species
+        run_names = [x for x in dict.fromkeys(r[8] for r in recs) if x] or [""]  # RunSet order
         ion = chem.parse_modification(mod).ion_type
         for name, value in (
             ("sample", sample), ("peptide", peptide), ("modification", mod),
@@ -306,8 +372,17 @@ def species_uptake(
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
             ("corrected", corrected[sample]), ("charge_trend", False),
             ("control_fallback", any(r[7] for r in recs)),
+            ("runs", ",".join(run_names)),
+            ("n_spectra_by_run", ",".join(str(sum(r[8] == x for r in recs)) for x in run_names)
+             if any(run_names) else ""),
+            ("run_offset", False),
         ):
             cols[name].append(value)
+        if len(run_names) > 1:  # each run against the first, at this time
+            per_run = {x: _combine(*map(np.array, zip(*[(r[0], r[1]) for r in recs
+                                                          if r[8] == x], strict=True)))
+                       for x in run_names}
+            by_run.setdefault((sample, peptide, mod, k, rank), []).append(per_run)
         if len(charges) > 1:
             per = by_charge.setdefault((sample, peptide, mod, k, rank), {})
             low = [(r[0], r[1]) for r in recs if r[4] == charges[0]]
@@ -321,6 +396,19 @@ def species_uptake(
                        strict=True))
     out["charge_trend"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in trend
                                     for a, b, c, d, e in species], dtype=bool)
+    offset = set()
+    for key, times in by_run.items():
+        first = next(iter(times[0]))  # the first run is the same at every time if present
+        others = {x for per in times for x in per if x != first}
+        for other in others:
+            pairs = [[per[first], per[other]] for per in times if first in per and other in per]
+            if _is_trend(pairs):
+                offset.add(key)
+    out["run_offset"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in offset
+                                  for a, b, c, d, e in species], dtype=bool)
+    if offset:
+        log.warning("%d merged species differ systematically between runs (run_offset)",
+                    len({key[:3] for key in offset}))
     for name in ("start", "end", "K", "rank", "n_spectra", "n_charges"):
         out[name] = out[name].astype(np.int64)
     for name in ("time", "mean", "mean_se", "fD", "fD_se", "population", "population_se",
@@ -328,6 +416,8 @@ def species_uptake(
         out[name] = out[name].astype(np.float64)
     out["corrected"] = out["corrected"].astype(bool)
     out["control_fallback"] = out["control_fallback"].astype(bool)
+    for name in ("runs", "n_spectra_by_run"):
+        out[name] = out[name].astype(str)
     return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
 
 

@@ -505,7 +505,7 @@ def cmd_analyse(args) -> int:
                 log.warning("%s is waiting for its %s; the analysis uses what it holds",
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
-        results = RunSet(opened) if several else opened[""]
+        results = RunSet(opened, merge=config.merge) if several else opened[""]
         written = write_analysis(results, config, out, base=base,
                                  progress=ProgressLog(name="analysis",
                                                       interval=args.progress_every),

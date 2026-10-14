@@ -874,3 +874,97 @@ def test_modified_peptides_are_separate_states_or_combined():
     assert AnalysisConfig().modified_peptides == "separate"
     with pytest.raises(ValueError, match="modified_peptides"):
         AnalysisConfig(modified_peptides="apart")
+
+
+def test_controls_follow_the_review_and_can_be_recomputed(results, caplog):
+    import dataclasses
+
+    from hxex.analysis import analysis_controls
+
+    assert analysis_controls(results) is results.controls  # nothing rejected, no changes
+    fd = np.flatnonzero(results.fit.time == 1e6)
+    series = int(results.fit.data_id[fd[0]])
+    before = results.controls.n_fd[results.controls.rows([series])[0]]
+    review = ReviewTable.empty().update(str(results.fit.spectrum_id[fd[0]]), status="rejected")
+    with caplog.at_level("INFO", logger="hxex.analysis.species"):
+        c = analysis_controls(results.with_review(review))
+    assert c is not results.controls and "1 rejected control spectra left out" in caplog.text
+    assert c.n_fd[c.rows([series])[0]] == before - 1
+    # changed settings: recomputed with them, the rest of the run's settings kept
+    changed = analysis_controls(results, {"d2o_fraction": 0.8, "retention_min": 0.99})
+    assert changed.config.d2o_fraction == 0.8 and changed.config.fd_time == 1e6
+    assert changed.fallback.all() and changed.retention == pytest.approx(0.8)
+    up = species_uptake(results, controls={"d2o_fraction": 0.8, "retention_min": 0.99})
+    base = species_uptake(results)
+    assert up.control_fallback.all() and not np.allclose(up.fD, base.fD)
+    with pytest.raises(ValueError, match="unknown control"):
+        from hxex.analysis import AnalysisConfig
+
+        AnalysisConfig(controls={"d2o": 0.8})
+    assert dataclasses.replace(results, controls=None).controls is None
+
+
+def test_merged_runs_pool_their_spectra(results):
+    import dataclasses
+
+    from hxex.analysis import RunSet, compare_peptides
+
+    binned = results.binned
+    two = dataclasses.replace(results, binned=dataclasses.replace(
+        binned, sample=np.where(binned.data_id == 1, "V", "S")))
+    single = species_uptake(two)
+    merged = RunSet({"A": two, "B": two},
+                    merge={"A:S": "S", "B:S": "S", "A:V": "V", "B:V": "V"})
+    up = species_uptake(merged)
+    assert set(up.sample.tolist()) == {"S", "V"}
+    np.testing.assert_allclose(up.fD, single.fD, atol=1e-12)  # the same spectra twice
+    np.testing.assert_array_equal(up.n_spectra, 2 * single.n_spectra)
+    pc = compare_peptides(merged, "S")
+    np.testing.assert_allclose(pc.delta, compare_peptides(two, "S").delta, atol=1e-12)
+    assert (pc.n == 2 * compare_peptides(two, "S").n).all()
+    partly = species_uptake(RunSet({"A": two, "B": two}, merge={"A:S": "S"}))
+    assert set(partly.sample.tolist()) == {"S", "A:V", "B:S", "B:V"}
+    # run identity: the runs and their spectra are listed; identical runs do not differ
+    assert set(up.runs.tolist()) == {"A,B"} and not up.run_offset.any()
+    assert all(c == f"{n // 2},{n // 2}" for c, n in zip(up.n_spectra_by_run, up.n_spectra,
+                                                         strict=True))
+    assert set(partly.runs[partly.sample == "A:V"].tolist()) == {"A"}
+    assert set(single.runs.tolist()) == {""}
+    # run B corrected with a smaller fully deuterated control: higher values throughout
+    c = two.controls
+    shifted_b = dataclasses.replace(two, controls=dataclasses.replace(
+        c, mfd=c.m0 + 0.8 * (c.mfd - c.m0)))
+    odd = species_uptake(RunSet({"A": two, "B": shifted_b},
+                                merge={"A:S": "S", "B:S": "S", "A:V": "V", "B:V": "V"}))
+    k1 = odd.where(K=1)
+    assert odd.run_offset[k1].any()
+    for bad in ({"C:S": "S"}, {"A": "S"}, {"A:S": ""}):
+        with pytest.raises(ValueError, match="merge"):
+            RunSet({"A": two}, merge=bad)
+
+
+def test_analyse_merged_runs(two_sample_bundle, tmp_path):
+    from hxex import cli
+
+    project = tmp_path / "hxex.toml"
+    project.write_text(f"""project = "p"
+[input]
+format = "specexport"
+data_dir = "d"
+[analysis]
+reference = "S"
+format = "png"
+out = "merged"
+[analysis.runs]
+A = "{two_sample_bundle.as_posix()}"
+B = "{two_sample_bundle.as_posix()}"
+[analysis.merge]
+"A:S" = "S"
+"B:S" = "S"
+"A:V" = "V"
+"B:V" = "V"
+""")
+    assert cli.main(["-q", "analyse", str(project)]) == 0
+    rows = (tmp_path / "merged" / "compare_peptides.csv").read_text().splitlines()[1:]
+    assert {r.split(",")[1] for r in rows} == {"V"}
+    assert (tmp_path / "merged" / "run_identity.csv").is_file()

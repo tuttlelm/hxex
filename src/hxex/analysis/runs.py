@@ -52,9 +52,14 @@ def _under(name: str, prefixes) -> bool:
 @dataclass(frozen=True)
 class RunSet:
     """Several runs (:class:`hxex.report.Results`) by name, analysed together; the first is the
-    reference run of :func:`check_identity`. Run names must not contain :data:`SEPARATOR`."""
+    reference run of :func:`check_identity`. Run names must not contain :data:`SEPARATOR`.
+
+    ``merge`` combines runs (pyHXExpress ``combine_batch_data``): it gives samples a label of
+    their own (``{'A:WT': 'WT', 'B:WT': 'WT'}``), and samples with the same label are one sample,
+    their replicate spectra pooled; the others keep ``run:sample``."""
 
     runs: Mapping[str, object] = field(default_factory=dict)
+    merge: Mapping[str, str] | None = None
 
     def __post_init__(self):
         if not self.runs:
@@ -63,6 +68,23 @@ class RunSet:
             if not name or SEPARATOR in name:
                 raise ValueError(f"run name {name!r}: must be non-empty without {SEPARATOR!r}")
         object.__setattr__(self, "runs", dict(self.runs))
+        merge = {str(k): str(v) for k, v in (self.merge or {}).items()}
+        for key, label in merge.items():
+            run, sample = self.split(key)
+            if run not in self.runs or not sample:
+                raise ValueError(f"merge: {key!r} is not run:sample of a run in the set")
+            if not label:
+                raise ValueError(f"merge: {key!r} needs a non-empty label")
+        object.__setattr__(self, "merge", merge)
+
+    def unmerged(self) -> RunSet:
+        """The same runs without ``merge``."""
+        return RunSet(self.runs)
+
+    def sample_label(self, run: str, sample: str) -> str:
+        """The label of ``sample`` of ``run`` in this set (``merge``, else ``run:sample``)."""
+        key = self.label(run, sample)
+        return self.merge.get(key, key)
 
     @property
     def names(self) -> list[str]:
@@ -79,16 +101,22 @@ class RunSet:
         run, _, sample = str(label).partition(SEPARATOR)
         return run, sample
 
-    def _records(self, ks, exclude_flagged, filters, quiet):
+    def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None):
         """:func:`hxex.analysis.species._records` of every run, the samples relabelled."""
         from .species import _records
 
         groups, corrected, nterm, undeut = {}, {}, {}, {}
         for name, results in self.runs.items():
             g, c, nterm[name], undeut[name] = _records(results, ks, exclude_flagged, filters,
-                                                       quiet)
-            groups.update({(self.label(name, key[0]), *key[1:]): recs for key, recs in g.items()})
-            corrected.update({self.label(name, s): v for s, v in c.items()})
+                                                       quiet, controls_changes)
+            for key, recs in g.items():  # merged samples pool their spectra, each tagged by run
+                groups.setdefault((self.sample_label(name, key[0]), *key[1:]), []).extend(
+                    (*r[:8], name) for r in recs)
+            for s, v in c.items():
+                label = self.sample_label(name, s)
+                if corrected.get(label, v) != v and not quiet:
+                    log.warning("%s pools runs with and without back-exchange correction", label)
+                corrected[label] = corrected.get(label, v) and v
         if len(set(nterm.values())) > 1:
             raise ValueError("the runs subtract different numbers of N-terminal residues "
                              f"({_listing(nterm)}): their residues cannot be compared")

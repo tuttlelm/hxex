@@ -1655,6 +1655,24 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     component is not trusted for either component, and genuinely protected states with fD below
     0.1 are not removed).
 
+63. **Recomputing and combining (post-fitting analysis, phase 5; 2026-10-13).** pyHXExpress's
+    `recalc_uptake` recomputes the correction after bad spectra are removed; in hxex the uptake
+    already left out the spectra the review rejected, but the controls were those of the run.
+    `analysis_controls(results, changes)` now recomputes them from the run's K=1 fits when the
+    review rejected a control spectrum (rejected spectra and noise outliers left out) or when
+    control settings are changed (`species_uptake(controls=...)`, `compare_peptides(controls=
+    ...)`, `[analysis.controls]`); otherwise the stored controls are used. Recomputing the
+    Gaussian refit's controls under the current defaults reproduces `gauss_full_v2` exactly (219
+    fallbacks, identical mFD). Combining runs (`combine_batch_data`): `RunSet(merge={'A:WT':
+    'WT', 'B:WT': 'WT'})` and `[analysis.merge]` pool samples of separate runs (the same run
+    merged with itself gives the same values with twice the spectra). Run identity is kept
+    (owner): every spectrum's record carries its run, the species table gains `runs` ('A,B'),
+    `n_spectra_by_run` ('4,4') and `run_offset` (a run differing from the first by more than 2
+    combined standard errors in the same direction at more than half of the shared times, and at
+    two at least; a warning counts them). Without the flag a batch effect would only widen the
+    standard errors (the replicate scatter) and enter the Welch test as replicate noise. The
+    export to pyHDX's DynamX-like format (`hdexa_to_pyhdx`) is not needed (owner).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

@@ -110,7 +110,7 @@ def write_analysis(
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
-                        filters=config.filters)
+                        filters=config.filters, controls=config.controls)
     present = list(dict.fromkeys(up.sample.tolist()))
     samples = list(config.samples) if config.samples else present
     missing = [s for s in samples if s not in present]
@@ -144,12 +144,17 @@ def write_analysis(
         tables["populations"] = choice.columns()
     if isinstance(results, RunSet):
         tables["run_settings"] = compare_settings(results).columns()
-        tables["run_identity"] = check_identity(up).columns()
+        # the identity check compares the runs, so merged samples are looked at run by run
+        unmerged = up if not results.merge else species_uptake(
+            results.unmerged(), ks=config.ks, exclude_flagged=config.exclude_flagged,
+            filters=config.filters, controls=config.controls)
+        tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     if config.reference:
         ref = config.reference
         kw = {"exclude_flagged": config.exclude_flagged, "filters": config.filters,
-              "alpha": config.alpha, "samples": samples, "match": config.peptide_match}
+              "alpha": config.alpha, "samples": samples, "match": config.peptide_match,
+              "controls": config.controls}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,

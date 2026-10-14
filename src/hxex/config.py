@@ -349,7 +349,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
 ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
                  "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
-                 "overlay_two_only", "peptide_match", "modified_peptides")
+                 "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -622,6 +622,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '#                                 # mutated or not) or identical sequences ("sequence")',
         '# modified_peptides = "separate"  # modified forms as their own states ("WT pS59") or',
         '#                                 # averaged with the sample ("combined")',
+        "# [analysis.controls]             # control settings to change for the analysis (the",
+        "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
         '# format = "pdf"                  # or "png", "svg"',
         "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
         "# min_population = 0.05",
@@ -642,6 +644,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.runs]                 # compare separate runs: samples become run:sample",
         '# A = "runA.zip"                  # (reference = "A:WT"); default: this project\'s bundle',
         '# B = "../other/runB.zip"',
+        "# [analysis.merge]                # combine runs: these samples become one, pooled",
+        '# "A:WT" = "WT"',
+        '# "B:WT" = "WT"',
         "",
         "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
         "# section turns that stage on; uncomment one to use it.",
