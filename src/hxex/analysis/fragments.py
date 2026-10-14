@@ -520,8 +520,10 @@ class DecayFit:
 
 def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     """Fit ``A exp(-k t) + C`` (a decay for back-exchange, a rise when ``A`` is negative) to the
-    points of ``trace`` at ``min_time`` and later (to leave out spurious early points), by
-    least squares from several starting rates; ``k`` is kept positive."""
+    points of ``trace`` at ``min_time`` and later, by least squares from several starting rates;
+    ``k`` is kept positive. Times here are on the exchange clock (spectrum times: scan time plus
+    the run's ``time_offset``); to leave a file's spurious early scans out of everything, set
+    the run's ``usable_from`` instead (:class:`hxex.io.MzmlRun`, acquisition clock)."""
     from scipy.optimize import curve_fit
 
     tr = trace.after(min_time)
@@ -724,8 +726,10 @@ def ladder_rates(
 class FragmentAnalysis:
     """The fragment part of a post-fitting analysis (``[analysis.fragments]``; written by
     :func:`hxex.report.write_analysis` for runs with fragment series): ``ion_types`` (empty:
-    every fragment ion type of the run), the fragment ``charges``, ``min_time`` (s; earlier
-    points are drawn but not fitted), condition ``labels`` for the figures (``{'gentle':
+    every fragment ion type of the run), the fragment ``charges``, ``min_time`` (s on the
+    exchange clock, the spectra's times; earlier points are drawn but not fitted; a file's
+    unusable early scans are better left out with its ``usable_from``), condition ``labels`` for
+    the figures (``{'gentle':
     'G'}``), the closure ``tolerance`` (deuterons) and ``precursor_charge`` (the closure's
     precursor; None: the unreacted precursor)."""
 

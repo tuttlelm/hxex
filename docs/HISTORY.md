@@ -1797,6 +1797,19 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     `RunSet`) get no fragment outputs yet (a warning). On the 8-residue probe: 3 tables and 4
     figures in 10 s.
 
+69. **Two clocks and a per-file usable start (owner, 2026-10-14).** Times in a kinetics run
+    are on two clocks: the acquisition clock (scan times from the start of acquisition) and the
+    exchange clock (spectrum times: scan time plus the run's `time_offset`, when exchange began
+    relative to acquisition). `MzmlRun.usable_from` (`[[input.runs]] usable_from`; seconds on
+    the acquisition clock, set by the user for each file, never suggested by hxex) leaves out
+    the file's scans before it, for example spurious points while an infusion settles; it does
+    not move the time axis (`time_offset` does). `[input.scans] min_time` and `windows` are on
+    the acquisition clock too (for every run); the analysis `min_time` (`fit_decay`,
+    `ladder_rates`, `closure_table`, the figures, `[analysis.fragments]`) is on the exchange
+    clock and only keeps points out of the fits. Recorded with the read only when set. On the
+    probe, `usable_from = 20` in place of the analysis cut gives the same rates (12,678 instead
+    of 12,910 spectra fitted).
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

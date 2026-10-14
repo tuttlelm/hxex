@@ -586,7 +586,10 @@ ms_level = 1
 {scans}
 
 # one [[input.runs]] per file; "time" is the labelling time of the whole file (s), or leave it
-# out when each scan has its own time (continuous labelling; then "time_offset")
+# out when each scan has its own time (continuous labelling). Two clocks: the scan times (the
+# acquisition clock) and the exchange clock, scan time + "time_offset" (s; when exchange began
+# relative to acquisition). "usable_from" (s, acquisition clock) leaves out this file's scans
+# before it (e.g. spurious early points): it does not move the time axis, time_offset does.
 [[input.runs]]
 path = "UN_01.{ext}"
 sample = "WT"
@@ -677,7 +680,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.fragments]            # runs with fragment ions (written whenever there are",
         '# ion_types = ["c-1", "z-dot"]    # some; fragments = false turns them off); default:',
         "# charges = [1]                   # every fragment ion type, fragment charge 1",
-        "# min_time = 20.0                 # s: earlier points drawn, not fitted",
+        "# min_time = 20.0                 # s, exchange clock: earlier points drawn, not fitted",
         "# tolerance = 0.25                # closure: c + z - M beyond this is flagged (D)",
         '# [analysis.fragments.labels]     # short condition names in the figures',
         '# gentle = "G"',

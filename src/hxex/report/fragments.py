@@ -69,7 +69,7 @@ def ladder_kinetics_figure(
     holds several (each must be unique otherwise). ``conditions`` (default: all, sorted) are
     drawn in that order, named by ``labels`` (for example ``{'gentle': 'G'}``). ``precursors``
     are the ion types of the top row at ``precursor_charge`` (default: ``charge``). Points before
-    ``min_time`` (s) are drawn but not fitted (spurious early points).
+    ``min_time`` (s, exchange clock: the spectra's times) are drawn but not fitted.
 
     ``right_traces`` adds traces of your own to the right column: called with each row's
     :class:`~hxex.analysis.LadderStep` (None for the precursor row), it returns ``(label, trace,

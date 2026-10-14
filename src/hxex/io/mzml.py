@@ -631,6 +631,13 @@ class MzmlRun:
     control's time), or None when every scan has its own time (the scan time plus
     ``time_offset``, in seconds).
 
+    Two clocks: the **acquisition clock** is the scan time the file records (from the start of
+    acquisition); the **exchange clock** is the time of the spectra, the scan time plus
+    ``time_offset`` (when exchange started relative to acquisition, for example the dead time
+    before the first scan). ``usable_from`` (seconds on the acquisition clock, set by the user
+    for each file) leaves out the scans before it, for example spurious points while the
+    infusion settles; it is not the same as ``time_offset``, which only moves the time axis.
+
     The scan conditions ``activation``, ``precursor_mz``, ``precursor_charge``,
     ``filter_contains`` and ``filter_excludes`` are the targets' (``'target'``, the default)
     unless set here, which replaces that condition of every target for this file only (None
@@ -643,6 +650,7 @@ class MzmlRun:
     rep: int = 1
     time: float | None = None
     time_offset: float = 0.0
+    usable_from: float | None = None
     activation: str | None = TARGET
     precursor_mz: float | str | None = TARGET
     precursor_charge: int | str | None = TARGET
@@ -661,6 +669,8 @@ class MzmlRun:
 
     def to_dict(self) -> dict:
         out = {"path": str(self.path), "sample": self.sample, "rep": int(self.rep),
+               **({"usable_from": float(self.usable_from)} if self.usable_from is not None
+                  else {}),
                "time": None if self.time is None else float(self.time),
                "time_offset": float(self.time_offset)}
         out.update({name: getattr(self, name) for name in SCAN_CONDITIONS
@@ -733,7 +743,10 @@ class MzmlConfig:
 
     For a run without a fixed time, ``group`` is ``'each'`` (one spectrum per scan), ``'every'``
     (``every`` consecutive selected scans summed) or ``'windows'`` (the scans inside each of the
-    ``windows``, in seconds of scan time, summed). ``mz_margin`` is the m/z kept on either side
+    ``windows``, in seconds of scan time, summed). ``min_time`` leaves out, in every such run, the
+    scans before it; ``windows`` and ``min_time`` are on the acquisition clock (the scan time,
+    before a run's ``time_offset``; see :class:`MzmlRun`, whose ``usable_from`` sets a start per
+    file). ``mz_margin`` is the m/z kept on either side
     of a target's predicted bins. ``sum_ppm`` merges centroided peaks; ``gap_factor`` finds the
     left-out stretches of profile scans; ``precursor_tol`` (m/z) matches a target's precursor.
     """
@@ -980,12 +993,15 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
                  config: MzmlConfig) -> np.ndarray:
     """Positions (in ``table``, one file's scans) of the scans of ``target`` in ``run``, as
     :func:`read_mzml` chooses them: the MS level and the scan conditions (the run's where it sets
-    them), within the retention window for a run with a fixed time, or after
-    ``config.min_time``."""
+    them), within the retention window for a run with a fixed time, or from ``config.min_time``
+    otherwise, and from the run's ``usable_from`` (all on the acquisition clock: scan times)."""
     if run.time is not None:
         time_range = target.rt_window
     else:
         time_range = None if config.min_time is None else (config.min_time, np.inf)
+    if run.usable_from is not None:
+        lo, hi = time_range if time_range is not None else (-np.inf, np.inf)
+        time_range = (max(lo, run.usable_from), hi)
     rows = table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
                         time_range=time_range, parent_mz=target.parent_mz,
                         preactivation=target.preactivation, **run.conditions(target))

@@ -718,3 +718,23 @@ def test_fragments_take_the_scans_of_their_own_parent(tmp_path, caplog):
         fragment_targets(ENTRY, "c:3:1", parent_mz="own")
     with pytest.raises(ValueError, match="range"):
         MzmlTarget(ENTRY, parent_mz=(5.0, 1.0))
+
+
+def test_usable_from_is_on_the_acquisition_clock(tmp_path):
+    """A run's usable_from leaves out its scans before that scan time; time_offset moves only
+    the spectra's times (the exchange clock); MzmlConfig.min_time is a scan time too."""
+    path = write_mzml(tmp_path / "k.mzML", time_course(n=6))  # scans at 30 to 180 s
+    target = MzmlTarget(ENTRY)
+    run = MzmlRun(path, "WT", time_offset=100.0, usable_from=75.0)
+    got = read_mzml([run], [target], project="p")
+    assert list(got.time) == [190.0, 220.0, 250.0, 280.0]  # scans 90-180 s, plus 100 s
+    both = read_mzml([run], [target], project="p", config=MzmlConfig(min_time=125.0))
+    assert list(both.time) == [250.0, 280.0]  # the later of the two starts, both scan times
+    assert got.source["runs"][0]["usable_from"] == 75.0
+    assert MzmlRun.from_dict(run.to_dict()) == MzmlRun(str(path), "WT", time_offset=100.0,
+                                                       usable_from=75.0)
+    assert "usable_from" not in MzmlRun(path, "WT").to_dict()  # older records stay as they were
+    # a run with a fixed time: the start applies within the retention window as well
+    fixed = MzmlRun(path, "WT", time=60.0, usable_from=100.0)
+    summed = read_mzml([fixed], [MzmlTarget(ENTRY, rt_window=(50.0, 160.0))], project="p")
+    assert len(summed) == 1 and summed.spectrum_id[0].endswith("scans3-4")  # 120 and 150 s
