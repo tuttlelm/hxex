@@ -10,7 +10,11 @@ tables can be read with any Parquet reader (`pyarrow`, R `arrow::read_parquet`, 
 Written with `hxex.io.write_bundle(path, measurements=..., fit=..., ...)`, read with
 `hxex.io.open_bundle(path)`. Writing is atomic (nothing is left behind on a failure), an
 existing bundle is only replaced with `overwrite=True`, and `Bundle.verify()` checks the SHA-256
-of every file.
+of every file. A bundle directory is replaced file by file: the files its manifest lists are
+removed, the new ones moved in and the manifest written last, so files of your own in the
+directory (notes, figures) stay; one named like a file of the new bundle is refused before
+anything changes. An interrupted replacement leaves `manifest.json.replacing` in place of the
+manifest: the directory does not open until the bundle is written again.
 
 ## Keys and conventions
 
@@ -71,7 +75,7 @@ entry's input: an HX-Express file, or a SpecExport folder identified as a whole)
 | `review.parquet` | reviewed spectrum | `spectrum_id`, `status` (`accepted` or `rejected`, or empty), `k_override` (0 = none), `note`, `updated` (UTC time) |
 | `quality.parquet` | measurement | when quality flags were assessed: `deviance` (reduced deviance of the selected-K fit), `deviance_rel` (to the series median), `misfit` (`sum((obs - fit)^2) / sum(obs^2)` of that fit) and `misfit_rel` (to the series median; the `poor_fit` statistic; absent in bundles written before it), `intensity` (total), `intensity_rel` (to the other replicates at the same time), `mz_offset` (the series' median m/z offset minus the median over all series, ppm), NaN where not assessed; `poor_fit`, `low_intensity`, `noise_outlier`, `mz_shift` and `flagged` (any of them) |
 | `envelopes.parquet` | series (`data_id`) | when the run used an ion-type mixture or an inferred envelope: `mode`, `source` (`reference`, `fallback` or `theory`), `weights` (of the ion types, lightest first), `residual`, `n_reference`, `good`, `fit_shape` (the envelope of the fit; the same shape is in the series' `measurements` rows) |
-| `controls.parquet` | series (`data_id`) | when controls were given: `n_amides`, `n_undeut`, `n_fd` (replicates used), `m0_measured`, `mfd_measured` (replicate means of the K=1 fits, NaN if missing), `m0`, `mfd` (the values used) with `m0_se`, `mfd_se` (NaN: one replicate; 0: theoretical), `retention`, `fallback`, `flags` (`;`-separated: `m0_missing`, `m0_high`, `fd_missing`, `retention_low`, `retention_high`, `no_amides`, `m0_unreplicated`, `fd_unreplicated`) |
+| `controls.parquet` | series (`data_id`) | when controls were given: `n_amides`, `n_undeut`, `n_fd` (replicates used), `m0_measured`, `mfd_measured` (replicate means of the K=1 fits, NaN if missing), `m0`, `mfd` (the values used) with `m0_se`, `mfd_se` (NaN: one replicate; 0: theoretical; for a theoretical back-exchange fallback the fit's scatter per amide times `n_amides`), `retention`, `fallback`, `flags` (`;`-separated: `m0_missing`, `m0_high`, `fd_missing`, `retention_low`, `retention_high`, `no_amides`, `m0_unreplicated`, `fd_unreplicated`, `fd_median`, `fd_off_model`, `fd_kint`); with `fd_fallback = "kint"` the fitted model (`a`, `t0`, `n_series`, `n_rejected`, `sd_per_amide`, `quench`) is JSON in the table's schema metadata (`fd_model`) |
 | `components.parquet` | measurement, K and component | the tidy table of every fit with its intervals (from `bootstrap` for the selected K and `bootstrap_k` for the others), for other tools; derived (not read back). `mean` is the uncorrected mean (deuterons beyond natural abundance). With controls it also has `mean_corrected`, `mean_corrected_se`, `mean_corrected_ci_lo`, `mean_corrected_ci_hi` (the controls' uncertainty included), `mean_corrected_control_se` (that part alone) and `control_fallback` |
 
 Index columns of `binned` and `spectra`: `spectrum_id`, `sample`, `peptide` (modX labels such as

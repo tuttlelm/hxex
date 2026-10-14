@@ -200,6 +200,13 @@ How fragment data differs, and what this branch does about it:
   final equilibrium run). Back-exchange may not be fully correctable (in back-exchange
   kinetics the final run is back-exchanged to about 0 D), so theoretical references may be
   needed instead (owner); some kinetics runs have spurious early time points from the setup.
+  Theoretical references and protection factors come from intrinsic rates in the kinetics'
+  solvent (`hxex.kint`; opt-in, `[analysis.fragments] kint = true`, with the samples'
+  conditions in `[analysis.fragments.exchange]`: pH_read, temperature, D2O fraction and the
+  starting D fraction; HISTORY item 70): `ladder_rates` gives `kint` and `protection = kint /
+  rate` per step, `expected_uptake` the deuterium of unprotected amides over time, drawn
+  dashed in the ladder figure, and the residue-rates figure gains a protection-factor panel.
+  Modified residues borrow their standard residue's factors and are marked approximate.
 - **Variants of one fragment**: charge states are kept separate for now (owner: they may give
   different exchange rates), as is the precursor charge (fragment deuteration differed by
   precursor charge, HISTORY items 39 to 41); ion-type variants (c and c-1, z-dot and z+1) are

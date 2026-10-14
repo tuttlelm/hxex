@@ -1810,6 +1810,147 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     probe, `usable_from = 20` in place of the analysis cut gives the same rates (12,678 instead
     of 12,910 spectra fitted).
 
+70. **Intrinsic exchange rates in H2O/D2O mixtures: `hxex.kint` (owner, 2026-10-14).** For
+    theoretical back-exchange references and protection factors. Source: Grimaldi, Stofella and
+    Paci, J. Phys. Chem. B 130, 2493 (2026), code pacilab/hdx-rates-mixtures (MIT; the notice
+    is kept in the module). It was ported rather than used as a dependency (owner): it is not
+    a package (no `pyproject.toml`, not on PyPI, flat-module imports), uses pandas, takes
+    one-letter sequences only and has no terminal groups beyond the free ones; the logic is
+    about 150 lines and two tables. Unlike `hdxrate` (pyHDX; pD = pH_read + 0.4 x), it treats
+    the mixture: the ionic product (Sweeton 1974, Gold and Lowe 1967), the D fractions of L+ and
+    OL- (fractionation factors 0.69 and 0.47) and the four isotope pairs, giving a forward
+    (H to D) and a back (D to H) rate per amide. In a mixture an unprotected amide relaxes at
+    `kforw + kback` to the D fraction `kforw / (kforw + kback)` (about 1.13 x at x = 0.1), so
+    that sum is the rate compared with observed decays. Inputs: `ExchangeConditions(ph_read,
+    temperature, d2o_fraction, reference)`, temperature in degrees Celsius (a value in kelvin is
+    refused), reference `PDLA` (default) or `3Ala`; nothing in the fragment dataset's metadata
+    records them, so the user sets them.
+    - **Check against the reference code** (`tests/golden/make_kint_golden.py`, 192 cases: four
+      sequences, pH_read 2.5 to 8.5, 0 and 25 degrees, x = 0 to 1, both references): identical
+      to about 1e-12 once the reference's intermediate rounding (rates to 1e-6 /s, factors to
+      0.01) is stripped; with its rounding, within about 2 % (median 0.8 %).
+    - **Differences from the reference code:** modX sequences with terminal groups; `Ac-` gives
+      residue 1 an amide with the acetyl's factors (Bai's `Ac` row, unused there) and takes
+      residue 2's N-terminal factor away; `-NH2` has no C-terminal factor (Bai's is the
+      carboxyl's) and marks the last residue `approximate`; a two-residue peptide gets both
+      terminal factors (the reference applies only the N-terminal one); no rounding; NaN, not
+      0, where there is no amide hydrogen (residue 1 with a free amine, prolines).
+    - **PTMs.** Bai et al. give no factors for pS, pT, pY or acK, and none have been published.
+      Moroco et al., MCP 24, 100904 (2025; 100 pS/pT and 100 acK peptide pairs, pH_read 3,
+      20 degrees, 88 % D2O): once normalised to fully deuterated controls, S/T phosphorylation
+      had no measurable effect on uptake, observed rate or protection factor; lysine
+      acetylation slowed exchange significantly (up to 2 D), with no correction factors given.
+      pY and other PTMs were not tested. A phosphomimetic S to D is covered by Bai's Asp
+      factors; phosphohistidine's slowed exchange is the imidazole C-H, not an amide. So
+      (owner): a modified residue takes its standard residue's factors and is marked
+      `approximate` (its amide and the next, which its side chain also affects), unless
+      `ExchangeConditions.factors` gives its own `(AL, AR, BL, BR)`.
+    - **Uses (opt-in, owner).** Nothing is computed unless the user opts in
+      (`[analysis.fragments] kint = true`) and gives the samples' conditions
+      (`[analysis.fragments.exchange]`, one table for every sample or one per sample,
+      `[analysis.fragments.exchange.<sample>]`); conditions alone change nothing, and `kint`
+      without them is refused. `ladder_rates(..., conditions=)` then adds `kint` (the residue's
+      `kforw + kback`, from the parent's sequence, in which the kinetics happen; NaN for a
+      sample without conditions, with a warning) and `protection` (`kint / rate`); without
+      conditions those columns do not exist. `expected_uptake(rates, residues, times, initial)`
+      is the theoretical reference: the deuterium of unprotected amides relaxing from
+      `initial` (`ExchangeConditions.initial_fraction`, for back-exchange the labelling
+      solvent's D fraction). Figures (designed by hxex at the owner's request): the ladder
+      figure's right column adds the theoretical curve, dashed black, of the step's residue
+      (and of all the parent's amides in the precursor row; amides without a rate, such as a
+      free N-terminal amine, are left out) when `initial_fraction` is set; the residue-rates
+      figure adds each residue's intrinsic rate as a black bar and a third panel of protection
+      factors. Peptide-level (MS1) protection factors and theoretical controls for the quench
+      and LC are not built.
+    - **Can the conditions be inferred from the data? (2026-10-14, the private fragment
+      dataset's 8-residue peptide, ETD, gentle and harsh, resolved steps.)** The D fraction can:
+      the decays' offsets (about 0.03 D per amide) and the final equilibrium run give the
+      solvent's equilibrium, about 1.13 x for small x. pH and temperature cannot: both scale
+      every rate together (the acid branch with pH and temperature, the base branch the opposite
+      way with pH), so fitting them makes the median protection factor 1 by construction, and
+      the fit is poor anyway (pH free, any temperature: best at the grid's edge, pH 1.0, rms
+      0.35 to 0.7 log units). With the reported pH_read of the H2O quench buffer, 2.8 (owner),
+      the median protection factor is 1 only near 33 degrees; at 20 degrees it is about 0.15
+      (residues 5 to 8: 0.02 to 0.15, faster than unprotected, which an amide in solution cannot
+      be) while D4 is about 12 (H3 unresolved). The pattern along the sequence is close to the
+      reverse of Bai's at pH 2.8 (D4 and H3 predicted fastest, K8 slowest from the carboxyl
+      factor; an amidated C-terminus would speed K8 up only 9 times). So the infusion conditions
+      differ from an aqueous pH 2.8 solution (temperature, organic solvent, pH after mixing), or
+      the fragment rates hold more than solution exchange (exchange or scrambling during ion
+      transfer); open, with the owner.
+
+71. **Theoretical back-exchange against measured fully deuterated controls (2026-10-14).**
+    Published HSPB5 data (WT, D109H, R120G; SpecExport; owner: need not stay private), K = 1
+    fits with controls; 127 series of 48 peptides with replicated controls and a retention
+    time (HDExaminer's results table; SpecExport has none). Models of the fully deuterated
+    control's deuterium `D = mfd - m0`, 5-fold cross-validation grouped by peptide, 10 random
+    splits, quench assumed pH_read 2.5 and 0 degrees (1.6 % formic acid, frozen, thawed and
+    digested at the run): hxex's fallback `0.9 n_amides` RMSE 5.75 D (measured retention is
+    low here, median 0.49 per amide); one fitted retention `a n_amides` 1.04 D (`a n + c`
+    1.05); each amide at its intrinsic rate (`hxex.kint`) for one fitted effective time,
+    `a sum_i exp(-k_i t0)`, 0.52 D; with `t0 + RT` 0.49 D (`t0 + b RT` 0.49). The sequence
+    halves the error; the retention time adds about 6 % (the sequence model's residual per
+    amide correlates with RT, r = 0.35). Fitted `a` 0.87 to 0.91, not given to the fit,
+    matches the labelling buffer's expected 0.85 to 0.9 D2O (owner): an independent check;
+    `t0` about 1 h at pH 2.5 and 0 degrees, more than the LC, so the thaw, digestion and
+    source dominate. pH 2.3 or 2.8 and 2 degrees change neither
+    ranking nor errors (in the acid branch they rescale every rate, which `t0` absorbs).
+    Is the shortfall all back-exchange (owner)? Out-of-fold residuals per amide by domain
+    (by peptide midpoint; NTD 1-66, ACD 67-150, CTD 151-175) are small (s.d. 0.045) and mostly
+    retention time (NTD peptides elute late, CTD early): with `t0 + b RT`, NTD +0.014, ACD
+    -0.004, CTD -0.018; within one RT band the NTD is about 0, and the structured ACD holds
+    slightly more than predicted, the opposite of incomplete labelling. So the shortfall is
+    consistent with back-exchange. The remaining residual is peptide-specific and
+    reproducible across variants (WT against D109H r = 0.97, against R120G 0.96) and not
+    additive over overlapping peptides (80-86 -0.13, 87-96 +0.09, 80-96 -0.01): a
+    peptide-level effect (termini, factor tables, source, measurement), not residue
+    labelling (`residuals_by_region.py` in the example).
+    Not built into hxex yet. Noticed on the way: with `[run.controls]` on, only its own
+    `undeut_time` identifies the undeuterated controls; `[run] undeut_time` does not, so
+    every series is `m0_missing` unless it is set (left as is; for the owner).
+
+72. **Overwriting a bundle directory keeps files of your own (owner, 2026-10-14).** It used to
+    remove the whole directory, so notes kept in it (a `summary.md`) went with every rerun.
+    Now only the files the old manifest lists are removed; the new files are moved in and the
+    manifest is written last. Readers trust only manifest-listed, checksummed files, so nothing
+    stale can be read as part of the new results; a table the new run does not write is
+    removed with the rest. A file of your own named like one of the new bundle's files is
+    refused before anything changes. The replacement is no longer a single rename: an
+    interruption leaves `manifest.json.replacing`, the directory does not open (a clear
+    error) and the next write with `overwrite` completes it. New bundles and zips are written
+    as before (one rename).
+
+73. **Theoretical back-exchange as the fully deuterated fallback (owner, 2026-10-14).** From
+    item 71: `ControlConfig(fd_fallback="kint", quench=ExchangeConditions(...))` (opt-in, like
+    every use of `hxex.kint`; `[run.controls] fd_fallback = "kint"` with
+    `[run.controls.quench]` ph_read, temperature, d2o_fraction). Every series of a parent
+    ion (not fragments, not with extra `Hex` sites) gets the intrinsic rates of the amides it
+    counts at the quench conditions (`series_rates`; a counted N-terminal amine keeps
+    nothing). The run fits `a` and `t0` of `D = a sum exp(-k_i t0)` to its measured FD
+    controls (robust soft-L1, then refitted without the rejected ones); a measured control is
+    rejected when it misses the prediction by more than `kint_tolerance` (0.15 D per amide,
+    about 3 times the scatter on the B5 data; `fd_off_model`), which replaces the retention
+    floor (`retention_min` unset means none in this mode; an explicit one still applies). A
+    missing or rejected control becomes `m0 + prediction` (`fd_kint`) with standard error
+    `sd_per_amide * n_amides` instead of 0. Fewer than `kint_min_series` (10) usable controls:
+    nothing is fitted, the `d2o_fraction` fallback stays (logged). The model is kept in the
+    bundle (`controls.parquet` schema metadata) and recomputed at analysis time from the
+    bundle's picked spectra (`analysis_controls`). Retention times are not used (SpecExport
+    has none; they added about 6 %). On the B5 data (pH_read 2.5, 0 degrees, x 0): `a` 0.853,
+    `t0` 3,393 s from 194 controls, none rejected, scatter 0.045 D per amide; the run's
+    fallbacks went from 39 of 195 (38 good controls under the 0.45 floor, given
+    `0.9 n_amides`, about twice what they hold) to 1 (no FD control: 9.71 +- 0.81 D, retention
+    0.53, instead of 16.3 D). Default (owner): `fd_fallback` unset means `kint` when quench
+    conditions are given and `d2o` without; an explicit value wins, and the unset value is
+    stored as such, so conditions added later (`[analysis.controls]`) switch it too
+    (`ControlConfig.fd_mode`). Are FD controls still needed? Yes, a few: with `a` fixed at the
+    buffer's 0.875, a guessed `t0` of 600, 1,800, 3,400 or 7,200 s gives an RMSE of 0.26,
+    0.14, 0.05 and 0.14 D per amide (the effective time is set by the whole workflow and
+    cannot be predicted from the LC alone); fitted to 3, 5, 10 or 20 peptides' FD controls,
+    the rest are predicted to 0.055, 0.051, 0.048 and 0.046 D per amide. A measured FD
+    control is about 15 times more precise (median standard error 0.0026 D per amide), so
+    the model replaces controls where they are missing or bad, not where they are good.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

@@ -43,7 +43,7 @@ from .bootstrap import (
     bootstrap_by_k,
     selected_from,
 )
-from .controls import ControlConfig, ControlTable, fit_controls
+from .controls import ControlConfig, ControlTable, fit_controls, series_rates
 from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report, start_stage
 from .picking import (
@@ -338,7 +338,8 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 
 
 def _fit_part(
-    data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm
+    data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
+    rates=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
     need the bootstrap)."""
@@ -356,7 +357,8 @@ def _fit_part(
     start_stage(progress, "controls and quality", at, at)
     controls = None
     if config.controls is not None:
-        controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls)
+        controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls,
+                                rates=rates)
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
@@ -418,6 +420,17 @@ def analyse(
     fits, fit, controls, quality = _fit_part(data, config, plan, progress, cancel, mz_offset_ppm)
     boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
     return fit, boot, by_k, controls, quality
+
+
+def control_rates(binned: BinnedSet, config: RunConfig) -> dict | None:
+    """The intrinsic rates at the quench conditions of every series' amides, when the controls
+    fall back to theoretical back-exchange (``fd_fallback='kint'``); else None."""
+    c = config.controls
+    if c is None or c.fd_mode != "kint":
+        return None
+    return series_rates(binned.peptide, binned.modification, binned.data_id, c.quench,
+                        nterm_subtract=config.picker.nterm_subtract,
+                        rules=config.picker.amide_rules, registry=config.registry)
 
 
 def run(
@@ -482,14 +495,16 @@ def run(
     if (~kept).any():
         log.warning("dropped %d of %d spectra: %d empty, %d without signal", int((~kept).sum()),
                     len(kept), int((reason == "empty").sum()), int((reason == "no_signal").sum()))
+    picked = binned.select(kept)
     measurements = Measurements.from_binned(
-        binned.select(kept), n_max_factor=config.n_max_factor,
+        picked, n_max_factor=config.n_max_factor,
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
     )
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
+    rates = control_rates(picked, config)
     fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
-                                             binned.mz_offset_ppm[kept])
+                                             binned.mz_offset_ppm[kept], rates)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

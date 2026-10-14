@@ -195,8 +195,18 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     if fit.noise_estimate is not None:
         usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
     factor = run.n_max_factor if run is not None else 1.2
+    rates = None
+    if config.fd_mode == "kint":
+        if results.binned is None or run is None:
+            raise ValueError("fd_fallback 'kint' needs the run's picked spectra and settings "
+                             "(the bundle's binned table)")
+        from ..run import control_rates
+
+        keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
+        rates = control_rates(results.binned.select(keep),
+                              dataclasses.replace(run, controls=config))
     out = fit_controls(fit, np.asarray(results.measurements.n_max, dtype=float) / factor, config,
-                       usable=usable)
+                       usable=usable, rates=rates)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (

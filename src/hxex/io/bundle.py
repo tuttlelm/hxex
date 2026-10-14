@@ -295,7 +295,10 @@ def _controls_table(c: ControlTable) -> pa.Table:
     cols["n_fd"] = pa.array(np.asarray(c.n_fd, dtype=np.int64))
     cols["fallback"] = pa.array(np.asarray(c.fallback, dtype=bool))
     cols["flags"] = _str(c.flags)
-    return pa.table(cols)
+    table = pa.table(cols)
+    if c.fd_model is not None:  # the fitted theoretical back-exchange (fd_fallback 'kint')
+        table = table.replace_schema_metadata({b"fd_model": json.dumps(dict(c.fd_model))})
+    return table
 
 
 def _read_controls(table: pa.Table, config: dict) -> ControlTable:
@@ -309,6 +312,8 @@ def _read_controls(table: pa.Table, config: dict) -> ControlTable:
         m0_measured=f("m0_measured"), mfd_measured=f("mfd_measured"), m0=f("m0"),
         m0_se=f("m0_se"), mfd=f("mfd"), mfd_se=f("mfd_se"), retention=f("retention"),
         fallback=np.asarray(_col(table, "fallback"), dtype=bool), flags=_strs(table, "flags"),
+        fd_model=json.loads(meta[b"fd_model"]) if (meta := table.schema.metadata or {}).get(
+            b"fd_model") else None,
     )
 
 
@@ -381,12 +386,25 @@ def _write_table(directory: Path, name: str, table: pa.Table, files: dict, **ext
     }
 
 
+# the manifest of a bundle directory while its files are being replaced: present only when
+# that replacement was interrupted (the directory is then not a bundle until rewritten)
+REPLACING = MANIFEST + ".replacing"
+
+
+def _old_manifest(path: Path) -> dict | None:
+    """The manifest of the bundle directory ``path`` (or of its interrupted replacement)."""
+    for name in (MANIFEST, REPLACING):
+        try:
+            manifest = json.loads((path / name).read_text())
+        except (OSError, ValueError):
+            continue
+        if manifest.get("kind") == KIND:
+            return manifest
+    return None
+
+
 def _is_bundle_dir(path: Path) -> bool:
-    manifest = path / MANIFEST
-    try:
-        return manifest.is_file() and json.loads(manifest.read_text()).get("kind") == KIND
-    except (OSError, ValueError):
-        return False
+    return _old_manifest(path) is not None
 
 
 def write_bundle(
@@ -415,7 +433,12 @@ def write_bundle(
     ``path`` ending in ``.zip`` gives a zip (read only); anything else a directory. The
     bundle is written next to its final place and moved there when complete, so a failed write
     leaves nothing behind. An existing bundle is only replaced with ``overwrite=True`` (a
-    directory that is not a bundle is never removed). ``project`` is recorded in the manifest.
+    directory that is not a bundle is never touched). A bundle directory is replaced file by
+    file: the files its manifest lists go, the new ones come in and the manifest is written
+    last; anything else in the directory (notes of your own) stays. A file of yours named like
+    one of the new bundle's files is refused before anything changes. An interrupted
+    replacement leaves a directory that does not open (its manifest is
+    ``manifest.json.replacing``) until it is written again. ``project`` is recorded in the manifest.
     ``spectra_source`` (how the raw spectra were read, see
     :attr:`~hxex.spectra.SpectrumSet.source`; by default that of ``spectra``) is recorded in the
     manifest whether or not the spectra are stored. ``pending`` names the stages the run has
@@ -530,9 +553,31 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
             path.unlink()
         os.replace(archive, path)
         return
-    if path.exists():
-        shutil.rmtree(path)
-    os.replace(tmp, path)
+    if not path.exists():
+        os.replace(tmp, path)
+        return
+    if path.is_file():
+        path.unlink()
+        os.replace(tmp, path)
+        return
+    old = _old_manifest(path)
+    if old is None:  # checked by write_bundle; never remove what is not a bundle
+        raise BundleError(f"{path} is a directory but not a results bundle; not removing it")
+    owned = set(old.get("files", {})) | {MANIFEST, REPLACING}
+    new = [item.name for item in tmp.iterdir() if item.name != MANIFEST]
+    clash = sorted(n for n in new if n not in owned and (path / n).exists())
+    if clash:
+        raise BundleError(f"{path} holds file(s) of its own named like the bundle's "
+                          f"({', '.join(clash)}); move them and write again")
+    if (path / MANIFEST).exists():
+        os.replace(path / MANIFEST, path / REPLACING)
+    for name in owned - {MANIFEST, REPLACING}:
+        (path / name).unlink(missing_ok=True)
+    for name in new:
+        os.replace(tmp / name, path / name)
+    os.replace(tmp / MANIFEST, path / MANIFEST)
+    (path / REPLACING).unlink(missing_ok=True)
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 # --- the review layer -----------------------------------------------------------------------
@@ -916,6 +961,9 @@ def open_bundle(path: str | Path) -> Bundle:
     """Open a bundle (a directory or a ``.zip``). Raises :class:`BundleError` if it is not one,
     or was written by a newer schema."""
     path = Path(path)
+    if path.is_dir() and not (path / MANIFEST).exists() and (path / REPLACING).exists():
+        raise BundleError(f"{path}: writing it was interrupted (it holds {REPLACING}); write the "
+                          f"bundle again")
     try:
         if path.is_dir():
             store: Any = _DirStore(path)

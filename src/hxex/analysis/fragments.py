@@ -26,6 +26,7 @@ from dataclasses import dataclass, fields
 import numpy as np
 
 from .. import chem
+from ..kint import ExchangeConditions, conditions_dict
 from ..spectra import PeptideEntry
 
 log = logging.getLogger(__name__)
@@ -622,7 +623,10 @@ class LadderRates:
     the fragments (``larger`` minus ``smaller``; ``smaller`` empty for the shortest fragment
     alone), ``rate`` and ``rate_se`` (1/s), ``amplitude`` and ``offset`` (deuterons), the
     number of points ``n`` and whether the decay is ``resolved`` in the time range (an
-    unresolved rate means nothing)."""
+    unresolved rate means nothing). Only when computed with exchange conditions (otherwise
+    None, and not among the columns): ``kint``, the residue's intrinsic rate in the sample's
+    solvent (1/s; ``kforw + kback``, :mod:`hxex.kint`, from the parent's sequence; NaN for a
+    sample without conditions) and ``protection``, ``kint / rate``."""
 
     sample: np.ndarray
     parent: np.ndarray
@@ -641,6 +645,8 @@ class LadderRates:
     offset: np.ndarray
     n: np.ndarray
     resolved: np.ndarray
+    kint: np.ndarray | None = None
+    protection: np.ndarray | None = None
     min_time: float | None = None
 
     def __len__(self) -> int:
@@ -671,11 +677,17 @@ def ladder_rates(
     ion_types: Sequence[str] | None = None,
     charges: Sequence[int] = (1,),
     min_time: float | None = None,
+    conditions: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None,
 ) -> LadderRates:
     """Fit ``A exp(-k t) + C`` (:func:`fit_decay`, from ``min_time``) to every single-residue
     step (:func:`ladder_steps`) of the ``ion_types`` (default: every fragment ion type of the
     table) at the fragment ``charges``, in every sample, parent, precursor charge and
-    condition. The shortest fragment counts as a step when it holds one amide."""
+    condition. The shortest fragment counts as a step when it holds one amide. With the
+    exchange ``conditions`` (the solvent of the kinetics: one set for every sample, or sample ->
+    set), each step also gets its residue's intrinsic rate and protection factor (NaN for a
+    sample without conditions); without them there are no such columns."""
+    from ..kint import intrinsic_rates, sample_conditions
+
     ion_types = list(ion_types) if ion_types is not None else fragment_ion_types(uptake)
     cols: dict[str, list] = {f.name: [] for f in fields(LadderRates) if f.name != "min_time"}
     groups = sorted({(str(s), str(p), int(z)) for s, p, z in zip(
@@ -684,7 +696,10 @@ def ladder_rates(
         rows = uptake.where(sample=sample, parent=parent, parent_charge=pz)
         entry = uptake.parent_entry(int(np.flatnonzero(rows)[0]))
         residues = chem.parse_sequence(parent)
-        conditions = sorted(np.unique(uptake.condition[rows]).tolist())
+        solvent = sample_conditions(conditions, sample)
+        kint = (intrinsic_rates(parent, solvent, start=entry.start_seq)
+                if solvent is not None else None)
+        scan_conditions = sorted(np.unique(uptake.condition[rows]).tolist())
         for ion in ion_types:
             for z in charges:
                 series = rows & uptake.where(ion_type=ion, charge=z)
@@ -697,7 +712,9 @@ def ladder_rates(
                     if not step.single:
                         continue
                     (residue,) = step.residues
-                    for cond in conditions:
+                    k_int = (float(kint.rate[kint.at([residue])[0]]) if kint is not None
+                             else np.nan)
+                    for cond in scan_conditions:
                         tr = difference_trace(uptake, step.larger, step.smaller, sample=sample,
                                               parent=parent, parent_charge=pz, condition=cond,
                                               charge=z).after(1e-9)
@@ -713,11 +730,21 @@ def ladder_rates(
                                 ("larger", step.larger), ("smaller", step.smaller or ""),
                                 ("rate", f.rate), ("rate_se", f.rate_se),
                                 ("amplitude", f.amplitude), ("offset", f.offset), ("n", f.n),
-                                ("resolved", f.resolved)):
+                                ("resolved", f.resolved), ("kint", k_int),
+                                ("protection", k_int / f.rate if f.rate > 0 else np.nan)):
                             cols[name].append(value)
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
              "residue": np.int64, "rate": float, "rate_se": float, "amplitude": float,
-             "offset": float, "n": np.int64, "resolved": bool}
+             "offset": float, "n": np.int64, "resolved": bool, "kint": float,
+             "protection": float}
+    if conditions is None:
+        del cols["kint"], cols["protection"]
+    else:
+        missing = sorted(set(cols["sample"]) - {s for s in cols["sample"]
+                                                 if sample_conditions(conditions, s)})
+        if missing:
+            log.warning("no exchange conditions for sample(s) %s: no intrinsic rates",
+                        ", ".join(missing))
     return LadderRates(**{name: np.array(v, dtype=kinds.get(name, str))
                           for name, v in cols.items()}, min_time=min_time)
 
@@ -730,8 +757,11 @@ class FragmentAnalysis:
     exchange clock, the spectra's times; earlier points are drawn but not fitted; a file's
     unusable early scans are better left out with its ``usable_from``), condition ``labels`` for
     the figures (``{'gentle':
-    'G'}``), the closure ``tolerance`` (deuterons) and ``precursor_charge`` (the closure's
-    precursor; None: the unreacted precursor)."""
+    'G'}``), the closure ``tolerance`` (deuterons), ``precursor_charge`` (the closure's
+    precursor; None: the unreacted precursor); ``kint``: whether to compute intrinsic rates,
+    protection factors and theoretical curves (opt-in, False by default; needs ``exchange``)
+    and ``exchange``, the samples' exchange conditions (:class:`hxex.kint.ExchangeConditions`,
+    one set for every sample or sample -> set; used only with ``kint``)."""
 
     ion_types: tuple[str, ...] = ()
     charges: tuple[int, ...] = (1,)
@@ -739,8 +769,18 @@ class FragmentAnalysis:
     labels: Mapping[str, str] | None = None
     tolerance: float = 0.25
     precursor_charge: int | None = None
+    kint: bool = False
+    exchange: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None
 
     def __post_init__(self):
+        from ..kint import read_conditions
+
+        object.__setattr__(self, "exchange", read_conditions(self.exchange))
+        if not isinstance(self.kint, bool):
+            raise ValueError("kint must be true or false")
+        if self.kint and not self.exchange:
+            raise ValueError("kint needs the samples' exchange conditions (exchange: ph_read, "
+                             "temperature, d2o_fraction)")
         object.__setattr__(self, "ion_types", tuple(str(i) for i in self.ion_types))
         for ion in self.ion_types:
             if chem.ion_terminus(ion) == "M":
@@ -756,7 +796,8 @@ class FragmentAnalysis:
     def to_dict(self) -> dict:
         return {"ion_types": list(self.ion_types), "charges": list(self.charges),
                 "min_time": self.min_time, "labels": dict(self.labels or {}) or None,
-                "tolerance": self.tolerance, "precursor_charge": self.precursor_charge}
+                "tolerance": self.tolerance, "precursor_charge": self.precursor_charge,
+                "kint": self.kint, "exchange": conditions_dict(self.exchange)}
 
     @classmethod
     def from_dict(cls, data: Mapping) -> FragmentAnalysis:

@@ -18,6 +18,19 @@ Each control falls back to its theoretical value, and the series is flagged, on 
   accepted controls (``fd_fallback='median'``; flagged ``fd_median``), which includes the
   back-exchange the buffer's fraction does not.
 
+With ``fd_fallback='kint'`` (the default when the ``quench`` conditions are given, which it
+needs) the fully deuterated value comes from theoretical back-exchange instead (HISTORY items 71
+and 73): every amide of the peptide keeps ``a * exp(-k_i * t0)`` of a deuteron, ``k_i`` its
+intrinsic rate at the quench conditions (:mod:`hxex.kint`), with the labelling fraction ``a``
+and an effective time ``t0`` fitted to the run's measured fully deuterated controls (robustly,
+then again without the rejected ones). A measured control is rejected when it misses that
+prediction by more than ``kint_tolerance`` deuterons per amide (``fd_off_model``), in place of
+the ``retention_min`` floor (which still applies when set); a missing or rejected control falls
+back to ``m0 + prediction`` (flagged ``fd_kint``) with the fit's scatter per amide times
+``n_amides`` as its standard error. Series without rates (fragment ions, extra ``Hex`` sites)
+keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable controls nothing
+is fitted and every series keeps it (logged). The fitted model is :attr:`ControlTable.fd_model`.
+
 A measured control with a single replicate has no uncertainty (flagged ``m0_unreplicated`` or
 ``fd_unreplicated``); a theoretical value is exact. The corrected mean of a population is
 ``(mean - m0) / (mFD - m0) * n_amides``, not below 0 (:func:`correct_means`); the uncertainty of
@@ -26,6 +39,7 @@ the controls is added to the uncertainty of the mean.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any
@@ -34,8 +48,11 @@ import numpy as np
 from scipy.stats import norm
 
 from .fit.result import FitResult
+from .kint import ExchangeConditions
 
-FD_FALLBACKS = ("d2o", "median")
+log = logging.getLogger(__name__)
+
+FD_FALLBACKS = ("d2o", "median", "kint")
 
 
 @dataclass(frozen=True)
@@ -47,9 +64,17 @@ class ControlConfig:
     docs/HISTORY.md item 27). ``d2o_fraction`` is the deuterium fraction of the labelling buffer
     (often 0.8 to 0.9; the default is pyHXExpress's ``Dfrac``). ``retention_min`` None (the
     default) means half of it. ``fd_fallback`` is the retention used when a series' fully
-    deuterated control is missing or rejected: ``'d2o'`` (``d2o_fraction``) or ``'median'`` (the
-    median of the run's accepted controls; ``d2o_fraction`` if there are none). See
-    docs/HISTORY.md items 59 and 61.
+    deuterated control is missing or rejected: ``'d2o'`` (``d2o_fraction``), ``'median'`` (the
+    median of the run's accepted controls; ``d2o_fraction`` if there are none) or ``'kint'``
+    (theoretical back-exchange fitted to the run's controls; see the module docstring), which
+    needs ``quench``; None (the default) means ``'kint'`` when ``quench`` is given and ``'d2o'``
+    otherwise (:attr:`fd_mode`; owner, HISTORY item 73). ``quench`` holds the conditions of the
+    back-exchange (:class:`hxex.kint.ExchangeConditions`:
+    pH_read and temperature of the quench and LC, ``d2o_fraction`` of their solvent, about 0).
+    ``kint_tolerance`` (deuterons per amide) rejects a measured control that far from the
+    prediction, and ``kint_min_series`` is the fewest usable controls to fit. With ``'kint'``
+    and ``retention_min`` None there is no retention floor. See docs/HISTORY.md items 59, 61
+    and 73.
     """
 
     undeut_time: float | None = None
@@ -58,15 +83,27 @@ class ControlConfig:
     retention_min: float | None = None
     retention_max: float = 1.1
     d2o_fraction: float = 0.9
-    fd_fallback: str = "d2o"
+    fd_fallback: str | None = None
     atol: float = 1e-6
+    quench: ExchangeConditions | None = None
+    kint_tolerance: float = 0.15
+    kint_min_series: int = 10
 
     def __post_init__(self):
+        if isinstance(self.quench, Mapping):
+            object.__setattr__(self, "quench", ExchangeConditions.from_dict(self.quench))
+        if self.fd_mode == "kint" and self.quench is None:
+            raise ValueError("fd_fallback 'kint' needs the quench conditions (quench: ph_read, "
+                             "temperature, d2o_fraction)")
+        if not self.kint_tolerance > 0:
+            raise ValueError("kint_tolerance must be positive")
+        if self.kint_min_series < 3:
+            raise ValueError("kint_min_series must be at least 3")
         if self.m0_max < 0:
             raise ValueError("m0_max must be >= 0")
         if not 0 <= self.min_retention < self.retention_max:
             raise ValueError("need 0 <= retention_min < retention_max")
-        if self.fd_fallback not in FD_FALLBACKS:
+        if self.fd_fallback is not None and self.fd_fallback not in FD_FALLBACKS:
             raise ValueError(f"fd_fallback must be one of {', '.join(FD_FALLBACKS)}")
         if self.atol < 0:
             raise ValueError("atol must be >= 0")
@@ -74,12 +111,25 @@ class ControlConfig:
             raise ValueError("d2o_fraction must be in (0, 1]")
 
     @property
+    def fd_mode(self) -> str:
+        """The fallback in use: ``fd_fallback``, or when unset ``'kint'`` with quench conditions
+        and ``'d2o'`` without."""
+        if self.fd_fallback is not None:
+            return self.fd_fallback
+        return "kint" if self.quench is not None else "d2o"
+
+    @property
     def min_retention(self) -> float:
-        """The lower retention limit in use (``retention_min``, or half of ``d2o_fraction``)."""
-        return self.d2o_fraction / 2 if self.retention_min is None else self.retention_min
+        """The lower retention limit in use (``retention_min``; unset: half of ``d2o_fraction``,
+        or none with ``fd_fallback='kint'``, which judges controls by the prediction)."""
+        if self.retention_min is not None:
+            return self.retention_min
+        return 0.0 if self.fd_mode == "kint" else self.d2o_fraction / 2
 
     def to_dict(self) -> dict[str, Any]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        out = {f.name: getattr(self, f.name) for f in fields(self)}
+        out["quench"] = None if self.quench is None else self.quench.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlConfig:
@@ -98,7 +148,10 @@ class ControlTable:
     ``m0_measured`` and ``mfd_measured`` are the replicate means (NaN: no control), ``n_undeut``
     and ``n_fd`` the replicates that were used. ``retention`` is ``(mfd - m0) / n_amides`` of the
     values used. ``fallback`` is True where either control is theoretical, and ``flags`` lists
-    the reasons, separated by ``;`` (see the module docstring).
+    the reasons, separated by ``;`` (see the module docstring). ``fd_model`` is the fitted
+    theoretical back-exchange with ``fd_fallback='kint'`` (``a``, ``t0`` in s, ``n_series``
+    fitted, ``n_rejected``, ``sd_per_amide`` and the ``quench`` conditions; None otherwise or
+    when too few controls could be fitted).
     """
 
     config: ControlConfig
@@ -115,6 +168,7 @@ class ControlTable:
     retention: np.ndarray
     fallback: np.ndarray
     flags: np.ndarray
+    fd_model: Mapping[str, Any] | None = None
 
     def __len__(self) -> int:
         return len(self.data_id)
@@ -133,20 +187,92 @@ def _mean_se(values: np.ndarray) -> tuple[float, float, int]:
     return float(values.mean()), se, n
 
 
+def series_rates(
+    peptide,
+    modification,
+    data_id,
+    conditions: ExchangeConditions,
+    *,
+    nterm_subtract: int = 1,
+    rules=None,
+    registry=None,
+) -> dict[int, np.ndarray]:
+    """The intrinsic rates (1/s) at ``conditions`` of the amides each series counts
+    (``data_id`` -> array, in :func:`hxex.chem.amide_positions` order), from per-spectrum
+    ``peptide``, ``modification`` and ``data_id`` arrays (a picked set's). Only parent-type
+    ions (``M``) without extra ``Hex`` sites get rates; a counted N-terminal amine (with
+    ``nterm_subtract`` 0) has an infinite rate (it keeps nothing)."""
+    from . import chem
+    from .kint import intrinsic_rates
+
+    rules = chem.DEFAULT_AMIDE_RULES if rules is None else rules
+    registry = chem.DEFAULT_MODIFICATIONS if registry is None else registry
+    out: dict[int, np.ndarray] = {}
+    cache: dict[tuple[str, str], np.ndarray | None] = {}
+    for pep, mod, d in zip(np.asarray(peptide), np.asarray(modification), np.asarray(data_id),
+                           strict=True):
+        d = int(d)
+        if d in out:
+            continue
+        key = (str(pep), str(mod))
+        if key not in cache:
+            spec = chem.parse_modification(key[1])
+            if spec.ion_type != "M" or spec.hex:
+                cache[key] = None
+            else:
+                pos = np.array(chem.amide_positions(key[0], "M", None,
+                                                    nterm_subtract=nterm_subtract, rules=rules,
+                                                    registry=registry), dtype=np.int64)
+                k = intrinsic_rates(key[0], conditions, registry=registry).rate[pos - 1]
+                cache[key] = np.where(np.isfinite(k), k, np.inf)
+        if cache[key] is not None:
+            out[d] = cache[key]
+    return out
+
+
+def _kint_predict(a: float, t0: float, rates) -> np.ndarray:
+    return np.array([a * float(np.sum(np.exp(-k * t0))) for k in rates])
+
+
+def _fit_kint(measured: np.ndarray, rates: list, n: np.ndarray) -> tuple[float, float, float]:
+    """``a`` and ``t0`` of ``measured ~ a * sum exp(-k t0)`` (robust), and the scatter per
+    amide of the residuals."""
+    from scipy.optimize import least_squares
+
+    def resid(p):
+        return _kint_predict(p[0], float(np.exp(p[1])), rates) - measured
+
+    best = None
+    for t_start in (60.0, 600.0, 3600.0, 36000.0):
+        r = least_squares(resid, [0.9, np.log(t_start)], loss="soft_l1", f_scale=0.5,
+                          bounds=([0.0, np.log(1e-3)], [1.5, np.log(1e7)]))
+        if best is None or r.cost < best.cost:
+            best = r
+    a, t0 = float(best.x[0]), float(np.exp(best.x[1]))
+    sd = float(np.std((_kint_predict(a, t0, rates) - measured) / n, ddof=2)) if len(n) > 2 \
+        else float("nan")
+    return a, t0, sd
+
+
 def fit_controls(
     fit: FitResult,
     n_amides,
     config: ControlConfig,
     usable: np.ndarray | None = None,
+    rates: Mapping[int, np.ndarray] | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
     ``n_amides`` is the number of exchangeable amides of each measurement's peptide, ``(M,)``
     (constant within a series). ``usable`` (``(M,)`` bool) marks the spectra that may serve as
     controls; by default every spectrum that the noise estimate did not flag as an outlier.
+    ``rates`` (``data_id`` -> the intrinsic rates at the quench conditions of the amides the
+    series counts, :func:`series_rates`) is needed with ``fd_fallback='kint'``.
     """
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
+    if config.fd_mode == "kint" and rates is None:
+        raise ValueError("fd_fallback 'kint' needs the amides' intrinsic rates (series_rates)")
     m = len(fit)
     n_amides = np.asarray(n_amides, dtype=float)
     if n_amides.shape != (m,):
@@ -220,13 +346,16 @@ def fit_controls(
         }
         for name, value in values.items():
             cols[name].append(value)
-    if config.fd_fallback == "median" and accepted and pending:
+    if config.fd_mode == "median" and accepted and pending:
         r = float(np.median(accepted))
         for i in pending:
             n_am, m0 = cols["n_amides"][i], cols["m0"][i]
             cols["mfd"][i] = m0 + r * n_am
             cols["retention"][i] = r if n_am > 0 else float("nan")
             cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
+    fd_model = None
+    if config.fd_mode == "kint":
+        fd_model = _kint_fallback(cols, series, pending, rates, config)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -241,7 +370,61 @@ def fit_controls(
         retention=np.array(cols["retention"], dtype=np.float64),
         fallback=np.array(cols["fallback"], dtype=bool),
         flags=np.array(cols["flags"], dtype=str),
+        fd_model=fd_model,
     )
+
+
+def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,
+                   config: ControlConfig) -> dict | None:
+    """Fit theoretical back-exchange to the accepted controls with rates, reject the controls
+    far from it, refit, and fill in every series that falls back and has rates (in ``cols``)."""
+    def flag(i: int, name: str) -> None:
+        cols["flags"][i] = ";".join(f for f in (cols["flags"][i], name) if f)
+
+    pending_set = set(pending)
+    fitted = [i for i, s in enumerate(series)
+              if i not in pending_set and int(s) in rates and cols["n_amides"][i] > 0]
+    if len(fitted) < config.kint_min_series:
+        log.warning("theoretical back-exchange not fitted: %d usable fully deuterated controls "
+                    "(kint_min_series %d); missing ones fall back to d2o_fraction",
+                    len(fitted), config.kint_min_series)
+        return None
+
+    def measured(rows):
+        return np.array([cols["mfd"][i] - cols["m0"][i] for i in rows])
+
+    def amides(rows):
+        return np.array([cols["n_amides"][i] for i in rows])
+
+    a, t0, _ = _fit_kint(measured(fitted), [rates[int(series[i])] for i in fitted],
+                         amides(fitted))
+    off = (np.abs(_kint_predict(a, t0, [rates[int(series[i])] for i in fitted])
+                  - measured(fitted)) / amides(fitted) > config.kint_tolerance)
+    rejected = [i for i, o in zip(fitted, off, strict=True) if o]
+    kept = [i for i, o in zip(fitted, off, strict=True) if not o]
+    if len(kept) < config.kint_min_series:
+        log.warning("theoretical back-exchange not fitted: %d fully deuterated controls agree "
+                    "with it (kint_min_series %d)", len(kept), config.kint_min_series)
+        return None
+    a, t0, sd = _fit_kint(measured(kept), [rates[int(series[i])] for i in kept], amides(kept))
+    for i in rejected:
+        cols["fallback"][i] = True
+        cols["flags"][i] = ";".join(f for f in cols["flags"][i].split(";")
+                                    if f and f != "fd_unreplicated")
+        flag(i, "fd_off_model")
+    for i in sorted(set(pending) | set(rejected)):
+        k = rates.get(int(series[i]))
+        if k is None or cols["n_amides"][i] <= 0:
+            continue
+        n_am, m0 = cols["n_amides"][i], cols["m0"][i]
+        cols["mfd"][i] = m0 + float(_kint_predict(a, t0, [k])[0])
+        cols["mfd_se"][i] = sd * n_am if np.isfinite(sd) else 0.0
+        cols["retention"][i] = (cols["mfd"][i] - m0) / n_am
+        flag(i, "fd_kint")
+    log.info("theoretical back-exchange: a = %.3f, t0 = %.0f s from %d controls (%d rejected, "
+             "scatter %.3f D per amide)", a, t0, len(kept), len(rejected), sd)
+    return {"a": a, "t0": t0, "n_series": len(kept), "n_rejected": len(rejected),
+            "sd_per_amide": sd, "quench": config.quench.to_dict()}
 
 
 @dataclass(frozen=True)

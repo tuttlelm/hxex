@@ -313,6 +313,23 @@ def test_ladder_rates_recover_each_residue():
     for r, k, ok in zip(rates.residue, rates.rate, rates.resolved, strict=True):
         assert ok and k == pytest.approx(RATES[r], rel=1e-3)
     assert len(ladder_rates(u, ion_types=["z"], charges=(2,))) == 0
+    assert rates.kint is None and "kint" not in rates.columns()
+    # with the kinetics' solvent: the residue's intrinsic rate (from the parent) and kint / rate
+    from hxex.kint import ExchangeConditions, intrinsic_rates
+
+    cond = ExchangeConditions(7.0, 20.0, 0.05)
+    with_k = ladder_rates(u, min_time=10.0, conditions=cond)
+    parent = str(with_k.parent[0])
+    ref = intrinsic_rates(parent, cond, start=int(with_k.parent_start[0]))
+    assert np.allclose(with_k.kint, ref.rate[ref.at(with_k.residue)])
+    assert np.allclose(with_k.protection, with_k.kint / with_k.rate)
+    assert np.allclose(with_k.rate, rates.rate)
+    assert "protection" in with_k.columns()
+    # per sample: a sample without conditions gets NaN
+    other = ladder_rates(u, min_time=10.0, conditions={"other": cond})
+    assert np.all(np.isnan(other.kint))
+    assert np.allclose(ladder_rates(u, min_time=10.0, conditions={"S": cond}).kint,
+                       with_k.kint)
 
 
 def test_fragment_analysis_settings():
@@ -334,6 +351,26 @@ def test_fragment_analysis_settings():
                         '[analysis.fragments.labels]\ngentle = "G"\n')
     parsed = _analysis_from(toml["analysis"], Path("."))
     assert parsed.fragments.charges == (1, 2) and parsed.fragments.labels == {"gentle": "G"}
+    assert parsed.fragments.exchange is None
+    from hxex.kint import ExchangeConditions
+
+    toml = tomllib.loads('[analysis.fragments.exchange]\nph_read = 2.5\ntemperature = 0.0\n'
+                        'd2o_fraction = 0.05\n[analysis.fragments.exchange.factors]\n'
+                        'pS = [-0.9, -0.12, 0.69, 0.6]\n')
+    parsed = _analysis_from(toml["analysis"], Path("."))
+    assert parsed.fragments.exchange == ExchangeConditions(
+        2.5, 0.0, 0.05, factors={"pS": (-0.9, -0.12, 0.69, 0.6)})
+    assert not parsed.fragments.kint  # conditions alone compute nothing: kint is opt-in
+    assert AnalysisConfig.from_dict(parsed.to_dict()) == parsed
+    toml = tomllib.loads('[analysis.fragments]\nkint = true\n'
+                        '[analysis.fragments.exchange.S]\nph_read = 2.8\ntemperature = 20\n'
+                        'd2o_fraction = 0.05\ninitial_fraction = 0.9\n')
+    parsed = _analysis_from(toml["analysis"], Path("."))
+    assert parsed.fragments.kint and parsed.fragments.exchange == {
+        "S": ExchangeConditions(2.8, 20.0, 0.05, initial_fraction=0.9)}
+    assert AnalysisConfig.from_dict(parsed.to_dict()) == parsed
+    with pytest.raises(ValueError, match="kint needs"):
+        FragmentAnalysis(kint=True)
     for bad in ({"ion_types": ["M"]}, {"charges": [0]}, {"tolerance": 0}, {"bogus": 1}):
         with pytest.raises(ValueError):
             FragmentAnalysis.from_dict(bad)
@@ -373,3 +410,40 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     assert bottom.get_xticklabels()[1].get_text() == "S12"
     with pytest.raises(ValueError, match="no c and y"):
         closure_figure(u, "c", "y")
+
+
+def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis, ladder_rates
+    from hxex.kint import ExchangeConditions, intrinsic_rates
+    from hxex.report import ladder_kinetics_figure, residue_rates_figure, write_analysis
+
+    run = stub_run()
+    cond = ExchangeConditions(2.8, 20.0, 0.05, initial_fraction=0.9)
+    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(
+        min_time=10.0, kint=True, exchange={"S": cond}))
+    written = write_analysis(run, cfg, tmp_path)
+    header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
+    assert header.endswith("kint,protection")
+    assert len(written) == 7
+    # without the opt-in the same conditions change nothing
+    off = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
+                                                                  exchange={"S": cond}))
+    write_analysis(run, off, tmp_path / "off")
+    assert "kint" not in (tmp_path / "off" / "ladder_rates.csv").read_text().splitlines()[0]
+
+    u = fragment_uptake(run)
+    rates = ladder_rates(u, min_time=10.0, conditions=cond)
+    fig = residue_rates_figure(rates)
+    assert len(fig.axes) == 3 and fig.axes[2].get_ylabel() == "protection factor"
+    kint = intrinsic_rates(str(u.parent[0]), cond, start=int(u.parent_start[0]))
+    fig = ladder_kinetics_figure(u, "c", kint=kint)
+    dashed = [line for ax in fig.axes for line in ax.get_lines() if line.get_linestyle() == "--"
+              and line.get_label().startswith("intrinsic")]
+    labels = [line.get_label() for line in dashed]
+    assert "intrinsic, all amides" in labels and sum("k = " in x for x in labels) >= 5
+    # without a starting fraction there is no curve
+    bare = intrinsic_rates(str(u.parent[0]), ExchangeConditions(2.8, 20.0, 0.05),
+                           start=int(u.parent_start[0]))
+    fig = ladder_kinetics_figure(u, "c", kint=bare)
+    assert not [line for ax in fig.axes for line in ax.get_lines()
+                if line.get_label().startswith("intrinsic")]

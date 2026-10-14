@@ -245,6 +245,46 @@ def test_existing_paths_are_protected(tmp_path, run):
     assert (other / "keep.txt").exists()
 
 
+def test_overwriting_keeps_files_of_your_own(tmp_path, run):
+    _, _, meas, fit, boot = run
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit, bootstrap=boot)
+    assert (path / "bootstrap.parquet").exists()
+    (path / "summary.md").write_text("my notes")
+    (path / "extra").mkdir()
+    (path / "extra" / "figure.png").write_bytes(b"png")
+    write_bundle(path, measurements=meas, fit=fit, overwrite=True, notes="again")
+    assert (path / "summary.md").read_text() == "my notes"
+    assert (path / "extra" / "figure.png").exists()
+    # a table the new run does not write is gone, not left stale
+    assert not (path / "bootstrap.parquet").exists()
+    assert not list(tmp_path.glob("b.tmp-*"))
+    with open_bundle(path) as b:
+        assert b.manifest["notes"] == "again" and not b.has("bootstrap")
+        b.verify()
+    # a file of your own named like one of the new bundle's is refused, nothing changed
+    (path / "bootstrap.parquet").write_text("mine")
+    with pytest.raises(BundleError, match="of its own"):
+        write_bundle(path, measurements=meas, fit=fit, bootstrap=boot, overwrite=True)
+    assert (path / "bootstrap.parquet").read_text() == "mine"
+    with open_bundle(path) as b:
+        assert b.manifest["notes"] == "again"
+    assert not list(tmp_path.glob("b.tmp-*"))
+
+
+def test_an_interrupted_replacement_is_detected_and_rewritten(tmp_path, run):
+    _, _, meas, fit, _ = run
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit)
+    (path / "manifest.json").rename(path / "manifest.json.replacing")
+    (path / "fit.parquet").unlink()
+    with pytest.raises(BundleError, match="interrupted"):
+        open_bundle(path)
+    write_bundle(path, measurements=meas, fit=fit, overwrite=True, notes="fixed")
+    assert not (path / "manifest.json.replacing").exists()
+    with open_bundle(path) as b:
+        assert b.manifest["notes"] == "fixed"
+        b.verify()
+
+
 def test_a_failed_write_leaves_nothing(tmp_path, run, monkeypatch):
     _, _, meas, fit, boot = run
     with pytest.raises(BundleError, match="same spectra"):

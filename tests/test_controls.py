@@ -158,3 +158,115 @@ def test_config_round_trip_and_checks():
         ControlConfig.from_dict({"bogus": 1})
     with pytest.raises(ValueError):
         ControlConfig(retention_min=1.2)
+
+
+# --- theoretical back-exchange (fd_fallback 'kint') ----------------------------------------
+
+PEPTIDES = ["LGEHNIDVLEGNEQF", "MDIAIHHPW", "FDQFFGEHLLE", "SPFYLRPPSF", "RLEKDRFSVNL",
+            "LDVKHFSPEEL", "EELKVKVLGD", "VIEVHGKHEERQDEHG", "SSLSSDGVL", "TVNGPRKQVSGPERTIP",
+            "ITREEKPAVTAAPKK", "FISREFHRKYRIPADV", "AIHHPWIRRPFF", "GLSEMRLEKDRF", "DVKHFSPEE"]
+QUENCH = {"ph_read": 2.5, "temperature": 0.0, "d2o_fraction": 0.0}
+
+
+def kint_case(a=0.85, t0=2000.0, off=(), missing=(), extra=()):
+    """Series 0..14 with FD controls following a * sum exp(-k t0) (plus a little scatter);
+    ``off`` series hold half that, ``missing`` have no FD control; ``extra`` ids are series
+    without rates (a fragment ion), FD control at 0.3 per amide."""
+    from hxex.controls import _kint_predict, series_rates
+    from hxex.kint import ExchangeConditions
+
+    rates = series_rates(PEPTIDES, ["" for _ in PEPTIDES], range(len(PEPTIDES)),
+                         ExchangeConditions(**QUENCH))
+    rng = np.random.default_rng(1)
+    rows, n = [], []
+    for d in range(len(PEPTIDES)):
+        k = rates[d]
+        fd = float(_kint_predict(a, t0, [k])[0]) * (0.5 if d in off else 1.0)
+        rows += [(d, 0.0, 0.05), (d, 0.0, 0.05)]
+        if d not in missing:
+            rows += [(d, 1e6, 0.05 + fd + rng.normal(0, 0.05)), (d, 1e6, 0.05 + fd)]
+        n += [len(k)] * (2 if d in missing else 4)
+    for d in extra:
+        rows += [(d, 0.0, 0.0), (d, 0.0, 0.0), (d, 1e6, 3.0), (d, 1e6, 3.0)]
+        n += [10] * 4
+    return fake_fit(rows), np.array(n, float), rates
+
+
+def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls():
+    from hxex.controls import _kint_predict
+
+    fit, n, rates = kint_case(off=(3,), missing=(5,), extra=(99,))
+    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    c = fit_controls(fit, n, cfg, rates=rates)
+    m = c.fd_model
+    assert m["a"] == pytest.approx(0.85, rel=0.05) and m["t0"] == pytest.approx(2000, rel=0.2)
+    assert m["n_series"] == 13 and m["n_rejected"] == 1 and m["sd_per_amide"] < 0.03
+    flags = dict(zip(c.data_id.tolist(), c.flags.tolist(), strict=True))
+    assert flags[3] == "fd_off_model;fd_kint" and flags[5] == "fd_missing;fd_kint"
+    for d in (3, 5):
+        i = c.rows([d])[0]
+        want = 0.05 + float(_kint_predict(m["a"], m["t0"], [rates[d]])[0])
+        assert c.fallback[i] and c.mfd[i] == pytest.approx(want)
+        assert c.mfd_se[i] == pytest.approx(m["sd_per_amide"] * c.n_amides[i])
+    # good controls are measured, and a low retention alone is no reason to reject one
+    good = c.rows([0, 1, 2])
+    assert not c.fallback[good].any() and (c.retention[good] < 0.9).all()
+    assert cfg.min_retention == 0.0
+    # a series without rates (a fragment ion) keeps its measured control, or d2o_fraction
+    i = c.rows([99])[0]
+    assert c.mfd[i] == pytest.approx(3.0) and "fd_kint" not in c.flags[i]
+
+
+def test_kint_fallback_needs_conditions_rates_and_enough_controls():
+    fit, n, rates = kint_case(missing=tuple(range(8)))
+    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    c = fit_controls(fit, n, cfg, rates=rates)  # 7 controls < kint_min_series 10
+    assert c.fd_model is None and "fd_kint" not in ";".join(c.flags)
+    i = c.rows([0])[0]
+    assert c.mfd[i] == pytest.approx(c.m0[i] + 0.9 * c.n_amides[i])
+    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint",
+                                           quench=QUENCH, kint_min_series=5), rates=rates)
+    assert c.fd_model["n_series"] == 7
+    with pytest.raises(ValueError, match="intrinsic rates"):
+        fit_controls(fit, n, cfg)
+    with pytest.raises(ValueError, match="quench"):
+        ControlConfig(fd_fallback="kint")
+    for bad in ({"kint_tolerance": 0}, {"kint_min_series": 2}):
+        with pytest.raises(ValueError):
+            ControlConfig(fd_fallback="kint", quench=QUENCH, **bad)
+    assert ControlConfig.from_dict(cfg.to_dict()) == cfg
+    # the fitted model is kept in the bundle's control table
+    from hxex.io.bundle import _controls_table, _read_controls
+
+    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint",
+                                           quench=QUENCH, kint_min_series=5), rates=rates)
+    back = _read_controls(_controls_table(c), cfg.to_dict())
+    assert back.fd_model == c.fd_model
+    assert _read_controls(_controls_table(table([(0, 0, 0.0), (0, 1e6, 8.0)])),
+                          CFG.to_dict()).fd_model is None
+
+
+def test_series_rates_count_the_amides_of_parent_ions_only():
+    from hxex import chem
+    from hxex.controls import series_rates
+    from hxex.kint import ExchangeConditions
+
+    cond = ExchangeConditions(**QUENCH)
+    r = series_rates(["PEPTIDE", "PEPTIDE", "PEPTIDEK", "PEPTIDEK"],
+                     ["", "", "ion_type:c", "Hex:1"], [0, 0, 1, 2], cond)
+    assert set(r) == {0} and len(r[0]) == chem.count_amides("PEPTIDE")
+    free = series_rates(["AAAAA"], [""], [0], cond, nterm_subtract=0)[0]
+    assert np.isinf(free[0]) and np.isfinite(free[1:]).all()
+
+
+def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
+    assert ControlConfig().fd_mode == "d2o" and ControlConfig().fd_fallback is None
+    auto = ControlConfig(quench=QUENCH)
+    assert auto.fd_mode == "kint" and auto.min_retention == 0.0
+    assert ControlConfig.from_dict(auto.to_dict()) == auto  # stays automatic when stored
+    assert ControlConfig(quench=QUENCH, fd_fallback="d2o").fd_mode == "d2o"  # explicit wins
+    assert ControlConfig(quench=QUENCH, fd_fallback="median").fd_mode == "median"
+    fit, n, rates = kint_case()
+    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, quench=QUENCH),
+                     rates=rates)
+    assert c.fd_model is not None

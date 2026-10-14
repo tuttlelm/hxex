@@ -375,3 +375,22 @@ def test_a_finished_run_and_a_run_without_bootstrap_have_nothing_pending(tmp_pat
     with pytest.raises(Cancelled):  # stopped during the fit: nothing is written
         run(raw, config(), out=tmp_path / "c", cancel=lambda: len(stop) > 0 or stop.append(1))
     assert not (tmp_path / "c").exists()
+
+
+def test_controls_can_fall_back_to_theoretical_back_exchange(tmp_path):
+    from hxex.analysis.species import analysis_controls
+    from hxex.io import open_bundle
+    from hxex.report import Results
+
+    quench = {"ph_read": 2.5, "temperature": 0.0, "d2o_fraction": 0.0}
+    ctrl = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=quench,
+                         kint_min_series=3)
+    res = run(raw_spectra(), config(bootstrap=None, controls=ctrl), out=tmp_path / "b")
+    m = res.controls.fd_model
+    assert m is not None and m["n_series"] == 3 and 0 < m["a"] <= 1.5
+    with open_bundle(tmp_path / "b") as b:
+        assert b.controls().fd_model == m and b.controls().config == ctrl
+        results = Results.from_bundle(b)
+    # recomputed at analysis time from the bundle's picked spectra and settings
+    again = analysis_controls(results, {"kint_tolerance": 0.2}, quiet=True)
+    assert again.fd_model["n_series"] == 3 and again.config.kint_tolerance == 0.2

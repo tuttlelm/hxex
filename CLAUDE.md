@@ -60,7 +60,8 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
 - `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,
   `fit`, `report`, `noise`, `controls`, `bootstrap`, `run`, `cli`). Each docstring says what
   it will contain and in which phase. `fragments` makes fragment-ion entries and mzML
-  targets from a parent peptide. `config` reads the TOML project file that `cli` (`hxex init`,
+  targets from a parent peptide. `kint` gives intrinsic exchange rates in H2O/D2O mixtures
+  (ported from pacilab/hdx-rates-mixtures, MIT). `config` reads the TOML project file that `cli` (`hxex init`,
   `check`, `run`, `resume`, `report`, `info`) runs. Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
 - `tests/`, `docs/` (`PLAN.md`, `HISTORY.md`, `ANALYSIS.md` (post-fitting analysis design:

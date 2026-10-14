@@ -113,6 +113,8 @@ and what its readers and picker do) is in `docs/HISTORY.md`.
 - `model`: the mixture, loss and shapes.
 - `fit`: initialization, optimizer, nested K start, NaN protection.
 - `noise` and `controls`: sigma reference selection and the back-exchange correction.
+- `kint`: intrinsic amide exchange rates in H2O/D2O mixtures (forward and back), for
+  theoretical references and protection factors (HISTORY item 70).
 - `bootstrap`.
 - `run`: chunking by device and orchestration.
 - `report`: tables and plots.

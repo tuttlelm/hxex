@@ -7,7 +7,10 @@ step of one ion series, in residue order: on the left the two fragments of the s
 condition and their difference, on the right the difference with a fit of
 ``A exp(-k t) + C`` and its rate. A step whose difference holds several exchanging residues
 (``block``) is drawn without a fit; a residue that no step covers keeps an empty row that says
-why. Time is on a log axis in seconds.
+why. Time is on a log axis in seconds. With intrinsic rates (:mod:`hxex.kint`) and the
+fraction the amides started from, the right column also shows, dashed in black, the
+theoretical curve of the unprotected amides: the step's residue, or all the parent's amides in
+the precursor row.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from ..analysis.fragments import (
     fragment_trace,
     ladder_steps,
 )
+from ..kint import IntrinsicRates, expected_uptake, intrinsic_rates, sample_conditions
 
 # per condition: (shorter fragment, longer fragment) and the difference
 _PAIR_COLOURS = [("tab:green", "tab:red"), ("tab:purple", "tab:brown"),
@@ -62,6 +66,7 @@ def ladder_kinetics_figure(
     panel: tuple[float, float] = (3.6, 2.8),
     right_traces: Callable[[LadderStep | None], Sequence[tuple[str, Trace, bool]]] | None = None,
     right_defaults: bool = True,
+    kint: IntrinsicRates | None = None,
 ) -> Figure:
     """The ladder of ``ion_type`` (fragment ``charge``) of one parent: see the module docstring.
 
@@ -75,7 +80,11 @@ def ladder_kinetics_figure(
     :class:`~hxex.analysis.LadderStep` (None for the precursor row), it returns ``(label, trace,
     fit)`` tuples, each drawn in its own colour and, when ``fit``, with its decay fit. With
     ``right_defaults`` False the right column shows only those (not the precursor's fits and
-    the differences)."""
+    the differences).
+
+    ``kint``: the parent's intrinsic rates (:func:`hxex.kint.intrinsic_rates`) in the sample's
+    solvent; with its ``conditions.initial_fraction`` set, the theoretical curves are drawn
+    (amides without a rate, such as a free N-terminal amine, are left out of them)."""
     pick = uptake.where(sample=sample, parent=parent, parent_charge=parent_charge)
     for name in ("sample", "parent", "parent_charge"):
         values = np.unique(getattr(uptake, name)[pick])
@@ -126,6 +135,13 @@ def ladder_kinetics_figure(
             _fitted(right, tr, _DIFF_COLOURS[j % len(_DIFF_COLOURS)], f"M {names[cond]}",
                     min_time, fit)
     _extras(right, right_traces, None, min_time)
+    t_axis = table.time[table.time > 0]
+    if kint is not None and kint.conditions.initial_fraction is not None:
+        from ..fragments import fragment_amides
+
+        held = fragment_amides(entry, "M", nterm_subtract=table.nterm_subtract,
+                               rules=table.amide_rules)
+        _intrinsic(right, kint, held, t_axis, "intrinsic, all amides")
     _legend(left)
     _legend(right)
 
@@ -164,6 +180,11 @@ def ladder_kinetics_figure(
                         _fitted(right, tr, colour, f"D {names[cond]}", min_time,
                                 fit and step.single)
         _extras(right, right_traces, step, min_time)
+        if (step.single and kint is not None
+                and kint.conditions.initial_fraction is not None):
+            (residue,) = step.residues
+            k = float(kint.rate[kint.at([residue])[0]])
+            _intrinsic(right, kint, step.residues, t_axis, f"intrinsic, k = {k:.2e} s⁻¹")
         if not step.single:
             right.text(0.5, 0.5, f"{step.note or 'block'}: residues "
                        f"{', '.join(map(str, step.residues)) or 'none'}", ha="center",
@@ -186,6 +207,17 @@ def _extras(ax, right_traces, step, min_time) -> None:
         if len(trace):
             _fitted(ax, trace.after(1e-12), _EXTRA_COLOURS[n % len(_EXTRA_COLOURS)], label,
                     min_time, fit)
+
+
+def _intrinsic(ax, kint, residues, times, label) -> None:
+    """The theoretical curve of the unprotected amides of ``residues`` (dashed, black)."""
+    pos = kint.at(residues)
+    residues = [r for r, k in zip(residues, kint.rate[pos], strict=True) if np.isfinite(k)]
+    if not residues or not len(times):
+        return
+    t = np.geomspace(float(times.min()), float(times.max()), 200)
+    ax.plot(t, expected_uptake(kint, residues, t, kint.conditions.initial_fraction),
+            color="black", ls="--", lw=1.0, label=label)
 
 
 def _fitted(ax, trace, colour, label, min_time, fit) -> None:
@@ -307,12 +339,18 @@ def residue_rates_figure(
     conditions by colour; a fragment charge other than 1 is named in the legend. Unresolved
     fits (the decay not shown by the time range) are drawn as open markers along the bottom of
     the rate panel and have no amplitude; the rate axis spans the rates whose standard error is
-    below the rate (others may reach beyond it)."""
+    below the rate (others may reach beyond it). When the rates carry intrinsic rates
+    (``kint``, :func:`hxex.analysis.ladder_rates` with exchange conditions), each residue's is
+    drawn as a black bar on the rate panel and a third panel shows the protection factors
+    (``kint / rate``, log axis; unresolved fits left out)."""
     pick, sample, parent, pz = _one(rates, sample, parent, parent_charge)
     residues = chem.parse_sequence(parent)
     start = int(rates.parent_start[pick][0])
-    fig = Figure(figsize=(panel[0], 2 * panel[1]), layout="constrained")
-    top, bottom = fig.subplots(2, 1, sharex=True)
+    with_kint = rates.kint is not None and bool(np.isfinite(rates.kint[pick]).any())
+    n_panels = 3 if with_kint else 2
+    fig = Figure(figsize=(panel[0], n_panels * panel[1]), layout="constrained")
+    axes = fig.subplots(n_panels, 1, sharex=True)
+    top, bottom = axes[0], axes[1]
     series = sorted({(str(c), str(i), int(z)) for c, i, z in zip(
         rates.condition[pick], rates.ion_type[pick], rates.charge[pick], strict=True)},
         key=lambda s: (s[0], chem.ion_terminus(s[1]) != "N", s[1], s[2]))
@@ -330,20 +368,37 @@ def residue_rates_figure(
         top.scatter(x[~ok], np.zeros(int((~ok).sum())), marker=marker, facecolors="none",
                     edgecolors=colour, s=25, transform=top.get_xaxis_transform(), clip_on=False)
         bottom.scatter(x[ok], rates.amplitude[rows][ok], marker=marker, color=colour, s=25)
+        if with_kint:
+            axes[2].scatter(x[ok], rates.protection[rows][ok], marker=marker, color=colour, s=25)
+    if with_kint:
+        known = pick & np.isfinite(rates.kint)
+        ks = sorted({(int(r), float(k)) for r, k in zip(rates.residue[known], rates.kint[known],
+                                                         strict=True)})
+        top.hlines([k for _, k in ks], [r - 0.4 for r, _ in ks], [r + 0.4 for r, _ in ks],
+                   color="black", lw=1.5, label="intrinsic")
+        pf = axes[2]
+        pf.set_yscale("log")
+        pf.axhline(1.0, color="0.5", lw=0.8)
+        pf.set_ylabel("protection factor")
+        pf.grid(True, axis="y", alpha=0.4)
     top.set_yscale("log")
     # the axis follows the rates known to better than their own size
     good = pick & rates.resolved & (rates.rate_se < rates.rate)
     if good.any():
-        lo, hi = float(rates.rate[good].min()), float(rates.rate[good].max())
+        values = rates.rate[good]
+        if with_kint:
+            values = np.concatenate([values, rates.kint[pick][np.isfinite(rates.kint[pick])]])
+        lo, hi = float(values.min()), float(values.max())
         top.set_ylim(lo / 3, hi * 3)
     top.set_ylabel("rate (s⁻¹)")
     bottom.set_ylabel("amplitude (D)")
     bottom.axhline(0.0, color="0.5", lw=0.8)
     ticks = list(range(start, start + len(residues)))
-    bottom.set_xticks(ticks, [f"{residues[t - start]}{t}" for t in ticks],
+    last = axes[-1]
+    last.set_xticks(ticks, [f"{residues[t - start]}{t}" for t in ticks],
                       fontsize=7 if len(ticks) > 30 else 8,
                       rotation=90 if len(ticks) > 30 else 0)
-    bottom.set_xlim(start - 0.6, start + len(residues) - 0.4)
+    last.set_xlim(start - 0.6, start + len(residues) - 0.4)
     for ax in (top, bottom):
         ax.grid(True, axis="y", alpha=0.4)
     top.set_title(f"{sample} {parent} (Z{pz})  single-residue rates"
@@ -376,7 +431,8 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         return {}, []
     ions = list(config.ion_types) or fragment_ion_types(uptake)
     rates = ladder_rates(uptake, ion_types=ions, charges=config.charges,
-                         min_time=config.min_time)
+                         min_time=config.min_time,
+                         conditions=config.exchange if config.kint else None)
     pairs = [(a, b) for a in ions for b in ions
              if chem.ion_terminus(a) == "N" and chem.ion_terminus(b) == "C"
              and _PARTNERS[a[0]] == b[0]]
@@ -402,13 +458,16 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         start = int(uptake.parent_start[rows][0])
         stem = f"{sample}_{start}-{start + len(chem.parse_sequence(parent)) - 1}_z{pz}"
         sel = {"sample": sample, "parent": parent, "parent_charge": pz}
+        solvent = sample_conditions(config.exchange, sample) if config.kint else None
+        kint = (intrinsic_rates(parent, solvent, start=start) if solvent is not None
+                else None)
         for ion in ions:
             for z in config.charges:
                 if (rows & uptake.where(ion_type=ion, charge=z) & (uptake.time > 0)).any():
                     jobs.append((f"ladder_{stem}_{ion}_z{z}",
-                                 lambda ion=ion, z=z, sel=sel: ladder_kinetics_figure(
+                                 lambda ion=ion, z=z, sel=sel, kint=kint: ladder_kinetics_figure(
                                      uptake, ion, charge=z, labels=config.labels,
-                                     min_time=config.min_time, **sel)))
+                                     min_time=config.min_time, kint=kint, **sel)))
         for a, b in pairs:
             have = set(uptake.fragment[rows].tolist())
             n = len(chem.parse_sequence(parent))
