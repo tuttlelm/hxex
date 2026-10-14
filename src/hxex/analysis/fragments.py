@@ -7,6 +7,8 @@ so their difference, scan by scan, follows those amides. :func:`fragment_uptake`
 deuteration of every fragment-ion spectrum of a run read from mzML or Thermo files;
 :func:`ladder_steps` lists the steps of one ion series and the residues each measures;
 :func:`difference_trace` gives the difference of two fragments over time, matched scan by scan;
+:func:`closure_trace` and :func:`closure_table` test that complementary ions (c and z, a and x,
+b and y) add up to the precursor, a check of the fragments' fits;
 :func:`fit_decay` fits ``A exp(-k t) + C`` to a trace; :func:`fit_residues` fits per-residue
 deuteration (0 to 1) to all fragments of a parent at one time, by bounded least squares.
 
@@ -342,6 +344,156 @@ def difference_trace(uptake: FragmentUptake, larger: str, smaller: str | None,
         y.append(uptake.mean[i] - uptake.mean[j])
         se.append(np.hypot(uptake.mean_se[i], uptake.mean_se[j]))
     return _average(np.array(t, float), np.array(y, float), np.array(se, float))
+
+
+# --- closure: an N-terminal ion and its complement hold the whole precursor ---------------------
+
+_PARTNERS = {"a": "x", "b": "y", "c": "z"}
+
+
+def _check_partners(n_ion: str, c_ion: str) -> None:
+    if chem.ion_terminus(n_ion) != "N" or chem.ion_terminus(c_ion) != "C" or \
+            _PARTNERS[n_ion[0]] != c_ion[0]:
+        raise ValueError(f"{n_ion} and {c_ion} are not complementary ions (a and x, b and y, "
+                         "c and z)")
+
+
+def closure_trace(
+    uptake: FragmentUptake,
+    n_fragment: str,
+    c_fragment: str,
+    *,
+    precursor: str = "M",
+    n_charge: int = 1,
+    c_charge: int = 1,
+    precursor_charge: int | None = None,
+    **conditions,
+) -> Trace:
+    """``D(n_fragment) + D(c_fragment) - D(precursor)`` over time, matched scan by scan (the
+    closure test, HISTORY item 41). An N-terminal ion of ``k`` residues and the complementary
+    C-terminal ion of ``n - k`` (``'c-1:3'`` and ``'z-dot:5'`` of an 8-residue parent) share the
+    precursor's atoms, so their deuterium adds up to the precursor's whatever scrambling or
+    hydrogen transfer happened; a miss points at the fragments' fits (envelope, ion types,
+    interference). ``precursor`` is the ion type of the precursor (its label is ``'M:n'``) at
+    ``precursor_charge`` (default: the unreacted precursor, the parent's charge); the fragments
+    are taken at ``n_charge`` and ``c_charge``. ``conditions`` select the rows as in
+    :func:`fragment_trace` (give the condition when the table holds several). Points at time 0
+    (the undeuterated control) are left out."""
+    n_ion, _, k = n_fragment.rpartition(":")
+    c_ion, _, j = c_fragment.rpartition(":")
+    _check_partners(n_ion, c_ion)
+    rows = uptake.where(**conditions) & (uptake.time > 0)
+    parents = np.unique(uptake.parent[rows])
+    if len(parents) > 1:
+        raise ValueError(f"the rows hold {len(parents)} parents; choose one (parent=...)")
+    if not len(parents):
+        return Trace(np.empty(0), np.empty(0), np.empty(0))
+    n = len(chem.parse_sequence(str(parents[0])))
+    if int(k) + int(j) != n:
+        raise ValueError(f"{n_fragment} and {c_fragment} do not make up the {n}-residue parent")
+
+    def key(i):
+        return (str(uptake.sample[i]), str(uptake.condition[i]), int(uptake.parent_charge[i]),
+                int(uptake.rep[i]), round(float(uptake.time[i]), 6))
+
+    def index(label, charge):
+        sel = np.flatnonzero(rows & uptake.where(fragment=label, charge=charge))
+        return {key(i): i for i in sel}
+
+    c_rows = index(c_fragment, c_charge)
+    m_sel = np.flatnonzero(rows & uptake.where(fragment=f"{precursor}:{n}"))
+    m_charge = (np.full(len(m_sel), precursor_charge) if precursor_charge is not None
+                else uptake.parent_charge[m_sel])
+    m_rows = {key(i): i for i, z in zip(m_sel, m_charge, strict=True)
+              if int(uptake.charge[i]) == int(z)}
+    t, y, se = [], [], []
+    for kk, i in index(n_fragment, n_charge).items():
+        jc, jm = c_rows.get(kk), m_rows.get(kk)
+        if jc is None or jm is None:
+            continue
+        t.append(uptake.time[i])
+        y.append(uptake.mean[i] + uptake.mean[jc] - uptake.mean[jm])
+        se.append(np.sqrt(uptake.mean_se[i] ** 2 + uptake.mean_se[jc] ** 2
+                          + uptake.mean_se[jm] ** 2))
+    return _average(np.array(t, float), np.array(y, float), np.array(se, float))
+
+
+@dataclass(frozen=True)
+class ClosureTable:
+    """The closure test of every complementary pair (:func:`closure_table`), one row per
+    sample, condition, parent, precursor charge and split ``k`` (residues of the N-terminal
+    ion): the two fragments, the number of matched scans ``n``, the ``median`` miss (deuterons),
+    its ``spread`` (half the interquartile range), the ``mean`` and ``flagged`` (the median
+    beyond ``tolerance``)."""
+
+    sample: np.ndarray
+    condition: np.ndarray
+    parent: np.ndarray
+    parent_charge: np.ndarray
+    k: np.ndarray
+    n_fragment: np.ndarray
+    c_fragment: np.ndarray
+    n: np.ndarray
+    median: np.ndarray
+    spread: np.ndarray
+    mean: np.ndarray
+    flagged: np.ndarray
+    tolerance: float = 0.25
+
+    def __len__(self) -> int:
+        return len(self.k)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return {f.name: getattr(self, f.name) for f in fields(self)
+                if isinstance(getattr(self, f.name), np.ndarray)}
+
+
+def closure_table(
+    uptake: FragmentUptake,
+    n_ion: str = "c-1",
+    c_ion: str = "z-dot",
+    *,
+    precursor: str = "M",
+    n_charge: int = 1,
+    c_charge: int = 1,
+    precursor_charge: int | None = None,
+    min_time: float | None = None,
+    tolerance: float = 0.25,
+) -> ClosureTable:
+    """The closure test (:func:`closure_trace`) of every split ``k`` with both ions measured,
+    for each sample, condition, parent and precursor charge, from ``min_time`` (s; spurious
+    early points). A pair whose median miss is beyond ``tolerance`` deuterons is ``flagged``.
+    ``n_ion`` and ``c_ion`` are complementary (c and z for ETD and ECD, a and x for UVPD, b and
+    y for collisional activation)."""
+    _check_partners(n_ion, c_ion)
+    cols: dict[str, list] = {f.name: [] for f in fields(ClosureTable) if f.name != "tolerance"}
+    groups = sorted({(str(s), str(c), str(p), int(z)) for s, c, p, z in zip(
+        uptake.sample, uptake.condition, uptake.parent, uptake.parent_charge, strict=True)})
+    for sample, condition, parent, pz in groups:
+        n = len(chem.parse_sequence(parent))
+        sel = dict(sample=sample, condition=condition, parent=parent, parent_charge=pz)
+        have = set(uptake.fragment[uptake.where(**sel)].tolist())
+        for k in range(1, n):
+            a, b = f"{n_ion}:{k}", f"{c_ion}:{n - k}"
+            if a not in have or b not in have:
+                continue
+            tr = closure_trace(uptake, a, b, precursor=precursor, n_charge=n_charge,
+                               c_charge=c_charge, precursor_charge=precursor_charge,
+                               **sel).after(min_time)
+            if not len(tr):
+                continue
+            q1, med, q3 = np.percentile(tr.mean, [25, 50, 75])
+            for name, value in (("sample", sample), ("condition", condition),
+                                ("parent", parent), ("parent_charge", pz), ("k", k),
+                                ("n_fragment", a), ("c_fragment", b), ("n", len(tr)),
+                                ("median", med), ("spread", (q3 - q1) / 2),
+                                ("mean", float(np.mean(tr.mean))),
+                                ("flagged", bool(abs(med) > tolerance))):
+                cols[name].append(value)
+    kinds = {"parent_charge": np.int64, "k": np.int64, "n": np.int64, "median": float,
+             "spread": float, "mean": float, "flagged": bool}
+    return ClosureTable(**{name: np.array(v, dtype=kinds.get(name, str))
+                           for name, v in cols.items()}, tolerance=tolerance)
 
 
 @dataclass(frozen=True)

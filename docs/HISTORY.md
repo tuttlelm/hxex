@@ -1772,7 +1772,14 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     reference figure assigns c_(k-1) -> c_k to residue k; its rates equal these, one residue
     lower (c3 -> c4 6.2e-3 against I5 6.0e-3, and so on), so the difference is the residue
     assignment (item 65); the owner confirmed that the reference figure assigned the residues
-    wrongly and hxex's assignment is right.
+    wrongly and hxex's assignment is right. Later the same day: `closure_trace` and
+    `closure_table` make item 41's closure test a function (c and z, a and x, b and y, scan by
+    scan against the unreacted precursor by default, flagged beyond 0.25 D), and the ladder
+    figure takes `right_traces` (one's own traces in the right column, for the owner's private
+    analyses). On the probe all 12 c-1 + z-dot pairs close within -0.08 to +0.03 D (spread
+    0.02 to 0.05 D) in both channels; against the charge-reduced 1+ precursor -0.03 to -0.15 D.
+    The closure holds at any level of scrambling, so it checks the fragments' fits, not
+    scrambling; hxex has no scrambling test (it belongs to the owner's method, tabled).
 
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:

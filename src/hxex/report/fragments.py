@@ -12,7 +12,7 @@ why. Time is on a log axis in seconds.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 from matplotlib.figure import Figure
@@ -20,6 +20,8 @@ from matplotlib.figure import Figure
 from .. import chem
 from ..analysis.fragments import (
     FragmentUptake,
+    LadderStep,
+    Trace,
     difference_trace,
     fit_decay,
     fragment_trace,
@@ -30,6 +32,7 @@ from ..analysis.fragments import (
 _PAIR_COLOURS = [("tab:green", "tab:red"), ("tab:purple", "tab:brown"),
                  ("tab:pink", "tab:olive"), ("tab:gray", "tab:cyan")]
 _DIFF_COLOURS = ["tab:blue", "tab:orange", "tab:cyan", "tab:gray"]
+_EXTRA_COLOURS = ["#08306b", "#67000d", "#00441b", "#3f007d", "#7f2704"]
 _MARKER = {"marker": "v", "s": 9, "linewidths": 0}
 
 
@@ -57,6 +60,8 @@ def ladder_kinetics_figure(
     min_time: float | None = None,
     fit: bool = True,
     panel: tuple[float, float] = (3.6, 2.8),
+    right_traces: Callable[[LadderStep | None], Sequence[tuple[str, Trace, bool]]] | None = None,
+    right_defaults: bool = True,
 ) -> Figure:
     """The ladder of ``ion_type`` (fragment ``charge``) of one parent: see the module docstring.
 
@@ -64,7 +69,13 @@ def ladder_kinetics_figure(
     holds several (each must be unique otherwise). ``conditions`` (default: all, sorted) are
     drawn in that order, named by ``labels`` (for example ``{'gentle': 'G'}``). ``precursors``
     are the ion types of the top row at ``precursor_charge`` (default: ``charge``). Points before
-    ``min_time`` (s) are drawn but not fitted (spurious early points)."""
+    ``min_time`` (s) are drawn but not fitted (spurious early points).
+
+    ``right_traces`` adds traces of your own to the right column: called with each row's
+    :class:`~hxex.analysis.LadderStep` (None for the precursor row), it returns ``(label, trace,
+    fit)`` tuples, each drawn in its own colour and, when ``fit``, with its decay fit. With
+    ``right_defaults`` False the right column shows only those (not the precursor's fits and
+    the differences)."""
     pick = uptake.where(sample=sample, parent=parent, parent_charge=parent_charge)
     for name in ("sample", "parent", "parent_charge"):
         values = np.unique(getattr(uptake, name)[pick])
@@ -111,9 +122,10 @@ def ladder_kinetics_figure(
                 left.scatter(tr.time, tr.mean, color=colours[m % 2],
                              label=f"{ion} {names[cond]}", **_MARKER)
         tr = fragment_trace(table, f"M:{len(residues)}", condition=cond, charge=pre_z)
-        if len(tr):
+        if len(tr) and right_defaults:
             _fitted(right, tr, _DIFF_COLOURS[j % len(_DIFF_COLOURS)], f"M {names[cond]}",
                     min_time, fit)
+    _extras(right, right_traces, None, min_time)
     _legend(left)
     _legend(right)
 
@@ -148,8 +160,10 @@ def ladder_kinetics_figure(
                 if len(tr):
                     left.scatter(tr.time, tr.mean, color=colour,
                                  label=f"D {names[cond]}", **_MARKER)
-                    _fitted(right, tr, colour, f"D {names[cond]}", min_time,
-                            fit and step.single)
+                    if right_defaults:
+                        _fitted(right, tr, colour, f"D {names[cond]}", min_time,
+                                fit and step.single)
+        _extras(right, right_traces, step, min_time)
         if not step.single:
             right.text(0.5, 0.5, f"{step.note or 'block'}: residues "
                        f"{', '.join(map(str, step.residues)) or 'none'}", ha="center",
@@ -164,9 +178,20 @@ def ladder_kinetics_figure(
     return fig
 
 
+def _extras(ax, right_traces, step, min_time) -> None:
+    """The caller's own traces of a row (see ``right_traces``)."""
+    if right_traces is None:
+        return
+    for n, (label, trace, fit) in enumerate(right_traces(step) or ()):
+        if len(trace):
+            _fitted(ax, trace.after(1e-12), _EXTRA_COLOURS[n % len(_EXTRA_COLOURS)], label,
+                    min_time, fit)
+
+
 def _fitted(ax, trace, colour, label, min_time, fit) -> None:
-    """``trace`` as points, with its decay fit (from ``min_time``) when ``fit``."""
-    ax.scatter(trace.time, trace.mean, color=colour, **_MARKER)
+    """``trace`` as points, with its decay fit (from ``min_time``) when ``fit`` (else the
+    points carry the label)."""
+    ax.scatter(trace.time, trace.mean, color=colour, label=None if fit else label, **_MARKER)
     if not fit:
         return
     f = fit_decay(trace, min_time=min_time)

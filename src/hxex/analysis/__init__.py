@@ -8,7 +8,8 @@ combined; :func:`residue_map` turns the peptides into residue-level values, and
 :func:`choose_populations` decides per residue whether two populations are supported;
 :func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples;
 :func:`fragment_uptake`, :func:`ladder_steps`, :func:`difference_trace`, :func:`fit_decay` and
-:func:`fit_residues` give fragment-ion kinetics and simple ladder values (one amide per step);
+:func:`fit_residues` give fragment-ion kinetics and simple ladder values (one amide per step),
+and :func:`closure_table` checks that complementary fragments add up to the precursor;
 a :class:`RunSet` of several runs is analysed like one run whose samples are ``run:sample``
 (:func:`compare_settings`, :func:`check_identity` and :func:`compare_choices` check it).
 """
@@ -26,11 +27,14 @@ from .compare import (
     region_summary,
 )
 from .fragments import (
+    ClosureTable,
     DecayFit,
     FragmentUptake,
     LadderStep,
     ResidueFit,
     Trace,
+    closure_table,
+    closure_trace,
     difference_trace,
     fit_decay,
     fit_residues,
@@ -65,6 +69,9 @@ from .settings import AnalysisConfig
 from .species import SpeciesFilters, SpeciesUptake, analysis_controls, species_uptake
 
 __all__ = [
+    "ClosureTable",
+    "closure_table",
+    "closure_trace",
     "DecayFit",
     "FragmentUptake",
     "LadderStep",

@@ -174,7 +174,8 @@ How fragment data differs, and what this branch does about it:
   from differences, estimated as a least-squares fit of per-residue deuteration (between 0 and 1)
   to all fragments of a parent at once, with the closure as a check. Built (2026-10-14,
   `hxex.analysis.fragments`, HISTORY item 67): the K = 1 fragment table, ladder steps,
-  scan-matched differences, decay fits and the bounded least squares, with the ladder kinetics
+  scan-matched differences, decay fits, the bounded least squares and the closure test
+  (`closure_table`: c + z, a + x, b + y against the precursor), with the ladder kinetics
   figure (`hxex.report.ladder_kinetics_figure`). Owner (2026-10-14): these
   simple ladder values are wanted as a comparison for the owner's own method of deriving
   single-residue exchange rates and scrambling, which is unpublished and kept outside the

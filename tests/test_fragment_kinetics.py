@@ -10,6 +10,8 @@ import pytest
 from hxex import chem
 from hxex.analysis import (
     FragmentUptake,
+    closure_table,
+    closure_trace,
     difference_trace,
     fit_decay,
     fit_residues,
@@ -211,9 +213,57 @@ def test_ladder_figure_has_a_row_per_step():
     assert rate_labels[0].startswith("D G, rate: 4.00e-03")  # residue 16 (V), exact data
     assert all(ax.get_xscale() == "log" for ax in axes)
     assert len({ax.get_xlim() for ax in axes}) == 1
+    # traces of one's own in the right column, alone
+    seen = []
+
+    def extra(step):
+        seen.append(None if step is None else step.larger)
+        if step is None:
+            return [("ratio", fragment_trace(u, "c:5", condition="gentle"), False)]
+        if step.single and step.smaller is not None:
+            tr = difference_trace(u, step.larger, step.smaller, condition="gentle")
+            return [("mine", tr, True)]
+        return []
+
+    fig = ladder_kinetics_figure(u, "c", min_time=10.0, right_traces=extra,
+                                 right_defaults=False)
+    assert seen[0] is None and "c:5" in seen
+    right = fig.axes[1::2]
+    assert [t.get_text() for t in right[0].get_legend().get_texts()] == ["ratio"]
+    texts = [t.get_text() for t in right[4].get_legend().get_texts()]
+    assert texts == ["mine, rate: 4.00e-03±0.00e+00 s⁻¹"] or (
+        len(texts) == 1 and texts[0].startswith("mine, rate: 4.00e-03"))
     with pytest.raises(ValueError, match="choose one"):
         both = synthetic()
         both = both.select(np.ones(len(both), dtype=bool))
         both.sample[: len(both) // 2] = "T"
         ladder_kinetics_figure(both, "c")
     assert chem.ion_terminus("c") == "N"
+
+
+def test_closure_of_complementary_ions():
+    """c_k + z_(n-k) and a_k + x_(n-k) hold the precursor's amides between them: the synthetic
+    ladder closes exactly, and a fragment fitted 0.4 D too high is flagged."""
+    u = synthetic(conditions=("gentle", "harsh"))
+    tr = closure_trace(u, "c:4", "z:4", precursor_charge=1, condition="gentle")
+    assert len(tr) == len(TIMES) and np.allclose(tr.mean, 0.0, atol=1e-12)
+    assert np.allclose(tr.mean_se, np.sqrt(3) * 0.01)
+    # the default precursor is the unreacted one (charge 3), which this table does not have
+    assert len(closure_trace(u, "c:4", "z:4", condition="gentle")) == 0
+    off = u.select(np.ones(len(u), dtype=bool))
+    off.mean[(off.fragment == "z:3") & (off.condition == "harsh")] += 0.4
+    table = closure_table(off, "c", "z", precursor_charge=1, min_time=10.0)
+    pairs = {(c, k) for c, k in zip(table.condition, table.k, strict=True)}
+    assert pairs == {(c, k) for c in ("gentle", "harsh") for k in (1, 2, 4, 5, 6, 7)}
+    flagged = {(c, int(k)) for c, k, f in zip(table.condition, table.k, table.flagged,
+                                              strict=True) if f}
+    assert flagged == {("harsh", 5)}  # c5 + z3
+    assert np.all(table.n == np.sum(TIMES >= 10.0))
+    worst = table.median[table.flagged][0]
+    assert worst == pytest.approx(0.4) and table.spread[table.flagged][0] == pytest.approx(0.0)
+    ax = synthetic(labels=("M:8", "a:3", "x:5", "b:5", "y:3"))
+    assert np.allclose(closure_trace(ax, "a:3", "x:5", precursor_charge=1).mean, 0.0)
+    assert np.allclose(closure_trace(ax, "b:5", "y:3", precursor_charge=1).mean, 0.0)
+    for bad in [("c:4", "y:4"), ("z:4", "c:4"), ("c:3", "z:4")]:
+        with pytest.raises(ValueError):
+            closure_trace(u, *bad)
