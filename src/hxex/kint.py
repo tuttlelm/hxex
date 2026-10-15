@@ -284,12 +284,21 @@ def intrinsic_rates(
     *,
     start: int = 1,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    free_termini: tuple[bool, bool] = (True, True),
 ) -> IntrinsicRates:
     """The intrinsic forward and back exchange rates of every backbone amide of ``sequence`` (a
     modX sequence, terminal groups included: ``'Ac-PEPpSTIDE-NH2'``) in the solvent of
     ``conditions``; residues are numbered from ``start``. Use the sequence the exchange happened
-    in: for fragment ions, their parent's in solution."""
+    in: for fragment ions, their parent's in solution.
+
+    ``free_termini`` (N, C): False for an end that is not a terminus but continues into a longer
+    chain (a stretch of a protein labelled whole): on the N side the first residue has no rate
+    (the residue before it is unknown: prepend it to get one) and the second no N-terminal
+    factor; on the C side the last residue has no C-terminal factor. A terminal group written in
+    ``sequence`` (``Ac-``, ``-NH2``) is a terminus whatever ``free_termini`` says."""
     nterm, _, cterm = chem.split_termini(sequence)
+    free_n = bool(free_termini[0]) or nterm != "H-"
+    free_c = bool(free_termini[1]) or cterm != "-OH"
     labels = chem.parse_sequence(sequence, registry)
     n = len(labels)
     own = conditions.factors
@@ -331,9 +340,9 @@ def intrinsic_rates(
             else:
                 _, ar, _, br = tab[base(labels[i - 1])]
             a, b = al + ar, bl + br
-            if i == 1 and nterm == "H-":
+            if i == 1 and nterm == "H-" and free_n:
                 a, b = a + _NT[0], b + _NT[1]
-            if i == n - 1 and cterm == "-OH":
+            if i == n - 1 and cterm == "-OH" and free_c:
                 a, b = a + ct_a, b + ct_b
             log_a[i], log_b[i] = a, b
         return 10.0**log_a, 10.0**log_b

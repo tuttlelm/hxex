@@ -93,7 +93,8 @@ class Results:
     are optional too: ``spectra`` holds them in memory, or ``loader`` fetches some by id (for a
     bundle, which must still be open). ``bootstrap`` is at each measurement's selected K and
     ``bootstrap_by_k`` at fixed K values. ``review`` is the reviewer's layer; replace it with
-    :meth:`with_review` (a ``Results`` is never edited).
+    :meth:`with_review` (a ``Results`` is never edited). ``excluded_times`` are left out of the
+    post-fitting analysis (:meth:`without_times`; the fits are kept).
     """
 
     measurements: Measurements
@@ -109,6 +110,7 @@ class Results:
     loader: Callable[[Sequence[str]], SpectrumSet | None] | None = field(
         default=None, repr=False, compare=False
     )
+    excluded_times: tuple[float, ...] = ()
 
     @classmethod
     def from_bundle(cls, bundle: Bundle) -> Results:
@@ -135,6 +137,21 @@ class Results:
     def with_review(self, review: ReviewTable | None) -> Results:
         """The same results with another review layer (nothing else is copied or refitted)."""
         return replace(self, review=review)
+
+    def without_times(self, times: Sequence[float], atol: float = 1e-6) -> Results:
+        """The same results with the measurements at ``times`` (s) left out of the analysis
+        (:func:`hxex.analysis.species_uptake` and everything built on it, the fragment uptake);
+        nothing is refitted or removed."""
+        return replace(self, excluded_times=tuple(float(t) for t in times))
+
+    @property
+    def excluded(self) -> np.ndarray:
+        """Whether each measurement is at one of :attr:`excluded_times`."""
+        time = np.asarray(self.fit.time, dtype=float)
+        out = np.zeros(len(time), dtype=bool)
+        for t in self.excluded_times:
+            out |= np.isclose(time, t, rtol=1e-9, atol=1e-6)
+        return out
 
     def __len__(self) -> int:
         return len(self.fit)

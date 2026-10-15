@@ -150,6 +150,8 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     keep = np.ones(len(fit), dtype=bool)
     if results.review is not None:
         keep &= results.review.status_of(fit) != "rejected"
+    if getattr(results, "excluded_times", ()):  # left out of the analysis (exclude_times)
+        keep &= ~results.excluded
     flagged = (np.asarray(results.quality.flagged, dtype=bool) if results.quality is not None
                else np.zeros(len(fit), dtype=bool))
     if exclude_flagged:

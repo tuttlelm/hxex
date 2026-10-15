@@ -225,6 +225,66 @@ How fragment data differs, and what this branch does about it:
   charge of a parent (an ETD 3+ run beside an EThcD 2+ run); the ladder and closure figures
   stay per precursor charge.
 
+### MS1 protection factors (owner, 2026-10-15; peptide level built, HISTORY item 81)
+
+Opt-in, and only with the labelling conditions (owner). Owner's decisions: one protection
+factor per peptide; K = 2 ranks get apparent values; differences between samples; figures in
+the coverage map's layout at the peptide level and the residue plots' at the residue level;
+the residue-level fit wanted too (next). The protection factor compares the
+measured exchange with that of unprotected amides: an amide with intrinsic rate `kint`
+(`hxex.kint`, `kforw + kback` in the labelling solvent) exchanges at `kint / protection`
+(EX2). It is always named `protection` (columns) or "protection factor" (text, figures), never
+`P` or `p`: `p` is already the binomial parameter of the fits and the comparisons' p-value
+(owner). The fragment branch's `ladder_rates` uses the same name.
+
+- **What is fitted.** The back-exchange-corrected fraction `fD` of a peptide (0 to 1; the
+  plateau is 1 whatever the solvent's D fraction, since the correction scales to the fully
+  deuterated control) against `mean_i(1 - exp(-kint_i t / protection))` over the amides the
+  peptide's `n_amides` counts (the same `nterm_subtract`, prolines out). Uncorrected samples
+  have no plateau of known height: no protection factors, with a warning.
+- **Level: one protection factor per peptide (built).** Per-residue values from overlapping
+  peptides need a regularised fit (pyHDX's ΔG fit): wanted by the owner, designed and built
+  separately. Fitting single residues of the residue map is not proposed either: a
+  residue's `fD` there is an average over whole peptides, whose amides have different `kint`.
+- **Two estimates per peptide.** (1) The apparent protection factor at each time: the value
+  that gives the measured `fD` (monotonic, one root; works with one time point). (2) One
+  protection factor over all times by least squares on `fD` weighted by `fD_se`, with its
+  standard error. When the amides of one peptide are protected differently from each other
+  (exposed and buried amides in one peptide; not conformational states, which the K = 2 fits
+  describe), the exposed ones exchange first and the apparent value rises with time; one
+  factor then summarises the peptide poorly. Reported as `protection_drift` (log10 of the last
+  apparent value over the first) and `one_factor_fits` (whether one factor fits every time
+  within the errors).
+- **Bounds, not values, outside the window.** With `fD` above about 0.95 at the first time,
+  the protection factor is only known to be below a limit; with `fD` below about 0.05 at the
+  last time, above one. Reported as a bound (`bound = 'upper'` or `'lower'`), never as a value.
+- **Populations.** K = 1 (the average) and each K = 2 rank (the ranks the species filters
+  keep), in separate rows and panels. Two populations come from EX1 or mixed exchange, where a
+  protection factor has no EX2 meaning: a rank's value is an apparent one.
+- **Settings.** `[analysis] protection = true` and `[analysis.labelling]` (an
+  `ExchangeConditions`: `ph_read`, `temperature`, `d2o_fraction`, `reference`; one table for
+  every sample or one per sample, `[analysis.labelling.<sample>]`). Labelling conditions alone
+  change nothing; `protection` without them is refused. Not the `[run.controls] quench`
+  conditions, which are the quench and LC's.
+- **Outputs.** `protection.csv`: sample, peptide, range, `protection`, `protection_se`,
+  `log10_protection`, `n_times`, `bound`, `protection_drift`, `misfit`, `one_factor_fits`,
+  `n_approximate` (amides whose `kint` borrows a factor: modified residues);
+  `protection_by_time.csv`: the apparent protection factor per time. With a reference,
+  `compare_protection.csv` (`delta` in log10 units, `delta_se`, `z`, `significant` at
+  `alpha`, `note` where a bound leaves no value; peptides matched as `peptide_match` says).
+  Figures (owner: the coverage map's layout): `protection_<sample>` (a panel per K and rank,
+  bars coloured by `log10_protection`, the uptake map's colours reversed so protected is
+  dark, bounds hatched at their limit) and `protection_difference_<sample>` (diverging
+  colours, pale where not significant).
+- **Intrinsic rates in the protein.** Labelling happens in the whole protein, so a peptide's
+  ends are not termini (unless they are the protein's, or written `Ac-`, `-NH2`), and its first
+  amide's rate depends on the residue before it, taken from the FASTA or else from the other
+  peptides (`intrinsic_rates(..., free_termini=)`). Without a FASTA no peptide ends at a free
+  carboxyl.
+- **Unreliable times** are left out with `[analysis] exclude_times` (the whole analysis).
+- **Next:** the residue-level fit (its own design; also for a K = 2 rank, for bimodal
+  proteins; checked on synthetic data, no suitable real dataset at hand).
+
 ### Common output and plots
 
 Both branches produce residue-level tables of the same layout, so comparisons, region

@@ -380,7 +380,8 @@ def plot_butterfly(
     position, the reference's value upwards and the sample's downwards, one line per time (a
     sequential colour per time), with the differences below (filled where significant,
     ``+-delta_crit`` dashed); a ``*`` at the top over each peptide whose two values were corrected
-    differently at a time drawn (one with a fallback control). ``times`` default to all of the
+    differently at a time drawn (one with a fallback control; named in the legend). ``times``
+    default to all of the
     comparison but the undeuterated one. Lines have the gids ``butterfly:<time>:reference``,
     ``butterfly:<time>:sample`` and ``difference:<time>``."""
     rows = comparison.where(sample=sample)
@@ -428,7 +429,7 @@ def plot_butterfly(
                        edgecolors=colour, s=10, linewidths=0.7, zorder=3)
     drawn_rows = np.flatnonzero(rows & np.isin(comparison.time, times)
                                 & comparison.corrected_differently)
-    _corrected_differently(top, [position[key(i)] for i in drawn_rows])
+    n_diff = _corrected_differently(top, [position[key(i)] for i in drawn_rows], note=False)
     top.axhline(0, color="#000000", linewidth=0.8)
     top.set_ylim(-1.1, 1.1)
     top.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(v):g}"))
@@ -437,8 +438,12 @@ def plot_butterfly(
              fontsize=9)
     top.text(0.005, 0.02, sample, transform=top.transAxes, ha="left", va="bottom", fontsize=9)
     top.grid(color="#e5e5e5", linewidth=0.8)
-    top.legend(loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
-               ncol=len(times))
+    handles, _ = top.get_legend_handles_labels()
+    if n_diff:  # in the legend, not over the panel (owner)
+        handles.append(Line2D([], [], linestyle="none", marker="$*$", markersize=7,
+                              color="#4d4d4d", label="corrected differently"))
+    top.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False,
+               fontsize=7, ncol=len(handles))
     if np.isfinite(comparison.delta_crit):
         for y in (comparison.delta_crit, -comparison.delta_crit):
             bottom.axhline(y, color="#555555", linestyle="--", linewidth=0.9, zorder=1)

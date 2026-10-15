@@ -15,7 +15,10 @@ values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
 ``closure.csv`` and per parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
-``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. Characters a file name cannot
+``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. With ``protection`` (opt-in,
+:mod:`hxex.analysis.protection`): ``protection.csv``, ``protection_by_time.csv`` and the
+figures ``protection_<sample>``, and with a reference ``compare_protection.csv`` and
+``protection_difference_<sample>``. Characters a file name cannot
 hold (the ``:`` of ``run:sample``) become ``_``.
 """
 
@@ -54,6 +57,7 @@ from .compare import (
 )
 from .coverage import coverage_figure, plot_redundancy_resolution
 from .fragments import fragment_outputs
+from .protection import protection_difference_figure, protection_figure
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
 
@@ -96,6 +100,29 @@ def _fd_times(results) -> list[float]:
         if run is not None and run.controls is not None and run.controls.fd_time is not None:
             out.append(float(run.controls.fd_time))
     return out
+
+
+def _without_times(results, times):
+    """``results`` (a run or a RunSet) with ``times`` left out of the analysis
+    (:meth:`hxex.report.Results.without_times`); a control's time is refused."""
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    controls = set(_fd_times(results))
+    for r in runs.values():
+        run = r.settings.run if r.settings is not None else None
+        if run is not None and run.undeut_time is not None:
+            controls.add(float(run.undeut_time))
+    clash = [t for t in times if any(np.isclose(t, c) for c in controls)]
+    if clash:
+        raise ValueError(f"exclude_times {', '.join(f'{t:g}' for t in clash)}: a control's time "
+                         "(the controls are set by the run)")
+    out = {name: r.without_times(times) for name, r in runs.items()}
+    n = sum(int(r.excluded.sum()) for r in out.values())
+    if n:
+        log.info("exclude_times: %d measurement(s) at %s s left out of the analysis", n,
+                 ", ".join(f"{t:g}" for t in times))
+    else:
+        log.warning("exclude_times: no measurement at %s s", ", ".join(f"{t:g}" for t in times))
+    return RunSet(out, merge=results.merge) if isinstance(results, RunSet) else out[""]
 
 
 def _fragment_keys(results) -> tuple[set[tuple], bool]:
@@ -186,6 +213,18 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up):
                 delta_crit=comparisons["K=2 rank 1 (low D) population"].delta_crit)
             tables["compare_populations"] = _columns(pop_cmp)
             tables["compare_choices"] = compare_choices(choice, ref).columns()
+    protection = prot_cmp = None
+    if config.protection:
+        from ..analysis.protection import compare_protection, peptide_protection
+
+        protection, by_time = peptide_protection(up, config.labelling, sequences=sequences,
+                                                 exclude_times=fd_times, alpha=config.alpha)
+        tables["protection"] = protection.columns()
+        tables["protection_by_time"] = by_time.columns()
+        if config.reference:
+            prot_cmp = compare_protection(protection, config.reference, alpha=config.alpha,
+                                          match=config.peptide_match)
+            tables["compare_protection"] = prot_cmp.columns()
     regions = None
     if ann.regions:
         regions = region_summary(residues, ann)
@@ -239,6 +278,16 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up):
                 jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
                     k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
                     undeut_time=undeut)))
+    if protection is not None:
+        for s in samples:
+            if protection.where(sample=s).any():
+                jobs.append((f"protection_{s}", lambda s=s: protection_figure(
+                    protection, s, length=length)))
+    if prot_cmp is not None:
+        for s in samples:
+            if prot_cmp.where(sample=s).any():
+                jobs.append((f"protection_difference_{s}", lambda s=s:
+                             protection_difference_figure(prot_cmp, s, length=length)))
     if regions is not None:
         for t in times:
             if (regions.time == t).any():
@@ -263,6 +312,8 @@ def write_analysis(
     ``base``. ``progress(done, total)`` counts the files."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if config.exclude_times:
+        results = _without_times(results, config.exclude_times)
     frag_tables, frag_jobs = {}, []
     # fragment series (and precursor ions read with them) are not peptides
     if isinstance(results, RunSet):

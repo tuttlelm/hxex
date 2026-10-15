@@ -584,6 +584,33 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
         write_analysis(Results.from_bundle(b), AnalysisConfig(reference="X"), tmp_path / "b")
 
 
+
+def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
+    """exclude_times: the measurements at those times leave every table; controls refused."""
+    import csv
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import write_analysis
+
+    with open_bundle(two_sample_bundle) as b:
+        res = Results.from_bundle(b)
+        run_cfg = res.settings.run
+        controls = (run_cfg.undeut_time, run_cfg.controls.fd_time)
+        times = sorted(set(species_uptake(res, ks=(1,)).time.tolist()) - set(controls))
+        late = times[-1]
+        dropped = res.without_times([late])
+        assert dropped.excluded.sum() == np.isclose(res.fit.time, late).sum() > 0
+        assert late not in species_uptake(dropped, ks=(1,)).time.tolist()
+        cfg = AnalysisConfig(reference="S", ks=(1,), overlay=("avg",), exclude_times=[late])
+        write_analysis(res, cfg, tmp_path / "a")
+        with open(tmp_path / "a" / "compare_peptides.csv") as f:
+            assert all(float(r["time"]) != late for r in csv.DictReader(f))
+        for control in controls:
+            with pytest.raises(ValueError, match="a control's time"):
+                write_analysis(res, AnalysisConfig(exclude_times=[control]), tmp_path / "b")
+    assert AnalysisConfig.from_dict(cfg.to_dict()).exclude_times == (late,)
+
 def test_analyse_command(two_sample_bundle, tmp_path, capsys):
     from hxex import cli
 
@@ -878,6 +905,12 @@ def test_values_corrected_differently_are_marked(results):
         control_fallback=np.array([True, False]))
     ax = plot_peptide_differences(woods, "V", 4.0).axes[0]
     assert {t.get_gid() for t in ax.texts if t.get_gid()} == {"corrected_differently:5.5"}
+    # the butterfly plot names it in the legend, not over the panel
+    from hxex.report import plot_butterfly
+
+    top = plot_butterfly(woods, "V").axes[0]
+    assert "corrected differently" in [t.get_text() for t in top.get_legend().texts]
+    assert not any("corrected differently" in t.get_text() for t in top.texts)
 
 
 def test_modified_peptides_are_separate_states_or_combined():

@@ -52,6 +52,13 @@ from .populations import (
     choose_populations,
     lever_population,
 )
+from .protection import (
+    ProtectionByTime,
+    ProtectionComparison,
+    ProtectionTable,
+    compare_protection,
+    peptide_protection,
+)
 from .residues import (
     CoverageTable,
     ResidueMap,
@@ -92,6 +99,11 @@ __all__ = [
     "fragment_uptake",
     "ladder_steps",
     "AnalysisConfig",
+    "ProtectionByTime",
+    "ProtectionComparison",
+    "ProtectionTable",
+    "compare_protection",
+    "peptide_protection",
     "Annotations",
     "analysis_controls",
     "ChoiceComparison",

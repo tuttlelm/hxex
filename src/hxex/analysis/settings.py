@@ -28,7 +28,9 @@ class AnalysisConfig:
 
     ``reference``: the sample the others are compared with (empty: no comparisons);
     ``samples``: the samples, in this order (empty: all, the reference first); ``times``: the
-    time points of the per-time figures (empty: all but the fully deuterated control); ``ks``:
+    time points of the per-time figures (empty: all but the fully deuterated control);
+    ``exclude_times``: time points left out of the whole analysis (unreliable ones; the fits in
+    the bundle are kept; not a control's time); ``ks``:
     the fixed K values analysed; ``fasta``: one sequence file for every sample, or one per sample
     (sample -> path; empty: the sequence comes from the peptides); ``coverage_times``:
     ``'undeuterated'``, ``'all'`` or a list of times; ``redundancy``: ``'peptides'`` or
@@ -54,11 +56,15 @@ class AnalysisConfig:
     their conditions ``run:condition``); ``fragments``: the fragment outputs of a run with fragment
     series (:class:`hxex.analysis.FragmentAnalysis`; ladder figures and rates, closure,
     per-residue rates; written whenever the run has fragments, None turns them off; fragment
-    series are left out of the peptide analysis)."""
+    series are left out of the peptide analysis); ``protection``: the peptides' protection
+    factors (:mod:`hxex.analysis.protection`; opt-in, False by default; needs ``labelling``)
+    and ``labelling``, the labelling conditions (:class:`hxex.kint.ExchangeConditions`, one set
+    for every sample or sample -> set; used only with ``protection``)."""
 
     reference: str = ""
     samples: tuple[str, ...] = ()
     times: tuple[float, ...] = ()
+    exclude_times: tuple[float, ...] = ()
     ks: tuple[int, ...] = (1, 2)
     fasta: str | Mapping[str, str] | None = None
     coverage_times: str | tuple[float, ...] = UNDEUTERATED
@@ -79,8 +85,18 @@ class AnalysisConfig:
     controls: Mapping[str, Any] | None = None
     merge: Mapping[str, str] | None = None
     fragments: FragmentAnalysis | None = FragmentAnalysis()  # noqa: RUF009
+    protection: bool = False
+    labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
 
     def __post_init__(self):
+        from ..kint import read_conditions
+
+        object.__setattr__(self, "labelling", read_conditions(self.labelling))
+        if not isinstance(self.protection, bool):
+            raise ValueError("protection must be true or false")
+        if self.protection and not self.labelling:
+            raise ValueError("protection needs the labelling conditions (labelling: ph_read, "
+                             "temperature, d2o_fraction)")
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
         if not self.overlay or any(v not in OVERLAY_VALUES for v in self.overlay):
             raise ValueError(f"overlay must be some of {', '.join(OVERLAY_VALUES)}")
@@ -95,6 +111,7 @@ class AnalysisConfig:
                                      f"{SEPARATOR!r}")
         object.__setattr__(self, "samples", tuple(str(s) for s in self.samples))
         object.__setattr__(self, "times", tuple(float(t) for t in self.times))
+        object.__setattr__(self, "exclude_times", tuple(float(t) for t in self.exclude_times))
         object.__setattr__(self, "ks", tuple(int(k) for k in self.ks))
         if not self.ks or 1 not in self.ks:
             raise ValueError("ks must include 1 (the average, and the choice needs it)")
@@ -155,6 +172,10 @@ class AnalysisConfig:
                                             for g in fields(value)}
             elif f.name == "annotations":
                 value = value.to_dict()
+            elif f.name == "labelling":
+                from ..kint import conditions_dict
+
+                value = conditions_dict(value)
             elif isinstance(value, tuple):
                 value = list(value)
             elif isinstance(value, Mapping):

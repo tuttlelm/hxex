@@ -434,11 +434,12 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     return Project(name, inp, run, output, path, threads, analysis)
 
 
-ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
-                 "weight_exponent", "filters", "choice", "alpha", "regions", "sites",
+ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta",
+                 "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
+                 "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
                  "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge",
-                 "fragments")
+                 "fragments", "protection", "labelling")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -728,6 +729,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# samples = ["WT", "variant"]     # which samples, in this order (default: all)',
         "# times = [4.0, 60.0]             # time points of the per-time figures (default: all",
         "#                                 # but the fully deuterated control)",
+        "# exclude_times = [0.1, 0.8]      # times left out of the whole analysis (unreliable;",
+        "#                                 # the fits are kept)",
         '# fasta = "protein.fasta"         # or one per sample: [analysis.fasta] WT = "wt.fasta"',
         '# coverage_times = "undeuterated" # or "all", or a list of times',
         '# redundancy = "peptides"         # or "spectra"',
@@ -778,6 +781,13 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# d2o_fraction = 0.05             # D atom fraction of the solvent (0 to 1)",
         '# reference = "PDLA"              # or "3Ala"',
         "# initial_fraction = 0.9          # D fraction when the exchange began (curves)",
+        "# protection = true               # in [analysis]: opt in to the peptides' protection",
+        "#                                 # factors (hxex.analysis.protection); needs labelling",
+        "# [analysis.labelling]            # the labelling solvent, for every sample (or one",
+        "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT])",
+        "# temperature = 20.0              # degrees Celsius",
+        "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer",
+        '# reference = "PDLA"              # or "3Ala"',
         "",
         "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
         "# section turns that stage on; uncomment one to use it.",

@@ -272,6 +272,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
     keep = np.ones(len(fit), dtype=bool)
     keep &= results.review_status != "rejected"
+    if getattr(results, "excluded_times", ()):  # left out of the analysis (exclude_times)
+        keep &= ~results.excluded
     if exclude_flagged and results.quality is not None:
         keep &= ~np.asarray(results.quality.flagged, dtype=bool)
     controls = analysis_controls(results, controls_changes, quiet=quiet)

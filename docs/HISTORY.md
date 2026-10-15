@@ -2151,3 +2151,39 @@ CSVs or mzML if wanted.
     `merge` and labels) is refused for lacking `[input]`; the comparison used the Python API.
     Closure figures (owner): the splits had shades of one colour map and one marker and could
     not be told apart; each now has a colour of its own and a marker (10 colours, 7 markers).
+
+81. **MS1 protection factors, peptide level (owner, 2026-10-15).** Design and decisions in
+    docs/ANALYSIS.md ("MS1 protection factors"). Built: `hxex.analysis.protection`
+    (`peptide_protection`, `compare_protection`, `peptide_rates`), `[analysis] protection =
+    true` with `[analysis.labelling]`, the tables `protection.csv`, `protection_by_time.csv`,
+    `compare_protection.csv` and the figures `protection_<sample>` and
+    `protection_difference_<sample>`; `intrinsic_rates(free_termini=)` for stretches of a
+    protein. Naming (owner): always `protection`, never `P` or `p` (the binomial parameter and
+    the comparisons' p-value); not "heterogeneous" (it suggests conformational states), but
+    `protection_drift` and `one_factor_fits`. Checked on synthetic uptake from known factors
+    (recovered to 1e-4 in log10; unequal amides drift; bounds at the thresholds).
+    On the published B5 disease data (WT, D109H, R120G; K = 1, measured FD controls) with
+    ASSUMED labelling conditions (pH_read 7.0, 25 degrees, 0.9 D2O; the real ones were not
+    at hand), 63 peptides per sample: the C-terminal tail is least protected and the ACD most,
+    as expected, but no peptide fits one factor (median reduced chi-square 935) and the
+    apparent factor rises with time by a median of 4.8 log10 units over 0.1 s to 20 h (WT
+    medians 0.8, 1.5, 2.1, 3.1, 4.4, 5.8 at 0.1 s, 0.8 s, 4 s, 1 min, 30 min, 20 h). Either
+    the amides of each peptide span a wide range of protection, or the millisecond points were
+    labelled under other conditions. Owner: the millisecond points are unreliable (the
+    experimental setup); without them the rise remains (WT medians 2.1 to 5.8 from 4 s to
+    20 h, drift median 3.5, still no peptide fits one factor). Owner: B5 is a polydisperse
+    oligomer with clear bimodality in many regions, and later times are more sensitive to
+    subunit dissociation, so a protection factor that changes with time is expected there: the
+    K = 1 average mixes populations and slow events that no single EX2 factor describes. On
+    such data `protection_drift` and `one_factor_fits` report the behaviour, not a fault;
+    a K = 2 rank's apparent factor (a K = 2 bundle) is the closer look, and a residue-level
+    EX2 fit of K = 1 averages would meet the same limits, and should also take a K = 2 rank
+    (the per-population states pyHXExpress gave pyHDX). No example dataset suited to checking
+    a residue-level fit is at hand (owner): synthetic data first.
+    `[analysis] exclude_times` (owner): times left out of the whole analysis (species table
+    and so every comparison, residues, protection factors, fragment uptake), as rejected
+    spectra are (`Results.without_times`; the bundle's fits are kept); a control's time is
+    refused. The example leaves out 0.1 and 0.8 s.
+    Example: hxex_private/analysis_examples/protection_factors/b5_disease.
+    Butterfly plot (owner): the "corrected differently" note sat over the middle of the figure;
+    it is now an entry of the time legend, as in the residue overlay.
