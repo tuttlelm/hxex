@@ -9,6 +9,7 @@ chosen for every time point independently.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -172,6 +173,10 @@ def plot_series_spectra(
     and fit layers. Spectra whose layers cannot be drawn are left blank."""
     info = series_info(results, data_id)
     fig, cells = _grid(info, cell, columns, residual)
+    if "raw" in show and results.spectra is None and results.loader is not None:
+        # the series' raw spectra in one read, not one read per panel
+        ids = [str(results.fit.spectrum_id[i]) for i in cells]
+        results = dataclasses.replace(results, spectra=results.loader(ids))
     for i, (ax, rax) in cells.items():
         sid = str(results.fit.spectrum_id[i])
         try:

@@ -266,6 +266,7 @@ def plot_spectrum(
         raise ValueError("the m/z axis for picked peaks and the fit needs the picked table")
     if residual and (fit is None or picked is None):
         raise ValueError("residuals need both the picked and the fit layers")
+    own = ax is None  # a figure of its own is laid out here; a caller's is the caller's to lay out
     if ax is None:
         fig = Figure(figsize=(5.5, 4.5 if residual else 3.5))
         if residual:
@@ -338,10 +339,11 @@ def plot_spectrum(
     if legend:
         ax.legend(fontsize=7, frameon=False)
     (rax or ax).set_xlabel("m/z" if xaxis == "mz" else "deuterium level (bin)")
-    try:
-        fig.tight_layout()
-    except Exception:  # noqa: BLE001 - layout is cosmetic
-        pass
+    if own:
+        try:
+            fig.tight_layout()
+        except Exception:  # noqa: BLE001 - layout is cosmetic
+            pass
     return fig
 
 

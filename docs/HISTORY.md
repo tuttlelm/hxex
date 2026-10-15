@@ -1951,6 +1951,15 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     control is about 15 times more precise (median standard error 0.0026 D per amide), so
     the model replaces controls where they are missing or bad, not where they are good.
 
+74. **Series spectra figures three times faster (2026-10-15).** Drawing every series' spectra
+    (150 series, about 14 spectra each, PDF) took about 9 minutes. Profiled: 60 % was
+    `tight_layout`, which `plot_spectrum` ran on the whole page after every panel (each call
+    measures every panel already drawn, so the cost grew with the square of the panels), and
+    15 % was reading the raw spectra from the bundle once per panel. Now `plot_spectrum` lays
+    out only a figure of its own (the series page and the K comparison lay out theirs once),
+    and `plot_series_spectra` reads a series' raw spectra in one read. Pages are pixel-identical;
+    the 150 series and the merged PDF took 178 s. The rest is mostly writing the PDF.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

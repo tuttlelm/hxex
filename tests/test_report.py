@@ -822,3 +822,21 @@ def test_residual_panels_in_the_grid_and_the_plot_config(results, tmp_path):
                                                    residual=True))["spectra"]
     assert len(no_fit.axes) == 8
     assert write_figures(results, tmp_path / "r", cfg)[0].stat().st_size > 5000
+
+
+def test_a_series_page_reads_its_raw_spectra_once(results):
+    import dataclasses
+
+    calls = []
+
+    def loader(ids):
+        calls.append(list(ids))
+        return results.spectra
+
+    lazy = dataclasses.replace(results, spectra=None, loader=loader)
+    fig = plot_series_spectra(lazy, 0, show=("raw", "picked", "fit"))
+    n_spectra = int((results.fit.data_id == 0).sum())
+    assert len(calls) == 1 and len(calls[0]) == n_spectra  # one read for the whole page
+    assert "raw" in gids(fig)
+    plot_series_spectra(lazy, 0, show=("picked", "fit"))  # no raw layer: nothing read
+    assert len(calls) == 1
