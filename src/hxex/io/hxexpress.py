@@ -64,12 +64,15 @@ def scan_hxexpress(
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
 ) -> list[PeptideEntry]:
-    """List the entries for the ``.xlsx`` files in ``data_dir`` named in the HX-Express way.
+    """List the entries for the ``.xlsx`` and ``.csv`` files in ``data_dir`` named in the
+    HX-Express way (the suffix in any case).
 
     Files whose names do not parse are skipped with a warning.
     """
     entries = []
-    for path in sorted(Path(data_dir).glob("*.xlsx")):
+    for path in sorted(Path(data_dir).iterdir()):
+        if path.suffix.lower() not in (".xlsx", ".csv") or not path.is_file():
+            continue
         if path.name.startswith("~$"):  # Excel lock file
             continue
         try:
@@ -93,7 +96,7 @@ def _read_rows(path: Path) -> list[tuple]:
         if suffix == ".csv":
             with path.open(newline="", encoding="utf-8-sig") as fh:
                 return [tuple(r) for r in csv.reader(fh)]
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     except Exception as exc:  # openpyxl raises many types for damaged files
         raise ReadError(f"cannot read {path}: {exc}") from exc

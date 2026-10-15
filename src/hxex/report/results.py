@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -145,12 +146,22 @@ class Results:
             raise KeyError(spectrum_id)
         return int(hits[0])
 
-    @property
+    @cached_property
     def effective_K(self) -> np.ndarray:
-        """The K of every measurement with the reviewer's choice applied (else the selected K)."""
+        """The K of every measurement with the reviewer's choice applied (else the selected K).
+        Computed once per ``Results`` (do not change it in place; :meth:`with_review` gives a
+        new one)."""
         if self.review is None:
             return self.fit.selected_K.copy()
         return self.review.effective_K(self.fit)
+
+    @cached_property
+    def review_status(self) -> np.ndarray:
+        """``accepted``, ``rejected`` or ``unreviewed`` for every measurement (the review's
+        :meth:`~hxex.io.ReviewTable.status_of`, computed once per ``Results``)."""
+        if self.review is None:
+            return np.full(len(self.fit), "unreviewed", dtype=object)
+        return self.review.status_of(self.fit)
 
     def bootstrap_for(self, i: int, k: int) -> BootstrapResult | None:
         """The bootstrap that covers measurement ``i`` at K = ``k`` (the fixed-K one, else the

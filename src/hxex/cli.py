@@ -71,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("resume", help="add the bootstrap to a bundle that is waiting for it")
     p.add_argument("bundle")
+    p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="also write the tables (default: beside the bundle)")
@@ -348,7 +349,7 @@ def cmd_resume(args) -> int:
     stop = _Stop()
     with stop.installed(), _threads(args.threads):
         result = resume_bootstrap(
-            bundle, figures_dir=_beside(bundle, args.figures, "_figures"),
+            bundle, device=args.device, figures_dir=_beside(bundle, args.figures, "_figures"),
             progress=ProgressLog(interval=args.progress_every), cancel=stop)
     tables = _beside(bundle, args.tables, "_tables")
     if tables is not None:
@@ -543,7 +544,7 @@ def _dispatch(args) -> int:
     except KeyboardInterrupt:
         log.warning("aborted")
         return EXIT_STOPPED
-    except (ReadError, BundleError, ValueError, OSError) as exc:
+    except (ReadError, BundleError, ValueError, OSError, RuntimeError) as exc:
         if args.verbose:
             log.exception("failed")
         else:

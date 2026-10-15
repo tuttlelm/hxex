@@ -674,3 +674,79 @@ def test_split_spectrum_id_errors(bad):
 
     with pytest.raises(ValueError):
         split_spectrum_id(bad)
+
+
+# --- audit fixes: units, suffixes, encodings, whole numbers, duplicate files --------------------
+
+@pytest.mark.parametrize(
+    "label, seconds",
+    [("500 ms", 0.5), ("15 sec", 15.0), ("30 seconds", 30.0), ("3 minutes", 180.0),
+     ("5 MIN", 300.0), ("2 hrs", 7200.0), ("1 hour", 3600.0), ("2 Hr", 7200.0)],
+)
+def test_time_units_are_whole_words(label, seconds):
+    assert hio.parse_hxexpress_time(label) == seconds
+
+
+@pytest.mark.parametrize("label", ["5 mi", "5 minu", "500 msx", "2 hz", "3 sx", "4 m2"])
+def test_unknown_time_units_raise(label):
+    """A unit is not matched on its first letter ('500 ms' was 30000 s)."""
+    with pytest.raises(hio.ReadError, match="unknown time unit"):
+        hio.parse_hxexpress_time(label)
+
+
+def test_scan_hxexpress_takes_csv_and_any_suffix_case(tmp_path):
+    write_xlsx(tmp_path / "A_0001-0005-ABCDE-z1-x.XLSX")
+    write_hx_csv(tmp_path / "B_0003-0009-ABCDEFG-z3-x.csv")
+    (tmp_path / "C_0001-0005-ABCDE-z2-x.txt").write_text("not data")
+    (tmp_path / "D_0001-0005-ABCDE-z2-x.csv").mkdir()  # a directory, not a file
+    entries = hio.scan_hxexpress(tmp_path)
+    assert [(e.sample, e.charge, e.file) for e in entries] == [
+        ("A", 1, "A_0001-0005-ABCDE-z1-x.XLSX"), ("B", 3, "B_0003-0009-ABCDEFG-z3-x.csv")]
+    for e in entries:  # what the scan lists, the reader reads
+        assert len(hio.read_hxexpress_file(tmp_path / e.file, e)) == 4
+
+
+def test_text_that_is_not_utf8_is_a_read_error(tmp_path, specroot):
+    table = tmp_path / "meta.csv"
+    table.write_bytes(b"file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
+                      b"a,S\xe9,AB,1-2,1,2,1\n")
+    with pytest.raises(hio.ReadError, match="meta.csv"):
+        hio.read_peptide_table(table)
+    fasta = tmp_path / "x.fasta"
+    fasta.write_bytes(b">s\xe9q\nMK\n")
+    with pytest.raises(hio.ReadError, match="x.fasta"):
+        hio.read_fasta_sequence(fasta)
+    hx = tmp_path / "A_0001-0005-ABCDE-z1-x.csv"
+    hx.write_bytes(b"undeut,\n\xff,1\n")
+    with pytest.raises(hio.ReadError, match="z1-x.csv"):
+        hio.read_hxexpress_file(hx, ENTRY)
+    pep = specroot / "S1" / "0002-0005-KVLA"
+    (pep / "60s-1-z2.csv").write_bytes(b"300.5,7\n\xff\n")
+    with pytest.raises(hio.ReadError, match="60s-1-z2.csv"):
+        hio.read_specexport_dir(pep, hio.scan_specexport(specroot)[0])
+
+
+def test_table_integers_must_be_whole(tmp_path):
+    p = tmp_path / "meta.csv"
+    head = "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
+    p.write_text(head + "a,S,AB,1-2,1.0,2,2.0\n")
+    assert hio.read_peptide_table(p)[0].charge == 2
+    for bad in ("a,S,AB,1-2,1,2,2.5\n", "a,S,AB,1-2,1.5,2,2\n", "a,S,AB,1-2,1,nan,2\n"):
+        p.write_text(head + bad)
+        with pytest.raises(hio.ReadError, match="line 2.*whole number"):
+            hio.read_peptide_table(p)
+
+
+def test_specexport_two_files_for_one_time_and_replicate(specroot, caplog):
+    pep = specroot / "S1" / "0002-0005-KVLA"
+    e = hio.scan_specexport(specroot)[0]
+    write_spec(pep / "1m-1-z2.csv", [(300.5, 7)])  # the same spectrum as 60s-1-z2.csv
+    with pytest.raises(hio.ReadError, match="1m-1-z2.csv and 60s-1-z2.csv are both replicate 1 "
+                                            "at 60 s"):
+        hio.read_specexport_dir(pep, e)
+    (pep / "1m-1-z2.csv").unlink()
+    # a control next to a time point of the control's time stays the warning it was
+    write_spec(pep / "0s-1-z2.csv", [(300.5, 7)])
+    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
+        sp = hio.read_specexport_dir(pep, e)
+    assert "cannot be told apart" in caplog.text and [s.time for s in sp][:2] == [0.0, 0.0]

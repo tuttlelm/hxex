@@ -23,14 +23,16 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from .backend import Backend
 
 NOISE_KINDS = ("gaussian", "poisson")
 
 
-def _log_binom(b, n, p):
-    """Log of the generalised binomial pmf and the mask of the bins that have probability.
+def _log_binom(b, n, p, log_p=None, log_q=None):
+    """Log of the generalised binomial, before normalisation, and the mask of the bins that
+    have probability.
 
     ``b``, ``n`` and ``p`` broadcast together. A bin has probability for ``0 <= b < n + 1``. For
     ``b <= n`` this is the ordinary binomial written with gamma functions. For ``n < b < n + 1``
@@ -40,25 +42,72 @@ def _log_binom(b, n, p):
     loses up to 15 % of the probability between integers at high ``p`` and biases the centre of
     the component low). For integer ``n`` the result is the ordinary binomial. For ``b >= n + 1``
     the gamma function of a negative argument would give negative values, so the bin is masked.
+
+    At non-integer ``n`` the bins do not sum to 1 (the bin above ``n`` carries
+    ``(1 - p)^(n - b)`` with a negative exponent, which grows without bound as ``p`` nears 1:
+    the mass is 1.02 at ``n = 13.5, p = 0.9`` but 1.7 at ``p = 0.99`` and 5 at ``n = 0.5,
+    p = 0.99``), so every user divides by :func:`log_binom_norm`. ``log_p`` and ``log_q`` are
+    ``log p`` and ``log (1 - p)``; given (from the logit, see :func:`log_terms`) they keep
+    ``log (1 - p)`` exact where ``sigmoid`` saturates in float32.
     """
     b_safe = b.clamp(min=0.0)
     rest = (n - b + 1.0).clamp(min=1e-12)  # argument of the third gamma, kept positive
     valid = (b >= 0) & (n - b + 1.0 > 0)
+    if log_p is None:
+        log_p = torch.log(p.clamp(min=1e-10))
+    if log_q is None:
+        log_q = torch.log((1.0 - p).clamp(min=1e-10))
     log_pmf = (
         torch.lgamma(n + 1)
         - torch.lgamma(b_safe + 1)
         - torch.lgamma(rest)
-        + b_safe * torch.log(p.clamp(min=1e-10))
-        + (n - b_safe) * torch.log((1.0 - p).clamp(min=1e-10))
+        + b_safe * log_p
+        + (n - b_safe) * log_q
     )
     return log_pmf, valid
 
 
-def log_binom_pmf(b: torch.Tensor, n: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
-    """Log pmf of the real-valued binomial. ``b`` is ``(B, M)``; ``n`` and ``p`` are
-    ``(M, K)``. Returns ``(B, M, K)``; bins without probability are set to -1e10 (see
+def log_terms(p: torch.Tensor, logit_p: torch.Tensor | None):
+    """``(log p, log (1 - p))`` from the logit when it is given (``logsigmoid``, exact in
+    float32 where ``sigmoid(logit_p)`` rounds to 1), else from ``p`` (clamped at 1e-10)."""
+    if logit_p is None:
+        return None, None
+    return F.logsigmoid(logit_p), F.logsigmoid(-logit_p)
+
+
+def log_binom_norm(n: torch.Tensor, p: torch.Tensor, log_p=None, log_q=None) -> torch.Tensor:
+    """``log`` of the total mass of the unnormalised pmf of :func:`_log_binom` over its valid
+    bins ``0 .. ceil(n)``, with the shape of ``n`` (``n`` and ``p`` broadcast). Subtracting it
+    makes every component sum to exactly 1 for any real ``n``, so the amplitudes are areas and
+    the populations ``A_k / sum A`` are shares of the molecules. Differentiable in ``n`` and
+    ``p``."""
+    n_b, p_b = torch.broadcast_tensors(n, p)
+    flat_n, flat_p = n_b.reshape(-1), p_b.reshape(-1)
+    if flat_n.numel() == 0:
+        return torch.zeros_like(n_b)
+    top = int(torch.nan_to_num(flat_n.detach(), nan=0.0, posinf=0.0).max().ceil().item()) + 1
+    u = torch.arange(top + 1, dtype=n.dtype, device=n.device).unsqueeze(1)  # (U, MK)
+    lp = lq = None
+    if log_p is not None:
+        lp, lq = torch.broadcast_tensors(log_p, log_q)
+        lp, lq = lp.reshape(1, -1), lq.reshape(1, -1)
+    log_pmf, valid = _log_binom(u, flat_n.unsqueeze(0), flat_p.unsqueeze(0), lp, lq)
+    log_pmf = log_pmf.masked_fill(~valid, float("-inf"))  # bin 0 is always valid for n >= 0
+    return torch.logsumexp(log_pmf, dim=0).reshape(n_b.shape)
+
+
+def log_binom_pmf(
+    b: torch.Tensor, n: torch.Tensor, p: torch.Tensor, logit_p: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Log pmf of the real-valued binomial, normalised to sum to 1 over its bins. ``b`` is
+    ``(B, M)``; ``n``, ``p`` and ``logit_p`` (optional, see :func:`log_terms`) are ``(M, K)``.
+    Returns ``(B, M, K)``; bins without probability are set to -1e10 (see
     :func:`_log_binom`)."""
-    log_pmf, valid = _log_binom(b.unsqueeze(2), n.unsqueeze(0), p.unsqueeze(0))
+    log_p, log_q = log_terms(p, logit_p)
+    lp = None if log_p is None else log_p.unsqueeze(0)
+    lq = None if log_q is None else log_q.unsqueeze(0)
+    log_pmf, valid = _log_binom(b.unsqueeze(2), n.unsqueeze(0), p.unsqueeze(0), lp, lq)
+    log_pmf = log_pmf - log_binom_norm(n, p, log_p, log_q).unsqueeze(0)
     return torch.where(valid, log_pmf, torch.full_like(log_pmf, -1e10))
 
 
@@ -106,11 +155,14 @@ def convolve(
     p: torch.Tensor,
     shape_w: torch.Tensor,
     grid: IntegerGrid | None = None,
+    logit_p: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Each binomial component convolved with its shape: ``sum_j D[j] * B(b - j; n, p)``.
 
     ``b`` is ``(B, M)``, ``n`` and ``p`` are ``(M, K)``, ``shape_w`` is ``(L, M, K)`` (see
-    :func:`shape_weights`). Returns ``(B, M, K)``. The shape index is vectorised.
+    :func:`shape_weights`). Returns ``(B, M, K)``. The shape index is vectorised. Each
+    component's pmf is normalised to sum to 1 (:func:`log_binom_norm`); ``logit_p`` (optional)
+    gives exact log terms in float32 (:func:`log_terms`).
 
     With ``grid`` (:func:`integer_grid` of ``b``; the bins are whole numbers), the pmf is
     evaluated once at each integer and gathered for every shifted bin, instead of once per
@@ -120,23 +172,29 @@ def convolve(
     0 as before.
     """
     length, m, k = shape_w.shape
+    log_p, log_q = log_terms(p, logit_p)
+    norm = log_binom_norm(n, p, log_p, log_q)  # (M, K)
+    if log_p is not None:
+        log_p, log_q = log_p.view(1, m, k), log_q.view(1, m, k)
     if grid is not None and grid.consecutive:
-        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k))  # (B, M, K)
-        pmf = torch.where(valid, log_pmf.exp(), torch.zeros_like(log_pmf))
+        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k), log_p, log_q)
+        pmf = torch.where(valid, (log_pmf - norm).exp(), torch.zeros_like(log_pmf))  # (B, M, K)
         padded = torch.cat([pmf.new_zeros(length - 1, m, k), pmf], dim=0)
         windows = padded.unfold(0, length, 1)  # (B, M, K, L): pmf at b - (L-1) + i
         out = (windows * shape_w.flip(0).permute(1, 2, 0)).sum(dim=-1)
         return torch.where(grid.real, out, out[:1])  # padding is bin 0, as row 0
     if grid is not None:
-        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k))  # (U, M, K)
-        pmf = torch.where(valid, log_pmf.exp(), torch.zeros_like(log_pmf))
+        log_pmf, valid = _log_binom(grid.u, n.view(1, m, k), p.view(1, m, k), log_p, log_q)
+        pmf = torch.where(valid, (log_pmf - norm).exp(), torch.zeros_like(log_pmf))  # (U, M, K)
         shifted = pmf.gather(0, grid.index.expand(-1, -1, k)).view(length, b.shape[0], m, k)
         shifted = torch.where(grid.inside, shifted, torch.zeros_like(shifted))
         return (shape_w.unsqueeze(1) * shifted).sum(dim=0)
     j = torch.arange(length, dtype=b.dtype, device=b.device).view(length, 1, 1, 1)
     bj = b.unsqueeze(0).unsqueeze(3) - j  # (L, B, M, 1)
-    log_pmf, valid = _log_binom(bj, n.view(1, 1, m, k), p.view(1, 1, m, k))
-    pmf = torch.where(valid, log_pmf.exp(), torch.zeros_like(log_pmf))
+    if log_p is not None:
+        log_p, log_q = log_p.unsqueeze(0), log_q.unsqueeze(0)
+    log_pmf, valid = _log_binom(bj, n.view(1, 1, m, k), p.view(1, 1, m, k), log_p, log_q)
+    pmf = torch.where(valid, (log_pmf - norm).exp(), torch.zeros_like(log_pmf))
     return (shape_w.unsqueeze(1) * pmf).sum(dim=0)
 
 
@@ -285,13 +343,13 @@ class MixtureBatch(nn.Module):
 
     def predict(self) -> torch.Tensor:
         """Predicted intensity at every (padded) bin, ``(B_max, M)``."""
-        conv = convolve(self.b, self.ns, self.ps, self.shape_w, self.grid)
+        conv = convolve(self.b, self.ns, self.ps, self.shape_w, self.grid, self.logit_p)
         return (self.amplitudes.unsqueeze(0) * conv).sum(dim=2)
 
     def components(self) -> torch.Tensor:
         """Predicted intensity of every component, ``(B_max, M, K)``."""
         return self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
-                                                       self.grid)
+                                                       self.grid, self.logit_p)
 
     def nll(self, obs: torch.Tensor) -> torch.Tensor:
         """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``."""

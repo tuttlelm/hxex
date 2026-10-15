@@ -12,11 +12,14 @@ Each control falls back to its theoretical value, and the series is flagged, on 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
 - ``mFD`` falls back to ``m0 + r * n_amides`` when it is missing (``fd_missing``) or when the
   retention ``(mFD - m0) / n_amides`` is below ``retention_min`` (``retention_low``; by default
-  half of ``d2o_fraction``) or above ``retention_max`` (``retention_high``), with ``m0`` as it is
-  used. The fallback retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium
-  fraction of the labelling buffer, a user setting) or the median retention of the run's
-  accepted controls (``fd_fallback='median'``; flagged ``fd_median``), which includes the
-  back-exchange the buffer's fraction does not.
+  half of ``d2o_fraction``, also with ``fd_fallback='kint'`` for the series the prediction
+  cannot judge, those without rates: fragment ions and ``Hex`` series; a retention of 0 or
+  less is always rejected, whatever the floor) or
+  above ``retention_max`` (``retention_high``), with ``m0`` as it is used. The fallback
+  retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium fraction of the
+  labelling buffer, a user setting) or the median retention of the run's accepted controls
+  (``fd_fallback='median'``; flagged ``fd_median``), which includes the back-exchange the
+  buffer's fraction does not.
 
 With ``fd_fallback='kint'`` (the default when the ``quench`` conditions are given, which it
 needs) the fully deuterated value comes from theoretical back-exchange instead (HISTORY items 71
@@ -121,7 +124,8 @@ class ControlConfig:
     @property
     def min_retention(self) -> float:
         """The lower retention limit in use (``retention_min``; unset: half of ``d2o_fraction``,
-        or none with ``fd_fallback='kint'``, which judges controls by the prediction)."""
+        or none with ``fd_fallback='kint'``, which judges controls by the prediction; series
+        without rates keep the ``d2o_fraction`` floor there, see :func:`fit_controls`)."""
         if self.retention_min is not None:
             return self.retention_min
         return 0.0 if self.fd_mode == "kint" else self.d2o_fraction / 2
@@ -317,11 +321,17 @@ def fit_controls(
         if n_u > 0 and m0_ok and n_u == 1:
             flags.append("m0_unreplicated")
         mfd_ok = False
+        floor = config.min_retention
+        if config.fd_mode == "kint" and config.retention_min is None and (
+                rates is None or int(s) not in rates):
+            floor = config.d2o_fraction / 2  # no rates: the prediction cannot judge the control
         if n_f == 0:
             flags.append("fd_missing")
         elif n_am > 0:
             ret = (mfd_meas - m0) / n_am
-            if ret < config.min_retention:
+            # a fully deuterated level at or below the undeuterated one cannot scale anything,
+            # whatever the floor (none with fd_fallback='kint' for the series with rates)
+            if ret <= 0 or ret < floor:
                 flags.append("retention_low")
             elif ret > config.retention_max:
                 flags.append("retention_high")
@@ -452,6 +462,8 @@ def correct_means(
     """Correct means for back-exchange, ``(mean - m0) / (mFD - m0) * n_amides`` (not below 0).
 
     ``mean`` is ``(M, ...)`` with the series of each row in ``data_id`` (``(M,)``); NaN stays NaN.
+    A series whose ``mfd`` is not above its ``m0`` cannot be corrected: its values become NaN,
+    with a warning (unless the series has no exchangeable site, where NaN is expected).
     A standard error ``se`` (same shape) gets the control uncertainty added in quadrature (delta
     method). An interval ``ci`` (``(..., 2)``) is transformed at its ends, which is exact because
     the correction increases with the mean, and each side is then widened in quadrature by the
@@ -463,6 +475,12 @@ def correct_means(
         raise ValueError("data_id must have one value per row of mean")
     pad = (slice(None),) + (None,) * (mean.ndim - 1)
     m0, f, n = (getattr(controls, k)[rows][pad] for k in ("m0", "mfd", "n_amides"))
+    bad = (controls.mfd[rows] <= controls.m0[rows]) & (controls.n_amides[rows] > 0)
+    if bad.any():
+        ids = np.unique(np.asarray(data_id)[bad])
+        log.warning("%d series (data_id %s) have a fully deuterated level at or below the "
+                    "undeuterated one: their corrected means are NaN", len(ids),
+                    ", ".join(str(int(d)) for d in ids[:5]) + (", ..." if len(ids) > 5 else ""))
     s0 = np.nan_to_num(controls.m0_se[rows])[pad]
     sf = np.nan_to_num(controls.mfd_se[rows])[pad]
     span = np.where(f - m0 > 0, f - m0, np.nan)

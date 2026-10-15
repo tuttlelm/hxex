@@ -2,11 +2,13 @@
 """The run stage: dropping flagged spectra, chunking (which must not change the result),
 progress and cancellation, and the bundle it writes."""
 
+import dataclasses
 import logging
 
 import numpy as np
 import pytest
 
+from hxex import chem
 from hxex.bootstrap import BootstrapConfig, BootstrapResult
 from hxex.controls import ControlConfig
 from hxex.fit import FitConfig, FitResult, Measurements
@@ -72,7 +74,10 @@ def test_run_gives_every_stage(whole):
     assert res.bootstrap is not None and len(res.bootstrap) == len(raw)
     assert list(res.controls.data_id) == [0, 1, 2] and res.quality is not None
     assert not res.controls.fallback.any()
-    assert (res.controls.n_amides == res.measurements.n_max[0] / 1.2).all()
+    # the amide count of the controls is the peptide's real site count (not n_max / factor)
+    sites = chem.exchangeable_sites(PEPTIDE, nterm_subtract=PICK.nterm_subtract)
+    assert sites == chem.count_amides(PEPTIDE, nterm_subtract=PICK.nterm_subtract) == 9
+    assert res.controls.n_amides.tolist() == [sites] * 3
 
 
 def test_flagged_spectra_are_dropped_and_recorded():
@@ -352,7 +357,8 @@ def test_the_fits_are_written_before_the_bootstrap_and_resumed(tmp_path, whole, 
         assert b.pending == ["bootstrap"] and b.bootstrap() is None
         assert b.has("spectra") and b.controls() is not None and b.quality() is not None
         np.testing.assert_array_equal(b.fit().selected_K, res.fit.selected_K)
-    done = resume_bootstrap(out)
+    done = resume_bootstrap(out, device="cpu")  # the run's device replaced (same here)
+    assert done.config.fit.backend.device == "cpu" and done.fit.config.backend.device == "cpu"
     with open_bundle(out) as b:
         assert b.pending == [] and b.has("spectra")
         boot = b.bootstrap()
@@ -394,3 +400,55 @@ def test_controls_can_fall_back_to_theoretical_back_exchange(tmp_path):
     # recomputed at analysis time from the bundle's picked spectra and settings
     again = analysis_controls(results, {"kint_tolerance": 0.2}, quiet=True)
     assert again.fd_model["n_series"] == 3 and again.config.kint_tolerance == 0.2
+
+
+def test_site_counts_add_hex_sites_and_give_zero_for_an_ion_without_any():
+    from hxex.run import site_counts
+
+    binned = pick_spectra(raw_spectra(n_series=1), PICK)
+    cfg = config()
+    n = len(binned)
+    assert site_counts(binned, cfg).tolist() == [9] * n
+    # owner: Hex sites stand for exchangeable amides on a modification and count
+    hexed = dataclasses.replace(binned, modification=np.array(["Hex:2"] * n))
+    assert site_counts(hexed, cfg).tolist() == [11] * n
+    bare = dataclasses.replace(binned, peptide=np.array(["L"] * n),
+                               modification=np.array(["ion_type:z"] * n))
+    assert site_counts(bare, cfg).tolist() == [0] * n
+
+
+def test_an_existing_output_is_refused_before_anything_is_fitted(tmp_path, monkeypatch):
+    from hxex.io.bundle import BundleError
+
+    raw = raw_spectra(n_series=1)
+    path = tmp_path / "taken"
+    path.write_text("not a bundle")
+    monkeypatch.setattr("hxex.run.pick_spectra", lambda *a, **k: pytest.fail("picked anyway"))
+    with pytest.raises(BundleError, match="exists"):
+        run(raw, config(bootstrap=None), out=path)
+
+
+def test_overwriting_a_reviewed_bundle_keeps_its_review(tmp_path, caplog):
+    from hxex.io import ReviewTable
+    from hxex.io.bundle import BundleError
+
+    cfg = config(bootstrap=None)
+    path = tmp_path / "b"
+    res = run(raw_spectra(n_series=1), cfg, out=path)
+    kept, dropped = str(res.fit.spectrum_id[3]), "proj:f0.xlsx#6"
+    review = ReviewTable.empty().update(kept, status="rejected", note="noisy")
+    review = review.update(dropped, status="accepted")
+    with open_bundle(path) as b:
+        b.set_review(review)
+    with pytest.raises(BundleError, match="exists"):
+        run(raw_spectra(n_series=1), cfg, out=path)
+    # the new run drops spectrum 6 (empty): its entry cannot be carried, the other one is
+    with caplog.at_level(logging.INFO, logger="hxex.run"):
+        again = run(raw_spectra(n_series=1, empty=(0, 5)), cfg, out=path, overwrite=True)
+    assert dropped in again.dropped_ids
+    assert "carrying its 2 review entries" in caplog.text
+    assert "1 of 2 review entries do not apply" in caplog.text
+    with open_bundle(path) as b:
+        r = b.review()
+        assert r.spectrum_id.tolist() == [kept] and r.note.tolist() == ["noisy"]
+        assert (r.status_of(b.fit()) == "rejected").sum() == 1

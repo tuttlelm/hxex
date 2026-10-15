@@ -36,10 +36,14 @@ def parse_modification(text: str | None) -> ModificationSpec:
     ion_type = "M"
     undeut_mz = None
     parent_pos = None
+    seen: set[str] = set()
     for item in (text or "").split():
         key, sep, value = item.partition(":")
         if not sep or not key or not value:
             raise ChemistryError(f"cannot parse modification item {item!r} (expected key:value)")
+        if key in seen:
+            raise ChemistryError(f"modification key {key!r} is given twice in {text!r}")
+        seen.add(key)
         try:
             if key == "ion_type":
                 ion_type = check_ion_type(value)
@@ -47,6 +51,8 @@ def parse_modification(text: str | None) -> ModificationSpec:
                 undeut_mz = float(value)
             elif key == "Hex":
                 hex_sites = int(value)
+                if hex_sites < 0:
+                    raise ChemistryError(f"Hex must be 0 or more, got {item!r}")
             elif key == "parent_pos":
                 parent_pos = int(value)
                 if parent_pos < 1:

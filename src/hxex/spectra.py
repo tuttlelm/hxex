@@ -41,7 +41,10 @@ def ragged_mask(offsets: np.ndarray, keep: np.ndarray) -> np.ndarray:
 
 
 def _check_mask(keep: np.ndarray, n: int) -> np.ndarray:
-    keep = np.asarray(keep, dtype=bool)
+    keep = np.asarray(keep)
+    if keep.dtype != bool:
+        raise TypeError(f"mask must be boolean (one flag per spectrum), got dtype {keep.dtype}; "
+                        "use np.isin or a boolean array, not indices")
     if keep.shape != (n,):
         raise ValueError(f"mask must have one element per spectrum ({n}), got shape {keep.shape}")
     return keep

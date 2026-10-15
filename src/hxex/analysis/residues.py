@@ -7,10 +7,13 @@ exchange back too fast to count) that are not prolines, as in the amide count. T
 residue is the weighted mean of the peptides that cover it, each peptide weighing
 ``(1 / its exchanging residues) ** weight_exponent`` normalised over the residue's peptides (the
 pyHDX weighting with exponent 1: a short peptide says more about each of its residues), and its
-standard error ``sqrt(sum(w^2 se^2))`` (independent peptides). Redundancy is the number of
-peptides covering a residue; resolution is the length of the block it lies in, the blocks being
-the stretches between consecutive peptide boundaries (where a peptide's exchanging residues start
-or end), so a residue resolved by peptides differing by one residue has resolution 1.
+standard error ``sqrt(sum(w^2 se^2))`` (independent peptides). A peptide without a value (NaN)
+does not contribute, so a residue covered only by such peptides is NaN; a residue's standard
+error is unknown (NaN) when any peptide contributing to it has an unknown one (no bootstrap and
+a single spectrum). Redundancy is the number of peptides covering a residue; resolution is the
+length of the block it lies in, the blocks being the stretches between consecutive peptide
+boundaries (where a peptide's exchanging residues start or end), so a residue resolved by
+peptides differing by one residue has resolution 1.
 
 Only peptides are used (``kind == 'peptide'``); fragments are analysed differently
 (docs/ANALYSIS.md, the fragment branch).
@@ -36,7 +39,8 @@ class SequenceMismatch(ValueError):
 class ResidueMap:
     """One row per sample, time, ``K``, ``rank`` and residue (columns of equal length):
     ``residue`` (number on the protein), ``aa`` (its letter, '' if unknown), ``fD`` and
-    ``fD_se`` (NaN where no peptide covers the residue's amide), ``redundancy``,
+    ``fD_se`` (NaN where no peptide covers the residue's amide, or no covering peptide has a
+    value; ``fD_se`` also where a contributing peptide's error is unknown), ``redundancy``,
     ``resolution`` (NaN where uncovered), ``proline``, ``covered`` and ``control_fallback`` (a
     peptide covering the residue was corrected with a fallback control)."""
 
@@ -340,12 +344,16 @@ def _coverage(peptides, n_res: int, nterm: int, registry, weights=None):
 
 
 def _weighted(z: np.ndarray, values: np.ndarray, ses: np.ndarray, exponent: float):
-    """Per-residue weighted values and standard errors (see the module docstring)."""
-    covered = z > 0
+    """Per-residue weighted values and standard errors (see the module docstring): peptides
+    without a value are left out of the design, and an unknown standard error (NaN) of a
+    contributing peptide makes the residue's unknown."""
+    values, ses = np.asarray(values, dtype=float), np.asarray(ses, dtype=float)
+    covered = (z > 0) & np.isfinite(values)[:, None]
     w = np.where(covered, z**exponent, 0.0)
     total = w.sum(axis=0)
     w = np.divide(w, total, out=np.zeros_like(w), where=total > 0)
     any_ = covered.any(axis=0)
-    out = np.where(any_, (w * values[:, None]).sum(axis=0), np.nan)
-    se = np.where(any_, np.sqrt((w**2 * np.nan_to_num(ses)[:, None] ** 2).sum(axis=0)), np.nan)
+    out = np.where(any_, (w * np.nan_to_num(values)[:, None]).sum(axis=0), np.nan)
+    var = np.where(w > 0, w**2 * ses[:, None] ** 2, 0.0).sum(axis=0)  # NaN only where it counts
+    se = np.where(any_, np.sqrt(var), np.nan)
     return out, se

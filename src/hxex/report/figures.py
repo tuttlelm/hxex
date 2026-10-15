@@ -102,7 +102,7 @@ def select_series(results: Results, which: str | Sequence[int] = "flagged") -> l
     if results.quality is not None:
         bad |= results.quality.flagged
     if results.review is not None:
-        bad |= results.review.status_of(results.fit) == "rejected"
+        bad |= results.review_status == "rejected"
     flagged = {int(d) for d in results.fit.data_id[bad]}
     if results.controls is not None:
         flagged |= {int(d) for d, f in zip(results.controls.data_id, results.controls.fallback,

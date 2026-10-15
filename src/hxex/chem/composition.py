@@ -8,7 +8,7 @@ from brainpy import isotopic_variants
 from pyteomics import mass
 
 from .amides import DEFAULT_AMIDE_RULES, AmideRules, exchangeable_sites
-from .ions import check_ion_type
+from .ions import check_ion_type, ion_terminus
 from .modifications import (
     DEFAULT_MODIFICATIONS,
     TERMINAL_GROUPS,
@@ -30,12 +30,21 @@ def composition(
     """Neutral elemental composition of the ion (pyteomics is the reference).
 
     Terminal groups other than ``H-`` and ``-OH`` (such as the C-terminal amide ``-NH2``) replace
-    the default ones. ``mod.composition`` is added; ``mod.hex`` and ``mod.undeut_mz`` do not
-    affect it.
+    the default ones. A fragment ion does not contain the far terminus, so a non-default group
+    there (``PEPTIDE-NH2`` as a b ion, ``Ac-PEPTIDE`` as a y ion) is an error: write the fragment
+    with the terminus it has, as :func:`hxex.fragments.fragment_entries` does. ``mod.composition``
+    is added; ``mod.hex`` and ``mod.undeut_mz`` do not affect it.
     """
     check_ion_type(ion_type)
     residues = parse_sequence(sequence, registry)
     nterm, _, cterm = split_termini(sequence)
+    end = ion_terminus(ion_type)
+    if (end == "N" and cterm != "-OH") or (end == "C" and nterm != "H-"):
+        far = cterm if end == "N" else nterm
+        raise ChemistryError(
+            f"{sequence!r} as a {ion_type} ion: the {'C' if end == 'N' else 'N'}-terminal group "
+            f"{far!r} is not part of the fragment (write it with the terminus it has)"
+        )
     comp = mass.Composition(
         parsed_sequence=["H-", *residues, "-OH"], aa_comp=registry.aa_comp, ion_type=ion_type
     )
@@ -125,8 +134,8 @@ def mixed_clusters(
     shape = np.asarray(shape, dtype=float)
     offset = np.asarray(offset, dtype=float)
     w = np.asarray(weights, dtype=float)
-    if w.ndim != 1 or len(w) == 0 or np.any(w < 0) or w.sum() <= 0:
-        raise ValueError("weights must be non-negative with a positive sum")
+    if w.ndim != 1 or len(w) == 0 or not np.all(np.isfinite(w)) or np.any(w < 0) or w.sum() <= 0:
+        raise ValueError("weights must be finite and non-negative with a positive sum")
     w = w / w.sum()
     n = len(shape) + len(w) - 1
     abundance = np.zeros(n)

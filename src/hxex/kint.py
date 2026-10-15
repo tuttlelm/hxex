@@ -176,7 +176,9 @@ def read_conditions(data) -> ExchangeConditions | dict[str, ExchangeConditions] 
         return data
     if not isinstance(data, Mapping):
         raise ValueError("exchange conditions must be a table")
-    if "ph_read" in data or not data:
+    if not data:
+        raise ValueError("exchange conditions need ph_read, temperature and d2o_fraction")
+    if "ph_read" in data:
         return ExchangeConditions.from_dict(data)
     out = {}
     for sample, value in data.items():
@@ -294,6 +296,12 @@ def intrinsic_rates(
 
     def base(label: str) -> str:
         return label if label in own else registry.base_residue(label)
+
+    known = set(_FACTORS) | set(_CHARGED) | set(own)
+    unknown = sorted({base(lab) for lab in labels} - known)
+    if unknown:
+        raise ValueError(f"no intrinsic-rate factors for residue(s) {', '.join(unknown)} in "
+                         f"{sequence!r}")
 
     t = conditions.temperature + 273.15
     x = conditions.d2o_fraction

@@ -367,7 +367,7 @@ def _title(results: Results | None, d: dict) -> str:
             notes.append(f"showing {names} (total is the whole fit)")
         i = fit["index"]
         if results is not None and results.review is not None:
-            status = str(results.review.status_of(results.fit)[i])
+            status = str(results.review_status[i])
             if status != "unreviewed":
                 notes.append(status)
         if results is not None and results.quality is not None and results.quality.flagged[i]:

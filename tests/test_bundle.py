@@ -6,6 +6,7 @@ import shutil
 import zipfile
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -474,3 +475,70 @@ def test_quality_flags_are_kept(tmp_path, run):
             assert_arrays_equal(getattr(got, name), getattr(q, name))
     with open_bundle(written_no_controls(tmp_path, run)) as b:
         assert b.quality() is None
+
+
+# --- audit fixes: what overwrite may remove, the review write, list column limits -------------
+
+def test_overwrite_never_removes_what_is_not_a_bundle(tmp_path, run):
+    _, _, meas, fit, _ = run
+    plain = tmp_path / "b"
+    plain.write_text("my data")
+    with pytest.raises(BundleError, match="not a results bundle"):
+        write_bundle(plain, measurements=meas, fit=fit, overwrite=True)
+    assert plain.read_text() == "my data"
+    other_zip = tmp_path / "b.zip"
+    with zipfile.ZipFile(other_zip, "w") as zf:
+        zf.writestr("notes.txt", "mine")
+    with pytest.raises(BundleError, match="not a results bundle"):
+        write_bundle(other_zip, measurements=meas, fit=fit, overwrite=True)
+    with zipfile.ZipFile(other_zip) as zf:
+        assert zf.namelist() == ["notes.txt"]
+    # a zipped bundle is replaced
+    z = write_bundle(tmp_path / "c.zip", measurements=meas, fit=fit)
+    write_bundle(z, measurements=meas, fit=fit, overwrite=True, notes="again")
+    with open_bundle(z) as b:
+        assert b.manifest["notes"] == "again"
+    # a bundle directory is not replaced by a zip of the same name
+    d = write_bundle(tmp_path / "d", measurements=meas, fit=fit)
+    d.rename(tmp_path / "d.zip")
+    with pytest.raises(BundleError, match="bundle directory"):
+        write_bundle(tmp_path / "d.zip", measurements=meas, fit=fit, overwrite=True)
+    assert (tmp_path / "d.zip" / "manifest.json").exists()
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_review_is_replaced_whole_or_not_at_all(written, run, monkeypatch):
+    ids = [str(s) for s in run[3].spectrum_id]
+    with open_bundle(written) as b:
+        b.set_review(ReviewTable.empty().update(ids[0], status="accepted"))
+        before = (written / "review.parquet").read_bytes()
+        manifest = (written / "manifest.json").read_bytes()
+
+        def fail(table, where, **kwargs):
+            where.write_bytes(b"half a table")
+            raise OSError("disk full")
+
+        monkeypatch.setattr(bundle_module.pq, "write_table", fail)
+        with pytest.raises(OSError, match="disk full"):
+            b.set_review(ReviewTable.empty().update(ids[1], status="rejected"))
+    assert (written / "review.parquet").read_bytes() == before
+    assert (written / "manifest.json").read_bytes() == manifest
+    assert not list(written.glob("*.tmp"))
+    with open_bundle(written) as b:
+        assert b.review().get(ids[0])["status"] == "accepted" and b.review().get(ids[1]) is None
+        b.verify()
+
+
+def test_list_columns_refuse_more_values_than_int32_offsets_hold():
+    from hxex.io._arrow import _flat_ragged, _ragged
+
+    class Huge:
+        def __len__(self):
+            return 2**31
+
+    with pytest.raises(ValueError, match="list column"):
+        _flat_ragged(np.zeros(2), np.array([0, 2**31]), pa.float64())
+    with pytest.raises(ValueError, match="list column"):
+        _ragged([np.zeros(1), Huge()], pa.float64())
+    assert _flat_ragged(np.zeros(2), np.array([0, 2]), pa.float64()).to_pylist() == [[0.0, 0.0]]
+    assert _ragged([np.ones(1), None], pa.float64()).to_pylist() == [[1.0], None]

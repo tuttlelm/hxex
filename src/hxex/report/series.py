@@ -54,7 +54,8 @@ def load_reference(path) -> Reference:
     layout of the Bimodal test set; ``fd`` in percent of the amides, ``#N/A`` for none)."""
     from pathlib import Path
 
-    rows = [r.split("\t") for r in Path(path).read_text().splitlines() if r.strip()]
+    rows = [r.split("\t") for r in Path(path).read_text(encoding="utf-8").splitlines()
+            if r.strip()]
     head = [h.strip().lower() for h in rows[0]]
     fd_cols = [j for j, h in enumerate(head) if h.startswith("fd")]
     p_cols = [j for j, h in enumerate(head) if h.startswith("p") and h[1:].isdigit()]
@@ -239,7 +240,9 @@ def population_data(
     """Populations of one spectrum for the population map: ``mean`` and ``population`` of every
     population by rank (``mean_se``, ``population_se``), the ``draws`` of the bootstrap as
     ``(n, K, 2)`` (mean, population; None if not kept), ``centroid`` (population-weighted mean),
-    ``corrected`` (whether the means are back-exchange corrected), ``n_amides`` and ``shown``."""
+    ``corrected`` (whether the means are back-exchange corrected), ``n_amides`` and ``shown``.
+    ``corrected`` None (the default) corrects when the results have controls for the spectrum's
+    series; True raises KeyError when they have none for it."""
     i = results.find(spectrum_id)
     k = int(results.effective_K[i] if k is None else k)
     kf = results.fit.fits[k]
@@ -257,10 +260,13 @@ def population_data(
         dm = (d.n[i][ok][:, :k] * d.p[i][ok][:, :k])[:, order]
         df = a / np.maximum(a.sum(axis=1, keepdims=True), 1e-10)
         draws = np.stack([dm, df], axis=-1)
-    use = results.controls is not None if corrected is None else corrected
+    data_id = int(results.fit.data_id[i])
+    row = _control_row(results, data_id)
+    if corrected and row is None:
+        raise KeyError(f"no controls for series {data_id} (spectrum {spectrum_id})")
+    use = row is not None if corrected is None else corrected
     n_amides = None
-    if use and results.controls is not None:
-        row = _control_row(results, int(results.fit.data_id[i]))
+    if use:
         n_amides = float(results.controls.n_amides[row])
         c = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :],
                           se=mean_se[None, :])
@@ -446,7 +452,8 @@ def plot_uptake(
     ..., labelled with the times), with every time point including the controls, as for the
     test data sets. ``corrected`` (default: if the results have controls) uses the back-exchange
     corrected means, and the limits drawn are then 0 and the number of amides; otherwise the
-    measured control levels. ``reference`` marks the known populations (open circles).
+    measured control levels. ``reference`` marks the known populations (open circles; in the
+    measured units, ``m0 + level * (mfd - m0)``, when the plot is not corrected).
     """
     if x not in ("time", "index"):
         raise ValueError("x must be 'time' or 'index'")
@@ -474,7 +481,10 @@ def plot_uptake(
             known = reference.at(float(t), d["n_amides"])
             if known is not None:
                 pos = d["time_index"][d["time"] == t][0] if x == "index" else t
-                ax.scatter([pos] * len(known[0]), known[0], s=20 + 160 * known[1],
+                ys = known[0]  # corrected units; else back to the measured scale
+                if not d["corrected"]:
+                    ys = d["m0"] + ys / d["n_amides"] * (d["mfd"] - d["m0"])
+                ax.scatter([pos] * len(ys), ys, s=20 + 160 * known[1],
                            facecolors="none", edgecolors="darkred", lw=1.5, zorder=6,
                            gid="reference")
     lo, hi = (0.0, d["n_amides"]) if d["corrected"] else (d["m0"], d["mfd"])

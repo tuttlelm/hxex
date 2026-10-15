@@ -27,8 +27,9 @@ def _predict(theta, b, shape_w, n_max, k, grid):
     logit_p]`` (``(M, 3K)``); ``b`` is ``(B, M)``."""
     amp = torch.exp(theta[:, :k])
     n = n_max.unsqueeze(1) * torch.sigmoid(theta[:, k : 2 * k])
-    p = torch.sigmoid(theta[:, 2 * k :])
-    conv = convolve(b, n, p, shape_w, grid)  # (B, M, K)
+    logit_p = theta[:, 2 * k :]
+    p = torch.sigmoid(logit_p)
+    conv = convolve(b, n, p, shape_w, grid, logit_p)  # (B, M, K)
     return (amp.unsqueeze(0) * conv).sum(dim=2).T
 
 

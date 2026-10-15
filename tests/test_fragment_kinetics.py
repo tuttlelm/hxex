@@ -447,3 +447,41 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
     fig = ladder_kinetics_figure(u, "c", kint=bare)
     assert not [line for ax in fig.axes for line in ax.get_lines()
                 if line.get_label().startswith("intrinsic")]
+
+
+def test_decay_fit_in_a_late_window_and_protection_only_when_resolved():
+    from hxex.analysis import Trace, ladder_rates
+    from hxex.kint import ExchangeConditions
+
+    t = np.linspace(2000.0, 3000.0, 60)
+    f = fit_decay(Trace(t, 0.7 * np.exp(-0.0012 * t) + 0.1, t * 0))
+    assert f.ok and f.resolved and f.rate == pytest.approx(0.0012, rel=1e-4)
+    assert f.amplitude == pytest.approx(0.7, rel=1e-3) and f.offset == pytest.approx(0.1, abs=1e-4)
+    np.testing.assert_allclose(f.curve(t), 0.7 * np.exp(-0.0012 * t) + 0.1, atol=1e-6)
+    # fitted late, a fast residue's decay is over before the first point: no protection factor
+    u = fragment_uptake(stub_run(conditions=("gentle",)))
+    late = ladder_rates(u, min_time=100.0, conditions=ExchangeConditions(7.0, 20.0, 0.05))
+    assert (~late.resolved).any() and late.resolved.any()
+    assert late.residue[~late.resolved].min() == 12
+    assert np.isnan(late.protection[~late.resolved]).all()
+    ok = late.resolved
+    np.testing.assert_allclose(late.protection[ok], late.kint[ok] / late.rate[ok])
+
+
+def test_fragment_outputs_say_why_they_are_missing(caplog):
+    import logging
+
+    from hxex.analysis import FragmentAnalysis
+    from hxex.report.fragments import fragment_outputs
+
+    run = stub_run(conditions=("gentle",))
+    cfg = FragmentAnalysis(min_time=10.0)
+    assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "ladder_rates", "closure"}
+    no_source = SimpleNamespace(**{**vars(run), "settings": SimpleNamespace(
+        spectra_source=None, picker=run.settings.picker)})
+    assert fragment_outputs(no_source, cfg) == ({}, [])
+    no_k1 = SimpleNamespace(**{**vars(run), "fit": SimpleNamespace(**{**vars(run.fit),
+                                                                       "fits": {}})})
+    with caplog.at_level(logging.WARNING, logger="hxex.report.fragments"):
+        assert fragment_outputs(no_k1, cfg) == ({}, [])
+    assert "needs the K = 1 fits" in caplog.text

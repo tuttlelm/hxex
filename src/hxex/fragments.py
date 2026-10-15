@@ -72,6 +72,8 @@ def _expand(text: str, top: int, what: str) -> list[int]:
         return list(range(1, top + 1))
     out: set[int] = set()
     for item in text.split(","):
+        if not item.strip():
+            raise ValueError(f"empty {what} item in {text!r}")
         lo, sep, hi = item.strip().partition("-")
         try:
             a = int(lo) if lo else 1

@@ -180,8 +180,7 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
             return None
         base = ControlConfig()
     fit = results.fit
-    rejected = (np.asarray(results.review.status_of(fit) == "rejected", dtype=bool)
-                if results.review is not None else np.zeros(len(fit), dtype=bool))
+    rejected = np.asarray(results.review_status == "rejected", dtype=bool)
     time = np.asarray(fit.time, dtype=float)
     at_control = np.zeros(len(fit), dtype=bool)
     for t in (base.undeut_time, base.fd_time):
@@ -194,7 +193,6 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     usable = ~rejected
     if fit.noise_estimate is not None:
         usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
-    factor = run.n_max_factor if run is not None else 1.2
     rates = None
     if config.fd_mode == "kint":
         if results.binned is None or run is None:
@@ -205,8 +203,7 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
         rates = control_rates(results.binned.select(keep),
                               dataclasses.replace(run, controls=config))
-    out = fit_controls(fit, np.asarray(results.measurements.n_max, dtype=float) / factor, config,
-                       usable=usable, rates=rates)
+    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (
@@ -215,6 +212,29 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
                  int(out.fallback.sum()), len(out),
                  f" (stored: {int(stored.fallback.sum())})" if stored is not None else "")
     return out
+
+
+def _site_counts(results) -> np.ndarray:
+    """The exchangeable sites of every measurement: from the stored controls, else counted on
+    the picked table (:func:`hxex.run.site_counts`), else read back from ``n_max`` (rounded)."""
+    fit = results.fit
+    if results.controls is not None:
+        try:
+            return np.asarray(results.controls.n_amides, dtype=float)[
+                results.controls.rows(fit.data_id)]
+        except KeyError:
+            pass
+    run = results.settings.run if results.settings is not None else None
+    if results.binned is not None and run is not None:
+        from ..run import site_counts
+
+        keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
+        sub = results.binned.select(keep)
+        index = {str(s): j for j, s in enumerate(sub.spectrum_id)}
+        counts = site_counts(sub, run)
+        return np.array([counts[index[str(s)]] for s in fit.spectrum_id], dtype=float)
+    factor = run.n_max_factor if run is not None else 1.2
+    return np.rint(np.asarray(results.measurements.n_max, dtype=float) / factor)
 
 
 def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
@@ -228,6 +248,17 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
 
     if isinstance(results, RunSet):
         return results._records(ks, exclude_flagged, filters, quiet, controls_changes)
+    groups, corrected, nterm, undeut, dropped = _spectrum_records(
+        results, ks, exclude_flagged, filters, quiet, controls_changes)
+    groups = _filter_species(groups, ks, filters, dropped, quiet)
+    return groups, corrected, nterm, undeut
+
+
+def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
+                      controls_changes=None):
+    """:func:`_records` of one run with only the per-spectrum filters applied, and the counts
+    of what they dropped (the per-species filters, :func:`_filter_species`, come after merged
+    samples are pooled)."""
     fit, binned = results.fit, results.binned
     if binned is None:
         raise ValueError("the species uptake table needs the picked table (results.binned)")
@@ -235,18 +266,16 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
     if missing:
         raise ValueError(f"K = {missing} were not fitted (fitted: {list(fit.k_values)})")
     run = results.settings.run if results.settings is not None else None
-    factor = run.n_max_factor if run is not None else 1.2
     picker = results.settings.picker if results.settings is not None else None
     nterm = picker.nterm_subtract if picker is not None else 1
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
     keep = np.ones(len(fit), dtype=bool)
-    if results.review is not None:
-        keep &= results.review.status_of(fit) != "rejected"
+    keep &= results.review_status != "rejected"
     if exclude_flagged and results.quality is not None:
         keep &= ~np.asarray(results.quality.flagged, dtype=bool)
     controls = analysis_controls(results, controls_changes, quiet=quiet)
-    n_amides = np.asarray(results.measurements.n_max, dtype=float) / factor
+    n_amides = _site_counts(results)
     fell_back = np.zeros(len(fit), dtype=bool)
     if controls is not None:
         n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
@@ -295,6 +324,15 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
                     int(binned.rep[j]), bool(fell_back[i]), "",
                 ))
 
+    undeut = run.reference_time if run is not None else float(np.min(fit.time))
+    corrected = {str(s): controls is not None for s in np.unique(binned.sample)}
+    return groups, corrected, int(nterm), float(undeut), dropped
+
+
+def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = False) -> dict:
+    """The per-species filters of :class:`SpeciesFilters` (``max_fD_se``,
+    ``k1_between_ranks``) on grouped records, once per species and time, after merged samples
+    are pooled; ``dropped`` (the per-spectrum counts) is completed and logged."""
     if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
         worst: dict[tuple, float] = {}
         for key, recs in groups.items():
@@ -324,9 +362,7 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
                      dropped["population"], filters.min_population, 1 - filters.min_population,
                      dropped["fD"], filters.max_fD, dropped["fD_se"], filters.max_fD_se,
                      dropped["k1_between_ranks"])
-    undeut = run.reference_time if run is not None else float(np.min(fit.time))
-    corrected = {str(s): controls is not None for s in np.unique(binned.sample)}
-    return groups, corrected, int(nterm), float(undeut)
+    return groups
 
 
 def species_uptake(

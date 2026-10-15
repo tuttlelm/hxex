@@ -20,23 +20,31 @@ def _str(values) -> pa.Array:
     return pa.array([str(v) for v in values], type=pa.string())
 
 
+# Arrow list columns index their values with int32 offsets
+_MAX_LIST_VALUES = 2**31 - 1
+
+
+def _list_offsets(offsets) -> pa.Array:
+    """``offsets`` as the int32 offsets of a list column, refusing what would not fit."""
+    offsets = np.asarray(offsets, dtype=np.int64)
+    if len(offsets) and offsets[-1] > _MAX_LIST_VALUES:
+        raise ValueError(f"a list column cannot hold {int(offsets[-1])} values (the limit is "
+                         f"{_MAX_LIST_VALUES}); split the data into smaller sets")
+    return pa.array(offsets.astype(np.int32), type=pa.int32())
+
+
 def _ragged(arrays: Sequence[np.ndarray | None], value_type: pa.DataType) -> pa.Array:
     """A list column from one array per row (``None`` makes a null row)."""
     sizes = [0 if a is None else len(a) for a in arrays]
-    offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int32)
+    offsets = _list_offsets(np.concatenate([[0], np.cumsum(sizes, dtype=np.int64)]))
     parts = [np.asarray(a) for a in arrays if a is not None]
     flat = np.concatenate(parts) if parts else np.empty(0)
     mask = pa.array([a is None for a in arrays]) if any(a is None for a in arrays) else None
-    return pa.ListArray.from_arrays(
-        pa.array(offsets, type=pa.int32()), pa.array(flat, type=value_type), mask=mask
-    )
+    return pa.ListArray.from_arrays(offsets, pa.array(flat, type=value_type), mask=mask)
 
 
 def _flat_ragged(flat: np.ndarray, offsets: np.ndarray, value_type: pa.DataType) -> pa.Array:
-    return pa.ListArray.from_arrays(
-        pa.array(np.asarray(offsets, dtype=np.int32), type=pa.int32()),
-        pa.array(flat, type=value_type),
-    )
+    return pa.ListArray.from_arrays(_list_offsets(offsets), pa.array(flat, type=value_type))
 
 
 def _rows(array2d: np.ndarray) -> list[np.ndarray]:

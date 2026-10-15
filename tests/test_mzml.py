@@ -751,3 +751,91 @@ def test_usable_from_is_on_the_acquisition_clock(tmp_path):
     fixed = MzmlRun(path, "WT", time=60.0, usable_from=100.0)
     summed = read_mzml([fixed], [MzmlTarget(ENTRY, rt_window=(50.0, 160.0))], project="p")
     assert len(summed) == 1 and summed.spectrum_id[0].endswith("scans3-4")  # 120 and 150 s
+
+
+# --- audit fixes: arrays, ids, recorded names, charges, sampling ------------------------------
+
+def test_empty_and_damaged_binary_arrays(tmp_path):
+    scans = time_course(n=2)
+    scans[1] = {"mz": [], "intensity": [], "time": 1.0}
+    path = write_mzml(tmp_path / "e.mzML", scans)
+    # an empty <binary></binary> with zlib declared (as some writers write an empty scan)
+    empty = base64.b64encode(zlib.compress(b"")).decode()
+    text = path.read_text()
+    assert text.count(f"<binary>{empty}</binary>") == 2
+    path.write_text(text.replace(f"<binary>{empty}</binary>", "<binary></binary>"))
+    got = list(iter_scans(path))
+    assert len(got) == 2 and len(got[1].mz) == 0 and len(got[1].intensity) == 0
+    assert got[1].mz.dtype == np.float64
+    # damaged payloads name the scan instead of escaping as zlib or base64 errors
+    first = base64.b64encode(zlib.compress(np.asarray(scans[0]["mz"]).tobytes())).decode()
+    assert text.count(first) == 1
+    for bad in ("not base64!!", base64.b64encode(b"not zlib data").decode()):
+        path.write_text(text.replace(first, bad))
+        with pytest.raises(MzmlError, match=r"scan 0 \(scan=1\): an array cannot be decoded"):
+            list(iter_scans(path))
+
+
+def test_spectrum_ids_must_be_unique(tmp_path):
+    """Two runs with one sample and file name (replicates in sibling directories) would give
+    the same ids, as would time windows that select the same scans twice."""
+    scans = time_course(n=3)
+    (tmp_path / "rep1").mkdir()
+    (tmp_path / "rep2").mkdir()
+    a = write_mzml(tmp_path / "rep1" / "run.mzML", scans)
+    b = write_mzml(tmp_path / "rep2" / "run.mzML", scans)
+    with pytest.raises(MzmlError, match="not unique") as info:
+        read_mzml([MzmlRun(a, "WT"), MzmlRun(b, "WT", rep=2)], [MzmlTarget(ENTRY)], project="p")
+    message = str(info.value)
+    assert "run 0 (WT, rep 1, " in message and "run 1 (WT, rep 2, " in message
+    assert str(b) in message and "same sample and file name" in message
+    ok = read_mzml([MzmlRun(a, "WT"), MzmlRun(b, "WT2")], [MzmlTarget(ENTRY)], project="p")
+    assert len(ok) == 6 and len(set(ok.spectrum_id)) == 6
+    twice = MzmlConfig(group="windows", windows=[(0, 1000), (0, 1000)])
+    with pytest.raises(MzmlError, match="not unique.*run 0.*selected more than once"):
+        read_mzml([MzmlRun(a, "WT")], [MzmlTarget(ENTRY)], project="p", config=twice)
+
+
+def test_run_paths_recorded_on_windows_are_found_by_name(tmp_path):
+    from hxex.io import kinetics_spectra, read_mzml_source
+
+    kin = write_mzml(tmp_path / "kin.mzML", time_course(n=3))
+    s = read_mzml([MzmlRun(kin, "WT")], [MzmlTarget(ENTRY)], project="p")
+    src = json.loads(json.dumps(s.source))
+    src["runs"][0]["path"] = r"C:\data\hdx\kin.mzML"  # the record of a read made on Windows
+    assert kinetics_spectra(src, s.spectrum_id).all()
+    again = read_mzml_source(src, directory=tmp_path)
+    np.testing.assert_array_equal(again.intensity, s.intensity)
+    assert again.source["runs"][0]["path"] == r"C:\data\hdx\kin.mzML"
+    del src["files"]  # an older record without the file names: the name comes from the path
+    assert kinetics_spectra(src, s.spectrum_id).all()
+    assert len(read_mzml_source(src, directory=tmp_path)) == len(s)
+
+
+def test_precursor_charge_is_that_of_its_own_stage(tmp_path):
+    hcd = ("MS:1000422", "beam-type collision-induced dissociation")
+    etd = ("MS:1000598", "electron transfer dissociation")
+    scans = time_course(n=1)
+    scans.append({"mz": scans[0]["mz"], "intensity": scans[0]["intensity"], "time": 0.6,
+                  "ms_level": 3, "precursors": [(1012.0, 3, *hcd), (1012.0, 7, *etd)]})
+    path = write_mzml(tmp_path / "ms3.mzML", scans)
+    assert list(iter_scans(path))[1].precursor_charge == 7
+    charge7 = '<cvParam cvRef="MS" accession="MS:1000041" name="charge state" value="7"/>'
+    text = path.read_text()
+    assert text.count(charge7) == 1
+    path.write_text(text.replace(charge7, ""))  # the last stage states no charge
+    scan = list(iter_scans(path))[1]
+    assert scan.precursor_charge == 0 and scan.precursor_mz == 1012.0 and len(scan.stages) == 2
+
+
+def test_sampling_scans_that_share_one_time(tmp_path):
+    from hxex.io.mzml import _sample_log
+
+    picks = _sample_log(np.full(10, 5.0), 4)
+    assert picks[0] == 0 and picks[-1] == 9 and len(picks) <= 4 and len(set(picks)) == len(picks)
+    assert list(_sample_log(np.full(3, 5.0), 4)) == [0, 1, 2]
+    path = write_mzml(tmp_path / "same.mzML", time_course(n=6, step=0.0))
+    s = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p",
+                  config=MzmlConfig(max_spectra=3))
+    assert 2 <= len(s) <= 3 and s.spectrum_id[0].endswith("scan0")
+    assert s.spectrum_id[-1].endswith("scan5")

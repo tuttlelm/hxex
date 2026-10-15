@@ -521,10 +521,13 @@ class DecayFit:
 
 def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     """Fit ``A exp(-k t) + C`` (a decay for back-exchange, a rise when ``A`` is negative) to the
-    points of ``trace`` at ``min_time`` and later, by least squares from several starting rates;
-    ``k`` is kept positive. Times here are on the exchange clock (spectrum times: scan time plus
-    the run's ``time_offset``); to leave a file's spurious early scans out of everything, set
-    the run's ``usable_from`` instead (:class:`hxex.io.MzmlRun`, acquisition clock)."""
+    points of ``trace`` at ``min_time`` and later, by least squares from several starting rates
+    spread over the time range (``0.1`` to ``1000`` decays across it); ``k`` is kept positive.
+    The fit is made as ``A' exp(-k (t - t_first)) + C`` (the same curve, conditioned on the
+    first fitted point rather than on time 0) and ``A = A' exp(k t_first)`` reported. Times
+    here are on the exchange clock (spectrum times: scan time plus the run's ``time_offset``);
+    to leave a file's spurious early scans out of everything, set the run's ``usable_from``
+    instead (:class:`hxex.io.MzmlRun`, acquisition clock)."""
     from scipy.optimize import curve_fit
 
     tr = trace.after(min_time)
@@ -533,16 +536,17 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     if len(t) < 4 or np.ptp(t) <= 0:
         return DecayFit(np.nan, np.nan, np.nan, np.nan, len(t), False)
     t_first, t_last = float(t.min()), float(t.max())
+    span = float(np.ptp(t))
 
     def model(x, a, k, c):
-        return a * np.exp(-k * x) + c
+        return a * np.exp(-k * (x - t_first)) + c
 
     tail = max(1, len(t) // 10)
     order = np.argsort(t)
     c0 = float(np.median(y[order[-tail:]]))
     a0 = float(np.median(y[order[:tail]])) - c0
     best = None
-    for k0 in np.geomspace(0.1 / np.ptp(t), 10.0 / max(t.min(), np.ptp(t) / 100), 7):
+    for k0 in np.geomspace(0.1 / span, 1000.0 / span, 7):
         try:
             p, cov = curve_fit(model, t, y, p0=(a0, k0, c0),
                                bounds=([-np.inf, 0.0, -np.inf], [np.inf, np.inf, np.inf]),
@@ -557,8 +561,10 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     _, p, cov = best
     rate_se = float(np.sqrt(cov[1, 1])) if np.all(np.isfinite(cov)) else np.nan
     rate = float(p[1])
+    with np.errstate(over="ignore"):  # the amplitude at time 0 of an unresolved fast decay
+        amplitude = float(p[0] * np.exp(rate * t_first))
     resolved = rate * t_last >= 0.1 and rate * t_first <= 3.0
-    return DecayFit(rate, rate_se, float(p[0]), float(p[2]), len(t), True, resolved)
+    return DecayFit(rate, rate_se, amplitude, float(p[2]), len(t), True, resolved)
 
 
 # --- per-residue values from all fragments ------------------------------------------------------
@@ -626,7 +632,8 @@ class LadderRates:
     unresolved rate means nothing). Only when computed with exchange conditions (otherwise
     None, and not among the columns): ``kint``, the residue's intrinsic rate in the sample's
     solvent (1/s; ``kforw + kback``, :mod:`hxex.kint`, from the parent's sequence; NaN for a
-    sample without conditions) and ``protection``, ``kint / rate``."""
+    sample without conditions) and ``protection``, ``kint / rate`` (NaN where the decay is not
+    resolved: such a rate means nothing)."""
 
     sample: np.ndarray
     parent: np.ndarray
@@ -731,7 +738,8 @@ def ladder_rates(
                                 ("rate", f.rate), ("rate_se", f.rate_se),
                                 ("amplitude", f.amplitude), ("offset", f.offset), ("n", f.n),
                                 ("resolved", f.resolved), ("kint", k_int),
-                                ("protection", k_int / f.rate if f.rate > 0 else np.nan)):
+                                ("protection", k_int / f.rate
+                                 if f.resolved and f.rate > 0 else np.nan)):
                             cols[name].append(value)
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
              "residue": np.int64, "rate": float, "rate_se": float, "amplitude": float,

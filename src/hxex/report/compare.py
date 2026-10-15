@@ -307,8 +307,9 @@ def plot_peptide_differences(
     _marks(ax, annotations)
     top = length if length is not None else int(comparison.end[rows].max())
     ax.set_xlim(0, top)
-    span = float(np.nanmax(np.abs(comparison.delta[rows]) + np.nan_to_num(
-        comparison.delta_se[rows]))) if len(rows) else 0.2
+    extent = np.abs(comparison.delta[rows]) + np.nan_to_num(comparison.delta_se[rows])
+    finite = extent[np.isfinite(extent)]
+    span = float(finite.max()) if len(finite) else 0.2  # every delta NaN: a default range
     ax.set_ylim(-max(span, 0.2) * 1.1, max(span, 0.2) * 1.1)
     ax.set_xlabel("residue")
     what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"

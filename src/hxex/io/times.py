@@ -7,7 +7,13 @@ from decimal import Decimal, InvalidOperation
 
 from .errors import ReadError
 
-_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+# seconds per unit, by the whole unit token (lower case)
+_UNIT_SECONDS: dict[str, Decimal] = {
+    **dict.fromkeys(("ms", "msec", "msecs", "millisecond", "milliseconds"), Decimal("0.001")),
+    **dict.fromkeys(("s", "sec", "secs", "second", "seconds"), Decimal(1)),
+    **dict.fromkeys(("m", "min", "mins", "minute", "minutes"), Decimal(60)),
+    **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), Decimal(3600)),
+}
 
 # Default times (s) recorded for the control labels; the user sets them per project. In an
 # experiment run the other way (deuterated at the start, then exchanged into H2O) a real time point
@@ -27,12 +33,15 @@ def _to_seconds(number: str, unit: str, label: str) -> float:
     """``number`` (decimal text) times the unit's seconds, rounded once to the nearest float.
 
     Multiplying as decimals keeps ``4.1m`` at exactly 246.0 (``4.1 * 60`` in floating point is
-    245.99999999999997), so equal times written differently compare equal.
+    245.99999999999997), so equal times written differently compare equal. The unit is matched
+    as a whole word (``s``, ``sec``, ``min``, ``hours``, ``ms``...), case-insensitively; any
+    other unit raises :class:`ReadError`.
     """
     try:
-        seconds = _UNIT_SECONDS[unit[:1].lower()]
+        seconds = _UNIT_SECONDS[unit.strip().lower()]
     except KeyError:
-        raise ReadError(f"unknown time unit {unit!r} in label {label!r} (use s, m or h)") from None
+        raise ReadError(f"unknown time unit {unit!r} in label {label!r} "
+                        "(use s, sec, m, min, h, hr or ms)") from None
     try:
         value = Decimal(number)
     except InvalidOperation:

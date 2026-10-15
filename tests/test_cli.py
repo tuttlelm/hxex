@@ -221,3 +221,120 @@ def test_threads_are_set_for_the_command_only(tmp_path, capsys):
         with pytest.raises(ProjectError, match="threads"):
             project_from(tomllib.loads(f'project = "p"\nthreads = {bad}\n[input]\n'
                                        'format = "specexport"\ndata_dir = "d"\n'), tmp_path)
+
+
+def _optional_settings(cls, path=()):
+    """Every setting of ``cls`` and its nested configs that may be None and is not a switch, as
+    (path, class) by the dotted TOML path, the way the project file sees them."""
+    from hxex.config import _config_class, _hints, _union_members
+
+    out = {}
+    for name, hint in _hints(cls).items():
+        members = _union_members(hint)
+        if type(None) in members and bool not in members:
+            out[(*path, name)] = cls
+        sub = _config_class(hint)
+        if sub is not None:
+            out.update(_optional_settings(sub, (*path, name)))
+    return out
+
+
+# what an optional setting needs beside it to be valid with false
+_COMPANIONS = {
+    ("fit", "noise", "percent"): "sd = 50.0",
+    ("controls", "quench", "initial_fraction"): "ph_read = 2.5\ntemperature = 0.0\n"
+                                                 "d2o_fraction = 0.0",
+}
+
+
+def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
+    head = 'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+
+    def project(text):
+        return project_from(tomllib.loads(head + text), tmp_path)
+
+    settings = _optional_settings(RunConfig)
+    sections = {p for p in settings if p[0] in ("bootstrap", "controls", "plots", "quality")}
+    assert {("fit", "noise", "sd"), ("fit", "noise", "percent"), ("controls", "fd_time"),
+            ("controls", "retention_min"), ("controls", "quench"),
+            ("quality", "max_mz_offset_ppm"), ("picker", "noise"), ("max_chunk",),
+            ("controls", "quench", "initial_fraction")} <= set(settings)
+    assert ("plots", "corrected") not in settings  # a switch that may be unset: false is off
+    for path in settings:
+        if len(path) == 1 and path[0] in sections:
+            continue  # the optional stages themselves: false turns them off (tested below)
+        table = f"[run.{'.'.join(path[:-1])}]\n" if len(path) > 1 else "[run]\n"
+        p = project(table + f"{path[-1]} = false\n{_COMPANIONS.get(path, '')}\n")
+        value = p.run
+        for name in path:
+            value = getattr(value, name)
+        assert value is None, path
+    # the switches keep an explicit false
+    p = project("[run]\ndrop_no_signal = false\nquality = false\n[run.fit]\nnested_init = false\n"
+                "[run.plots]\ncorrected = false\noverview = false\n")
+    assert p.run.drop_no_signal is False and p.run.quality is None
+    assert p.run.fit.nested_init is False
+    assert p.run.plots.corrected is False and p.run.plots.overview is False
+    # a fixed noise level: sd set, the default percent removed
+    p = project("[run.fit.noise]\nsd = 50.0\npercent = false\n")
+    assert p.run.fit.noise.sd == 50.0 and p.run.fit.noise.percent is None
+    with pytest.raises(ProjectError, match="sd"):
+        project("[run.fit.noise]\nsd = 50.0\n")  # both set
+    p = project("[run.controls]\nfd_time = false\nquench = false\n[run.quality]\n"
+                "max_mz_offset_ppm = false\n")
+    assert p.run.controls.fd_time is None and p.run.controls.quench is None
+    assert p.run.quality.max_mz_offset_ppm is None
+
+
+def test_control_times_default_to_the_input_times(tmp_path):
+    def project(text, fmt='format = "specexport"\ndata_dir = "d"\nundeut_time = 0.5\n'
+                                'fulldeut_time = 99.0\n'):
+        return project_from(tomllib.loads(f'project = "p"\n[input]\n{fmt}' + text), tmp_path)
+
+    p = project("[run.controls]\nd2o_fraction = 0.85\n")
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
+    assert p.run.reference_time == 0.5
+    p = project("[run]\ncontrols = true\n")
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
+    p = project("[run.controls]\nundeut_time = 1.0\nfd_time = 100.0\n")  # explicit values win
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (1.0, 100.0)
+    p = project("[run.controls]\nundeut_time = false\nfd_time = false\n")  # no such controls
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (None, None)
+    assert project("").run.controls is None
+    # a scan format: its runs carry the times; the undeuterated ones are at [run] undeut_time
+    scan = ('format = "mzml"\npeptides = "p.csv"\n[[input.runs]]\npath = "a"\nsample = "S"\n'
+            "time = 0.0\n")
+    p = project("[run]\nundeut_time = 2.0\n[run.controls]\n", scan)
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (2.0, None)
+    p = project("[run.controls]\nfd_time = 1e6\n", scan)
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.0, 1e6)
+
+
+def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
+    import re
+
+    from hxex.bootstrap import BootstrapConfig
+
+    for fmt in ("specexport", "mzml"):
+        text = template(fmt)
+        head, run = text.split("# Run settings", 1)
+        run = re.sub(r"^# (\[|[a-z_]+ = )", r"\1", run, flags=re.M)  # every setting on
+        assert "(not set)" not in run
+        p = project_from(tomllib.loads(head + "# Run settings" + run), tmp_path)
+        assert p.run.bootstrap == BootstrapConfig() and p.run.plots is not None
+        assert p.run.max_chunk is None and p.run.fit.noise.sd is None
+        assert p.run.controls.quench is None and p.run.controls.retention_min is None
+        assert p.run.controls.fd_time == 1e6
+        assert p.run.controls.undeut_time == 0.0
+        if fmt == "mzml":
+            assert p.input.scans.min_time is None and p.input.scans.max_spectra is None
+
+
+def test_runtime_errors_are_messages_too(tmp_path, capsys, monkeypatch):
+    def fail(args):
+        raise RuntimeError("CUDA is not available")
+
+    monkeypatch.setitem(cli.COMMANDS, "info", fail)
+    assert cli.main(["info", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "CUDA is not available" in err and "Traceback" not in err

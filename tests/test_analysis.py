@@ -996,3 +996,80 @@ B = "{two_sample_bundle.as_posix()}"
     rows = (tmp_path / "merged" / "compare_peptides.csv").read_text().splitlines()[1:]
     assert {r.split(",")[1] for r in rows} == {"V"}
     assert (tmp_path / "merged" / "run_identity.csv").is_file()
+
+
+def test_a_peptide_without_a_value_or_error_leaves_the_other_residues_alone():
+    from hxex.analysis import ChoiceConfig, choose_populations
+
+    # a: residues 3, 4, 6-9 without a value; b: 7-11 with an unknown error; c: 9-14 complete
+    up = table([("S", "AKLPGSTV", 2, 4.0, np.nan, 0.02), ("S", "GSTVED", 6, 4.0, 0.6, np.nan),
+                ("S", "TVEDRWQ", 8, 4.0, 0.5, 0.03)])
+    rm = residue_map(up, sequences=SEQUENCE)
+
+    def at(residue, name):
+        return getattr(rm, name)[rm.residue == residue][0]
+
+    assert np.isnan(at(3, "fD")) and at(3, "redundancy") == 1 and at(3, "covered")
+    assert at(7, "fD") == pytest.approx(0.6) and np.isnan(at(7, "fD_se"))
+    wb, wc = (1 / 5) / (1 / 5 + 1 / 6), (1 / 6) / (1 / 5 + 1 / 6)
+    assert at(10, "fD") == pytest.approx(wb * 0.6 + wc * 0.5) and np.isnan(at(10, "fD_se"))
+    assert at(12, "fD") == pytest.approx(0.5) and at(12, "fD_se") == pytest.approx(0.03)
+    assert np.isfinite(rm.fD[rm.covered & (rm.residue >= 12)]).all()
+    # the choice between one and two populations: an unknown error passes no test
+    rows = [(1, 1, 1, 0.4, 0.02), (1, 2, 1, 0.2, np.nan), (1, 2, 2, 0.6, 0.02),
+            (2, 1, 1, 0.4, 0.02), (2, 2, 1, 0.2, np.nan), (2, 2, 2, 0.6, np.nan),
+            (3, 1, 1, 0.4, 0.02), (3, 2, 1, 0.2, 0.02), (3, 2, 2, 0.6, 0.02)]
+    ch = choose_populations(choice_map(rows), ChoiceConfig(confidence=0, max_fD_se=1))
+    assert ch.two_populations.tolist() == [False, False, True]
+    assert ch.reason.tolist() == ["not separated", "not separated", ""]
+
+
+def test_species_filters_judge_merged_samples_once_pooled(results):
+    from hxex.analysis import RunSet
+
+    merged = RunSet({"A": results, "B": results}, merge={"A:S": "S", "B:S": "S"})
+    loose = SpeciesFilters(k1_between_ranks=False, max_fD_se=1e9)
+
+    def worst(up):  # the largest fD error of the ranks of each K=2 species and time
+        out = {}
+        for p, t, k, se in zip(up.peptide, up.time, up.K, up.fD_se, strict=True):
+            if k == 2 and np.isfinite(se):
+                out[(str(p), float(t))] = max(out.get((str(p), float(t)), 0.0), float(se))
+        return out
+
+    single, pooled = worst(species_uptake(results, filters=loose)), worst(
+        species_uptake(merged, filters=loose))
+    key = max(single, key=lambda k: single[k] - pooled.get(k, np.inf))
+    assert pooled[key] < single[key]  # pooling the same spectra twice shrinks the error
+    tight = SpeciesFilters(k1_between_ranks=False, max_fD_se=(single[key] + pooled[key]) / 2)
+    s2, p2 = species_uptake(results, filters=tight), species_uptake(merged, filters=tight)
+    assert not (s2.where(K=2, time=key[1]) & (s2.peptide == key[0])).any()
+    assert (p2.where(K=2, time=key[1]) & (p2.peptide == key[0])).any()  # judged once, pooled
+
+
+def test_identity_check_needs_run_labels_or_the_runs_column():
+    import dataclasses
+
+    from hxex.analysis import check_identity
+
+    with pytest.raises(ValueError, match="name no run: S"):
+        check_identity(table([("S", "AKLPGSTV", 2, 4.0, 0.3, 0.01)]))
+    # a merged sample carries its runs in the runs column
+    up = table([("S", "AKLPGSTV", 2, 4.0, 0.3, 0.01), ("S", "AKLPGSTV", 3, 4.0, 0.3, 0.01)])
+    check = check_identity(dataclasses.replace(up, runs=np.array(["A", "B"])), quiet=True)
+    assert check.run.tolist() == ["A", "B"] and set(check.issue) == {"position"}
+
+
+def test_woods_plot_without_a_finite_difference_keeps_a_default_range():
+    from hxex.analysis import PeptideComparison
+    from hxex.report import plot_peptide_differences
+
+    nan = np.array([np.nan])
+    pc = PeptideComparison(
+        sample=np.array(["V"]), peptide=np.array(["AKLPGSTV"]), modification=np.array([""]),
+        start=np.array([2]), end=np.array([9]), time=np.array([4.0]), value_reference=nan,
+        value_reference_se=nan, value=nan, value_se=nan, delta=nan, delta_se=nan, t=nan, p=nan,
+        n_reference=np.array([1]), n=np.array([1]), significant=np.array([False]),
+        reference="R", delta_crit=np.nan)
+    fig = plot_peptide_differences(pc, "V", 4.0)
+    np.testing.assert_allclose(fig.axes[0].get_ylim(), (-0.22, 0.22))

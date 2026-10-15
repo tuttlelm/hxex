@@ -9,13 +9,21 @@ shape, scaled by its amplitude. ``tests/test_report.py`` checks it against the P
 from __future__ import annotations
 
 import numpy as np
-from scipy.special import gammaln
+from scipy.special import gammaln, logsumexp
 
 
 def log_binom(b: np.ndarray, n: float, p: float) -> tuple[np.ndarray, np.ndarray]:
-    """Log of the generalised binomial pmf at the bins ``b`` and the mask of bins that have
-    probability (the same rule as ``hxex.model.mixture``)."""
+    """Log of the real-valued binomial pmf at the bins ``b``, normalised to sum to 1 over its
+    valid bins ``0 .. ceil(n)``, and the mask of bins that have probability (the same rule as
+    ``hxex.model.mixture``, including its normalisation)."""
     b = np.asarray(b, dtype=float)
+    log_pmf, valid = _log_binom_raw(b, n, p)
+    grid, grid_valid = _log_binom_raw(np.arange(int(np.ceil(max(n, 0.0))) + 2, dtype=float), n, p)
+    log_norm = logsumexp(grid[grid_valid]) if grid_valid.any() else 0.0
+    return log_pmf - log_norm, valid
+
+
+def _log_binom_raw(b: np.ndarray, n: float, p: float) -> tuple[np.ndarray, np.ndarray]:
     b_safe = np.clip(b, 0.0, None)
     rest = np.clip(n - b + 1.0, 1e-12, None)
     valid = (b >= 0) & (n - b + 1.0 > 0)

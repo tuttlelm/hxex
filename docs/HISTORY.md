@@ -2039,3 +2039,91 @@ atomically, with a content checksum in the file metadata and partial reads by sp
 need numpy and pyarrow only. The shared Arrow helpers moved to `hxex.io._arrow`. Still to do:
 the HX-Express writer (of the peak-picked spectra, see "Later goals"), and writers for SpecExport
 CSVs or mzML if wanted.
+
+78. **Code audit: the binomial components are normalised; owner decisions (2026-10-15).** A full
+    audit (six reviewers over the whole package; every finding verified against the code, the
+    main ones reproduced). The fixes are in this commit, each with a test. The findings that
+    changed behaviour or settled a question:
+    - **The real-valued binomial was not normalised.** Item 2's "mass within 2 % of 1" held only
+      where it was checked (`13 <= n <= 14`, `p = 0.9`). At non-integer `n` the bin above `n`
+      carries `(1 - p)^(n - b)` with a negative exponent, so the mass grows without bound as `p`
+      nears 1: measured 1.02 at `n = 13.5, p = 0.9`, 1.20 at `p = 0.97`, 1.70 at `p = 0.99`,
+      4.8 at `p = 0.999`, and 1.7 at `n = 0.5, p = 0.9`. The populations `A_k / sum A` were then
+      not shares (on the Bimodal baseline 29 of 542 spectra had a selected component with mass
+      above 1.1, 18 above 1.3, and a population off by up to 0.18), and the back-exchange
+      correction inherited it through the fully deuterated controls. `model.log_binom_norm` now
+      gives `log` of each component's mass over its valid bins `0 .. ceil(n)` (a logsumexp on
+      an integer grid, differentiable), and `log_binom_pmf` and `convolve` subtract it, so every
+      component sums to exactly 1 for any real `n` and `p`; the amplitudes are areas. The log
+      terms `log p` and `log (1 - p)` come from the logit (`logsigmoid`) wherever the logit is
+      known (the model and the polish), so in float32 the pmf stays finite and normalised where
+      `sigmoid(logit_p)` rounds to 1 (the `1e-10` clamp used to take over there and the bin
+      above `n` carried a mass of about 1.5e4). The reported mean stays `n p`: for the
+      normalised continuation the pmf's centre is `n p` within 0.05 D at `p <= 0.9` and within
+      0.4 D at `p = 0.99` and half-integer `n` (integer `n`: exact). An alternative continuation
+      that is exact in both mass and mean, the mixture `(1 - f) B(floor n, p) + f B(ceil n, p)`
+      with `f = n - floor(n)`, is an open option for the owner (it has kinks in `n` at the
+      integers but no cliffs). The prototype comparisons in `tests/test_model.py` add the mass
+      back before comparing. The fit regressions are unchanged (same selections and losses
+      within their tolerances).
+    - **A letter-only formula in `ModificationRegistry.with_modification`** (`'O'` for
+      oxidation) was read by pyteomics as a peptide sequence (pyrrolysine plus water, 255 Da
+      heavier instead of 16). Now `Composition(formula=...)`. The TOML path (dicts) was fine.
+    - **Terminal groups on fragment ions (owner: raise).** `composition()` applied the far
+      terminus's group to a fragment that does not contain it (`PEPTIDE-NH2` as a b ion was
+      0.984 Da low, `Ac-PEPTIDE` as a y ion 42 Da high); it is now a `ChemistryError`.
+      `fragment_entries` already writes each fragment with the terminus it has.
+    - **`false` in the project file.** The "false means unset" rule was applied to every
+      top-level `[run]` scalar (`drop_no_signal = false` became None and crashed the run) and
+      never inside `[run.*]` tables (a fixed noise `sd` could not be set, `fd_time = false`
+      meant time 0). It is now type-aware: `false` is None only for settings whose type admits
+      None, in every table.
+    - **`[run.controls]` times (owner, closes item 71's trap):** when not set, `undeut_time` is
+      the input's undeuterated time (the one the reader labels the controls with) and `fd_time`
+      the input's fully deuterated time; `false` means no control of that kind.
+    - **A fully deuterated control at or below the undeuterated level** (`mfd <= m0`) passed in
+      kint mode (no retention floor) and made every corrected mean of the series NaN without a
+      flag; one such NaN then made every residue of that sample and time NaN in the residue
+      map (`0 * NaN`), and the Woods plot crashed on NaN limits. A non-positive span is now
+      `retention_low` whatever the floor; non-finite values are masked out of the residue
+      design; unknown (NaN) errors stay unknown instead of becoming 0.
+    - **Hex sites count as amides (owner):** they stand for exchangeable amides on a
+      modification, so `n_amides` of the controls is the site count (amides plus Hex), now
+      passed as such instead of `n_max / 1.2`.
+    - **Range matching across modified forms is intended (owner):** `compare_peptides` with
+      `match='range'` pairs an unmodified reference with the sample's modified form when each
+      side has one species over the range; documented there.
+    - **Noise reference and bootstrap resampling** differ from pyHXExpress as the owner intends
+      (now listed in PLAN's deliberate differences).
+    - **Overwriting a bundle keeps its review (owner).** `hxex run --overwrite` on a reviewed
+      bundle used to drop `review.parquet`; the review is carried over (the ids are stable).
+    - Readers: an empty zlib-encoded scan no longer aborts an mzML read; time units are whole
+      words (`ms` is milliseconds; unknown units raise); duplicate spectrum ids (same sample and
+      file name in sibling directories, or windows selecting the same scans) raise instead of
+      colliding in the bundle; Windows-recorded run paths are found by name on POSIX; overwrite
+      never removes a file that is not a bundle; review writes are atomic.
+    Open for the owner (from the audit): the kint-mode retention floor for series without
+    rates; the `[input.scans]` blanket `false` rule; whether `ms` should be accepted; the
+    SpecExport FASTA, which is sliced by characters (a plain-residue FASTA is the precondition;
+    a modX FASTA would be mis-sliced).
+
+79. **Kint mode: series without rates keep the retention floor (owner, 2026-10-15).** With
+    `fd_fallback = 'kint'` the floor was none for every series, but the prediction only judges
+    the series that have rates (parent-type ions without `Hex`), and only once `kint_min_series`
+    usable controls exist; fragment ions and `Hex` series had no check at all (any level from
+    0 to full exchange was accepted). They now keep the d2o-mode floor (half of `d2o_fraction`)
+    and fall back to `d2o_fraction` below it. The owner's wider point, to be designed: the
+    back-exchange correction may belong at the parent level, applied to the fragments in a way
+    still to be decided (PLAN, "Risks and open decisions").
+    **Sequence files and modifications (owner):** FASTA has no syntax for the modX labels, so
+    modifications are given in the peptide list (`peptides.csv`, pyHXExpress's metadf) and
+    `read_specexport_dir` slices the plain FASTA by characters, which is correct for it. A
+    sequence file that carries modifications would need a format decision: a future
+    consideration, not a bug.
+    **Errors without a bootstrap (owner's question):** the aggregation already gives them.
+    `species_uptake` combines the records of a species (replicates and charge states) with the
+    larger of their own errors and the scatter between them (`_combine`), so without a
+    bootstrap the peptide-level standard error is the scatter's, and is unknown only for a
+    species with a single record. The residue level propagates those, so residues covered only
+    by single-record species are the ones without an error. The scatter of overlapping
+    peptides about a residue's value is not used as an error (an option, not built).

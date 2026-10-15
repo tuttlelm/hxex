@@ -118,7 +118,7 @@ def test_terminal_groups():
     assert chem.count_amides("RPKPQQFFGLM-NH2") == chem.count_amides("RPKPQQFFGLM")
 
 
-@pytest.mark.parametrize("ion_type", ["M", "b", "c-1", "y", "z-dot", "x"])
+@pytest.mark.parametrize("ion_type", ["M", "y", "z-dot", "x"])
 def test_c_terminal_amide_matches_pyteomics(ion_type):
     seq = "RPKPQQFFGLM-NH2"  # substance P
     # the group given to pyteomics explicitly (older pyteomics cannot read it from the sequence)
@@ -130,6 +130,28 @@ def test_c_terminal_amide_matches_pyteomics(ion_type):
     d = {k: chem.composition(seq, ion_type).get(k, 0) - chem.composition(seq[:-4], ion_type)
          .get(k, 0) for k in "CHNO"}
     assert d == {"C": 0, "H": 1, "N": 1, "O": -1}
+
+
+@pytest.mark.parametrize("seq, ion_type", [("RPKPQQFFGLM-NH2", "b"), ("RPKPQQFFGLM-NH2", "c-1"),
+                                           ("Ac-PEPTIDE", "y"), ("Ac-PEPTIDE", "z-dot")])
+def test_a_far_terminus_group_on_a_fragment_ion_is_an_error(seq, ion_type):
+    """A b ion never carries the C-terminus (pyteomics would subtract -OH from a peptide that
+    ends in -NH2 and give an m/z 0.984 Da low); the fragment must be written with the terminus it
+    has, as fragment_entries does."""
+    with pytest.raises(chem.ChemistryError, match="not part of the fragment"):
+        chem.composition(seq, ion_type)
+    with pytest.raises(chem.ChemistryError):
+        chem.mz(seq, 1, ion_type)
+
+
+def test_with_modification_reads_a_letter_only_formula_as_a_formula():
+    """pyteomics tries a bare string as a peptide sequence first ('O' was pyrrolysine + water)."""
+    reg = chem.DEFAULT_MODIFICATIONS.with_modification("oM", "M", "O")
+    assert chem.neutral_mass("oM", registry=reg) - chem.neutral_mass("M") == pytest.approx(
+        15.9949, abs=1e-3)
+    reg2 = chem.DEFAULT_MODIFICATIONS.with_modification("fK", "K", "CO")
+    assert chem.neutral_mass("fK", registry=reg2) - chem.neutral_mass("K") == pytest.approx(
+        27.9949, abs=1e-3)
 
 
 def test_n_terminal_acetyl():

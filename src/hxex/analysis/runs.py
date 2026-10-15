@@ -102,13 +102,18 @@ class RunSet:
         return run, sample
 
     def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None):
-        """:func:`hxex.analysis.species._records` of every run, the samples relabelled."""
-        from .species import _records
+        """:func:`hxex.analysis.species._records` of every run, the samples relabelled: the
+        per-spectrum filters are applied within each run, the per-species ones once, after
+        merged samples have pooled their spectra."""
+        from .species import _filter_species, _spectrum_records
 
         groups, corrected, nterm, undeut = {}, {}, {}, {}
+        dropped: dict[str, int] = {}
         for name, results in self.runs.items():
-            g, c, nterm[name], undeut[name] = _records(results, ks, exclude_flagged, filters,
-                                                       quiet, controls_changes)
+            g, c, nterm[name], undeut[name], d = _spectrum_records(
+                results, ks, exclude_flagged, filters, quiet, controls_changes)
+            for key, n in d.items():
+                dropped[key] = dropped.get(key, 0) + n
             for key, recs in g.items():  # merged samples pool their spectra, each tagged by run
                 groups.setdefault((self.sample_label(name, key[0]), *key[1:]), []).extend(
                     (*r[:8], name) for r in recs)
@@ -127,6 +132,7 @@ class RunSet:
             log.warning("back-exchange correction differs between runs (corrected: %s)",
                         ", ".join(s for s, v in corrected.items() if v) or "none")
         first = self.names[0]
+        groups = _filter_species(groups, ks, filters, dropped, quiet)
         return groups, corrected, nterm[first], undeut[first]
 
 
@@ -225,16 +231,30 @@ class IdentityCheck:
 
 def check_identity(uptake: SpeciesUptake, *, quiet: bool = False) -> IdentityCheck:
     """The species of ``uptake`` (the table of a :class:`RunSet`) whose identity does not agree
-    between runs (see :class:`IdentityCheck`); a warning counts them unless ``quiet``."""
+    between runs (see :class:`IdentityCheck`); a warning counts them unless ``quiet``. A row's
+    runs are those in its ``runs`` column (a merged sample), else the run part of its label;
+    a table whose labels have no run part (one run's) is refused."""
     per: dict[tuple[str, str], dict[str, tuple[set, set]]] = {}
-    for label, peptide, mod, start, end, amides in zip(
+    bare: list[str] = []
+    for label, peptide, mod, start, end, amides, runs in zip(
             uptake.sample, uptake.peptide, uptake.modification, uptake.start, uptake.end,
-            uptake.n_amides, strict=True):
-        run, _ = RunSet.split(label)
-        where, count = per.setdefault((str(peptide), str(mod)), {}).setdefault(
-            run, (set(), set()))
-        where.add((int(start), int(end)))
-        count.add(round(float(amides), 6))
+            uptake.n_amides, uptake.runs, strict=True):
+        names = [r for r in str(runs).split(",") if r]
+        if not names:
+            run, sample = RunSet.split(label)
+            if not sample:
+                bare.append(str(label))
+                continue
+            names = [run]
+        for run in names:
+            where, count = per.setdefault((str(peptide), str(mod)), {}).setdefault(
+                run, (set(), set()))
+            where.add((int(start), int(end)))
+            count.add(round(float(amides), 6))
+    if bare:
+        shown = ", ".join(sorted(set(bare))[:5])
+        raise ValueError(f"check_identity needs the table of a RunSet (samples labelled "
+                         f"run:sample); these samples name no run: {shown}")
     rows = []
     for (peptide, mod), by_run in sorted(per.items()):
         if len(by_run) < 2:

@@ -379,8 +379,16 @@ def _sha256(path: Path) -> str:
 
 
 def _write_table(directory: Path, name: str, table: pa.Table, files: dict, **extra) -> None:
+    """Write ``table`` as ``name.parquet`` in ``directory`` (through a temporary file, so that
+    a table replaced in place, like the review layer, is whole or untouched) and record it."""
     path = directory / f"{name}.parquet"
-    pq.write_table(table, path, compression="zstd", row_group_size=ROW_GROUP)
+    tmp = directory / f"{name}.parquet.tmp"
+    try:
+        pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     files[f"{name}.parquet"] = {
         "rows": table.num_rows, "bytes": path.stat().st_size, "sha256": _sha256(path), **extra,
     }
@@ -398,13 +406,32 @@ def _old_manifest(path: Path) -> dict | None:
             manifest = json.loads((path / name).read_text())
         except (OSError, ValueError):
             continue
-        if manifest.get("kind") == KIND:
+        if isinstance(manifest, dict) and manifest.get("kind") == KIND:
             return manifest
     return None
 
 
 def _is_bundle_dir(path: Path) -> bool:
     return _old_manifest(path) is not None
+
+
+def _is_bundle_zip(path: Path) -> bool:
+    """Whether the file ``path`` is a zipped results bundle (a zip with a bundle manifest)."""
+    if not zipfile.is_zipfile(path):
+        return False
+    try:
+        with zipfile.ZipFile(path) as zf:
+            manifest = json.loads(zf.read(MANIFEST).decode())
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return False
+    return isinstance(manifest, dict) and manifest.get("kind") == KIND
+
+
+def _is_bundle(path: Path) -> bool:
+    """Whether ``path`` is a results bundle (a directory or a zip) that may be replaced."""
+    if path.is_dir():
+        return _is_bundle_dir(path)
+    return path.is_file() and _is_bundle_zip(path)
 
 
 def write_bundle(
@@ -471,8 +498,11 @@ def write_bundle(
     if path.exists():
         if not overwrite:
             raise BundleError(f"{path} exists (use overwrite=True to replace a bundle)")
-        if path.is_dir() and not _is_bundle_dir(path):
-            raise BundleError(f"{path} is a directory but not a results bundle; not removing it")
+        if not _is_bundle(path):
+            raise BundleError(f"{path} exists but is not a results bundle; not removing it")
+        if path.is_dir() and path.suffix == ".zip":
+            raise BundleError(f"{path} is a bundle directory; it cannot be replaced by a zip "
+                              "(remove it first)")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=path.name + ".tmp-", dir=path.parent))
     try:
@@ -544,6 +574,8 @@ def _project_of(ids) -> str:
 def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     """Move the finished bundle to ``path`` (as a directory, or zipped if ``path`` is .zip)."""
     if path.suffix == ".zip":
+        if path.exists() and not (path.is_file() and _is_bundle_zip(path)):
+            raise BundleError(f"{path} exists but is not a zipped results bundle; not removing it")
         archive = tmp.with_suffix(".zip")
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
             for item in sorted(tmp.iterdir()):
@@ -557,6 +589,8 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
         os.replace(tmp, path)
         return
     if path.is_file():
+        if not _is_bundle_zip(path):  # checked by write_bundle; never remove what is not a bundle
+            raise BundleError(f"{path} exists but is not a results bundle; not removing it")
         path.unlink()
         os.replace(tmp, path)
         return

@@ -840,3 +840,70 @@ def test_a_series_page_reads_its_raw_spectra_once(results):
     assert "raw" in gids(fig)
     plot_series_spectra(lazy, 0, show=("picked", "fit"))  # no raw layer: nothing read
     assert len(calls) == 1
+
+
+def test_the_reference_overlay_follows_the_units_of_the_plot(results):
+    ref = Reference(np.array([60.0]), np.array([[0.25, 1.0]]), np.array([[0.5, 0.5]]))
+    d = uptake_data(results, 0)
+    n, m0, mfd = d["n_amides"], d["m0"], d["mfd"]
+
+    def overlay(fig):
+        return np.sort(np.concatenate([a.get_offsets()[:, 1] for a in fig.axes[0].collections
+                                       if a.get_gid() == "reference"]))
+
+    np.testing.assert_allclose(overlay(plot_uptake(results, 0, x="index", reference=ref)),
+                               [0.25 * n, n])
+    raw = plot_uptake(results, 0, x="index", corrected=False, reference=ref)
+    np.testing.assert_allclose(overlay(raw), [m0 + 0.25 * (mfd - m0), mfd])
+
+
+def test_csv_cells_are_utf8_with_nan_empty_and_inf_kept(tmp_path):
+    from hxex.report.tables import _cell, format_table, write_csv
+
+    cols = {"name": np.array(["µ-peptide"]), "x": np.array([np.inf]), "y": np.array([np.nan]),
+            "z": np.array([-np.inf])}
+    path = write_csv(cols, tmp_path / "c.csv")
+    assert path.read_bytes().decode("utf-8").splitlines()[1] == "µ-peptide,inf,,-inf"
+    assert _cell(np.float64("nan")) == "" and _cell(float("inf")) == "inf"
+    assert format_table(cols).splitlines()[1].split() == ["µ-peptide", "inf", "-inf"]
+    ref = tmp_path / "r.tsv"
+    ref.write_bytes("temps (µs)\tfd1\tp1\n60\t25\t1\n".encode())
+    np.testing.assert_allclose(load_reference(ref).at(60.0, 8.0)[0], [2.0])
+
+
+def _controls_for(c, data_ids):
+    import dataclasses
+
+    keep = np.isin(c.data_id, data_ids)
+    return dataclasses.replace(c, **{f.name: getattr(c, f.name)[keep]
+                                     for f in dataclasses.fields(c)
+                                     if isinstance(getattr(c, f.name), np.ndarray)})
+
+
+def test_a_series_without_controls_is_uncorrected_or_an_error(results):
+    import dataclasses
+
+    partial = dataclasses.replace(results, controls=_controls_for(results.controls, [0]))
+    sid = str(results.fit.spectrum_id[8])  # series 1
+    assert int(results.fit.data_id[8]) == 1
+    d = population_data(partial, sid)
+    assert not d["corrected"] and d["n_amides"] is None
+    assert population_data(partial, str(results.fit.spectrum_id[0]))["corrected"]
+    with pytest.raises(KeyError, match="series 1"):
+        population_data(partial, sid, corrected=True)
+    assert not uptake_data(partial, 1)["corrected"] and series_info(partial, 1)["n_amides"] is None
+    comp = components_table(partial)
+    assert np.isnan(comp["mean_corrected"][comp["data_id"] == 1]).all()
+    assert np.isfinite(comp["mean_corrected"][comp["data_id"] == 0]).all()
+
+
+def test_effective_k_and_review_status_are_computed_once(results):
+    assert results.effective_K is results.effective_K
+    assert results.review_status is results.review_status
+    assert set(results.review_status.tolist()) == {"unreviewed"}
+    sid = str(results.fit.spectrum_id[3])
+    changed = results.with_review(ReviewTable.empty().update(sid, status="rejected", k_override=2))
+    assert changed.effective_K[3] == 2 and changed.review_status[3] == "rejected"
+    assert changed.review_status[0] == "unreviewed"
+    assert results.effective_K[3] == results.fit.selected_K[3]  # the original is untouched
+    assert spectra_table(changed)["status"][3] == "rejected"

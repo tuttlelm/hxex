@@ -96,7 +96,7 @@ class ProgressLog:
 
     def __call__(self, done: int, total: int) -> None:
         now = self.clock()
-        if total and done >= total:
+        if total >= 0 and done >= total:
             if not self.finished:
                 self.finished = True
                 if self.stage is not None:

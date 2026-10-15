@@ -17,7 +17,7 @@ import numpy as np
 from ..controls import correct_means
 from ..quality import FLAG_NAMES
 from .results import Results
-from .series import _reps
+from .series import _control_row, _reps
 
 
 def _index_columns(results: Results) -> dict[str, np.ndarray]:
@@ -37,8 +37,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         for name in names:
             cols[name] = np.array([""] * m)
     cols.update(_target_columns(results))
-    status = results.review.status_of(fit) if results.review is not None else None
-    cols["status"] = status if status is not None else np.array(["unreviewed"] * m)
+    cols["status"] = np.asarray(results.review_status).astype(str)
     if results.quality is not None:
         q = results.quality
         cols["flags"] = np.array([
@@ -78,7 +77,8 @@ def _target_columns(results: Results) -> dict[str, np.ndarray]:
 
 
 def _populations(results: Results, i: int, k: int):
-    """Ranked means, populations and their standard errors, and the corrected means (or None)."""
+    """Ranked means, populations and their standard errors, and the corrected means (or None:
+    no controls, or none for the spectrum's series)."""
     kf = results.fit.fits[k]
     order = np.argsort(kf.means[i])
     mean, frac = kf.means[i][order], kf.populations[i][order]
@@ -87,7 +87,7 @@ def _populations(results: Results, i: int, k: int):
     mean_se = boot.mean_se[i, :k][order] if boot is not None else nan
     population_se = boot.population_se[i, :k][order] if boot is not None else nan
     corrected = corrected_se = None
-    if results.controls is not None:
+    if _control_row(results, int(results.fit.data_id[i])) is not None:
         c = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :],
                           se=mean_se[None, :])
         corrected, corrected_se = c.mean[0], c.se[0]
@@ -187,8 +187,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     b = results.binned
     where = {str(s): j for j, s in enumerate(b.spectrum_id)} if b is not None else {}
     flagged = results.quality.flagged if results.quality is not None else np.zeros(len(fit), bool)
-    rejected = (results.review.status_of(fit) == "rejected" if results.review is not None
-                else np.zeros(len(fit), bool))
+    rejected = np.asarray(results.review_status == "rejected", dtype=bool)
     multi = results.effective_K > 1
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
@@ -257,7 +256,7 @@ def format_table(
 
     def cell(value) -> str:
         if isinstance(value, (float, np.floating)):
-            return "" if not np.isfinite(value) else f"{float(value):.3g}"
+            return "" if np.isnan(value) else f"{float(value):.3g}"
         return str(value)[:width]
 
     text = [[cell(columns[c][i]) for c in names] for i in shown]
@@ -270,11 +269,12 @@ def format_table(
 
 
 def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
-    """Write columns of equal length as a CSV file with a header; NaN is written as empty."""
+    """Write columns of equal length as a CSV file with a header (UTF-8); NaN is written as
+    empty, an infinite value as ``inf`` or ``-inf``."""
     path = Path(path)
     names = list(columns)
     n = len(columns[names[0]]) if names else 0
-    with path.open("w", newline="") as fh:
+    with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(names)
         for i in range(n):
@@ -284,7 +284,7 @@ def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
 
 def _cell(value) -> str:
     if isinstance(value, (float, np.floating)):
-        return "" if not np.isfinite(value) else repr(float(value))
+        return "" if np.isnan(value) else repr(float(value))  # inf stays 'inf'
     return str(value)
 
 

@@ -442,7 +442,16 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
   2-population runs (item 30).
 - The real-valued binomial is masked at `b < n + 1` (exact gamma-function continuation), not
   `b <= n` as in pyHXExpress's `nCk_real` and the prototype: the pmf is continuous in `n`, and
-  means at high `p` can move (Bimodal: median 0.005 D, 90th percentile 0.18 D).
+  means at high `p` can move (Bimodal: median 0.005 D, 90th percentile 0.18 D). Every component
+  is normalised to sum to 1 over its bins (HISTORY 78): the amplitudes are areas and the
+  populations are shares of the molecules at any `n` and `p`.
+- The percent noise sd of a series is a percentage of its undeuterated control's tallest peak
+  (or the spectrum's own when there is none; kinetics runs: HISTORY 77), not of the average of
+  the undeuterated and fully deuterated controls' maxima as in `run_hdx_fits` (`Y_ERR`).
+  Confirmed by the owner (HISTORY 78).
+- Bootstrap resamples add unit Gaussian noise (in noise-scaled units) to every bin, including
+  bins that are zero; pyHXExpress's `fit_bootstrap` leaves zero bins unchanged and clips the
+  resample to `[0, 2y]`. Confirmed by the owner (HISTORY 78).
 - Back-exchange correction from the controls (control means from K = 1 fits, per-control
   fallbacks with flags); `hxex_updating.py` has no back-exchange correction (item 27). Uptake
   plots are corrected by default (item 31).
@@ -514,6 +523,14 @@ Planned, not built:
    (fractions only) mode for unfolding studies; fragment-ion amide counts (see "Risks and open decisions").
 
 ## Risks and open decisions
+
+- **Back-exchange correction of fragment ions.** Fragment series are corrected by their own
+  controls (or the d2o fallback; the kint prediction does not cover them, HISTORY 79). The
+  correction may belong at the parent level, applied to the fragments in a way still to be
+  decided (owner, 2026-10-15).
+- **Modifications in sequence files.** FASTA cannot carry the modX labels; modifications come
+  from the peptide list. A sequence format with modifications is a future consideration
+  (owner, 2026-10-15; HISTORY 79).
 
 - **Exchangeable amide count for fragment ions: by structure, awaiting the owner's
   confirmation (HISTORY item 65).** A fragment holds the backbone N-H of its residues, placed in

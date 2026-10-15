@@ -16,6 +16,7 @@ from hxex.model import (
     bic,
     convolve,
     integer_grid,
+    log_binom_norm,
     log_binom_pmf,
     logit,
     n_params,
@@ -25,6 +26,7 @@ from hxex.model import (
 
 GOLD = np.load(Path(__file__).parent / "golden" / "model_reference.npz")
 CPU64 = Backend("cpu", "float64")
+CPU32 = Backend("cpu", "float32")
 
 
 def gold_inputs(backend=CPU64):
@@ -141,7 +143,9 @@ def test_pmf_matches_the_prototype_for_every_bin_it_gives_probability():
     """The prototype masks b > n; hxex also gives the bin just above n (n < b < n + 1) its
     gamma-function probability. Everywhere else the two are the same."""
     batch, model, _ = gold_inputs()
+    norm = log_binom_norm(model.ns, model.ps).detach().numpy()  # the prototype does not normalise
     ours = log_binom_pmf(batch.b, model.ns, model.ps).detach().numpy()
+    ours = np.where(ours > -1e9, ours + norm[None], ours)
     gold, n = GOLD["log_pmf"], GOLD["ns"][None]  # (B, M, K) and (1, M, K)
     b = GOLD["b_padded"][:, :, None]
     in_proto = gold > -1e9
@@ -278,12 +282,34 @@ def test_pmf_is_continuous_in_n():
     assert _pmf(14.0, 0.9)[14] == pytest.approx(0.9**14, rel=1e-12)  # an integer n: the binomial
 
 
-def test_pmf_is_nearly_normalised_and_centred_between_integers():
+def test_pmf_is_normalised_at_any_n_and_p_and_centred_between_integers():
+    """Without the normalisation the bin above n carries (1 - p)^(n - b) with a negative
+    exponent, and the mass reached 1.7 at n = 13.5, p = 0.99 and 5 at n = 0.5, p = 0.99."""
     bins = np.arange(30)
+    for n in (0.5, 13.25, 13.5, 13.75):
+        for p in (0.5, 0.9, 0.97, 0.99, 0.999):
+            pmf = _pmf(n, p)
+            assert pmf.sum() == pytest.approx(1.0, abs=1e-12), (n, p)
     for n in (13.25, 13.5, 13.75):
         pmf = _pmf(n, 0.9)
-        assert abs(pmf.sum() - 1.0) < 0.03
-        assert abs(np.sum(bins * pmf) / pmf.sum() - n * 0.9) < 0.06  # centre = n p
+        assert abs(np.sum(bins * pmf) - n * 0.9) < 0.06  # centre = n p (within 0.05 D at p <= 0.9)
+
+
+def test_components_are_normalised_in_float32_where_sigmoid_saturates():
+    """With logit_p = 30 float32's sigmoid is exactly 1; the log terms from the logit keep the
+    pmf finite and normalised, with finite gradients."""
+    b = torch.arange(0.0, 20.0).unsqueeze(1)
+    n = torch.tensor([[13.5]], requires_grad=True)
+    logit_p = torch.tensor([[30.0]], requires_grad=True)
+    pmf = log_binom_pmf(b, n, torch.sigmoid(logit_p), logit_p).exp()[:, 0, 0]
+    assert torch.isfinite(pmf).all() and pmf.sum().item() == pytest.approx(1.0, abs=1e-5)
+    assert pmf[14].item() == pytest.approx(1.0, abs=1e-5)  # all the mass in the bin above n
+    (pmf * b[:, 0]).sum().backward()
+    assert torch.isfinite(n.grad).all() and torch.isfinite(logit_p.grad).all()
+    w = shape_weights([np.array([0.7, 0.3])], 1, CPU32)
+    batch = PaddedBatch.from_arrays([np.arange(20.0)], [np.ones(20)], [20.0], CPU32)
+    conv = convolve(batch.b, n.detach(), torch.sigmoid(logit_p.detach()), w, None, logit_p.detach())
+    assert conv[:, 0, 0].sum().item() == pytest.approx(1.0, abs=1e-5)
 
 
 def test_mixture_loss_is_continuous_in_n_with_finite_gradients():

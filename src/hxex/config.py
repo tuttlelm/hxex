@@ -22,17 +22,24 @@
     reference = "WT"
 
 A key left out keeps its default. TOML has no null: ``false`` stands for None where a setting
-can be None (an optional stage, a scan condition a run removes, an unset limit). Relative paths
-are taken relative to the project file's directory. :func:`load_project` reads and checks the
-file, :func:`read_input` reads the spectra it names, and :func:`template` writes a project file
-with every default.
+can be None (an optional stage, a scan condition a run removes, an unset limit) and is not a
+switch; a switch (``drop_no_signal``, ``overview``) set to ``false`` is off. This holds in every
+``[run]`` table and sub-table, by the type of each setting. The control times of
+``[run.controls]`` (``undeut_time``, ``fd_time``) left out are those the readers give the
+controls (``[input] undeut_time`` and ``fulldeut_time`` of a folder format; ``[run]
+undeut_time`` for the undeuterated runs of a scan format); ``false`` says the data has no such
+control. Relative paths are taken relative to the project file's directory.
+:func:`load_project` reads and checks the file, :func:`read_input` reads the spectra it names,
+and :func:`template` writes a project file with every default.
 """
 
 from __future__ import annotations
 
 import tomllib
+import types
+import typing
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +71,45 @@ def _none(value):
     return None if value is False else value
 
 
+def _hints(cls) -> dict[str, Any]:
+    """The resolved field annotations of a config class."""
+    from .report.figures import PlotConfig  # RunConfig names it for type checking only
+
+    return typing.get_type_hints(cls, localns={"PlotConfig": PlotConfig})
+
+
+def _union_members(hint) -> tuple:
+    if typing.get_origin(hint) in (typing.Union, types.UnionType):
+        return typing.get_args(hint)
+    return (hint,)
+
+
+def _config_class(hint) -> type | None:
+    """The config dataclass a field's annotation names (``X`` or ``X | None``), else None."""
+    for member in _union_members(hint):
+        if isinstance(member, type) and is_dataclass(member):
+            return member
+    return None
+
+
+def _false_to_none(data: Mapping, cls) -> dict:
+    """``data`` (a TOML table of the config class ``cls``) with ``false`` as None in the keys
+    whose field admits None and is not a switch (no bool in its type; the module's convention),
+    recursively into the sub-tables of nested config classes. Keys the class does not know are
+    kept as they are (its ``from_dict`` reports them)."""
+    hints = _hints(cls)
+    out = {}
+    for key, value in data.items():
+        members = _union_members(hints[key]) if key in hints else ()
+        if value is False and type(None) in members and bool not in members:
+            out[key] = None
+        elif isinstance(value, Mapping) and (sub := _config_class(hints.get(key))) is not None:
+            out[key] = _false_to_none(value, sub)
+        else:
+            out[key] = value
+    return out
+
+
 def _merge(base: dict, update: Mapping, where: str) -> dict:
     """``base`` (a config's ``to_dict``) with ``update`` laid over it, key by key into tables."""
     out = dict(base)
@@ -75,23 +121,22 @@ def _merge(base: dict, update: Mapping, where: str) -> dict:
     return out
 
 
-def _section_defaults(name: str) -> dict:
-    from .bootstrap import BootstrapConfig
-    from .controls import ControlConfig
-    from .quality import QualityConfig
-    from .report.figures import PlotConfig
+def _section_class(name: str) -> type:
+    """The config class of a ``[run.NAME]`` table."""
+    return _config_class(_hints(RunConfig)[name])
 
-    cls = {"bootstrap": BootstrapConfig, "controls": ControlConfig, "plots": PlotConfig,
-           "quality": QualityConfig}[name]
-    return cls().to_dict()
+
+def _section_defaults(name: str) -> dict:
+    return _section_class(name)().to_dict()
 
 
 def run_config_from(data: Mapping) -> RunConfig:
-    """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table."""
+    """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table (``false`` as None
+    where a setting admits it; see the module docstring)."""
     merged = RunConfig().to_dict()
-    for key, value in data.items():
+    for key, value in _false_to_none(data, RunConfig).items():
         if key in _OPTIONAL_SECTIONS:
-            if value is False:
+            if value is None:
                 merged[key] = None
             elif value is True:
                 merged[key] = _section_defaults(key)
@@ -102,11 +147,31 @@ def run_config_from(data: Mapping) -> RunConfig:
         elif key in merged and isinstance(value, Mapping) and isinstance(merged[key], Mapping):
             merged[key] = _merge(merged[key], value, f"run.{key}")
         else:
-            merged[key] = _none(value)
+            merged[key] = value
     try:
         return RunConfig.from_dict(merged)
     except (TypeError, ValueError) as exc:
         raise ProjectError(f"[run]: {exc}") from exc
+
+
+def _control_times(run: RunConfig, given, inp: InputSettings) -> RunConfig:
+    """``run`` with the control times its ``[run.controls]`` (``given``, the table as written)
+    leaves out taken from where the readers put the controls: the undeuterated at the input's
+    ``undeut_time`` (folder formats) or at ``[run] undeut_time`` (scan formats, whose runs carry
+    their own times); the fully deuterated at the input's ``fulldeut_time`` (folder formats
+    only: a scan format's fully deuterated runs have whatever time their ``[[input.runs]]``
+    give, so ``fd_time`` is set by hand). A time given as ``false`` (no control of that kind)
+    stays None."""
+    if run.controls is None:
+        return run
+    given = given if isinstance(given, Mapping) else {}
+    folder = inp.format in FOLDER_FORMATS
+    times = {}
+    if "undeut_time" not in given:
+        times["undeut_time"] = inp.undeut_time if folder else run.undeut_time
+    if "fd_time" not in given and folder:
+        times["fd_time"] = inp.fulldeut_time
+    return replace(run, controls=replace(run.controls, **times)) if times else run
 
 
 @dataclass(frozen=True)
@@ -350,11 +415,14 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         raise ProjectError("project must be a name (non-empty text without ':')")
     if "input" not in data:
         raise ProjectError("the project file needs an [input] table")
-    run = run_config_from(data.get("run", {}))
+    run_table = data.get("run", {})
+    if not isinstance(run_table, Mapping):
+        raise ProjectError("[run] must be a table")
+    run = run_config_from(run_table)
+    inp = _input_from(data["input"], base)
+    run = _control_times(run, run_table.get("controls"), inp)
     output = _output_from(data.get("output", {}), base)
     if output.figures is not False and run.plots is None:  # figures asked for: default plots
-        from dataclasses import replace
-
         from .report.figures import PlotConfig
 
         run = replace(run, plots=PlotConfig())
@@ -363,7 +431,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
                                 or threads < 1):
         raise ProjectError("threads must be a whole number of at least 1")
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
-    return Project(name, _input_from(data["input"], base), run, output, path, threads, analysis)
+    return Project(name, inp, run, output, path, threads, analysis)
 
 
 ANALYSIS_KEYS = ("reference", "samples", "times", "ks", "fasta", "coverage_times", "redundancy",
@@ -510,21 +578,37 @@ def _toml_value(value) -> str:
     raise TypeError(f"cannot write {value!r} as TOML")
 
 
-def _toml_table(name: str, data: Mapping, comment: bool = False) -> list[str]:
+def _unset_line(key: str, hint, note: tuple[str, str] | None = None) -> str:
+    """The commented line of a setting at None: valid TOML once uncommented (``false``, the
+    stand-in for None, or ``true`` for a switch that may also be unset) with a comment saying
+    so, or ``note``'s value and comment instead."""
+    if note is None:
+        note = (("true", "not set; true or false sets it") if bool in _union_members(hint)
+                else ("false", "not set; false means unset"))
+    return f"# {key} = {note[0]}".ljust(34) + f"# {note[1]}"
+
+
+def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | None = None,
+                notes: Mapping[str, tuple[str, str]] | None = None) -> list[str]:
     """``[name]`` with ``data``: scalars first (None as a commented line, it is the default),
-    then sub-tables and arrays of tables."""
+    then sub-tables and arrays of tables. ``cls`` is the table's config class (its types say how
+    a None is written; sub-tables take theirs from it) and ``notes`` gives the value and comment
+    written for the None settings it names."""
     c = "# " if comment else ""
+    hints = _hints(cls) if cls is not None else {}
+    notes = notes or {}
     lines = [f"{c}[{name}]"]
     later: list[str] = []
     for key, value in data.items():
         if isinstance(value, Mapping):
-            later += [""] + _toml_table(f"{name}.{key}", value, comment)
+            later += [""] + _toml_table(f"{name}.{key}", value, comment,
+                                        _config_class(hints.get(key)))
         elif isinstance(value, list) and value and all(isinstance(v, Mapping) for v in value):
             for item in value:
                 later += ["", f"{c}[[{name}.{key}]]"]
                 later += [f"{c}{k} = {_toml_value(v)}" for k, v in item.items()]
         elif value is None:
-            lines.append(f"# {key} =  (not set)")
+            lines.append(_unset_line(key, hints.get(key), notes.get(key)))
         else:
             lines.append(f"{c}{key} = {_toml_value(value)}")
     return lines + later
@@ -609,7 +693,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     if fmt not in FORMATS:
         raise ProjectError(f"format must be one of {', '.join(FORMATS)}")
     if fmt in SCAN_FORMATS:
-        scans = "\n".join(_toml_table("x", MzmlConfig().to_dict())[1:])
+        scans = "\n".join(_toml_table("x", MzmlConfig().to_dict(), cls=MzmlConfig)[1:])
         thermo = ('\n# thermo_dir = "/path/to/ThermoRawFileParser"   # Thermo\'s DLLs, or set '
                   'HXEX_THERMO_DIR' if fmt == "thermo" else "")
         input_text = _SCAN_TEMPLATE.format(fmt=fmt, scans=scans, thermo=thermo,
@@ -619,7 +703,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     run = RunConfig().to_dict()
     lines = [
         "# hxex project file (TOML). A key left out keeps its default; false stands for",
-        "# \"not set\" where a setting can be unset. Relative paths are relative to this file.",
+        "# \"not set\" where a setting can be unset (a switch set to false is off). The",
+        "# control times of [run.controls] left out are the input's. Relative paths are",
+        "# relative to this file.",
         "",
         f'project = "{project}"              # prefixes every spectrum id',
         "# threads = 12                    # CPU threads (default: PyTorch's, the physical",
@@ -698,12 +784,24 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     ]
     scalars = {k: v for k, v in run.items()
                if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
-    lines += [""] + _toml_table("run", scalars)
+    lines += [""] + _toml_table("run", scalars, cls=RunConfig)
+    if fmt in SCAN_FORMATS:
+        control_times = {
+            "undeut_time": ("0.0", "default: [run] undeut_time; false: none"),
+            "fd_time": ("1000000.0", "the fully deuterated runs' time; false: none"),
+        }
+    else:
+        control_times = {
+            "undeut_time": ("0.0", "default: the input's undeut_time; false: none"),
+            "fd_time": ("1000000.0", "default: the input's fulldeut_time; false: none"),
+        }
     for key, value in run.items():
         if key in _OPTIONAL_SECTIONS and value is None:
-            lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True)
+            lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
+                                        cls=_section_class(key),
+                                        notes=control_times if key == "controls" else None)
         elif isinstance(value, Mapping):
-            lines += [""] + _toml_table(f"run.{key}", value)
+            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
     return "\n".join(lines) + "\n"
 
 

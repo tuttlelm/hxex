@@ -29,13 +29,14 @@ the same sums made by OpenMS (see docs/HISTORY.md item 33).
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 import re
 import zlib
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from xml.etree import ElementTree as ET
 
 import numpy as np
@@ -198,10 +199,16 @@ def _decode(bda, n_expected: int, where: str) -> tuple[str, np.ndarray]:
         dtype = "<f4"
     else:
         raise MzmlError(f"{where}: an array is neither 32- nor 64-bit float")
-    text = bda.findtext(f"{_NS}binary") or ""
-    raw = base64.b64decode(text)
-    if _ZLIB in cv:
-        raw = zlib.decompress(raw)
+    text = (bda.findtext(f"{_NS}binary") or "").strip()
+    try:
+        raw = base64.b64decode(text)
+        if raw and _ZLIB in cv:  # an empty payload is an empty array, compressed or not
+            raw = zlib.decompress(raw)
+    except (binascii.Error, zlib.error) as exc:
+        raise MzmlError(f"{where}: an array cannot be decoded ({exc})") from exc
+    if len(raw) % np.dtype(dtype).itemsize:
+        raise MzmlError(f"{where}: an array has {len(raw)} bytes, not a whole number of "
+                        f"{np.dtype(dtype).itemsize}-byte values")
     values = np.frombuffer(raw, dtype=dtype).astype(np.float64)
     if n_expected and len(values) != n_expected:
         raise MzmlError(f"{where}: an array has {len(values)} values, expected {n_expected}")
@@ -230,7 +237,7 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
     stages = []
     # several precursors (MSn written stage by stage) are taken as first to last
     for prec in elem.findall(f"{_NS}precursorList/{_NS}precursor"):
-        pmz, activation, isolation, energy = np.nan, (), (np.nan, np.nan), np.nan
+        pmz, pz, activation, isolation, energy = np.nan, 0, (), (np.nan, np.nan), np.nan
         window = prec.find(f"{_NS}isolationWindow")
         if window is not None:
             wcv = _cv(window)
@@ -818,6 +825,8 @@ def _sample_log(times: np.ndarray, n: int) -> np.ndarray:
     if len(times) <= n:
         return np.arange(len(times))
     rel = times - times[0]
+    if not rel[-1] > 0:  # one time for every scan: nothing to space, so spread the positions
+        return np.unique(np.linspace(0, len(times) - 1, n).round().astype(np.int64))
     step = np.median(np.diff(times)) if len(times) > 1 else 1.0
     goal = np.concatenate([[0.0], np.geomspace(max(step, 1e-9), rel[-1], n - 1)])
     picks = sorted({int(np.argmin(np.abs(rel - g))) for g in goal} | {0, len(times) - 1})
@@ -959,6 +968,7 @@ def _read_runs(
     windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
     series: dict[tuple[str, int], int] = {}
     spectra: list[Spectrum] = []
+    origin: list[int] = []  # the run (position) of each spectrum
     extra: dict = {}
     for n_run, run in enumerate(runs):
         check_cancel(cancel)
@@ -967,9 +977,11 @@ def _read_runs(
                 extra = fmt.extra(f)
             _read_run(f, run, targets, windows, series, spectra, project=project,
                       config=config)
+        origin.extend([n_run] * (len(spectra) - len(origin)))
         report(progress, n_run + 1, len(runs))
     if not spectra:
         raise fmt.error("no spectra: no scan matched any target in any run")
+    _check_unique_ids(fmt, spectra, origin, runs, opened)
     source = {
         "reader": fmt.reader,
         "project": project,
@@ -989,6 +1001,40 @@ def _read_runs(
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
 
 
+def _check_unique_ids(fmt: _ScanFormat, spectra, origin, runs, opened) -> None:
+    """Raise the format's error when two spectra got the same id: the ids name the sample, the
+    file name, the target and the scans, so two runs with one sample and file name (replicates
+    in sibling directories) clash, as do time windows that select the same scans twice."""
+    first: dict[str, int] = {}
+    clashes: dict[str, set[int]] = {}
+    for s, n in zip(spectra, origin, strict=True):
+        if s.spectrum_id in first:
+            clashes.setdefault(s.spectrum_id, {first[s.spectrum_id]}).add(n)
+        else:
+            first[s.spectrum_id] = n
+    if not clashes:
+        return
+    involved = sorted({n for ns in clashes.values() for n in ns})
+    named = ", ".join(f"run {n} ({runs[n].sample}, rep {runs[n].rep}, {opened[n]})"
+                      for n in involved)
+    example = next(iter(clashes))
+    if len(involved) == 1:
+        why = ("the same scans are selected more than once (time windows that overlap, or two "
+               "targets with the same entry and scan conditions)")
+    else:
+        why = ("the runs have the same sample and file name; give the files distinct names "
+               "or the runs distinct samples")
+    raise fmt.error(f"{len(clashes)} spectrum id(s) are not unique, for example {example!r} "
+                    f"from {named}: {why}")
+
+
+def _run_file_name(path: str | Path) -> str:
+    """The file name of a recorded run path, whichever system recorded it (a Windows path
+    read on POSIX still ends in its file name)."""
+    text = str(path)
+    return PureWindowsPath(text).name if "\\" in text else Path(text).name
+
+
 def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.ndarray:
     """Whether each spectrum (by ``spectrum_id``) came from a kinetics run, one without a fixed
     ``time`` (each scan its own time), by the read record ``source`` of :func:`read_mzml` or
@@ -996,8 +1042,12 @@ def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.n
     out = np.zeros(len(spectrum_id), dtype=bool)
     if not source or source.get("reader") not in ("mzml", "thermo"):
         return out
-    prefixes = tuple(f"{r['sample']}/{Path(r['path']).name}/" for r in source.get("runs", ())
-                     if r.get("time") is None)
+    runs = list(source.get("runs", ()))
+    files = list(source.get("files") or [])
+    files += [None] * (len(runs) - len(files))
+    prefixes = tuple(
+        f"{r['sample']}/{(known or {}).get('name') or _run_file_name(r['path'])}/"
+        for r, known in zip(runs, files, strict=True) if r.get("time") is None)
     if not prefixes:
         return out
     for i, sid in enumerate(spectrum_id):
@@ -1146,7 +1196,7 @@ def _repeat_read(
         check_cancel(cancel)
         p = Path(r.path)
         if directory is not None:
-            p = Path(directory) / p.name
+            p = Path(directory) / ((known or {}).get("name") or _run_file_name(r.path))
         elif not p.is_absolute() and root is not None:
             p = root / p
         if not p.is_file():

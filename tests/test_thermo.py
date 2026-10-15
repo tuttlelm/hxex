@@ -7,6 +7,7 @@ same name beside it) are set."""
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -217,3 +218,55 @@ def test_a_real_raw_file_matches_its_thermorawfileparser_mzml():
     y = read_mzml([run_mzml], [MzmlTarget(ENTRY)], project="p")
     np.testing.assert_array_equal(x.mz, y.mz)
     np.testing.assert_allclose(x.intensity, y.intensity, rtol=1e-6)
+
+
+# --- the RawFileReader handle is released when opening fails ----------------------------------
+
+class FakeRaw:
+    """What the RawFileReader's FileFactory returns, as far as opening uses it."""
+
+    def __init__(self, fail=None, ms_count=1):
+        self.IsError, self.InAcquisition, self.disposed = False, False, False
+        self.IncludeReferenceAndExceptionData = False
+        self._fail, self._count = fail, ms_count
+
+    def GetInstrumentCountOfType(self, kind):
+        if self._fail is not None:
+            raise self._fail
+        return self._count
+
+    def SelectInstrument(self, kind, number):
+        pass
+
+    @property
+    def RunHeaderEx(self):
+        return SimpleNamespace(FirstSpectrum=1, LastSpectrum=3)
+
+    def GetTrailerExtraHeaderInformation(self):
+        return SimpleNamespace(Length=0)
+
+    def Dispose(self):
+        self.disposed = True
+
+
+@pytest.mark.parametrize("raw, error", [
+    (FakeRaw(fail=RuntimeError("the .NET call failed")), RuntimeError),
+    (FakeRaw(ms_count=0), ThermoError),
+    (FakeRaw(), None),
+])
+def test_opening_releases_the_file_when_a_call_fails(tmp_path, monkeypatch, raw, error):
+    api = SimpleNamespace(adapter=SimpleNamespace(FileFactory=lambda path: raw),
+                          device=SimpleNamespace(MS=1), version="test")
+    monkeypatch.setattr(thermo, "_thermo_api", lambda thermo_dir: api)
+    path = tmp_path / "run.raw"
+    path.write_bytes(b"not really a raw file")
+    if error is not None:
+        with pytest.raises(error):
+            thermo._RawFileReader(path, None)
+        assert raw.disposed
+        return
+    reader = thermo._RawFileReader(path, None)
+    assert not raw.disposed and (reader.first, reader.last) == (1, 3)
+    assert raw.IncludeReferenceAndExceptionData
+    reader.close()
+    assert raw.disposed

@@ -103,7 +103,7 @@ def _read_two_columns(path: Path) -> tuple[list[float | None], list[float | None
                 where = f"{path.name} line {line}"
                 mz.append(to_number(row[0], where))
                 intensity.append(to_number(row[1], where))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     return mz, intensity
 
@@ -134,6 +134,16 @@ def read_specexport_dir(
     if not found:
         raise ReadError(f"{spec_dir}: no spectrum files for charge {entry.charge}")
     _warn_control_clash(spec_dir, [(token, t) for t, _, _, token in found])
+    # two files for one time and replicate (``60s-1`` and ``1m-1``) cannot both be that
+    # spectrum; a control next to a time point of the same time is the warning above
+    seen: dict[tuple[float, int, bool], Path] = {}
+    for time, rep, path, token in sorted(found, key=lambda t: t[2].name):
+        key = (time, rep, token in ("Non", "Full"))
+        other = seen.setdefault(key, path)
+        if other is not path:
+            raise ReadError(
+                f"{spec_dir}: {other.name} and {path.name} are both replicate {rep} at "
+                f"{time:g} s for charge {entry.charge}; rename or remove one")
     spectra = []
     for time, rep, path, _ in sorted(found, key=lambda t: (t[0], t[1], t[2].name)):
         mz, intensity = clean_spectrum(*_read_two_columns(path))

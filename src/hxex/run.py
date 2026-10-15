@@ -339,10 +339,12 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
-    rates=None,
+    rates=None, n_sites=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
-    need the bootstrap)."""
+    need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
+    (:func:`site_counts`); without it they are read back from ``data.n_max`` (rounded; an ion
+    without any site then counts one)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     fits: list[FitResult] = []
     start_stage(progress, "fit", lo, lo + (hi - lo) * share)
@@ -357,8 +359,9 @@ def _fit_part(
     start_stage(progress, "controls and quality", at, at)
     controls = None
     if config.controls is not None:
-        controls = fit_controls(fit, data.n_max / config.n_max_factor, config.controls,
-                                rates=rates)
+        if n_sites is None:
+            n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
+        controls = fit_controls(fit, n_sites, config.controls, rates=rates)
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
@@ -422,6 +425,25 @@ def analyse(
     return fit, boot, by_k, controls, quality
 
 
+def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
+    """The exchangeable sites of every spectrum of ``binned``, ``(M,)`` integers: the backbone
+    amides of its peptide and ion type plus its user ``Hex`` sites (owner: they stand for
+    exchangeable amides on a modification), as :meth:`hxex.fit.Measurements.from_binned` counts
+    them for ``n_max`` (0 for an ion without any site, which the controls flag ``no_amides``)."""
+    cache: dict[tuple[str, str], int] = {}
+    out = np.zeros(len(binned), dtype=np.int64)
+    for i, (pep, mod) in enumerate(zip(binned.peptide, binned.modification, strict=True)):
+        key = (str(pep), str(mod))
+        if key not in cache:
+            spec = chem.parse_modification(key[1])
+            cache[key] = chem.exchangeable_sites(
+                key[0], mod=spec, ion_type=spec.ion_type,
+                nterm_subtract=config.picker.nterm_subtract, rules=config.picker.amide_rules,
+                registry=config.registry)
+        out[i] = cache[key]
+    return out
+
+
 def control_rates(binned: BinnedSet, config: RunConfig) -> dict | None:
     """The intrinsic rates at the quench conditions of every series' amides, when the controls
     fall back to theoretical back-exchange (``fd_fallback='kint'``); else None."""
@@ -451,10 +473,13 @@ def run(
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
     recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
-    was a :class:`SpectrumSet` and ``keep_spectra``). With ``config.plots`` the series figures
+    was a :class:`SpectrumSet` and ``keep_spectra``). An existing ``out`` is refused before
+    anything is fitted unless ``overwrite``; a bundle replaced with ``overwrite`` keeps its
+    review layer (as :func:`resume_bootstrap` does). With ``config.plots`` the series figures
     are written to ``figures_dir`` (default: ``out`` with ``_figures`` added to its name);
     ``reference`` adds known populations to them. Raises ValueError if nothing is left.
     """
+    review = _existing_review(out, overwrite) if out is not None else None
     if config.plots is not None and figures_dir is None:
         if out is None:
             raise ValueError("config.plots needs figures_dir or out to say where to write")
@@ -507,7 +532,8 @@ def run(
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)
     fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
-                                             binned.mz_offset_ppm[kept], rates)
+                                             binned.mz_offset_ppm[kept], rates,
+                                             site_counts(picked, config))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -515,13 +541,14 @@ def run(
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
     )
     spectra = raw if keep_spectra else None
+    review = _review_for(review, fit)
     checkpoint = out is not None and config.bootstrap is not None
     if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)
         at = plan.lo + (plan.hi - plan.lo) * plan.fit_share
         start_stage(progress, "write fits", at, at)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
-                     pending=("bootstrap",))
+                     pending=("bootstrap",), review=review)
         overwrite = True
     try:
         boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
@@ -533,7 +560,46 @@ def run(
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, figures_dir=figures_dir, raw=raw, reference=reference,
-                   progress=progress, cancel=cancel)
+                   progress=progress, cancel=cancel, review=review)
+
+
+def _existing_review(out, overwrite: bool):
+    """Refuse an existing ``out`` unless ``overwrite`` (before anything is fitted, as the CLI
+    does); with it, the review layer of the bundle there (None if it holds no review or is not
+    a bundle: the write then refuses it as before)."""
+    from .io.bundle import BundleError, open_bundle
+
+    path = Path(out)
+    if not path.exists():
+        return None
+    if not overwrite:
+        raise BundleError(f"{path} exists (use overwrite=True to replace a bundle)")
+    try:
+        with open_bundle(path) as b:
+            review = b.review() if b.has("review") else None
+    except BundleError:
+        return None
+    if review is not None and len(review):
+        log.info("%s: carrying its %d review entries over to the new bundle", path,
+                 len(review))
+    return review
+
+
+def _review_for(review, fit: FitResult):
+    """``review`` without the entries the new run cannot hold (spectra it does not have, a
+    chosen K it did not fit), logged; None stays None."""
+    if review is None or not len(review):
+        return review
+    known = set(map(str, fit.spectrum_id))
+    keep = np.array([str(s) in known and (int(k) == 0 or int(k) in fit.k_values)
+                     for s, k in zip(review.spectrum_id, review.k_override, strict=True)],
+                    dtype=bool)
+    if not keep.all():
+        log.warning("%d of %d review entries do not apply to this run (spectra it dropped or a "
+                    "K it did not fit) and are left out", int((~keep).sum()), len(keep))
+    return dataclasses.replace(review, spectrum_id=review.spectrum_id[keep],
+                               status=review.status[keep], k_override=review.k_override[keep],
+                               note=review.note[keep], updated=review.updated[keep])
 
 
 def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, figures_dir, raw,
@@ -556,6 +622,7 @@ def resume_bootstrap(
     path: str | Path,
     *,
     bootstrap: BootstrapConfig | None = None,
+    device: str | None = None,
     figures_dir: str | Path | None = None,
     reference: Reference | None = None,
     progress: ProgressHook | None = None,
@@ -565,8 +632,10 @@ def resume_bootstrap(
     ``['bootstrap']``: the run was stopped or failed during the bootstrap), and rewrite it
     complete. The fits are not repeated, and the result is the one the run would have given
     (each measurement is seeded from its own id). The bootstrap settings are the run's unless
-    ``bootstrap`` is given. The stored spectra, notes and review are kept; figures are written
-    as by :func:`run` when the run's settings ask for them."""
+    ``bootstrap`` is given; ``device`` (``'cpu'``, ``'cuda'``, ...) replaces the run's, so a
+    bundle fitted on a GPU can be resumed where there is none. The stored spectra, notes and
+    review are kept; figures are written as by :func:`run` when the run's settings ask for
+    them."""
     from .io.bundle import open_bundle
 
     path = Path(path)
@@ -581,6 +650,11 @@ def resume_bootstrap(
         if config.bootstrap is None:
             raise ValueError("the run had no bootstrap settings: give bootstrap=")
         measurements, fit, binned = b.measurements(), b.fit(), b.binned()
+        if device is not None:  # the bootstrap takes its backend from the stored fit
+            backend = dataclasses.replace(fit.config.backend, device=device)
+            config = dataclasses.replace(
+                config, fit=dataclasses.replace(config.fit, backend=backend))
+            fit = dataclasses.replace(fit, config=dataclasses.replace(fit.config, backend=backend))
         if binned is None:
             raise ValueError(f"{path}: the bundle has no picked spectra")
         controls, quality, envelopes = b.controls(), b.quality(), b.envelopes()

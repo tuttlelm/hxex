@@ -10,6 +10,10 @@ description is kept when every test passes:
 - the populations are separated: ``(fD_high - fD_low) - z (se_low + se_high) >= 0``, with ``z``
   for the ``confidence`` interval (50 % by default, as ``choose_fits``);
 - both standard errors are below ``max_fD_se``;
+
+An unknown standard error (NaN: no bootstrap and a single spectrum behind the residue) is
+treated as unknown, not as 0: the residue counts as neither separated nor precise, and the K=1
+value describes it (``reason`` ``'not separated'``).
 - the K=1 value lies between them, ``fD_low < fD_avg < fD_high`` (the same molecules);
 - the lever-rule population of the low-D component, ``(fD_high - fD_avg) / (fD_high - fD_low)``,
   is within ``[min_population, 1 - min_population]``.
@@ -32,7 +36,9 @@ REASONS = ("", "no K=2", "not separated", "error", "K=1 outside", "population")
 
 @dataclass(frozen=True)
 class ChoiceConfig:
-    """Limits of :func:`choose_populations` (defaults as the owner's ``choose_fits``)."""
+    """Limits of :func:`choose_populations` (defaults as the owner's ``choose_fits``). A
+    residue whose K=2 standard errors are unknown (NaN) fails the separation and precision
+    tests: the one-population description is kept (see the module docstring)."""
 
     confidence: float = 0.5
     max_fD_se: float = 0.25
@@ -145,8 +151,9 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
     lo = config.min_population
     with np.errstate(invalid="ignore"):
         has_k2 = np.isfinite(low) & np.isfinite(high) & np.isfinite(avg)
-        separated = (high - low) - config.z * (np.nan_to_num(low_se) + np.nan_to_num(high_se)) >= 0
-        precise = ~(low_se >= config.max_fD_se) & ~(high_se >= config.max_fD_se)
+        known = np.isfinite(low_se) & np.isfinite(high_se)  # an unknown error passes no test
+        separated = known & ((high - low) - config.z * (low_se + high_se) >= 0)
+        precise = known & (low_se < config.max_fD_se) & (high_se < config.max_fD_se)
         between = (low < avg) & (avg < high)
         in_range = (pop >= lo) & (pop <= 1 - lo)
     reason = np.full(len(keys), "", dtype=object)

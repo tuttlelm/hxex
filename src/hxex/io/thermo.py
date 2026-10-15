@@ -229,21 +229,23 @@ class _RawFileReader:
             if raw is not None:
                 raw.Dispose()
             raise ThermoError(f"{path}: not a readable Thermo raw file ({message})")
-        if raw.InAcquisition:
+        try:  # whatever fails from here on, the file handle is released
+            if raw.InAcquisition:
+                raise ThermoError(f"{path}: the file is still being acquired")
+            if raw.GetInstrumentCountOfType(api.device.MS) < 1:
+                raise ThermoError(f"{path}: no mass spectrometer data")
+            raw.SelectInstrument(api.device.MS, 1)
+            # keep the reference (lock mass) and exception peaks, as ThermoRawFileParser does
+            # by default (else they are zero)
+            raw.IncludeReferenceAndExceptionData = True
+            header = raw.RunHeaderEx
+            self.first, self.last = int(header.FirstSpectrum), int(header.LastSpectrum)
+            labels = raw.GetTrailerExtraHeaderInformation()
+            self._trailer = {labels[i].Label.strip(): i for i in range(labels.Length)}
+        except BaseException:
             raw.Dispose()
-            raise ThermoError(f"{path}: the file is still being acquired")
-        if raw.GetInstrumentCountOfType(api.device.MS) < 1:
-            raw.Dispose()
-            raise ThermoError(f"{path}: no mass spectrometer data")
-        raw.SelectInstrument(api.device.MS, 1)
-        # keep the reference (lock mass) and exception peaks, as ThermoRawFileParser does by
-        # default (else they are zero)
-        raw.IncludeReferenceAndExceptionData = True
+            raise
         self._raw = raw
-        header = raw.RunHeaderEx
-        self.first, self.last = int(header.FirstSpectrum), int(header.LastSpectrum)
-        labels = raw.GetTrailerExtraHeaderInformation()
-        self._trailer = {labels[i].Label.strip(): i for i in range(labels.Length)}
 
     def _trailer_value(self, number: int, label: str, default):
         i = self._trailer.get(label)

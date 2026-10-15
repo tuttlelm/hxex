@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Controls: replicate averaging, per-control fallbacks, the correction and its uncertainty."""
 
+import dataclasses
+import logging
+
 import numpy as np
 import pytest
 
@@ -212,9 +215,15 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
     good = c.rows([0, 1, 2])
     assert not c.fallback[good].any() and (c.retention[good] < 0.9).all()
     assert cfg.min_retention == 0.0
-    # a series without rates (a fragment ion) keeps its measured control, or d2o_fraction
+    # a series without rates (a fragment ion) is not judged by the prediction: it keeps the
+    # d2o floor (half of d2o_fraction) and falls back to d2o_fraction below it, never to kint
     i = c.rows([99])[0]
-    assert c.mfd[i] == pytest.approx(3.0) and "fd_kint" not in c.flags[i]
+    assert c.mfd_measured[i] == pytest.approx(3.0) and c.flags[i] == "retention_low"
+    assert c.mfd[i] == pytest.approx(0.0 + cfg.d2o_fraction * 10) and c.fallback[i]
+    rows = [(d, t, m) for d, t, m in [(98, 0.0, 0.0), (98, 0.0, 0.0), (98, 1e6, 6.0),
+                                       (98, 1e6, 6.0)]]
+    c2 = fit_controls(fake_fit(rows), np.array([10.0] * 4), cfg, rates=rates)
+    assert c2.mfd[0] == pytest.approx(6.0) and c2.flags[0] == "" and not c2.fallback[0]
 
 
 def test_kint_fallback_needs_conditions_rates_and_enough_controls():
@@ -270,3 +279,25 @@ def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
     c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, quench=QUENCH),
                      rates=rates)
     assert c.fd_model is not None
+
+
+def test_a_fully_deuterated_level_not_above_m0_is_rejected_whatever_the_floor(caplog):
+    # no retention floor (as with fd_fallback='kint'): a span of 0 or less still scales nothing
+    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, retention_min=0.0)
+    for fd in (0.1, 0.05):
+        c = fit_controls(fake_fit([(0, 0, 0.1), (0, 0, 0.1), (0, 1e6, fd), (0, 1e6, fd)]),
+                         np.full(4, 10.0), cfg)
+        assert c.flags[0] == "retention_low" and c.fallback[0]
+        assert c.mfd[0] == pytest.approx(9.1) and c.retention[0] == pytest.approx(0.9)
+        out = correct_means(c, [0, 0], np.array([4.6, 9.1]))
+        np.testing.assert_allclose(out.mean, [5.0, 10.0])
+    # a series without any exchangeable site: flagged, its retention unknown
+    c = fit_controls(fake_fit([(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 0.0)]), np.zeros(3), cfg)
+    assert c.flags[0] == "no_amides" and np.isnan(c.retention[0]) and c.fallback[0]
+    # a table holding such a row (made by hand) corrects to NaN, with a warning naming the series
+    c = table([(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 8.0), (0, 1e6, 8.0)])
+    bad = dataclasses.replace(c, mfd=np.array([0.0]))
+    with caplog.at_level(logging.WARNING, logger="hxex.controls"):
+        out = correct_means(bad, [0, 0], np.array([4.0, 8.0]))
+    assert np.isnan(out.mean).all()
+    assert "data_id 0" in caplog.text and "at or below" in caplog.text

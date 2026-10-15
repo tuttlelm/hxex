@@ -79,7 +79,9 @@ class ModificationRegistry:
             raise ChemistryError(
                 f"modification {label!r} must end with its standard residue letter {base!r}"
             )
-        comp = mass.Composition(delta) if isinstance(delta, str) else mass.Composition(dict(delta))
+        # formula=: a bare string would be tried as a peptide sequence first ('O' -> pyrrolysine)
+        comp = (mass.Composition(formula=delta) if isinstance(delta, str)
+                else mass.Composition(dict(delta)))
         return ModificationRegistry((*self.residues, ModifiedResidue(label, base, dict(comp))))
 
     def to_dict(self) -> dict[str, list[dict]]:

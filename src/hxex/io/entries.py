@@ -36,9 +36,17 @@ def read_peptide_table(path: str | Path) -> list[PeptideEntry]:
                     entries.append(_entry_from_row(row))
                 except (ValueError, TypeError) as exc:
                     raise ReadError(f"{path} line {line}: {exc}") from exc
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     return entries
+
+
+def _whole(value: str, name: str) -> int:
+    """An integer column value (``2`` or ``2.0``; a fraction or a non-number is an error)."""
+    number = float(value)
+    if not number.is_integer():
+        raise ValueError(f"{name} must be a whole number, not {value!r}")
+    return int(number)
 
 
 def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
@@ -48,9 +56,9 @@ def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
         sample=row["sample"],
         peptide=row["peptide"],
         peptide_range=row["peptide_range"],
-        start_seq=int(float(row["start_seq"])),
-        end_seq=int(float(row["end_seq"])),
-        charge=int(float(row["charge"])),
+        start_seq=_whole(row["start_seq"], "start_seq"),
+        end_seq=_whole(row["end_seq"], "end_seq"),
+        charge=_whole(row["charge"], "charge"),
         modification=(row.get("modification") or "").strip(),
         extra={k: v for k, v in row.items() if k not in known and k is not None},
     )
@@ -72,7 +80,7 @@ def read_fasta_records(path: str | Path) -> list[tuple[str, str]]:
                     records.append((header[0] if header else "", []))
                 elif line and records:
                     records[-1][1].append("".join(line.split()))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     return [(name, "".join(parts)) for name, parts in records if parts]
 

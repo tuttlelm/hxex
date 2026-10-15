@@ -423,9 +423,15 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         ladder_rates,
     )
 
+    settings = getattr(results, "settings", None)
+    if not (settings.spectra_source if settings is not None else None):
+        return {}, []  # not read from scan files: no fragment targets
     try:
         uptake = fragment_uptake(results)
-    except ValueError:  # not read from scan files
+    except ValueError as exc:  # e.g. fitted without K = 1
+        import logging
+
+        logging.getLogger(__name__).warning("no fragment outputs: %s", exc)
         return {}, []
     if not len(uptake):
         return {}, []
