@@ -291,6 +291,19 @@ def test_scan_time_layout_each_every_and_windows(tmp_path):
     assert len(windows) == 2
 
 
+def test_kinetics_spectra_from_the_read_record(tmp_path):
+    from hxex.io import kinetics_spectra
+
+    kin = write_mzml(tmp_path / "kin.mzML", time_course(n=4, ms2_every=2))
+    un = write_mzml(tmp_path / "un.mzML", time_course(n=2, ms2_every=2))
+    runs = [MzmlRun(un, "WT", time=0.0), MzmlRun(kin, "WT")]
+    s = read_mzml(runs, [MzmlTarget(ENTRY)], project="p")
+    flags = kinetics_spectra(s.source, s.spectrum_id)
+    assert flags.tolist() == [t != 0.0 for t in s.time] and flags.sum() == 4
+    assert not kinetics_spectra(None, s.spectrum_id).any()
+    assert not kinetics_spectra({"reader": "specexport"}, s.spectrum_id).any()
+
+
 def test_fragment_targets_need_their_scans(tmp_path, caplog):
     path = write_mzml(tmp_path / "f.mzML", time_course(n=6, ms2_every=2))
     frag = MzmlTarget(ENTRY, ms_level=2, activation="ETD", precursor_mz=1012.0,

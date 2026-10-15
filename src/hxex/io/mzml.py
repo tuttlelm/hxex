@@ -43,7 +43,7 @@ import numpy as np
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, plan_bins
-from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
+from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id, split_spectrum_id
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
 
@@ -987,6 +987,22 @@ def _read_runs(
     }
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
+
+
+def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.ndarray:
+    """Whether each spectrum (by ``spectrum_id``) came from a kinetics run, one without a fixed
+    ``time`` (each scan its own time), by the read record ``source`` of :func:`read_mzml` or
+    :func:`~hxex.io.read_thermo`. All False without a record or for other readers."""
+    out = np.zeros(len(spectrum_id), dtype=bool)
+    if not source or source.get("reader") not in ("mzml", "thermo"):
+        return out
+    prefixes = tuple(f"{r['sample']}/{Path(r['path']).name}/" for r in source.get("runs", ())
+                     if r.get("time") is None)
+    if not prefixes:
+        return out
+    for i, sid in enumerate(spectrum_id):
+        out[i] = split_spectrum_id(str(sid))[1].startswith(prefixes)
+    return out
 
 
 def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,

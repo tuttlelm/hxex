@@ -202,6 +202,12 @@ def test_measurements_from_binned():
     assert meas.n_max[0] == pytest.approx(1.2 * sites) and sites == N_SITES + 2
     np.testing.assert_allclose(meas.shapes[0], chem.natural_abundance(PEPTIDE, mod=spec))
     assert meas.references == ((0,), (0,), (2,))  # the undeuterated control of each series
+    kin = Measurements.from_binned(pick_spectra(SpectrumSet.from_spectra(spectra), cfg),
+                                   kinetics=[False, True, False])
+    assert kin.references == ((0,), (1,), (2,))  # a kinetics scan: from its own run
+    with pytest.raises(ValueError, match="kinetics"):
+        Measurements.from_binned(pick_spectra(SpectrumSet.from_spectra(spectra), cfg),
+                                 kinetics=[True])
     assert list(meas.spectrum_id) == ["p:s0", "p:s1", "p:s2"]
     np.testing.assert_array_equal(meas.bins[0], np.arange(len(meas.bins[0])))
     with pytest.raises(ValueError):

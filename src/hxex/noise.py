@@ -3,7 +3,8 @@
 
 Each spectrum is divided by a scale ``c`` before it is fitted. ``c`` is the same for every
 measurement that shares a reference spectrum (normally the undeuterated control of its series), so
-spectra keep their relative intensities and a weaker spectrum is relatively noisier.
+spectra keep their relative intensities and a weaker spectrum is relatively noisier. The spectra
+of a kinetics run take theirs from the run's own scans instead (:func:`kinetics_references`).
 
 ``model='gaussian'``: baseline-type noise with a constant sd ``sigma`` that does not depend on
 the signal. ``c = sigma``, given directly (``sd``) or as ``percent`` of the tallest peak of the
@@ -133,6 +134,34 @@ def control_references(
             idx = np.flatnonzero((data_id == series) & (np.abs(time - undeut_time) <= atol))
             cache[s] = tuple(int(i) for i in idx) or None
         out.append(cache[s])
+    return out
+
+
+def kinetics_references(
+    data_id: Sequence[int],
+    rep: Sequence[int],
+    observed: Sequence[np.ndarray],
+    kinetics: Sequence[bool],
+) -> list[tuple[int, ...] | None]:
+    """The reference of every spectrum of a kinetics run (``kinetics``: each scan its own time,
+    from one infusion file): the one spectrum of the same series (``data_id``) and replicate
+    (``rep``) among the kinetics spectra whose tallest peak is the median of theirs (the lower
+    one for an even count), so the series shares one noise level at the kinetics file's
+    intensity. A separate undeuterated control can be far weaker than the kinetics scans (about
+    2 % on the private fragment dataset), and its scale would make them look almost noiseless
+    (HISTORY item 77). None for the other spectra."""
+    data_id, rep = np.asarray(data_id), np.asarray(rep)
+    kinetics = np.asarray(kinetics, dtype=bool)
+    if not (len(data_id) == len(rep) == len(observed) == len(kinetics)):
+        raise ValueError("data_id, rep, observed and kinetics must have one entry per spectrum")
+    out: list[tuple[int, ...] | None] = [None] * len(data_id)
+    for series, r in sorted({(int(d), int(r)) for d, r in
+                             zip(data_id[kinetics], rep[kinetics], strict=True)}):
+        idx = np.flatnonzero(kinetics & (data_id == series) & (rep == r))
+        tallest = np.array([np.max(observed[i]) if len(observed[i]) else 0.0 for i in idx])
+        ref = (int(idx[np.argsort(tallest, kind="stable")[(len(idx) - 1) // 2]]),)
+        for i in idx:
+            out[int(i)] = ref
     return out
 
 

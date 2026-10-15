@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .. import chem
-from ..noise import Reference, control_references
+from ..noise import Reference, control_references, kinetics_references
 from ..picking import BinnedSet
 
 
@@ -112,10 +112,13 @@ class Measurements:
         amide_rules: chem.AmideRules = chem.DEFAULT_AMIDE_RULES,
         registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
         shapes: Mapping[int, np.ndarray] | None = None,
+        kinetics: Sequence[bool] | None = None,
     ) -> Measurements:
         """Measurements from a picked set. Drop flagged spectra first (``BinnedSet.select``).
         ``shapes`` replaces the envelope of some series (``data_id``), for example an ion-type
-        mixture or an inferred envelope (:mod:`hxex.picking.envelope`).
+        mixture or an inferred envelope (:mod:`hxex.picking.envelope`). ``kinetics`` marks the
+        spectra of kinetics runs (:func:`hxex.io.kinetics_spectra`), whose reference is taken
+        from the run's own scans (:func:`hxex.noise.kinetics_references`).
 
         ``n_max = n_max_factor * exchangeable sites`` (amides plus user ``Hex``; at least one site,
         for fragment ions without any); the shape is
@@ -151,9 +154,16 @@ class Measurements:
             # an ion without exchangeable sites (a z ion of one residue) is fitted with the cap of
             # one: its mass shift can still be measured (scrambling)
             n_max.append(n_max_factor * max(sites_cache[key], 1))
+        references = control_references(binned.data_id, binned.time, undeut_time)
+        if kinetics is not None:
+            if len(kinetics) != len(binned):
+                raise ValueError("kinetics must have one entry per spectrum")
+            from_run = kinetics_references(binned.data_id, binned.rep, observed, kinetics)
+            references = [k if k is not None else c
+                          for k, c in zip(from_run, references, strict=True)]
         return cls(
             bins=tuple(bins), observed=tuple(observed), shapes=tuple(shape_list),
             n_max=np.asarray(n_max, dtype=np.float64),
-            references=tuple(control_references(binned.data_id, binned.time, undeut_time)),
+            references=tuple(references),
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,
         )

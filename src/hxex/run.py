@@ -496,10 +496,13 @@ def run(
         log.warning("dropped %d of %d spectra: %d empty, %d without signal", int((~kept).sum()),
                     len(kept), int((reason == "empty").sum()), int((reason == "no_signal").sum()))
     picked = binned.select(kept)
+    from .io.mzml import kinetics_spectra
+
     measurements = Measurements.from_binned(
         picked, n_max_factor=config.n_max_factor,
         undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
+        kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)

@@ -1971,6 +1971,47 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     has the columns whenever K=2 was analysed. Without a choice the columns are `None` and the
     values are unchanged.
 
+76. **Waters `.raw` input: tabled (owner, 2026-10-15).** Looked at on two undeuterated
+    Cyclic IMS MSe runs (functions: low-energy MS1, 1,900 scans with ion mobility; high-energy;
+    lock mass at 785.84; m/z not lock-mass corrected in the file). Open-source readers:
+    - OpenWRaw 4.0.0 (Apache-2.0, Rust with Python wheels, first release 2026-05): opens a run
+      in 0.3 s and reads every function, but decodes no ion mobility and applies no lock mass.
+      Against DynamX's exported spectrum of a 13-residue peptide (2+), the peaks were 33 ppm low
+      and the isotope pattern was wrong even within +-0.04 min (1, 0.98, 0.92, 0.83 against
+      DynamX's 1, 0.81, 0.28, 0.08, with a second overlapping 2+ species): summed over all drift
+      times, where DynamX selects the peptide's drift window.
+    - rainbow-api 1.5.3 (LGPL-3.0): refuses these files (only the 2, 4, 6 and 8 bytes-per-point
+      formats; "HRMS ... not supported"); no ion mobility.
+    Options left: the Waters MassLynx Raw SDK supplied by the user (as Thermo's RawFileReader;
+    licence by request from Waters, ion mobility, Linux unconfirmed), OpenWRaw with hxex's own
+    lock-mass correction (no drift selection), a decoder of our own, or msconvert to mzML with
+    drift times. Recommended if resumed: the SDK.
+
+77. **Kinetics runs take their noise reference from their own scans (owner, 2026-10-15).** The
+    noise sd of a series is a percentage of its reference spectrum's tallest peak, the
+    undeuterated control. In a kinetics run (an mzML or Thermo run without a fixed `time`) the
+    control is a separate file, on the private fragment dataset about 2 % of a kinetics scan's
+    intensity, so the kinetics spectra looked almost noiseless: harmless for the K=1 values,
+    but it inflates the case for K=2 and would make bootstrap resamples far too narrow. Of
+    the three options (each spectrum its own reference; one reference per series from its
+    kinetics scans; noise estimated from neighbouring scans) the owner chose the second:
+    `noise.kinetics_references` gives every kinetics spectrum of a series and replicate the
+    one kinetics spectrum whose tallest peak is their median (the lower one for an even count),
+    so the series keeps a common scale at the kinetics file's intensity. Which spectra are
+    kinetics is read from the read record (`io.kinetics_spectra`: the runs without a `time`,
+    matched by the spectrum ids hxex makes); `Measurements.from_binned(kinetics=...)`, passed
+    by `run`. Controls and every other format keep their references.
+    On the probe (ScramPep ETD 3+, gentle and harsh, 12,616 kinetics spectra and 62 controls,
+    K = 1 and 2): the kinetics scales rose by a median factor of 47 (10th to 90th percentile 29
+    to 60), the controls' were unchanged, and K=2 was selected for 1,048 kinetics spectra
+    against 8,849 before. Of the K=1 fits, 659 move by more than 0.05 D: M-NH3 301 of 1,686,
+    z7 and z8 286 of 1,133, c-1 66 of 4,772, and M and z2 to z6 6 of 5,087. The loss is flat
+    there: the rescaled loss is the same
+    (median change 0, 99th percentile 6e-5 relative). The ladder rates agree within their
+    standard errors (largest: harsh z K8 0.0088 to 0.0063 s^-1, 1.3 SE; gentle c D4 0.0028 to
+    0.0034 s^-1, 0.9 SE). The noise estimated from neighbouring scans (the third option) stays
+    a possible opt-in.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at

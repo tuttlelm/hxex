@@ -7,7 +7,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from hxex.noise import NoiseConfig, control_references, noise_scale, sample_size
+from hxex.noise import (
+    NoiseConfig,
+    control_references,
+    kinetics_references,
+    noise_scale,
+    sample_size,
+)
 
 GOLD = np.load(Path(__file__).parent / "golden" / "model_reference.npz")
 OBSERVED = [GOLD["obs_padded"][: s, i] for i, s in enumerate(GOLD["sizes"])]
@@ -88,6 +94,23 @@ def test_control_references():
     assert close == [(0,), (0,)]  # within the tolerance
     assert control_references([0], [0.0], 30.0) == [None]
     assert control_references([], [], 0.0) == []
+
+
+
+def test_kinetics_references():
+    # series 0: a weak control (0) and kinetics scans of replicates 1 (1, 2, 3) and 2 (4, 5);
+    # series 1: a control only
+    tallest = [2.0, 90.0, 100.0, 120.0, 60.0, 50.0, 3.0]
+    observed = [np.array([0.5, t, 1.0]) for t in tallest]
+    refs = kinetics_references([0, 0, 0, 0, 0, 0, 1], [1, 1, 1, 1, 2, 2, 1], observed,
+                               [False, True, True, True, True, True, False])
+    # the median of 90, 100, 120 is scan 2; of 60 and 50 the lower one, scan 5
+    assert refs == [None, (2,), (2,), (2,), (5,), (5,), None]
+    assert kinetics_references([0], [1], [np.array([1.0])], [False]) == [None]
+    with pytest.raises(ValueError, match="one entry"):
+        kinetics_references([0, 0], [1], observed[:2], [True, True])
+    scale = noise_scale(observed, NoiseConfig(), refs)  # 3 % of the reference's tallest peak
+    np.testing.assert_allclose(scale[1:4], 3.0)
 
 
 def test_sample_size():
