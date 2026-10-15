@@ -290,7 +290,12 @@ class ResidueComparison:
     ``value`` (the ``quantity``) with their ``*_se``, ``delta`` and ``delta_se``, ``z``
     (``delta / delta_se``) and ``significant``; with the ``reference``, ``K``, ``rank``, ``alpha``
     and the ``delta_crit`` used. ``control_fallback_reference`` and ``control_fallback``: whether
-    each side's value rests on a fallback control (see :class:`PeptideComparison`)."""
+    each side's value rests on a fallback control (see :class:`PeptideComparison`).
+    ``two_reference`` and ``two``: whether each side's one-or-two choice
+    (:func:`hxex.analysis.choose_populations`) keeps two populations at the residue, so that a
+    difference is read beside whether each side supports two populations; ``None`` when the
+    comparison was made without a choice. Rows are kept whatever the choices (owner,
+    2026-10-15)."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -311,6 +316,8 @@ class ResidueComparison:
     quantity: str = "fD"
     control_fallback_reference: np.ndarray | None = None
     control_fallback: np.ndarray | None = None
+    two_reference: np.ndarray | None = None
+    two: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback
         for name in ("control_fallback_reference", "control_fallback"):
@@ -322,6 +329,14 @@ class ResidueComparison:
         """Rows whose two values were corrected differently (one with a fallback control)."""
         return np.asarray(self.control_fallback_reference, dtype=bool) != np.asarray(
             self.control_fallback, dtype=bool)
+
+    @property
+    def choices_differ(self) -> np.ndarray:
+        """Rows where one side keeps two populations and the other one (all False without a
+        choice)."""
+        if self.two is None:
+            return np.zeros(len(self), dtype=bool)
+        return np.asarray(self.two_reference, dtype=bool) != np.asarray(self.two, dtype=bool)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -335,9 +350,20 @@ class ResidueComparison:
         return keep
 
 
-def _residue_rows(value: dict, reference: str, alpha: float, delta_crit: float) -> list[dict]:
+def _choices(choice) -> dict | None:
+    """``(sample, time, residue) -> two_populations`` of a choice, where it has a K=1 value (as
+    :func:`hxex.analysis.compare_choices`)."""
+    if choice is None:
+        return None
+    return {(str(s), float(t), int(r)): bool(two) for s, t, r, avg, two in zip(
+        choice.sample, choice.time, choice.residue, choice.fD_avg, choice.two_populations,
+        strict=True) if np.isfinite(avg)}
+
+
+def _residue_rows(value: dict, reference: str, alpha: float, delta_crit: float,
+                  two: dict | None = None) -> list[dict]:
     """Rows of a residue comparison from ``(sample, time, residue) -> (value, se,
-    control_fallback)``."""
+    control_fallback)``, with each side's choice from ``two`` (:func:`_choices`) if given."""
     z_crit = float(stats.norm.ppf(1 - alpha / 2))
     rows = []
     for (sample, time, res), (v, e, fb) in sorted(value.items()):
@@ -354,11 +380,15 @@ def _residue_rows(value: dict, reference: str, alpha: float, delta_crit: float) 
                      "value_reference_se": re_, "value": v, "value_se": e, "delta": delta,
                      "delta_se": se, "z": z, "significant": sig,
                      "control_fallback_reference": rfb, "control_fallback": fb})
+        if two is not None:
+            rows[-1]["two_reference"] = two.get((reference, time, res), False)
+            rows[-1]["two"] = two.get((sample, time, res), False)
     return rows
 
 
-def _residue_comparison(rows, **scalars) -> ResidueComparison:
-    names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS]
+def _residue_comparison(rows, with_choice: bool, **scalars) -> ResidueComparison:
+    names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS
+             and (with_choice or f.name not in ("two_reference", "two"))]
     if not rows:
         return ResidueComparison(**{name: np.array([]) for name in names}, **scalars)
     cols = {name: np.array([r[name] for r in rows]) for name in names}
@@ -373,9 +403,12 @@ def compare_residues(
     rank: int = 1,
     alpha: float = 0.05,
     delta_crit: float = 0.0,
+    choice=None,
 ) -> ResidueComparison:
     """Every sample against ``reference`` residue by residue at ``K`` and ``rank``;
-    ``delta_crit`` is usually the peptides' (:func:`compare_peptides`)."""
+    ``delta_crit`` is usually the peptides' (:func:`compare_peptides`). With a ``choice``
+    (:func:`hxex.analysis.choose_populations`) each row records whether each side keeps two
+    populations (``two_reference``, ``two``); no row is left out because of it."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     sel = (residues.K == K) & (residues.rank == rank)
@@ -386,9 +419,10 @@ def compare_residues(
                  strict=True)}
     if not any(k[0] == reference for k in value):
         raise ValueError(f"no reference sample {reference!r} at K={K} rank {rank}")
-    return _residue_comparison(_residue_rows(value, reference, alpha, delta_crit),
-                               reference=reference, K=K, rank=rank, alpha=alpha,
-                               delta_crit=delta_crit, quantity="fD")
+    return _residue_comparison(
+        _residue_rows(value, reference, alpha, delta_crit, _choices(choice)),
+        choice is not None, reference=reference, K=K, rank=rank, alpha=alpha,
+        delta_crit=delta_crit, quantity="fD")
 
 
 def compare_populations(choice, reference: str, *, alpha: float = 0.05,
@@ -396,7 +430,9 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
     """Every sample against ``reference`` residue by residue in the lever-rule population of the
     low-D component (:func:`hxex.analysis.choose_populations`), where both have one (the K=1
     value between the K=2 ranks); ``delta_crit`` is usually the peptides'
-    (:func:`compare_peptides` with ``quantity='population'``)."""
+    (:func:`compare_peptides` with ``quantity='population'``). Each row records whether each
+    side's choice keeps two populations (``two_reference``, ``two``): the lever rule can apply
+    where the choice keeps one."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     value = {(str(s), float(t), int(r)): (float(v), float(e), bool(fb))
@@ -405,9 +441,10 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
                  choice.population_low_se, choice.control_fallback, strict=True)}
     if not any(k[0] == reference for k in value):
         raise ValueError(f"no reference sample {reference!r} in the choice")
-    return _residue_comparison(_residue_rows(value, reference, alpha, delta_crit),
-                               reference=reference, K=2, rank=1, alpha=alpha,
-                               delta_crit=delta_crit, quantity="population")
+    return _residue_comparison(
+        _residue_rows(value, reference, alpha, delta_crit, _choices(choice)), True,
+        reference=reference, K=2, rank=1, alpha=alpha, delta_crit=delta_crit,
+        quantity="population")
 
 
 @dataclass(frozen=True)

@@ -500,6 +500,32 @@ def test_population_comparison_per_residue():
 
     fig = residue_comparison_figure(cmp, ["V"], 4.0)
     assert fig.axes[0].get_ylabel() == "population (low D)"
+    np.testing.assert_array_equal(cmp.two_reference, True)
+    np.testing.assert_array_equal(cmp.two, True)
+
+
+def test_residue_comparison_records_each_sides_choice():
+    import dataclasses
+
+    from hxex.analysis import ResidueMap, choose_populations, compare_residues
+
+    rows = []
+    for avgs in ((0.4, 0.4, 0.4), (0.4, 0.65, 0.4)):  # R, then V (residue 2: K=1 outside)
+        for r, avg in enumerate(avgs, start=1):
+            rows += [(r, 1, 1, avg, 0.01), (r, 2, 1, 0.2, 0.01), (r, 2, 2, 0.6, 0.01)]
+    m, v = choice_map(rows[:9]), choice_map(rows[9:])
+    both = ResidueMap(**{f.name: np.concatenate([getattr(m, f.name), getattr(v, f.name)])
+                         for f in dataclasses.fields(ResidueMap)})
+    both = dataclasses.replace(both, sample=np.array(["R"] * 9 + ["V"] * 9))
+    ch = choose_populations(both)
+    rc = compare_residues(both, "R", K=2, rank=1, choice=ch)
+    assert len(rc) == 3  # the residue where V keeps one population is still compared
+    np.testing.assert_array_equal(rc.two_reference, [True, True, True])
+    np.testing.assert_array_equal(rc.two, [True, False, True])
+    np.testing.assert_array_equal(rc.choices_differ, [False, True, False])
+    plain = compare_residues(both, "R", K=2, rank=1)
+    assert plain.two is None and not plain.choices_differ.any()
+    np.testing.assert_allclose(plain.delta, rc.delta)
 
 
 # --- the whole analysis: settings, files and the command line -----------------------------------
@@ -548,6 +574,8 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
                   "compare_residues", "compare_populations", "regions"):
         assert f"{table}.csv" in names
     assert "coverage_S.png" in names and "redundancy_resolution.png" in names
+    header = (tmp_path / "a" / "compare_residues.csv").read_text().splitlines()[0].split(",")
+    assert {"two_reference", "two"} <= set(header)
     assert any(n.startswith("choice_V_") for n in names)
     assert any(n.startswith("compare_residues_") for n in names)
     assert seen[-1][0] == seen[-1][1] == len(written)

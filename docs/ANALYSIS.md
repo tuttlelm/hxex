@@ -275,10 +275,13 @@ Plots (matplotlib, returning figures):
   criterion, bootstrap, controls and limits, envelope, `n_max_factor`, the modification
   registry), listing the rest (optimiser settings, seeds, quality limits, package versions)
   without a warning. One population in one run and two in another: every spectrum is fitted at
-  every K, so the K=1 values are always compared; a K=2 rank or population only where both sides
-  keep a K=2 description; `compare_choices` reports per residue where the one-or-two choice
-  differs, and neither side's description is imposed on the other (the same rule as between
-  samples of a run; recommended, to confirm with the owner). The butterfly plot (reference up,
+  every K, so the K=1 values are always compared; `compare_choices` reports per residue where
+  the one-or-two choice differs, and neither side's description is imposed on the other (the
+  same rule as between samples of a run). Whether one side supports two populations and the
+  other one is worth knowing (owner, 2026-10-15; HISTORY item 75): residue comparisons are not
+  filtered by the choice, and each row carries both sides' choices (`two_reference`, `two`,
+  `choices_differ`) when a choice is given (`compare_residues(choice=...)`, always in
+  `compare_populations` and in `hxex analyse`). The butterfly plot (reference up,
   other sample down, one line per time, differences below) is drawn for every comparison.
 - **Recomputing and combining**: uptake without the spectra the review rejected
   (`recalc_uptake`), and combining runs (`combine_batch_data`).

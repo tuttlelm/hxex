@@ -177,7 +177,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up):
                 rows.setdefault(name, []).append(values)
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
-                                   delta_crit=comparisons["K=1 fD"].delta_crit)
+                                   delta_crit=comparisons["K=1 fD"].delta_crit, choice=choice)
         tables["compare_residues"] = _columns(res_cmp)
         pop_cmp = None
         if choice is not None:

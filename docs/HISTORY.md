@@ -1960,6 +1960,17 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     and `plot_series_spectra` reads a series' raw spectra in one read. Pages are pixel-identical;
     the 150 series and the merged PDF took 178 s. The rest is mostly writing the PDF.
 
+75. **Residue comparisons carry each side's one-or-two choice (owner, 2026-10-15).** The open
+    question (item 53) was whether `compare_residues` at K=2 should leave out residues where a
+    sample's choice keeps one population. Owner: whether one sample supported K=2 and another
+    K=1 is worth knowing, so no row is left out; instead each row records both choices.
+    `compare_residues(..., choice=)` adds `two_reference` and `two` (False where a side has no
+    K=1 value, as in `compare_choices`), and `ResidueComparison.choices_differ` marks the
+    disagreements; `compare_populations` always adds them (the lever rule can apply where the
+    choice keeps one population), and `hxex analyse` passes its choice, so `compare_residues.csv`
+    has the columns whenever K=2 was analysed. Without a choice the columns are `None` and the
+    values are unchanged.
+
 **CPU and GPU (2026-10-10, RTX A4500, torch 2.14.1 with CUDA 12.6; `tests/test_gpu_parity.py`,
 skipped without CUDA).** On the 542 Bimodal measurements, CPU float64 against GPU float32:
 the selected K is identical for **542 of 542** spectra (the prototype: 541 of 542). The loss at
