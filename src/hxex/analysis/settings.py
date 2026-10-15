@@ -50,7 +50,8 @@ class AnalysisConfig:
     :func:`hxex.analysis.species.analysis_controls`; they are also recomputed, with the run's
     settings, when the review rejected a control spectrum); ``merge``: with ``runs``, samples to
     combine across runs (``'run:sample'`` -> label; the same label pools them,
-    :class:`hxex.analysis.RunSet`); ``fragments``: the fragment outputs of a run with fragment
+    :class:`hxex.analysis.RunSet`; fragment series are not pooled but drawn side by side,
+    their conditions ``run:condition``); ``fragments``: the fragment outputs of a run with fragment
     series (:class:`hxex.analysis.FragmentAnalysis`; ladder figures and rates, closure,
     per-residue rates; written whenever the run has fragments, None turns them off; fragment
     series are left out of the peptide analysis)."""

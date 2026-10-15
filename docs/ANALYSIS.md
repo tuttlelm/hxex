@@ -217,6 +217,13 @@ How fragment data differs, and what this branch does about it:
   clean D content against time, with the traces of chosen fragment ions or of chosen
   differences (`amide_difference`). The reference is pyHXExpress's kinetics notebooks; the
   owner provides references when this branch starts.
+- **Several runs** (owner, 2026-10-15; HISTORY item 80): activations and ladders are compared
+  across runs with a `RunSet`, as peptides are. Samples are `run:sample` unless `merge` gives
+  runs one sample; then each run's conditions become `run:condition`, so the runs are drawn
+  side by side in that sample's figures and never pooled (each run has its own exchange
+  clock). The tables start with a `run` column. The residue-rate figure holds every precursor
+  charge of a parent (an ETD 3+ run beside an EThcD 2+ run); the ladder and closure figures
+  stay per precursor charge.
 
 ### Common output and plots
 

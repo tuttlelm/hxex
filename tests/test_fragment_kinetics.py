@@ -2,6 +2,7 @@
 """Fragment kinetics: the uptake table, ladder steps, scan-matched differences, decay fits,
 per-residue least squares and the ladder figure, on synthetic ladders with known rates."""
 
+import dataclasses
 from types import SimpleNamespace
 
 import numpy as np
@@ -269,14 +270,14 @@ def test_closure_of_complementary_ions():
             closure_trace(u, *bad)
 
 
-def stub_run(conditions=("gentle", "harsh")):
+def stub_run(conditions=("gentle", "harsh"), parent=None):
     """A fitted fragment run (the objects fragment_uptake reads) whose fragments are the sums of
     their residues' decays, every fragment of one condition from the same scans."""
     from hxex.analysis import fragment_uptake as _  # noqa: F401 (the reader under test)
 
     targets = []
     for cond in conditions:
-        targets += fragment_targets(PARENT, "M c:1,2,4,5,6,7:1 z:1,2,3,4,6,7:1",
+        targets += fragment_targets(parent or PARENT, "M c:1,2,4,5,6,7:1 z:1,2,3,4,6,7:1",
                                     activation="ETD", label=cond)
     source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
               "series": [{"data_id": i, "sample": "S", "target": i}
@@ -485,3 +486,59 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
     with caplog.at_level(logging.WARNING, logger="hxex.report.fragments"):
         assert fragment_outputs(no_k1, cfg) == ({}, [])
     assert "needs the K = 1 fits" in caplog.text
+
+
+def test_fragment_outputs_of_several_runs(tmp_path):
+    """Runs of one sample (two activations, say) side by side, never pooled; unmerged runs
+    each on their own."""
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis, RunSet, ladder_rates
+    from hxex.report import residue_rates_figure, write_analysis
+
+    runs = {"etd": stub_run(conditions=("gentle",)), "ethcd": stub_run(conditions=("gentle",))}
+    # EThcD of the 2+ precursor: its own figures, but one residue-rate figure for both
+    runs_z = {**runs, "ethcd": stub_run(conditions=("gentle",),
+                                        parent=dataclasses.replace(PARENT, charge=2))}
+    merged = RunSet(runs, merge={"etd:S": "S", "ethcd:S": "S"})
+    u = fragment_uptake(merged)
+    assert set(u.sample) == {"S"} and set(u.condition) == {"etd:gentle", "ethcd:gentle"}
+    assert set(u.run) == {"etd", "ethcd"} and len(u) == 2 * len(fragment_uptake(runs["etd"]))
+    assert u.select(u.where(run="etd")).run.tolist() == ["etd"] * (len(u) // 2)
+    rates = ladder_rates(u, min_time=10.0)
+    single = ladder_rates(fragment_uptake(runs["etd"]), min_time=10.0)
+    assert len(rates) == 2 * len(single)
+    assert np.array_equal(rates.n[rates.where(condition="etd:gentle")], single.n)  # not pooled
+    fig = residue_rates_figure(rates)
+    assert [t.get_text() for t in fig.axes[0].get_legend().get_texts()] == [
+        "etd:gentle c", "etd:gentle z", "ethcd:gentle c", "ethcd:gentle z"]
+
+    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
+    written = write_analysis(merged, cfg, tmp_path / "merged")
+    assert sorted(p.name for p in written) == sorted([
+        "fragment_uptake.csv", "ladder_rates.csv", "closure.csv",
+        "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
+        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
+    for name in ("fragment_uptake", "ladder_rates", "closure"):
+        head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
+        assert head.startswith("run,sample,"), head
+
+    # unmerged: run:sample, the conditions as they are, figures per run
+    plain = fragment_uptake(RunSet(runs))
+    assert set(plain.sample) == {"etd:S", "ethcd:S"} and set(plain.condition) == {"gentle"}
+    names = {p.name for p in write_analysis(RunSet(runs), cfg, tmp_path / "plain")}
+    assert {"residue_rates_etd_S_11-18_z3.png", "residue_rates_ethcd_S_11-18_z3.png"} <= names
+
+    both = RunSet(runs_z, merge={"etd:S": "S", "ethcd:S": "S"})
+    names = {p.name for p in write_analysis(both, cfg, tmp_path / "charges")}
+    assert {"ladder_S_11-18_z2_c_z1.png", "ladder_S_11-18_z3_c_z1.png",
+            "residue_rates_S_11-18.png"} <= names
+    assert not any(n.startswith("residue_rates_S_11-18_z") for n in names)
+    fig = residue_rates_figure(ladder_rates(fragment_uptake(both), min_time=10.0))
+    assert [t.get_text() for t in fig.axes[0].get_legend().get_texts()] == [
+        "etd:gentle Z3 c", "etd:gentle Z3 z", "ethcd:gentle Z2 c", "ethcd:gentle Z2 z"]
+    assert "(Z2/3)" in fig.axes[0].get_title()
+
+    # runs that count amides differently cannot be compared
+    other = stub_run(conditions=("gentle",))
+    other.settings.picker = PickerConfig(nterm_subtract=2)
+    with pytest.raises(ValueError, match="count fragment amides differently"):
+        fragment_uptake(RunSet({"a": runs["etd"], "b": other}))

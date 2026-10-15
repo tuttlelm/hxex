@@ -263,17 +263,16 @@ def write_analysis(
     ``base``. ``progress(done, total)`` counts the files."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    frag_tables, frag_jobs, fragment_keys, only_fragments = {}, [], set(), False
+    frag_tables, frag_jobs = {}, []
+    # fragment series (and precursor ions read with them) are not peptides
     if isinstance(results, RunSet):
-        if config.fragments is not None and any(
-                _fragment_keys(r)[0] for r in results.runs.values()):
-            log.warning("the fragment outputs are not written for several runs; analyse "
-                        "each run on its own")
+        keyed = [_fragment_keys(r) for r in results.runs.values()]
+        fragment_keys = set().union(*(keys for keys, _ in keyed))
+        only_fragments = all(only for _, only in keyed)
     else:
-        # fragment series (and precursor ions read with them) are not peptides
         fragment_keys, only_fragments = _fragment_keys(results)
-        if config.fragments is not None and fragment_keys:
-            frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
+    if config.fragments is not None and fragment_keys:
+        frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
     tables, jobs = {}, []
     if not only_fragments:
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,

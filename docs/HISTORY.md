@@ -2127,3 +2127,27 @@ CSVs or mzML if wanted.
     species with a single record. The residue level propagates those, so residues covered only
     by single-record species are the ones without an error. The scatter of overlapping
     peptides about a residue's value is not used as an error (an option, not built).
+
+80. **Fragment outputs for several runs (owner, 2026-10-15).** The owner asked to compare
+    activations and ladders across runs. `fragment_uptake` (and so `write_analysis` and
+    `hxex analyse`) takes a `RunSet`: the fragments of every run read from scan files, in one
+    table with a `run` column, samples labelled as in the peptide comparison (`run:sample`, or
+    the `merge` label). In a merged sample each run's conditions become `run:condition`, so
+    runs are drawn side by side and never pooled, unlike merged peptide samples: each run has
+    its own exchange clock (item 69), and scans are matched within a run. Runs that count
+    fragment amides differently (`nterm_subtract`, amide rules) are refused. The three tables
+    start with the run. Runs of one activation usually differ in precursor charge (EThcD of the
+    2+, ETD of the 3+), so the residue-rate figure now holds every precursor charge of a parent,
+    a colour per condition and charge (`Z3` in the legend; file `residue_rates_<sample>_<range>`
+    without a charge when there are several); the ladder and closure figures stay per precursor
+    charge, since their precursor row is charge-specific. On the 8-residue peptide of the private
+    fragment dataset (ETD 3+ and EThcD 2+ fitted as two projects from one kinetics file;
+    gentle condition), the same ion type agrees between activations wherever both are resolved
+    (z: I5 6.85e-3 and 6.80e-3 /s; c: I7 6.2e-4 and 5.9e-4, K8 2.07e-3 and 2.20e-3; D4, V6
+    within about one standard error). The c- against z-ladder disagreement of ETD at I7 and K8
+    cannot be checked on EThcD: its z step at I7 is unresolved and its K8 z error is wide. One
+    EThcD harsh c-1 step (I5) fits a 40 D amplitude for one residue, an unphysical fit that
+    nothing flags yet. Noticed: a project file with only `[analysis]` (to compare bundles with
+    `merge` and labels) is refused for lacking `[input]`; the comparison used the Python API.
+    Closure figures (owner): the splits had shades of one colour map and one marker and could
+    not be told apart; each now has a colour of its own and a marker (10 colours, 7 markers).

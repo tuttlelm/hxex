@@ -44,7 +44,8 @@ class FragmentUptake:
     ``rep``. Values: ``time`` (s), ``mean`` (deuterons beyond natural abundance) and ``mean_se``
     (from the K = 1 bootstrap, NaN without one), ``n_amides`` (the exchangeable amides the
     fragment holds; :func:`hxex.fragments.fragment_amides`), ``flagged`` (quality flags) and
-    ``spectrum_id``. ``nterm_subtract`` and ``amide_rules`` are those of the run's picker."""
+    ``spectrum_id``. ``nterm_subtract`` and ``amide_rules`` are those of the run's picker.
+    ``run``: the run of each row when read from a :class:`hxex.analysis.RunSet` (else None)."""
 
     sample: np.ndarray
     condition: np.ndarray
@@ -66,6 +67,7 @@ class FragmentUptake:
     spectrum_id: np.ndarray
     nterm_subtract: int = 1
     amide_rules: chem.AmideRules = chem.DEFAULT_AMIDE_RULES
+    run: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.time)
@@ -119,9 +121,19 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     """The K = 1 deuteration of every fragment-ion spectrum of ``results`` (a run read from mzML
     or Thermo files with fragment targets, :func:`hxex.fragments.fragment_targets`). Spectra
     the review rejected are left out, flagged ones too with ``exclude_flagged``; series that
-    are not fragments of a parent (peptides read from MS1) are left out."""
+    are not fragments of a parent (peptides read from MS1) are left out.
+
+    From a :class:`hxex.analysis.RunSet`, the fragments of every run read from scan files, in
+    one table with a ``run`` column: samples are labelled as in the rest of the analysis
+    (``run:sample``, or the ``merge`` label), and the conditions of a merged sample become
+    ``run:condition``, so that the runs of one sample (two activations, say) are drawn side by
+    side in its figures and never pooled (each run has an exchange clock of its own)."""
     from ..fragments import fragment_amides
     from ..io.mzml import mzml_series_targets
+    from .runs import RunSet
+
+    if isinstance(results, RunSet):
+        return _runset_uptake(results, exclude_flagged)
 
     settings = results.settings
     source = settings.spectra_source if settings is not None else None
@@ -145,7 +157,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     means = fit.fits[1].means[:, 0]
     amides: dict[tuple, int] = {}
     rows: dict[str, list] = {f.name: [] for f in fields(FragmentUptake)
-                             if f.name not in ("nterm_subtract", "amide_rules")}
+                             if f.name not in ("nterm_subtract", "amide_rules", "run")}
     skipped = 0
     for i in np.flatnonzero(keep):
         target = targets.get(int(fit.data_id[i]))
@@ -186,6 +198,42 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     return FragmentUptake(
         **{name: np.array(values, dtype=kinds.get(name, str)) for name, values in rows.items()},
         nterm_subtract=int(nterm), amide_rules=rules)
+
+
+def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
+    """:func:`fragment_uptake` of the runs of a :class:`hxex.analysis.RunSet`."""
+    from .runs import SEPARATOR
+
+    tables = {}
+    for name, results in runs.runs.items():
+        settings = results.settings
+        if not (settings.spectra_source if settings is not None else None):
+            continue  # read from MS1 tables: no fragments
+        try:
+            u = fragment_uptake(results, exclude_flagged=exclude_flagged)
+        except ValueError as exc:
+            raise ValueError(f"run {name}: {exc}") from exc
+        if len(u):
+            tables[name] = u
+    if not tables:
+        raise ValueError("fragment_uptake needs a run read from mzML or Thermo files")
+    first = next(iter(tables.values()))
+    if any((u.nterm_subtract, u.amide_rules) != (first.nterm_subtract, first.amide_rules)
+           for u in tables.values()):
+        raise ValueError("the runs count fragment amides differently (nterm_subtract or amide "
+                         "rules): their fragments cannot be compared")
+    parts = []
+    for name, u in tables.items():
+        cols = u.columns()
+        merged = np.array([runs.label(name, s) in runs.merge for s in cols["sample"]], bool)
+        cols["sample"] = np.array([runs.sample_label(name, s) for s in cols["sample"]], str)
+        cols["condition"] = np.where(
+            merged, np.char.add(f"{name}{SEPARATOR}", cols["condition"].astype(str)),
+            cols["condition"])
+        cols["run"] = np.full(len(u), name)
+        parts.append(cols)
+    return FragmentUptake(**{key: np.concatenate([c[key] for c in parts]) for key in parts[0]},
+                          nterm_subtract=first.nterm_subtract, amide_rules=first.amide_rules)
 
 
 # --- ladder steps -------------------------------------------------------------------------------

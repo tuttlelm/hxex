@@ -36,8 +36,15 @@ from ..kint import IntrinsicRates, expected_uptake, intrinsic_rates, sample_cond
 _PAIR_COLOURS = [("tab:green", "tab:red"), ("tab:purple", "tab:brown"),
                  ("tab:pink", "tab:olive"), ("tab:gray", "tab:cyan")]
 _DIFF_COLOURS = ["tab:blue", "tab:orange", "tab:cyan", "tab:gray"]
+# the residue-rate figure: per condition (and precursor charge)
+_SOURCE_COLOURS = [*_DIFF_COLOURS, "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink",
+                   "tab:olive"]
 _EXTRA_COLOURS = ["#08306b", "#67000d", "#00441b", "#3f007d", "#7f2704"]
 _MARKER = {"marker": "v", "s": 9, "linewidths": 0}
+# closure splits: a colour and a marker each (10 colours, 7 markers: 70 distinct pairs)
+_SPLIT_COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown",
+                  "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
+_SPLIT_MARKERS = ["o", "s", "^", "D", "v", "P", "X"]
 
 
 def _title_residues(residues: Sequence[str], first: int, last: int, side: str) -> str:
@@ -279,8 +286,8 @@ def closure_figure(
     panel: tuple[float, float] = (4.2, 3.0),
 ) -> Figure:
     """The closure test against time (:func:`hxex.analysis.closure_trace`): for every split
-    ``k``, ``D(n_ion k) + D(c_ion n-k) - D(precursor)``, one panel per condition, one colour per
-    split (light to dark with ``k``), with the band of ``tolerance`` around 0. Points before
+    ``k``, ``D(n_ion k) + D(c_ion n-k) - D(precursor)``, one panel per condition, a colour and
+    a marker per split, with the band of ``tolerance`` around 0. Points before
     ``min_time`` are drawn fainter (they are left out of :func:`hxex.analysis.closure_table`)."""
     from ..analysis.fragments import closure_trace
 
@@ -293,9 +300,6 @@ def closure_figure(
     splits = [k for k in range(1, n) if f"{n_ion}:{k}" in have and f"{c_ion}:{n - k}" in have]
     if not splits:
         raise ValueError(f"no {n_ion} and {c_ion} pairs of {parent}")
-    import matplotlib
-
-    cmap = matplotlib.colormaps["viridis"]
     fig = Figure(figsize=(panel[0] * len(conditions), panel[1]), layout="constrained")
     axes = fig.subplots(1, len(conditions), squeeze=False, sharey=True)[0]
     mz = pz if precursor_charge is None else precursor_charge
@@ -309,11 +313,13 @@ def closure_figure(
                                condition=cond)
             if not len(tr):
                 continue
-            colour = cmap(0.1 + 0.8 * m / max(1, len(splits) - 1))
+            style = {"color": _SPLIT_COLOURS[m % len(_SPLIT_COLOURS)],
+                     "marker": _SPLIT_MARKERS[m % len(_SPLIT_MARKERS)], "s": 10,
+                     "linewidths": 0}
             early = tr.time < (min_time if min_time is not None else -np.inf)
-            ax.scatter(tr.time[~early], tr.mean[~early], color=colour,
-                       label=f"{n_ion}_{k} + {c_ion}_{n - k}", **_MARKER)
-            ax.scatter(tr.time[early], tr.mean[early], color=colour, alpha=0.3, **_MARKER)
+            ax.scatter(tr.time[~early], tr.mean[~early], alpha=0.8,
+                       label=f"{n_ion}_{k} + {c_ion}_{n - k}", **style)
+            ax.scatter(tr.time[early], tr.mean[early], alpha=0.25, **style)
         ax.set_title(f"{sample} (Z{pz})  {(labels or {}).get(cond, cond)}", fontsize=9)
         ax.set_xlabel("Time, sec")
         ax.grid(True, which="major", alpha=0.4)
@@ -336,14 +342,25 @@ def residue_rates_figure(
     """The rates of every single-residue ladder step (:func:`hxex.analysis.ladder_rates`) by
     residue: on top the rate (log axis, with its standard error), below the fitted amplitude
     (the deuterium that exchanges over the time range). Ion types are told apart by marker,
-    conditions by colour; a fragment charge other than 1 is named in the legend. Unresolved
+    conditions by colour; a fragment charge other than 1 is named in the legend. Every
+    precursor charge of the parent is drawn unless ``parent_charge`` chooses one; with several,
+    each condition and precursor charge has a colour of its own (``Z3`` in the legend), so
+    that runs of one sample on different precursors (two activations, say) are compared in
+    one figure. Unresolved
     fits (the decay not shown by the time range) are drawn as open markers along the bottom of
     the rate panel and have no amplitude; the rate axis spans the rates whose standard error is
     below the rate (others may reach beyond it). When the rates carry intrinsic rates
     (``kint``, :func:`hxex.analysis.ladder_rates` with exchange conditions), each residue's is
     drawn as a black bar on the rate panel and a third panel shows the protection factors
     (``kint / rate``, log axis; unresolved fits left out)."""
-    pick, sample, parent, pz = _one(rates, sample, parent, parent_charge)
+    pick = rates.where(sample=sample, parent=parent, parent_charge=parent_charge)
+    for name in ("sample", "parent"):
+        values = np.unique(getattr(rates, name)[pick])
+        if len(values) != 1:
+            raise ValueError(f"the table holds {len(values)} {name} values; choose one "
+                             f"({', '.join(map(str, values[:5]))})")
+    sample, parent = str(rates.sample[pick][0]), str(rates.parent[pick][0])
+    charges = sorted(set(rates.parent_charge[pick].tolist()))
     residues = chem.parse_sequence(parent)
     start = int(rates.parent_start[pick][0])
     with_kint = rates.kint is not None and bool(np.isfinite(rates.kint[pick]).any())
@@ -351,17 +368,19 @@ def residue_rates_figure(
     fig = Figure(figsize=(panel[0], n_panels * panel[1]), layout="constrained")
     axes = fig.subplots(n_panels, 1, sharex=True)
     top, bottom = axes[0], axes[1]
-    series = sorted({(str(c), str(i), int(z)) for c, i, z in zip(
-        rates.condition[pick], rates.ion_type[pick], rates.charge[pick], strict=True)},
-        key=lambda s: (s[0], chem.ion_terminus(s[1]) != "N", s[1], s[2]))
-    conditions = sorted({s[0] for s in series})
+    series = sorted({(str(c), int(pz), str(i), int(z)) for c, pz, i, z in zip(
+        rates.condition[pick], rates.parent_charge[pick], rates.ion_type[pick],
+        rates.charge[pick], strict=True)},
+        key=lambda s: (s[0], s[1], chem.ion_terminus(s[2]) != "N", s[2], s[3]))
+    sources = sorted({s[:2] for s in series})
     width = 0.6 / max(1, len(series))
-    for m, (cond, ion, z) in enumerate(series):
-        rows = pick & rates.where(condition=cond, ion_type=ion, charge=z)
+    for m, (cond, pz, ion, z) in enumerate(series):
+        rows = pick & rates.where(condition=cond, parent_charge=pz, ion_type=ion, charge=z)
         x = rates.residue[rows] + (m - (len(series) - 1) / 2) * width
-        colour = _DIFF_COLOURS[conditions.index(cond) % len(_DIFF_COLOURS)]
+        colour = _SOURCE_COLOURS[sources.index((cond, pz)) % len(_SOURCE_COLOURS)]
         marker = _ION_MARKERS.get(ion[0], "o")
-        name = f"{(labels or {}).get(cond, cond)} {ion}" + (f" z{z}" if z != 1 else "")
+        name = (f"{(labels or {}).get(cond, cond)}" + (f" Z{pz}" if len(charges) > 1 else "")
+                + f" {ion}" + (f" z{z}" if z != 1 else ""))
         ok = rates.resolved[rows]
         top.errorbar(x[ok], rates.rate[rows][ok], yerr=rates.rate_se[rows][ok], fmt=marker,
                      color=colour, ms=5, capsize=2, lw=0.8, label=name)
@@ -401,7 +420,7 @@ def residue_rates_figure(
     last.set_xlim(start - 0.6, start + len(residues) - 0.4)
     for ax in (top, bottom):
         ax.grid(True, axis="y", alpha=0.4)
-    top.set_title(f"{sample} {parent} (Z{pz})  single-residue rates"
+    top.set_title(f"{sample} {parent} (Z{'/'.join(map(str, charges))})  single-residue rates"
                   + ("  (open: not resolved)" if not rates.resolved[pick].all() else ""),
                   fontsize=9)
     if top.get_legend_handles_labels()[0]:
@@ -414,7 +433,11 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
     ``ladder_..._<ion>_z<charge>``, ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``;
-    tables ``fragment_uptake``, ``ladder_rates`` and ``closure``."""
+    tables ``fragment_uptake``, ``ladder_rates`` and ``closure``. A parent read at several
+    precursor charges has one ``residue_rates_<sample>_<range>`` (no charge) for all of them.
+    ``results`` may be a
+    :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables then
+    start with a ``run`` column."""
     from ..analysis.fragments import (
         _PARTNERS,
         closure_table,
@@ -422,9 +445,10 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         fragment_uptake,
         ladder_rates,
     )
+    from ..analysis.runs import RunSet
 
-    settings = getattr(results, "settings", None)
-    if not (settings.spectra_source if settings is not None else None):
+    runs = results.runs.values() if isinstance(results, RunSet) else [results]
+    if not any(getattr(getattr(r, "settings", None), "spectra_source", None) for r in runs):
         return {}, []  # not read from scan files: no fragment targets
     try:
         uptake = fragment_uptake(results)
@@ -449,6 +473,13 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     if closures:
         cols = [c.columns() for c in closures]
         tables["closure"] = {name: np.concatenate([c[name] for c in cols]) for name in cols[0]}
+    if uptake.run is not None:  # several runs: the run of each row first
+        owner = {(s, c): r for s, c, r in zip(uptake.sample, uptake.condition, uptake.run,
+                                              strict=True)}
+        for name, cols in tables.items():
+            run = np.array([owner[s, c] for s, c in zip(cols["sample"], cols["condition"],
+                                                        strict=True)], dtype=str)
+            tables[name] = {"run": run, **{k: v for k, v in cols.items() if k != "run"}}
         flagged = int(sum(c.flagged.sum() for c in closures))
         if flagged and not quiet:
             import logging
@@ -482,7 +513,15 @@ def fragment_outputs(results, config, *, quiet: bool = False):
                     uptake, a, b, labels=config.labels, min_time=config.min_time,
                     tolerance=config.tolerance, precursor_charge=config.precursor_charge,
                     **sel)))
-        if rates.where(**sel).any():
-            jobs.append((f"residue_rates_{stem}", lambda sel=sel: residue_rates_figure(
-                rates, labels=config.labels, **sel)))
+    # the rates: one figure per parent, its precursor charges together
+    for sample, parent in sorted({g[:2] for g in groups}):
+        have = rates.where(sample=sample, parent=parent)
+        if not have.any():
+            continue
+        start = int(rates.parent_start[have][0])
+        charges = sorted(set(rates.parent_charge[have].tolist()))
+        stem = f"{sample}_{start}-{start + len(chem.parse_sequence(parent)) - 1}" + (
+            f"_z{charges[0]}" if len(charges) == 1 else "")
+        jobs.append((f"residue_rates_{stem}", lambda sel=(sample, parent): residue_rates_figure(
+            rates, labels=config.labels, sample=sel[0], parent=sel[1])))
     return tables, jobs
