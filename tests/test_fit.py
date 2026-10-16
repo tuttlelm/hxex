@@ -288,8 +288,14 @@ def test_scaling_the_data_scales_only_the_amplitudes():
                                             references=refs, spectrum_id=big.spectrum_id), cfg)
     np.testing.assert_allclose(b.obs_scale, 1000 * a.obs_scale, rtol=1e-9)
     # the scaled problems are identical up to rounding, which the optimiser amplifies a little
-    np.testing.assert_allclose(b.fits[2].A, 1000 * a.fits[2].A, rtol=1e-3)
-    np.testing.assert_allclose(b.fits[2].means, a.fits[2].means, rtol=1e-3, atol=1e-3)
+    fa, fb = a.fits[2], b.fits[2]
+    np.testing.assert_allclose(fb.A[0], 1000 * fa.A[0], rtol=1e-3)
+    np.testing.assert_allclose(fb.means[0], fa.means[0], rtol=1e-3, atol=1e-3)
+    # K = 2 on the unimodal spectrum: how its one population is split is not determined (the
+    # rounding moved the split by 2 % on Windows), only the total and its mean are
+    np.testing.assert_allclose(fb.A[1].sum(), 1000 * fa.A[1].sum(), rtol=1e-3)
+    np.testing.assert_allclose(np.average(fb.means[1], weights=fb.A[1]),
+                               np.average(fa.means[1], weights=fa.A[1]), rtol=1e-3)
 
 
 # --- K range --------------------------------------------------------------------------------
