@@ -2321,6 +2321,10 @@ CSVs or mzML if wanted.
     - GPU parity: one test asked for the same K on a tie (criteria 0.02 apart); float32 on the
       GPU now reaches a K = 2 fit 0.02 better than float64 on the CPU, so the test checks the
       measurements whose choice is not a tie. Test suite on this machine: 7:50 before, 5:27 after.
+    - On the GPU (RTX A4500, float32; measured after item 86): 7,741 measurements 69 to 31 s
+      with the defaults; the screen did not help there (34 s: a step costs about the same for
+      2,000 rows as for 8,000), with `k1_adam_steps = 200` 25 s. The whole benchmark (26,181)
+      1.03 min with the defaults, 0.61 with the screen, 0.56 with both.
 
 86. **Fewer Adam steps for K = 1 (owner asked, 2026-10-15; item 85's measurement).**
     `FitConfig.k1_adam_steps` (None, the default: `adam_steps`) sets the Adam steps of the K = 1
