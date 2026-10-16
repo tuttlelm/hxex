@@ -126,8 +126,13 @@ def estimate_envelope(
 
     For ``'mixed'`` and ``'infer'``: start from equal weights, then ``iterations`` times pick the
     references with the bins of the current mixture, average their envelopes (each scaled to sum
-    to 1) and fit the weights by non-negative least squares to that average. Without a usable
-    reference (none given, or nothing picked) the result is the theory with ``good`` False.
+    to 1) and fit the weights by non-negative least squares to that average. Each set of weights
+    (the starting ones, every fitted one) is scored by its misfit (at the best scale) to the
+    references picked with its own bins, those a run would use, and the best is kept: the bins
+    move with the weights, so the rounds need not settle (on a weak reference they can cycle,
+    docs/HISTORY.md item 88). ``residual`` is that misfit, and with ``'infer'`` the average picked
+    with the kept weights' bins is the envelope of the fit. Without a usable reference (none given,
+    or nothing picked) the result is the theory with ``good`` False.
     """
     spec = chem.parse_modification(modification)
     base = chem.isotope_clusters(
@@ -144,32 +149,65 @@ def estimate_envelope(
     columns = np.zeros((length, k))
     for i in range(k):
         columns[i:i + len(shape), i] = shape
-    observed = None
-    residual = float("nan")
-    n_used = 0
-    for _ in range(config.iterations):
-        clusters = chem.mixed_clusters(*base, weights)
-        plan = plan_bins(peptide, charge, modification=modification, config=picker,
-                         registry=registry, clusters=clusters)
-        picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
-                                registry=registry, plan=plan).intensity for mz, y in references]
-        picked = [p for p in picked if p.sum() > 0]
-        n_used = len(picked)
-        if not n_used:
-            return Envelope(config.mode, theory.weights, base, base[0], float("nan"), 0, False)
-        observed = np.mean([_normalised(p, length) for p in picked], axis=0)
-        fitted, _ = nnls(columns, observed)
-        if fitted.sum() <= 0:
-            return Envelope(config.mode, theory.weights, base, base[0], float("nan"), n_used,
-                            False)
-        weights = fitted / fitted.sum()
-        model = columns @ fitted
-        residual = float(np.sqrt(np.mean((model - observed) ** 2))
-                         / np.sqrt(np.mean(observed ** 2)))
-    clusters = chem.mixed_clusters(*base, weights)
+    def average(clusters):
+        observed, n = _picked_average(references, clusters, length, peptide, charge,
+                                      modification=modification, picker=picker,
+                                      registry=registry)
+        if observed is None:
+            raise _NoReference(n)
+        return observed, n
+
+    best = None  # (residual, weights, clusters, observed, n_used)
+    try:
+        for i in range(config.iterations + 1):
+            clusters = chem.mixed_clusters(*base, weights)
+            observed, n_used = average(clusters)
+            residual = _residual(columns @ weights, observed)
+            if best is None or residual < best[0]:
+                best = (residual, weights, clusters, observed, n_used)
+            if i == config.iterations:
+                break
+            fitted, _ = nnls(columns, observed)
+            if fitted.sum() <= 0:
+                raise _NoReference(n_used)
+            weights = fitted / fitted.sum()
+    except _NoReference as none:
+        return Envelope(config.mode, theory.weights, base, base[0], float("nan"), none.n_used,
+                        False)
+    residual, weights, clusters, observed, n_used = best
     fit_shape = clusters[0] if config.mode == "mixed" else observed / observed.sum()
     return Envelope(config.mode, weights, clusters, fit_shape, residual, n_used,
                     residual <= config.max_residual)
+
+
+class _NoReference(Exception):
+    """No usable reference: nothing picked, or no positive weights (``n_used`` picked)."""
+
+    def __init__(self, n_used: int):
+        super().__init__(n_used)
+        self.n_used = n_used
+
+
+def _picked_average(references, clusters, length, peptide, charge, *, modification, picker,
+                    registry) -> tuple[np.ndarray | None, int]:
+    """The references picked with the bins of ``clusters``, each scaled to sum to 1, averaged
+    over those with signal (None without any), and how many those are."""
+    plan = plan_bins(peptide, charge, modification=modification, config=picker,
+                     registry=registry, clusters=clusters)
+    picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
+                            registry=registry, plan=plan).intensity for mz, y in references]
+    picked = [p for p in picked if p.sum() > 0]
+    if not picked:
+        return None, 0
+    return np.mean([_normalised(p, length) for p in picked], axis=0), len(picked)
+
+
+def _residual(model: np.ndarray, observed: np.ndarray) -> float:
+    """The RMS misfit of ``model`` at its best scale to ``observed``, over the RMS of
+    ``observed``."""
+    scale = float(model @ observed) / float(model @ model)
+    return float(np.sqrt(np.mean((scale * model - observed) ** 2))
+                 / np.sqrt(np.mean(observed ** 2)))
 
 
 def reference_residual(
@@ -186,18 +224,10 @@ def reference_residual(
     averaged (each scaled to sum to 1), against its fit envelope at the best scale; the RMS of
     the misfit over the RMS of the average, as :attr:`Envelope.residual`. NaN without a usable
     reference."""
-    plan = plan_bins(peptide, charge, modification=modification, config=picker,
-                     registry=registry, clusters=envelope.clusters)
     model = np.asarray(envelope.fit_shape, dtype=float)
-    picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
-                            registry=registry, plan=plan).intensity for mz, y in references]
-    picked = [p for p in picked if p.sum() > 0]
-    if not picked:
-        return float("nan")
-    observed = np.mean([_normalised(p, len(model)) for p in picked], axis=0)
-    scale = float(model @ observed) / float(model @ model)
-    return float(np.sqrt(np.mean((scale * model - observed) ** 2))
-                 / np.sqrt(np.mean(observed ** 2)))
+    observed, _ = _picked_average(references, envelope.clusters, len(model), peptide, charge,
+                                  modification=modification, picker=picker, registry=registry)
+    return float("nan") if observed is None else _residual(model, observed)
 
 
 @dataclass(frozen=True)

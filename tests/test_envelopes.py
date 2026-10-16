@@ -74,6 +74,15 @@ def test_weights_are_recovered_from_the_reference():
     np.testing.assert_allclose(e.weights, [0.25, 0.75, 0.0], atol=0.01)
     assert e.good and e.residual < 0.02 and e.n_reference == 3
     np.testing.assert_allclose(e.fit_shape, e.clusters[0])
+    # the residual is that of the references picked with the final weights' bins (HISTORY 88),
+    # also after a single iteration, whose weights were fitted with the equal weights' bins
+    mod = f"ion_type:{ION}"
+    for iterations in (1, 3):
+        f = estimate_envelope(refs, PEPTIDE, CHARGE, modification=mod, picker=PICK,
+                              config=EnvelopeConfig(mode="mixed", components=3,
+                                                    iterations=iterations))
+        assert f.residual == pytest.approx(
+            reference_residual(refs, f, PEPTIDE, CHARGE, modification=mod, picker=PICK))
     one = estimate_envelope(refs, PEPTIDE, CHARGE, modification=f"ion_type:{ION}",
                             config=EnvelopeConfig(mode="mixed", components=1), picker=PICK)
     assert not one.good and one.residual > 0.3  # one ion type cannot describe the mixture

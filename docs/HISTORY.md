@@ -2410,10 +2410,26 @@ CSVs or mzML if wanted.
       spectra), as before the change but now visible: 6 with no reference at all (`c-1:1` at
       1+ and 2+, `z-dot:1` at 2+, each condition), 28 whose mixture does not fit (residual
       0.16 to 1.0 against 0.15; 22 of them 2+ fragments, 4 1+, 2 3+) and 2 (one ion, both
-      conditions) whose mixture fits at 0.105 by `estimate_envelope`'s residual but at 0.22
-      when the reference is picked again with the final weights' bins (that residual is
-      computed with the bins of the previous iteration; the iterations had not settled). In
-      most of the 2+ references the 2+ ion is
+      conditions) whose mixture fit at 0.105 by `estimate_envelope`'s residual but at 0.22
+      when the reference was picked again with the final weights' bins (fixed in item 88:
+      34 flagged since). In most of the 2+ references the 2+ ion is
       not there to speak of (`c-1:4` 2+: the picked bins hold scattered noise; the strongest
       nearby peaks belong to another ion), so their kinetics fits rest on no measured envelope.
       Not yet checked on data where the conditions have separate undeuterated files.
+
+88. **The envelope's residual on the bins it is used with (2026-10-16; item 87's finding).**
+    `estimate_envelope` alternates picking the references with the current weights' bins and
+    fitting new weights, but reported the misfit of the last weights to the references picked
+    with the previous weights' bins, and used those weights' bins in the run. On a weak
+    reference the rounds do not settle: `c-1:2` 2+ of the ScramPep ETD example cycles with
+    period four (weights (0, 0, 1), (0, 0, 1), (0.10, 0, 0.90), (0, 0.12, 0.88); misfit on
+    their own bins 0.105, 0.155, 0.22, 0.199), so after the default three rounds it reported
+    0.105 for weights whose own misfit is 0.22. Now every set of weights (the equal starting
+    ones and each fitted set) is scored on the references picked with its own bins, at the
+    best scale, and the best is kept; with `infer` the fit envelope is the average picked with
+    the kept weights' bins (it was the previous round's). No extra picking: each round's
+    picking scores the weights it was made with, plus one at the end. `residual` now equals
+    `reference_residual` of the series' own references (tested). On that example: weights
+    changed in 4 of 68 series (two ions, both conditions), `good` in none, and `poor_envelope`
+    36 to 34 series (the cycling ion now keeps the weights that fit at 0.105). A run with
+    `mixed` or `infer` can give slightly different weights and residuals than before.
