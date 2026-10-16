@@ -94,7 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="the post-fitting analysis of a bundle: tables and figures")
     p.add_argument("source", metavar="PROJECT|BUNDLE", nargs="+",
                    help="a project file (its [analysis] settings, and [analysis.runs] or "
-                        "output.bundle), a bundle, or several bundles to compare as separate "
+                        "output.bundle; a file with only [analysis] is enough), a bundle, or "
+                        "several bundles to compare as separate "
                         "runs (NAME=BUNDLE, or BUNDLE named after its file; samples become "
                         "NAME:sample)")
     p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
@@ -472,7 +473,7 @@ def cmd_analyse(args) -> int:
     else:
         from .config import load_project
 
-        project = load_project(first)
+        project = load_project(first, analysis_only=True)
         config = project.analysis if project.analysis is not None else AnalysisConfig()
         base = first.resolve().parent
         threads = threads if threads is not None else project.threads

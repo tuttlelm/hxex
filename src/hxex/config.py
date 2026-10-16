@@ -258,13 +258,13 @@ def _beside(bundle: Path | None, value: Path | bool, suffix: str) -> Path | None
 
 @dataclass(frozen=True)
 class Project:
-    """A project file, checked: ``project`` (the spectrum-id prefix), ``input``, ``run`` and
-    ``output``; ``threads``, the CPU threads of a command that runs it (None: PyTorch's
-    default; a setting of the process, so the command line applies it, not the library);
-    ``path`` is the file itself."""
+    """A project file, checked: ``project`` (the spectrum-id prefix), ``input`` (None in a
+    file read for analysis only, :func:`load_project`), ``run`` and ``output``; ``threads``,
+    the CPU threads of a command that runs it (None: PyTorch's default; a setting of the
+    process, so the command line applies it, not the library); ``path`` is the file itself."""
 
     project: str
-    input: InputSettings
+    input: InputSettings | None
     run: RunConfig
     output: OutputSettings
     path: Path | None = None
@@ -408,23 +408,29 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
     )
 
 
-def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None) -> Project:
+def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None, *,
+                 analysis_only: bool = False) -> Project:
     """A :class:`Project` from the parsed TOML ``data``; relative paths are taken relative to
-    ``base``."""
+    ``base``. With ``analysis_only`` the ``[input]`` table may be left out when there is an
+    ``[analysis]`` one (comparing bundles needs no input): ``input`` is then None."""
     base = Path(base)
     _check_keys(data, {"project", "threads", "input", "run", "output", "analysis"},
                 "the project file")
     name = data.get("project")
     if not isinstance(name, str) or not name or ":" in name:
         raise ProjectError("project must be a name (non-empty text without ':')")
-    if "input" not in data:
-        raise ProjectError("the project file needs an [input] table")
+    if "input" not in data and not (analysis_only and "analysis" in data):
+        raise ProjectError("the project file needs an [input] table" + (
+            " (or, for hxex analyse only, an [analysis] table)" if analysis_only else
+            "; a file with only an [analysis] table is for hxex analyse"))
     run_table = data.get("run", {})
     if not isinstance(run_table, Mapping):
         raise ProjectError("[run] must be a table")
     run = run_config_from(run_table)
-    inp = _input_from(data["input"], base)
-    run = _control_times(run, run_table.get("controls"), inp)
+    inp = None
+    if "input" in data:
+        inp = _input_from(data["input"], base)
+        run = _control_times(run, run_table.get("controls"), inp)
     output = _output_from(data.get("output", {}), base)
     if output.figures is not False and run.plots is None:  # figures asked for: default plots
         from .report.figures import PlotConfig
@@ -483,8 +489,9 @@ def _analysis_from(data: Mapping, base: Path):
         raise ProjectError(f"[analysis]: {exc}") from exc
 
 
-def load_project(path: str | Path) -> Project:
-    """Read and check a project file."""
+def load_project(path: str | Path, *, analysis_only: bool = False) -> Project:
+    """Read and check a project file (``analysis_only``: one that may have only an
+    ``[analysis]`` table, for :func:`hxex.report.write_analysis`)."""
     path = Path(path)
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -492,7 +499,7 @@ def load_project(path: str | Path) -> Project:
         raise ProjectError(f"cannot read {path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise ProjectError(f"{path}: not valid TOML ({exc})") from exc
-    return project_from(data, path.resolve().parent, path)
+    return project_from(data, path.resolve().parent, path, analysis_only=analysis_only)
 
 
 # --- reading the input --------------------------------------------------------------------------

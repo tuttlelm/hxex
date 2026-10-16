@@ -611,6 +611,35 @@ def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
                 write_analysis(res, AnalysisConfig(exclude_times=[control]), tmp_path / "b")
     assert AnalysisConfig.from_dict(cfg.to_dict()).exclude_times == (late,)
 
+
+def test_a_project_file_for_analysis_only(two_sample_bundle, tmp_path):
+    """Comparing bundles needs no [input]: hxex analyse takes a file with only [analysis],
+    and the commands that read input refuse it with a pointer to analyse."""
+    from hxex import cli
+
+    project = tmp_path / "compare.toml"
+    project.write_text(f"""project = "compare"
+[analysis]
+format = "png"
+ks = [1]
+overlay = ["avg"]
+out = "out"
+[analysis.runs]
+A = "{two_sample_bundle}"
+B = "{two_sample_bundle}"
+[analysis.merge]
+"A:S" = "S"
+"B:S" = "S"
+""")
+    assert cli.main(["-q", "analyse", str(project)]) == 0
+    assert (tmp_path / "out" / "species_uptake.csv").is_file()
+    assert cli.main(["-q", "run", str(project)]) == cli.EXIT_ERROR
+    from hxex.config import ProjectError, load_project
+
+    with pytest.raises(ProjectError, match="only an \\[analysis\\] table is for hxex analyse"):
+        load_project(project)
+    assert load_project(project, analysis_only=True).input is None
+
 def test_analyse_command(two_sample_bundle, tmp_path, capsys):
     from hxex import cli
 

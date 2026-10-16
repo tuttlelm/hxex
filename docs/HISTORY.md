@@ -2252,3 +2252,10 @@ CSVs or mzML if wanted.
     hxex_private/analysis_examples/quench_backexchange/b5_disease (`make_rt_table.py`,
     `hxex_kint_rt.toml`).
 
+84. **A project file for analysis only (owner, 2026-10-15; item 80's gap).** `hxex analyse`
+    accepts a project file without `[input]` when it has an `[analysis]` table, for comparing
+    bundles (`[analysis.runs]`, `merge`, labels): `load_project(path, analysis_only=True)`
+    gives `input = None`. `hxex run`, `check` and `resume` still need `[input]`, and their
+    error says that a file with only `[analysis]` is for `hxex analyse`. The ScramPep ETD
+    against EThcD comparison is now such a file (`scrampep_compare/hxex.toml`).
+
