@@ -98,21 +98,56 @@ def _reps(results: Results) -> np.ndarray:
     return out
 
 
+def _fragment_of(results: Results, data_id: int) -> dict | None:
+    """The fragment ion of a series read from scan files (its ``fragment`` label such as
+    ``c-1:6``, the ``parent_range``, the ``parent_charge`` and the ``condition``), or None for
+    a peptide or other data."""
+    from ..io.mzml import SCAN_READERS, MzmlTarget
+
+    source = results.settings.spectra_source if results.settings is not None else None
+    if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
+        return None
+    for s in source["series"]:
+        if int(s["data_id"]) == int(data_id):
+            target = MzmlTarget.from_dict(source["targets"][int(s["target"])])
+            extra = dict(target.entry.extra)
+            if "fragment" not in extra:
+                return None
+            return {"fragment": str(extra["fragment"]),
+                    "parent_range": str(extra.get("parent_range", "")),
+                    "parent_charge": int(extra.get("parent_charge", 0) or 0),
+                    "condition": str(extra.get("condition") or target.activation or "")}
+    return None
+
+
 def series_info(results: Results, data_id: int) -> dict:
     """Description of a series: ``rows``, ``times``, ``reps``, ``time_index`` of each spectrum,
-    ``label`` (sample, range, peptide, charge when the picked table is there) and ``n_amides``
-    (from the controls, else None)."""
+    ``label`` (sample, range, peptide, charge when the picked table is there; for a fragment
+    ion its range and sequence, the fragment label such as ``c-1:6`` with its charge, the
+    parent's range and charge and the condition), ``file_label`` (the label for file names:
+    a fragment's without the sequence, so that the fragment is kept when names are
+    shortened) and ``n_amides`` (from the controls, else None)."""
     rows = series_rows(results, data_id)
     fit = results.fit
-    label = f"series {data_id}"
+    label = file_label = f"series {data_id}"
     if results.binned is not None:
         j = results.binned.find(str(fit.spectrum_id[rows[0]]))
         b = results.binned
-        label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z={int(b.charge[j])}".strip()
+        z = int(b.charge[j])
+        label = file_label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z={z}".strip()
+        frag = _fragment_of(results, data_id)
+        if frag is not None:
+            pz, cond = frag["parent_charge"], frag["condition"]
+            label = (f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} {frag['fragment']} "
+                     f"z={z}, parent {frag['parent_range']} z={pz}"
+                     + (f", {cond}" if cond else "")).strip()
+            file_label = (f"{b.sample[j]} {b.peptide_range[j]} {frag['fragment']} z{z} "
+                          f"parent z{pz} {cond}").strip()
     row = _control_row(results, data_id)
     n_amides = None if row is None else float(results.controls.n_amides[row])
     return {
-        "data_id": data_id, "rows": rows, "label": label, "n_amides": n_amides,
+        "data_id": data_id, "rows": rows, "label": label, "file_label": file_label,
+        "n_amides": n_amides,
         "times": fit.time[rows], "reps": _reps(results)[rows],
         "time_index": time_index(fit.data_id[rows], fit.time[rows]),
     }
@@ -192,9 +227,11 @@ def plot_series_spectra(
         pos = list(info["rows"]).index(i)
         ax.set_title(f"{_time_text(results, info['times'][pos])}, rep {info['reps'][pos]}",
                      fontsize=8)
-    fig.suptitle(info["label"], fontsize=10)
-    # keep a band at the top for the series title (the layout does not count it in nested grids)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.4 / fig.get_figheight()))
+    # the series title in a band at the top, placed in inches (a fraction of the height would
+    # drop it into the first row of a tall figure; the layout does not count it in nested grids)
+    height = fig.get_figheight()
+    fig.suptitle(info["label"], fontsize=10, y=1 - 0.1 / height, va="top")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.45 / height))
     return fig
 
 

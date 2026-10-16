@@ -154,7 +154,7 @@ def write_figures(
                                   dpi=config.dpi)
     for n, data_id in enumerate(chosen):
         check_cancel(cancel)
-        stem = f"hxex_{data_id}_{_slug(series_info(results, data_id)['label'])}"
+        stem = f"hxex_{data_id}_{_slug(series_info(results, data_id)['file_label'])}"
         figures = series_figures(results, data_id, config, reference)
         if config.format == "pdf":
             path = directory / f"{stem}.pdf"

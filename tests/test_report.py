@@ -425,6 +425,47 @@ def test_grid_layout_wraps_a_single_replicate_time_course():
         _layout(info(3, 1), 0)
 
 
+def test_the_series_title_stays_above_a_tall_grid(results):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    fig = plot_series_spectra(results, 0, show=("picked", "fit"), columns=1)  # one tall column
+    renderer = FigureCanvasAgg(fig).get_renderer()
+    title = fig._suptitle.get_window_extent(renderer)
+    top = max(max(ax.get_window_extent(renderer).y1, ax.title.get_window_extent(renderer).y1)
+              for ax in fig.axes)
+    height = fig.get_figheight() * fig.dpi
+    # inside the band kept at the top (0.45 in), above every panel and its title
+    assert fig.get_figheight() > 20 and title.y0 > top
+    assert (height - title.y0) / fig.dpi < 0.45
+
+
+def test_fragment_series_are_named_by_their_fragment(results, tmp_path):
+    import dataclasses
+
+    from hxex.fragments import fragment_targets
+    from hxex.io import MzmlTarget
+    from hxex.report.figures import PlotConfig, write_figures
+    from hxex.spectra import PeptideEntry
+
+    peptide = series_info(results, 0)["label"]
+    assert series_info(results, 0)["file_label"] == peptide  # a peptide keeps its label
+    parent = PeptideEntry("f", "S", "GSHPLVFKAEDLR", "11-23", 11, 23, 3)
+    (frag,) = fragment_targets(parent, "z-dot:7:2", activation="ETD", label="gentle")
+    source = {"reader": "mzml", "targets": [frag.to_dict(), MzmlTarget(parent).to_dict()],
+              "series": [{"data_id": 0, "sample": "S", "target": 0},
+                         {"data_id": 1, "sample": "S", "target": 1}]}
+    settings = dataclasses.replace(results.settings, configs={
+        **results.settings.configs, "spectra_source": source})
+    named = dataclasses.replace(results, settings=settings)
+    info = series_info(named, 0)
+    assert info["label"].endswith("z-dot:7 z=2, parent 11-23 z=3, gentle")
+    assert info["file_label"].endswith("z-dot:7 z2 parent z3 gentle")
+    assert series_info(named, 1)["label"] == series_info(results, 1)["label"]  # the parent
+    files = write_figures(named, tmp_path, PlotConfig(series=[0], kinds=("spectra",),
+                                                      format="png", overview=False))
+    assert files[0].name.endswith("_z_dot_7_z2_parent_z3_gentle_spectra.png")
+
+
 def test_columns_option_on_the_series_plots(results):
     fig = plot_series_spectra(results, 0, show=("picked", "fit"), columns=3)
     shown = [ax for ax in fig.axes if ax.get_visible()]

@@ -2492,3 +2492,12 @@ CSVs or mzML if wanted.
     between conditions and ion types: single replicates, and a difference of two fragments
     carries both their errors. The shortest fragments (two or three residues) are noisy, and
     the 2+ precursors' EThcD M did not follow the time for five peptides (item 89).
+
+92. **Series figure titles (owner, 2026-10-16).** The series title was placed at the default
+    fraction of the figure height, which on a tall grid (a 17-time series is 48 in) put it about
+    1 in down, over the first row; it is now placed in inches inside the band kept at the top.
+    A fragment series' title and file name now name the fragment (`z-dot:14 z=3, parent 51-72
+    z=4, ETD`; file `..._59_72_z_dot_14_z3_parent_z4_ETD`): before, they showed only the
+    fragment's range, sequence and charge, so the same fragment in two conditions had the same
+    name. The file name leaves out the sequence so that the fragment survives the 60-character
+    limit. Peptide series keep their names.
