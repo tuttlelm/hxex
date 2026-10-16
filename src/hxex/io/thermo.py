@@ -56,6 +56,8 @@ from .mzml import (
     _repeat_read,
     _run_paths,
     _ScanFormat,
+    in_windows,
+    merge_windows,
 )
 
 log = logging.getLogger(__name__)
@@ -328,6 +330,7 @@ class ThermoFile:
         """The scans at the positions ``indices``, with their arrays (only the points inside
         ``mz_windows`` when given), by position."""
         rows = self._scan_rows()
+        merged = None if mz_windows is None else merge_windows(mz_windows)
         out = {}
         for i in sorted({int(i) for i in indices}):
             if not 0 <= i < len(rows):
@@ -336,10 +339,8 @@ class ThermoFile:
             if len(mz) > 1 and np.any(np.diff(mz) < 0):
                 order = np.argsort(mz, kind="stable")
                 mz, y = mz[order], y[order]
-            if mz_windows is not None:
-                keep = np.zeros(len(mz), dtype=bool)
-                for lo, hi in mz_windows:
-                    keep |= (mz >= lo) & (mz <= hi)
+            if merged is not None:
+                keep = in_windows(mz, merged)
                 mz, y = mz[keep], y[keep]
             out[i] = replace(rows[i], mz=mz, intensity=y)
         return out

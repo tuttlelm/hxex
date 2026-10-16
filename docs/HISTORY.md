@@ -2508,3 +2508,20 @@ CSVs or mzML if wanted.
     lowest to the highest predicted m/z of the picked bins of all its spectra (undeuterated to
     beyond fully deuterated), padded by 10 % of its width on each side (`padding`); without a
     picked table, the panels' own ranges together.
+
+94. **Reading scan files: where the time went (owner, 2026-10-16).** Reading the 17 Thermo
+    files of a targeted LC-MS dataset (about 7,300 scans each, 3,118 targets: 18 precursors in
+    four fragmentation conditions, three ion types) took about 23 min, about 80 s per file.
+    Profiled on one file (107 s under the profiler): 66 s in `ScanTable.select`, whose
+    activation test split and compared every scan's activation string in Python, once per
+    target; 29 s in `ThermoFile.read_scans`, which masked each scan's points against each of the
+    3,118 target windows in turn; 5 s summing scans; 2 s building the scan table through
+    pythonnet; under 1 s converting the arrays. pythonnet was not the cost. Now the text tests
+    of `select` (activation, pre-activation, filter) run once per distinct value (a file has a
+    handful) and are cached on the table, and the windows are merged once into sorted, disjoint
+    ranges tested with one `searchsorted` per scan (`merge_windows`, `in_windows`; the mzML
+    reader shares both). One file: 80.6 to 8.7 s, its spectra identical (m/z, intensities, ids,
+    times, retention times); all 17 files: 138 s. The warning for a target without scans in a
+    file is now one line per file (`no scan for N of M targets, for example ...`; each target
+    at debug level): in a targeted method each precursor is fragmented in only some
+    conditions, and the 1,550 lines per file buried the log.

@@ -222,8 +222,34 @@ def _decode(bda, n_expected: int, where: str) -> tuple[str, np.ndarray]:
     return kind, values
 
 
+def merge_windows(windows: Sequence[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
+    """The union of the m/z ranges ``windows`` (inclusive) as sorted, disjoint ranges: their
+    lower and upper ends."""
+    w = np.asarray(windows, dtype=np.float64).reshape(-1, 2)
+    w = w[np.argsort(w[:, 0], kind="stable")]
+    lows, highs = [], []
+    for lo, hi in w:
+        if highs and lo <= highs[-1]:
+            highs[-1] = max(highs[-1], hi)
+        else:
+            lows.append(lo)
+            highs.append(hi)
+    return np.array(lows), np.array(highs)
+
+
+def in_windows(mz: np.ndarray, merged: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    """Which of ``mz`` (in any order) lie inside the ranges ``merged`` (of
+    :func:`merge_windows`)."""
+    lows, highs = merged
+    if not len(lows):
+        return np.zeros(len(mz), dtype=bool)
+    j = np.searchsorted(lows, mz, side="right") - 1  # the last range starting at or below
+    return (j >= 0) & (mz <= highs[np.maximum(j, 0)])
+
+
 def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
-    """A :class:`Scan` from a ``spectrum`` element."""
+    """A :class:`Scan` from a ``spectrum`` element (``mz_windows`` merged, as
+    :func:`merge_windows` returns them)."""
     index = int(elem.get("index", -1))
     sid = elem.get("id", "")
     where = f"scan {index} ({sid})"
@@ -283,9 +309,7 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
             raise MzmlError(f"{where}: the m/z or the intensity array is missing")
         mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
         if mz_windows is not None:
-            keep = np.zeros(len(mz), dtype=bool)
-            for lo, hi in mz_windows:
-                keep |= (mz >= lo) & (mz <= hi)
+            keep = in_windows(mz, mz_windows)
             mz, intensity = mz[keep], intensity[keep]
     return Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, mz, intensity,
                 isolation, tuple(stages))
@@ -303,6 +327,7 @@ def iter_scans(
     scan's metadata (a :class:`Scan` without arrays) that decides whether its arrays are read and
     the scan is returned."""
     path = Path(path)
+    merged = None if mz_windows is None else merge_windows(mz_windows)
     try:
         for event, elem in ET.iterparse(path, events=("end",)):
             if event != "end":
@@ -310,7 +335,7 @@ def iter_scans(
             if elem.tag == f"{_NS}spectrum":
                 meta = _scan_from(elem, False, None)
                 if keep is None or keep(meta):
-                    yield _scan_from(elem, read_arrays, mz_windows) if read_arrays else meta
+                    yield _scan_from(elem, read_arrays, merged) if read_arrays else meta
                 elem.clear()  # the spectrum's content is no longer needed
             elif elem.tag == f"{_NS}chromatogram":
                 elem.clear()
@@ -373,6 +398,19 @@ class ScanTable:
     def __len__(self) -> int:
         return len(self.index)
 
+    def _distinct(self, column: str) -> tuple[np.ndarray, np.ndarray]:
+        """The distinct values of a text column and each row's position among them (computed
+        once: a file has few distinct activations or filters, and every target tests them)."""
+        cache = self.__dict__.setdefault("_distinct_cache", {})
+        if column not in cache:
+            cache[column] = np.unique(getattr(self, column), return_inverse=True)
+        return cache[column]
+
+    def _test(self, column: str, test) -> np.ndarray:
+        """``test`` (on an array of distinct values, giving one bool each) for every row."""
+        values, inverse = self._distinct(column)
+        return np.asarray(test(values), dtype=bool)[inverse.reshape(-1)]
+
     @classmethod
     def from_scans(cls, rows: Sequence[Scan]) -> ScanTable:
         """The table of ``rows`` (their arrays are not kept)."""
@@ -431,7 +469,7 @@ class ScanTable:
         if ms_level is not None:
             keep &= self.ms_level == ms_level
         if activation is not None:
-            keep &= _activation_match(self.activation, activation)
+            keep &= self._test("activation", lambda v: _activation_match(v, activation))
         if precursor_mz is not None:
             keep &= np.abs(self.precursor_mz - precursor_mz) <= precursor_tol
         if precursor_charge is not None:
@@ -439,9 +477,9 @@ class ScanTable:
         if time_range is not None:
             keep &= (self.time >= time_range[0]) & (self.time <= time_range[1])
         if filter_contains is not None:
-            keep &= np.array([filter_contains in str(f) for f in self.filter], dtype=bool)
+            keep &= self._test("filter", lambda v: [filter_contains in str(f) for f in v])
         if filter_excludes is not None:
-            keep &= np.array([filter_excludes not in str(f) for f in self.filter], dtype=bool)
+            keep &= self._test("filter", lambda v: [filter_excludes not in str(f) for f in v])
         if parent_mz is not None:
             lo, hi = parent_mz
             window = ~np.isnan(self.parent_lower) & ~np.isnan(self.parent_upper)
@@ -455,7 +493,8 @@ class ScanTable:
             if preactivation.strip().lower() in ("", "none"):
                 keep &= self.preactivation == ""
             else:
-                keep &= known & _activation_match(self.preactivation, preactivation)
+                keep &= known & self._test(
+                    "preactivation", lambda v: _activation_match(v, preactivation))
         return np.flatnonzero(keep)
 
 
@@ -537,7 +576,8 @@ class MzmlFile:
                     chunk += more
             text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
             text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ', 1)
-            return _scan_from(ET.fromstring(text), True, windows)
+            return _scan_from(ET.fromstring(text), True,
+                              None if windows is None else merge_windows(windows))
         for s in iter_scans(self.path, mz_windows=windows, keep=lambda m: m.index == index):
             return s
         raise MzmlError(f"{self.path}: no scan {index}")
@@ -1109,10 +1149,16 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     if not needed:
         log.warning("%s: no scan matches any target", f.path.name)
         return
+    missing = [_target_label(t) for t, p in zip(targets, plans, strict=True) if p is None]
+    if missing:
+        # one line per file: in a targeted method each target has scans in some files only
+        log.warning("%s: no scan for %d of %d targets, for example %s", f.path.name,
+                    len(missing), len(targets), missing[0])
+        for label in missing:
+            log.debug("%s: no scan for target %s", f.path.name, label)
     by_index = f.read_scans(sorted(needed), windows)
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
-            log.warning("%s: no scan for target %s", f.path.name, _target_label(target))
             continue
         lo, hi = windows[t_i]
         key = (run.sample, t_i)

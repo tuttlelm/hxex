@@ -528,13 +528,11 @@ Planned, not built:
 4. Open design items: how K is capped by the number of bins; whether to add bounds on the means
    (per component, with decisions on K above the number of bounds) or a fixed-population
    (fractions only) mode for unfolding studies; fragment-ion amide counts (see "Risks and open decisions").
-5. **Speed up reading scan files** (owner, 2026-10-16). Reading 17 Thermo files of a targeted
-   LC-MS dataset (about 7,300 scans each) took about 20 min, against under a minute for
-   picking and fitting on the GPU (HISTORY 89, 90). Adding ion types needs a new read (the
-   stored spectra hold only each target's m/z window; owner: no merging of bundles), so the
-   read time matters. Measure first where it goes (the scan table built scan by scan through
-   pythonnet, the reading of the scans, the summing), then e.g. parallel files, fewer calls
-   per scan, or reading only the scans the targets need.
+5. **Speed up reading scan files** (owner, 2026-10-16). DONE for the measured case (HISTORY
+   94): 17 Thermo files of a targeted LC-MS dataset, about 23 min before, now 2.3 min. The time
+   was not in pythonnet but in two Python loops over the scans, once per target. What is left
+   (about 8 s per file: summing profile scans, the scan table through pythonnet) is spread
+   out; reading files in parallel processes is the next step if it is needed.
 
 ## Risks and open decisions
 

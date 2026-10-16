@@ -321,7 +321,7 @@ def test_fragment_targets_need_their_scans(tmp_path, caplog):
     hcd = MzmlTarget(ENTRY, ms_level=2, activation="HCD")
     with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
         s2 = read_mzml([MzmlRun(path, "WT")], [hcd, MzmlTarget(ENTRY)], project="p")
-    assert "no scan for target" in caplog.text and len(s2) == 6
+    assert "no scan for 1 of 2 targets" in caplog.text and len(s2) == 6
     with pytest.raises(MzmlError, match="no spectra"):
         read_mzml([MzmlRun(path, "WT")], [hcd], project="p")
 
@@ -845,3 +845,39 @@ def test_sampling_scans_that_share_one_time(tmp_path):
                   config=MzmlConfig(max_spectra=3))
     assert 2 <= len(s) <= 3 and s.spectrum_id[0].endswith("scan0")
     assert s.spectrum_id[-1].endswith("scan5")
+
+
+def test_window_filter_and_distinct_tests_match_the_plain_ones():
+    from hxex.io.mzml import ScanTable, _activation_match, in_windows, merge_windows
+
+    rng = np.random.default_rng(0)
+    windows = [(500.0, 502.0), (501.5, 503.0), (510.0, 510.0), (499.0, 499.5), (520.0, 521.0)]
+    merged = merge_windows(windows)
+    assert merged[0].tolist() == [499.0, 500.0, 510.0, 520.0]
+    assert merged[1].tolist() == [499.5, 503.0, 510.0, 521.0]
+    mz = np.concatenate([rng.uniform(495, 525, 2000), [499.0, 503.0, 510.0, 521.0, 521.01]])
+    plain = np.zeros(len(mz), dtype=bool)
+    for lo, hi in windows:
+        plain |= (mz >= lo) & (mz <= hi)
+    assert np.array_equal(in_windows(mz, merged), plain)  # any order, ends inclusive
+    assert not in_windows(mz, merge_windows([])).any()
+    # select's activation tests on distinct values give what the row-by-row test gives
+    names = np.array(["electron transfer dissociation",
+                      "electron transfer dissociation;supplemental beam-type collision-induced "
+                      "dissociation", "beam-type collision-induced dissociation", ""])
+    column = names[rng.integers(0, len(names), 50)]
+    n = len(column)
+    table = ScanTable(
+        index=np.arange(n), id=np.array([f"s{i}" for i in range(n)]),
+        ms_level=np.full(n, 2), time=np.arange(n, dtype=float),
+        filter=np.array(["FTMS + p" if i % 3 else "FTMS + p sid=20" for i in range(n)]),
+        precursor_mz=np.full(n, 500.0), precursor_charge=np.full(n, 2), activation=column,
+        centroid=np.zeros(n, dtype=int), isolation_lower=np.full(n, np.nan),
+        isolation_upper=np.full(n, np.nan), energy=np.full(n, np.nan),
+        parent_mz=np.full(n, 500.0), parent_lower=np.full(n, np.nan),
+        parent_upper=np.full(n, np.nan), preactivation=np.full(n, ""),
+        preactivation_energy=np.full(n, np.nan))
+    for act in ("ETD", "EThcD", "HCD", "beam-type"):
+        assert np.array_equal(table.select(activation=act),
+                              np.flatnonzero(_activation_match(column, act)))
+    assert np.array_equal(table.select(filter_excludes="sid="), np.flatnonzero(np.arange(n) % 3))
