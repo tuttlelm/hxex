@@ -190,6 +190,28 @@ def _grid(info: dict, size: tuple[float, float], columns: int | None, residual: 
     return fig, cells
 
 
+def _series_range(results: Results, spectrum_ids: Sequence[str], axes) -> tuple[float, float]:
+    """The expected m/z range of a series' spectra: the lowest and highest predicted m/z of
+    their picked bins, or without a picked table the union of the ``axes``' current ranges."""
+    lo, hi = np.inf, -np.inf
+    binned = results.binned
+    if binned is not None:
+        for sid in spectrum_ids:
+            try:
+                mz = np.asarray(binned.spectrum(binned.find(sid))[0], dtype=float)
+            except KeyError:
+                continue
+            mz = mz[np.isfinite(mz)]
+            if len(mz):
+                lo, hi = min(lo, float(mz.min())), max(hi, float(mz.max()))
+    if not np.isfinite(lo):
+        for ax in axes:
+            if ax.has_data():
+                a, b = ax.get_xlim()
+                lo, hi = min(lo, a), max(hi, b)
+    return lo, hi
+
+
 def plot_series_spectra(
     results: Results,
     data_id: int,
@@ -200,13 +222,17 @@ def plot_series_spectra(
     columns: int | None = None,
     residual: bool = False,
     cell: tuple[float, float] = (4.5, 3.0),
+    padding: float = 0.1,
     **kwargs,
 ) -> Figure:
     """A grid of spectra: with replicates a row per time and a column per replicate, otherwise
     the time course wrapped into ``columns`` columns (see :func:`_layout`; see
     :func:`plot_spectrum` for the keyword arguments, which are passed on). ``residual`` puts the
     residuals of each spectrum (picked minus fit) in a small panel under it; it needs the picked
-    and fit layers. Spectra whose layers cannot be drawn are left blank."""
+    and fit layers. Spectra whose layers cannot be drawn are left blank. Every panel has the
+    same m/z range: the series' expected range (the predicted m/z of the picked bins of all its
+    spectra; without a picked table, the panels' own ranges together) with ``padding`` times its
+    width on each side."""
     info = series_info(results, data_id)
     fig, cells = _grid(info, cell, columns, residual)
     if "raw" in show and results.spectra is None and results.loader is not None:
@@ -227,6 +253,12 @@ def plot_series_spectra(
         pos = list(info["rows"]).index(i)
         ax.set_title(f"{_time_text(results, info['times'][pos])}, rep {info['reps'][pos]}",
                      fontsize=8)
+    lo, hi = _series_range(results, [str(results.fit.spectrum_id[i]) for i in cells],
+                           [ax for ax, _ in cells.values()])
+    if np.isfinite(lo) and hi > lo:
+        pad = padding * (hi - lo)
+        for ax, _ in cells.values():  # the residual panels share their spectrum's x axis
+            ax.set_xlim(lo - pad, hi + pad)
     # the series title in a band at the top, placed in inches (a fraction of the height would
     # drop it into the first row of a tall figure; the layout does not count it in nested grids)
     height = fig.get_figheight()

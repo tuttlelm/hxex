@@ -2501,3 +2501,10 @@ CSVs or mzML if wanted.
     fragment's range, sequence and charge, so the same fragment in two conditions had the same
     name. The file name leaves out the sequence so that the fragment survives the 60-character
     limit. Peptide series keep their names.
+
+93. **One m/z range for every panel of a series (owner, 2026-10-16).** The panels of a series'
+    spectra figure each scaled to what they drew, so their m/z ranges differed with each
+    spectrum's raw window and picked bins. Every panel now has the series' expected range, the
+    lowest to the highest predicted m/z of the picked bins of all its spectra (undeuterated to
+    beyond fully deuterated), padded by 10 % of its width on each side (`padding`); without a
+    picked table, the panels' own ranges together.

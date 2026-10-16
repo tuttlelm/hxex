@@ -466,6 +466,20 @@ def test_fragment_series_are_named_by_their_fragment(results, tmp_path):
     assert files[0].name.endswith("_z_dot_7_z2_parent_z3_gentle_spectra.png")
 
 
+def test_series_panels_share_the_expected_mz_range(results):
+    fig = plot_series_spectra(results, 0, show=("raw", "picked", "fit"))
+    limits = {tuple(np.round(ax.get_xlim(), 6)) for ax in fig.axes if ax.has_data()}
+    assert len(limits) == 1  # one range for every panel, whatever each spectrum covers
+    b = results.binned
+    ids = results.fit.spectrum_id[results.fit.data_id == 0]
+    mz = np.concatenate([b.spectrum(b.find(str(s)))[0] for s in ids])
+    lo, hi = mz.min(), mz.max()
+    (got,) = limits
+    np.testing.assert_allclose(got, (lo - 0.1 * (hi - lo), hi + 0.1 * (hi - lo)), rtol=1e-6)
+    wide = plot_series_spectra(results, 0, show=("picked",), padding=0.5)
+    assert wide.axes[0].get_xlim()[0] < got[0]
+
+
 def test_columns_option_on_the_series_plots(results):
     fig = plot_series_spectra(results, 0, show=("picked", "fit"), columns=3)
     shown = [ax for ax in fig.axes if ax.get_visible()]
