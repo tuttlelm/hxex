@@ -197,6 +197,9 @@ def test_fragment_uptake_from_a_run():
     assert u.n_amides[c4][0] == len(fragment_amides(PARENT, "c:4")) == 3
     assert np.isnan(u.mean_se).all() and u.parent_entry().start_seq == 11
     assert u.select(c4).time.tolist() == [30.0]
+    # the fully deuterated control is not a point of the kinetics
+    results.settings.run = SimpleNamespace(controls=SimpleNamespace(fd_time=30.0))
+    assert len(fragment_uptake(results)) == 0
     with pytest.raises(ValueError, match="mzML"):
         fragment_uptake(SimpleNamespace(settings=SimpleNamespace(spectra_source=None)))
 

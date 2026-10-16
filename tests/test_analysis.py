@@ -146,6 +146,30 @@ def test_species_uptake_combines_replicates_at_each_fixed_k(results):
         species_uptake(results, ks=(4,))
 
 
+def test_series_left_out_of_the_analysis(results):
+    """without_series: a series leaves the species table; the fragment series of a run that read
+    its peptides from MS1 too are found by series, not by sequence."""
+    from types import SimpleNamespace
+
+    from hxex.fragments import fragment_targets
+    from hxex.io import MzmlTarget
+    from hxex.report.analysis import _fragment_series
+    from hxex.spectra import PeptideEntry
+
+    both = species_uptake(results, ks=(1,))
+    one = species_uptake(results.without_series([1]), ks=(1,))
+    assert results.without_series([1]).excluded.sum() == (results.fit.data_id == 1).sum() > 0
+    assert one.n_spectra.sum() == both.n_spectra.sum() - (results.fit.data_id == 1).sum()
+    parent = PeptideEntry("f", "S", "GSHPLVFK", "11-18", 11, 18, 3)
+    targets = [MzmlTarget(parent)] + fragment_targets(parent, "M c:2", activation="ETD")
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    run = SimpleNamespace(settings=SimpleNamespace(spectra_source=source))
+    series, only = _fragment_series(run)
+    assert series == set(range(1, len(targets))) and not only  # the MS1 peptide is kept
+
+
 def test_rejected_spectra_are_left_out(results):
     first = str(results.fit.spectrum_id[0])
     review = ReviewTable.empty().update(first, status="rejected")

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..spectra import PeptideEntry, SpectrumSet, entry_rt
+from ..spectra import PeptideEntry, SpectrumSet, entry_rt, entry_rt_window
 from .errors import ReadError
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,9 @@ def read_peptide_table(path: str | Path) -> list[PeptideEntry]:
     """Read a metadata CSV (columns as in pyHXExpress's ``metadf``).
 
     Required: file, sample, peptide, peptide_range, start_seq, end_seq, charge. Optional:
-    modification, ``rt`` (the retention time in minutes, kept with the spectra). The ``Index``
+    modification, ``rt`` (the retention time in minutes, kept with the spectra), ``rt_start``
+    and ``rt_end`` (the peptide's retention window in minutes: for mzML and Thermo runs with a
+    fixed time, the scans summed for it and its fragments). The ``Index``
     column is ignored and any other column is kept in ``extra``. Values are text
     (``peptide_range`` keeps its leading zeros).
     """
@@ -67,6 +69,7 @@ def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
         extra={k: v for k, v in row.items() if k not in known and k is not None},
     )
     entry_rt(entry)  # a retention time must be a number
+    entry_rt_window(entry)  # and a window both ends, in order
     return entry
 
 

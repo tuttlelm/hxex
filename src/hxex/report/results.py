@@ -93,8 +93,9 @@ class Results:
     are optional too: ``spectra`` holds them in memory, or ``loader`` fetches some by id (for a
     bundle, which must still be open). ``bootstrap`` is at each measurement's selected K and
     ``bootstrap_by_k`` at fixed K values. ``review`` is the reviewer's layer; replace it with
-    :meth:`with_review` (a ``Results`` is never edited). ``excluded_times`` are left out of the
-    post-fitting analysis (:meth:`without_times`; the fits are kept).
+    :meth:`with_review` (a ``Results`` is never edited). ``excluded_times`` and
+    ``excluded_series`` (``data_id``) are left out of the post-fitting analysis
+    (:meth:`without_times`, :meth:`without_series`; the fits are kept).
     """
 
     measurements: Measurements
@@ -111,6 +112,7 @@ class Results:
         default=None, repr=False, compare=False
     )
     excluded_times: tuple[float, ...] = ()
+    excluded_series: tuple[int, ...] = ()
 
     @classmethod
     def from_bundle(cls, bundle: Bundle) -> Results:
@@ -144,13 +146,21 @@ class Results:
         nothing is refitted or removed."""
         return replace(self, excluded_times=tuple(float(t) for t in times))
 
+    def without_series(self, data_ids: Sequence[int]) -> Results:
+        """The same results with the series ``data_ids`` left out of the analysis (as
+        :meth:`without_times`)."""
+        return replace(self, excluded_series=tuple(sorted({int(d) for d in data_ids})))
+
     @property
     def excluded(self) -> np.ndarray:
-        """Whether each measurement is at one of :attr:`excluded_times`."""
+        """Whether each measurement is at one of :attr:`excluded_times` or in one of
+        :attr:`excluded_series`."""
         time = np.asarray(self.fit.time, dtype=float)
         out = np.zeros(len(time), dtype=bool)
         for t in self.excluded_times:
             out |= np.isclose(time, t, rtol=1e-9, atol=1e-6)
+        if self.excluded_series:
+            out |= np.isin(np.asarray(self.fit.data_id), self.excluded_series)
         return out
 
     def __len__(self) -> int:

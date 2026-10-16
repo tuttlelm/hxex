@@ -178,7 +178,9 @@ How fragment data differs, and what this branch does about it:
   (`closure_table`: c + z, a + x, b + y against the precursor), the per-step rate table
   (`ladder_rates`), the closure and per-residue rate figures (no owner reference: designed
   in hxex, owner 2026-10-14), all written by `hxex analyse` for runs with fragment series
-  (`[analysis.fragments]`; those series are kept out of the peptide analysis), with the ladder kinetics
+  (`[analysis.fragments]`; those series, the precursor M read with them included, are kept out
+  of the peptide analysis by series, so a peptide also read from MS1 stays in it; the fully
+  deuterated controls are not points of the kinetics, HISTORY 91), with the ladder kinetics
   figure (`hxex.report.ladder_kinetics_figure`). Owner (2026-10-14): these
   simple ladder values are wanted as a comparison for the owner's own method of deriving
   single-residue exchange rates and scrambling, which is unpublished and kept outside the

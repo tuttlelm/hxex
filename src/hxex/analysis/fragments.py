@@ -121,7 +121,8 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     """The K = 1 deuteration of every fragment-ion spectrum of ``results`` (a run read from mzML
     or Thermo files with fragment targets, :func:`hxex.fragments.fragment_targets`). Spectra
     the review rejected are left out, flagged ones too with ``exclude_flagged``; series that
-    are not fragments of a parent (peptides read from MS1) are left out.
+    are not fragments of a parent (peptides read from MS1) are left out, and so are the fully
+    deuterated controls (the run's ``fd_time``): they are not a point of the kinetics.
 
     From a :class:`hxex.analysis.RunSet`, the fragments of every run read from scan files, in
     one table with a ``run`` column: samples are labelled as in the rest of the analysis
@@ -150,8 +151,14 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     keep = np.ones(len(fit), dtype=bool)
     if results.review is not None:
         keep &= results.review.status_of(fit) != "rejected"
-    if getattr(results, "excluded_times", ()):  # left out of the analysis (exclude_times)
-        keep &= ~results.excluded
+    if getattr(results, "excluded_times", ()) or getattr(results, "excluded_series", ()):
+        keep &= ~results.excluded  # left out of the analysis (exclude_times, other branch)
+    run_config = getattr(settings, "run", None)
+    fd_time = (run_config.controls.fd_time if run_config is not None
+               and run_config.controls is not None else None)
+    if fd_time is not None:
+        keep &= ~np.isclose(np.asarray(fit.time, dtype=float), float(fd_time), rtol=1e-9,
+                            atol=1e-6)
     flagged = (np.asarray(results.quality.flagged, dtype=bool) if results.quality is not None
                else np.zeros(len(fit), dtype=bool))
     if exclude_flagged:

@@ -52,6 +52,7 @@ A run is described by a TOML project file:
 hxex init --format specexport -o hxex.toml   # a project file with every default; edit it
 hxex check hxex.toml                         # what would be read, and any problem
 hxex run hxex.toml                           # read, pick, fit, bootstrap; bundle and tables
+hxex run hxex.toml --spectra old_results     # the same from the raw spectra a bundle stored
 hxex info results                            # what the results bundle holds
 hxex report results --figures                # figures (and --tables) from the bundle
 hxex resume results                          # finish a run stopped during its bootstrap

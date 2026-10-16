@@ -35,6 +35,7 @@ and :func:`template` writes a project file with every default.
 
 from __future__ import annotations
 
+import logging
 import tomllib
 import types
 import typing
@@ -48,6 +49,8 @@ from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget
 from .io.times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME
 from .run import RunConfig
 from .spectra import SpectrumSet
+
+log = logging.getLogger(__name__)
 
 FORMATS = ("specexport", "hxexpress", "pooled", "mzml", "thermo")
 FOLDER_FORMATS = ("specexport", "hxexpress", "pooled")
@@ -225,6 +228,9 @@ class InputSettings:
     thermo_dir: Path | None = None
     # every format: a table of retention times (minutes)
     retention_times: Path | None = None
+    # every format: take the raw spectra stored by an earlier run (a bundle, or a spectra file)
+    # instead of reading the input
+    spectra: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -319,8 +325,30 @@ def _fragment_settings(block) -> FragmentSettings:
 
 
 def _input_from(data: Mapping, base: Path) -> InputSettings:
+    """The ``[input]`` table. With ``spectra`` (stored raw spectra) the rest of the table is
+    checked as usual when it is there (the same project file can read the input or rerun from a
+    bundle); without it (``spectra`` and at most ``retention_times``) the format and the folder
+    formats' control times come from the stored spectra's read record."""
     names = {f.name for f in fields(InputSettings)}
     _check_keys(data, names, "[input]")
+    if "spectra" not in data:
+        return _read_settings(data, base)
+    data = dict(data)
+    stored = _path(base, data.pop("spectra"), "input.spectra")
+    if set(data) - {"retention_times"}:
+        return replace(_read_settings(data, base), spectra=stored)
+    source = stored_spectra_source(stored) or {}
+    reader = source.get("reader")
+    return InputSettings(
+        format=reader if reader in FORMATS else "stored",
+        undeut_time=float(source.get("undeut_time", DEFAULT_UNDEUT_TIME)),
+        fulldeut_time=float(source.get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
+        retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
+        spectra=stored,
+    )
+
+
+def _read_settings(data: Mapping, base: Path) -> InputSettings:
     fmt = data.get("format")
     if fmt not in FORMATS:
         raise ProjectError(f"input.format must be one of {', '.join(FORMATS)}")
@@ -506,22 +534,28 @@ def load_project(path: str | Path, *, analysis_only: bool = False) -> Project:
 
 def scan_targets(project: Project) -> list[MzmlTarget]:
     """The targets of an mzML or Thermo project: each peptide of the table (if ``parents``),
-    and its fragments (one set per ``[input.fragments]`` table)."""
+    and its fragments (one set per ``[input.fragments]`` table). A peptide's ``rt_start`` and
+    ``rt_end`` columns set the retention window of its targets, in place of ``rt_window``."""
     from .fragments import fragment_targets
     from .io.entries import read_peptide_table
+    from .spectra import entry_rt_window
 
     inp = project.input
     targets = []
     for entry in read_peptide_table(inp.peptides):
+        # the peptide's own retention window (rt_start, rt_end) overrides the project's
+        window = entry_rt_window(entry)
         if inp.parents:
-            targets.append(MzmlTarget(entry, **inp.target))
+            target = inp.target if window is None else {**inp.target, "rt_window": window}
+            targets.append(MzmlTarget(entry, **target))
         for f in inp.fragments:
             targets += fragment_targets(
                 entry, f.ions, ms_level=f.ms_level, activation=f.activation,
                 preactivation=f.preactivation, parent_mz=f.parent_mz,
                 precursor_mz=f.precursor_mz, precursor_charge=f.precursor_charge,
                 filter_contains=f.filter_contains, filter_excludes=f.filter_excludes,
-                rt_window=f.rt_window, limit_charge=f.limit_charge, label=f.label,
+                rt_window=f.rt_window if window is None else window,
+                limit_charge=f.limit_charge, label=f.label,
                 picker=project.run.picker, registry=project.run.registry,
             )
     if not targets:
@@ -542,6 +576,68 @@ def folder_entries(project: Project):
                 peptide_ranges=inp.peptide_ranges, sample=inp.sample)
 
 
+def _is_spectra_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() == ".parquet"
+
+
+def stored_spectra_source(path: str | Path) -> dict | None:
+    """The read record of the raw spectra stored in ``path`` (a bundle, as a directory or
+    ``.zip``, or a spectra file of :func:`hxex.io.save_spectra`), without reading the
+    spectra; None when they have none. A bundle without raw spectra is an error."""
+    import json
+
+    from .io import BundleError, open_bundle, spectra_info
+
+    path = Path(path)
+    if not path.exists():
+        raise ProjectError(f"input.spectra: {path} does not exist")
+    try:
+        if _is_spectra_file(path):
+            source = spectra_info(path).get("source")
+            return None if not source else json.loads(source)
+        with open_bundle(path) as b:
+            if not b.has("spectra"):
+                raise ProjectError(f"input.spectra: the bundle {path} holds no raw spectra "
+                                   "(it was written with keep_spectra = false)")
+            return b.spectra_source()
+    except BundleError as exc:
+        raise ProjectError(f"input.spectra: {exc}") from exc
+
+
+def load_stored_spectra(path: str | Path) -> SpectrumSet:
+    """The raw spectra stored in ``path`` (see :func:`stored_spectra_source`), with their read
+    record, to which ``stored_in`` (the path they were taken from) is added."""
+    from .io import BundleError, load_spectra, open_bundle
+
+    path = Path(path)
+    stored_spectra_source(path)  # exists and holds spectra
+    try:
+        if _is_spectra_file(path):
+            spectra = load_spectra(path)
+        else:
+            with open_bundle(path) as b:
+                spectra = b.spectra()
+    except BundleError as exc:
+        raise ProjectError(f"input.spectra: {exc}") from exc
+    return replace(spectra, source={**(spectra.source or {}), "stored_in": str(path)})
+
+
+def project_with_spectra(project: Project, path: str | Path) -> Project:
+    """``project`` taking the raw spectra stored in ``path`` (as ``[input] spectra``; a
+    relative path is taken from the working directory)."""
+    path = Path(path).resolve()
+    stored_spectra_source(path)  # exists and holds spectra
+    if project.input is None:
+        raise ProjectError("the project file has no [input] table")
+    inp = replace(project.input, spectra=path)
+    return replace(project, input=inp)
+
+
+_READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "sample", "undeut_time",
+               "fulldeut_time", "peptides", "runs", "parents", "target", "fragments", "scans",
+               "data_root", "thermo_dir")
+
+
 def read_input(
     project: Project,
     *,
@@ -549,8 +645,19 @@ def read_input(
     cancel: CancelHook | None = None,
 ) -> SpectrumSet:
     """The raw spectra the project's ``[input]`` names (recorded, so the read can be
-    repeated), with the retention times of ``retention_times`` when it names a table."""
-    spectra = _read_input(project, progress=progress, cancel=cancel)
+    repeated), with the retention times of ``retention_times`` when it names a table. With
+    ``spectra`` they are the spectra stored by an earlier run (:func:`load_stored_spectra`):
+    the settings of the read itself (files, targets, scans) do not apply then."""
+    inp = project.input
+    if inp.spectra is not None:
+        default = InputSettings(inp.format)
+        unused = [k for k in _READ_STAGE if k != "format"
+                  and getattr(inp, k) != getattr(default, k)]
+        log.info("taking the raw spectra stored in %s%s", inp.spectra,
+                 f"; not used: input {', '.join(unused)}" if unused else "")
+        spectra = load_stored_spectra(inp.spectra)
+    else:
+        spectra = _read_input(project, progress=progress, cancel=cancel)
     if project.input.retention_times is not None:
         from .io import apply_retention_times, read_retention_times
 
@@ -640,6 +747,8 @@ def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | Non
 _INPUT_TEMPLATES = {
     "specexport": """[input]
 format = "specexport"
+# spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
+#                                # file) instead of reading the files below
 data_dir = "SpecExport"          # the HDExaminer SpecExport folder
 # samples = ["WT", "mutant"]     # only these samples
 # peptide_ranges = ["0001-0010"] # only these peptides
@@ -650,6 +759,8 @@ record_paths = "path"            # or "name": record file names only
 #                                # end_seq, peptide, charge (or an rt column in peptides)""",
     "hxexpress": """[input]
 format = "hxexpress"
+# spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
+#                                # file) instead of reading the files below
 data_dir = "data"                # the folder of HX-Express spreadsheets
 # peptides = "metadf.csv"        # a table of the files (pyHXExpress's metadf) instead of
 #                                # finding them by name (SAMPLE_START-END-PEPTIDE-zCHARGE-...)
@@ -660,6 +771,8 @@ fulldeut_time = 1000000.0
 record_paths = "path\"""",
     "pooled": """[input]
 format = "pooled"
+# spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
+#                                # file) instead of reading the files below
 data_dir = "pooled"              # a SpecExport folder with peptides of several proteins
 sample = "pool"                  # the sample name given to its entries
 # peptide_ranges = ["0001-0010"]
@@ -670,6 +783,8 @@ record_paths = "path\"""",
 
 _SCAN_TEMPLATE = """[input]
 format = "{fmt}"
+# spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
+#                                # file) instead of reading the files below
 peptides = "peptides.csv"        # the peptide table (columns as pyHXExpress's metadf)
 data_root = "."                  # relative run paths are taken from here
 # retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
@@ -681,6 +796,7 @@ parents = true                   # read each peptide itself (set false for fragm
 [input.target]                   # how the peptides' scans are chosen
 ms_level = 1
 # rt_window = [60.0, 180.0]      # seconds, for runs with a fixed time
+#                                # (a peptide's own: rt_start, rt_end columns of the table, min)
 # filter_excludes = "sid"        # leave out scans whose filter contains this
 
 # [[input.fragments]]            # fragment ions of every peptide (repeat the table for
@@ -850,7 +966,8 @@ def describe(project: Project) -> dict[str, Any]:
     run = project.run
     return {
         "project": project.project,
-        "format": project.input.format,
+        "format": project.input.format + (
+            "" if project.input.spectra is None else f" (stored in {project.input.spectra})"),
         "K": f"{run.fit.k_min} to {run.fit.k_max}",
         "device": run.fit.backend.device,
         "bootstrap": "off" if run.bootstrap is None else f"{run.bootstrap.n_boot} resamples",

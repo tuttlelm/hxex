@@ -9,7 +9,7 @@ import pytest
 from hxex import cli
 from hxex.config import FORMATS, ProjectError, load_project, project_from, template
 from hxex.hooks import Cancelled
-from hxex.io import open_bundle
+from hxex.io import ReadError, open_bundle
 from hxex.run import RunConfig, run
 from test_mzml import PEPTIDE, time_course, write_mzml  # noqa: I001
 from test_run import config as run_config  # noqa: I001
@@ -129,6 +129,30 @@ def test_fragment_scans_are_tied_to_their_parent(tmp_path):
         targets('parent_mz = "own"\n')
 
 
+def test_a_peptides_own_retention_window(tmp_path):
+    from hxex.config import scan_targets
+
+    path = mzml_project(tmp_path, extra_input='[input.target]\nrt_window = [0.0, 30.0]\n'
+                                              '[input.fragments]\nions = "c:2-3:1"\n')
+    table = tmp_path / "peptides.csv"
+    head = "file,sample,peptide,peptide_range,start_seq,end_seq,charge,rt_start,rt_end\n"
+    table.write_text(head + f"x,S,{PEPTIDE},0001-0010,1,10,2,5.5,6.75\n"
+                     f"x,S,{PEPTIDE},0001-0010,1,10,3,,\n")
+    got = scan_targets(load_project(path))
+    first, second = got[:len(got) // 2], got[len(got) // 2:]  # each peptide, then its fragments
+    assert first[0].ms_level == 1 and second[0].entry.charge == 3 and len(first) > 1
+    assert {t.rt_window for t in first} == {(330.0, 405.0)}  # minutes -> seconds, fragments too
+    # without columns: the project's window for the peptide, the fragments' own (none)
+    assert second[0].rt_window == (0.0, 30.0)
+    assert {t.rt_window for t in second[1:]} == {None}
+    for row, match in ((",6.0", "both or neither"), ("7.0,6.0", "after the start"),
+                       ("a,6.0", "not numbers")):
+        table.write_text(head + f"x,S,{PEPTIDE},0001-0010,1,10,2,{row}\n")
+        with pytest.raises(ReadError, match="line 2") as err:
+            scan_targets(load_project(path))
+        assert match in str(err.value.__cause__)
+
+
 def test_check_shows_what_would_be_read(tmp_path, capsys):
     path = mzml_project(tmp_path, extra_input='[input.target]\nfilter_excludes = "sid"')
     assert cli.main(["check", str(path)]) == 0
@@ -164,6 +188,63 @@ def test_run_info_and_report(tmp_path, capsys):
                      str(tmp_path / "out_tables_again")]) == 0
     assert (tmp_path / "out_tables_again" / "series.csv").is_file()
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
+
+
+def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys):
+    import numpy as np
+
+    from hxex.io import save_spectra
+
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        first, binned = b.fit(), b.binned()
+        spectra = b.spectra()
+
+    def same_results(bundle, stored="out"):
+        with open_bundle(bundle) as b:
+            assert b.spectra_source()["reader"] == "mzml"  # the read record is kept
+            assert b.spectra_source()["stored_in"].endswith(stored)
+            assert np.array_equal(b.binned().intensity, binned.intensity)
+            assert np.allclose(b.fit().fits[1].p, first.fits[1].p)
+
+    # the same project file, with the stored spectra in place of the read
+    text = path.read_text().replace('peptides = "peptides.csv"',
+                                    'peptides = "peptides.csv"\nspectra = "out"')
+    (tmp_path / "rerun.toml").write_text(text.replace('bundle = "out"', 'bundle = "out2"'))
+    (tmp_path / "run1.mzML").unlink()  # not read again
+    capsys.readouterr()
+    assert cli.main(["run", str(tmp_path / "rerun.toml")]) == 0
+    assert "not used: input peptides, runs" in capsys.readouterr().err
+    same_results(tmp_path / "out2")
+    # or from the command line, into another bundle
+    assert cli.main(["-q", "run", str(path), "--spectra", str(tmp_path / "out"),
+                     "--bundle", str(tmp_path / "out3")]) == 0
+    same_results(tmp_path / "out3")
+    # an [input] of the spectra alone: the format is the stored spectra's
+    project_file = tmp_path / "only.toml"
+    project_file.write_text(f'project = "again"\n[input]\nspectra = "out"\n'
+                            f'[output]\nbundle = "out4"\n{FAST_RUN}')
+    assert load_project(project_file).input.format == "mzml"
+    assert cli.main(["check", str(project_file)]) == 0
+    assert "stored in" in capsys.readouterr().out
+    assert cli.main(["-q", "run", str(project_file)]) == 0
+    same_results(tmp_path / "out4")
+    # a spectra file works as well
+    save_spectra(spectra, tmp_path / "s.parquet")
+    project_file.write_text(project_file.read_text().replace('"out"', '"s.parquet"'))
+    assert cli.main(["-q", "run", str(project_file), "--overwrite"]) == 0
+    same_results(tmp_path / "out4", "s.parquet")
+    # refused: the bundle it reads from, a missing path, a bundle without raw spectra
+    assert cli.main(["run", str(path), "--spectra", str(tmp_path / "out"), "--overwrite"]) == 1
+    capsys.readouterr()
+    assert cli.main(["run", str(path), "--spectra", str(tmp_path / "nothing")]) == 1
+    assert "does not exist" in capsys.readouterr().err
+    (tmp_path / "bare").mkdir()
+    no_spectra = mzml_project(tmp_path / "bare", output="keep_spectra = false")
+    assert cli.main(["-q", "run", str(no_spectra)]) == 0
+    assert cli.main(["run", str(path), "--spectra", str(tmp_path / "bare" / "out")]) == 1
+    assert "holds no raw spectra" in capsys.readouterr().err
 
 
 def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):

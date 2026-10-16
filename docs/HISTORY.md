@@ -2433,3 +2433,62 @@ CSVs or mzML if wanted.
     changed in 4 of 68 series (two ions, both conditions), `good` in none, and `poor_envelope`
     36 to 34 series (the cycling ion now keeps the weights that fit at 0.105). A run with
     `mixed` or `infer` can give slightly different weights and residuals than before.
+
+89. **A peptide's own retention window (owner asked, 2026-10-16).** A project file had one
+    `rt_window` for every peptide (`[input.target]`, `[[input.fragments]]`), so an LC-MS file
+    per labelling time could not have its peptides read from MS1: without a window each
+    peptide's MS1 spectrum is summed over the whole run. The peptide table now takes optional
+    `rt_start` and `rt_end` columns (minutes, like `rt`; `entry_rt_window`, checked when the
+    table is read: both or neither, numbers, end after start). They set the window (in seconds)
+    of the peptide's target and of its fragments, in place of the project's; rows without them
+    keep the project's. On a private bottom-up dataset (item 64's: an LC-MS file per labelling
+    time, 18 targeted precursors, windows from the owner's list; example
+    hxex_private/analysis_examples/fragment_ladders/targeted_lcms): every MS1 parent was
+    found in all 17 runs (two undeuterated, one fully deuterated, 14 times from 4 s to 27 h),
+    and its centroid was compared with that of the precursor M in the peptide's own isolated
+    MS2 scans, run by run. For 11 of 18 they agree (median difference 0.01 to 0.09 D; single
+    runs up to about 1 D, and one MS2 M fitted at 0 D at 27 h); for two the median is 0.4 to
+    0.5 D (22 residues 4+, and 20 residues 3+, whose undeuterated MS1 centroid is 4 D with
+    K = 2 in 12 of 17 spectra: interference in its 2.5 min window); for five 2+ precursors
+    fragmented by EThcD the MS2 M values do not follow the labelling time (6, 14, 15, 17 and
+    20 residues), while the MS1 values do: the MS2 M is the suspect measure there (an 8-residue
+    2+ EThcD precursor agrees).
+    Finding: the fully deuterated control is below the 27 h point for most
+    peptides (owner: it was meant to be fully deuterated).
+
+90. **A run from the raw spectra of an earlier bundle (owner asked, 2026-10-16).** Reading
+    raw files can take most of a run (about 20 min for 17 Thermo files of item 89, against
+    under a minute for picking and fitting on the GPU), so a project can now take the raw
+    spectra a bundle stored instead: `[input] spectra = "path"` (a bundle directory or `.zip`,
+    or a spectra file of `save_spectra`), or `hxex run|check PROJECT --spectra PATH`. With the
+    rest of `[input]` present, the same project file reads the input or reruns from a bundle:
+    that part is checked as usual, and the read-stage settings that differ from the defaults
+    are logged as not used (the stored spectra are already summed and cut to each target's m/z
+    window: retention windows, margins, scan filters and targets cannot change). With
+    `spectra` alone (and `retention_times`) the format and a folder format's control times come
+    from the stored read record. The record is kept (envelope sharing and the kinetics noise
+    reference read it) with `stored_in` added. Refused: a missing path, a bundle without raw
+    spectra (`keep_spectra = false`), and (CLI) writing the results over the bundle the spectra
+    come from. Spectrum ids keep the original project's prefix.
+
+91. **Ladder rates of forward labelling at fixed times (owner asked, 2026-10-16).** The fragment
+    analysis (item 67) was built on back-exchange kinetics (one continuous run); item 89's
+    dataset is the first forward labelling with an LC-MS file per time (14 times, 4 s to 27 h)
+    and MS1 parents read with the fragments. Two fixes were needed. (1) `hxex analyse` kept
+    fragment series out of the peptide analysis by (sequence, modification, range); a fragment
+    target carries its parent's, so every peptide also read from MS1 was dropped with them.
+    They are now left out by series (`Results.without_series`, `excluded_series`, like
+    `excluded_times`): the MS1 parents stay, the precursor M read from MS2 scans does not
+    (it would otherwise be pooled with the MS1 parent into one species). (2) The fully
+    deuterated control (the run's `fd_time`) entered every ladder step as the last point of the
+    kinetics; `fragment_uptake` now leaves it out. `fit_decay` already fits a rise (negative
+    amplitude), and the ladder figure's time axis is logarithmic, so nothing else changed. On
+    that dataset (no intrinsic rates: conditions unknown): 738 single-residue steps in four
+    conditions, 468 resolved, 108 residues with at least one resolved rate. Where the ladders
+    are dense and the signal strong the conditions agree: in an 11-residue 3+ precursor, ETD and
+    ETD after HCD pre-activation give 0.037 and 0.040 /s, 0.039 and 0.054 /s for two
+    consecutive residues and 1 to 9e-3 /s for the next two, and the 2+ EThcD ladder of the same
+    peptide matches. Elsewhere one residue's rates often scatter over two orders of magnitude
+    between conditions and ion types: single replicates, and a difference of two fragments
+    carries both their errors. The shortest fragments (two or three residues) are noisy, and
+    the 2+ precursors' EThcD M did not follow the time for five peptides (item 89).

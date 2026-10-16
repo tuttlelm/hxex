@@ -133,18 +133,17 @@ def _without_times(results, times):
     return RunSet(out, merge=results.merge) if isinstance(results, RunSet) else out[""]
 
 
-def _fragment_keys(results) -> tuple[set[tuple], bool]:
-    """(peptide, modification, start, end) of the series read from fragment lists, and whether
-    every series is one."""
+def _fragment_series(results) -> tuple[set[int], bool]:
+    """The series (``data_id``) read from fragment lists (the precursor M read with them
+    included), and whether every series is one."""
     from ..io.mzml import SCAN_READERS, mzml_series_targets
 
     source = results.settings.spectra_source if results.settings is not None else None
     if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
         return set(), False
-    targets = list(mzml_series_targets(source).values())
-    keys = {(t.entry.peptide, t.entry.modification, t.entry.start_seq, t.entry.end_seq)
-            for t in targets if "fragment" in t.entry.extra}
-    return keys, bool(targets) and all("fragment" in t.entry.extra for t in targets)
+    targets = mzml_series_targets(source)
+    series = {d for d, t in targets.items() if "fragment" in t.entry.extra}
+    return series, bool(targets) and len(series) == len(targets)
 
 
 def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
@@ -349,23 +348,23 @@ def write_analysis(
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
     frag_tables, frag_jobs = {}, []
-    # fragment series (and precursor ions read with them) are not peptides
-    if isinstance(results, RunSet):
-        keyed = [_fragment_keys(r) for r in results.runs.values()]
-        fragment_keys = set().union(*(keys for keys, _ in keyed))
-        only_fragments = all(only for _, only in keyed)
-    else:
-        fragment_keys, only_fragments = _fragment_keys(results)
-    if config.fragments is not None and fragment_keys:
+    # fragment series (and precursor ions read with them) are not peptides: the peptide
+    # branch leaves them out by series (a peptide read from MS1 too has the same sequence)
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    split = {name: _fragment_series(r) for name, r in runs.items()}
+    any_fragments = any(series for series, _ in split.values())
+    only_fragments = all(only for _, only in split.values())
+    if config.fragments is not None and any_fragments:
         frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
     tables, jobs = {}, []
     if not only_fragments:
+        if any_fragments:
+            peptides = {name: r.without_series(split[name][0]) if split[name][0] else r
+                        for name, r in runs.items()}
+            results = (RunSet(peptides, merge=results.merge) if isinstance(results, RunSet)
+                       else peptides[""])
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
                             filters=config.filters, controls=config.controls)
-        if fragment_keys:
-            keys = list(zip(up.peptide.tolist(), up.modification.tolist(), up.start.tolist(),
-                            up.end.tolist(), strict=True))
-            up = up.select(np.array([k not in fragment_keys for k in keys], dtype=bool))
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
     tables.update(frag_tables)

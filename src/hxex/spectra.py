@@ -130,6 +130,29 @@ def entry_rt(entry: PeptideEntry) -> float:
                          "minutes") from None
 
 
+def entry_rt_window(entry: PeptideEntry) -> tuple[float, float] | None:
+    """The retention window of a peptide table row's ``rt_start`` and ``rt_end`` columns
+    (minutes in the table), in seconds as :class:`~hxex.io.MzmlTarget` takes it; None when both
+    are absent or empty. One without the other, a non-number or an end not after the start is
+    an error."""
+    extra = dict(entry.extra)
+    values = [str(extra.get(k, "") or "").strip() for k in ("rt_start", "rt_end")]
+    if not any(values):
+        return None
+    where = f"{entry.sample} {entry.peptide} {entry.charge}+"
+    if not all(values):
+        raise ValueError(f"rt_start and rt_end of {where}: give both or neither")
+    try:
+        lo, hi = (float(v) for v in values)
+    except ValueError:
+        raise ValueError(f"rt_start {values[0]!r}, rt_end {values[1]!r} of {where}: not "
+                         "numbers of minutes") from None
+    if not lo < hi:
+        raise ValueError(f"rt_start {lo:g} and rt_end {hi:g} of {where}: the end must be after "
+                         "the start")
+    return 60.0 * lo, 60.0 * hi
+
+
 @dataclass(frozen=True)
 class SpectrumSet:
     """Many spectra as flat arrays plus an index with one entry per spectrum.

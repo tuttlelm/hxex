@@ -61,12 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("check", help="check a project file and show what would be read")
     p.add_argument("project_file", metavar="PROJECT")
+    _spectra_option(p)
 
     p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write")
     p.add_argument("project_file", metavar="PROJECT")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true", help="replace an existing bundle")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
+    _spectra_option(p)
     _threads_option(p)
 
     p = sub.add_parser("resume", help="add the bootstrap to a bundle that is waiting for it")
@@ -111,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("bundle")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
     return parser
+
+
+def _spectra_option(p) -> None:
+    p.add_argument("--spectra", metavar="PATH",
+                   help="take the raw spectra stored in this bundle (or spectra file) instead "
+                        "of reading the input (as input.spectra)")
 
 
 def _threads_option(p) -> None:
@@ -218,15 +226,29 @@ def cmd_init(args) -> int:
     return 0
 
 
-def cmd_check(args) -> int:
-    from .config import FOLDER_FORMATS, describe, folder_entries, load_project
+def _project(args):
+    """The project of ``args.project_file``, with ``--spectra`` in place of input.spectra."""
+    from .config import load_project, project_with_spectra
 
     project = load_project(args.project_file)
+    if getattr(args, "spectra", None):
+        project = project_with_spectra(project, args.spectra)
+    return project
+
+
+def cmd_check(args) -> int:
+    from .config import FOLDER_FORMATS, describe, folder_entries, stored_spectra_source
+
+    project = _project(args)
     for key, value in describe(project).items():
         _say(f"{key:14s} {value}")
     inp = project.input
     problems = 0
-    if inp.format in FOLDER_FORMATS:
+    if inp.spectra is not None:
+        source = stored_spectra_source(inp.spectra) or {}
+        _say(f"{'spectra':14s} stored in {inp.spectra} (read by {source.get('reader', 'unknown')}"
+             f", project {source.get('project', 'unknown')}); the input files are not read")
+    elif inp.format in FOLDER_FORMATS:
         if not inp.data_dir.is_dir():
             log.error("input.data_dir %s is not a directory", inp.data_dir)
             return EXIT_ERROR
@@ -290,16 +312,21 @@ def _check_scan_files(project) -> int:
 def cmd_run(args) -> int:
     import dataclasses
 
-    from .config import load_project, read_input
+    from .config import read_input
     from .hooks import ProgressLog
     from .model import Backend
     from .run import run
 
-    project = load_project(args.project_file)
+    project = _project(args)
     out = project.output
     bundle = Path(args.bundle) if args.bundle else out.bundle
     if bundle is None:
         log.error("no bundle: set output.bundle or give --bundle")
+        return EXIT_ERROR
+    stored = project.input.spectra
+    if stored is not None and bundle.resolve() == stored.resolve():
+        log.error("%s holds the spectra this run takes: write the results to another bundle",
+                  bundle)
         return EXIT_ERROR
     overwrite = args.overwrite or out.overwrite
     if bundle.exists() and not overwrite:
@@ -313,7 +340,8 @@ def cmd_run(args) -> int:
     stop = _Stop()
     threads = args.threads if args.threads is not None else project.threads
     with stop.installed(), _threads(threads):
-        log.info("reading the %s input of %s", project.input.format, project.project)
+        if stored is None:
+            log.info("reading the %s input of %s", project.input.format, project.project)
         spectra = read_input(project, progress=ProgressLog(name="read",
                                                            interval=args.progress_every),
                              cancel=stop)
