@@ -625,8 +625,8 @@ ks = [1]
 overlay = ["avg"]
 out = "out"
 [analysis.runs]
-A = "{two_sample_bundle}"
-B = "{two_sample_bundle}"
+A = "{two_sample_bundle.as_posix()}"
+B = "{two_sample_bundle.as_posix()}"
 [analysis.merge]
 "A:S" = "S"
 "B:S" = "S"
