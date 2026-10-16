@@ -2343,7 +2343,29 @@ CSVs or mzML if wanted.
       3,248) have the same loss (median change 0, 95th percentile 3e-6): the K = 1 mean of an
       undeuterated spectrum lies in a flat valley of the loss, so it is set by the data only to
       a few hundredths of a deuteron (up to 0.07 D here), and the optimiser's path decides
-      where in it the fit stops. Neither value fits better. This uncertainty of `m0` is not in
-      its reported error.
+      where in it the fit stops. Neither value fits better.
+    - By deuterium level (K = 1 mean as a share of the exchangeable sites; spectra whose loss
+      did not change): moved by more than 0.01 D for 238 of 3,126 below 0.02, 44 of 126 at
+      0.02 to 0.05 (99th percentile 0.19 D), 26 of 613 at 0.05 to 0.10, 35 of 18,123 at 0.10
+      to 0.80 (99th percentile at most 0.002 D) and 4 of 104 above 0.80. So it is an effect of
+      the ends of the range, not of the controls: 74 of the 347 that moved are deuterated
+      samples with little or almost full uptake.
+    - **Data, not the optimiser** (2026-10-16; 325 series, 6,255 spectra: every series with a
+      moved spectrum plus 40 at 0.2 to 0.6): a long fit (float64, 3,000 Adam steps, 300 LM
+      iterations) lands at a third point in the valley (median 0.014 D from the 400-step fit
+      below 0.05, 0.034 D at 0.05 to 0.8) without a lower loss (median change -1e-6, at most
+      0.004): more steps do not settle it. The shift between 400 and 200 steps is about one
+      standard error: below 0.05 a median of 0.024 D against a curvature (Laplace) standard
+      error of 0.023 and a bootstrap one of 0.031 (shift / bootstrap SE 0.86); at 0.05 to 0.8,
+      0.041 against 0.031 and 0.072 (0.62). Unmoved spectra at 0.2 to 0.6: curvature and
+      bootstrap errors agree (0.075 and 0.074 D). At the bound (the mean pressed to 0, p or n
+      saturated) the curvature error is 0 and not usable; the bootstrap's is.
+    - The controls' errors cover it mostly: `m0_se` is the scatter of the undeuterated
+      replicates, each fitted alone, so where in the valley each lands is part of it. Of the
+      142 series whose `m0` changed by more than 0.01 D, 140 have replicates; the change is a
+      median 0.89 of their standard error (0.021 D; 0.007 D over all series), above 2 for
+      21 % (two or three replicates estimate a standard error poorly, and replicates fitted
+      the same way may stop alike). Earlier in this item `m0`'s error was said not to include
+      this: wrong, corrected here.
     - Owner's decision (2026-10-15): the default stays 400; `k1_adam_steps = 200` with
       `screen = true` is the recommended setting when speed matters (README).
