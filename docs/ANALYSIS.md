@@ -282,8 +282,48 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   peptides (`intrinsic_rates(..., free_termini=)`). Without a FASTA no peptide ends at a free
   carboxyl.
 - **Unreliable times** are left out with `[analysis] exclude_times` (the whole analysis).
-- **Next:** the residue-level fit (its own design; also for a K = 2 rank, for bimodal
-  proteins; checked on synthetic data, no suitable real dataset at hand).
+- **Residue level (step C; owner asked for it, 2026-10-15).** One `log10_protection` per
+  exchanging residue, fitted to every peptide of a state (a sample at K = 1, or one K = 2
+  rank: apparent values, for proteins whose exchange is not unimodal) at once, as pyHDX's
+  `fit_gibbs_global`, which is the reference (pyHDX 0.4.3, an oracle only, not a dependency).
+  - Model: a peptide's `fD(t) = (sum over its counted amides of 1 - exp(-kint_r t /
+    protection_r)) / n_amides`, the rates as at the peptide level (the protein labelled whole).
+    Same definition as the peptide level, `protection = kint / rate`; pyHDX uses `kint / (1 +
+    protection)`, so its factors are hxex's minus 1.
+  - Loss: the mean squared residual of `fD` in units of its standard error (pyHDX: unweighted
+    deuterons), the error floored at 0.01 so no point dominates, plus `r1` times the mean
+    absolute difference of `log10_protection` between neighbouring fitted residues (pyHDX's
+    total-variation regulariser, in log10 units instead of ΔG/1e4 J/mol; a proline or an
+    uncovered stretch breaks the chain). Smoothed (`sqrt(d^2 + 1e-4)`) and minimised by L-BFGS
+    in float64 (pyHDX: SGD, up to 200,000 epochs).
+  - Errors: from the inverse Hessian of the loss (with the regulariser; pyHDX: without it),
+    scaled by the misfit when it is above 1. They hold for the chosen `r1`.
+  - What the data determine: `resolved` is True where the peptides alone separate the residue
+    from its neighbours (the residue's unit vector lies in the span of the peptides' coverage
+    vectors); elsewhere the value is the regulariser's share-out. `bound` as at the peptide
+    level, where every covering peptide has the same bound. `n_peptides` counts the covering
+    peptides.
+  - Opt-in on its own (owner, after B5): `[analysis] protection_residues = true` (needs
+    `protection`); `protection = true` alone gives the peptide level only.
+  - `r1`: one setting (`[analysis] protection_r1`, default chosen on synthetic data and
+    recorded in HISTORY); no automatic choice for now (cross-validation over peptides is the
+    natural option, later).
+  - Outputs: `protection_residues.csv` (sample, K, rank, residue, aa, `log10_protection`,
+    its se, `protection`, `bound`, `resolved`, `n_peptides`) and its fit summary in the log
+    (misfit, r1); with a reference `compare_protection_residues.csv` (differences of the fitted
+    values, as `compare_residues`); figures in the residue plots' layout:
+    `protection_residues_<state>` (log10 protection per residue, samples overlaid, bounds as
+    triangles, residues not resolved open) and `protection_residue_comparison_<sample>`.
+    Residues whose standard error is above `[analysis] protection_max_se` (default 5 log10
+    units, about half the axis range; owner: errors of hundreds of units made the plot
+    useless) are left out of the figures, with a count, and kept in the table; the panel title
+    gives the misfit. Drawn as the residue comparison plots (a line with standard-error bars;
+    owner).
+  - Owner's assessment (B5): the residue-level factors carry little information for data of
+    this kind (multimodal exchange); the peptide-level factors make sense, and the residue-level
+    fD is valid, but the factors do not translate well to single residues.
+  - Not now: pyHDX's second regulariser (`r2`, pulling samples towards a reference); a fit
+    across several samples at once; choosing `r1` by cross-validation.
 
 ### Common output and plots
 

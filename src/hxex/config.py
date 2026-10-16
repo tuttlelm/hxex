@@ -439,7 +439,8 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta"
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
                  "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge",
-                 "fragments", "protection", "labelling")
+                 "fragments", "protection", "labelling", "protection_residues", "protection_r1",
+                 "protection_max_se")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -783,6 +784,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# initial_fraction = 0.9          # D fraction when the exchange began (curves)",
         "# protection = true               # in [analysis]: opt in to the peptides' protection",
         "#                                 # factors (hxex.analysis.protection); needs labelling",
+        "# protection_residues = true      # in [analysis]: also one factor per residue (opt-in)",
+        "# protection_r1 = 0.1             # in [analysis]: smoothing of the residue-level fit",
+        "# protection_max_se = 5.0         # residues with a larger error left out of figures",
         "# [analysis.labelling]            # the labelling solvent, for every sample (or one",
         "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT])",
         "# temperature = 20.0              # degrees Celsius",

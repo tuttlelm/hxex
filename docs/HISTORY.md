@@ -2172,7 +2172,8 @@ CSVs or mzML if wanted.
     labelled under other conditions. Owner: the millisecond points are unreliable (the
     experimental setup); without them the rise remains (WT medians 2.1 to 5.8 from 4 s to
     20 h, drift median 3.5, still no peptide fits one factor). Owner: B5 is a polydisperse
-    oligomer with clear bimodality in many regions, and later times are more sensitive to
+    oligomer whose exchange is likely multimodal; in many regions two populations describe the
+    data better than one (not "a bimodal oligomer"), and later times are more sensitive to
     subunit dissociation, so a protection factor that changes with time is expected there: the
     K = 1 average mixes populations and slow events that no single EX2 factor describes. On
     such data `protection_drift` and `one_factor_fits` report the behaviour, not a fault;
@@ -2187,3 +2188,47 @@ CSVs or mzML if wanted.
     Example: hxex_private/analysis_examples/protection_factors/b5_disease.
     Butterfly plot (owner): the "corrected differently" note sat over the middle of the figure;
     it is now an entry of the time legend, as in the residue overlay.
+
+82. **Residue-level protection factors (owner asked, 2026-10-15).** Design in docs/ANALYSIS.md
+    ("Residue level"). `residue_protection` fits one `log10_protection` per exchanging residue
+    of each state (a sample at K = 1, or a K = 2 rank: apparent) to all its peptides at once:
+    weighted squared residuals of `fD` (errors floored at 0.01) plus `r1` times pyHDX's
+    total-variation regulariser in log10 units (prolines bridged, uncovered stretches not);
+    L-BFGS in float64; errors from the inverse Hessian scaled by the misfit above 1;
+    `resolved` where the peptides' coverage vectors span the residue's unit vector;
+    `compare_residue_protection` (no significance where either side is not resolved); figures
+    `protection_residues` and `protection_residue_comparison_<sample>`; `[analysis]
+    protection_r1` (default 0.1). Progress and cancellation hooks.
+    - **The loss is not convex.** The exponentials saturate and neighbouring residues can trade
+      values: plain L-BFGS from the peptide-level starting values stopped at chi-square 2.05
+      per point where the true values give 1.01 (synthetic, 80 residues, 70 peptides, 9
+      times, noise 0.01). Continuation over `r1`, single-residue grid sweeps and pair swaps
+      did not escape; basin hopping did: windows of 2 to 5 neighbouring residues get random
+      values (half of them at the worst-fitting peptide), a 30-iteration descent follows, and
+      the move is kept if the loss drops; 40 moves without a gain end it; seeded. A descent
+      never returns a point worse than its start (a failed line search can). Values are held
+      between -3 and 14 by a smooth wall.
+    - **Synthetic check** (six seeds): on residues resolved and inside the time window, the
+      error is 0.06 to 0.16 log10 units with misfit 1.02 to 1.09 and 79 to 100 % of true
+      values within two standard errors; about 9 s per 80-residue state on the CPU. `r1` from
+      0.03 to 0.3 performs alike, 1 slightly worse: default 0.1.
+    - **pyHDX 0.4.3 as a reference** (imports only with a stub for proplot, which the
+      installed matplotlib breaks; hxex's intrinsic rates substituted, its factors converted
+      from `kint / (1 + P)`): on the same data and residues it ends 0.27 to 0.46 log10 units
+      from the truth (r1 0.1 or 1, patience raised to 2,000 epochs; 80 s per fit) with a
+      residual error several times the noise: SGD stops in a poorer local minimum of the same
+      problem. So pyHDX is not a tight reference here; the known truth is.
+    - **Figures (owner):** on B5 some residues had errors of hundreds to thousands of log10
+      units (flat data: the factor is undetermined), which made the residue plot useless.
+      `protection_max_se` leaves them out of the figures, with a count; the panel title gives
+      the misfit. Default 5 log10 units (owner: about half the axis range, so it does not
+      distort the plot; at 1, 440 of 468 B5 residue values were left out, the misfit of 170 to
+      270 scaling the errors by its square root). The plots are drawn as the residue
+      comparison plots (a line with standard-error bars; owner).
+    - **Owner's assessment:** for data like B5 (multimodal exchange) the residue-level factors
+      do not provide much information. The peptide-level factors make sense, and the
+      residue-level fD seems valid, but the protection factors do not translate well to single
+      residues. So the residue-level fit is opt-in on its own (owner): `[analysis]
+      protection_residues = true`, which needs `protection`; `protection = true` alone gives
+      the peptide level.
+

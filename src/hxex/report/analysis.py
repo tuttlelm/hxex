@@ -18,7 +18,10 @@ those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates
 ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. With ``protection`` (opt-in,
 :mod:`hxex.analysis.protection`): ``protection.csv``, ``protection_by_time.csv`` and the
 figures ``protection_<sample>``, and with a reference ``compare_protection.csv`` and
-``protection_difference_<sample>``. Characters a file name cannot
+``protection_difference_<sample>``; with ``protection_residues`` (opt-in) the residue level:
+``protection_residues.csv``, the
+figure ``protection_residues`` and with a reference ``compare_protection_residues.csv`` and
+``protection_residue_comparison_<sample>``. Characters a file name cannot
 hold (the ``:`` of ``run:sample``) become ``_``.
 """
 
@@ -57,7 +60,12 @@ from .compare import (
 )
 from .coverage import coverage_figure, plot_redundancy_resolution
 from .fragments import fragment_outputs
-from .protection import protection_difference_figure, protection_figure
+from .protection import (
+    protection_difference_figure,
+    protection_figure,
+    residue_protection_comparison_figure,
+    residue_protection_figure,
+)
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
 
@@ -139,7 +147,7 @@ def _fragment_keys(results) -> tuple[set[tuple], bool]:
     return keys, bool(targets) and all("fragment" in t.entry.extra for t in targets)
 
 
-def _peptide_outputs(results, config: AnalysisConfig, base, up):
+def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     """The tables (name -> columns) and figures (stem -> drawing function) of the peptide
     analysis of the species table ``up``."""
     present = list(dict.fromkeys(up.sample.tolist()))
@@ -213,18 +221,32 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up):
                 delta_crit=comparisons["K=2 rank 1 (low D) population"].delta_crit)
             tables["compare_populations"] = _columns(pop_cmp)
             tables["compare_choices"] = compare_choices(choice, ref).columns()
-    protection = prot_cmp = None
+    protection = prot_cmp = res_prot = res_cmp = None
     if config.protection:
-        from ..analysis.protection import compare_protection, peptide_protection
+        from ..analysis.protection import (
+            compare_protection,
+            compare_residue_protection,
+            peptide_protection,
+            residue_protection,
+        )
 
         protection, by_time = peptide_protection(up, config.labelling, sequences=sequences,
                                                  exclude_times=fd_times, alpha=config.alpha)
         tables["protection"] = protection.columns()
         tables["protection_by_time"] = by_time.columns()
+        if config.protection_residues:
+            res_prot = residue_protection(up, config.labelling, sequences=sequences,
+                                          exclude_times=fd_times, r1=config.protection_r1,
+                                          peptides=protection, cancel=cancel)
+            tables["protection_residues"] = res_prot.columns()
         if config.reference:
             prot_cmp = compare_protection(protection, config.reference, alpha=config.alpha,
                                           match=config.peptide_match)
             tables["compare_protection"] = prot_cmp.columns()
+            if res_prot is not None:
+                res_cmp = compare_residue_protection(res_prot, config.reference,
+                                                     alpha=config.alpha)
+                tables["compare_protection_residues"] = res_cmp.columns()
     regions = None
     if ann.regions:
         regions = region_summary(residues, ann)
@@ -288,6 +310,18 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up):
             if prot_cmp.where(sample=s).any():
                 jobs.append((f"protection_difference_{s}", lambda s=s:
                              protection_difference_figure(prot_cmp, s, length=length)))
+    if res_prot is not None and len(res_prot):
+        shown = [s for s in samples if res_prot.where(sample=s).any()]
+        jobs.append(("protection_residues", lambda: residue_protection_figure(
+            res_prot, shown, annotations=ann, length=length,
+            max_se=config.protection_max_se)))
+    if res_cmp is not None:
+        for n, s in enumerate(samples):
+            if res_cmp.where(sample=s).any():
+                jobs.append((f"protection_residue_comparison_{s}", lambda s=s, n=n:
+                             residue_protection_comparison_figure(
+                                 res_prot, res_cmp, s, style_index=n, annotations=ann,
+                                 length=length, max_se=config.protection_max_se)))
     if regions is not None:
         for t in times:
             if (regions.time == t).any():
@@ -333,7 +367,7 @@ def write_analysis(
                             up.end.tolist(), strict=True))
             up = up.select(np.array([k not in fragment_keys for k in keys], dtype=bool))
         if len(up):
-            tables, jobs = _peptide_outputs(results, config, base, up)
+            tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
     tables.update(frag_tables)
     jobs += frag_jobs
 
