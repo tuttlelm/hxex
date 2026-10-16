@@ -278,6 +278,7 @@ def test_scan_time_layout_each_every_and_windows(tmp_path):
     assert len(each) == 6 and list(each.time) == [5.0 + 60 * (0.5 + 0.5 * k) for k in range(6)]
     assert set(each.sample) == {"WT"} and set(each.rep) == {1} and set(each.data_id) == {0}
     assert len(set(each.spectrum_id)) == 6 and each.spectrum_id[0].startswith("p:WT/c.mzML/")
+    assert np.isnan(each.rt).all()  # a kinetics run: the scan time is the exchange time
     plan = plan_bins(PEPTIDE, CHARGE)
     mz0, _ = each.spectrum(0)
     assert mz0.min() >= plan.pred_mz.min() - 2 and mz0.max() <= plan.pred_mz.max() + 2
@@ -335,6 +336,11 @@ def test_fixed_time_layout_sums_the_retention_window(tmp_path):
     assert len(s) == 3 and list(s.time) == [60.0, 60.0, 0.0] and list(s.rep) == [1, 2, 1]
     assert set(s.data_id) == {0}  # one series: the same sample and target
     assert s.spectrum_id[0].endswith("scans1-3")
+    # the retention time (minutes) of a fixed-time spectrum: its scans' times by signal
+    assert 1.0 <= s.rt[0] <= 2.0 and s.rt[0] == s.rt[1]
+    from dataclasses import replace as _replace
+    given = MzmlTarget(_replace(ENTRY, extra={"rt": "7.5"}), rt_window=(60.0, 120.0))
+    assert set(read_mzml(runs, [given], project="p").rt) == {7.5}  # the peptide table wins
     one = read_mzml(runs[:1], [MzmlTarget(ENTRY, rt_window=(60.0, 60.0))], project="p")
     whole = read_mzml(runs[:1], [MzmlTarget(ENTRY)], project="p")  # no window: every scan
     assert one.spectrum(0)[1].max() < s.spectrum(0)[1].max() < whole.spectrum(0)[1].max()

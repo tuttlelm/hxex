@@ -32,7 +32,11 @@ the ``retention_min`` floor (which still applies when set); a missing or rejecte
 back to ``m0 + prediction`` (flagged ``fd_kint``) with the fit's scatter per amide times
 ``n_amides`` as its standard error. Series without rates (fragment ions, extra ``Hex`` sites)
 keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable controls nothing
-is fitted and every series keeps it (logged). The fitted model is :attr:`ControlTable.fd_model`.
+is fitted and every series keeps it (logged). When every control in the fit has a retention
+time (``RT``, minutes; :func:`series_rt`) for at least ``kint_min_series`` of the controls, the
+effective time is ``t0 + b RT`` (``b`` fitted, not below 0; HISTORY items 71 and 83), and a
+series without one is taken at the median RT of those that have one.
+The fitted model is :attr:`ControlTable.fd_model`.
 
 A measured control with a single replicate has no uncertainty (flagged ``m0_unreplicated`` or
 ``fd_unreplicated``); a theoretical value is exact. The corrected mean of a population is
@@ -234,28 +238,50 @@ def series_rates(
     return out
 
 
-def _kint_predict(a: float, t0: float, rates) -> np.ndarray:
-    return np.array([a * float(np.sum(np.exp(-k * t0))) for k in rates])
+def series_rt(data_id, rt) -> dict[int, float]:
+    """``data_id`` -> the median retention time (minutes) of the series' spectra, for the
+    series that have one (per-spectrum ``data_id`` and ``rt``, a picked set's)."""
+    data_id = np.asarray(data_id)
+    rt = np.asarray(rt, dtype=float)
+    out = {}
+    for d in np.unique(data_id[np.isfinite(rt)]):
+        out[int(d)] = float(np.median(rt[(data_id == d) & np.isfinite(rt)]))
+    return out
 
 
-def _fit_kint(measured: np.ndarray, rates: list, n: np.ndarray) -> tuple[float, float, float]:
-    """``a`` and ``t0`` of ``measured ~ a * sum exp(-k t0)`` (robust), and the scatter per
-    amide of the residuals."""
+def _kint_predict(a: float, t0: float, rates, rt=None, b: float = 0.0) -> np.ndarray:
+    """``a sum exp(-k t)`` of each series, ``t = t0 + b * RT`` (RT in minutes, as seconds)."""
+    rt = np.zeros(len(rates)) if rt is None else np.asarray(rt, dtype=float)
+    return np.array([a * float(np.sum(np.exp(-k * (t0 + b * 60.0 * r))))
+                     for k, r in zip(rates, rt, strict=True)])
+
+
+def _fit_kint(measured: np.ndarray, rates: list, n: np.ndarray,
+              rt: np.ndarray | None = None) -> tuple[float, float, float, float]:
+    """``a``, ``t0`` and ``b`` of ``measured ~ a * sum exp(-k (t0 + b RT))`` (robust; ``b`` 0
+    without retention times), and the scatter per amide of the residuals."""
     from scipy.optimize import least_squares
 
+    with_rt = rt is not None
+
     def resid(p):
-        return _kint_predict(p[0], float(np.exp(p[1])), rates) - measured
+        return _kint_predict(p[0], float(np.exp(p[1])), rates, rt,
+                             p[2] if with_rt else 0.0) - measured
 
     best = None
     for t_start in (60.0, 600.0, 3600.0, 36000.0):
-        r = least_squares(resid, [0.9, np.log(t_start)], loss="soft_l1", f_scale=0.5,
-                          bounds=([0.0, np.log(1e-3)], [1.5, np.log(1e7)]))
+        start = [0.9, np.log(t_start)] + ([0.0] if with_rt else [])
+        lower = [0.0, np.log(1e-3)] + ([0.0] if with_rt else [])
+        upper = [1.5, np.log(1e7)] + ([1e3] if with_rt else [])
+        r = least_squares(resid, start, loss="soft_l1", f_scale=0.5, bounds=(lower, upper))
         if best is None or r.cost < best.cost:
             best = r
     a, t0 = float(best.x[0]), float(np.exp(best.x[1]))
-    sd = float(np.std((_kint_predict(a, t0, rates) - measured) / n, ddof=2)) if len(n) > 2 \
-        else float("nan")
-    return a, t0, sd
+    b = float(best.x[2]) if with_rt else 0.0
+    free = 3 if with_rt else 2
+    sd = (float(np.std((_kint_predict(a, t0, rates, rt, b) - measured) / n, ddof=free))
+          if len(n) > free else float("nan"))
+    return a, t0, b, sd
 
 
 def fit_controls(
@@ -264,6 +290,7 @@ def fit_controls(
     config: ControlConfig,
     usable: np.ndarray | None = None,
     rates: Mapping[int, np.ndarray] | None = None,
+    rt: Mapping[int, float] | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -271,7 +298,9 @@ def fit_controls(
     (constant within a series). ``usable`` (``(M,)`` bool) marks the spectra that may serve as
     controls; by default every spectrum that the noise estimate did not flag as an outlier.
     ``rates`` (``data_id`` -> the intrinsic rates at the quench conditions of the amides the
-    series counts, :func:`series_rates`) is needed with ``fd_fallback='kint'``.
+    series counts, :func:`series_rates`) is needed with ``fd_fallback='kint'``; ``rt``
+    (``data_id`` -> retention time in minutes, :func:`series_rt`) adds the retention time to
+    that model when at least ``kint_min_series`` of its controls have one.
     """
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
@@ -365,7 +394,7 @@ def fit_controls(
             cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
     fd_model = None
     if config.fd_mode == "kint":
-        fd_model = _kint_fallback(cols, series, pending, rates, config)
+        fd_model = _kint_fallback(cols, series, pending, rates, config, rt)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -385,7 +414,7 @@ def fit_controls(
 
 
 def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,
-                   config: ControlConfig) -> dict | None:
+                   config: ControlConfig, rt: Mapping[int, float] | None = None) -> dict | None:
     """Fit theoretical back-exchange to the accepted controls with rates, reject the controls
     far from it, refit, and fill in every series that falls back and has rates (in ``cols``)."""
     def flag(i: int, name: str) -> None:
@@ -406,9 +435,25 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
     def amides(rows):
         return np.array([cols["n_amides"][i] for i in rows])
 
-    a, t0, _ = _fit_kint(measured(fitted), [rates[int(series[i])] for i in fitted],
-                         amides(fitted))
-    off = (np.abs(_kint_predict(a, t0, [rates[int(series[i])] for i in fitted])
+    rt = dict(rt or {})
+    with_rt = [i for i in fitted if int(series[i]) in rt]
+    use_rt = len(with_rt) >= config.kint_min_series
+    median_rt = float(np.median([rt[int(series[i])] for i in with_rt])) if use_rt else 0.0
+    if rt and not use_rt:
+        log.info("theoretical back-exchange without retention times: %d of %d controls have "
+                 "one (kint_min_series %d)", len(with_rt), len(fitted), config.kint_min_series)
+    elif use_rt and len(with_rt) < len(fitted):
+        log.info("theoretical back-exchange: %d of %d controls have no retention time and are "
+                 "taken at the median, %.2f min", len(fitted) - len(with_rt), len(fitted),
+                 median_rt)
+
+    def times(rows):
+        return (np.array([rt.get(int(series[i]), median_rt) for i in rows]) if use_rt
+                else None)
+
+    a, t0, b, _ = _fit_kint(measured(fitted), [rates[int(series[i])] for i in fitted],
+                            amides(fitted), times(fitted))
+    off = (np.abs(_kint_predict(a, t0, [rates[int(series[i])] for i in fitted], times(fitted), b)
                   - measured(fitted)) / amides(fitted) > config.kint_tolerance)
     rejected = [i for i, o in zip(fitted, off, strict=True) if o]
     kept = [i for i, o in zip(fitted, off, strict=True) if not o]
@@ -416,7 +461,8 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
         log.warning("theoretical back-exchange not fitted: %d fully deuterated controls agree "
                     "with it (kint_min_series %d)", len(kept), config.kint_min_series)
         return None
-    a, t0, sd = _fit_kint(measured(kept), [rates[int(series[i])] for i in kept], amides(kept))
+    a, t0, b, sd = _fit_kint(measured(kept), [rates[int(series[i])] for i in kept],
+                             amides(kept), times(kept))
     for i in rejected:
         cols["fallback"][i] = True
         cols["flags"][i] = ";".join(f for f in cols["flags"][i].split(";")
@@ -427,13 +473,16 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
         if k is None or cols["n_amides"][i] <= 0:
             continue
         n_am, m0 = cols["n_amides"][i], cols["m0"][i]
-        cols["mfd"][i] = m0 + float(_kint_predict(a, t0, [k])[0])
+        own = rt.get(int(series[i]), median_rt) if use_rt else 0.0
+        cols["mfd"][i] = m0 + float(_kint_predict(a, t0, [k], [own], b)[0])
         cols["mfd_se"][i] = sd * n_am if np.isfinite(sd) else 0.0
         cols["retention"][i] = (cols["mfd"][i] - m0) / n_am
         flag(i, "fd_kint")
-    log.info("theoretical back-exchange: a = %.3f, t0 = %.0f s from %d controls (%d rejected, "
-             "scatter %.3f D per amide)", a, t0, len(kept), len(rejected), sd)
-    return {"a": a, "t0": t0, "n_series": len(kept), "n_rejected": len(rejected),
+    log.info("theoretical back-exchange: a = %.3f, t0 = %.0f s%s from %d controls (%d "
+             "rejected, scatter %.3f D per amide)", a, t0,
+             f" + {b:.3g} x RT" if use_rt else "", len(kept), len(rejected), sd)
+    return {"a": a, "t0": t0, "b_rt": b if use_rt else None, "median_rt": median_rt
+            if use_rt else None, "n_series": len(kept), "n_rejected": len(rejected),
             "sd_per_amide": sd, "quench": config.quench.to_dict()}
 
 

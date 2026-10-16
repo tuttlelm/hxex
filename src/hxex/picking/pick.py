@@ -381,4 +381,5 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         data_id=spectra.data_id,
         time=spectra.time,
         modification=spectra.modification,
+        rt=spectra.rt,
     )

@@ -88,7 +88,8 @@ class SpeciesUptake:
     or rejected control, :mod:`hxex.controls`). From a :class:`hxex.analysis.RunSet`: ``runs``
     (the runs its spectra come from, e.g. ``'A,B'`` for a merged sample; '' for one run),
     ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
-    systematically; see :func:`species_uptake`). ``nterm_subtract`` (the
+    systematically; see :func:`species_uptake`); ``rt``: the median retention time of its
+    spectra (minutes; NaN: unknown). ``nterm_subtract`` (the
     N-terminal residues that do not count) and ``undeut_time`` (the undeuterated control's time,
     which coverage, redundancy and resolution refer to) are the run's.
     """
@@ -117,6 +118,7 @@ class SpeciesUptake:
     runs: np.ndarray | None = None
     n_spectra_by_run: np.ndarray | None = None
     run_offset: np.ndarray | None = None
+    rt: np.ndarray | None = None
     nterm_subtract: int = 1
     undeut_time: float = 0.0
 
@@ -125,7 +127,8 @@ class SpeciesUptake:
         for name, empty in (("control_fallback", np.zeros(n, dtype=bool)),
                             ("runs", np.full(n, "", dtype=object)),
                             ("n_spectra_by_run", np.full(n, "", dtype=object)),
-                            ("run_offset", np.zeros(n, dtype=bool))):
+                            ("run_offset", np.zeros(n, dtype=bool)),
+                            ("rt", np.full(n, np.nan))):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, empty)
 
@@ -193,17 +196,19 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     usable = ~rejected
     if fit.noise_estimate is not None:
         usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
-    rates = None
+    rates = rt = None
     if config.fd_mode == "kint":
         if results.binned is None or run is None:
             raise ValueError("fd_fallback 'kint' needs the run's picked spectra and settings "
                              "(the bundle's binned table)")
+        from ..controls import series_rt
         from ..run import control_rates
 
         keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
-        rates = control_rates(results.binned.select(keep),
-                              dataclasses.replace(run, controls=config))
-    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates)
+        picked = results.binned.select(keep)
+        rates = control_rates(picked, dataclasses.replace(run, controls=config))
+        rt = series_rt(picked.data_id, picked.rt)
+    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (
@@ -466,7 +471,28 @@ def species_uptake(
     out["control_fallback"] = out["control_fallback"].astype(bool)
     for name in ("runs", "n_spectra_by_run"):
         out[name] = out[name].astype(str)
+    rts = _species_rt(results)
+    out["rt"] = np.array([rts.get((str(a), str(b), str(c)), np.nan) for a, b, c in zip(
+        out["sample"], out["peptide"], out["modification"], strict=True)], dtype=np.float64)
     return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
+
+
+def _species_rt(results) -> dict[tuple[str, str, str], float]:
+    """(sample, peptide, modification) -> the median retention time (minutes) of its spectra
+    (samples labelled as in a :class:`hxex.analysis.RunSet`); species without one are absent."""
+    from .runs import RunSet
+
+    runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
+    values: dict[tuple[str, str, str], list[float]] = {}
+    for name, r in runs:
+        b = r.binned
+        if b is None or getattr(b, "rt", None) is None:
+            continue
+        for i in np.flatnonzero(np.isfinite(b.rt)):
+            sample = results.sample_label(name, str(b.sample[i])) if name else str(b.sample[i])
+            values.setdefault((sample, str(b.peptide[i]), str(b.modification[i])),
+                              []).append(float(b.rt[i]))
+    return {key: float(np.median(v)) for key, v in values.items()}
 
 
 def _is_trend(pairs: list) -> bool:

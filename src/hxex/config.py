@@ -223,6 +223,8 @@ class InputSettings:
     scans: MzmlConfig = MzmlConfig()  # noqa: RUF009
     data_root: Path | None = None
     thermo_dir: Path | None = None
+    # every format: a table of retention times (minutes)
+    retention_times: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -339,6 +341,7 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
             fulldeut_time=float(data.get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
             record_paths=str(data.get("record_paths", "path")),
             peptides=_path(base, data.get("peptides"), "input.peptides"),
+            retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
         )
     extra = set(data) & {"data_dir", "samples", "peptide_ranges", "sample", "undeut_time",
                          "fulldeut_time"}
@@ -385,6 +388,7 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
         scans=scans, record_paths=str(data.get("record_paths", "path")),
         data_root=_path(base, data.get("data_root", "."), "input.data_root"),
         thermo_dir=_path(base, data.get("thermo_dir"), "input.thermo_dir"),
+        retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
     )
 
 
@@ -538,7 +542,17 @@ def read_input(
     cancel: CancelHook | None = None,
 ) -> SpectrumSet:
     """The raw spectra the project's ``[input]`` names (recorded, so the read can be
-    repeated)."""
+    repeated), with the retention times of ``retention_times`` when it names a table."""
+    spectra = _read_input(project, progress=progress, cancel=cancel)
+    if project.input.retention_times is not None:
+        from .io import apply_retention_times, read_retention_times
+
+        spectra = apply_retention_times(spectra, read_retention_times(
+            project.input.retention_times))
+    return spectra
+
+
+def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
     inp = project.input
     if inp.format in FOLDER_FORMATS:
         from .io import read_spectra
@@ -624,7 +638,9 @@ data_dir = "SpecExport"          # the HDExaminer SpecExport folder
 # peptide_ranges = ["0001-0010"] # only these peptides
 undeut_time = 0.0                # the time given to undeuterated controls (s)
 fulldeut_time = 1000000.0        # the time given to fully deuterated controls (s)
-record_paths = "path"            # or "name": record file names only""",
+record_paths = "path"            # or "name": record file names only
+# retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
+#                                # end_seq, peptide, charge (or an rt column in peptides)""",
     "hxexpress": """[input]
 format = "hxexpress"
 data_dir = "data"                # the folder of HX-Express spreadsheets
@@ -649,6 +665,9 @@ _SCAN_TEMPLATE = """[input]
 format = "{fmt}"
 peptides = "peptides.csv"        # the peptide table (columns as pyHXExpress's metadf)
 data_root = "."                  # relative run paths are taken from here
+# retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
+#                                # end_seq, peptide, charge (else from the peptide table's
+#                                # rt column, else from the scans of fixed-time runs)
 record_paths = "path"            # or "relative" (to data_root) or "name"{thermo}
 parents = true                   # read each peptide itself (set false for fragments only)
 

@@ -89,6 +89,9 @@ def _index_table(obj) -> dict[str, pa.Array]:
     for name in _INDEX_INT:
         cols[name] = pa.array(np.asarray(getattr(obj, name), dtype=np.int64))
     cols["time"] = pa.array(np.asarray(obj.time, dtype=np.float64))
+    rt = getattr(obj, "rt", None)
+    cols["rt"] = pa.array(np.asarray(rt if rt is not None else np.full(len(obj.time), np.nan),
+                                     dtype=np.float64))
     return cols
 
 
@@ -97,6 +100,9 @@ def _index_arrays(t: pa.Table) -> dict[str, np.ndarray]:
     for name in _INDEX_INT:
         out[name] = np.asarray(_col(t, name), dtype=np.int64)
     out["time"] = np.asarray(_col(t, "time"), dtype=np.float64)
+    # tables written before retention times were kept have none: unknown
+    out["rt"] = (np.asarray(_col(t, "rt"), dtype=np.float64) if "rt" in t.column_names
+                 else np.full(t.num_rows, np.nan))
     return out
 
 

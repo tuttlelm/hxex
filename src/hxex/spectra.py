@@ -101,6 +101,9 @@ class Spectrum:
     ``PEPTIDE_DIR/FILE`` for pooled folders. :func:`hxex.io.read_spectra` prefixes the
     user-chosen project name (``PROJECT:LOCAL``, see :func:`qualify_spectrum_id`) so ids stay
     unique when data from several directories are combined.
+
+    ``rt`` is the chromatographic retention time in minutes (NaN: unknown); a reader that sees
+    the scans sets it, otherwise it comes from the entry's ``rt`` column (:func:`entry_rt`).
     """
 
     mz: np.ndarray
@@ -111,6 +114,20 @@ class Spectrum:
     data_id: int = 0
     label: str = ""
     spectrum_id: str = ""
+    rt: float = float("nan")
+
+
+def entry_rt(entry: PeptideEntry) -> float:
+    """The retention time (minutes) of a peptide table row's ``rt`` column; NaN when absent
+    or empty."""
+    value = str(dict(entry.extra).get("rt", "") or "").strip()
+    if not value:
+        return float("nan")
+    try:
+        return float(value)
+    except ValueError:
+        raise ValueError(f"rt {value!r} of {entry.sample} {entry.peptide}: not a number of "
+                         "minutes") from None
 
 
 @dataclass(frozen=True)
@@ -123,7 +140,8 @@ class SpectrumSet:
     ``source`` records how the spectra were read, as plain JSON-compatible data (a reader that
     selects and sums scans, such as :func:`hxex.io.read_mzml`, sets it so the read can be
     repeated); it is kept by :meth:`select`, spectra files and results bundles, and is None when
-    nothing was recorded.
+    nothing was recorded. ``rt`` is each spectrum's retention time in minutes (NaN: unknown;
+    all NaN when not given).
     """
 
     mz: np.ndarray
@@ -142,7 +160,12 @@ class SpectrumSet:
     data_id: np.ndarray
     time: np.ndarray
     modification: np.ndarray
+    rt: np.ndarray | None = None
     source: Mapping | None = field(default=None, compare=False)
+
+    def __post_init__(self):  # built without retention times: unknown
+        if self.rt is None:
+            object.__setattr__(self, "rt", np.full(len(self.offsets) - 1, np.nan))
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -210,5 +233,7 @@ class SpectrumSet:
             data_id=np.array([s.data_id for s in spectra], dtype=np.int64),
             time=np.array([s.time for s in spectra], dtype=np.float64),
             modification=np.array([s.entry.modification for s in spectra], dtype=str),
+            rt=np.array([s.rt if np.isfinite(s.rt) else entry_rt(s.entry) for s in spectra],
+                        dtype=np.float64),
             source=source,
         )

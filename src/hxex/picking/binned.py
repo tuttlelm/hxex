@@ -58,8 +58,11 @@ class BinnedSet:
     modification: np.ndarray
     peak_mz: np.ndarray | None = None
     mz_offset_ppm: np.ndarray | None = None
+    rt: np.ndarray | None = None
 
     def __post_init__(self):
+        if self.rt is None:  # retention times (minutes) not given: unknown
+            object.__setattr__(self, "rt", np.full(len(self.offsets) - 1, np.nan))
         if self.peak_mz is None:
             object.__setattr__(self, "peak_mz", np.full(len(self.mz), np.nan))
         if self.mz_offset_ppm is None:

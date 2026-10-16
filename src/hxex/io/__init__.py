@@ -7,10 +7,12 @@ files the same way by :mod:`hxex.io.thermo` (with Thermo's RawFileReader, not pa
 """
 
 from .entries import (
+    apply_retention_times,
     filter_entries,
     read_fasta_records,
     read_fasta_sequence,
     read_peptide_table,
+    read_retention_times,
     sort_entries,
 )
 from .errors import ReadError
@@ -94,6 +96,8 @@ __all__ = [
     "read_fasta_sequence",
     "read_hxexpress_file",
     "read_peptide_table",
+    "read_retention_times",
+    "apply_retention_times",
     "read_specexport_dir",
     "read_source",
     "read_spectra",

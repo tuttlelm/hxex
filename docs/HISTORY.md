@@ -2232,3 +2232,23 @@ CSVs or mzML if wanted.
       protection_residues = true`, which needs `protection`; `protection = true` alone gives
       the peptide level.
 
+83. **Retention times kept with the spectra (owner, 2026-10-15).** Mainly to keep the metadata
+    together (owner), and used by the theoretical back-exchange fallback when available.
+    `rt` (minutes, NaN unknown) on `Spectrum`, `SpectrumSet` and `BinnedSet`, stored with the
+    index columns of `spectra` and `binned` (older bundles read as unknown); in the results
+    tables (per spectrum, and per series as the median; `retention` there stays the
+    back-exchange retention) and the species table (median of its spectra). Sources, the first
+    that gives one: `[input] retention_times` (a CSV: `rt` and any of `sample`, `start_seq` and
+    `end_seq` or `peptide_range`, `peptide`, `charge`; the row matching on the most columns
+    wins; any format, SpecExport included), the peptide table's `rt` column (checked when
+    read), and for mzML or Thermo runs with a fixed time the intensity-weighted mean time of
+    the scans summed (a kinetics run's scan time is its exchange time: no RT). The fallback
+    (`fd_fallback = "kint"`) fits `a sum exp(-k (t0 + b RT))` (`b` not below 0) when at least
+    `kint_min_series` controls have an RT; the others are taken at their median RT
+    (`fd_model` `b_rt`, `median_rt`). On the B5 data with HDExaminer's Actual RT (144
+    sample-sequence rows, 4,042 of 5,261 spectra; 45 of 194 controls without one, at 8.70 min):
+    `a` 0.891, `t0` 2,510 s + 2.59 RT (without RT: 0.853, 3,393 s); in-sample scatter 0.045 D
+    per amide either way, as item 71's cross-validated gain of about 6 % suggests. Example:
+    hxex_private/analysis_examples/quench_backexchange/b5_disease (`make_rt_table.py`,
+    `hxex_kint_rt.toml`).
+

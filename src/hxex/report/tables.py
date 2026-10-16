@@ -33,9 +33,13 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         for name in names:
             values = getattr(b, name)
             cols[name] = np.array([values[j] if j >= 0 else "" for j in rows])
+        rt = getattr(b, "rt", None)
+        cols["rt"] = np.array([float(rt[j]) if j >= 0 and rt is not None else np.nan
+                               for j in rows])
     else:
         for name in names:
             cols[name] = np.array([""] * m)
+        cols["rt"] = np.full(m, np.nan)
     cols.update(_target_columns(results))
     cols["status"] = np.asarray(results.review_status).astype(str)
     if results.quality is not None:
@@ -175,13 +179,23 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
 
+def _median_rt(binned, where, ids) -> float:
+    rt = getattr(binned, "rt", None)
+    if rt is None:
+        return np.nan
+    values = [float(rt[where[str(i)]]) for i in ids if str(i) in where]
+    values = [v for v in values if np.isfinite(v)]
+    return float(np.median(values)) if values else np.nan
+
+
 def series_table(results: Results) -> dict[str, np.ndarray]:
     """One row per series (a peptide at one charge in one sample), ordered by ``data_id``:
     ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
     (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
-    (``measured``, or the fallback reasons; empty without controls), ``retention`` (the one used;
-    NaN without controls) and ``fallback``."""
+    (``measured``, or the fallback reasons; empty without controls), ``retention`` (the
+    back-exchange retention used; NaN without controls), ``fallback`` and ``rt`` (the median
+    chromatographic retention time of its spectra, minutes; NaN: unknown)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
     b = results.binned
@@ -191,7 +205,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     multi = results.effective_K > 1
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
-        "n_rejected", "n_multi", "controls", "retention", "fallback")}
+        "n_rejected", "n_multi", "controls", "retention", "fallback", "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     for d in ids:
@@ -210,6 +224,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
                                               else str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
             "fallback": False if r is None else bool(ctrl.fallback[r]),
+            "rt": _median_rt(b, where, fit.spectrum_id[members]),
         }
         for name, value in values.items():
             cols[name].append(value)

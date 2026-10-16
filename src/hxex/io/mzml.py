@@ -44,7 +44,14 @@ import numpy as np
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, plan_bins
-from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id, split_spectrum_id
+from ..spectra import (
+    PeptideEntry,
+    Spectrum,
+    SpectrumSet,
+    entry_rt,
+    qualify_spectrum_id,
+    split_spectrum_id,
+)
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
 
@@ -1132,10 +1139,19 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             time = (float(run.time) if run.time is not None
                     else float(np.mean([s.time for s in scans])) + run.time_offset)
             local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
+            # retention time (minutes): the scans' acquisition times weighted by their signal in
+            # the window, for a run with a fixed exchange time (in a kinetics run the scan time
+            # is the exchange time); a peptide table's rt column, when given, wins
+            rt = entry_rt(entry)
+            if not np.isfinite(rt) and run.time is not None:
+                weight = np.array([float(np.sum(p[1])) for p in parts])
+                times = np.array([s.time for s in scans], dtype=float)
+                rt = float(np.average(times, weights=weight) if weight.sum() > 0
+                           else times.mean()) / 60.0
             spectra.append(Spectrum(
                 mz, y, entry, time, run.rep, data_id=data_id,
                 label=f"{f.path.name} {scan_text}",
-                spectrum_id=qualify_spectrum_id(project, local),
+                spectrum_id=qualify_spectrum_id(project, local), rt=rt,
             ))
 
 
