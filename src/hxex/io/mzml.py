@@ -1165,6 +1165,29 @@ def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:
     return {int(s["data_id"]): targets[int(s["target"])] for s in source["series"]}
 
 
+def envelope_groups(source: Mapping | None) -> dict[int, tuple]:
+    """The conditions of one ion, for a shared envelope (``EnvelopeConfig.share``): every series
+    (``data_id``) of a read by :func:`read_mzml` or :func:`hxex.io.read_thermo` mapped to a key
+    that series share when they differ only in their scan filters (``filter_contains``,
+    ``filter_excludes``) or the fragment list's label: the same sample, ion (peptide, ion type
+    and modifications), charge, parent, MS level, activation, pre-activation, precursor and
+    retention window. Empty for other reads (each series then has its own envelope)."""
+    if not source or source.get("reader") not in SCAN_READERS:
+        return {}
+    targets = [MzmlTarget.from_dict(t) for t in source["targets"]]
+    out: dict[int, tuple] = {}
+    for s in source["series"]:
+        t = targets[int(s["target"])]
+        e = t.entry
+        out[int(s["data_id"])] = (
+            str(s["sample"]), e.peptide, e.modification, int(e.charge),
+            e.extra.get("parent_peptide"), e.extra.get("parent_range"), t.ms_level,
+            t.activation, t.preactivation, t.precursor_mz, t.precursor_charge, t.parent_mz,
+            t.rt_window,
+        )
+    return out
+
+
 def read_mzml_source(
     source: Mapping,
     *,

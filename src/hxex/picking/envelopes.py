@@ -14,6 +14,21 @@ picker's bins and to fit the spectra is then not the natural isotope envelope of
 - ``'infer'``: the fit uses the picked reference envelope itself (averaged over the references),
   and the bins are placed as for ``'mixed'`` (or the theory with one component).
 
+With ``share`` the conditions of one ion share its envelope: the series of the same sample, ion,
+charge, activation and precursor that differ only in their scan filters or the fragment list's
+label (gentle and harsh in-source activation, say) get one envelope, fitted to all their references
+together (:func:`hxex.io.envelope_groups` gives the groups). The ion-type mixture is set by the
+activation, not by the in-source energy: on the owner's comparison of undeuterated fragments at low
+and high energy in ETD, EThcD and UVPD the envelopes agreed unless something else was wrong with
+the data (docs/HISTORY.md item 87). So the conditions are first compared: two agree when the
+envelope fitted to the references of each describes those of the other nearly as well as their own
+does (:func:`reference_residual` at most ``max_residual`` above the residual of their own envelope,
+both ways; how well the mixture fits at all is ``good``). The shared envelope is fitted to the
+references of the conditions that agree with the most others; the rest (``agrees`` False) are left
+out of it and their series marked ``poor``. When none agrees with another (two conditions that
+disagree, say) there is no telling which is right: the envelope is fitted to all of them and all
+are marked. A condition without references of its own takes the shared envelope.
+
 This follows pyHXExpress's ``NA_envelope`` options (``mixedN`` and ``infer``), with two
 differences: the components are shifted by the hydrogen mass rather than by one ExMS step, and the
 mixture also sets the bin positions. Like pyHXExpress it assumes the proportions of the ion types
@@ -22,7 +37,7 @@ do not change with deuteration.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -41,12 +56,14 @@ class EnvelopeConfig:
     """How the envelope of each series is found (see the module docstring). ``components`` is the
     number of ion types in a mixture; ``max_residual`` the largest relative residual (RMS of the
     mixture's misfit over the RMS of the reference envelope) for which a reference counts as
-    good; ``iterations`` the rounds of picking and fitting the weights."""
+    good; ``iterations`` the rounds of picking and fitting the weights; ``share`` gives the
+    conditions of one ion one envelope (see the module docstring)."""
 
     mode: str = "theory"
     components: int = 2
     max_residual: float = 0.15
     iterations: int = 3
+    share: bool = False
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -155,14 +172,48 @@ def estimate_envelope(
                     residual <= config.max_residual)
 
 
+def reference_residual(
+    references: Sequence[tuple[np.ndarray, np.ndarray]],
+    envelope: Envelope,
+    peptide: str,
+    charge: int,
+    *,
+    modification: str = "",
+    picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+) -> float:
+    """How well ``envelope`` describes ``references``: the references picked with its bins,
+    averaged (each scaled to sum to 1), against its fit envelope at the best scale; the RMS of
+    the misfit over the RMS of the average, as :attr:`Envelope.residual`. NaN without a usable
+    reference."""
+    plan = plan_bins(peptide, charge, modification=modification, config=picker,
+                     registry=registry, clusters=envelope.clusters)
+    model = np.asarray(envelope.fit_shape, dtype=float)
+    picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
+                            registry=registry, plan=plan).intensity for mz, y in references]
+    picked = [p for p in picked if p.sum() > 0]
+    if not picked:
+        return float("nan")
+    observed = np.mean([_normalised(p, len(model)) for p in picked], axis=0)
+    scale = float(model @ observed) / float(model @ model)
+    return float(np.sqrt(np.mean((scale * model - observed) ** 2))
+                 / np.sqrt(np.mean(observed ** 2)))
+
+
 @dataclass(frozen=True)
 class EnvelopeTable:
     """The envelope of every series of a run, one row per series (ascending ``data_id``):
     ``mode``, ``source`` (``reference``: the series' reference spectra, normally the undeuterated
-    control; ``fallback``: the spectra at the fallback time, because the reference was missing or
-    poor; ``theory``: no usable spectra), the ion-type ``weights`` (``(n_series, components)``,
-    lightest first), ``residual``, ``n_reference``, ``good`` and the envelope of the fit
-    (``fit_shape``, flat, series ``i`` in ``shape_offsets[i]:shape_offsets[i + 1]``)."""
+    control; ``shared``: the references of every condition of the ion, with ``share``;
+    ``fallback``: the spectra at the fallback time, because the reference was missing or poor;
+    ``theory``: no usable spectra), the ion-type ``weights`` (``(n_series, components)``,
+    lightest first), ``residual``, ``n_reference`` (the spectra the envelope was fitted to;
+    with ``share``, the series' own references), ``good``, the
+    envelope of the fit (``fit_shape``, flat, series ``i`` in
+    ``shape_offsets[i]:shape_offsets[i + 1]``) and, with ``share``, ``own_residual``: how well
+    the envelope describes the series' own references (:func:`reference_residual`; NaN without
+    any, or without ``share``) and ``agrees``: False where the series' references disagree with
+    the other conditions' (see the module docstring; True where not assessed)."""
 
     config: EnvelopeConfig
     data_id: np.ndarray
@@ -174,9 +225,30 @@ class EnvelopeTable:
     good: np.ndarray
     fit_shape: np.ndarray
     shape_offsets: np.ndarray
+    own_residual: np.ndarray | None = None
+    agrees: np.ndarray | None = None
+
+    def __post_init__(self):  # read from a bundle written before share
+        if self.own_residual is None:
+            object.__setattr__(self, "own_residual", np.full(len(self.data_id), np.nan))
+        if self.agrees is None:
+            object.__setattr__(self, "agrees", np.ones(len(self.data_id), dtype=bool))
 
     def __len__(self) -> int:
         return len(self.data_id)
+
+    @property
+    def poor(self) -> np.ndarray:
+        """Series whose ion-type envelope was not measured well: with ``mixed`` or ``infer``,
+        those left with the theory (no usable spectra), those whose envelope does not describe
+        the spectra it was fitted to (``good`` False) and, with ``share``, those whose own
+        references disagree with the other conditions' or are not described by the shared
+        envelope."""
+        measured = self.mode != "theory"
+        own = np.nan_to_num(np.asarray(self.own_residual, dtype=float), nan=0.0)
+        return measured & ((self.source == "theory") | ~np.asarray(self.good, dtype=bool)
+                           | ~np.asarray(self.agrees, dtype=bool)
+                           | (own > self.config.max_residual))
 
     def shape(self, i: int) -> np.ndarray:
         return self.fit_shape[self.shape_offsets[i]:self.shape_offsets[i + 1]]
@@ -190,35 +262,75 @@ def series_envelopes(
     fallback_time: float | None = None,
     picker: PickerConfig = DEFAULT_PICKER_CONFIG,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    groups: Mapping[int, Hashable] | None = None,
     atol: float = 1e-6,
 ) -> tuple[EnvelopeTable, dict[int, Envelope]]:
     """The envelope of every series (``data_id``) of a :class:`~hxex.spectra.SpectrumSet` from
     its spectra at ``reference_time`` (the undeuterated control). If those are missing or the
     mixture does not describe them (``good`` False), the spectra at ``fallback_time`` are used
     (for example a fully exchanged end-state run), and the source is recorded as ``fallback``;
-    with neither, the theory. Returns the table and the envelopes by series."""
+    with neither, the theory. With ``config.share``, the series of one group (``groups``:
+    ``data_id`` to a key, :func:`hxex.io.envelope_groups`; a series not in it is a group of its
+    own) share one envelope (see the module docstring). Returns the table and the envelopes by
+    series."""
     by_series: dict[int, Envelope] = {}
     sources: dict[int, str] = {}
-    for d in np.unique(spectra.data_id):
-        rows = np.flatnonzero(spectra.data_id == d)
-        i0 = rows[0]
+    own_count: dict[int, int] = {}
+    own_residual: dict[int, float] = {}
+    agrees: dict[int, bool] = {}
+    ids_all = [int(d) for d in np.unique(spectra.data_id)]
+    if config.share and groups:
+        keyed: dict[Hashable, list[int]] = {}
+        for d in ids_all:
+            keyed.setdefault(groups.get(d, ("series", d)), []).append(d)
+        members = list(keyed.values())
+    else:
+        members = [[d] for d in ids_all]
+    for group in members:
+        rows = {d: np.flatnonzero(spectra.data_id == d) for d in group}
+        i0 = rows[group[0]][0]
         peptide, charge = str(spectra.peptide[i0]), int(spectra.charge[i0])
         modification = str(spectra.modification[i0])
 
-        def at(t, rows=rows):
-            sel = rows[np.abs(spectra.time[rows] - t) <= atol]
+        def at(t, d, rows=rows):
+            sel = rows[d][np.abs(spectra.time[rows[d]] - t) <= atol]
             return [spectra.spectrum(int(i)) for i in sel]
 
         def estimate(refs, peptide=peptide, charge=charge, modification=modification):
             return estimate_envelope(refs, peptide, charge, modification=modification,
                                      config=config, picker=picker, registry=registry)
 
+        def residual(refs, envelope, peptide=peptide, charge=charge,
+                     modification=modification):
+            return reference_residual(refs, envelope, peptide, charge,
+                                      modification=modification, picker=picker,
+                                      registry=registry)
+
+        own = {d: at(reference_time, d) for d in group}
         chosen, source = None, "theory"
-        refs = at(reference_time)
+        refs = [r for d in group for r in own[d]]
         if refs:
-            chosen, source = estimate(refs), "reference"
+            chosen = estimate(refs)
+            source = "reference" if len(group) == 1 else "shared"
+        res = {d: float("nan") for d in group}
+        agree = {d: True for d in group}
+        if chosen is not None and len(group) > 1 and config.mode != "theory":
+            have = [d for d in group if own[d]]
+            if len(have) > 1:  # which conditions agree with which (see the module docstring)
+                alone = {d: estimate(own[d]) for d in have}
+                self_fit = {d: residual(own[d], alone[d]) for d in have}
+                fits = {(d, e): residual(own[d], alone[e]) - self_fit[d] <= config.max_residual
+                        for d in have for e in have if d != e}
+                count = {d: sum(fits[d, e] and fits[e, d] for e in have if e != d)
+                         for d in have}
+                best = max(count.values())
+                agree.update({d: best > 0 and count[d] == best for d in have})
+                core = [r for d in have if agree[d] for r in own[d]]
+                if core and len(core) < len(refs):
+                    chosen = estimate(core)
+            res = {d: residual(own[d], chosen) if own[d] else float("nan") for d in group}
         if (chosen is None or not chosen.good) and fallback_time is not None:
-            back = at(fallback_time)
+            back = [r for d in group for r in at(fallback_time, d)]
             if back:
                 other = estimate(back)
                 if chosen is None or other.good or other.residual < chosen.residual:
@@ -228,8 +340,12 @@ def series_envelopes(
             chosen = Envelope(config.mode, np.array([1.0]), base.clusters, base.fit_shape,
                               float("nan"), 0, config.mode == "theory")
             source = "theory"
-        by_series[int(d)] = chosen
-        sources[int(d)] = source
+        for d in group:
+            by_series[d] = chosen
+            sources[d] = source
+            own_count[d] = len(own[d]) if len(group) > 1 else chosen.n_reference
+            own_residual[d] = res[d] if source == "shared" else float("nan")
+            agrees[d] = agree[d] if source == "shared" else True
     ids = sorted(by_series)
     width = max(config.components, 1)
     weights = np.full((len(ids), width), np.nan)
@@ -244,9 +360,11 @@ def series_envelopes(
         mode=np.array([by_series[d].mode for d in ids], dtype=str),
         source=np.array([sources[d] for d in ids], dtype=str), weights=weights,
         residual=np.array([by_series[d].residual for d in ids], dtype=float),
-        n_reference=np.array([by_series[d].n_reference for d in ids], dtype=np.int64),
+        n_reference=np.array([own_count[d] for d in ids], dtype=np.int64),
         good=np.array([by_series[d].good for d in ids], dtype=bool),
         fit_shape=np.concatenate(shapes) if shapes else np.empty(0),
         shape_offsets=np.asarray(offsets, dtype=np.int64),
+        own_residual=np.array([own_residual[d] for d in ids], dtype=float),
+        agrees=np.array([agrees[d] for d in ids], dtype=bool),
     )
     return table, by_series

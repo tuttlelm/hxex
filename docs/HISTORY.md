@@ -2369,3 +2369,51 @@ CSVs or mzML if wanted.
       this: wrong, corrected here.
     - Owner's decision (2026-10-15): the default stays 400; `k1_adam_steps = 200` with
       `screen = true` is the recommended setting when speed matters (README).
+
+87. **Shared envelopes for the conditions of one ion, and the `poor_envelope` flag (owner,
+    2026-10-16).** A fragment's envelope is a mixture of ion types (`c-1` and `c`, `z-dot` and
+    `z+1`) whose proportions the theory cannot predict, so it has to be measured, normally from
+    the undeuterated control (item 35, `[run.envelope] mode = "mixed"` or `"infer"`).
+    - **Owner's evidence** (August 2025, private): the undeuterated envelopes of every fragment
+      of the 11-residue peptide of the private fragment dataset compared at low and high
+      in-source energy, for ETD (3+), EThcD (2+) and UVPD (3+). Conclusion: they agree unless
+      something else is wrong with the data. In that comparison the ETD and EThcD `c-1` and
+      `z-dot` ions and the precursors agree closely; five UVPD `a`/`x` ions differ in shape, and
+      five ions are seen at one energy only. The mixture differs between activations (EThcD's
+      `c-1` ions carry more of the lighter type than ETD's), so an envelope is shared across
+      energies, not across activations.
+    - **Built:** `EnvelopeConfig.share` (opt-in, `[run.envelope] share = true`). The series of
+      one sample, ion, charge, parent, activation, pre-activation and precursor that differ only
+      in their scan filters or list label (`hxex.io.envelope_groups`) get one envelope from all
+      their references. The conditions are compared pairwise first: two agree when the envelope
+      fitted to each one's references fits the other's within `max_residual` of its own fit,
+      both ways. The shared envelope is fitted to those that agree with the most others; the
+      rest (`agrees` False) are flagged; with no agreement at all (two conditions that
+      disagree) it is fitted to all and all are flagged. A condition without references of its
+      own takes the shared envelope. The envelope table gains `own_residual` and `agrees`
+      (older bundles: NaN and True); `n_reference` is the series' own count with `share`.
+      The first version compared each condition with the pooled fit, which an outlier pulls
+      towards itself (the synthetic test caught it); the second compared absolute residuals,
+      which marked as disagreeing two conditions with the same references whenever the mixture
+      fitted neither.
+    - **Flag `poor_envelope`** (all runs with `mixed` or `infer`, shared or not): the series was
+      left with the theory (no usable reference), its envelope does not describe the spectra
+      it was fitted to (`good` False), or, with `share`, its references disagree with the other
+      conditions' or the shared envelope does not describe them. Previously these were only
+      counted in the log.
+    - `[run] envelope_fallback_time` was already readable from the project file (not a gap,
+      contrary to what I told the owner at first).
+    - **Real data** (the private ScramPep ETD example: gentle and harsh scans of one
+      undeuterated file, 3 components): with `share` the weights are identical to the
+      per-condition ones (the references are the same spectra), no condition disagrees, and the
+      run takes the same time. 36 of 68 series are flagged `poor_envelope` (3,686 of 12,678
+      spectra), as before the change but now visible: 6 with no reference at all (`c-1:1` at
+      1+ and 2+, `z-dot:1` at 2+, each condition), 28 whose mixture does not fit (residual
+      0.16 to 1.0 against 0.15; 22 of them 2+ fragments, 4 1+, 2 3+) and 2 (one ion, both
+      conditions) whose mixture fits at 0.105 by `estimate_envelope`'s residual but at 0.22
+      when the reference is picked again with the final weights' bins (that residual is
+      computed with the bins of the previous iteration; the iterations had not settled). In
+      most of the 2+ references the 2+ ion is
+      not there to speak of (`c-1:4` 2+: the picked bins hold scattered noise; the strongest
+      nearby peaks belong to another ion), so their kinetics fits rest on no measured envelope.
+      Not yet checked on data where the conditions have separate undeuterated files.

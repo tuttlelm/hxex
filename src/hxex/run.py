@@ -339,12 +339,12 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
-    rates=None, n_sites=None, rt=None,
+    rates=None, n_sites=None, rt=None, poor_envelope=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
     need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
     (:func:`site_counts`); without it they are read back from ``data.n_max`` (rounded; an ion
-    without any site then counts one)."""
+    without any site then counts one). ``poor_envelope``: the series whose envelope is poor."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     fits: list[FitResult] = []
     start_stage(progress, "fit", lo, lo + (hi - lo) * share)
@@ -364,7 +364,8 @@ def _fit_part(
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt)
     quality = None
     if config.quality is not None:
-        quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm)
+        quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
+                                 poor_envelope_series=poor_envelope)
     return fits, fit, controls, quality
 
 
@@ -496,17 +497,34 @@ def run(
     pick_share = 0.05 if raw is not None else 0.0
     envelopes, clusters, shapes = None, None, None
     if raw is not None and config.envelope.mode != "theory":
+        groups = None
+        if config.envelope.share:
+            from .io.mzml import envelope_groups
+
+            groups = envelope_groups(raw.source)
+            if not groups:
+                log.warning("envelope share: the spectra were not read from scan files, so "
+                            "every series keeps its own envelope")
         envelopes, by_series = series_envelopes(
             raw, config=config.envelope, reference_time=config.reference_time,
             fallback_time=config.envelope_fallback_time, picker=config.picker,
-            registry=config.registry,
+            registry=config.registry, groups=groups,
         )
         clusters = {d: e.clusters for d, e in by_series.items()}
         shapes = {d: e.fit_shape for d, e in by_series.items()}
-        n_back = int((envelopes.source != "reference").sum())
+        n_back = int(np.isin(envelopes.source, ("fallback", "theory")).sum())
         if n_back:
             log.warning("%d of %d series took their envelope from the fallback or the theory",
                         n_back, len(envelopes))
+        if config.envelope.share:
+            shared = envelopes.source == "shared"
+            log.info("%d series share an envelope with another condition, %d without "
+                     "references of their own", int(shared.sum()),
+                     int((shared & (envelopes.n_reference == 0)).sum()))
+        n_poor = int(envelopes.poor.sum())
+        if n_poor:
+            log.warning("%d of %d series have a poor envelope (flagged poor_envelope)", n_poor,
+                        len(envelopes))
     if raw is not None:
         start_stage(progress, "pick", 0.0, UNITS * pick_share)
         binned = pick_spectra(
@@ -537,9 +555,11 @@ def run(
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None
+    poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
-                                             site_counts(picked, config), rt=rt)
+                                             site_counts(picked, config), rt=rt,
+                                             poor_envelope=poor)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

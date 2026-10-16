@@ -241,6 +241,8 @@ def _envelopes_table(e: EnvelopeTable) -> pa.Table:
         "n_reference": pa.array(np.asarray(e.n_reference, dtype=np.int64)),
         "good": pa.array(np.asarray(e.good, dtype=bool)),
         "fit_shape": _flat_ragged(e.fit_shape, e.shape_offsets, pa.float64()),
+        "own_residual": pa.array(np.asarray(e.own_residual, dtype=np.float64)),
+        "agrees": pa.array(np.asarray(e.agrees, dtype=bool)),
     })
 
 
@@ -255,6 +257,10 @@ def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
         n_reference=np.asarray(_col(table, "n_reference"), dtype=np.int64),
         good=np.asarray(_col(table, "good"), dtype=bool),
         fit_shape=np.asarray(shape, dtype=np.float64), shape_offsets=offsets,
+        own_residual=(np.asarray(_col(table, "own_residual"), dtype=np.float64)
+                      if "own_residual" in table.column_names else None),
+        agrees=(np.asarray(_col(table, "agrees"), dtype=bool)
+                if "agrees" in table.column_names else None),
     )
 
 
@@ -283,6 +289,8 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         # written before the misfit statistic: NaN
         misfit=f("misfit") if "misfit" in table.column_names else None,
         misfit_rel=f("misfit_rel") if "misfit_rel" in table.column_names else None,
+        # written before the envelope flag: False
+        poor_envelope=(b("poor_envelope") if "poor_envelope" in table.column_names else None),
     )
 
 

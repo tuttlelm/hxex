@@ -10,6 +10,7 @@ from .envelopes import (
     EnvelopeConfig,
     EnvelopeTable,
     estimate_envelope,
+    reference_residual,
     series_envelopes,
 )
 from .pick import (
@@ -39,5 +40,6 @@ __all__ = [
     "pick_spectrum",
     "plan_bins",
     "predicted_mz",
+    "reference_residual",
     "series_envelopes",
 ]

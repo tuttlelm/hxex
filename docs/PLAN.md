@@ -432,7 +432,9 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   envelope formulas, `max_namides` without `Hex`.
 - Fragment ion-type mixtures: hxex fits the weights of the given ion types to the series'
   undeuterated references, with marked fallbacks; pyHXExpress used `NA_envelope` `mixedN` (and
-  `infer`) (item 35).
+  `infer`) (item 35). Opt-in `share`: the conditions of one ion (scan filters, list label)
+  share its envelope, checked pairwise; an envelope not measured well is flagged
+  `poor_envelope` (item 87).
 
 Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status"):
 

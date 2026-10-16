@@ -8,7 +8,8 @@ from scipy.stats import binom
 
 from hxex import chem
 from hxex.fit import FitConfig
-from hxex.io import open_bundle
+from hxex.fragments import fragment_targets
+from hxex.io import MzmlTarget, envelope_groups, open_bundle
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import (
@@ -16,9 +17,11 @@ from hxex.picking import (
     PickerConfig,
     estimate_envelope,
     plan_bins,
+    reference_residual,
     series_envelopes,
 )
 from hxex.picking.pick import composition_mz
+from hxex.quality import QualityConfig
 from hxex.run import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
@@ -115,6 +118,106 @@ def test_reference_fallback_and_theory():
     assert no_fallback.source[1] == "reference" and not no_fallback.good[1]
 
 
+def test_conditions_share_an_envelope():
+    """Gentle and harsh scans of one ion share its envelope: a condition without references
+    borrows it, one whose references it does not describe is left out of it and marked poor."""
+    good = mixture_spectrum(TRUE_WEIGHTS, 0.0)
+    other = mixture_spectrum(np.array([0.9, 0.1]), 0.0)  # mostly c-1: not the same mixture
+    later = mixture_spectrum(TRUE_WEIGHTS, 2.0)
+    cfg = EnvelopeConfig(mode="mixed", components=2, share=True)
+    s = SpectrumSet.from_spectra(
+        series([(0.0, good), (60.0, later)], 0)  # gentle
+        + series([(0.0, mixture_spectrum(TRUE_WEIGHTS, 0.0, height=6e4)), (60.0, later)], 1)
+        + series([(60.0, later)], 2)  # no reference of its own
+        + series([(0.0, other), (60.0, later)], 3)  # a reference the others do not agree with
+        + series([(60.0, later)], 4))  # another ion: nothing to learn from
+    groups = {0: "ion", 1: "ion", 2: "ion", 3: "ion"}
+    table, by = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, groups=groups)
+    assert list(table.source) == ["shared"] * 4 + ["theory"]
+    assert table.n_reference.tolist() == [1, 1, 0, 1, 0]
+    for d in range(4):  # one envelope, fitted without series 3
+        np.testing.assert_allclose(table.weights[d], [0.25, 0.75], atol=0.01)
+        assert by[d] is by[0]
+    own = table.own_residual
+    assert own[0] < 0.02 and own[1] < 0.02 and own[3] > cfg.max_residual
+    assert table.agrees.tolist() == [True, True, True, False, True]
+    assert np.isnan(own[2]) and np.isnan(own[4])
+    assert table.poor.tolist() == [False, False, False, True, True]
+    mod = f"ion_type:{ION}"
+    assert reference_residual([other], by[0], PEPTIDE, CHARGE, modification=mod,
+                              picker=PICK) == pytest.approx(own[3])
+    assert np.isnan(reference_residual([], by[0], PEPTIDE, CHARGE, modification=mod,
+                                       picker=PICK))
+    # two conditions that disagree: no telling which is right, so both are marked
+    pair, _ = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+                               groups={0: "ion", 3: "ion"})
+    assert pair.agrees.tolist() == [False, True, True, False, True]
+    assert pair.poor.tolist() == [True, False, True, True, True]
+    # without share (or without groups) every series has its own
+    alone, _ = series_envelopes(s, config=EnvelopeConfig(mode="mixed", components=2),
+                                reference_time=0.0, picker=PICK, groups=groups)
+    assert list(alone.source) == ["reference", "reference", "theory", "reference", "theory"]
+    np.testing.assert_allclose(alone.weights[3], [0.9, 0.1], atol=0.01)
+    assert np.isnan(alone.own_residual).all() and alone.agrees.all()
+    assert alone.poor.tolist() == [False, False, True, False, True]
+
+
+def test_envelope_groups():
+    """Series that differ only in their scan filters or list label share a key."""
+    def target(label, **kw):
+        entry = PeptideEntry("", "", PEPTIDE, "0001-0010", 1, 10, CHARGE, f"ion_type:{ION}",
+                             extra={"condition": label, "parent_peptide": PEPTIDE})
+        return MzmlTarget(entry, ms_level=2, activation="ETD", precursor_charge=3, **kw)
+
+    targets = [target("gentle", filter_excludes="sid"), target("harsh", filter_contains="sid"),
+               MzmlTarget(target("x").entry, ms_level=2, activation="EThcD"),
+               target("gentle", filter_excludes="sid", preactivation="HCD")]
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i} for i in range(4)]
+              + [{"data_id": 4, "sample": "T", "target": 0}]}
+    g = envelope_groups(source)
+    assert g[0] == g[1] and len({g[0], g[2], g[3], g[4]}) == 4
+    assert envelope_groups({"reader": "specexport"}) == {} and envelope_groups(None) == {}
+    # targets as the fragment lists make them: a gentle and a harsh c4 share, c2 does not
+    parent = PeptideEntry("f", "S", "GSHPLVFK", "11-18", 11, 18, 3)
+    made = (fragment_targets(parent, "c:2,4", activation="ETD", label="gentle",
+                             filter_excludes="sid")
+            + fragment_targets(parent, "c:4", activation="ETD", label="harsh",
+                               filter_contains="sid"))
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in made],
+              "series": [{"data_id": i, "sample": "S", "target": i} for i in range(len(made))]}
+    g = envelope_groups(source)
+    ion = [(t.entry.peptide, t.entry.modification, t.entry.charge) for t in made]
+    assert len(set(ion)) == 4 < len(made)
+    for i in range(len(made)):
+        for j in range(len(made)):
+            assert (g[i] == g[j]) == (ion[i] == ion[j])
+
+
+def test_a_poor_envelope_is_flagged(tmp_path):
+    """A series fitted with a mixed envelope but without references is flagged poor_envelope,
+    in the run and in the bundle."""
+    times, levels = [0.0, 30.0, 60.0, 120.0, 240.0], [0.0, 1.5, 3.0, 4.5, 6.0]
+    with_ref = series([(t, mixture_spectrum(TRUE_WEIGHTS, lv))
+                       for t, lv in zip(times, levels, strict=True)], 0)
+    without = series([(t, mixture_spectrum(TRUE_WEIGHTS, lv))
+                      for t, lv in zip(times[1:], levels[1:], strict=True)], 1, sample="T")
+    fit = FitConfig(k_min=1, k_max=1, adam_steps=100, n_restarts=1,
+                    backend=Backend("cpu", "float64"),
+                    noise=NoiseConfig("gaussian", percent=3.0))
+    cfg = RunConfig(picker=PICK, fit=fit, quality=QualityConfig(),
+                    envelope=EnvelopeConfig(mode="mixed", components=2))
+    res = run(SpectrumSet.from_spectra(with_ref + without), cfg, out=tmp_path / "b")
+    assert list(res.envelopes.source) == ["reference", "theory"]
+    flag = np.asarray(res.quality.poor_envelope)
+    np.testing.assert_array_equal(flag, res.fit.data_id == 1)
+    assert res.quality.flagged[flag].all()
+    with open_bundle(tmp_path / "b") as b:
+        np.testing.assert_array_equal(b.quality().poor_envelope, flag)
+        np.testing.assert_array_equal(b.envelopes().own_residual, res.envelopes.own_residual)
+        np.testing.assert_array_equal(b.envelopes().agrees, res.envelopes.agrees)
+
+
 def test_a_run_with_a_mixture_recovers_the_deuteration(tmp_path):
     """Spectra of a c-1 / c mixture: with the mixture the fitted deuteration is the true one;
     with the theory of c-1 alone it is about one deuterium (the hydrogen) too high."""
@@ -148,6 +251,7 @@ def test_a_run_with_a_mixture_recovers_the_deuteration(tmp_path):
 def test_envelope_config():
     c = EnvelopeConfig(mode="infer", components=3)
     assert EnvelopeConfig.from_dict(c.to_dict()) == c
+    assert EnvelopeConfig.from_dict({"share": True}).share
     for bad in ({"mode": "other"}, {"components": 0}, {"max_residual": 0}, {"iterations": 0}):
         with pytest.raises(ValueError):
             EnvelopeConfig(**bad)
