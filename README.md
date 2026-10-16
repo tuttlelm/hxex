@@ -64,6 +64,12 @@ Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes
 Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had started. On the CPU,
 `--threads N` (or `threads = N` in the project file) sets the number of threads; about half the
 physical cores was fastest on a 24-core machine.
+With `screen = true` in `[run.fit]`, K = 2 and 3 are fitted only for the spectra that could
+select them (an exact bound; the selected K does not change), which takes about a third of the
+time, but the skipped fits are missing from fixed-K analyses (K = 2 descriptions, fixed-K
+bootstraps). When speed matters, add `k1_adam_steps = 200` (fewer Adam steps for K = 1 only):
+together about a quarter of the default time, with the same selected K for all but a few spectra
+and undeuterated control means within a few hundredths of a deuteron.
 
 ## Thermo raw files (optional)
 

@@ -687,6 +687,7 @@ class ReviewTable:
             if k:
                 if int(k) not in fit.k_values:
                     raise ValueError(f"{sid}: K = {int(k)} was not fitted (tried {fit.k_values})")
+                fit.require_fitted(index[str(sid)], int(k))
                 out[index[str(sid)]] = int(k)
         return out
 

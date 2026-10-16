@@ -21,6 +21,7 @@ from hxex.model import (
     logit,
     n_params,
     normalise_shape,
+    predict_mixture,
     shape_weights,
 )
 
@@ -365,3 +366,54 @@ def test_the_fast_convolutions_equal_the_direct_one(layout):
     zeros = CPU64.tensor(np.zeros((len(bins), k)))
     model = MixtureBatch(batch, shape_w, zeros, zeros, zeros)
     assert (model.grid is None) == (layout == "fractional")
+
+
+@pytest.mark.parametrize("layout", ["consecutive", "integer", "fractional"])
+def test_the_mixture_prediction_is_the_sum_of_the_components(layout):
+    """predict_mixture convolves the amplitude-weighted mixture once instead of each component."""
+    rng = np.random.default_rng(5)
+    sizes = [12, 7, 20, 1, 15]
+    if layout == "consecutive":
+        bins = [np.arange(s, dtype=float) for s in sizes]
+    elif layout == "integer":
+        bins = [np.arange(s, dtype=float) + 2 for s in sizes]
+    else:
+        bins = [np.arange(s, dtype=float) + 0.5 for s in sizes]
+    shapes = [rng.uniform(0.1, 1, int(rng.integers(1, 9))) for _ in bins]
+    k = 3
+    batch = PaddedBatch.from_arrays(bins, [np.ones(len(b)) for b in bins], np.full(5, 25.0), CPU64)
+    shape_w = shape_weights(shapes, k, CPU64)
+    grid = integer_grid(batch.b, shape_w.shape[0])
+    log_a = torch.tensor(rng.normal(0, 1, (5, k)), requires_grad=True)
+    n = torch.tensor(rng.uniform(0.3, 24, (5, k)), requires_grad=True)
+    logit_p = torch.tensor(rng.normal(0, 2, (5, k)), requires_grad=True)
+    p = torch.sigmoid(logit_p)
+    parts = (log_a.exp().unsqueeze(0) * convolve(batch.b, n, p, shape_w, grid, logit_p)).sum(2)
+    mixed = predict_mixture(batch.b, log_a, n, p, shape_w[:, :, 0], grid, logit_p)
+    np.testing.assert_allclose(mixed.detach().numpy(), parts.detach().numpy(), rtol=1e-12,
+                               atol=1e-300)
+    w = torch.tensor(rng.normal(size=parts.shape))
+    g1 = torch.autograd.grad((parts * w).sum(), (log_a, n, logit_p))
+    g2 = torch.autograd.grad((predict_mixture(batch.b, log_a, n, torch.sigmoid(logit_p),
+                                              shape_w[:, :, 0], grid, logit_p) * w).sum(),
+                             (log_a, n, logit_p))
+    for a, b in zip(g2, g1, strict=True):
+        np.testing.assert_allclose(a.numpy(), b.numpy(), rtol=1e-9, atol=1e-12)
+
+
+def test_gradients_are_finite_in_float32_where_p_is_near_1():
+    """Above the support the unnormalised terms grow as (1 - p)^(n - b); evaluated before
+    masking they overflowed float32 and made the gradient NaN (an optimiser then stopped
+    moving n and p for that measurement). Seen at n just above an integer with p near 1."""
+    bins = np.arange(30.0)
+    batch = PaddedBatch.from_arrays([bins], [np.ones(30)], [9.6], CPU32)
+    w = shape_weights([GOLD["shape_0"]], 2, CPU32)
+    n = np.array([[7.0017, 4.0]])
+    n_raw = np.log(n / (9.6 - n))
+    for model_fn in ("nll", "components"):
+        m = MixtureBatch(batch, w, CPU32.tensor(np.zeros((1, 2))), CPU32.tensor(n_raw),
+                         CPU32.tensor(np.array([[7.44, 16.7]])))
+        out = m.nll(batch.obs).sum() if model_fn == "nll" else m.components().sum()
+        out.backward()
+        for prm in m.parameters():
+            assert torch.isfinite(prm.grad).all(), model_fn

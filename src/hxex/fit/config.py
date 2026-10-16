@@ -40,6 +40,15 @@ class FitConfig:
     the others). With the defaults a measurement's fit depends only on its own data, its noise
     reference and the seed, not on the other measurements in the batch.
     Everything random is drawn from generators seeded by ``seed``.
+
+    ``k1_adam_steps`` (None: ``adam_steps``) is the number of Adam steps of the K=1 fit only:
+    one component rarely has more than one optimum, so it needs fewer than the larger K
+    (docs/HISTORY.md item 86).
+
+    ``screen`` (off by default) fits each K above 1 only for the measurements that could still
+    select it, judged from a lower bound on the loss of any mixture (:mod:`hxex.fit.screen`);
+    the selected K does not change, but the skipped fits are NaN, so fixed-K analyses (a
+    fixed-K bootstrap, the K=2 descriptions of the analysis) lack them. It needs ``k_min = 1``.
     """
 
     k_min: int = 1
@@ -48,6 +57,7 @@ class FitConfig:
     min_population: float = 0.05
     n_restarts: int = 6
     adam_steps: int = 400
+    k1_adam_steps: int | None = None
     lbfgs_steps: int = 0
     lr_adam: float = 0.05
     lr_adam_end: float = 0.002
@@ -58,6 +68,7 @@ class FitConfig:
     grad_clip: str = "per_measurement"
     polish_steps: int = 40
     seed: int = 0
+    screen: bool = False
     noise: NoiseConfig = field(default_factory=NoiseConfig)
     backend: Backend = field(default_factory=Backend)
 
@@ -70,6 +81,8 @@ class FitConfig:
             raise ValueError("min_population must be in [0, 1)")
         if self.n_restarts < 1:
             raise ValueError("n_restarts must be at least 1")
+        if self.k1_adam_steps is not None and self.k1_adam_steps < 0:
+            raise ValueError("k1_adam_steps must be non-negative")
         if self.adam_steps < 0 or self.lbfgs_steps < 0:
             raise ValueError("adam_steps and lbfgs_steps must be non-negative")
         if not self.lr_adam > 0 or not self.lr_adam_end > 0:
@@ -82,6 +95,14 @@ class FitConfig:
             raise ValueError("warm_noise must be non-negative")
         if self.seed < 0:
             raise ValueError("seed must be non-negative")
+        if self.screen and self.k_min != 1:
+            raise ValueError("the screen needs k_min = 1 (it compares every K with the K=1 fit)")
+
+    def adam_steps_for(self, k: int) -> int:
+        """The Adam steps of the K-population fit."""
+        if k == 1 and self.k1_adam_steps is not None:
+            return self.k1_adam_steps
+        return self.adam_steps
 
     @property
     def k_values(self) -> tuple[int, ...]:

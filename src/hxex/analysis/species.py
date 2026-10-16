@@ -303,20 +303,24 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
             if boot is not None:
                 mean_se[i] = boot.mean_se[i, :k][order[i]]
                 frac_se[i] = boot.population_se[i, :k][order[i]]
-        no_boot = int(np.isnan(mean_se[keep, 0]).sum())
+        fitted = fit.fitted(k)
+        if not quiet and (keep & ~fitted).any():
+            log.info("K=%d was not fitted for %d spectra (the screen showed it cannot be "
+                     "selected): they have no K=%d description", k, int((keep & ~fitted).sum()), k)
+        no_boot = int(np.isnan(mean_se[keep & fitted, 0]).sum())
         if k >= 2 and no_boot and not quiet:
             log.warning("K=%d: %d of %d spectra have no bootstrap, so their standard errors come "
                         "only from the scatter of replicates (or are unknown): too small for the "
                         "choice between one and two populations (run the bootstrap at K=1 and "
-                        "K=2, BootstrapConfig.ks)", k, no_boot, int(keep.sum()))
+                        "K=2, BootstrapConfig.ks)", k, no_boot, int((keep & fitted).sum()))
         if controls is not None:
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se
-        usable = keep.copy()
+        usable = keep & fitted
         if filters is not None and k >= 2:
             lo = filters.min_population
-            bad_pop = np.any((fracs < lo) | (fracs > 1 - lo), axis=1) & keep
-            bad_fd = np.any(means / n_amides[:, None] > filters.max_fD, axis=1) & keep
+            bad_pop = np.any((fracs < lo) | (fracs > 1 - lo), axis=1) & usable
+            bad_fd = np.any(means / n_amides[:, None] > filters.max_fD, axis=1) & usable
             dropped["population"] += int(bad_pop.sum())
             dropped["fD"] += int((bad_fd & ~bad_pop).sum())
             usable &= ~(bad_pop | bad_fd)

@@ -452,3 +452,20 @@ def test_overwriting_a_reviewed_bundle_keeps_its_review(tmp_path, caplog):
         r = b.review()
         assert r.spectrum_id.tolist() == [kept] and r.note.tolist() == ["noisy"]
         assert (r.status_of(b.fit()) == "rejected").sum() == 1
+
+
+def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tmp_path, caplog):
+    raw, res = whole
+    cfg = config(fit=dataclasses.replace(config().fit, screen=True),
+                 bootstrap=dataclasses.replace(config().bootstrap, ks=(1, 2)))
+    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+        screened = run(raw, cfg, out=tmp_path / "s")
+    np.testing.assert_array_equal(screened.fit.selected_K, res.fit.selected_K)
+    skipped = ~screened.fit.fitted(2)
+    assert skipped.any() and res.fit.fitted(2).all()
+    assert "fixed-K bootstrap has no values" in caplog.text
+    assert np.all(screened.bootstrap_by_k[2].n_success[skipped] == 0)
+    with open_bundle(tmp_path / "s") as b:
+        np.testing.assert_array_equal(b.fit().fitted(2), screened.fit.fitted(2))
+        np.testing.assert_array_equal(b.fit().selected_K, screened.fit.selected_K)
+        assert RunConfig.from_dict(b.manifest["configs"]["run"]).fit.screen

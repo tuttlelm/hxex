@@ -141,6 +141,21 @@ class FitResult:
             noise_kind=self.noise_kind[rows], noise_estimate=estimate,
         )
 
+    def fitted(self, k: int) -> np.ndarray:
+        """Whether K was fitted for each measurement (False where the screen skipped it,
+        :attr:`FitConfig.screen`; a fit that failed counts as fitted, with an ``inf`` loss)."""
+        return ~np.isnan(self.fits[k].nll)
+
+    def require_fitted(self, i: int, k: int) -> None:
+        """Raise ValueError if K was not fitted for measurement ``i``."""
+        if k not in self.fits:
+            raise ValueError(f"K = {k} was not fitted (tried {self.k_values})")
+        if not self.fitted(k)[i]:
+            raise ValueError(
+                f"{self.spectrum_id[i]}: K = {k} was not fitted (the screen showed it cannot be "
+                "selected; fit without FitConfig.screen to have it)"
+            )
+
     def grid(self, name: str) -> np.ndarray:
         """``nll``, ``bic``, ``aic`` or ``passes_min_pop`` for every K tried, ``(M, nK)``."""
         return np.column_stack([getattr(self.fits[k], name) for k in self.k_values])
@@ -159,16 +174,17 @@ class FitResult:
         """One row per measurement, K and component, as a dict of equal-length columns.
 
         ``k_ordered`` ranks the components of a fit by ascending mean. Rows are ordered by
-        measurement, then K, then component.
+        measurement, then K, then component. Fits the screen skipped have no rows.
         """
         cols: dict[str, list] = {name: [] for name in _TABLE_COLUMNS}
         for k in self.k_values:
             fit = self.fits[k]
             order = np.argsort(np.argsort(fit.means, axis=1), axis=1) + 1
             frac = fit.populations
+            fitted = self.fitted(k)
             for m in range(len(self)):
                 is_sel = bool(self.selected_K[m] == k)
-                if selected_only and not is_sel:
+                if (selected_only and not is_sel) or not fitted[m]:
                     continue
                 for c in range(k):
                     row = {

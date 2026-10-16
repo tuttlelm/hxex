@@ -2259,3 +2259,87 @@ CSVs or mzML if wanted.
     error says that a file with only `[analysis]` is for `hxex analyse`. The ScramPep ETD
     against EThcD comparison is now such a file (`scrampep_compare/hxex.toml`).
 
+
+85. **CPU speed, part two, and an exact multimodality screen (owner asked, 2026-10-15).**
+    Profiled on 100 series of the intact-peptide benchmark (1,889 measurements, K = 1 to 3, the
+    benchmark's settings, CPU float32, 12 threads): 87 s, of which Adam 65 s, the polish 12 s
+    and the k-means starts 10 s.
+    - **Model step** (`hxex.model.mixture`): the pmf at the integers comes from the ratio of
+      successive terms (`sum_{i<u} log((n - i) / (i + 1))`, one `log` and a cumulative sum
+      instead of an `lgamma`), evaluated once for both the normaliser and the bins; and the
+      prediction convolves the amplitude-weighted mixture once (`predict_mixture`; the shape is
+      the same for every component, so `sum_k A_k (B_k * D) = (sum_k A_k B_k) * D`) instead of
+      each component. Forward plus backward 7.9 to 3.8 ms per step; values equal to 1e-13
+      (float64, the prototype goldens) and about 1e-5 relative in float32.
+    - **Bug found and fixed:** terms above the support, `(1 - p)^(n - b)`, overflowed float32
+      where `p` is near 1 before `torch.where` masked them, so the gradient was NaN (0 x inf);
+      `_clean_grads` zeroed it, and Adam stopped moving `n` and `p` of that measurement. 134 of
+      the 1,889 had NaN gradients at their fitted parameters. Masking to `-inf` before any `exp`
+      removes it (test). float64 was not affected.
+    - **k-means starts** batched (`kmeans_starts`): a k-means on the bins weighted by their
+      rounded intensities (the same clusters as clustering that many copies, as before, without
+      making them), vectorised over the measurements, with centroids starting at the weighted
+      quantiles (deterministic; scipy's random points cannot be reproduced). 10 s to under 1 s.
+    - Together: 87 to 42 s; selected K 1,508/319/62 against 1,509/318/62 (one measurement).
+      The whole benchmark (26,181) through `analyse`: 10.5 min (17.1 in item 46, under the model
+      of that time).
+    - **The screen** (`FitConfig.screen`, off by default; `hxex.fit.screen`). Every K-mixture
+      predicts the shape convolved with a non-negative distribution on `0 .. ceil(n_max)`, so
+      the loss of the best such distribution (non-negative least squares, 0.3 s for 7,741
+      spectra) is a floor under the loss of every K. With the Gaussian loss, K cannot be
+      selected where its penalty plus twice the floor is worse than the best criterion of the
+      Ks already fitted (with a tolerance of 1e-3 + 1e-4 relative for float32), so it is not
+      fitted. Exact by construction: it skips only fits that cannot be selected. No floor for
+      the Poisson loss (it can be negative) or bins that are not whole numbers: never skipped.
+      Skipped fits are NaN (parameters, loss, criteria; failed fits stay `inf`) with an `inf`
+      score; `FitResult.fitted(k)` and `require_fitted` tell them apart; the components table
+      leaves them out; a reviewer's K override, a spectrum figure or table at a skipped K
+      raises; population maps at a fixed K leave the panel empty; the species table logs and
+      drops them; the fixed-K bootstrap has no values for them (a warning; it already does not
+      resample a measurement without a fit). It needs `k_min = 1`. Off by default because the
+      analysis's K=2 descriptions and the one-or-two choice use the K=2 fit of every spectrum.
+    - Screen measured on 400 series (7,741 measurements; reference: the full fit on the GPU,
+      K 6,256/1,174/311): the floor was below the fitted loss of every K for all of them;
+      K = 2 and 3 skipped for 74.9 %, K = 3 for 93.0 %, no multimodal measurement missed. The
+      floor of 0 alone (2 nll1 <= 3 ln N) skips 65.7 %. Approximate screens (a quick K = 2 from
+      the split and k-means starts, LM only or 50 to 100 Adam steps, a BIC margin) skipped
+      only 6 to 10 % more and missed 64 to 353 multimodal measurements: not built.
+    - With the screen on the CPU: 7,741 measurements 193.6 to 75.6 s, the whole benchmark 10.5
+      to 3.6 min (K = 2 fitted for 26.3 %, K = 3 for 7.2 %). Selected K identical for 7,741 of
+      7,741 and 26,180 of 26,181: the one is a K = 3 fit that found another minimum in the
+      smaller batch (the rounding of a reduction depends on a measurement's position in the
+      batch: 4.4 % of measurements differ in the last bit between two batches at the same
+      parameters, padding to the same width does not change that; chunking has the same effect,
+      item 30), so its K = 3 criterion was 82.7 against 66.2 and it selected K = 2.
+    - Measured, not changed (results would change; owner to decide): K = 1 hardly needs its
+      restarts (one restart matches the six within 0.1 % of the loss for 98.4 %, six of 200
+      Adam steps for 99.8 % at half the cost), K = 2 does (one to three restarts or 200 steps
+      changed the K = 1 against K = 2 decision of 24 to 75 of 7,741). With the screen on, K = 1
+      is about three quarters of the fit. Batches up to about 4,000 rows cost less per row
+      (2.15 ms per 1,000 rows at 1,889, 1.35 at 7,556), so fitting the restarts of a K side by
+      side would help small projects (not done).
+    - GPU parity: one test asked for the same K on a tie (criteria 0.02 apart); float32 on the
+      GPU now reaches a K = 2 fit 0.02 better than float64 on the CPU, so the test checks the
+      measurements whose choice is not a tie. Test suite on this machine: 7:50 before, 5:27 after.
+
+86. **Fewer Adam steps for K = 1 (owner asked, 2026-10-15; item 85's measurement).**
+    `FitConfig.k1_adam_steps` (None, the default: `adam_steps`) sets the Adam steps of the K = 1
+    fit only; the larger K keep theirs, as they need them (item 85). Whole intact-peptide
+    benchmark (26,181 measurements, CPU, 12 threads, controls as configured there), 400 against
+    200 steps for K = 1:
+    - Time 10.46 to 9.23 min; with the screen (item 85) 2.43 min (3.6 with 400 steps).
+    - Selected K differs for 2 of 26,181 (one 2 to 3, one 3 to 2), 3 with the screen.
+    - K = 1 loss worse by more than 0.1 % for 0.18 %, by more than 0.5 for 9; never better.
+      K = 2 losses (from the split of the K = 1 fit): 8 worse and 7 better by more than 0.5;
+      24 of 4,349 spectra selecting K = 2 in both moved a mean by more than 0.1 D.
+    - K = 1 means: median change 3e-6 D, 99th percentile 0.022 D, 118 above 0.05 D (maximum
+      0.74). Controls: `m0` changed by more than 0.01 D in 142 of 1,372 series (maximum 0.075
+      D), `mfd` in 16 (maximum 0.093 D); fallbacks unchanged.
+    - **Finding:** the undeuterated spectra whose K = 1 mean moved by more than 0.01 D (281 of
+      3,248) have the same loss (median change 0, 95th percentile 3e-6): the K = 1 mean of an
+      undeuterated spectrum lies in a flat valley of the loss, so it is set by the data only to
+      a few hundredths of a deuteron (up to 0.07 D here), and the optimiser's path decides
+      where in it the fit stops. Neither value fits better. This uncertainty of `m0` is not in
+      its reported error.
+    - Owner's decision (2026-10-15): the default stays 400; `k1_adam_steps = 200` with
+      `screen = true` is the recommended setting when speed matters (README).

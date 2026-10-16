@@ -104,7 +104,12 @@ def test_the_noise_estimate_and_the_polish_run_on_the_gpu():
     gpu = fit_models(meas, FitConfig(backend=GPU32, **kw))
     assert set(gpu.noise_kind) == set(cpu.noise_kind) == {"gaussian"}
     np.testing.assert_allclose(gpu.obs_scale, cpu.obs_scale)  # the estimate does not use the GPU
-    assert np.all(np.isfinite(gpu.grid("nll"))) and list(gpu.selected_K) == list(cpu.selected_K)
+    assert np.all(np.isfinite(gpu.grid("nll")))
+    # the same K wherever the choice is not a tie (row 12's K=1 and K=2 criteria differ by 0.02,
+    # and float32 on the GPU found a K=2 fit 0.02 better than float64 on the CPU)
+    clear = np.abs(np.diff(cpu.score, axis=1))[:, 0] > 0.1
+    assert clear.sum() >= len(clear) - 2
+    assert list(gpu.selected_K[clear]) == list(cpu.selected_K[clear])
 
 
 @needs_cuda

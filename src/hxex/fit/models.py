@@ -15,6 +15,7 @@ from .init import split_start
 from .measurements import Measurements
 from .optimise import fit_batch, prepare, stable_keys
 from .result import FitResult, KFit
+from .screen import can_win, loss_floor
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,10 @@ def fit_models(
     from them (see :func:`hxex.noise.estimate_noise`); the result keeps the estimate and the flags.
     ``progress(done, total)`` counts optimiser restarts; ``cancel`` raises
     :class:`~hxex.hooks.Cancelled`.
+
+    With ``config.screen`` each K above 1 is fitted only for the measurements that could still
+    select it (:mod:`hxex.fit.screen`); the others get NaN for that K (parameters, loss and
+    criteria) and an ``inf`` score. The selected K is the same as without the screen.
     """
     backend = config.backend
     m = len(data)
@@ -79,15 +84,30 @@ def fit_models(
         done += 1
         report(progress, done, total)
 
+    floor = None
+    if config.screen:
+        floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind)
+    best = np.full(m, np.inf)  # best criterion so far (for the screen)
     fits: dict[int, KFit] = {}
     for k in k_values:
+        rows = np.arange(m)
+        if floor is not None and k > 1:
+            rows = np.flatnonzero(can_win(config.criterion, k, sizes, floor, best))
+            log.info("screen: K=%d can be selected for %d of %d measurements", k, len(rows), m)
         warm = None
         if config.nested_init and (k - 1) in fits:
             prev = fits[k - 1]
-            warm = split_start(prev.log_A, prev.n_raw, prev.p, config.split_delta)
-        log.info("fitting K=%d for %d measurements", k, m)
+            warm = split_start(prev.log_A[rows], prev.n_raw[rows], prev.p[rows],
+                               config.split_delta)
+        if len(rows) == 0:
+            fits[k] = _unfitted(k, m)
+            for _ in range(config.n_restarts + (1 if warm is not None and extra else 0)):
+                tick()
+            continue
+        sub = prep if len(rows) == m else prep.select(rows, backend)
+        log.info("fitting K=%d for %d measurements", k, len(rows))
         model, nll = fit_batch(
-            prep, k, backend, n_restarts=config.n_restarts, adam_steps=config.adam_steps,
+            sub, k, backend, n_restarts=config.n_restarts, adam_steps=config.adam_steps_for(k),
             lbfgs_steps=config.lbfgs_steps, lr_adam=config.lr_adam,
             lr_adam_end=config.lr_adam_end, seed=config.seed, warm=warm,
             warm_noise=config.warm_noise, kmeans_after_warm=config.kmeans_after_warm,
@@ -95,16 +115,20 @@ def fit_models(
             cancel=cancel, on_restart=tick,
         )
         par = model.parameters_numpy()
-        amplitudes = par["A"] * scale[:, None]
+        amplitudes = par["A"] * scale[rows, None]
         fractions = amplitudes / np.maximum(amplitudes.sum(axis=1, keepdims=True), 1e-10)
-        fits[k] = KFit(
-            k=k, A=amplitudes, n=par["n"], p=par["p"],
-            log_A=model.log_A.detach().cpu().numpy().astype(np.float64),
-            n_raw=model.n_raw.detach().cpu().numpy().astype(np.float64),
-            logit_p=model.logit_p.detach().cpu().numpy().astype(np.float64),
-            nll=nll, bic=bic(k, sizes, nll), aic=aic(k, nll),
-            passes_min_pop=np.all(fractions >= config.min_population, axis=1),
-        )
+        fit = _unfitted(k, m)
+        fit.A[rows], fit.n[rows], fit.p[rows] = amplitudes, par["n"], par["p"]
+        fit.log_A[rows] = model.log_A.detach().cpu().numpy()
+        fit.n_raw[rows] = model.n_raw.detach().cpu().numpy()
+        fit.logit_p[rows] = model.logit_p.detach().cpu().numpy()
+        fit.nll[rows] = nll
+        fit.bic[rows] = bic(k, sizes[rows], nll)
+        fit.aic[rows] = aic(k, nll)
+        fit.passes_min_pop[rows] = np.all(fractions >= config.min_population, axis=1)
+        fits[k] = fit
+        score_k = getattr(fit, config.criterion)
+        best = np.where(fit.passes_min_pop & (score_k < best), score_k, best)
 
     raw = np.column_stack(
         [getattr(fits[k], config.criterion) for k in k_values]
@@ -120,4 +144,17 @@ def fit_models(
         k_values=k_values, fits=fits, selected_K=selected, score=score, obs_scale=scale,
         sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
         noise_estimate=estimate,
+    )
+
+
+def _unfitted(k: int, m: int) -> KFit:
+    """A K-population result for M measurements with nothing fitted: NaN everywhere (the
+    screen skipped them) and no K passing the minimum population."""
+    def nan(*shape):
+        return np.full(shape, np.nan)
+
+    return KFit(
+        k=k, A=nan(m, k), n=nan(m, k), p=nan(m, k), log_A=nan(m, k), n_raw=nan(m, k),
+        logit_p=nan(m, k), nll=nan(m), bic=nan(m), aic=nan(m),
+        passes_min_pop=np.zeros(m, dtype=bool),
     )

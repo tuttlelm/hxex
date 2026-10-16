@@ -162,8 +162,7 @@ def spectrum_data(
 def _fit_data(results: Results, spectrum_id: str, k: int | None, shown) -> dict:
     i = results.find(spectrum_id)
     k = int(results.effective_K[i] if k is None else k)
-    if k not in results.fit.fits:
-        raise ValueError(f"K = {k} was not fitted (tried {results.fit.k_values})")
+    results.fit.require_fitted(i, k)
     shown = list(range(1, k + 1)) if shown is None else sorted({int(c) for c in shown})
     if any(c < 1 or c > k for c in shown):
         raise ValueError(f"components must be ranks from 1 to {k}, got {shown}")

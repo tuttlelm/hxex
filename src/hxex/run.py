@@ -378,6 +378,11 @@ def _bootstrap_part(
     boots: list[BootstrapResult] = []
     fixed: list[dict[int, BootstrapResult]] = []
     ks = _bootstrap_ks(config, fits[0])
+    skipped = [k for k in ks if not all(f.fitted(k).all() for f in fits)]
+    if skipped:
+        log.warning("the screen skipped K = %s for some spectra: the fixed-K bootstrap has no "
+                    "values for them (fit without FitConfig.screen for a fixed-K analysis)",
+                    ", ".join(map(str, skipped)))
     start_stage(progress, "bootstrap", lo + (hi - lo) * share, hi)
     for j, (sub, fit) in enumerate(zip(plan.subs, fits, strict=True)):
         check_cancel(cancel)

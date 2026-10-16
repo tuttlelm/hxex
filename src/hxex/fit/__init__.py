@@ -7,7 +7,7 @@ Batched across measurements; nested K start; Adam with a cosine schedule, then L
 """
 
 from .config import CRITERIA, FitConfig
-from .init import Start, kmeans_start, split_start
+from .init import Start, kmeans_start, kmeans_starts, split_start
 from .measurements import Measurements
 from .models import fit_models
 from .optimise import FitError, Prepared, cosine_lr, fit_batch, prepare, stable_keys
@@ -26,6 +26,7 @@ __all__ = [
     "fit_batch",
     "fit_models",
     "kmeans_start",
+    "kmeans_starts",
     "prepare",
     "split_start",
     "stable_keys",

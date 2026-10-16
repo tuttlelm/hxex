@@ -472,6 +472,11 @@ and "Phase 2 status"):
   `spectrum_id`, so runs are reproducible and independent of batch position and size.
 - A K with a nested start is also fitted from the k-means start (`FitConfig.kmeans_after_warm`),
   so a K in a run of several is not worse than the same K fitted alone (item 30).
+- The k-means start clusters the bins weighted by their rounded intensities (the same clusters as
+  the prototype's k-means on that many copies of each bin), batched over the measurements, with
+  centroids starting at the weighted quantiles instead of random points (item 85).
+- An optional exact screen (`FitConfig.screen`, off by default) skips the K that cannot be
+  selected, from a lower bound on the loss of any mixture; the prototype fits every K (item 85).
 - Bootstrap: a failed resample is dropped for that measurement only (the prototype discarded the
   iteration for all), a measurement whose own fit failed is not resampled, and resamples are
   seeded per iteration and spectrum id.
@@ -577,6 +582,9 @@ Planned, not built:
   convolution, float32, measured chunk memory). The command line takes a thread count (12 beat
   the default 24 by 7 to 15 % on a 24-core CPU). Not done: the k-means starts (single-threaded
   Python, about 10 % of a fit).
+  Update: the model step is about twice as fast (one evaluation of the pmf, one convolution of
+  the mixture), the k-means starts are batched, and the optional screen skips the K that
+  cannot be selected (item 85).
 - **Memory and plots at 10,000+ fits:** figures must be selective by default.
   Resolved: `PlotConfig` draws the `flagged` series by default and `write_figures` makes and
   releases one series at a time (item 31).

@@ -28,6 +28,7 @@ from hxex.fit import (
     cosine_lr,
     fit_models,
     kmeans_start,
+    kmeans_starts,
     split_start,
     stable_keys,
 )
@@ -92,6 +93,8 @@ def test_config_defaults_roundtrip_and_k_values():
     assert cfg.lbfgs_steps == 0 and cfg.criterion == "bic"
     assert FitConfig(k_min=2, k_max=3).k_values == (2, 3)
     assert FitConfig(k_min=2, k_max=2).k_values == (2,)
+    assert [FitConfig(k1_adam_steps=200).adam_steps_for(k) for k in (1, 2)] == [200, 400]
+    assert FitConfig().adam_steps_for(1) == 400
     full = FitConfig(k_min=2, seed=5, noise=NoiseConfig("poisson", n_eff=500.0, percent=None),
                      backend=Backend("cpu", "float32"))
     assert FitConfig.from_dict(json.loads(json.dumps(full.to_dict()))) == full
@@ -103,7 +106,8 @@ def test_config_defaults_roundtrip_and_k_values():
     "kwargs",
     [{"k_min": 0}, {"k_min": 3, "k_max": 2}, {"criterion": "hqic"}, {"min_population": 1.0},
      {"min_population": -0.1}, {"n_restarts": 0}, {"adam_steps": -1}, {"lr_adam": 0.0},
-     {"warm_noise": -1.0}, {"grad_clip": "none"}, {"seed": -1}],
+     {"warm_noise": -1.0}, {"grad_clip": "none"}, {"seed": -1}, {"k_min": 2, "screen": True},
+     {"k1_adam_steps": -1}],
 )
 def test_config_validation(kwargs):
     with pytest.raises(ValueError):
@@ -138,6 +142,16 @@ def test_kmeans_start_finds_the_populations():
 def test_kmeans_start_pads_when_there_are_fewer_distinct_bins_than_components():
     out = kmeans_start(np.array([0.0, 1.0]), np.array([100.0, 50.0]), 4, np.array([1.0]), 10.0)
     assert all(len(x) == 4 and np.all(np.isfinite(x)) for x in out)
+
+
+def test_kmeans_starts_of_a_batch_equal_those_of_each_measurement():
+    meas, _ = synthetic([BIMODAL, UNIMODAL, TRIMODAL])
+    obs = [o / 100.0 for o in meas.observed]
+    batch = kmeans_starts(meas.bins, obs, 3, meas.shapes, meas.n_max, [0, 1, 2])
+    for i in range(3):
+        one = kmeans_start(meas.bins[i], obs[i], 3, meas.shapes[i], meas.n_max[i], seed=i)
+        for a, b in zip(batch, one, strict=True):
+            np.testing.assert_allclose(a[i], b, rtol=1e-12)
 
 
 def test_split_start_keeps_the_amplitude_and_splits_the_heaviest():
@@ -531,3 +545,51 @@ def test_full_regression_against_the_prototype():
             np.abs(BASE["nll_grid"][:, k - 1]), 1.0)
         assert np.median(rel) < 1e-3  # not worse than the prototype
         assert np.mean(rel < 1e-6) > 0.7  # as good or better for most fits
+
+
+# --- the multimodality screen ---------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def screened():
+    specs = [UNIMODAL, BIMODAL, UNIMODAL, TRIMODAL, [(9.0, 1.0)], UNIMODAL]
+    meas, _ = synthetic(specs, seed=4)
+    full = fit_models(meas, CFG)
+    return meas, full, fit_models(meas, dataclasses.replace(CFG, screen=True))
+
+
+def test_the_loss_floor_is_below_the_loss_of_every_k(screened):
+    from hxex.fit.screen import loss_floor
+
+    meas, full, _ = screened
+    scaled = [o / s for o, s in zip(meas.observed, full.obs_scale, strict=True)]
+    floor = loss_floor(meas.bins, scaled, meas.shapes, meas.n_max, ["gaussian"] * len(meas))
+    assert np.all(np.isfinite(floor)) and np.all(floor >= 0)
+    for k in full.k_values:
+        assert np.all(floor <= full.fits[k].nll + 1e-9)
+    # no floor for the Poisson loss or bins that are not whole numbers
+    half = [b + 0.5 for b in meas.bins]
+    assert np.all(loss_floor(half, scaled, meas.shapes, meas.n_max, ["gaussian"] * len(meas))
+                  == -np.inf)
+    assert np.all(loss_floor(meas.bins, scaled, meas.shapes, meas.n_max, ["poisson"] * len(meas))
+                  == -np.inf)
+
+
+def test_the_screen_keeps_the_selected_k_and_marks_what_it_skipped(screened):
+    _, full, fit = screened
+    assert np.array_equal(fit.selected_K, full.selected_K)
+    assert list(full.selected_K) == [1, 2, 1, 3, 1, 1]
+    for k in (1, 2, 3):  # what was fitted is the full fit
+        done = fit.fitted(k)
+        np.testing.assert_allclose(fit.fits[k].nll[done], full.fits[k].nll[done], rtol=1e-6)
+    assert fit.fitted(1).all() and full.fitted(2).all()
+    skipped = ~fit.fitted(2)
+    assert skipped[[0, 2, 4, 5]].all() and not skipped[[1, 3]].any()
+    assert np.all(np.isnan(fit.fits[2].A[skipped])) and np.all(np.isinf(fit.score[skipped, 1]))
+    assert not fit.fitted(3)[1]  # the bimodal one cannot select K=3 once K=2 is fitted
+    rows = fit.table()
+    assert not np.any((rows["fit_K"] == 2) & np.isin(rows["measurement"], np.flatnonzero(skipped)))
+    with pytest.raises(ValueError, match="screen"):
+        fit.require_fitted(0, 2)
+    fit.require_fitted(1, 2)
+    merged = type(fit).merge([fit.select([0, 1]), fit.select([2, 3, 4, 5])], [[0, 1], [2, 3, 4, 5]])
+    assert np.array_equal(merged.fitted(2), fit.fitted(2))

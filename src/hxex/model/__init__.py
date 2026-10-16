@@ -21,6 +21,7 @@ from .mixture import (
     n_params,
     noise_loss,
     normalise_shape,
+    predict_mixture,
     shape_weights,
 )
 
@@ -40,5 +41,6 @@ __all__ = [
     "noise_loss",
     "n_params",
     "normalise_shape",
+    "predict_mixture",
     "shape_weights",
 ]

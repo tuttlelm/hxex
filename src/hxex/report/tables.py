@@ -83,6 +83,7 @@ def _target_columns(results: Results) -> dict[str, np.ndarray]:
 def _populations(results: Results, i: int, k: int):
     """Ranked means, populations and their standard errors, and the corrected means (or None:
     no controls, or none for the spectrum's series)."""
+    results.fit.require_fitted(i, k)
     kf = results.fit.fits[k]
     order = np.argsort(kf.means[i])
     mean, frac = kf.means[i][order], kf.populations[i][order]

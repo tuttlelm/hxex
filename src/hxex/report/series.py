@@ -245,6 +245,7 @@ def population_data(
     series; True raises KeyError when they have none for it."""
     i = results.find(spectrum_id)
     k = int(results.effective_K[i] if k is None else k)
+    results.fit.require_fitted(i, k)
     kf = results.fit.fits[k]
     order = np.argsort(kf.means[i])
     mean, frac = kf.means[i][order], kf.populations[i][order]
@@ -346,6 +347,8 @@ def plot_populations(
         sid = str(results.fit.spectrum_id[i])
         r_idx = int(np.searchsorted(reps, info["reps"][pos]))
         t_idx = positions[pos][0]
+        if k is not None and not results.fit.fitted(k)[i]:
+            continue  # the screen skipped this K for the spectrum: its panel stays empty
         d = population_data(results, sid, k=k, corrected=corrected, components=components)
         ax = axes[positions[pos]]
         ax.set_visible(True)
@@ -402,6 +405,8 @@ def uptake_data(
         "population_se")}
     use = False
     for pos, i in enumerate(info["rows"]):
+        if k is not None and not results.fit.fitted(k)[i]:
+            continue  # the screen skipped this K for the spectrum
         d = population_data(results, str(results.fit.spectrum_id[i]), k=k, corrected=corrected,
                             components=components)
         use = d["corrected"]

@@ -20,7 +20,7 @@ import torch
 
 from ..hooks import CancelHook, check_cancel
 from ..model import Backend, MixtureBatch, PaddedBatch, shape_weights
-from .init import Start, kmeans_start
+from .init import Start, kmeans_starts
 from .polish import lm_polish
 
 log = logging.getLogger(__name__)
@@ -53,6 +53,17 @@ class Prepared:
     @property
     def n_measurements(self) -> int:
         return len(self.bins)
+
+    def select(self, rows: np.ndarray, backend: Backend) -> Prepared:
+        """The measurements at the positions ``rows``, padded anew."""
+        rows = np.asarray(rows, dtype=np.int64)
+        bins = [self.bins[i] for i in rows]
+        observed = [self.observed[i] for i in rows]
+        return Prepared(
+            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend), bins, observed,
+            [self.shapes[i] for i in rows], self.n_max[rows],
+            tuple(self.noise_kind[i] for i in rows), self.keys[rows],
+        )
 
 
 def stable_keys(ids: Sequence[str]) -> np.ndarray:
@@ -214,21 +225,22 @@ def fit_batch(
             nr = warm.n_raw + jitter[:, 1]
             lp = warm.logit_p + jitter[:, 2]
         elif kind == "kmeans":
-            la, nr, lp = np.zeros((m, k)), np.zeros((m, k)), np.zeros((m, k))
+            obs_init, shift = [], np.zeros(m)
             for i in range(m):
-                ob_init, la_shift = prep.observed[i], 0.0
+                ob_init = prep.observed[i]
                 if prep.noise_kind[i] == "gaussian":
                     # k-means pseudo-samples need count-like weights: normalise for the
                     # clustering, then restore the amplitude scale
                     ob_init = np.clip(ob_init, 0, None)
                     total = max(float(ob_init.sum()), 1e-12)
                     ob_init = ob_init * (KMEANS_PSEUDO_COUNTS / total)
-                    la_shift = float(np.log(max(total, 1.0) / KMEANS_PSEUDO_COUNTS))
-                a, n_, p_ = kmeans_start(
-                    prep.bins[i], ob_init, k, prep.shapes[i], float(prep.n_max[i]),
-                    seed=(seed + int(prep.keys[i])) % 2**31,
-                )
-                la[i], nr[i], lp[i] = a + la_shift, n_, p_
+                    shift[i] = float(np.log(max(total, 1.0) / KMEANS_PSEUDO_COUNTS))
+                obs_init.append(ob_init)
+            la, nr, lp = kmeans_starts(
+                prep.bins, obs_init, k, prep.shapes, prep.n_max,
+                [(seed + int(key)) % 2**31 for key in prep.keys],
+            )
+            la = la + shift[:, None]
         else:
             la, nr, lp = np.zeros((m, k)), np.zeros((m, k)), np.zeros((m, k))
             for i in range(m):

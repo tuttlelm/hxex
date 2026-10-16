@@ -19,18 +19,16 @@ import torch
 from torch.func import jvp
 
 from ..hooks import CancelHook, check_cancel
-from ..model import MixtureBatch, convolve, integer_grid, noise_loss
+from ..model import MixtureBatch, integer_grid, noise_loss, predict_mixture
 
 
 def _predict(theta, b, shape_w, n_max, k, grid):
     """Predictions ``(M, B)`` of every measurement from its row of ``theta = [log_A, n_raw,
     logit_p]`` (``(M, 3K)``); ``b`` is ``(B, M)``."""
-    amp = torch.exp(theta[:, :k])
     n = n_max.unsqueeze(1) * torch.sigmoid(theta[:, k : 2 * k])
     logit_p = theta[:, 2 * k :]
     p = torch.sigmoid(logit_p)
-    conv = convolve(b, n, p, shape_w, grid, logit_p)  # (B, M, K)
-    return (amp.unsqueeze(0) * conv).sum(dim=2).T
+    return predict_mixture(b, theta[:, :k], n, p, shape_w[:, :, 0], grid, logit_p).T
 
 
 def _loss(pred, obs, mask, is_gaussian):
