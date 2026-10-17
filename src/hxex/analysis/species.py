@@ -259,6 +259,19 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
     return groups, corrected, nterm, undeut
 
 
+def _kept(results, exclude_flagged: bool) -> np.ndarray:
+    """The rows of the fit the tables use: not rejected by the review, not left out of the
+    analysis (``exclude_times``, another branch's series) and, with ``exclude_flagged``, not
+    flagged by the quality checks."""
+    keep = np.ones(len(results.fit), dtype=bool)
+    keep &= results.review_status != "rejected"
+    if getattr(results, "excluded_times", ()) or getattr(results, "excluded_series", ()):
+        keep &= ~results.excluded
+    if exclude_flagged and results.quality is not None:
+        keep &= ~np.asarray(results.quality.flagged, dtype=bool)
+    return keep
+
+
 def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                       controls_changes=None):
     """:func:`_records` of one run with only the per-spectrum filters applied, and the counts
@@ -275,12 +288,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     nterm = picker.nterm_subtract if picker is not None else 1
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
-    keep = np.ones(len(fit), dtype=bool)
-    keep &= results.review_status != "rejected"
-    if getattr(results, "excluded_times", ()) or getattr(results, "excluded_series", ()):
-        keep &= ~results.excluded  # left out of the analysis (exclude_times, other branch)
-    if exclude_flagged and results.quality is not None:
-        keep &= ~np.asarray(results.quality.flagged, dtype=bool)
+    keep = _kept(results, exclude_flagged)
     controls = analysis_controls(results, controls_changes, quiet=quiet)
     n_amides = _site_counts(results)
     fell_back = np.zeros(len(fit), dtype=bool)
@@ -475,15 +483,16 @@ def species_uptake(
     out["control_fallback"] = out["control_fallback"].astype(bool)
     for name in ("runs", "n_spectra_by_run"):
         out[name] = out[name].astype(str)
-    rts = _species_rt(results)
+    rts = _species_rt(results, exclude_flagged)
     out["rt"] = np.array([rts.get((str(a), str(b), str(c)), np.nan) for a, b, c in zip(
         out["sample"], out["peptide"], out["modification"], strict=True)], dtype=np.float64)
     return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
 
 
-def _species_rt(results) -> dict[tuple[str, str, str], float]:
+def _species_rt(results, exclude_flagged: bool = False) -> dict[tuple[str, str, str], float]:
     """(sample, peptide, modification) -> the median retention time (minutes) of its spectra
-    (samples labelled as in a :class:`hxex.analysis.RunSet`); species without one are absent."""
+    (those the tables use, :func:`_kept`; samples labelled as in a
+    :class:`hxex.analysis.RunSet`); species without one are absent."""
     from .runs import RunSet
 
     runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
@@ -492,7 +501,10 @@ def _species_rt(results) -> dict[tuple[str, str, str], float]:
         b = r.binned
         if b is None or getattr(b, "rt", None) is None:
             continue
-        for i in np.flatnonzero(np.isfinite(b.rt)):
+        index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+        used = np.zeros(len(b.spectrum_id), dtype=bool)
+        used[[index[str(s)] for s in r.fit.spectrum_id[_kept(r, exclude_flagged)]]] = True
+        for i in np.flatnonzero(np.isfinite(b.rt) & used):
             sample = results.sample_label(name, str(b.sample[i])) if name else str(b.sample[i])
             values.setdefault((sample, str(b.peptide[i]), str(b.modification[i])),
                               []).append(float(b.rt[i]))

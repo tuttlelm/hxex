@@ -633,10 +633,21 @@ def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
         for control in controls:
             with pytest.raises(ValueError, match="a control's time"):
                 write_analysis(res, AnalysisConfig(exclude_times=[control]), tmp_path / "b")
+        # the controls' undeuterated time is the one refused, not the run's reference time
+        import dataclasses
+
+        moved = dataclasses.replace(res, settings=dataclasses.replace(
+            res.settings, configs={**res.settings.configs, "run": {
+                **res.settings.configs["run"], "undeut_time": 777.0}}))
+        assert moved.settings.run.undeut_time == 777.0
+        with pytest.raises(ValueError, match="a control's time"):
+            write_analysis(moved, AnalysisConfig(exclude_times=[run_cfg.controls.undeut_time]),
+                           tmp_path / "b")
+        assert moved.without_times([777.0]).excluded.sum() == 0
     assert AnalysisConfig.from_dict(cfg.to_dict()).exclude_times == (late,)
 
 
-def test_a_project_file_for_analysis_only(two_sample_bundle, tmp_path):
+def test_a_project_file_for_analysis_only(two_sample_bundle, tmp_path, capsys):
     """Comparing bundles needs no [input]: hxex analyse takes a file with only [analysis],
     and the commands that read input refuse it with a pointer to analyse."""
     from hxex import cli
@@ -658,6 +669,8 @@ B = "{two_sample_bundle.as_posix()}"
     assert cli.main(["-q", "analyse", str(project)]) == 0
     assert (tmp_path / "out" / "species_uptake.csv").is_file()
     assert cli.main(["-q", "run", str(project)]) == cli.EXIT_ERROR
+    assert cli.main(["check", str(project)]) == 0  # the summary says there is no input
+    assert "(none: analysis only)" in capsys.readouterr().out
     from hxex.config import ProjectError, load_project
 
     with pytest.raises(ProjectError, match="only an \\[analysis\\] table is for hxex analyse"):

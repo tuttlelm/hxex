@@ -161,12 +161,12 @@ class IntegerGrid:
     real: torch.Tensor | None = None
 
 
-def integer_grid(b: torch.Tensor, length: int) -> IntegerGrid | None:
-    """The :class:`IntegerGrid` of the bins ``b`` (``(B, M)``) for shapes of ``length`` points,
-    or None if a bin is not a whole number of 0 or more (then :func:`convolve` evaluates the
-    pmf at every shifted bin)."""
+def integer_grid(b: torch.Tensor, length: int) -> IntegerGrid:
+    """The :class:`IntegerGrid` of the bins ``b`` (``(B, M)``) for shapes of ``length`` points.
+    Bins are whole numbers of 0 or more (deuterons beyond natural abundance;
+    :class:`hxex.fit.Measurements` checks them): any other bin is an error."""
     if b.numel() == 0 or not bool(torch.equal(b, b.round())) or bool((b < 0).any()):
-        return None
+        raise ValueError("bins must be whole numbers of 0 or more")
     n_bins, m = b.shape
     j = torch.arange(length, device=b.device).view(length, 1, 1)
     shifted = b.long().unsqueeze(0) - j  # (L, B, M)
@@ -198,18 +198,25 @@ def convolve(
     component's pmf is normalised to sum to 1 (:func:`log_binom_norm`); ``logit_p`` (optional)
     gives exact log terms in float32 (:func:`log_terms`).
 
-    With ``grid`` (:func:`integer_grid` of ``b``; the bins are whole numbers), the pmf is
-    evaluated once at each integer (:func:`_log_binom_integers`) and gathered for every shifted
-    bin, instead of once per shift and bin. When every measurement's bins are ``0, 1, 2, ...``
-    the shifted pmfs are windows of one padded array (no gather); padded positions (bin 0,
-    masked out of every loss) get the value of bin 0. For the sum of the components use
-    :func:`predict_mixture`, which convolves once instead of once per component.
+    The bins are whole numbers (``grid``, :func:`integer_grid` of ``b``, computed if not
+    given): the pmf is evaluated once at each integer (:func:`_integer_log_pmf`) and gathered
+    for every shifted bin, instead of once per shift and bin. When every measurement's bins
+    are ``0, 1, 2, ...`` the shifted pmfs are windows of one padded array (no gather); padded
+    positions (bin 0, masked out of every loss) get the value of bin 0. For the sum of the
+    components use :func:`predict_mixture`, which convolves once instead of once per component.
     """
+    if grid is None:
+        grid = integer_grid(b, shape_w.shape[0])
+    log_p, log_q = log_terms(p, logit_p)
+    pmf = _integer_log_pmf(grid.u.shape[0], n, p, log_p, log_q).exp()  # (U, M, K)
+    return _shift_sum(pmf, shape_w, grid, b.shape[0])
+
+
+def _convolve_direct(b, n, p, shape_w, logit_p=None):
+    """:func:`convolve` evaluated at every shifted bin (once per shift and bin, any real
+    bins): the reference the fast path is tested against, not used by the fit."""
     length, m, k = shape_w.shape
     log_p, log_q = log_terms(p, logit_p)
-    if grid is not None:
-        pmf = _integer_log_pmf(grid.u.shape[0], n, p, log_p, log_q).exp()  # (U, M, K)
-        return _shift_sum(pmf, shape_w, grid, b.shape[0])
     norm = log_binom_norm(n, p, log_p, log_q)  # (M, K)
     j = torch.arange(length, dtype=b.dtype, device=b.device).view(length, 1, 1, 1)
     bj = b.unsqueeze(0).unsqueeze(3) - j  # (L, B, M, 1)
@@ -253,8 +260,7 @@ def predict_mixture(
     the pmfs is convolved once (``sum_k A_k (B_k * D) = (sum_k A_k B_k) * D``). Equal to summing
     :func:`convolve` over the components, up to rounding."""
     if grid is None:
-        conv = convolve(b, n, p, shape.unsqueeze(2).expand(-1, -1, n.shape[1]), None, logit_p)
-        return (torch.exp(log_A).unsqueeze(0) * conv).sum(dim=2)
+        grid = integer_grid(b, shape.shape[0])
     log_p, log_q = log_terms(p, logit_p)
     log_pmf = _integer_log_pmf(grid.u.shape[0], n, p, log_p, log_q)  # (U, M, K)
     mix = (log_pmf + log_A.unsqueeze(0)).exp().sum(dim=2)  # (U, M)
@@ -373,7 +379,7 @@ class MixtureBatch(nn.Module):
         self.n_raw = nn.Parameter(n_raw.clone())
         self.logit_p = nn.Parameter(logit_p.clone())
         self.set_noise_kind(noise_kind)
-        self.grid = integer_grid(batch.b, shape_w.shape[0])  # None for non-integer bins
+        self.grid = integer_grid(batch.b, shape_w.shape[0])
 
     def set_noise_kind(self, noise_kind: str | Sequence[str]) -> None:
         """Change the noise model: one name for all measurements, or one per measurement."""

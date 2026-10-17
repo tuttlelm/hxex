@@ -85,7 +85,7 @@ def fit_models(
         report(progress, done, total)
 
     floor = None
-    if config.screen:
+    if config.screen and any(k > 1 for k in k_values):  # nothing to skip with K = 1 alone
         floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind)
     best = np.full(m, np.inf)  # best criterion so far (for the screen)
     fits: dict[int, KFit] = {}

@@ -129,11 +129,13 @@ class Results:
     def from_run(
         cls, run: RunResult, review: ReviewTable | None = None, spectra: SpectrumSet | None = None
     ) -> Results:
+        """The results of a run; ``review`` is the run's own (the one it carried over to its
+        bundle) unless given."""
         return cls(
             measurements=run.measurements, fit=run.fit, bootstrap=run.bootstrap,
             bootstrap_by_k=dict(run.bootstrap_by_k or {}), controls=run.controls,
-            quality=run.quality, review=review, binned=run.binned, spectra=spectra,
-            settings=Settings.from_run(run),
+            quality=run.quality, review=review if review is not None else run.review,
+            binned=run.binned, spectra=spectra, settings=Settings.from_run(run),
         )
 
     def with_review(self, review: ReviewTable | None) -> Results:

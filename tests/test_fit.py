@@ -580,6 +580,16 @@ def test_the_loss_floor_is_below_the_loss_of_every_k(screened):
                   == -np.inf)
 
 
+def test_the_screen_is_idle_when_only_k1_is_tried(screened):
+    """With K = 1 alone there is nothing to skip: no loss floor is computed."""
+    from unittest import mock
+
+    meas, _, _ = screened
+    with mock.patch("hxex.fit.models.loss_floor", side_effect=AssertionError("not needed")):
+        fit = fit_models(meas, dataclasses.replace(CFG, screen=True, k_min=1, k_max=1))
+    assert fit.k_values == (1,) and len(fit) == len(meas)
+
+
 def test_the_screen_keeps_the_selected_k_and_marks_what_it_skipped(screened):
     _, full, fit = screened
     assert np.array_equal(fit.selected_K, full.selected_K)

@@ -44,6 +44,7 @@ def loss_floor(
     ``scaled``: a lower bound on the loss of a mixture of any number of components. ``-inf``
     where there is no such bound (Poisson loss, or bins that are not whole numbers)."""
     out = np.full(len(bins), -np.inf)
+    not_converged = 0
     for i, (x, y, shape) in enumerate(zip(bins, scaled, shapes, strict=True)):
         x = np.asarray(x, dtype=np.float64)
         if noise_kind[i] != "gaussian" or not np.array_equal(x, np.round(x)) or np.any(x < 0):
@@ -57,8 +58,12 @@ def loss_floor(
             _, residual = nnls(design, y, maxiter=50 * design.shape[1])
         except RuntimeError:  # did not converge: the loss is still at least 0
             out[i] = 0.0
+            not_converged += 1
             continue
         out[i] = 0.5 * residual * residual
+    if not_converged:
+        log.warning("the loss floor of %d measurement(s) is 0 (the non-negative least squares "
+                    "did not converge): the screen cannot skip any of their fits", not_converged)
     return out
 
 

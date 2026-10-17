@@ -887,6 +887,24 @@ def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: f
     return float(plan.pred_mz.min()) - margin, float(plan.pred_mz.max()) + margin
 
 
+def stored_window_excess(source: Mapping, picker: PickerConfig,
+                         registry: chem.ModificationRegistry) -> list[str]:
+    """The targets (labels) whose bins under ``picker`` reach beyond the m/z their stored
+    spectra were cut to (``source``: a record of :func:`read_mzml` or the Thermo reader with
+    ``windows``; empty for other records): points outside that cut cannot be recovered from
+    stored spectra, so a rerun with a wider picker must read the files again."""
+    if source.get("reader") not in SCAN_READERS or "windows" not in source:
+        return []
+    margin = float(source.get("config", {}).get("mz_margin", MzmlConfig().mz_margin))
+    out = []
+    for t, (lo, hi) in zip(source["targets"], source["windows"], strict=True):
+        target = MzmlTarget.from_dict(t)
+        need_lo, need_hi = _target_window(target, picker, registry, margin)
+        if need_lo < lo - 1e-9 or need_hi > hi + 1e-9:
+            out.append(_target_label(target))
+    return out
+
+
 def _target_label(t: MzmlTarget) -> str:
     """The target in spectrum ids: the entry, then (for fragments) how the scans were chosen,
     for example ``1-5-RDKVQ-z1-ion_type:c@ETD-pz3``, or ``...-ms3-pre:HCD@ETD-pz3`` for MS3 scans
@@ -1037,6 +1055,7 @@ def _read_runs(
         "files": list(identities) if identities is not None else [
             file_identity(p) for p in opened],
         "targets": [t.to_dict() for t in targets],
+        "windows": [list(w) for w in windows],  # the m/z each target's scans were cut to
         "config": config.to_dict(),
         "picker": picker.to_dict(),
         "registry": registry.to_dict(),
@@ -1157,6 +1176,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         for label in missing:
             log.debug("%s: no scan for target %s", f.path.name, label)
     by_index = f.read_scans(sorted(needed), windows)
+    parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
             continue
@@ -1187,13 +1207,23 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
             # retention time (minutes): the scans' acquisition times weighted by their signal in
             # the window, for a run with a fixed exchange time (in a kinetics run the scan time
-            # is the exchange time); a peptide table's rt column, when given, wins
+            # is the exchange time and no spectrum has one); a peptide table's rt column, when
+            # given, wins. A fragment takes its parent's (the back-exchange happened to the
+            # parent on the column) when the parent was read before it (as the targets of a
+            # project are ordered), else its own scans'
+            extra = dict(entry.extra)
+            parent_key = (extra.get("parent_peptide"), extra.get("parent_range"),
+                          extra.get("parent_charge"))
             rt = entry_rt(entry)
-            if not np.isfinite(rt) and run.time is not None:
+            if not np.isfinite(rt) and "fragment" in extra and parent_key in parent_rt:
+                rt = parent_rt[parent_key]
+            elif not np.isfinite(rt) and run.time is not None:
                 weight = np.array([float(np.sum(p[1])) for p in parts])
                 times = np.array([s.time for s in scans], dtype=float)
                 rt = float(np.average(times, weights=weight) if weight.sum() > 0
                            else times.mean()) / 60.0
+            if "fragment" not in extra:
+                parent_rt[(entry.peptide, entry.peptide_range, str(entry.charge))] = rt
             spectra.append(Spectrum(
                 mz, y, entry, time, run.rep, data_id=data_id,
                 label=f"{f.path.name} {scan_text}",

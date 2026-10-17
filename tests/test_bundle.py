@@ -426,6 +426,14 @@ def test_a_review_given_at_writing(tmp_path, run):
     r = ReviewTable.empty().update(str(fit.spectrum_id[2]), status="rejected")
     with open_bundle(write_bundle(tmp_path / "rv", measurements=meas, fit=fit, review=r)) as b:
         assert b.review().get(str(fit.spectrum_id[2]))["status"] == "rejected"
+    # checked as set_review checks: unknown spectra and a K that was not fitted are refused
+    with pytest.raises(BundleError, match="unknown spectra"):
+        write_bundle(tmp_path / "rv2", measurements=meas, fit=fit,
+                     review=ReviewTable.empty().update("proj:not-there", status="rejected"))
+    bad = ReviewTable.empty().update(str(fit.spectrum_id[2]), k_override=max(fit.k_values) + 1)
+    with pytest.raises(ValueError, match="was not fitted"):
+        write_bundle(tmp_path / "rv3", measurements=meas, fit=fit, review=bad)
+    assert not (tmp_path / "rv3").exists()
 
 
 # --- controls -------------------------------------------------------------------------------

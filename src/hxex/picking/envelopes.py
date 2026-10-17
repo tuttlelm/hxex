@@ -45,6 +45,7 @@ import numpy as np
 from scipy.optimize import nnls
 
 from .. import chem
+from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .pick import pick_spectrum, plan_bins
 
@@ -294,6 +295,8 @@ def series_envelopes(
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     groups: Mapping[int, Hashable] | None = None,
     atol: float = 1e-6,
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
 ) -> tuple[EnvelopeTable, dict[int, Envelope]]:
     """The envelope of every series (``data_id``) of a :class:`~hxex.spectra.SpectrumSet` from
     its spectra at ``reference_time`` (the undeuterated control). If those are missing or the
@@ -301,8 +304,9 @@ def series_envelopes(
     (for example a fully exchanged end-state run), and the source is recorded as ``fallback``;
     with neither, the theory. With ``config.share``, the series of one group (``groups``:
     ``data_id`` to a key, :func:`hxex.io.envelope_groups`; a series not in it is a group of its
-    own) share one envelope (see the module docstring). Returns the table and the envelopes by
-    series."""
+    own) share one envelope (see the module docstring). ``progress(done, total)`` counts the
+    series; ``cancel`` is polled before each group (:class:`hxex.hooks.Cancelled`). Returns the
+    table and the envelopes by series."""
     by_series: dict[int, Envelope] = {}
     sources: dict[int, str] = {}
     own_count: dict[int, int] = {}
@@ -316,7 +320,11 @@ def series_envelopes(
         members = list(keyed.values())
     else:
         members = [[d] for d in ids_all]
+    n_done = 0
     for group in members:
+        check_cancel(cancel)
+        report(progress, n_done, len(ids_all))
+        n_done += len(group)
         rows = {d: np.flatnonzero(spectra.data_id == d) for d in group}
         i0 = rows[group[0]][0]
         peptide, charge = str(spectra.peptide[i0]), int(spectra.charge[i0])
@@ -344,6 +352,7 @@ def series_envelopes(
             source = "reference" if len(group) == 1 else "shared"
         res = {d: float("nan") for d in group}
         agree = {d: True for d in group}
+        alone: dict[int, Envelope] = {}
         if chosen is not None and len(group) > 1 and config.mode != "theory":
             have = [d for d in group if own[d]]
             if len(have) > 1:  # which conditions agree with which (see the module docstring)
@@ -358,6 +367,15 @@ def series_envelopes(
                 core = [r for d in have if agree[d] for r in own[d]]
                 if core and len(core) < len(refs):
                     chosen = estimate(core)
+                    # conditions outside the core that it describes as well as their own
+                    # envelope does are admitted (three or more conditions: two may agree
+                    # with the core but not with each other), and the core is refitted once
+                    back = [d for d in have if not agree[d]
+                            and residual(own[d], chosen) - self_fit[d] <= config.max_residual]
+                    if back:
+                        agree.update(dict.fromkeys(back, True))
+                        core += [r for d in back for r in own[d]]
+                        chosen = estimate(core)
             res = {d: residual(own[d], chosen) if own[d] else float("nan") for d in group}
         if (chosen is None or not chosen.good) and fallback_time is not None:
             back = [r for d in group for r in at(fallback_time, d)]
@@ -373,9 +391,15 @@ def series_envelopes(
         for d in group:
             by_series[d] = chosen
             sources[d] = source
-            own_count[d] = len(own[d]) if len(group) > 1 else chosen.n_reference
-            own_residual[d] = res[d] if source == "shared" else float("nan")
-            agrees[d] = agree[d] if source == "shared" else True
+            if len(group) == 1:
+                own_count[d] = chosen.n_reference
+            else:  # the series' own references with signal, as for a series on its own
+                own_count[d] = (alone[d].n_reference if d in alone
+                                else estimate(own[d]).n_reference if own[d] else 0)
+            # the pairwise comparison stays on record when the group then falls back
+            own_residual[d] = res[d]
+            agrees[d] = agree[d]
+    report(progress, len(ids_all), len(ids_all))
     ids = sorted(by_series)
     width = max(config.components, 1)
     weights = np.full((len(ids), width), np.nan)

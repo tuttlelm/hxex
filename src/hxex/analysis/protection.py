@@ -31,6 +31,8 @@ import numpy as np
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..kint import ExchangeConditions, intrinsic_rates, sample_conditions
+from .compare import _pairs
+from .residues import MODIFIED, separate_modified
 from .species import SpeciesUptake
 
 log = logging.getLogger(__name__)
@@ -213,12 +215,25 @@ def _apparent(k, t, y, se):
     return x, (abs(se / slope) if np.isfinite(se) and slope != 0 else np.nan), "", np.nan
 
 
+def _known_errors(se: np.ndarray) -> np.ndarray | None:
+    """``se`` with every unknown error (NaN, or not above 0) replaced by the median of the
+    known ones; None when none is known (an unweighted fit). An unknown error must not get
+    the largest weight (the audit of 2026-10-17)."""
+    se = np.asarray(se, dtype=float)
+    known = np.isfinite(se) & (se > 0)
+    if not known.any():
+        return None
+    return np.where(known, se, float(np.median(se[known])))
+
+
 def _fit(k, t, y, se, apparent, alpha):
-    """(log10 protection, its se, misfit, one factor fits) over every time."""
+    """(log10 protection, its se, misfit, one factor fits) over every time; weighted by the
+    errors when any is known (:func:`_known_errors`)."""
     from scipy import stats
     from scipy.optimize import least_squares
 
-    weighted = np.all(np.isfinite(se) & (se > 0))
+    se = _known_errors(se)
+    weighted = se is not None
     w = 1.0 / se if weighted else np.ones_like(y)
     finite = np.isfinite(apparent)
     x0 = float(np.median(apparent[finite])) if finite.any() else 0.0
@@ -238,17 +253,65 @@ def _fit(k, t, y, se, apparent, alpha):
     return x, float(np.sqrt(scale / jtj)), misfit, fits
 
 
-def _prepare(uptake, conditions, sequences, exclude_times, registry):
+def _refuse_falling(pep) -> None:
+    """Refuse a sample whose peptides mostly lose deuterium with time (back-exchange
+    kinetics: the model is one of forward labelling; the two-direction model is a design
+    item of the audit of 2026-10-17). A peptide falls (rises) when its last finite ``fD`` is
+    below (above) its first by more than twice their combined error, or by 0.05 without one."""
+    falling: dict[str, int] = {}
+    rising: dict[str, int] = {}
+    groups: dict[tuple, list[int]] = {}
+    for i in np.argsort(pep.time, kind="stable"):
+        key = (str(pep.sample[i]), str(pep.peptide[i]), str(pep.modification[i]),
+               int(pep.start[i]), int(pep.end[i]), int(pep.K[i]), int(pep.rank[i]))
+        if np.isfinite(pep.fD[i]):
+            groups.setdefault(key, []).append(int(i))
+    for key, rows in groups.items():
+        if len(rows) < 2:
+            continue
+        first, last = rows[0], rows[-1]
+        step = 2.0 * float(np.hypot(pep.fD_se[first], pep.fD_se[last]))
+        step = step if np.isfinite(step) and step > 0 else 0.05
+        change = float(pep.fD[last] - pep.fD[first])
+        if change < -step:
+            falling[key[0]] = falling.get(key[0], 0) + 1
+        elif change > step:
+            rising[key[0]] = rising.get(key[0], 0) + 1
+    bad = sorted(s for s, n in falling.items() if n > rising.get(s, 0))
+    if bad:
+        raise ValueError(
+            f"sample(s) {', '.join(bad)}: fD falls with time in most peptides "
+            f"({', '.join(f'{s}: {falling[s]} falling, {rising.get(s, 0)} rising' for s in bad)})"
+            ". Protection factors are fitted to forward labelling; back-exchange kinetics "
+            "(deuterated then diluted into H2O) need the two-direction model, which is not "
+            "built: leave protection off for this run")
+
+
+def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="combined"):
     """The peptides of ``uptake`` that get protection factors: (the table, its rows grouped by
     sample, peptide, modification, start, end, K and rank, the rates of each peptide by its
     first five keys (``(kint of the counted amides, how many approximate, their residue
-    numbers)``, None where not all known), each sample's residue labels by number)."""
+    numbers)``, None where not all known), each sample's residue labels by number, and the
+    base sample of every state). With ``modified='separate'`` every modified peptide moves
+    to a state of its own (:func:`hxex.analysis.separate_modified`, named ``'<sample>
+    <sites>'``), which takes its sample's sequence and conditions; ``'combined'`` keeps the
+    forms in one sample."""
+    if modified not in MODIFIED:
+        raise ValueError(f"modified must be one of {', '.join(MODIFIED)}")
     pep = uptake.select(uptake.where(kind="peptide"))
     times = np.asarray(pep.time, dtype=float)
     keep = times > pep.undeut_time
     for t in exclude_times:
         keep &= ~np.isclose(times, t)
     pep = pep.select(keep)
+    _refuse_falling(pep)
+    base = {str(s): str(s) for s in pep.sample}
+    if modified == "separate":
+        pep, base = separate_modified(pep, registry)
+        if isinstance(sequences, Mapping):
+            sequences = {state: sequences[s] for state, s in base.items() if s in sequences}
+        if isinstance(conditions, Mapping):
+            conditions = {state: conditions[s] for state, s in base.items() if s in conditions}
     uncorrected = sorted({str(s) for s, c in zip(pep.sample, pep.corrected, strict=True)
                           if not c})
     if uncorrected:
@@ -295,7 +358,7 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry):
         log.warning("protection factors: %s peptide(s) left out (rates not all known: a modified "
                     "ion type, or the residue before unknown)",
                     ", ".join(f"{s}: {n}" for s, n in skipped.items()))
-    return pep, groups, rates, labels
+    return pep, groups, rates, labels, base
 
 
 def peptide_protection(
@@ -315,8 +378,11 @@ def peptide_protection(
     peptide and the protein's C-terminus; without it the residue before comes from the other
     peptides, and no peptide ends at a free carboxyl. Samples without back-exchange correction,
     or without conditions, are left out with a warning, and so are peptides whose rates are not
-    all known (a modified ion type, or the residue before unknown)."""
-    pep, groups, rates, _ = _prepare(uptake, conditions, sequences, exclude_times, registry)
+    all known (a modified ion type, or the residue before unknown). A sample whose peptides
+    lose deuterium with time (back-exchange kinetics) is refused: the model is one of forward
+    labelling. The fit over all times is weighted by ``fD_se`` where it is known; an unknown
+    error takes the median of the peptide's known ones (none known: unweighted)."""
+    pep, groups, rates, _, _ = _prepare(uptake, conditions, sequences, exclude_times, registry)
     out = {f.name: [] for f in fields(ProtectionTable)}
     by_time = {f.name: [] for f in fields(ProtectionByTime)}
     for key, rows in groups.items():
@@ -434,8 +500,9 @@ def _fit_residues(peps, obs, k, pairs, r1, x0, cancel=None):
     which = torch.tensor(obs[0], dtype=torch.long)
     t = torch.tensor(obs[1], dtype=torch.float64)
     y = torch.tensor(obs[2], dtype=torch.float64)
-    w = 1.0 / torch.tensor(np.maximum(np.nan_to_num(obs[3], nan=SE_FLOOR), SE_FLOOR),
-                           dtype=torch.float64)
+    se = _known_errors(obs[3])  # unknown errors: the median of the state's known ones
+    w = (1.0 / torch.tensor(np.maximum(se, SE_FLOOR), dtype=torch.float64) if se is not None
+         else torch.ones(len(obs[2]), dtype=torch.float64))
     kk = torch.tensor(k, dtype=torch.float64)
     a = torch.tensor(pairs[:, 0], dtype=torch.long) if len(pairs) else None
     b = torch.tensor(pairs[:, 1], dtype=torch.long) if len(pairs) else None
@@ -534,6 +601,7 @@ def residue_protection(
     exclude_times=(),
     r1: float = R1,
     peptides: ProtectionTable | None = None,
+    modified: str = "separate",
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
@@ -542,16 +610,21 @@ def residue_protection(
     K = 2 rank: apparent values), fitted to all its peptides at once with a total-variation
     regulariser of weight ``r1`` (docs/ANALYSIS.md, "Residue level"; pyHDX's
     ``fit_gibbs_global`` is the reference). Inputs and the peptides used are those of
-    :func:`peptide_protection`; ``peptides`` (its table, computed if not given) gives the
-    starting values and the bounds. ``progress(done, total)`` counts the states; ``cancel``
-    stops the fit (:class:`hxex.hooks.Cancelled`)."""
+    :func:`peptide_protection`, less the peptides without a finite ``fD`` (logged; their
+    ``n_times`` is 0 in ``peptides``); ``peptides`` (its table, computed if not given) gives
+    the starting values and the bounds. ``modified`` is as in
+    :func:`hxex.analysis.residue_map`: ``'separate'`` (the default) fits each modified form
+    as a state of its own (``'WT pS59'``) from its own peptides, ``'combined'`` pools the
+    forms with the sample's other peptides. Unknown errors take the median of the state's
+    known ones (none known: unweighted). ``progress(done, total)`` counts the states;
+    ``cancel`` stops the fit (:class:`hxex.hooks.Cancelled`)."""
     if not r1 >= 0:
         raise ValueError("r1 must be >= 0")
     if peptides is None:
         peptides = peptide_protection(uptake, conditions, sequences=sequences,
                                       exclude_times=exclude_times, registry=registry)[0]
-    pep, groups, rates, labels = _prepare(uptake, conditions, sequences, exclude_times,
-                                          registry)
+    pep, groups, rates, labels, base = _prepare(uptake, conditions, sequences, exclude_times,
+                                                registry, modified)
     start_value = {}
     for i in range(len(peptides)):
         key = (str(peptides.sample[i]), str(peptides.peptide[i]), str(peptides.modification[i]),
@@ -561,14 +634,20 @@ def residue_protection(
         start_value[key] = ((float(x) if np.isfinite(x) else
                              float(np.log10(peptides.limit[i])) if peptides.bound[i] else np.nan),
                             str(peptides.bound[i]), float(peptides.limit[i]))
-    states = sorted({(k[0], k[5], k[6]) for k in groups if rates[k[:5]] is not None},
+    # peptides with no finite value cannot be fitted: they would still count as members and
+    # as coverage (their residues reported resolved with a regulariser-only value)
+    empty = {k for k, rows in groups.items() if not np.isfinite(pep.fD[rows]).any()}
+    if empty:
+        log.info("residue protection: %d peptide(s) without a finite fD left out", len(empty))
+    states = sorted({(k[0], k[5], k[6]) for k in groups
+                     if rates[k[:5]] is not None and k not in empty},
                     key=lambda s: (list(labels).index(s[0]), s[1], s[2]))
     cols = {f.name: [] for f in fields(ResidueProtection) if f.name != "r1"}
     for n_done, (sample, kk_, rank) in enumerate(states):
         report(progress, n_done, len(states))
         check_cancel(cancel)
         keys = [k for k in groups if (k[0], k[5], k[6]) == (sample, kk_, rank)
-                and rates[k[:5]] is not None]
+                and rates[k[:5]] is not None and k not in empty]
         rate_of: dict[int, float] = {}
         for key in keys:
             k, _, res = rates[key[:5]]
@@ -588,8 +667,9 @@ def residue_protection(
                    if np.isfinite(kr)]
             member[j, idx] = 1.0
             peps.append((idx, float(np.sum(~np.isfinite(k))), float(len(k))))
-            for r in idx:
-                covering[residues[r]].append(start_value.get(key, (np.nan, "", np.nan)))
+            for r in idx:  # the peptide table names the sample, not the state
+                covering[residues[r]].append(start_value.get(
+                    (base.get(key[0], key[0]), *key[1:]), (np.nan, "", np.nan)))
             for i in groups[key]:
                 if np.isfinite(pep.fD[i]):
                     for target, value in zip(obs, (j, pep.time[i], pep.fD[i], pep.fD_se[i]),
@@ -690,19 +770,21 @@ def compare_protection(
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
 
-    def ident(i):
-        pep = ((int(table.start[i]), int(table.end[i])) if match == "range"
-               else (str(table.peptide[i]), str(table.modification[i])))
-        return (*pep, int(table.K[i]), int(table.rank[i]))
+    def ident(i):  # as compare_peptides keys species: _pairs matches on the range, [2:]
+        return (str(table.peptide[i]), str(table.modification[i]), int(table.start[i]),
+                int(table.end[i]), int(table.K[i]), int(table.rank[i]))
 
     ref = {ident(i): i for i in np.flatnonzero(table.where(sample=reference))}
     crit = float(stats.norm.ppf(1 - alpha / 2))
     cols = {f.name: [] for f in fields(ProtectionComparison) if f.name not in ("reference",
                                                                               "alpha")}
-    for i in np.flatnonzero(~table.where(sample=reference)):
-        j = ref.get(ident(i))
-        if j is None:
+    pairs = []
+    for sample in dict.fromkeys(table.sample.tolist()):
+        if sample == reference:
             continue
+        other = {ident(i): i for i in np.flatnonzero(table.where(sample=sample))}
+        pairs += [(ref[rkey], other[key]) for rkey, key in _pairs(ref, other, match)]
+    for j, i in sorted(pairs, key=lambda p: p[1]):
         note = ""
         if table.bound[i] or table.bound[j]:
             note = "; ".join(f"{who} {table.bound[r]} bound" for who, r in

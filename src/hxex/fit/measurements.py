@@ -44,6 +44,9 @@ class Measurements:
                 raise ValueError(
                     f"measurement {i}: bins and intensities must match and not be empty"
                 )
+            if not np.array_equal(b, np.round(b)) or np.any(b < 0):
+                raise ValueError(f"measurement {i}: bins must be whole numbers of 0 or more "
+                                 "(deuterons beyond natural abundance)")
         if np.any(np.asarray(self.n_max) <= 0):
             raise ValueError("n_max must be positive")
 

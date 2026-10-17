@@ -329,33 +329,33 @@ def test_mixture_loss_is_continuous_in_n_with_finite_gradients():
     assert abs(out[1] - out[0]) < 1e-3
 
 
-@pytest.mark.parametrize("layout", ["consecutive", "integer", "fractional"])
+@pytest.mark.parametrize("layout", ["consecutive", "integer"])
 def test_the_fast_convolutions_equal_the_direct_one(layout):
     """With whole-number bins the pmf is evaluated once per integer (gathered, or as windows when
     every measurement's bins are 0, 1, 2, ...): the same values and gradients as evaluating it at
-    every shifted bin, padding included."""
+    every shifted bin (the reference implementation), padding included."""
+    from hxex.model.mixture import _convolve_direct
+
     rng = np.random.default_rng(3)
     sizes = [12, 7, 20, 1, 15]
     if layout == "consecutive":
         bins = [np.arange(s, dtype=float) for s in sizes]
-    elif layout == "integer":  # whole numbers, but not 0, 1, 2, ... (an offset and a gap)
+    else:  # whole numbers, but not 0, 1, 2, ... (an offset and a gap)
         bins = [np.arange(s, dtype=float) + 2 for s in sizes]
         bins[2] = np.delete(np.arange(21, dtype=float), 5)
-    else:
-        bins = [np.arange(s, dtype=float) + 0.5 for s in sizes]
     obs = [rng.uniform(0, 5, len(b)) for b in bins]
     shapes = [rng.uniform(0.1, 1, int(rng.integers(1, 9))) for _ in bins]
     k = 3
     batch = PaddedBatch.from_arrays(bins, obs, np.full(len(bins), 25.0), CPU64)
     shape_w = shape_weights(shapes, k, CPU64)
     grid = integer_grid(batch.b, shape_w.shape[0])
-    assert (grid is None) == (layout == "fractional")
-    if grid is not None:
-        assert grid.consecutive == (layout == "consecutive")
+    assert grid.consecutive == (layout == "consecutive")
     n = torch.tensor(rng.uniform(0.3, 24, (len(bins), k)), requires_grad=True)
     p = torch.tensor(rng.uniform(0.05, 0.9, (len(bins), k)), requires_grad=True)
-    direct = convolve(batch.b, n, p, shape_w)
+    direct = _convolve_direct(batch.b, n, p, shape_w)
     fast = convolve(batch.b, n, p, shape_w, grid)
+    np.testing.assert_allclose(convolve(batch.b, n, p, shape_w).detach().numpy(),
+                               fast.detach().numpy())  # the grid is computed when not given
     np.testing.assert_allclose(fast.detach().numpy(), direct.detach().numpy(), rtol=1e-13,
                                atol=1e-300)
     weights = torch.tensor(rng.normal(size=direct.shape))
@@ -365,20 +365,44 @@ def test_the_fast_convolutions_equal_the_direct_one(layout):
         np.testing.assert_allclose(a.numpy(), b.numpy(), rtol=1e-9, atol=1e-12)
     zeros = CPU64.tensor(np.zeros((len(bins), k)))
     model = MixtureBatch(batch, shape_w, zeros, zeros, zeros)
-    assert (model.grid is None) == (layout == "fractional")
+    assert model.grid.consecutive == grid.consecutive
 
 
-@pytest.mark.parametrize("layout", ["consecutive", "integer", "fractional"])
+def test_bins_must_be_whole_numbers():
+    """The fractional path is gone (audit of 2026-10-17): it normalised over the integers but
+    evaluated at fractional points, unbounded near p = 1. Measurements refuse such bins."""
+    from hxex.fit import Measurements
+
+    half = [np.arange(5, dtype=float) + 0.5]
+    batch = PaddedBatch.from_arrays(half, [np.ones(5)], np.full(1, 25.0), CPU64)
+    with pytest.raises(ValueError, match="whole numbers"):
+        integer_grid(batch.b, 3)
+    with pytest.raises(ValueError, match="whole numbers"):
+        convolve(batch.b, torch.ones(1, 1), torch.full((1, 1), 0.5),
+                 shape_weights([np.ones(3)], 1, CPU64))
+    negative = PaddedBatch.from_arrays([np.arange(5, dtype=float) - 1], [np.ones(5)],
+                                       np.full(1, 25.0), CPU64)
+    with pytest.raises(ValueError, match="whole numbers"):
+        integer_grid(negative.b, 3)
+    good = Measurements.from_arrays([np.arange(5, dtype=float)], [np.ones(5)], [np.ones(3)],
+                                    np.full(1, 25.0), spectrum_id=["a"], data_id=[0],
+                                    time=[0.0])
+    assert len(good) == 1
+    for bad in (half, [np.arange(5, dtype=float) - 1]):
+        with pytest.raises(ValueError, match="whole numbers"):
+            Measurements.from_arrays(bad, [np.ones(5)], [np.ones(3)], np.full(1, 25.0),
+                                     spectrum_id=["a"], data_id=[0], time=[0.0])
+
+
+@pytest.mark.parametrize("layout", ["consecutive", "integer"])
 def test_the_mixture_prediction_is_the_sum_of_the_components(layout):
     """predict_mixture convolves the amplitude-weighted mixture once instead of each component."""
     rng = np.random.default_rng(5)
     sizes = [12, 7, 20, 1, 15]
     if layout == "consecutive":
         bins = [np.arange(s, dtype=float) for s in sizes]
-    elif layout == "integer":
-        bins = [np.arange(s, dtype=float) + 2 for s in sizes]
     else:
-        bins = [np.arange(s, dtype=float) + 0.5 for s in sizes]
+        bins = [np.arange(s, dtype=float) + 2 for s in sizes]
     shapes = [rng.uniform(0.1, 1, int(rng.integers(1, 9))) for _ in bins]
     k = 3
     batch = PaddedBatch.from_arrays(bins, [np.ones(len(b)) for b in bins], np.full(5, 25.0), CPU64)

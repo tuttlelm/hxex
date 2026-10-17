@@ -2525,3 +2525,59 @@ CSVs or mzML if wanted.
     file is now one line per file (`no scan for N of M targets, for example ...`; each target
     at debug level): in a targeted method each precursor is fragmented in only some
     conditions, and the 1,550 lines per file buried the log.
+
+95. **Audit of 2026-10-17, Session A: the bug fixes (2026-10-17).** The items of
+    `docs/AUDIT_2026-10-17.md` marked for Session A, each with a test, in the order the document
+    gives. Validation: a run's `time` is a number of seconds or absent and `rep` a whole number
+    of 1 or more, with errors naming the run (`input.runs #2 (file.mzML)`); `false` for a
+    table-valued `[analysis]` key means none; a retention-time row with fewer or more cells than
+    the header, or naming no spectrum, is a read error with its line; `hxex check` prints the
+    summary first, then every problem on its own line (missing peptide table, data directory,
+    retention-time table, Thermo directory or run file, an existing bundle, a peptide that does
+    not tokenise, named by file, line and token with the modX hint), and accepts an analysis-only
+    file. Controls: with `fd_fallback = "kint"` and too few usable or agreeing controls, the
+    rated series get the d2o floor (half of `d2o_fraction`) like the series without rates (four
+    peptides with a fully deuterated level of 0.1 per amide gave a tenfold inflated correction);
+    reruns from stored spectra take the format and both control stamps from the stored record
+    whenever `spectra` is set (`--spectra` included; the inherited control times follow; one
+    warning when the file says otherwise), and a record that cannot be read yet leaves the
+    file's settings until the spectra are read (`hxex check` reports it; `hxex run` refuses it
+    before anything else); `exclude_times` is checked against the controls' undeuterated time.
+    Protection: an unknown `fD_se` takes the median of the peptide's (residue fit: the state's)
+    known errors, none known gives an unweighted fit (a NaN error got the 0.01 floor, five times
+    the weight of a good point); peptides without a finite value leave the residue fit (logged;
+    `n_times = 0` in `protection.csv`); `modified_peptides` applies to the residue fit, each
+    modified form a state of its own with its sample's sequence and conditions
+    (`residue_protection(modified=)`); `compare_protection` pairs reference peptides as
+    `compare_peptides` does (`compare._pairs`), so two forms over one range no longer collapse;
+    a sample whose peptides mostly lose deuterium with time is refused with a message naming
+    the two-direction model. Fragments and envelopes: a RunSet skips runs whose reader is not a
+    scan reader instead of losing every fragment output; once fragment series exist, a
+    ValueError is raised, not swallowed, and a missing K = 1 has its own message; the closure
+    warning fires for a single run again; shared envelopes with three or more conditions
+    re-admit the conditions the core describes within `max_residual` and refit once,
+    `n_reference` is each series' own references with signal, and `own_residual` and `agrees`
+    stay on record when the group falls back; the envelope stage has progress and cancellation
+    hooks (stage `envelope`, 3 % of the units before `pick`); the species retention time is the
+    median over the spectra the tables use (not rejected, excluded or, with `exclude_flagged`,
+    flagged); in an LC run a fragment takes its parent's retention time (the parent read before
+    it, as a project orders its targets), in a kinetics run no spectrum has one. Engine and
+    plumbing: the tables and figures of `hxex run` and `resume` use the carried review
+    (`RunResult.review`, `Results.from_run`); `Measurements` requires whole-number bins and the
+    fractional convolution path is gone (`integer_grid` raises; `_convolve_direct` stays as the
+    reference the fast path is tested against; `WORK_FACTOR_DIRECT` removed); the screen logs
+    the measurements whose NNLS floor did not converge and computes no floor when only K = 1
+    is tried; `write_bundle(review=)` is checked as `set_review` is (`_check_review`);
+    `resume --figures` writes figures with the default plot settings when the run had none,
+    without changing the run's record; the read's m/z windows are recorded (`windows` in the
+    scan-file record) and a rerun from stored spectra whose picker reaches beyond them warns
+    (`stored_window_excess`); the "not used" line no longer lists a default `data_root`;
+    `describe()` says "(none: analysis only)". Docs: BUNDLE.md (`poor_envelope`, `shared`,
+    `own_residual`, `agrees`, `stored_in`, `windows`, the NaN rows of screened Ks), ANALYSIS.md
+    (error weighting, direction, modified forms, prolines bridged). No table column was renamed;
+    `n_reference` of shared groups changed meaning (own references with signal, not the count
+    of own reference spectra). Low item 3 (resolve the stored spectra lazily) was reconciled with
+    high item 3: the record is read at load time when it can be (the manifest only, to settle the
+    format and the control times), and otherwise when the spectra are read. GPU parity with the
+    screen: `tests/test_gpu_parity.py` (run on the GPU build). Sessions B (the overwrite
+    contract) and C (readability) and the design items remain.

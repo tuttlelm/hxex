@@ -301,3 +301,28 @@ def test_a_fully_deuterated_level_not_above_m0_is_rejected_whatever_the_floor(ca
         out = correct_means(bad, [0, 0], np.array([4.0, 8.0]))
     assert np.isnan(out.mean).all()
     assert "data_id 0" in caplog.text and "at or below" in caplog.text
+
+
+def test_too_few_controls_for_the_kint_model_keep_the_retention_floor(caplog):
+    """When the theoretical model is not fitted nothing judges the rated series' controls:
+    they get the d2o floor like the series without rates (four peptides with a fully deuterated
+    level of 0.1 per amide gave a tenfold inflated correction)."""
+    _, _, rates = kint_case()
+    n = {d: float(len(rates[d])) for d in (0, 1)}
+    rows = [(0, 0.0, 0.0), (0, 0.0, 0.0), (0, 1e6, 0.1 * n[0]),
+            (1, 0.0, 0.0), (1, 0.0, 0.0), (1, 1e6, 0.6 * n[1])]
+    amides = np.array([n[0]] * 3 + [n[1]] * 3)
+    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    with caplog.at_level(logging.WARNING):
+        c = fit_controls(fake_fit(rows), amides, cfg, rates=rates)
+    assert c.fd_model is None and "below the retention floor" in caplog.text
+    low, ok = c.rows([0])[0], c.rows([1])[0]
+    assert c.flags[low] == "retention_low" and c.fallback[low]
+    assert c.mfd[low] == pytest.approx(cfg.d2o_fraction * n[0]) and c.mfd_se[low] == 0.0
+    assert c.retention[low] == pytest.approx(cfg.d2o_fraction)
+    assert c.flags[ok] == "fd_unreplicated" and not c.fallback[ok]
+    assert c.retention[ok] == pytest.approx(0.6)
+    # an explicit retention_min is the floor as before, and a fitted model judges instead
+    c = fit_controls(fake_fit(rows), amides, dataclasses.replace(cfg, retention_min=0.05),
+                     rates=rates)
+    assert not c.fallback.any()

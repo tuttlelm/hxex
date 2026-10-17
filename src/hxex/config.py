@@ -36,6 +36,7 @@ and :func:`template` writes a project file with every default.
 from __future__ import annotations
 
 import logging
+import math
 import tomllib
 import types
 import typing
@@ -327,25 +328,41 @@ def _fragment_settings(block) -> FragmentSettings:
 def _input_from(data: Mapping, base: Path) -> InputSettings:
     """The ``[input]`` table. With ``spectra`` (stored raw spectra) the rest of the table is
     checked as usual when it is there (the same project file can read the input or rerun from a
-    bundle); without it (``spectra`` and at most ``retention_times``) the format and the folder
-    formats' control times come from the stored spectra's read record."""
+    bundle), but the format and the folder formats' control times are those of the stored
+    spectra's read record (logged when the file says otherwise); with ``spectra`` alone (and
+    at most ``retention_times``) they come from the record only."""
     names = {f.name for f in fields(InputSettings)}
     _check_keys(data, names, "[input]")
     if "spectra" not in data:
         return _read_settings(data, base)
     data = dict(data)
     stored = _path(base, data.pop("spectra"), "input.spectra")
-    if set(data) - {"retention_times"}:
-        return replace(_read_settings(data, base), spectra=stored)
-    source = stored_spectra_source(stored) or {}
-    reader = source.get("reader")
-    return InputSettings(
-        format=reader if reader in FORMATS else "stored",
-        undeut_time=float(source.get("undeut_time", DEFAULT_UNDEUT_TIME)),
-        fulldeut_time=float(source.get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
-        retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
-        spectra=stored,
-    )
+    try:  # the record only (the manifest); a missing or unusable path is reported when read
+        source = stored_spectra_source(stored) or {}
+    except ProjectError as exc:
+        log.debug("input.spectra: %s (resolved when the spectra are read)", exc)
+        source = None
+    reader = (source or {}).get("reader")
+    record = {
+        "format": reader if reader in FORMATS else "stored",
+        "undeut_time": float((source or {}).get("undeut_time", DEFAULT_UNDEUT_TIME)),
+        "fulldeut_time": float((source or {}).get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
+    }
+    if not (set(data) - {"retention_times"}):
+        return InputSettings(
+            retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
+            spectra=stored, **record)
+    inp = _read_settings(data, base)
+    if source is None:  # the file's own settings until the record can be read
+        return replace(inp, spectra=stored)
+    differs = {k: getattr(inp, k) for k, v in record.items() if getattr(inp, k) != v
+               and (k == "format" or inp.format in FOLDER_FORMATS)}
+    if differs:
+        log.warning("input.spectra: the stored spectra were read with %s; the project file's "
+                    "%s do(es) not apply to them", ", ".join(
+                        f"{k} = {v!r}" for k, v in record.items() if k in differs),
+                    ", ".join(f"{k} = {v!r}" for k, v in differs.items()))
+    return replace(inp, spectra=stored, **record)
 
 
 def _read_settings(data: Mapping, base: Path) -> InputSettings:
@@ -384,12 +401,23 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     run_names = {f.name for f in fields(MzmlRun)}
     parsed_runs = []
     for i, r in enumerate(runs, start=1):
-        _check_keys(r, run_names, f"input.runs #{i}")
+        where = f"input.runs #{i}" + (f" ({r['path']})" if isinstance(r.get("path"), str)
+                                      else "")
+        _check_keys(r, run_names, where)
+        time = r.get("time")
+        if time is not None and (isinstance(time, bool) or not isinstance(time, (int, float))
+                                 or not math.isfinite(time)):
+            raise ProjectError(f"{where}: time must be a number of seconds (the labelling time "
+                               "of the whole file) or left out (each scan has its own time); "
+                               f"got {time!r}")
+        rep = r.get("rep", 1)
+        if isinstance(rep, bool) or not isinstance(rep, int) or rep < 1:
+            raise ProjectError(f"{where}: rep must be a whole number of 1 or more, got {rep!r}")
         try:
             parsed_runs.append(MzmlRun.from_dict({k: _none(v) if k != "time" else v
                                                   for k, v in r.items()}))
         except (TypeError, ValueError) as exc:
-            raise ProjectError(f"input.runs #{i}: {exc}") from exc
+            raise ProjectError(f"{where}: {exc}") from exc
     target = dict(data.get("target", {}))
     _check_keys(target, _TARGET_KEYS, "[input.target]")
     target = {k: _none(v) for k, v in target.items()}
@@ -437,11 +465,16 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
 
 
 def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None, *,
-                 analysis_only: bool = False) -> Project:
+                 analysis_only: bool = False, spectra: str | Path | None = None) -> Project:
     """A :class:`Project` from the parsed TOML ``data``; relative paths are taken relative to
     ``base``. With ``analysis_only`` the ``[input]`` table may be left out when there is an
-    ``[analysis]`` one (comparing bundles needs no input): ``input`` is then None."""
+    ``[analysis]`` one (comparing bundles needs no input): ``input`` is then None. ``spectra``
+    (a path from the working directory) takes the place of ``[input] spectra``: the run takes
+    the raw spectra stored there."""
     base = Path(base)
+    if spectra is not None:
+        data = {**data, "input": {**data.get("input", {}),
+                                  "spectra": str(Path(spectra).resolve())}}
     _check_keys(data, {"project", "threads", "input", "run", "output", "analysis"},
                 "the project file")
     name = data.get("project")
@@ -487,7 +520,10 @@ def _analysis_from(data: Mapping, base: Path):
     from .analysis import AnalysisConfig
 
     _check_keys(data, ANALYSIS_KEYS, "[analysis]")
-    values = {k: v for k, v in data.items() if k not in ("regions", "sites")}
+    values = _false_to_none({k: v for k, v in data.items() if k not in ("regions", "sites")},
+                            AnalysisConfig)
+    if values.get("labelling") is False:  # typed Any: the helper cannot tell
+        values["labelling"] = None
     fasta = values.get("fasta")
     if isinstance(fasta, str):
         values["fasta"] = str(_path(base, fasta, "analysis.fasta"))
@@ -496,30 +532,34 @@ def _analysis_from(data: Mapping, base: Path):
                            for k, v in fasta.items()}
     if "out" in values:
         values["out"] = str(_path(base, values["out"], "analysis.out"))
-    if "runs" in values:
+    if values.get("runs") is not None:
         if not isinstance(values["runs"], Mapping):
             raise ProjectError("[analysis.runs] must be a table of run name = bundle")
         values["runs"] = {str(k): str(_path(base, v, f"analysis.runs.{k}"))
                           for k, v in values["runs"].items()}
-    if "filters" in values and isinstance(values["filters"], Mapping):
-        from .analysis import SpeciesFilters
-
-        values["filters"] = {**SpeciesFilters().__dict__, **values["filters"]}
-    if "choice" in values:
-        from .analysis import ChoiceConfig
-
-        values["choice"] = {**ChoiceConfig().to_dict(), **values["choice"]}
     values["annotations"] = {"regions": list(data.get("regions", [])),
                              "sites": list(data.get("sites", []))}
     try:
+        if isinstance(values.get("filters"), Mapping):
+            from .analysis import SpeciesFilters
+
+            values["filters"] = {**SpeciesFilters().__dict__, **values["filters"]}
+        if "choice" in values:
+            from .analysis import ChoiceConfig
+
+            if not isinstance(values["choice"], Mapping):
+                raise TypeError("choice must be a table")
+            values["choice"] = {**ChoiceConfig().to_dict(), **values["choice"]}
         return AnalysisConfig.from_dict(values)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, AttributeError) as exc:
         raise ProjectError(f"[analysis]: {exc}") from exc
 
 
-def load_project(path: str | Path, *, analysis_only: bool = False) -> Project:
+def load_project(path: str | Path, *, analysis_only: bool = False,
+                 spectra: str | Path | None = None) -> Project:
     """Read and check a project file (``analysis_only``: one that may have only an
-    ``[analysis]`` table, for :func:`hxex.report.write_analysis`)."""
+    ``[analysis]`` table, for :func:`hxex.report.write_analysis`; ``spectra``: stored raw
+    spectra in place of the input, :func:`project_from`)."""
     path = Path(path)
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -527,7 +567,8 @@ def load_project(path: str | Path, *, analysis_only: bool = False) -> Project:
         raise ProjectError(f"cannot read {path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise ProjectError(f"{path}: not valid TOML ({exc})") from exc
-    return project_from(data, path.resolve().parent, path, analysis_only=analysis_only)
+    return project_from(data, path.resolve().parent, path, analysis_only=analysis_only,
+                        spectra=spectra)
 
 
 # --- reading the input --------------------------------------------------------------------------
@@ -624,13 +665,12 @@ def load_stored_spectra(path: str | Path) -> SpectrumSet:
 
 def project_with_spectra(project: Project, path: str | Path) -> Project:
     """``project`` taking the raw spectra stored in ``path`` (as ``[input] spectra``; a
-    relative path is taken from the working directory)."""
-    path = Path(path).resolve()
-    stored_spectra_source(path)  # exists and holds spectra
-    if project.input is None:
-        raise ProjectError("the project file has no [input] table")
-    inp = replace(project.input, spectra=path)
-    return replace(project, input=inp)
+    relative path is taken from the working directory). The project is read again from its
+    file, so the format, the control times and everything that follows from them are those of
+    the stored spectra (:func:`load_project` with ``spectra``)."""
+    if project.path is None:
+        raise ProjectError("the project was not read from a file: give spectra in [input]")
+    return load_project(project.path, spectra=path)
 
 
 _READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "sample", "undeut_time",
@@ -651,8 +691,10 @@ def read_input(
     inp = project.input
     if inp.spectra is not None:
         default = InputSettings(inp.format)
-        unused = [k for k in _READ_STAGE if k != "format"
-                  and getattr(inp, k) != getattr(default, k)]
+        base = project.path.resolve().parent if project.path is not None else Path.cwd()
+        unused = [k for k in _READ_STAGE if k not in ("format", "undeut_time", "fulldeut_time")
+                  and getattr(inp, k) != getattr(default, k)
+                  and not (k == "data_root" and inp.data_root == base)]
         log.info("taking the raw spectra stored in %s%s", inp.spectra,
                  f"; not used: input {', '.join(unused)}" if unused else "")
         spectra = load_stored_spectra(inp.spectra)
@@ -964,10 +1006,11 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
 def describe(project: Project) -> dict[str, Any]:
     """A short summary of a project's settings (for ``hxex check``)."""
     run = project.run
+    inp = project.input
     return {
         "project": project.project,
-        "format": project.input.format + (
-            "" if project.input.spectra is None else f" (stored in {project.input.spectra})"),
+        "format": "(none: analysis only)" if inp is None else inp.format + (
+            "" if inp.spectra is None else f" (stored in {inp.spectra})"),
         "K": f"{run.fit.k_min} to {run.fit.k_max}",
         "device": run.fit.backend.device,
         "bootstrap": "off" if run.bootstrap is None else f"{run.bootstrap.n_boot} resamples",

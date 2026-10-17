@@ -251,7 +251,9 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
 - **Two estimates per peptide.** (1) The apparent protection factor at each time: the value
   that gives the measured `fD` (monotonic, one root; works with one time point). (2) One
   protection factor over all times by least squares on `fD` weighted by `fD_se`, with its
-  standard error. When the amides of one peptide are protected differently from each other
+  standard error; a point whose error is unknown (no bootstrap) takes the median of the
+  peptide's known errors, and with none known the fit is unweighted (an unknown error must
+  never get the largest weight; audit of 2026-10-17). When the amides of one peptide are protected differently from each other
   (exposed and buried amides in one peptide; not conformational states, which the K = 2 fits
   describe), the exposed ones exchange first and the apparent value rises with time; one
   factor then summarises the peptide poorly. Reported as `protection_drift` (log10 of the last
@@ -284,6 +286,18 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   peptides (`intrinsic_rates(..., free_termini=)`). Without a FASTA no peptide ends at a free
   carboxyl.
 - **Unreliable times** are left out with `[analysis] exclude_times` (the whole analysis).
+- **Direction.** The model is one of forward labelling (`fD` rises with time). A sample whose
+  peptides mostly lose deuterium with time (back-exchange kinetics) is refused with a message:
+  protection factors apply there too (the same ratio under EX2), but through the
+  two-direction model of the audit of 2026-10-17, a design item not yet built.
+- **Modified forms** at the residue level follow `[analysis] modified_peptides`: `'separate'`
+  (the default) fits each modified form as a state of its own (`'WT pS59'`, as the residue
+  map does), `'combined'` pools it with the sample's other peptides. A peptide with no finite
+  `fD` at any time leaves the residue fit (it would otherwise count as a member and as
+  coverage, reporting its residues resolved with a regulariser-only value); its row of
+  `protection.csv` has `n_times = 0`. Reference peptides are matched as in
+  `compare_peptides` (one species per side over a range pairs by range; several pair by
+  identical sequence), so two forms over one range never collapse to one.
 - **Residue level (step C; owner asked for it, 2026-10-15).** One `log10_protection` per
   exchanging residue, fitted to every peptide of a state (a sample at K = 1, or one K = 2
   rank: apparent values, for proteins whose exchange is not unimodal) at once, as pyHDX's
@@ -293,10 +307,12 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
     Same definition as the peptide level, `protection = kint / rate`; pyHDX uses `kint / (1 +
     protection)`, so its factors are hxex's minus 1.
   - Loss: the mean squared residual of `fD` in units of its standard error (pyHDX: unweighted
-    deuterons), the error floored at 0.01 so no point dominates, plus `r1` times the mean
+    deuterons), the error floored at 0.01 so no point dominates and an unknown error replaced
+    by the median of the state's known ones (none known: unweighted), plus `r1` times the mean
     absolute difference of `log10_protection` between neighbouring fitted residues (pyHDX's
-    total-variation regulariser, in log10 units instead of ΔG/1e4 J/mol; a proline or an
-    uncovered stretch breaks the chain). Smoothed (`sqrt(d^2 + 1e-4)`) and minimised by L-BFGS
+    total-variation regulariser, in log10 units instead of ΔG/1e4 J/mol; a proline, which
+    has no amide to fit, is bridged (its two neighbours are tied), an uncovered stretch breaks
+    the chain). Smoothed (`sqrt(d^2 + 1e-4)`) and minimised by L-BFGS
     in float64 (pyHDX: SGD, up to 200,000 epochs).
   - Errors: from the inverse Hessian of the loss (with the regulariser; pyHDX: without it),
     scaled by the misfit when it is above 1. They hold for the chosen `r1`.

@@ -171,6 +171,62 @@ def test_conditions_share_an_envelope():
     assert alone.poor.tolist() == [False, False, True, False, True]
 
 
+def test_three_conditions_agreeing_with_the_core_share_its_envelope():
+    """Two conditions off the core in opposite directions agree with it but not with each
+    other: the core (the condition agreeing with most) describes both within max_residual,
+    so they are admitted and the envelope is refitted with every condition."""
+    cfg = EnvelopeConfig(mode="mixed", components=2, share=True)
+    a = mixture_spectrum(TRUE_WEIGHTS, 0.0)
+    b = mixture_spectrum(np.array([0.35, 0.65]), 0.0)
+    c = mixture_spectrum(np.array([0.15, 0.85]), 0.0)
+    s = SpectrumSet.from_spectra(series([(0.0, a)], 0) + series([(0.0, b)], 1)
+                                 + series([(0.0, c)], 2) + series([(0.0, c)], 3))
+    groups = {0: "ion", 1: "ion", 2: "ion"}
+    table, by = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, groups=groups)
+    assert table.agrees.tolist() == [True, True, True, True]
+    assert table.poor.tolist() == [False, False, False, False]
+    assert by[0] is by[1] is by[2] and by[0].n_reference == 3  # refitted with all three
+    assert table.n_reference.tolist() == [1, 1, 1, 1]  # each series' own references
+    # the two off-core conditions alone disagree, and stay on record when the group then
+    # falls back to the theory (no fallback time, the pair's envelope not good)
+    pair, _ = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+                               groups={1: "ion", 2: "ion"})
+    assert pair.agrees[[1, 2]].tolist() == [False, False]
+    assert np.isfinite(pair.own_residual[[1, 2]]).all()
+
+
+def test_envelopes_report_progress_and_stop_on_cancel(tmp_path):
+    from hxex.hooks import Cancelled
+
+    good = mixture_spectrum(TRUE_WEIGHTS, 0.0)
+    s = SpectrumSet.from_spectra(series([(0.0, good)], 0) + series([(0.0, good)], 1))
+    cfg = EnvelopeConfig(mode="mixed", components=2)
+    seen = []
+    series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+                     progress=lambda d, t: seen.append((d, t)))
+    assert seen[0] == (0, 2) and seen[-1] == (2, 2)
+    with pytest.raises(Cancelled):
+        series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, cancel=lambda: True)
+    # the run names the stage before picking and stops there when cancelled
+    stages = []
+
+    class Recorder:
+        def start_stage(self, name, start, end):
+            stages.append((name, start, end))
+
+        def __call__(self, done, total):
+            pass
+
+    fit = FitConfig(k_min=1, k_max=1, adam_steps=20, n_restarts=1,
+                    backend=Backend("cpu", "float64"), noise=NoiseConfig("gaussian", percent=3.0))
+    config = RunConfig(picker=PICK, fit=fit, quality=None, envelope=cfg)
+    run(s, config, progress=Recorder())
+    assert [x[0] for x in stages[:2]] == ["envelope", "pick"]
+    assert stages[0][1] == 0 and stages[0][2] == stages[1][1] < stages[1][2]
+    with pytest.raises(Cancelled):
+        run(s, config, cancel=lambda: True)
+
+
 def test_envelope_groups():
     """Series that differ only in their scan filters or list label share a key."""
     def target(label, **kw):

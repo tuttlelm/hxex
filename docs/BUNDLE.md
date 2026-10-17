@@ -28,6 +28,8 @@ manifest: the directory does not open until the bundle is written again.
   own parameters (`log_A`, `n_raw`, `logit_p`) are in the noise-scaled units the fit works in.
 - Per-measurement values that depend on K are lists of K values in the order of the original
   fit's components. Where a table pads to the largest K tried (`k_max`), the padding is NaN.
+  A K the multimodality screen (`fit.screen`) did not fit for a measurement has NaN in every
+  value of that K (its loss and criteria included) and is never its selected K.
 - `mean` is `n * p` in deuterons and `population` (a component's share) is `A_k / sum(A)`.
 
 ## manifest.json
@@ -55,7 +57,11 @@ differs is read with a warning, or refused with `on_change="error"`, and its new
 `files` keeps the old identity under `previous`; for `read_spectra` (HX-Express, SpecExport,
 pooled) the format, project, data directory, entries, filters, control times and `files` (each
 entry's input: an HX-Express file, or a SpecExport folder identified as a whole), repeated by
-`hxex.io.read_spectra_source`; `hxex.io.read_source` repeats either kind), and
+`hxex.io.read_spectra_source`; `hxex.io.read_source` repeats either kind). A scan-file
+record also holds `windows`, the m/z range each target's scans were cut to (the picker's
+predicted bins plus `mz_margin`; a rerun from stored spectra whose picker reaches beyond it
+warns). Spectra taken from an earlier bundle or spectra file (`[input] spectra`) keep that
+read's record with `stored_in`, the path they were taken from. Then
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
 ## Tables
@@ -73,8 +79,8 @@ entry's input: an HX-Express file, or a SpecExport folder identified as a whole)
 | `binned.parquet` | spectrum | the peak-picked table: the index columns below plus `mz` (predicted), `intensity`, `n_deut`, `peak_mz` (where the peak was found, NaN for an empty bin) (lists per bin), `mz_offset_ppm` (the spectrum's intensity-weighted median peak offset; both NaN in bundles written before hxex recorded them), `env_width`, `env_symm`, `max_namides`, `threshold`, and the flags `empty`, `no_signal`, `capped` |
 | `spectra.parquet` | spectrum | optional raw spectra: the index columns plus `mz`, `intensity` (lists) |
 | `review.parquet` | reviewed spectrum | `spectrum_id`, `status` (`accepted` or `rejected`, or empty), `k_override` (0 = none), `note`, `updated` (UTC time) |
-| `quality.parquet` | measurement | when quality flags were assessed: `deviance` (reduced deviance of the selected-K fit), `deviance_rel` (to the series median), `misfit` (`sum((obs - fit)^2) / sum(obs^2)` of that fit) and `misfit_rel` (to the series median; the `poor_fit` statistic; absent in bundles written before it), `intensity` (total), `intensity_rel` (to the other replicates at the same time), `mz_offset` (the series' median m/z offset minus the median over all series, ppm), NaN where not assessed; `poor_fit`, `low_intensity`, `noise_outlier`, `mz_shift` and `flagged` (any of them) |
-| `envelopes.parquet` | series (`data_id`) | when the run used an ion-type mixture or an inferred envelope: `mode`, `source` (`reference`, `fallback` or `theory`), `weights` (of the ion types, lightest first), `residual`, `n_reference`, `good`, `fit_shape` (the envelope of the fit; the same shape is in the series' `measurements` rows) |
+| `quality.parquet` | measurement | when quality flags were assessed: `deviance` (reduced deviance of the selected-K fit), `deviance_rel` (to the series median), `misfit` (`sum((obs - fit)^2) / sum(obs^2)` of that fit) and `misfit_rel` (to the series median; the `poor_fit` statistic; absent in bundles written before it), `intensity` (total), `intensity_rel` (to the other replicates at the same time), `mz_offset` (the series' median m/z offset minus the median over all series, ppm), NaN where not assessed; `poor_fit`, `low_intensity`, `noise_outlier`, `mz_shift`, `poor_envelope` (the series' ion-type envelope was not measured well, `envelopes.parquet`; absent in bundles written before it) and `flagged` (any of them) |
+| `envelopes.parquet` | series (`data_id`) | when the run used an ion-type mixture or an inferred envelope: `mode`, `source` (`reference`, `shared` (one envelope for the conditions of one ion, `envelope.share`), `fallback` or `theory`), `weights` (of the ion types, lightest first), `residual` (on the bins the envelope is used with), `n_reference` (the series' own reference spectra with signal), `good`, `fit_shape` (the envelope of the fit; the same shape is in the series' `measurements` rows), and for shared groups `own_residual` (the shared envelope against the series' own references; NaN without any) and `agrees` (whether its references agree with the other conditions'; both kept when the group then fell back; absent in bundles written before them) |
 | `controls.parquet` | series (`data_id`) | when controls were given: `n_amides`, `n_undeut`, `n_fd` (replicates used), `m0_measured`, `mfd_measured` (replicate means of the K=1 fits, NaN if missing), `m0`, `mfd` (the values used) with `m0_se`, `mfd_se` (NaN: one replicate; 0: theoretical; for a theoretical back-exchange fallback the fit's scatter per amide times `n_amides`), `retention`, `fallback`, `flags` (`;`-separated: `m0_missing`, `m0_high`, `fd_missing`, `retention_low`, `retention_high`, `no_amides`, `m0_unreplicated`, `fd_unreplicated`, `fd_median`, `fd_off_model`, `fd_kint`); with `fd_fallback = "kint"` the fitted model (`a`, `t0`, `b_rt` and `median_rt` when it used retention times, else null, `n_series`, `n_rejected`, `sd_per_amide`, `quench`) is JSON in the table's schema metadata (`fd_model`) |
 | `components.parquet` | measurement, K and component | the tidy table of every fit with its intervals (from `bootstrap` for the selected K and `bootstrap_k` for the others), for other tools; derived (not read back). `mean` is the uncorrected mean (deuterons beyond natural abundance). With controls it also has `mean_corrected`, `mean_corrected_se`, `mean_corrected_ci_lo`, `mean_corrected_ci_hi` (the controls' uncertainty included), `mean_corrected_control_se` (that part alone) and `control_fallback` |
 

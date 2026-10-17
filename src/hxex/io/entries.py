@@ -105,6 +105,10 @@ def read_retention_times(path: str | Path) -> list[dict]:
 
 
 def _rt_row(row: dict) -> dict:
+    if None in row.values():
+        raise ValueError("fewer cells than the header has columns")
+    if row.get(None):
+        raise ValueError("more cells than the header has columns")
     out: dict = {"rt": float(row["rt"])}
     rng = (row.get("peptide_range") or "").strip()
     if rng and not (row.get("start_seq") or "").strip():
@@ -114,6 +118,9 @@ def _rt_row(row: dict) -> dict:
         value = (row.get(key) or "").strip()
         if value:
             out[key] = _whole(value, key) if key in ("start_seq", "end_seq", "charge") else value
+    if not set(out) - {"rt"}:
+        raise ValueError("no sample, peptide, range or charge: the row would apply to every "
+                         "spectrum")
     return out
 
 

@@ -881,3 +881,27 @@ def test_window_filter_and_distinct_tests_match_the_plain_ones():
         assert np.array_equal(table.select(activation=act),
                               np.flatnonzero(_activation_match(column, act)))
     assert np.array_equal(table.select(filter_excludes="sid="), np.flatnonzero(np.arange(n) % 3))
+
+
+def test_fragments_take_their_parents_retention_time(tmp_path):
+    """In an LC run (a fixed time) a fragment's retention time is its parent's: the
+    back-exchange happened to the parent on the column. In a kinetics run no spectrum has one."""
+    from hxex.fragments import fragment_targets, parent_mz_range
+
+    lo, _ = parent_mz_range(ENTRY)
+    scans = time_course(n=4, start=1.0, step=0.5)  # MS1 at 60, 90, 120 and 150 s
+    scans.append({"mz": np.linspace(100.0, 1500.0, 3000), "intensity": np.ones(3000),
+                  "time": 2.45, "ms_level": 2, "precursors": [(lo + 0.5, CHARGE, *ETD)],
+                  "filter": ""})  # the only MS2 scan, at 147 s
+    path = write_mzml(tmp_path / "lc.mzML", scans)
+    window = (60.0, 150.0)
+    targets = ([MzmlTarget(ENTRY, rt_window=window)]
+               + fragment_targets(ENTRY, "c:3:1", activation="ETD", rt_window=window))
+    s = read_mzml([MzmlRun(path, "WT", time=60.0)], targets, project="p")
+    assert len(s) == 2 and list(s.data_id) == [0, 1]
+    assert np.isfinite(s.rt[0]) and s.rt[0] < 2.4 and s.rt[1] == s.rt[0]
+    # the fragment first (a hand-made target list): its own scans' time
+    backwards = read_mzml([MzmlRun(path, "WT", time=60.0)], targets[::-1], project="p")
+    assert backwards.rt[0] == pytest.approx(2.45) and backwards.rt[1] == s.rt[0]
+    kinetics = read_mzml([MzmlRun(path, "WT")], targets, project="p")
+    assert np.isnan(kinetics.rt).all()

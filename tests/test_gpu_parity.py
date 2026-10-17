@@ -72,6 +72,19 @@ def test_float64_on_the_gpu_is_the_cpu_result():
 
 
 @needs_cuda
+def test_the_screen_skips_the_same_fits_on_the_gpu():
+    """The multimodality screen (a CPU loss floor) decides the same fits whatever device
+    fits them, and the fitted values agree."""
+    meas = clear_data()
+    cpu = fit_models(meas, FitConfig(noise=NOISE, backend=CPU64, screen=True, **LIGHT))
+    gpu = fit_models(meas, FitConfig(noise=NOISE, backend=GPU64, screen=True, **LIGHT))
+    assert list(cpu.selected_K) == list(gpu.selected_K)
+    np.testing.assert_array_equal(np.isnan(cpu.grid("nll")), np.isnan(gpu.grid("nll")))
+    np.testing.assert_allclose(ordered(gpu)[0], ordered(cpu)[0], atol=1e-3)
+    np.testing.assert_allclose(selected_loss(gpu), selected_loss(cpu), rtol=1e-4, atol=1e-3)
+
+
+@needs_cuda
 def test_a_gpu_run_is_reproducible():
     meas = clear_data()
     cfg = FitConfig(noise=NOISE, backend=GPU32, **LIGHT)

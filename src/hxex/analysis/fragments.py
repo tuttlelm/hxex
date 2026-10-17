@@ -211,13 +211,15 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
 
 def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
     """:func:`fragment_uptake` of the runs of a :class:`hxex.analysis.RunSet`."""
+    from ..io.mzml import SCAN_READERS
     from .runs import SEPARATOR
 
     tables = {}
     for name, results in runs.runs.items():
         settings = results.settings
-        if not (settings.spectra_source if settings is not None else None):
-            continue  # read from MS1 tables: no fragments
+        source = settings.spectra_source if settings is not None else None
+        if not source or source.get("reader") not in SCAN_READERS:
+            continue  # a folder format (MS1 tables): no fragments, nothing to read
         try:
             u = fragment_uptake(results, exclude_flagged=exclude_flagged)
         except ValueError as exc:

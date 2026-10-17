@@ -74,7 +74,6 @@ GPU_SHARE = 0.5  # share of the free GPU memory used by one chunk unless set
 # 3,727 measurements (docs/HISTORY.md item 46), so 12. Other bins evaluate the pmf at every
 # shifted bin: 5.2 to 5.9 times 12 arrays on the GPU for 94 to 542 Bimodal measurements, so 75.
 WORK_FACTOR = 12.0
-WORK_FACTOR_DIRECT = 75.0
 
 
 @dataclass(frozen=True)
@@ -172,6 +171,7 @@ class RunResult:
     quality: QualityFlags | None
     envelopes: EnvelopeTable | None = None
     spectra_source: dict | None = None
+    review: Any = None  # the hxex.io.bundle.ReviewTable carried over to the bundle, if any
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -185,14 +185,17 @@ class RunResult:
         reference: Reference | None = None,
         progress: ProgressHook | None = None,
         cancel: CancelHook | None = None,
+        plots: PlotConfig | None = None,
     ) -> list[Path]:
-        """Write the series figures described by ``config.plots`` (the default settings if it
-        is None); ``spectra`` adds the raw layer. Returns the files."""
+        """Write the series figures described by ``plots`` (default: ``config.plots``, or the
+        default settings if that is None) with the run's review applied; ``spectra`` adds the
+        raw layer. Returns the files."""
         from .report import Results
         from .report.figures import PlotConfig, write_figures
 
         return write_figures(
-            Results.from_run(self, spectra=spectra), directory, self.config.plots or PlotConfig(),
+            Results.from_run(self, spectra=spectra), directory,
+            plots or self.config.plots or PlotConfig(),
             reference=reference, progress=progress, cancel=cancel,
         )
 
@@ -227,16 +230,9 @@ def chunk_bytes(n_bins: int, shape_len: int, k_max: int, n: int, itemsize: int,
                 factor: float = WORK_FACTOR) -> float:
     """Estimated memory of a chunk of ``n`` measurements with ``n_bins`` bins and shapes of
     ``shape_len`` entries: the array of the binomial pmf of every shape position, bin and
-    population, times the number of such arrays alive at once (``factor``: ``WORK_FACTOR`` for
-    whole-number bins, ``WORK_FACTOR_DIRECT`` otherwise; measured peaks, which grow linearly
-    with the chunk)."""
+    population, times the number of such arrays alive at once (``factor``: ``WORK_FACTOR``,
+    a measured peak, which grows linearly with the chunk)."""
     return float(itemsize) * factor * n_bins * shape_len * k_max * n
-
-
-def _work_factor(data: Measurements) -> float:
-    """The memory factor of ``data``: whole-number bins use the integer convolution."""
-    whole = all(len(b) == 0 or (np.all(b == np.round(b)) and b.min() >= 0) for b in data.bins)
-    return WORK_FACTOR if whole else WORK_FACTOR_DIRECT
 
 
 def default_budget(config: RunConfig) -> int:
@@ -260,7 +256,7 @@ def plan_chunks(
     Series are ordered by their widest spectrum so that a chunk has similar widths, which keeps
     the padding small; the groups cover every measurement once."""
     shape_len = max(len(s) for s in data.shapes)
-    factor = _work_factor(data)
+    factor = WORK_FACTOR
     widths = np.array([len(b) for b in data.bins])
     series = [np.flatnonzero(data.data_id == s) for s in np.unique(data.data_id)]
     series.sort(key=lambda rows: -int(widths[rows].max()))
@@ -491,10 +487,13 @@ def run(
             raise ValueError("config.plots needs figures_dir or out to say where to write")
         figures_dir = Path(out).with_name(Path(out).name + "_figures")
     raw = data if isinstance(data, SpectrumSet) else None
+    if raw is not None and raw.source and raw.source.get("stored_in"):
+        _check_stored_windows(raw.source, config)
     if config.envelope.mode != "theory" and raw is None:
         raise ValueError(f"envelope mode {config.envelope.mode!r} needs the raw spectra "
                          "(a SpectrumSet), not a picked set")
     pick_share = 0.05 if raw is not None else 0.0
+    envelope_share = 0.03 if raw is not None and config.envelope.mode != "theory" else 0.0
     envelopes, clusters, shapes = None, None, None
     if raw is not None and config.envelope.mode != "theory":
         groups = None
@@ -505,10 +504,12 @@ def run(
             if not groups:
                 log.warning("envelope share: the spectra were not read from scan files, so "
                             "every series keeps its own envelope")
+        start_stage(progress, "envelope", 0.0, UNITS * envelope_share)
         envelopes, by_series = series_envelopes(
             raw, config=config.envelope, reference_time=config.reference_time,
             fallback_time=config.envelope_fallback_time, picker=config.picker,
             registry=config.registry, groups=groups,
+            progress=_Span(progress, 0.0, UNITS * envelope_share), cancel=cancel,
         )
         clusters = {d: e.clusters for d, e in by_series.items()}
         shapes = {d: e.fit_shape for d, e in by_series.items()}
@@ -526,11 +527,14 @@ def run(
             log.warning("%d of %d series have a poor envelope (flagged poor_envelope)", n_poor,
                         len(envelopes))
     if raw is not None:
-        start_stage(progress, "pick", 0.0, UNITS * pick_share)
+        start_stage(progress, "pick", UNITS * envelope_share,
+                    UNITS * (envelope_share + pick_share))
         binned = pick_spectra(
             raw, config.picker, registry=config.registry, clusters=clusters,
-            progress=_Span(progress, 0.0, UNITS * pick_share), cancel=cancel,
+            progress=_Span(progress, UNITS * envelope_share,
+                           UNITS * (envelope_share + pick_share)), cancel=cancel,
         )
+        pick_share += envelope_share
     else:
         binned = data
     drop_empty = np.asarray(binned.empty, dtype=bool)
@@ -628,18 +632,33 @@ def _review_for(review, fit: FitResult):
                                note=review.note[keep], updated=review.updated[keep])
 
 
+def _check_stored_windows(source: Mapping, config: RunConfig) -> None:
+    """Warn when the picker's bins reach beyond the m/z the stored spectra were cut to."""
+    from .io.mzml import stored_window_excess
+
+    outside = stored_window_excess(source, config.picker, config.registry)
+    if outside:
+        log.warning("%d target(s) need m/z outside the window the stored spectra were cut to "
+                    "(the picker's bins or margin grew since they were read): points outside "
+                    "it cannot be recovered; read the files again for them, for example %s",
+                    len(outside), outside[0])
+
+
 def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, figures_dir, raw,
-            reference, progress, cancel, review=None) -> RunResult:
-    """Write the bundle (if ``out``) and the figures (if the run asks for them)."""
+            reference, progress, cancel, review=None, plots=None) -> RunResult:
+    """Write the bundle (if ``out``) and the figures (if the run asks for them, or ``plots``
+    is given), both with the carried-over ``review`` (kept on the result)."""
+    result = dataclasses.replace(result, review=review)
     if out is not None:
         check_cancel(cancel)
         start_stage(progress, "write", UNITS - _FINISH, UNITS)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
                      review=review)
-    if result.config.plots is not None:
+    if result.config.plots is not None or plots is not None:
         check_cancel(cancel)
         start_stage(progress, "figures", UNITS - _FINISH, UNITS)
-        result.write_figures(figures_dir, spectra=raw, reference=reference, cancel=cancel)
+        result.write_figures(figures_dir, spectra=raw, reference=reference, cancel=cancel,
+                             plots=plots)
     report(progress, UNITS, UNITS)
     return result
 
@@ -661,7 +680,7 @@ def resume_bootstrap(
     ``bootstrap`` is given; ``device`` (``'cpu'``, ``'cuda'``, ...) replaces the run's, so a
     bundle fitted on a GPU can be resumed where there is none. The stored spectra, notes and
     review are kept; figures are written as by :func:`run` when the run's settings ask for
-    them."""
+    them, or (with the default plot settings) when ``figures_dir`` is given."""
     from .io.bundle import open_bundle
 
     path = Path(path)
@@ -687,8 +706,13 @@ def resume_bootstrap(
         spectra = b.spectra() if b.has("spectra") else None
         review = b.review() if b.has("review") else None
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
+    plots = None
     if config.plots is not None and figures_dir is None:
         figures_dir = path.with_name(path.name + "_figures")
+    elif config.plots is None and figures_dir is not None:
+        from .report.figures import PlotConfig
+
+        plots = PlotConfig()  # asked for figures the run did not: the defaults
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
                       np.where(~kept, "no_signal", "")).astype(str)
@@ -703,4 +727,4 @@ def resume_bootstrap(
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,
-                   cancel=cancel, review=review)
+                   cancel=cancel, review=review, plots=plots)

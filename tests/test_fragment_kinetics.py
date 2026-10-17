@@ -489,6 +489,33 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
     with caplog.at_level(logging.WARNING, logger="hxex.report.fragments"):
         assert fragment_outputs(no_k1, cfg) == ({}, [])
     assert "needs the K = 1 fits" in caplog.text
+    # a folder-format run in a RunSet has no fragments and is skipped, not an error
+    from hxex.analysis import RunSet
+
+    folder = SimpleNamespace(**{**vars(run), "settings": SimpleNamespace(
+        spectra_source={"reader": "specexport"}, picker=run.settings.picker)})
+    both = RunSet({"ms1": folder, "frag": run})
+    assert set(fragment_uptake(both).run) == {"frag"}
+    assert fragment_outputs(both, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
+                                                      "closure"}
+    assert fragment_outputs(RunSet({"ms1": folder}), cfg) == ({}, [])
+    # once there are fragment series, any other error is raised, not swallowed
+    other = stub_run(conditions=("gentle",))
+    other.settings.picker = PickerConfig(nterm_subtract=2)
+    with pytest.raises(ValueError, match="count fragment amides differently"):
+        fragment_outputs(RunSet({"a": run, "b": other}), cfg)
+    # the closure warning fires for a single run as well as for several
+    from hxex.io.mzml import mzml_series_targets
+
+    off = stub_run(conditions=("gentle",))
+    targets = mzml_series_targets(off.settings.spectra_source)
+    z3 = [i for i, d in enumerate(off.fit.data_id)
+          if targets[int(d)].entry.extra["fragment"] == "z:3"]
+    off.fit.fits[1].means[z3, 0] += 0.4
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hxex.report.fragments"):
+        fragment_outputs(off, cfg)
+    assert "miss the precursor by more than" in caplog.text
 
 
 def test_fragment_outputs_of_several_runs(tmp_path):

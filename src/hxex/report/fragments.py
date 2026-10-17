@@ -428,6 +428,17 @@ def residue_rates_figure(
     return fig
 
 
+def _has_fragment_series(results) -> bool:
+    """Whether ``results`` were read from scan files with fragment targets."""
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    settings = getattr(results, "settings", None)
+    source = getattr(settings, "spectra_source", None)
+    if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
+        return False
+    return any("fragment" in t.entry.extra for t in mzml_series_targets(source).values())
+
+
 def fragment_outputs(results, config, *, quiet: bool = False):
     """The fragment part of an analysis (:class:`hxex.analysis.FragmentAnalysis` ``config``):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
@@ -447,16 +458,19 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     )
     from ..analysis.runs import RunSet
 
-    runs = results.runs.values() if isinstance(results, RunSet) else [results]
-    if not any(getattr(getattr(r, "settings", None), "spectra_source", None) for r in runs):
-        return {}, []  # not read from scan files: no fragment targets
-    try:
-        uptake = fragment_uptake(results)
-    except ValueError as exc:  # e.g. fitted without K = 1
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    with_fragments = [name for name, r in runs.items() if _has_fragment_series(r)]
+    if not with_fragments:
+        return {}, []  # no run read from scan files with fragment targets
+    without_k1 = [name for name in with_fragments if 1 not in runs[name].fit.fits]
+    if without_k1:
         import logging
 
-        logging.getLogger(__name__).warning("no fragment outputs: %s", exc)
+        logging.getLogger(__name__).warning(
+            "no fragment outputs: fragment_uptake needs the K = 1 fits (fit with k_min = 1)%s",
+            f"; run(s) {', '.join(without_k1)}" if any(without_k1) else "")
         return {}, []
+    uptake = fragment_uptake(results)  # any other error is a real one
     if not len(uptake):
         return {}, []
     ions = list(config.ion_types) or fragment_ion_types(uptake)
@@ -480,13 +494,13 @@ def fragment_outputs(results, config, *, quiet: bool = False):
             run = np.array([owner[s, c] for s, c in zip(cols["sample"], cols["condition"],
                                                         strict=True)], dtype=str)
             tables[name] = {"run": run, **{k: v for k, v in cols.items() if k != "run"}}
-        flagged = int(sum(c.flagged.sum() for c in closures))
-        if flagged and not quiet:
-            import logging
+    flagged = int(sum(c.flagged.sum() for c in closures)) if closures else 0
+    if flagged and not quiet:
+        import logging
 
-            logging.getLogger(__name__).warning(
-                "%d fragment pair(s) miss the precursor by more than %g D (closure.csv)",
-                flagged, config.tolerance)
+        logging.getLogger(__name__).warning(
+            "%d fragment pair(s) miss the precursor by more than %g D (closure.csv)",
+            flagged, config.tolerance)
     jobs = []
     groups = sorted({(str(s), str(p), int(z)) for s, p, z in zip(
         uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})

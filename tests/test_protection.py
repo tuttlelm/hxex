@@ -2,6 +2,7 @@
 """MS1 protection factors: intrinsic rates in the protein, the per-time and fitted factors,
 bounds, and the differences between samples, on uptake made from known factors."""
 
+import dataclasses
 import logging
 
 import numpy as np
@@ -135,6 +136,94 @@ def test_differences_between_samples():
     assert np.isnan(cmp.delta[1]) and cmp.note[1] == "sample upper bound"
     with pytest.raises(ValueError, match="match"):
         compare_protection(table, "WT", match="other")
+
+
+def test_unknown_errors_take_the_median_of_the_known_ones():
+    """A NaN standard error (no bootstrap) must not get the largest weight: it takes the
+    median of the peptide's known errors; with none known the fit is unweighted."""
+    from hxex.analysis.protection import _known_errors
+
+    assert _known_errors(np.array([np.nan, np.nan])) is None
+    assert _known_errors(np.array([0.02, np.nan, 0.04, 0.0])).tolist() == [0.02, 0.03, 0.04, 0.03]
+    k = rates_in_protein(2, 9)
+    up = uptake([("A", 2, 9, model(k, 10.0) + np.array([0.0, 0.02, -0.02, 0.0]))])
+    known, _ = peptide_protection(up, LABELLING, sequences=PROTEIN)
+    half = dataclasses.replace(up, fD_se=np.where(up.time == 100.0, np.nan, up.fD_se))
+    table, _ = peptide_protection(half, LABELLING, sequences=PROTEIN)
+    assert np.isfinite(table.misfit[0]) and table.misfit[0] == pytest.approx(known.misfit[0])
+    assert table.log10_protection[0] == pytest.approx(known.log10_protection[0], abs=1e-6)
+    none = dataclasses.replace(up, fD_se=np.full(len(up), np.nan))
+    table, _ = peptide_protection(none, LABELLING, sequences=PROTEIN)
+    assert np.isnan(table.misfit[0]) and np.isfinite(table.log10_protection_se[0])
+
+
+def test_empty_peptides_leave_the_residue_fit(caplog):
+    """A peptide with no finite fD is not a member of the design (its residues were reported
+    resolved with a regulariser-only value); the peptide table keeps it with n_times 0."""
+    from hxex.analysis import residue_protection
+
+    up = residue_uptake("A", TRUE, [(2, 9), (3, 10), (2, 20)], times=TIMES_WIDE)
+    gone = np.isin(up.start, [2]) & np.isin(up.end, [20])
+    up = dataclasses.replace(up, fD=np.where(gone, np.nan, up.fD))
+    with caplog.at_level(logging.INFO):
+        out = residue_protection(up, LABELLING, sequences=PROTEIN)
+    assert "1 peptide(s) without a finite fD" in caplog.text
+    assert out.residue.max() == 10 and not np.isin(out.residue, range(11, 21)).any()
+    table, _ = peptide_protection(up, LABELLING, sequences=PROTEIN)
+    assert table.n_times[table.where(start=2, end=20)].tolist() == [0]
+
+
+def test_modified_forms_are_states_of_their_own_in_the_residue_fit():
+    """modified_peptides = 'separate': a phosphorylated form is fitted from its own peptides,
+    with its sample's sequence and conditions; 'combined' pools it with the sample."""
+    from hxex.analysis import residue_protection
+
+    plain = residue_uptake("WT", TRUE, PEPTIDES, times=TIMES_WIDE)
+    more = {r: v + 2.0 for r, v in TRUE.items()}
+    mod = residue_uptake("WT", more, [(2, 9), (3, 11), (5, 13)], times=TIMES_WIDE)
+    mod = dataclasses.replace(mod, peptide=np.array([p.replace("S", "pS", 1) for p in
+                                                     mod.peptide]))
+    both = SpeciesUptake(**{name: np.concatenate([x, y]) for (name, x), y in zip(
+        plain.columns().items(), mod.columns().values(), strict=True)}, nterm_subtract=1)
+    out = residue_protection(both, {"WT": LABELLING}, sequences={"WT": PROTEIN})
+    states = list(dict.fromkeys(out.sample.tolist()))
+    assert states == ["WT", "WT pS7"]
+    own = out.where(sample="WT pS7") & np.isfinite(out.log10_protection)
+    base = out.where(sample="WT") & out.resolved & np.isfinite(out.log10_protection)
+    assert own.any() and np.median(out.log10_protection[own]) > np.median(
+        out.log10_protection[base]) + 1.0  # the form's own factors, not the pooled ones
+    pooled = residue_protection(both, {"WT": LABELLING}, sequences={"WT": PROTEIN},
+                                modified="combined")
+    assert set(pooled.sample) == {"WT"}
+    with pytest.raises(ValueError, match="modified"):
+        residue_protection(both, LABELLING, modified="together")
+
+
+def test_two_reference_forms_over_one_range_do_not_collapse():
+    k1 = rates_in_protein(2, 9)
+    up = uptake([("WT", 2, 9, model(k1, 10.0)), ("M", 2, 9, model(k1, 100.0))])
+    mod = uptake([("WT", 2, 9, model(k1, 1000.0)), ("M", 2, 9, model(k1, 1000.0))])
+    mod = dataclasses.replace(mod, peptide=np.array([p.replace("S", "pS", 1) for p in
+                                                     mod.peptide]))
+    both = SpeciesUptake(**{name: np.concatenate([x, y]) for (name, x), y in zip(
+        up.columns().items(), mod.columns().values(), strict=True)}, nterm_subtract=1)
+    table, _ = peptide_protection(both, LABELLING, sequences=PROTEIN)
+    cmp = compare_protection(table, "WT")  # range matching: identical sequences pair
+    assert len(cmp) == 2 and sorted(cmp.peptide.tolist()) == sorted(cmp.peptide_reference)
+    deltas = dict(zip(cmp.peptide.tolist(), cmp.delta.tolist(), strict=True))
+    assert deltas[PROTEIN[1:9]] == pytest.approx(1.0, abs=1e-3)
+    assert deltas[PROTEIN[1:9].replace("S", "pS", 1)] == pytest.approx(0.0, abs=1e-3)
+    assert len(compare_protection(table, "WT", match="sequence")) == 2
+
+
+def test_a_falling_series_is_refused():
+    """Back-exchange kinetics (fD falls with time) do not fit the forward model."""
+    k = rates_in_protein(2, 9)
+    up = uptake([("A", 2, 9, model(k, 10.0)[::-1]), ("A", 10, 20, [0.9, 0.6, 0.3, 0.1])])
+    with pytest.raises(ValueError, match="falls with time.*two-direction"):
+        peptide_protection(up, LABELLING, sequences=PROTEIN)
+    mixed = uptake([("A", 2, 9, model(k, 10.0)), ("A", 10, 20, [0.9, 0.6, 0.3, 0.1])])
+    peptide_protection(mixed, LABELLING, sequences=PROTEIN)  # not most of them: accepted
 
 
 def test_modified_residue_counts_as_approximate():

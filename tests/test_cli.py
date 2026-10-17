@@ -2,6 +2,8 @@
 """The command line and the project file: templates, checks, a whole run of a synthetic mzML
 project, resuming a stopped bootstrap, reports from a bundle and bundle summaries."""
 
+import dataclasses
+import logging
 import tomllib
 
 import pytest
@@ -109,6 +111,43 @@ def test_project_files_are_checked(tmp_path):
         load_project(tmp_path / "x.toml")
 
 
+def test_run_time_and_rep_are_checked(tmp_path):
+    """A run's time is a number of seconds or absent (false, true or text made a run at 0 s,
+    1 s or crashed later); rep is a whole number of 1 or more. The error names the run."""
+    def project(run):
+        return project_from(tomllib.loads(
+            'project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n'
+            f'[[input.runs]]\npath = "a.mzML"\nsample = "S"\n{run}'), tmp_path)
+
+    assert project("").input.runs[0].time is None
+    assert project("time = 60\n").input.runs[0].time == 60.0
+    assert project("time = 0.0\nrep = 2\n").input.runs[0].rep == 2
+    for bad, match in (("time = false", "time must be a number"), ("time = true", "got True"),
+                       ('time = "60 s"', "left out"), ("time = inf", "got inf"),
+                       ("rep = false", "rep must be"), ("rep = 0", "got 0"),
+                       ("rep = 1.5", "rep must be")):
+        with pytest.raises(ProjectError, match=match) as info:
+            project(bad + "\n")
+        assert "input.runs #1 (a.mzML)" in str(info.value)
+
+
+def test_false_unsets_the_analysis_tables(tmp_path):
+    """``false`` for a table-valued [analysis] key means none (it gave a traceback)."""
+    def project(text):
+        return project_from(tomllib.loads(
+            'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n[analysis]\n'
+            + text), tmp_path)
+
+    a = project("filters = false\nfragments = false\ncontrols = false\nmerge = false\n"
+                "labelling = false\nruns = false\nfasta = false\n").analysis
+    assert a.filters is None and a.fragments is None and a.controls is None
+    assert a.merge is None and a.labelling is None and a.runs is None and a.fasta is None
+    assert project("").analysis.filters is not None
+    for bad in ("choice = false\n", "filters = 3\n", "fragments = 1\n", "choice = [1]\n"):
+        with pytest.raises(ProjectError, match=r"\[analysis\]"):
+            project(bad)
+
+
 def test_fragment_scans_are_tied_to_their_parent(tmp_path):
     from hxex.config import scan_targets
     from hxex.fragments import parent_mz_range
@@ -161,6 +200,34 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     assert out.strip().endswith("ok")
     (tmp_path / "out").mkdir()  # an existing bundle is reported
     assert cli.main(["check", str(path)]) == 1
+    assert "the bundle" in capsys.readouterr().err
+
+
+def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
+    """Missing files and folders are named, a peptide that does not tokenise is reported with
+    its line and a modX hint, and the summary comes first whatever is wrong."""
+    path = mzml_project(tmp_path)
+    (tmp_path / "peptides.csv").rename(tmp_path / "gone.csv")
+    assert cli.main(["check", str(path)]) == 1
+    out, err = capsys.readouterr()
+    assert "project        cli" in out and "input.peptides" in err and "gone" not in err
+    assert "peptides.csv: no such file" in err and "1 problem(s)" in err
+    (tmp_path / "peptides.csv").write_text(
+        "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
+        f"x,S,{PEPTIDE},0001-0010,1,10,2\nx,S,AC(ox)DE,0001-0005,1,5,2\n")
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "peptides.csv line 3: peptide 'AC(ox)DE'" in err and "modX" in err
+    assert "1 problem(s)" in err
+    (tmp_path / "out").mkdir()
+    folder = tmp_path / "folder.toml"
+    folder.write_text('project = "f"\n[input]\nformat = "specexport"\ndata_dir = "nowhere"\n'
+                      'retention_times = "rt.csv"\n[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(folder)]) == 1
+    out, err = capsys.readouterr()
+    assert "format         specexport" in out
+    assert "nowhere: no such directory" in err and "rt.csv: no such file" in err
+    assert "the bundle" in err and "3 problem(s)" in err
 
 
 def test_run_info_and_report(tmp_path, capsys):
@@ -190,10 +257,11 @@ def test_run_info_and_report(tmp_path, capsys):
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
 
 
-def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys):
+def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     import numpy as np
 
     from hxex.io import save_spectra
+    from hxex.io.times import DEFAULT_FULLDEUT_TIME
 
     path = mzml_project(tmp_path)
     assert cli.main(["-q", "run", str(path)]) == 0
@@ -245,6 +313,44 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys):
     assert cli.main(["-q", "run", str(no_spectra)]) == 0
     assert cli.main(["run", str(path), "--spectra", str(tmp_path / "bare" / "out")]) == 1
     assert "holds no raw spectra" in capsys.readouterr().err
+    # the format and the control stamps are the stored record's, not the project file's
+    # (which is logged), and the inherited control times follow them
+    other = tmp_path / "other.toml"
+    other.write_text(f'project = "o"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                     f'fulldeut_time = 50.0\nspectra = "out"\n[run.controls]\n'
+                     f'[output]\nbundle = "out5"\n{FAST_RUN}')
+    with caplog.at_level(logging.WARNING):
+        p = load_project(other)
+    assert p.input.format == "mzml" and p.input.fulldeut_time == DEFAULT_FULLDEUT_TIME
+    assert "read with format = 'mzml'" in caplog.text and "fulldeut_time = 50.0" in caplog.text
+    assert p.run.controls.fd_time is None  # a scan format: fd_time is set by hand
+    stored = dataclasses.replace(spectra, source={**spectra.source, "reader": "specexport",
+                                                  "undeut_time": 0.5, "fulldeut_time": 99.0})
+    save_spectra(stored, tmp_path / "s2.parquet")
+    other.write_text(other.read_text().replace('spectra = "out"', 'spectra = "s2.parquet"'))
+    p = load_project(other)
+    assert (p.input.format, p.input.undeut_time, p.input.fulldeut_time) == ("specexport", 0.5,
+                                                                            99.0)
+    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
+    p = load_project(other, spectra=tmp_path / "out")  # the command line's --spectra
+    assert p.input.format == "mzml" and p.input.spectra == tmp_path / "out"
+    assert p.run.controls.fd_time is None
+    # a stored path that cannot be read yet leaves the file's own settings until the spectra
+    # are read: check reports it as a problem, run refuses it before anything else
+    other.write_text(other.read_text().replace('spectra = "s2.parquet"', 'spectra = "gone"'))
+    assert load_project(other).input.format == "specexport"
+    capsys.readouterr()
+    assert cli.main(["check", str(other)]) == 1
+    out, err = capsys.readouterr()
+    assert "format         specexport" in out and "gone does not exist" in err
+    assert cli.main(["run", str(other)]) == 1 and "does not exist" in capsys.readouterr().err
+    # a rerun whose picker reaches beyond the m/z the stored spectra were cut to warns
+    wide = tmp_path / "wide.toml"
+    wide.write_text(text.replace('bundle = "out"', 'bundle = "out6"')
+                    .replace("zero_filling = 3", "zero_filling = 12"))
+    capsys.readouterr()
+    assert cli.main(["run", str(wide)]) == 0
+    assert "outside the window the stored spectra were cut to" in capsys.readouterr().err
 
 
 def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
@@ -263,10 +369,12 @@ def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
             cancel=lambda: stages[-1:] == ["bootstrap"])
     assert cli.main(["info", str(tmp_path / "b")]) == 0
     assert "pending        bootstrap" in capsys.readouterr().out
-    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 0
+    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables", "--figures"]) == 0
     with open_bundle(tmp_path / "b") as b:
         assert b.pending == [] and b.bootstrap() is not None
+        assert b.manifest["configs"]["run"]["plots"] is None  # the run's record is unchanged
     assert (tmp_path / "b_tables" / "uptake.csv").is_file()
+    assert any((tmp_path / "b_figures").iterdir())  # --figures honoured without run.plots
     assert cli.main(["resume", str(tmp_path / "b")]) == 1  # nothing pending any more
 
 

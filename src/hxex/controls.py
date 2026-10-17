@@ -31,8 +31,9 @@ prediction by more than ``kint_tolerance`` deuterons per amide (``fd_off_model``
 the ``retention_min`` floor (which still applies when set); a missing or rejected control falls
 back to ``m0 + prediction`` (flagged ``fd_kint``) with the fit's scatter per amide times
 ``n_amides`` as its standard error. Series without rates (fragment ions, extra ``Hex`` sites)
-keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable controls nothing
-is fitted and every series keeps it (logged). When every control in the fit has a retention
+keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable (or agreeing)
+controls nothing is fitted and every series keeps it, with its floor (logged). When every
+control in the fit has a retention
 time (``RT``, minutes; :func:`series_rt`) for at least ``kint_min_series`` of the controls, the
 effective time is ``t0 + b RT`` (``b`` fitted, not below 0; HISTORY items 71 and 83), and a
 series without one is taken at the median RT of those that have one.
@@ -395,6 +396,9 @@ def fit_controls(
     fd_model = None
     if config.fd_mode == "kint":
         fd_model = _kint_fallback(cols, series, pending, rates, config, rt)
+        if fd_model is None and config.retention_min is None:
+            # nothing judges the rated series' controls: they get the d2o floor as well
+            _apply_floor(cols, series, pending, rates, config)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -411,6 +415,27 @@ def fit_controls(
         flags=np.array(cols["flags"], dtype=str),
         fd_model=fd_model,
     )
+
+
+def _apply_floor(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,
+                 config: ControlConfig) -> None:
+    """Reject the accepted fully deuterated controls of the series with rates whose retention
+    is below half of ``d2o_fraction`` (``retention_low``, the fallback ``d2o_fraction``), as
+    the series without rates were (in ``cols``). For ``fd_fallback='kint'`` when the
+    theoretical model was not fitted, so that no control is judged."""
+    floor = config.d2o_fraction / 2
+    low = [i for i, s in enumerate(series) if i not in set(pending) and int(s) in rates
+           and cols["n_amides"][i] > 0 and cols["retention"][i] < floor]
+    for i in low:
+        n_am, m0 = cols["n_amides"][i], cols["m0"][i]
+        cols["mfd"][i], cols["mfd_se"][i] = m0 + config.d2o_fraction * n_am, 0.0
+        cols["retention"][i] = config.d2o_fraction
+        cols["fallback"][i] = True
+        cols["flags"][i] = ";".join([*(f for f in cols["flags"][i].split(";")
+                                       if f and f != "fd_unreplicated"), "retention_low"])
+    if low:
+        log.warning("%d fully deuterated control(s) below the retention floor %.2f fall back to "
+                    "d2o_fraction (no theoretical model to judge them)", len(low), floor)
 
 
 def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,

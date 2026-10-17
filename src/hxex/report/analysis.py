@@ -117,8 +117,11 @@ def _without_times(results, times):
     controls = set(_fd_times(results))
     for r in runs.values():
         run = r.settings.run if r.settings is not None else None
-        if run is not None and run.undeut_time is not None:
-            controls.add(float(run.undeut_time))
+        if run is None:
+            continue
+        undeut = run.controls.undeut_time if run.controls is not None else run.undeut_time
+        if undeut is not None:
+            controls.add(float(undeut))
     clash = [t for t in times if any(np.isclose(t, c) for c in controls)]
     if clash:
         raise ValueError(f"exclude_times {', '.join(f'{t:g}' for t in clash)}: a control's time "
@@ -236,7 +239,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         if config.protection_residues:
             res_prot = residue_protection(up, config.labelling, sequences=sequences,
                                           exclude_times=fd_times, r1=config.protection_r1,
-                                          peptides=protection, cancel=cancel)
+                                          peptides=protection,
+                                          modified=config.modified_peptides, cancel=cancel)
             tables["protection_residues"] = res_prot.columns()
         if config.reference:
             prot_cmp = compare_protection(protection, config.reference, alpha=config.alpha,

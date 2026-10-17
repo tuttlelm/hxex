@@ -452,6 +452,13 @@ def test_overwriting_a_reviewed_bundle_keeps_its_review(tmp_path, caplog):
         r = b.review()
         assert r.spectrum_id.tolist() == [kept] and r.note.tolist() == ["noisy"]
         assert (r.status_of(b.fit()) == "rejected").sum() == 1
+    # the run's result carries it too, so tables and figures made from the result agree
+    # with those made from the bundle
+    from hxex.report import Results
+
+    assert again.review is not None and again.review.spectrum_id.tolist() == [kept]
+    assert (Results.from_run(again).review_status == "rejected").sum() == 1
+    assert (Results.from_run(res).review_status == "rejected").sum() == 0
 
 
 def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tmp_path, caplog):

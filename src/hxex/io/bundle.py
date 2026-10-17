@@ -543,6 +543,7 @@ def write_bundle(
         components = _components_table(fit, bootstrap, controls, bootstrap_by_k)
         _write_table(tmp, "components", components, files, derived=True)
         if review is not None:
+            _check_review(review, fit)
             _write_table(tmp, "review", _review_table(review), files)
         manifest = {
             "kind": KIND,
@@ -707,6 +708,17 @@ class ReviewTable:
             if status:
                 out[index[str(sid)]] = str(status)
         return out.astype(str)
+
+
+def _check_review(review: ReviewTable, fit: FitResult) -> None:
+    """Refuse a review layer that ``fit`` cannot hold: entries for spectra it does not have
+    (:class:`BundleError`) or a chosen K it did not fit (ValueError). One check for the
+    review given at writing and for :meth:`Bundle.set_review`."""
+    known = set(map(str, fit.spectrum_id))
+    unknown = [str(s) for s in review.spectrum_id if str(s) not in known]
+    if unknown:
+        raise BundleError(f"review entries for unknown spectra: {unknown[:3]}")
+    review.effective_K(fit)  # raises if a chosen K was not fitted
 
 
 def _review_table(r: ReviewTable) -> pa.Table:
@@ -986,11 +998,7 @@ class Bundle:
         """Replace the review layer (directory bundles only); no fit is touched."""
         if not self._store.writable:
             raise BundleError("a zip bundle is read only; unpack it to edit the review layer")
-        known = set(map(str, self.fit().spectrum_id))
-        unknown = [str(s) for s in review.spectrum_id if str(s) not in known]
-        if unknown:
-            raise BundleError(f"review entries for unknown spectra: {unknown[:3]}")
-        review.effective_K(self.fit())  # raises if a chosen K was not fitted
+        _check_review(review, self.fit())
         files = dict(self.manifest["files"])
         _write_table(self.path, "review", _review_table(review), files)
         manifest = {**self.manifest, "files": files}

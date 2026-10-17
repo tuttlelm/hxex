@@ -70,6 +70,13 @@ def test_a_table_of_retention_times(tmp_path, caplog):
         path.write_text(bad)
         with pytest.raises(ReadError):
             read_retention_times(path)
+    # a row with fewer or more cells than the header, or naming no spectrum, is refused
+    for bad, match in (("peptide,sample,rt\nAKLV,WT\n", "fewer cells"),
+                       ("peptide,rt\nAKLV,1,2\n", "more cells"),
+                       ("peptide,sample,rt\n,,5\n", "every spectrum")):
+        path.write_text(bad)
+        with pytest.raises(ReadError, match=f"line 2: .*{match}"):
+            read_retention_times(path)
 
 
 def test_rt_reaches_the_bundle_and_the_species_table(tmp_path):
@@ -92,6 +99,12 @@ def test_rt_reaches_the_bundle_and_the_species_table(tmp_path):
     # both series are one species (the same sample and peptide): the median of its spectra
     assert np.allclose(up.rt, np.median(rt))
     assert "rt" in up.columns()
+    # over the spectra the table uses: a rejected one does not count
+    from hxex.io.bundle import ReviewTable
+
+    rejected = ReviewTable.empty().update(str(res.fit.spectrum_id[0]), status="rejected")
+    without = species_uptake(res.with_review(rejected), ks=(1,))
+    assert np.allclose(without.rt, np.median(rt[1:])) and not np.allclose(without.rt, up.rt)
 
 
 def test_kint_fallback_adds_the_retention_time_when_every_control_has_one():

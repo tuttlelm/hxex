@@ -226,67 +226,114 @@ def cmd_init(args) -> int:
     return 0
 
 
-def _project(args):
-    """The project of ``args.project_file``, with ``--spectra`` in place of input.spectra."""
-    from .config import load_project, project_with_spectra
+def _project(args, *, analysis_only: bool = False):
+    """The project of ``args.project_file``, with ``--spectra`` in place of input.spectra
+    (``analysis_only``: a file with only an ``[analysis]`` table is accepted)."""
+    from .config import load_project
 
-    project = load_project(args.project_file)
-    if getattr(args, "spectra", None):
-        project = project_with_spectra(project, args.spectra)
-    return project
+    return load_project(args.project_file, analysis_only=analysis_only,
+                        spectra=getattr(args, "spectra", None) or None)
 
 
 def cmd_check(args) -> int:
-    from .config import FOLDER_FORMATS, describe, folder_entries, stored_spectra_source
+    """Print what the project would read, then every problem found (each a line; the exit
+    status says whether there were any)."""
+    from .config import (
+        FOLDER_FORMATS,
+        ProjectError,
+        describe,
+        folder_entries,
+        stored_spectra_source,
+    )
 
-    project = _project(args)
+    project = _project(args, analysis_only=True)
     for key, value in describe(project).items():
         _say(f"{key:14s} {value}")
     inp = project.input
-    problems = 0
-    if inp.spectra is not None:
-        source = stored_spectra_source(inp.spectra) or {}
-        _say(f"{'spectra':14s} stored in {inp.spectra} (read by {source.get('reader', 'unknown')}"
-             f", project {source.get('project', 'unknown')}); the input files are not read")
+    problems: list[str] = []
+    if inp is None:
+        _say(f"{'input':14s} none (a project file for hxex analyse)")
+    elif inp.spectra is not None:
+        try:
+            source = stored_spectra_source(inp.spectra) or {}
+        except ProjectError as exc:
+            problems.append(str(exc))
+        else:
+            _say(f"{'spectra':14s} stored in {inp.spectra} (read by "
+                 f"{source.get('reader', 'unknown')}, project {source.get('project', 'unknown')}"
+                 "); the input files are not read")
     elif inp.format in FOLDER_FORMATS:
+        if inp.peptides is not None and not inp.peptides.is_file():
+            problems.append(f"input.peptides {inp.peptides}: no such file")
         if not inp.data_dir.is_dir():
-            log.error("input.data_dir %s is not a directory", inp.data_dir)
-            return EXIT_ERROR
-        entries = folder_entries(project)
-        samples = Counter(e.sample for e in entries)
-        _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
-        for s, n in sorted(samples.items()):
-            _say(f"  {s or '(no sample)'}: {n}")
-        problems += not entries
+            problems.append(f"input.data_dir {inp.data_dir}: no such directory")
+        if not problems:
+            entries = folder_entries(project)
+            samples = Counter(e.sample for e in entries)
+            _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
+            for s, n in sorted(samples.items()):
+                _say(f"  {s or '(no sample)'}: {n}")
+            if not entries:
+                problems.append(f"no spectra of format {inp.format} in {inp.data_dir}")
+            problems += _check_peptides(project, entries)
     else:
         problems += _check_scan_files(project)
+    if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
+        problems.append(f"input.retention_times {inp.retention_times}: no such file")
     out = project.output
     if out.bundle is not None and out.bundle.exists() and not out.overwrite:
-        log.warning("the bundle %s exists: 'hxex run' needs --overwrite or output.overwrite",
-                    out.bundle)
-        problems += 1
+        problems.append(f"the bundle {out.bundle} exists: 'hxex run' needs --overwrite or "
+                        "output.overwrite")
     if problems:
-        log.warning("%d problem(s) found", problems)
+        for p in problems:
+            log.error("%s", p)
+        log.warning("%d problem(s) found", len(problems))
         return EXIT_ERROR
     _say("ok")
     return 0
 
 
-def _check_scan_files(project) -> int:
-    """List each run's scans per target; the number of problems."""
+def _check_peptides(project, entries) -> list[str]:
+    """One problem per peptide of ``entries`` (in table order) that does not tokenise with the
+    project's registry: file and line (of the peptide table) or file name (entries found by
+    scanning), the sequence and the reason, with a reminder of the modX labels."""
+    from .chem import ChemistryError, parse_sequence
+
+    inp = project.input
+    problems = []
+    for n, entry in enumerate(entries):
+        try:
+            parse_sequence(entry.peptide, project.run.registry)
+        except ChemistryError as exc:
+            where = (f"{inp.peptides} line {n + 2}" if inp.peptides is not None
+                     else f"{entry.file}")
+            problems.append(f"{where}: peptide {entry.peptide!r}: {exc} (modified residues "
+                            "are modX labels such as acK or pS; unknown ones go in "
+                            "[run.registry])")
+    return problems
+
+
+def _check_scan_files(project) -> list[str]:
+    """List each run's scans per target; the problems found."""
     from .config import scan_targets
+    from .io import read_peptide_table
     from .io.mzml import MzmlFile, _target_label, target_scans
 
     inp = project.input
+    if not inp.peptides.is_file():
+        return [f"input.peptides {inp.peptides}: no such file"]
+    if inp.format == "thermo" and inp.thermo_dir is not None and not inp.thermo_dir.is_dir():
+        return [f"input.thermo_dir {inp.thermo_dir}: no such directory"]
+    problems = _check_peptides(project, read_peptide_table(inp.peptides))
+    if problems:
+        return problems
     targets = scan_targets(project)
     _say(f"{'targets':14s} {len(targets)} from {inp.peptides}")
-    problems = 0
     for run in inp.runs:
         path = Path(run.path)
         path = path if path.is_absolute() else inp.data_root / path
         if not path.is_file():
-            log.error("run %s: no such file", path)
-            problems += 1
+            problems.append(f"run {path}: no such file")
             continue
         if inp.format == "thermo":
             from .io import ThermoFile
@@ -305,7 +352,8 @@ def _check_scan_files(project) -> int:
             _say(f"  no scans: {label}")
         if len(none) > 10:
             _say(f"  ... and {len(none) - 10} more")
-        problems += len(none) == len(targets)
+        if len(none) == len(targets):
+            problems.append(f"run {path.name}: no target has scans")
     return problems
 
 
@@ -328,6 +376,10 @@ def cmd_run(args) -> int:
         log.error("%s holds the spectra this run takes: write the results to another bundle",
                   bundle)
         return EXIT_ERROR
+    if stored is not None:
+        from .config import stored_spectra_source
+
+        stored_spectra_source(stored)  # a path that cannot be read: refused before anything
     overwrite = args.overwrite or out.overwrite
     if bundle.exists() and not overwrite:
         log.error("%s exists (use --overwrite or output.overwrite)", bundle)
