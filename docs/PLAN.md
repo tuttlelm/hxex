@@ -533,6 +533,14 @@ Planned, not built:
    was not in pythonnet but in two Python loops over the scans, once per target. What is left
    (about 8 s per file: summing profile scans, the scan table through pythonnet) is spread
    out; reading files in parallel processes is the next step if it is needed.
+6. **Audit of 2026-10-17: fixes, the overwrite contract, the readability pass and five design
+   items** (control identity by label; the run as a variable in the analysis; the two-direction
+   protection model; a picking window from the resolving power; a user guide). Findings,
+   decisions and execution order are in `docs/AUDIT_2026-10-17.md`.
+7. **User guide and tutorials** (owner, 2026-10-17). The documents in `docs/` are written for
+   the developer; a complete pass to create user-friendly documentation and tutorials (inputs,
+   a worked project from `hxex init` to `hxex analyse`, what every table and figure holds) is
+   an open TODO.
 
 ## Risks and open decisions
 
