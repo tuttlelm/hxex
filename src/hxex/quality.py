@@ -69,7 +69,7 @@ class QualityConfig:
     - ``max_mz_offset_ppm``: ``mz_shift`` when a series' m/z offset against the run is beyond
       this; None: screen off.
     """
-    # defaults set on the tubulin data: docs/HISTORY.md item 28
+    # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
     poor_fit_factor: float = 10.0
     min_deviance: float = 1.0

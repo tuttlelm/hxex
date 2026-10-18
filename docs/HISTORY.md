@@ -389,8 +389,8 @@ Verified: on the Bimodal_HDX_Data test set the 24 spreadsheets give 566 spectra 
 points, **identical** (m/z, intensity, time, replicate) to pyHXExpress's `allrawdata`. On the
 Chris_B4 SpecExport example the entries (sample, range, charge, sequence from the FASTA) equal
 pyHXExpress's `metadf_asrun`, and the (time, replicate) set equals its `alldeutdata`. On two
-real pooled folders (tubulin, 318 entries each) the entries, candidate lists and classes equal
-pyHXExpress's `metadf` columns `sample_matches` and `tub_class`. Those three tests read their
+real pooled folders (the private pooled dataset, 318 entries each) the entries, candidate lists and classes equal
+the pooled `metadf` columns `sample_matches` and the protein-class column. Those three tests read their
 data from `HXEX_BIMODAL_DATA`, `HXEX_SPECEXPORT_EXAMPLE` and `HXEX_POOLED_EXAMPLE` and are
 skipped without them; the other tests use generated files.
 
@@ -448,15 +448,15 @@ What it does, per spectrum (m/z sorted, intensity):
 6. The SpecExport reader drops spectra whose picked intensities sum to zero; the HX-Express
    reader does not. `time_idx` is numbered over the times that remain.
 
-Findings (numbers from the October 2026 tubulin runs, 4,235 spectra, and the other test sets):
+Findings (numbers from the October 2026 runs of the private pooled dataset, 4,235 spectra, and the other test sets):
 
 - **The 19Feb2024 `alldeutdata` is not an oracle for the current picker.** It was made by an
   older version (constant spacing 1.006227 per bin and a different bin count). The oracle is the
   October 2026 pooled runs, which come with `allrawdata` and use the current spacing: the
-  reference function reproduces `batchrun_1pop_06Oct2026/TBA_run` exactly (2,232 spectra, six
+  reference function reproduces the first of the two pooled runs exactly (2,232 spectra, six
   columns, 1e-9) with `Nterm_subtract=2, Zero_Filling=3, setNoise=50, Max_Pops=1,
   Peak_Resolution=50, Env_threshold=0.1`. A numpy prototype of the same logic also matches
-  TBA_run and TBB_run exactly (0 of 4,235 differ).
+  both pooled runs exactly (0 of 4,235 differ).
 - **The zero count is cumulative, not consecutive.** Zeros anywhere to the right of the mean
   m/z add up, so a valley inside a multimodal envelope can stop picking early. A consecutive
   rule would pick more bins in 21 % of spectra, and in 7 % the extra bins contain intensity
@@ -466,7 +466,7 @@ Findings (numbers from the October 2026 tubulin runs, 4,235 spectra, and the oth
   threshold) while being counted as zeros; 32 % of spectra run to the bin cap instead of
   stopping on zeros.
 - **Shoulder rejection and the 10-point rule have never been exercised by real data here:** in
-  every dataset tested (Bimodal, B4, tubulin) no window has 10 or more points, so these data
+  every dataset tested (Bimodal, B4, the private pooled dataset) no window has 10 or more points, so these data
   are centroided or sparse. The branch has no oracle and needs synthetic tests; treat it as
   unvalidated.
 - The reference sorts the window with an unstable quicksort, so a tie for the maximum is broken
@@ -492,7 +492,7 @@ Deliberate differences from `peak_picker` (decided with the owner, 2026-10-10):
 1. **Picking ends `zero_filling` bins after the last bin that reaches the threshold**, so a
    valley inside a multimodal envelope never ends picking early. pyHXExpress stopped after a
    cumulative count of below-threshold bins to the right of the mean m/z. On the October
-   tubulin runs (TBA 2,232 and TBB 2,003 spectra) the old rule left out bins above the
+   private pooled runs (run A 2,232 and run B 2,003 spectra) the old rule left out bins above the
    threshold in 20 to 25 % of spectra, more than 10 % of the spectrum maximum in about 5 %, and
    in a few cases the maximum itself.
 2. **The bin limit is the physical range**: `amides + Hex + (natural-abundance peaks - 1) +
@@ -524,7 +524,7 @@ shoulder rejection, sub-threshold intensities kept as they are, predicted (not o
 the table, the envelope formulas, `max_namides` without `Hex`.
 
 Verified against pyHXExpress output from the October 2026 pooled runs (SpecExport raw spectra
-with the picked table from the same code): in TBA, TBB, TBA_B5 and TBB_B5, every bin both
+with the picked table from the same code): in the four private pooled runs (A, B and their B5 counterparts), every bin both
 pickers produced is identical (m/z and intensity, exactly), every bin only pyHXExpress kept is
 below the threshold, the envelope columns are equal wherever the bin counts are equal, and the one
 all-zero spectrum is flagged `empty`. A golden file of 11 spectra covering
@@ -534,7 +534,7 @@ check reads a run directory from `HXEX_PICKER_ORACLE`. Both skip when unset. The
 an older picker (constant bin spacing) and is not an oracle.
 
 **Unvalidated:** shoulder rejection and the 10-point rule. In every dataset available (Bimodal,
-B4, tubulin) no window has 10 or more points, so they are covered by synthetic tests only.
+B4, the private pooled dataset) no window has 10 or more points, so they are covered by synthetic tests only.
 Modified peptides (`Hex`, `H:1`, PTM labels) are also covered only by synthetic tests, because no
 oracle run uses them.
 
@@ -724,7 +724,7 @@ the models now differ slightly. Still open: a spectrum fitted with too few popul
 the wrong basin (harmless for selection).
 
 **Noise model (looked at 2026-10-10; decision: keep both Gaussian and Poisson).** In the
-replicate data of the tubulin runs (TBA and TBB, the peak-picked stick heights of 12,000 bins
+replicate data of the private pooled runs (A and B, the peak-picked stick heights of 12,000 bins
 each, 3 or more replicates at the same peptide, charge, time and bin) the noise is not constant:
 the replicate sd grows with the intensity with a log-log slope of 0.82 (0.64 after each spectrum
 is normalised to its own total, which removes whole-spectrum scale differences), and the
@@ -774,7 +774,7 @@ Small batches are slow because each resample runs the optimiser steps one after 
 **Noise estimated from replicates (2026-10-10; `NoiseConfig(estimate='replicates')`, off by
 default).** A set is one series: a peptide at one charge with its controls and time points
 (`data_id`); nothing is known about the instrument or sample preparation, so nothing is pooled
-across series. The noise of the tubulin series (peak-picked stick heights) is variance =
+across series. The noise of the private pooled dataset's series (peak-picked stick heights) is variance =
 gain x intensity within a series (log-log slope of variance against intensity 1.11, middle half
 1.00 to 1.19, 73 series), with a gain that differs between series (median 54, 10th to 90th
 percentile 29 to 103; the effective counts per series 99 to 1,266 and rising with the series'
@@ -789,13 +789,13 @@ gain as its scale (`obs / gain` are then counts). It needs at least `min_replica
 points with two or more replicates; **a series without that falls back to the configured noise
 settings**, so the engine now takes the noise model per measurement (`MixtureBatch`, the polish,
 the starting points, the sample size of the BIC and the bootstrap draws all work per
-measurement; `FitResult.noise_kind` records it). On the tubulin data 158 of 168 series can be
+measurement; `FitResult.noise_kind` records it). On the private pooled dataset 158 of 168 series can be
 estimated (16 have one replicated time point, 5 none).
 
 **Safeguard against bad spectra.** Each spectrum of a time point with three or more replicates
 gets a score: the mean over bins of its squared difference from the mean of the other replicates
 divided by the variance the gain predicts for that difference (`gain x mean x (1 + 1 / k)`),
-about 1 for a consistent spectrum (tubulin: median 0.93, 90th percentile 2.3; 3.5 % flagged in
+about 1 for a consistent spectrum (private pooled dataset: median 0.93, 90th percentile 2.3; 3.5 % flagged in
 50 series, 99th percentile above 10). While three or more replicates are active the worst is
 removed if its score exceeds `outlier_score` (4) and the others are scored again, so one bad
 spectrum does not make its good replicates look bad; removed spectra are left out of the gain
@@ -853,15 +853,15 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     `poor_fit`: the reduced deviance of the selected-K fit (squared residual for Gaussian noise,
     Poisson deviance for Poisson, noise-scaled, over `bins - 3K`) is more than 10 times the
     median of its series (at least 5 assessed spectra) **and** above 1. The absolute value alone
-    is unusable: on the tubulin subset (40 peptides, 371 spectra, noise estimated from
+    is unusable: on the private pooled subset (40 peptides, 371 spectra, noise estimated from
     replicates) the median is 4.9, because the model is never exactly right, and on the Bimodal
     data with the 3 % noise setting it is 0.17, because that noise is far above the real one; the
     floor of 1 removed 11 of 12 false flags on Bimodal (fits better than the noise model, flagged
     only because their series was cleaner) and left the one real bad fit (series 14, 7 s,
     deviance 44). `low_intensity`: total intensity below 0.3 of the mean of the other replicates
     at the same time (not assessed without a replicate: the total changes along a time course,
-    and against the series median the 5th percentile on tubulin is already 0.31). `noise_outlier`:
-    the replicate-consistency flag of the noise estimate. On the tubulin subset: 9, 11 and 23
+    and against the series median the 5th percentile on the private pooled subset is already 0.31). `noise_outlier`:
+    the replicate-consistency flag of the noise estimate. On the private pooled subset: 9, 11 and 23
     spectra (36 flagged of 371), overlap poor-fit with outlier 2, low-intensity with outlier 5, so
     the screens are largely complementary; on Bimodal: 1, 0 and 0. Thresholds are defaults from
     these two data sets, not validated against known bad spectra (there is no labelled set).
@@ -2673,7 +2673,7 @@ CSVs or mzML if wanted.
     earlier result is unchanged). For R = 60,000 at m/z 200: 29 ppm at m/z 600, 46 ppm at m/z
     1500, 25 mDa instead of the 37 mDa peak width at m/z 1000 with z = 20. Owner's decisions:
     Orbitrap scaling and one FWHM as defaults; the floor as its own key; the cap in the new
-    mode only, its effect on the ppm window to be measured on the tubulin and intact-peptide
+    mode only, its effect on the ppm window to be measured on the private pooled and intact-peptide
     data before any change there. `resolving_power = "recorded"` takes each spectrum's value
     from the scan files: Thermo raw files record it per scan in the trailer (`Orbitrap
     Resolution:` on the Tribrids and Exploris, `FT Resolution:` before; the example file, an

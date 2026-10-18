@@ -100,7 +100,7 @@ def match_candidates(
 
     Modifications are ignored when matching (``acK`` matches ``K``); the residues are tokenised,
     not read as characters. ``matches`` follows FASTA order. ``classes`` are labels such as
-    ``'TBA'``: each one that appears in the text of any matching record id is reported, in the
+    ``'ALPHA'``: each one that appears in the text of any matching record id is reported, in the
     order given.
     """
     records = read_fasta_records(pooled_fasta)

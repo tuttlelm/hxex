@@ -4,7 +4,7 @@
 The real-data tests read their location from HXEX_BIMODAL_DATA (the pyHXExpress
 Bimodal_HDX_Data folder) and HXEX_SPECEXPORT_EXAMPLE (a SpecExport folder with its FASTA file,
 plus ``hdxms_analysis_*/alldeutdata_*.csv`` and ``metadf_asrun_*.csv`` from a pyHXExpress run).
-HXEX_POOLED_EXAMPLE is a pooled folder with All_tubs.fasta and a metadf_*.csv. They are
+HXEX_POOLED_EXAMPLE is a pooled folder with a FASTA and a metadf_*.csv. They are
 skipped when the variables are not set.
 """
 
@@ -522,7 +522,7 @@ def pooldir(tmp_path):
             write_spec(tmp_path / name / f, [(100.0, 1.0), (101.0, 2.0)])
     (tmp_path / "metadf.csv").write_text("x")
     (tmp_path / "pooled.fasta").write_text(
-        ">TBA1A alpha one\nAAMKVLAA\n>TBB2A\nAAAAMKVLGGGAC\n>HSP\nWWACKDEWW\n"
+        ">ALPHA1 alpha one\nAAMKVLAA\n>BETA2\nAAAAMKVLGGGAC\n>OTHER\nWWACKDEWW\n"
     )
     return tmp_path
 
@@ -559,13 +559,13 @@ def test_read_spectra_pooled(pooldir):
 
 def test_match_candidates(pooldir):
     entries = hio.scan_specexport_pooled(pooldir)
-    m = hio.match_candidates(entries, pooldir / "pooled.fasta", classes=["TBA", "TBB", "HSP"])
+    m = hio.match_candidates(entries, pooldir / "pooled.fasta", classes=["ALPHA", "BETA", "OTHER"])
     by_file = {x.entry.file: x for x in m if x.entry.charge == 2}
-    assert by_file["0001-0004-MKVL"].matches == ("TBA1A", "TBB2A")  # FASTA order
-    assert by_file["0001-0004-MKVL"].classes == ("TBA", "TBB")
-    assert by_file["0010-0014-ACacKDE"].matches == ("HSP",)  # acK matches K
-    assert by_file["0010-0014-ACacKDE"].classes == ("HSP",)
-    assert by_file["0020-0022-GGG"].matches == ("TBB2A",)
+    assert by_file["0001-0004-MKVL"].matches == ("ALPHA1", "BETA2")  # FASTA order
+    assert by_file["0001-0004-MKVL"].classes == ("ALPHA", "BETA")
+    assert by_file["0010-0014-ACacKDE"].matches == ("OTHER",)  # acK matches K
+    assert by_file["0010-0014-ACacKDE"].classes == ("OTHER",)
+    assert by_file["0020-0022-GGG"].matches == ("BETA2",)
     assert hio.match_candidates(entries[:1], pooldir / "pooled.fasta")[0].classes == ()
     only_gg = hio.match_candidates(
         [PeptideEntry("f", "", "QQQ", "0001-0003", 1, 3, 2)], pooldir / "pooled.fasta"
@@ -586,8 +586,8 @@ def test_match_candidates_errors(pooldir):
 
 def test_read_fasta_records(tmp_path):
     p = tmp_path / "a.fasta"
-    p.write_text(">TBA1A alpha one\nMK\nVL\n\n>empty\n>TBB2A\nGG G\n")
-    assert hio.read_fasta_records(p) == [("TBA1A", "MKVL"), ("TBB2A", "GGG")]
+    p.write_text(">ALPHA1 alpha one\nMK\nVL\n\n>empty\n>BETA2\nGG G\n")
+    assert hio.read_fasta_records(p) == [("ALPHA1", "MKVL"), ("BETA2", "GGG")]
 
 
 POOLED = os.environ.get("HXEX_POOLED_EXAMPLE")
@@ -595,15 +595,17 @@ POOLED = os.environ.get("HXEX_POOLED_EXAMPLE")
 
 @pytest.mark.skipif(not POOLED, reason="HXEX_POOLED_EXAMPLE not set")
 def test_pooled_example_matches_pyhxexpress_metadf():
-    """A pooled folder with All_tubs.fasta and a metadf_*.csv written by pyHXExpress's
-    get_metadf_pooled and categorize_pooled_peptides (classes TBA and TBB)."""
+    """A pooled folder with one FASTA and a metadf_*.csv written by the owner's pooled scripts
+    (``sample_matches`` lists the matching records; a ``*_class`` column names each peptide's
+    protein class, the first part before ``_``)."""
     root = Path(POOLED)
-    ref = {
-        (r["file"], int(float(r["charge"]))): (r["sample_matches"], r["tub_class"])
-        for r in csv.DictReader(next(root.glob("metadf_*.csv")).open())
-    }
+    rows = list(csv.DictReader(next(root.glob("metadf_*.csv")).open()))
+    class_column = next(c for c in rows[0] if c.endswith("_class"))
+    ref = {(r["file"], int(float(r["charge"]))): (r["sample_matches"], r[class_column])
+           for r in rows}
+    classes = sorted({cls.split("_")[0] for _, cls in ref.values() if cls})
     entries = hio.scan(root, "pooled")
-    found = hio.match_candidates(entries, root / "All_tubs.fasta", classes=["TBA", "TBB"])
+    found = hio.match_candidates(entries, next(root.glob("*.fasta")), classes=classes)
     assert {(m.entry.file, m.entry.charge) for m in found} == set(ref)
     for m in found:
         matches, cls = ref[(m.entry.file, m.entry.charge)]
