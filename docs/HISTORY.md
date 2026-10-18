@@ -2694,3 +2694,26 @@ CSVs or mzML if wanted.
     (`test_window_from_the_resolving_power`), `tests/test_thermo.py` (recorded values through
     the readers, the read record and `hxex check`), `tests/test_spectra_file.py` (round trip,
     old files read as unknown), `tests/test_report.py` (the drawn window).
+
+99. **The half-spacing cap on the plain ppm window: measured (2026-10-18).** The cap of item 98
+    (half-width at most half the isotope spacing, `1.00235 / (2 z)`) binds only where the ppm
+    half-width exceeds it, that is where m/z times charge exceeds 10,023 at 50 ppm. On the two
+    bottom-up datasets it never does, so applying it to `resolution_ppm` would change nothing
+    there, exactly: the intact-peptide benchmark reaches m/z times charge 4,950 (26,333 spectra,
+    charges up to 6, m/z up to 1,777) and the private pooled dataset 3,844 (318 entries,
+    charges up to 5). On the top-down example file (an intact protein at charge 20, m/z 1,008;
+    23 sums of 20 MS1 scans) a 50 ppm half-width is 50.4 mDa against an isotope spacing
+    of 50.1 mDa, so every window holds both neighbouring peaks (21 points per window), and the
+    shoulder rule then zeroes every bin whose neighbour is taller: a median of 27 of the 95
+    real envelope bins per spectrum (the apex and flat stretches survive, the flanks go), the
+    kept tail beyond bin 110 is the neighbours' flanks picked at 20 to 30 ppm offsets, and
+    the envelope centre is biased by about 9 bins (59.0 against 50.1 on one spectrum; a median
+    shift of 8 bins over the run). With the cap (25 mDa, 10 points per window), with the 20
+    ppm window the earlier notes used, with the shoulder rule off, or with
+    `resolving_power = "recorded"` (120,000 at MS1) the pick is the same within a bin (centre
+    49.4 to 50.9, 98 strong bins). Conclusion: the plain window is wrong exactly where the cap
+    binds, and nowhere else; applying the cap to `resolution_ppm` as well would leave every
+    bottom-up result unchanged and repair top-down picking at the default settings. Decision
+    left to the owner (a deliberate difference from pyHXExpress if taken). Scratch script in
+    the session scratchpad only; the numbers are from the stored picked table of the benchmark,
+    the pooled folder's entries, and the top-down example file.
