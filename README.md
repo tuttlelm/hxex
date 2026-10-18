@@ -52,6 +52,7 @@ A run is described by a TOML project file:
 hxex init --format specexport -o hxex.toml   # a project file with every default; edit it
 hxex check hxex.toml                         # what would be read, and any problem
 hxex run hxex.toml                           # read, pick, fit, bootstrap; bundle and tables
+hxex run hxex.toml --keep-previous           # again, keeping the earlier results as results.1
 hxex run hxex.toml --spectra old_results     # the same from the raw spectra a bundle stored
 hxex info results                            # what the results bundle holds
 hxex report results --figures                # figures (and --tables) from the bundle
@@ -60,6 +61,14 @@ hxex analyse hxex.toml                       # post-fitting analysis: coverage, 
                                              # populations, comparisons ([analysis])
 hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs
 ```
+
+The output bundle (`[output] bundle`, say `results`) and the folders named after it
+(`results_tables`, `results_figures` and the generations `results.1`, `results.1_tables`, ...)
+are hxex's: a later `hxex run` refuses to write over them unless told to, and then either
+replaces them (`--overwrite`; the review layer is carried over) or moves them to the next
+generation first (`--keep-previous`). Files of your own inside them are kept, but one named
+like an hxex file stops the run; keep your own files elsewhere. `hxex info` shows what a
+bundle replaced, what changed and its earlier generations (see `docs/BUNDLE.md`).
 
 Formats: `specexport`, `hxexpress`, `pooled`, `mzml` and `thermo`. Progress goes to stderr;
 Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had started. On the CPU,

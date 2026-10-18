@@ -2581,3 +2581,40 @@ CSVs or mzML if wanted.
     format and the control times), and otherwise when the spectra are read. GPU parity with the
     screen: `tests/test_gpu_parity.py` (run on the GPU build). Sessions B (the overwrite
     contract) and C (readability) and the design items remain.
+
+96. **Audit of 2026-10-17, Session B: the overwrite contract (2026-10-17).** Three kinds of
+    content live in or beside a results folder and are now treated by kind: computed results
+    are replaced, annotations are carried and never silently dropped, the user's own files are
+    never touched. `hxex run` on an existing bundle still refuses; the message names
+    `--overwrite`, `--keep-previous` and another `output.bundle` (`hxex check` likewise). The
+    review layer carried over with `--overwrite` keeps every entry: those the new run cannot
+    apply (spectrum dropped, chosen K not fitted) get `stale = true` in `review.parquet`
+    (`ReviewTable.stale`, `mark_stale`, `n_stale`; old bundles read as all current), their
+    status and note stay on record and count in `status_of`, `effective_K` ignores their
+    chosen K, `update` makes an entry current again and `_check_review` then checks it as any
+    other; one log line gives the counts (before: entries the run could not hold were left
+    out with a warning). The manifest gets a `provenance` block (`hxex.io.provenance_of`;
+    `write_bundle(provenance=)` records it as given, a resumed bundle keeps it): the path
+    replaced, its stamp and hxex version, when, where it was moved to, `settings_changed`
+    (the dotted paths of the run settings that differ, `settings_changed`; the spectra source
+    counts once, its read stamps ignored) and the review counts; `hxex info` shows it, the
+    review counts and the generations. `--keep-previous` (`[output] keep_previous`,
+    `run(keep_previous=)`) moves the bundle to `name.N` (`name.N.zip` for a zip) with its
+    `name_tables` and `name_figures` folders to `name.N_tables` and `name.N_figures`
+    (`hxex.io.keep_previous`, sizes logged; `generations` lists them), just before the new
+    bundle is written; N is one more than any number ever used beside the bundle (a folder or
+    file starting `name.N` counts), so a name is never reused; an explicit `output.tables` or
+    `output.figures` directory is not moved (logged). Something at the path that is not a
+    bundle is refused before anything is fitted, with `overwrite` too (before: fitted, then
+    refused at the write). The tables and figures folders keep a listing of hxex's files,
+    `hxex_listing.json` (`hxex.io.replace_outputs`, `output_listing`): `write_tables` and
+    `write_figures` remove the listed files, refuse a file of yours named like a new one
+    before anything changes (`OutputError`; a folder without a listing, written before this
+    item, is refused only on such a clash) and write the listing even when they fail
+    part-way, so a stopped write is still known as hxex's. The owner's decisions: `_tables`
+    and `_figures` stay siblings of the bundle and generations keep the "bundle name plus
+    suffix" rule (`results.1_tables`), so every command finds a generation's folders as it
+    finds the current ones; the docs and setup say plainly that `<bundle>*` folders are
+    program folders (README, the template's `[output]` comments, `hxex init`'s closing hint,
+    BUNDLE.md, the refusal message). Tests: `tests/test_outputs.py` (new), the review, provenance
+    and generation tests in `tests/test_bundle.py`, `tests/test_run.py` and `tests/test_cli.py`.

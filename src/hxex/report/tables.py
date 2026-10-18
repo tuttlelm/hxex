@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from ..controls import correct_means
+from ..io.outputs import replace_outputs
 from ..quality import FLAG_NAMES
 from .results import Results
 from .series import _control_row, _reps
@@ -306,12 +307,12 @@ def _cell(value) -> str:
 
 def write_tables(results: Results, directory: str | Path) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
-    ``directory``."""
+    ``directory``, replacing the tables hxex wrote there before (its listing,
+    :func:`hxex.io.replace_outputs`) and never a file of your own."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    return [
-        write_csv(series_table(results), directory / "series.csv"),
-        write_csv(spectra_table(results), directory / "spectra.csv"),
-        write_csv(components_table(results), directory / "components.csv"),
-        write_csv(uptake_table(results), directory / "uptake.csv"),
-    ]
+    tables = {"series.csv": series_table, "spectra.csv": spectra_table,
+              "components.csv": components_table, "uptake.csv": uptake_table}
+    with replace_outputs(directory, tables) as written:
+        for name, make in tables.items():
+            written.append(write_csv(make(results), directory / name))
+    return list(written)

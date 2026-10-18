@@ -17,6 +17,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
+from ..io.outputs import replace_outputs
 from .results import Results
 from .series import (
     Reference,
@@ -142,34 +143,42 @@ def write_figures(
 ) -> list[Path]:
     """Write the run's overviews (if ``config.overview``) and the figures of the series selected
     by ``config`` into ``directory``, and return the files. A series' figures are made and
-    released one by one."""
+    released one by one. The figures hxex wrote there before are replaced (its listing,
+    :func:`hxex.io.replace_outputs`), never a file of your own."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
     chosen = select_series(results, config.series)
-    written: list[Path] = []
-    if config.overview:
-        from .overview import write_overview
-
-        written += write_overview(results, directory / f"hxex_overview.{config.format}",
-                                  dpi=config.dpi)
-    for n, data_id in enumerate(chosen):
-        check_cancel(cancel)
-        stem = f"hxex_{data_id}_{_slug(series_info(results, data_id)['file_label'])}"
-        figures = series_figures(results, data_id, config, reference)
+    stems = {data_id: f"hxex_{data_id}_{_slug(series_info(results, data_id)['file_label'])}"
+             for data_id in chosen}
+    names = [f"hxex_overview.{config.format}"] if config.overview else []
+    for stem in stems.values():  # the files a series gives, known before anything is drawn
         if config.format == "pdf":
-            path = directory / f"{stem}.pdf"
-            with PdfPages(path) as pdf:
-                for fig in figures.values():
-                    pdf.savefig(fig, dpi=config.dpi)
-            written.append(path)
+            names.append(f"{stem}.pdf")
         else:
-            for kind, fig in figures.items():
-                path = directory / f"{stem}_{kind}.{config.format}"
-                fig.savefig(path, dpi=config.dpi)
+            names += [f"{stem}_{kind}.{config.format}" for kind in config.kinds]
+    with replace_outputs(directory, names) as written:
+        if config.overview:
+            from .overview import write_overview
+
+            written += write_overview(results, directory / f"hxex_overview.{config.format}",
+                                      dpi=config.dpi)
+        for n, data_id in enumerate(chosen):
+            check_cancel(cancel)
+            stem = stems[data_id]
+            figures = series_figures(results, data_id, config, reference)
+            if config.format == "pdf":
+                path = directory / f"{stem}.pdf"
+                with PdfPages(path) as pdf:
+                    for fig in figures.values():
+                        pdf.savefig(fig, dpi=config.dpi)
                 written.append(path)
-        report(progress, n + 1, len(chosen))
+            else:
+                for kind, fig in figures.items():
+                    path = directory / f"{stem}_{kind}.{config.format}"
+                    fig.savefig(path, dpi=config.dpi)
+                    written.append(path)
+            report(progress, n + 1, len(chosen))
     log.info("wrote %d figure file(s) for %d series", len(written), len(chosen))
-    return written
+    return list(written)
 
 
 def _slug(text: str) -> str:

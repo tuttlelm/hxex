@@ -437,28 +437,79 @@ def test_overwriting_a_reviewed_bundle_keeps_its_review(tmp_path, caplog):
     res = run(raw_spectra(n_series=1), cfg, out=path)
     kept, dropped = str(res.fit.spectrum_id[3]), "proj:f0.xlsx#6"
     review = ReviewTable.empty().update(kept, status="rejected", note="noisy")
-    review = review.update(dropped, status="accepted")
+    review = review.update(dropped, status="accepted", note="fine")
     with open_bundle(path) as b:
         b.set_review(review)
+        assert b.manifest["provenance"] is None
     with pytest.raises(BundleError, match="exists"):
         run(raw_spectra(n_series=1), cfg, out=path)
-    # the new run drops spectrum 6 (empty): its entry cannot be carried, the other one is
+    # the new run drops spectrum 6 (empty): its entry is carried but stale, the other current
     with caplog.at_level(logging.INFO, logger="hxex.run"):
         again = run(raw_spectra(n_series=1, empty=(0, 5)), cfg, out=path, overwrite=True)
     assert dropped in again.dropped_ids
-    assert "carrying its 2 review entries" in caplog.text
-    assert "1 of 2 review entries do not apply" in caplog.text
+    assert "carrying 2 review entries over to the new bundle, 1 stale" in caplog.text
     with open_bundle(path) as b:
         r = b.review()
-        assert r.spectrum_id.tolist() == [kept] and r.note.tolist() == ["noisy"]
+        assert sorted(r.spectrum_id.tolist()) == sorted([kept, dropped])
+        assert r.get(kept) == {**r.get(kept), "note": "noisy", "stale": False}
+        assert r.get(dropped) == {**r.get(dropped), "note": "fine", "stale": True}
         assert (r.status_of(b.fit()) == "rejected").sum() == 1
+        prov = b.manifest["provenance"]
+        assert prov["replaced"] == str(path) and prov["moved_to"] is None
+        assert prov["review"] == {"carried": 2, "stale": 1}
+        assert prov["settings_changed"] == [] and prov["replaced_created"]
     # the run's result carries it too, so tables and figures made from the result agree
     # with those made from the bundle
     from hxex.report import Results
 
-    assert again.review is not None and again.review.spectrum_id.tolist() == [kept]
+    assert again.review is not None and len(again.review) == 2
     assert (Results.from_run(again).review_status == "rejected").sum() == 1
     assert (Results.from_run(res).review_status == "rejected").sum() == 0
+    # a third run with other settings records what changed, and the review goes on
+    cfg2 = dataclasses.replace(cfg, fit=dataclasses.replace(cfg.fit, k_max=1))
+    third = run(raw_spectra(n_series=1), cfg2, out=path, overwrite=True)
+    with open_bundle(path) as b:
+        prov = b.manifest["provenance"]
+        assert prov["settings_changed"] == ["fit.k_max"]
+        assert prov["review"] == {"carried": 2, "stale": 0}  # spectrum 6 is back
+    assert third.review.n_stale == 0
+
+
+def test_keep_previous_moves_the_bundle_and_its_folders(tmp_path, caplog):
+    from hxex.io import generations
+    from hxex.io.bundle import BundleError
+    from hxex.report import Results, write_tables
+    from hxex.report.figures import PlotConfig
+
+    cfg = config(bootstrap=None, plots=PlotConfig(series="all", kinds=("uptake",)))
+    path = tmp_path / "res"
+    first = run(raw_spectra(n_series=1), cfg, out=path)
+    write_tables(Results.from_run(first), tmp_path / "res_tables")
+    (tmp_path / "res_tables" / "mine.txt").write_text("keep me")
+    (tmp_path / "res.3_tables").mkdir()  # a number used before is never reused
+    with pytest.raises(BundleError, match="exists"):
+        run(raw_spectra(n_series=1), cfg, out=path)
+    with caplog.at_level(logging.INFO, logger="hxex.io.bundle"):
+        second = run(raw_spectra(n_series=1), cfg, out=path, keep_previous=True)
+    assert "kept the previous results: moved res (" in caplog.text
+    assert "to res.4" in caplog.text and "res_figures" in caplog.text
+    for name in ("res.4", "res.4_tables", "res.4_figures", "res", "res_figures"):
+        assert (tmp_path / name).is_dir(), name
+    assert not (tmp_path / "res_tables").exists()  # moved with the bundle; not written here
+    assert (tmp_path / "res.4_tables" / "mine.txt").read_text() == "keep me"
+    with open_bundle(tmp_path / "res.4") as old, open_bundle(path) as new:
+        assert old.manifest["provenance"] is None
+        prov = new.manifest["provenance"]
+        assert prov["moved_to"] == str(tmp_path / "res.4")
+        assert prov["replaced_created"] == old.manifest["created"]
+    assert generations(path) == [(4, tmp_path / "res.4")]
+    assert second.review is None
+    # nothing to keep: a fresh path is written as usual; something else there is refused
+    run(raw_spectra(n_series=1), cfg, out=tmp_path / "fresh", keep_previous=True)
+    (tmp_path / "plain").write_text("mine")
+    with pytest.raises(BundleError, match="not a results bundle"):
+        run(raw_spectra(n_series=1), cfg, out=tmp_path / "plain", keep_previous=True)
+    assert (tmp_path / "plain").read_text() == "mine"
 
 
 def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tmp_path, caplog):

@@ -16,6 +16,35 @@ directory (notes, figures) stay; one named like a file of the new bundle is refu
 anything changes. An interrupted replacement leaves `manifest.json.replacing` in place of the
 manifest: the directory does not open until the bundle is written again.
 
+## What a results folder holds, and what a later run does with it
+
+The bundle and the folders named after it (`results_tables`, `results_figures`, and the
+earlier generations `results.1`, `results.1_tables`, `results.1_figures`, or `results.1.zip`
+for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
+live there and are treated differently:
+
+- **Computed results** (the bundle's tables, the CSV tables, the figures) are replaced. A
+  bundle directory is replaced file by file as above. A tables or figures folder keeps a
+  listing of the files hxex wrote, `hxex_listing.json`; writing again (`hxex run`, `resume`,
+  `report`, `write_tables`, `write_figures`) removes the listed files and writes the new ones,
+  so the folder holds what the current bundle gives. A folder with files but no listing (one
+  written before the listing existed) is written only if no file in it is named like a new
+  one.
+- **Annotations** (the review layer: your work, keyed by `spectrum_id`) are carried over to
+  the new bundle, never silently dropped: an entry the new run cannot apply (its spectrum was
+  dropped, its chosen K was not fitted) is kept with `stale = true`, its status and note on
+  record and its chosen K ignored until you change the entry (see "The review layer").
+- **Your own files** in these folders are never touched, but one named like a file hxex is
+  about to write stops the run before anything changes; keep your own files elsewhere, or
+  under other names.
+
+`hxex run --overwrite` (or `[output] overwrite = true`) replaces in place; `--keep-previous`
+(`keep_previous = true`) first moves the bundle, with its `_tables` and `_figures` folders, to
+the next generation (`results.N`, `results.N_tables`, `results.N_figures`; N is one more than
+any number ever used beside the bundle, so a name is never reused; `hxex.io.keep_previous`).
+A tables or figures directory named explicitly in `[output]` is not moved (its hxex files are
+replaced). `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
+
 ## Keys and conventions
 
 - `spectrum_id` is the key of a spectrum in every table: `PROJECT:LOCAL_ID` (for example
@@ -39,7 +68,13 @@ manifest: the directory does not open until the bundle is written again.
 `n_measurements`, `pending` (the stages the run has still to add: `["bootstrap"]` for the
 bundle a run writes as soon as its fits are done, which it rewrites complete at the end, or
 `hxex.run.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
-when complete), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
+when complete), `provenance` (null for a bundle written where there was none; for one that
+replaced a bundle: `replaced` (its path), `replaced_created` and `replaced_hxex` (its stamp
+and version), `at`, `moved_to` (the generation it was moved to with `keep_previous`, else
+null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
+and `spectra_source` when other files were read or read differently) and `review`
+(`carried`, `stale`: the review entries carried over and how many are stale);
+`hxex.io.provenance_of` builds it, and a resumed bundle keeps it), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and
@@ -78,7 +113,7 @@ read's record with `stored_in`, the path they were taken from. Then
 | `bootstrap_k_draws.parquet` | measurement and K | the draws of the fixed-K bootstrap when kept: the columns of `bootstrap_draws` plus `fit_K` |
 | `binned.parquet` | spectrum | the peak-picked table: the index columns below plus `mz` (predicted), `intensity`, `n_deut`, `peak_mz` (where the peak was found, NaN for an empty bin) (lists per bin), `mz_offset_ppm` (the spectrum's intensity-weighted median peak offset; both NaN in bundles written before hxex recorded them), `env_width`, `env_symm`, `max_namides`, `threshold`, and the flags `empty`, `no_signal`, `capped` |
 | `spectra.parquet` | spectrum | optional raw spectra: the index columns plus `mz`, `intensity` (lists) |
-| `review.parquet` | reviewed spectrum | `spectrum_id`, `status` (`accepted` or `rejected`, or empty), `k_override` (0 = none), `note`, `updated` (UTC time) |
+| `review.parquet` | reviewed spectrum | `spectrum_id`, `status` (`accepted` or `rejected`, or empty), `k_override` (0 = none), `note`, `updated` (UTC time), `stale` (the entry does not apply to this fit; absent in bundles written before 2026-10-17, meaning false) |
 | `quality.parquet` | measurement | when quality flags were assessed: `deviance` (reduced deviance of the selected-K fit), `deviance_rel` (to the series median), `misfit` (`sum((obs - fit)^2) / sum(obs^2)` of that fit) and `misfit_rel` (to the series median; the `poor_fit` statistic; absent in bundles written before it), `intensity` (total), `intensity_rel` (to the other replicates at the same time), `mz_offset` (the series' median m/z offset minus the median over all series, ppm), NaN where not assessed; `poor_fit`, `low_intensity`, `noise_outlier`, `mz_shift`, `poor_envelope` (the series' ion-type envelope was not measured well, `envelopes.parquet`; absent in bundles written before it) and `flagged` (any of them) |
 | `envelopes.parquet` | series (`data_id`) | when the run used an ion-type mixture or an inferred envelope: `mode`, `source` (`reference`, `shared` (one envelope for the conditions of one ion, `envelope.share`), `fallback` or `theory`), `weights` (of the ion types, lightest first), `residual` (on the bins the envelope is used with), `n_reference` (the series' own reference spectra with signal), `good`, `fit_shape` (the envelope of the fit; the same shape is in the series' `measurements` rows), and for shared groups `own_residual` (the shared envelope against the series' own references; NaN without any) and `agrees` (whether its references agree with the other conditions'; both kept when the group then fell back; absent in bundles written before them) |
 | `controls.parquet` | series (`data_id`) | when controls were given: `n_amides`, `n_undeut`, `n_fd` (replicates used), `m0_measured`, `mfd_measured` (replicate means of the K=1 fits, NaN if missing), `m0`, `mfd` (the values used) with `m0_se`, `mfd_se` (NaN: one replicate; 0: theoretical; for a theoretical back-exchange fallback the fit's scatter per amide times `n_amides`), `retention`, `fallback`, `flags` (`;`-separated: `m0_missing`, `m0_high`, `fd_missing`, `retention_low`, `retention_high`, `no_amides`, `m0_unreplicated`, `fd_unreplicated`, `fd_median`, `fd_off_model`, `fd_kint`); with `fd_fallback = "kint"` the fitted model (`a`, `t0`, `b_rt` and `median_rt` when it used retention times, else null, `n_series`, `n_rejected`, `sd_per_amide`, `quench`) is JSON in the table's schema metadata (`fd_model`) |
@@ -95,7 +130,13 @@ absent in bundles written before 2026-10-15, read as unknown).
 `review.parquet` is the only table that changes after writing (`Bundle.set_review`, directory
 bundles only; the manifest is updated with the new checksum). It never changes the fit: use
 `ReviewTable.effective_K(fit)` and `status_of(fit)` for the reviewed view. A chosen K must be
-one that was fitted.
+one that was fitted. A run that replaces a reviewed bundle carries the review over and marks
+the entries it cannot apply `stale` (the spectrum is not in the new fit, or the chosen K was
+not fitted): the status and note stay on record (`status_of` still reports the status when
+the spectrum is there), `effective_K` ignores a stale entry's chosen K, and `hxex info` counts
+them. `ReviewTable.update` makes an entry current again, so a stale entry you change is
+checked like any other when stored (an entry for a spectrum the bundle does not have is
+refused; clearing it removes it). `ReviewTable.mark_stale(fit)` recomputes the marker.
 
 ## Versioning
 

@@ -200,7 +200,10 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     assert out.strip().endswith("ok")
     (tmp_path / "out").mkdir()  # an existing bundle is reported
     assert cli.main(["check", str(path)]) == 1
-    assert "the bundle" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "the bundle" in err and "--keep-previous" in err
+    path = mzml_project(tmp_path, output="keep_previous = true")
+    assert cli.main(["check", str(path)]) == 0
 
 
 def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
@@ -239,14 +242,17 @@ def test_run_info_and_report(tmp_path, capsys):
         assert b.pending == [] and b.bootstrap() is not None and b.has("spectra")
         assert b.spectra_source()["reader"] == "mzml" and b.manifest["notes"] == "first try"
     assert {p.name for p in (tmp_path / "out_tables").iterdir()} == {
-        "series.csv", "spectra.csv", "components.csv", "uptake.csv"}
+        "series.csv", "spectra.csv", "components.csv", "uptake.csv", "hxex_listing.json"}
     assert cli.main(["run", str(path)]) == 1  # the bundle exists
+    err = capsys.readouterr().err
+    assert "--overwrite" in err and "--keep-previous" in err and "output.bundle" in err
     assert cli.main(["info", "--verify", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     for line in ("project        cli", "input          mzml", "measurements   6",
                  "selected K     1: 6", "bootstrap      yes", "pending        nothing",
-                 "checksums      ok"):
+                 "review         none", "checksums      ok"):
         assert line in info
+    assert "replaced" not in info and "generations" not in info
     assert cli.main(["report", str(tmp_path / "out"), "--figures", str(tmp_path / "f"),
                      "--series", "all", "--format", "png"]) == 0
     assert any(p.suffix == ".png" for p in (tmp_path / "f").iterdir())
@@ -255,6 +261,23 @@ def test_run_info_and_report(tmp_path, capsys):
                      str(tmp_path / "out_tables_again")]) == 0
     assert (tmp_path / "out_tables_again" / "series.csv").is_file()
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    info = capsys.readouterr().out
+    assert "replaced       " + str(tmp_path / "out") in info and "changed        nothing" in info
+    # --keep-previous moves the bundle and its tables to generation 1 and writes afresh
+    (tmp_path / "out_tables" / "mine.txt").write_text("keep")
+    assert cli.main(["-q", "run", "--keep-previous", str(path)]) == 0
+    assert (tmp_path / "out.1_tables" / "mine.txt").read_text() == "keep"
+    assert (tmp_path / "out.1" / "manifest.json").is_file()
+    assert (tmp_path / "out_tables" / "series.csv").is_file()
+    assert not (tmp_path / "out_tables" / "mine.txt").exists()
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    info = capsys.readouterr().out
+    assert "kept as " + str(tmp_path / "out.1") in info and "generations    out.1" in info
+    # a file of yours named like a table stops the run before anything is fitted or replaced
+    (tmp_path / "out_tables" / "hxex_listing.json").unlink()
+    assert cli.main(["-q", "run", "--overwrite", str(path)]) == 1
+    assert "series.csv" in capsys.readouterr().err
 
 
 def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):

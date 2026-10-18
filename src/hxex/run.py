@@ -209,9 +209,10 @@ class RunResult:
         overwrite: bool = False,
         pending: Sequence[str] = (),
         review=None,
+        provenance=None,
     ) -> Path:
         """Write the results bundle (see :mod:`hxex.io.bundle`); ``spectra`` adds the raw data,
-        ``pending`` and ``review`` are as for :func:`~hxex.io.write_bundle`."""
+        ``pending``, ``review`` and ``provenance`` are as for :func:`~hxex.io.write_bundle`."""
         from .io.bundle import write_bundle
 
         return write_bundle(
@@ -223,6 +224,7 @@ class RunResult:
             spectra_source=self.spectra_source if spectra is None or spectra.source is None
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
+            provenance=provenance,
         )
 
 
@@ -465,6 +467,7 @@ def run(
     project: str | None = None,
     notes: str = "",
     overwrite: bool = False,
+    keep_previous: bool = False,
     keep_spectra: bool = True,
     figures_dir: str | Path | None = None,
     reference: Reference | None = None,
@@ -476,12 +479,19 @@ def run(
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
     recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
     was a :class:`SpectrumSet` and ``keep_spectra``). An existing ``out`` is refused before
-    anything is fitted unless ``overwrite``; a bundle replaced with ``overwrite`` keeps its
-    review layer (as :func:`resume_bootstrap` does). With ``config.plots`` the series figures
-    are written to ``figures_dir`` (default: ``out`` with ``_figures`` added to its name);
-    ``reference`` adds known populations to them. Raises ValueError if nothing is left.
+    anything is fitted unless ``overwrite`` or ``keep_previous``. With ``overwrite`` the bundle
+    there is replaced (its files; files of your own in the directory stay) and its review
+    layer carried over, with the entries this run cannot apply marked stale (see
+    :class:`~hxex.io.ReviewTable`); with ``keep_previous`` it is first moved to its next
+    generation (``name.N``, with its ``name_tables`` and ``name_figures`` folders; see
+    :func:`hxex.io.keep_previous`) just before the new bundle is written. Either way the new
+    manifest records what was replaced, what changed and the review carried (its
+    ``provenance``). With ``config.plots`` the series figures are written to ``figures_dir``
+    (default: ``out`` with ``_figures`` added to its name); ``reference`` adds known
+    populations to them. Raises ValueError if nothing is left.
     """
-    review = _existing_review(out, overwrite) if out is not None else None
+    previous, review = (_previous(out, overwrite or keep_previous) if out is not None
+                        else (None, None))
     if config.plots is not None and figures_dir is None:
         if out is None:
             raise ValueError("config.plots needs figures_dir or out to say where to write")
@@ -572,13 +582,22 @@ def run(
     )
     spectra = raw if keep_spectra else None
     review = _review_for(review, fit)
+    provenance = None
+    if previous is not None:
+        from .io.bundle import keep_previous as move_previous
+        from .io.bundle import provenance_of
+
+        moved = move_previous(out) if keep_previous else None
+        provenance = provenance_of(
+            previous, out, moved_to=moved, review=review,
+            new_configs={"run": config.to_dict(), "spectra_source": result.spectra_source})
     checkpoint = out is not None and config.bootstrap is not None
     if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)
         at = plan.lo + (plan.hi - plan.lo) * plan.fit_share
         start_stage(progress, "write fits", at, at)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
-                     pending=("bootstrap",), review=review)
+                     pending=("bootstrap",), review=review, provenance=provenance)
         overwrite = True
     try:
         boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
@@ -590,46 +609,45 @@ def run(
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, figures_dir=figures_dir, raw=raw, reference=reference,
-                   progress=progress, cancel=cancel, review=review)
+                   progress=progress, cancel=cancel, review=review, provenance=provenance)
 
 
-def _existing_review(out, overwrite: bool):
-    """Refuse an existing ``out`` unless ``overwrite`` (before anything is fitted, as the CLI
-    does); with it, the review layer of the bundle there (None if it holds no review or is not
-    a bundle: the write then refuses it as before)."""
-    from .io.bundle import BundleError, open_bundle
+def _previous(out, replace: bool):
+    """Refuse an existing ``out`` unless ``replace`` (before anything is fitted, as the CLI
+    does); with it, ``(manifest, review)`` of the bundle there (``(None, None)`` when there is
+    nothing there; a bundle without a review gives ``(manifest, None)``). Something that is
+    not a bundle is refused: it is never replaced or moved."""
+    from .io.bundle import BundleError, bundle_manifest, open_bundle
 
     path = Path(out)
     if not path.exists():
-        return None
-    if not overwrite:
-        raise BundleError(f"{path} exists (use overwrite=True to replace a bundle)")
+        return None, None
+    if not replace:
+        raise BundleError(f"{path} exists (use overwrite=True to replace a bundle, or "
+                          "keep_previous=True to keep it as an earlier generation)")
+    manifest = bundle_manifest(path)
+    if manifest is None:
+        raise BundleError(f"{path} exists but is not a results bundle; not replacing it")
     try:
         with open_bundle(path) as b:
             review = b.review() if b.has("review") else None
     except BundleError:
-        return None
-    if review is not None and len(review):
-        log.info("%s: carrying its %d review entries over to the new bundle", path,
-                 len(review))
-    return review
+        review = None
+    return manifest, review
 
 
 def _review_for(review, fit: FitResult):
-    """``review`` without the entries the new run cannot hold (spectra it does not have, a
-    chosen K it did not fit), logged; None stays None."""
+    """``review`` with the entries the new run cannot apply (spectra it does not have, a chosen
+    K it did not fit) marked stale: their status and note stay on record, the chosen K is
+    ignored (see :class:`~hxex.io.ReviewTable`). One log line with the counts; None stays
+    None."""
     if review is None or not len(review):
         return review
-    known = set(map(str, fit.spectrum_id))
-    keep = np.array([str(s) in known and (int(k) == 0 or int(k) in fit.k_values)
-                     for s, k in zip(review.spectrum_id, review.k_override, strict=True)],
-                    dtype=bool)
-    if not keep.all():
-        log.warning("%d of %d review entries do not apply to this run (spectra it dropped or a "
-                    "K it did not fit) and are left out", int((~keep).sum()), len(keep))
-    return dataclasses.replace(review, spectrum_id=review.spectrum_id[keep],
-                               status=review.status[keep], k_override=review.k_override[keep],
-                               note=review.note[keep], updated=review.updated[keep])
+    review = review.mark_stale(fit)
+    log.info("carrying %d review entries over to the new bundle, %d stale (their spectrum was "
+             "dropped or their K not fitted: status and note kept, chosen K ignored)",
+             len(review), review.n_stale)
+    return review
 
 
 def _check_stored_windows(source: Mapping, config: RunConfig) -> None:
@@ -645,15 +663,16 @@ def _check_stored_windows(source: Mapping, config: RunConfig) -> None:
 
 
 def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, figures_dir, raw,
-            reference, progress, cancel, review=None, plots=None) -> RunResult:
+            reference, progress, cancel, review=None, plots=None, provenance=None) -> RunResult:
     """Write the bundle (if ``out``) and the figures (if the run asks for them, or ``plots``
-    is given), both with the carried-over ``review`` (kept on the result)."""
+    is given), both with the carried-over ``review`` (kept on the result); ``provenance`` is
+    recorded in the bundle."""
     result = dataclasses.replace(result, review=review)
     if out is not None:
         check_cancel(cancel)
         start_stage(progress, "write", UNITS - _FINISH, UNITS)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
-                     review=review)
+                     review=review, provenance=provenance)
     if result.config.plots is not None or plots is not None:
         check_cancel(cancel)
         start_stage(progress, "figures", UNITS - _FINISH, UNITS)
@@ -706,6 +725,7 @@ def resume_bootstrap(
         spectra = b.spectra() if b.has("spectra") else None
         review = b.review() if b.has("review") else None
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
+        provenance = b.manifest.get("provenance")
     plots = None
     if config.plots is not None and figures_dir is None:
         figures_dir = path.with_name(path.name + "_figures")
@@ -727,4 +747,4 @@ def resume_bootstrap(
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,
-                   cancel=cancel, review=review, plots=plots)
+                   cancel=cancel, review=review, plots=plots, provenance=provenance)

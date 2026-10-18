@@ -237,10 +237,14 @@ class InputSettings:
 @dataclass(frozen=True)
 class OutputSettings:
     """Where results go (the ``[output]`` table): the bundle, the tables (a directory, or True
-    for the bundle's name plus ``_tables``) and the figures (likewise, ``_figures``)."""
+    for the bundle's name plus ``_tables``) and the figures (likewise, ``_figures``). The
+    bundle and these two folders (and their earlier generations, ``name.N``) are hxex's: a
+    later run replaces them (``overwrite``) or moves them to the next generation first
+    (``keep_previous``); see :func:`hxex.run.run`."""
 
     bundle: Path | None = None
     overwrite: bool = False
+    keep_previous: bool = False
     keep_spectra: bool = True
     tables: Path | bool = True
     figures: Path | bool = False
@@ -458,6 +462,7 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
     return OutputSettings(
         bundle=_path(base, data.get("bundle"), "output.bundle"),
         overwrite=bool(data.get("overwrite", False)),
+        keep_previous=bool(data.get("keep_previous", False)),
         keep_spectra=bool(data.get("keep_spectra", True)),
         tables=where("tables", True), figures=where("figures", False),
         notes=str(data.get("notes", "")),
@@ -900,8 +905,15 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         input_text,
         "",
         "[output]",
+        "# The bundle and the folders named after it (results_tables, results_figures and",
+        "# the generations results.1, results.1_tables, ...) belong to hxex: a later run",
+        "# replaces or renames them. Keep your own files elsewhere (files of yours inside",
+        "# them are kept, but one named like an hxex file stops the run).",
         'bundle = "results"               # the results bundle (a directory, or .zip)',
-        "overwrite = false",
+        "overwrite = false                # replace an existing bundle (its review is carried",
+        "#                                 # over) and its tables and figures",
+        "keep_previous = false            # move the existing bundle, tables and figures to",
+        "#                                 # the next generation (results.1, ...) first",
         "keep_spectra = true              # store the raw spectra in the bundle",
         "tables = true                    # CSV tables beside the bundle, or a directory",
         "figures = false                  # figures beside the bundle, or a directory",

@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import tempfile
 import zipfile
@@ -442,6 +443,159 @@ def _is_bundle(path: Path) -> bool:
     return path.is_file() and _is_bundle_zip(path)
 
 
+def bundle_manifest(path: str | Path) -> dict | None:
+    """The manifest of the bundle at ``path`` (a directory, its interrupted replacement, or a
+    zip), or None when there is no bundle there."""
+    path = Path(path)
+    if path.is_dir():
+        return _old_manifest(path)
+    if path.is_file() and zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                manifest = json.loads(zf.read(MANIFEST).decode())
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+            return None
+        if isinstance(manifest, dict) and manifest.get("kind") == KIND:
+            return manifest
+    return None
+
+
+def settings_changed(old: Mapping | None, new: Mapping | None) -> list[str]:
+    """The dotted paths of the settings that differ between the ``configs`` of two manifests:
+    the run settings leaf by leaf (``fit.k_max``), a stage's settings where a bundle has no
+    run settings, and ``spectra_source`` as one item (which files were read, how)."""
+    old, new = dict(old or {}), dict(new or {})
+    changed: list[str] = []
+    if old.get("run") is not None and new.get("run") is not None:
+        changed += _diff(old["run"], new["run"], "")
+    else:
+        for key in ("fit", "bootstrap", "picker", "controls", "quality", "envelope"):
+            changed += _diff(old.get(key), new.get(key), key)
+    if _without_stamps(old.get("spectra_source")) != _without_stamps(new.get("spectra_source")):
+        changed.append("spectra_source")
+    return sorted(changed)
+
+
+def _diff(old, new, prefix: str) -> list[str]:
+    if isinstance(old, Mapping) and isinstance(new, Mapping):
+        out: list[str] = []
+        for key in sorted(set(old) | set(new), key=str):
+            name = f"{prefix}.{key}" if prefix else str(key)
+            out += _diff(old.get(key), new.get(key), name)
+        return out
+    return [] if old == new else [prefix or "(all)"]
+
+
+def _without_stamps(value):
+    """``value`` with the keys that record when something was read or written removed, so
+    that reading the same files again does not count as a change."""
+    if isinstance(value, Mapping):
+        return {k: _without_stamps(v) for k, v in value.items()
+                if not str(k).endswith(("created", "read", "written"))}
+    if isinstance(value, list):
+        return [_without_stamps(v) for v in value]
+    return value
+
+
+def provenance_of(
+    old: Mapping,
+    path: str | Path,
+    *,
+    new_configs: Mapping | None,
+    review: ReviewTable | None,
+    moved_to: str | Path | None = None,
+) -> dict[str, Any]:
+    """The provenance block of a bundle replacing the one whose manifest is ``old`` at
+    ``path``: when it was replaced, where it went (``moved_to``, with ``keep_previous``), which
+    settings changed (:func:`settings_changed`) and how many review entries were carried and
+    are stale. ``new_configs`` is the new bundle's ``configs`` (the run settings and the
+    spectra source are what is compared)."""
+    return {
+        "replaced": str(path),
+        "replaced_created": old.get("created"),
+        "replaced_hxex": (old.get("versions") or {}).get("hxex"),
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "moved_to": None if moved_to is None else str(moved_to),
+        "settings_changed": settings_changed(old.get("configs"), new_configs),
+        "review": {"carried": 0 if review is None else len(review),
+                   "stale": 0 if review is None else review.n_stale},
+    }
+
+
+# --- generations: a bundle kept beside its replacement ---------------------------------------
+
+SIBLINGS = ("_tables", "_figures")  # the output folders named after a bundle
+
+
+def _generation_stem(path: Path) -> tuple[str, str]:
+    """``(stem, ext)`` so that generation N of the bundle is ``stem.N`` + ``ext``."""
+    return (path.stem, ".zip") if path.suffix == ".zip" else (path.name, "")
+
+
+def generations(path: str | Path) -> list[tuple[int, Path]]:
+    """The earlier generations kept beside the bundle ``path`` (``name.N``, or ``name.N.zip``
+    for a zip; see :func:`keep_previous`), oldest first."""
+    path = Path(path)
+    stem, ext = _generation_stem(path)
+    found: dict[int, Path] = {}
+    if path.parent.is_dir():
+        for item in path.parent.iterdir():
+            m = re.fullmatch(re.escape(stem) + r"\.(\d+)" + re.escape(ext), item.name)
+            if m and _is_bundle(item):
+                found[int(m.group(1))] = item
+    return sorted(found.items())
+
+
+def _next_generation(path: Path) -> int:
+    """One more than every number ever used beside ``path`` (``name.N`` and anything that
+    starts like it: its folders, a bundle that was deleted but whose tables remain)."""
+    stem, _ = _generation_stem(path)
+    used = [0]
+    for item in path.parent.iterdir():
+        m = re.match(re.escape(stem) + r"\.(\d+)(\.|_|$)", item.name)
+        if m:
+            used.append(int(m.group(1)))
+    return max(used) + 1
+
+
+def _size_of(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+
+
+def keep_previous(path: str | Path) -> Path | None:
+    """Move the bundle at ``path`` to its next generation, ``name.N`` (``name.N.zip`` for a
+    zip), with its ``name_tables`` and ``name_figures`` folders moved to ``name.N_tables`` and
+    ``name.N_figures``, and return the generation's path (None when there is nothing at
+    ``path``). N is one more than any number used beside the bundle before, so a generation's
+    name is never reused. A path that holds something other than a bundle is refused. Sizes
+    are logged."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    if not _is_bundle(path):
+        raise BundleError(f"{path} exists but is not a results bundle; not moving it")
+    stem, ext = _generation_stem(path)
+    n = _next_generation(path)
+    target = path.with_name(f"{stem}.{n}{ext}")
+    moves = [(path, target)]
+    for suffix in SIBLINGS:
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            moves.append((sibling, target.with_name(target.name + suffix)))
+    for src, dst in moves:
+        if dst.exists():  # cannot happen (N is new); never replace anything
+            raise BundleError(f"{dst} exists; not moving {src} over it")
+    done = []
+    for src, dst in moves:
+        size = _size_of(src)
+        os.replace(src, dst)
+        done.append(f"{src.name} ({size / 1e6:.1f} MB) to {dst.name}")
+    log.info("kept the previous results: moved %s", "; ".join(done))
+    return target
+
+
 def write_bundle(
     path: str | Path,
     *,
@@ -462,6 +616,7 @@ def write_bundle(
     notes: str = "",
     pending: Sequence[str] = (),
     overwrite: bool = False,
+    provenance: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
@@ -478,7 +633,8 @@ def write_bundle(
     :attr:`~hxex.spectra.SpectrumSet.source`; by default that of ``spectra``) is recorded in the
     manifest whether or not the spectra are stored. ``pending`` names the stages the run has
     still to add (``'bootstrap'`` for the bundle a run writes before its bootstrap, see
-    :func:`hxex.run.resume_bootstrap`).
+    :func:`hxex.run.resume_bootstrap`). ``provenance`` is recorded as given (see
+    :func:`provenance_of`: the bundle this one replaces, what changed, the review carried).
     """
     path = Path(path)
     unknown = set(pending) - set(PENDING_STAGES)
@@ -555,6 +711,7 @@ def write_bundle(
             "k_values": list(fit.k_values),
             "n_measurements": len(fit),
             "pending": list(pending),
+            "provenance": None if provenance is None else dict(provenance),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
@@ -630,13 +787,24 @@ class ReviewTable:
     """Per-spectrum review: ``status`` (``accepted`` or ``rejected``), a chosen ``k_override``
     (0 = none) and a ``note``, with the time of the last change. Spectra not listed are
     unreviewed. It changes nothing in the fit: :meth:`effective_K` and :meth:`status_of` give
-    the reviewed view."""
+    the reviewed view. ``stale`` marks an entry a rerun could not apply (its spectrum was
+    dropped, or its chosen K was not fitted): the status and note are kept on record, the
+    chosen K is ignored while stale, and :meth:`update` makes the entry current again (it is
+    then checked like any other when stored)."""
 
     spectrum_id: np.ndarray
     status: np.ndarray
     k_override: np.ndarray
     note: np.ndarray
     updated: np.ndarray
+    stale: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        stale = (np.zeros(len(self.spectrum_id), dtype=bool) if self.stale is None
+                 else np.asarray(self.stale, dtype=bool))
+        if stale.shape != (len(self.spectrum_id),):
+            raise ValueError("stale must have one value per entry")
+        object.__setattr__(self, "stale", stale)
 
     @classmethod
     def empty(cls) -> ReviewTable:
@@ -646,13 +814,30 @@ class ReviewTable:
     def __len__(self) -> int:
         return len(self.spectrum_id)
 
+    @property
+    def n_stale(self) -> int:
+        return int(self.stale.sum())
+
     def get(self, spectrum_id: str) -> dict[str, Any] | None:
         hits = np.flatnonzero(self.spectrum_id == spectrum_id)
         if len(hits) == 0:
             return None
         i = hits[0]
         return {"status": str(self.status[i]), "k_override": int(self.k_override[i]),
-                "note": str(self.note[i]), "updated": str(self.updated[i])}
+                "note": str(self.note[i]), "updated": str(self.updated[i]),
+                "stale": bool(self.stale[i])}
+
+    def with_stale(self, stale: np.ndarray) -> ReviewTable:
+        """The same entries with ``stale`` (one bool per entry) in place of the marker."""
+        return dataclasses.replace(self, stale=np.asarray(stale, dtype=bool))
+
+    def mark_stale(self, fit: FitResult) -> ReviewTable:
+        """The entries ``fit`` cannot hold (a spectrum it does not have, a chosen K it did not
+        fit) marked stale and the others current, so the table can be stored with ``fit``."""
+        known = set(map(str, fit.spectrum_id))
+        stale = [str(s) not in known or (int(k) != 0 and int(k) not in fit.k_values)
+                 for s, k in zip(self.spectrum_id, self.k_override, strict=True)]
+        return self.with_stale(np.array(stale, dtype=bool))
 
     def update(
         self,
@@ -679,21 +864,22 @@ class ReviewTable:
         keep = self.spectrum_id != spectrum_id
         if not new["status"] and not new["k_override"] and not new["note"]:
             return ReviewTable(self.spectrum_id[keep], self.status[keep], self.k_override[keep],
-                               self.note[keep], self.updated[keep])
+                               self.note[keep], self.updated[keep], self.stale[keep])
         return ReviewTable(
             np.append(self.spectrum_id[keep], spectrum_id).astype(str),
             np.append(self.status[keep], new["status"]).astype(str),
             np.append(self.k_override[keep], new["k_override"]).astype(np.int64),
             np.append(self.note[keep], new["note"]).astype(str),
             np.append(self.updated[keep], stamp).astype(str),
+            np.append(self.stale[keep], False),  # a change makes the entry current again
         )
 
     def effective_K(self, fit: FitResult) -> np.ndarray:
-        """The K of every measurement with the reviewer's choices applied."""
+        """The K of every measurement with the reviewer's choices applied (stale ones not)."""
         out = fit.selected_K.copy()
         index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
-        for sid, k in zip(self.spectrum_id, self.k_override, strict=True):
-            if k:
+        for sid, k, stale in zip(self.spectrum_id, self.k_override, self.stale, strict=True):
+            if k and not stale:
                 if int(k) not in fit.k_values:
                     raise ValueError(f"{sid}: K = {int(k)} was not fitted (tried {fit.k_values})")
                 fit.require_fitted(index[str(sid)], int(k))
@@ -701,21 +887,24 @@ class ReviewTable:
         return out
 
     def status_of(self, fit: FitResult) -> np.ndarray:
-        """``accepted``, ``rejected`` or ``unreviewed`` for every measurement."""
+        """``accepted``, ``rejected`` or ``unreviewed`` for every measurement (a stale entry
+        still counts when its spectrum is in ``fit``)."""
         out = np.full(len(fit), "unreviewed", dtype=object)
         index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
         for sid, status in zip(self.spectrum_id, self.status, strict=True):
-            if status:
+            if status and str(sid) in index:
                 out[index[str(sid)]] = str(status)
         return out.astype(str)
 
 
 def _check_review(review: ReviewTable, fit: FitResult) -> None:
-    """Refuse a review layer that ``fit`` cannot hold: entries for spectra it does not have
-    (:class:`BundleError`) or a chosen K it did not fit (ValueError). One check for the
-    review given at writing and for :meth:`Bundle.set_review`."""
+    """Refuse a review layer that ``fit`` cannot hold: current entries for spectra it does not
+    have (:class:`BundleError`) or with a chosen K it did not fit (ValueError); stale entries
+    are on record only and pass. One check for the review given at writing and for
+    :meth:`Bundle.set_review`."""
     known = set(map(str, fit.spectrum_id))
-    unknown = [str(s) for s in review.spectrum_id if str(s) not in known]
+    unknown = [str(s) for s, stale in zip(review.spectrum_id, review.stale, strict=True)
+               if not stale and str(s) not in known]
     if unknown:
         raise BundleError(f"review entries for unknown spectra: {unknown[:3]}")
     review.effective_K(fit)  # raises if a chosen K was not fitted
@@ -726,13 +915,16 @@ def _review_table(r: ReviewTable) -> pa.Table:
         "spectrum_id": _str(r.spectrum_id), "status": _str(r.status),
         "k_override": pa.array(np.asarray(r.k_override, dtype=np.int64)),
         "note": _str(r.note), "updated": _str(r.updated),
+        "stale": pa.array(np.asarray(r.stale, dtype=bool)),
     })
 
 
 def _read_review(table: pa.Table) -> ReviewTable:
+    stale = (np.asarray(_col(table, "stale"), dtype=bool) if "stale" in table.column_names
+             else None)  # bundles written before the marker: every entry current
     return ReviewTable(_strs(table, "spectrum_id"), _strs(table, "status"),
                        np.asarray(_col(table, "k_override"), dtype=np.int64),
-                       _strs(table, "note"), _strs(table, "updated"))
+                       _strs(table, "note"), _strs(table, "updated"), stale)
 
 
 # --- reading --------------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Results bundle: exact round trips, integrity, zip, laziness and the review layer."""
 
+import dataclasses
 import json
 import shutil
 import zipfile
@@ -550,3 +551,110 @@ def test_list_columns_refuse_more_values_than_int32_offsets_hold():
         _ragged([np.zeros(1), Huge()], pa.float64())
     assert _flat_ragged(np.zeros(2), np.array([0, 2]), pa.float64()).to_pylist() == [[0.0, 0.0]]
     assert _ragged([np.ones(1), None], pa.float64()).to_pylist() == [[1.0], None]
+
+
+# --- the overwrite contract: stale review entries, provenance, generations -------------------
+
+def test_stale_review_entries_are_kept_on_record_and_their_k_ignored(tmp_path, run):
+    from hxex.io.bundle import _read_review, _review_table
+
+    raw, binned, meas, fit, boot = run
+    ids = [str(s) for s in fit.spectrum_id]
+    r = ReviewTable.empty().update(ids[0], status="rejected", k_override=2, note="two")
+    r = r.update("proj:gone#9", status="accepted", note="was fine").update(ids[1], k_override=2)
+    assert not r.stale.any() and r.n_stale == 0
+    with pytest.raises(BundleError, match="unknown spectra"):
+        write_bundle(tmp_path / "a", measurements=meas, fit=fit, review=r)
+    marked = r.mark_stale(fit)
+    assert marked.get("proj:gone#9")["stale"] and not marked.get(ids[0])["stale"]
+    assert marked.n_stale == 1
+    # a chosen K that a K = 1 only fit cannot hold is stale too, and ignored
+    one = fit_models(meas, dataclasses.replace(fit.config, k_max=1))
+    assert one.k_values == (1,)
+    marked_one = r.mark_stale(one)
+    assert marked_one.n_stale == 3 and (marked_one.effective_K(one) == 1).all()
+    assert (marked_one.status_of(one) == "rejected").sum() == 1  # the status still counts
+    # stored and read back with the marker; the current entry is checked as before
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit, review=marked)
+    with open_bundle(path) as b:
+        got = b.review()
+        assert got.stale.tolist() == marked.stale.tolist() and got.n_stale == 1
+        assert (got.effective_K(fit)[0] == 2) and got.get(ids[1])["k_override"] == 2
+        # a change to a stale entry makes it current: it must then apply, or is refused
+        with pytest.raises(BundleError, match="unknown spectra"):
+            b.set_review(got.update("proj:gone#9", note="looked again"))
+        b.set_review(got.update("proj:gone#9", status="", note=""))  # cleared: gone
+        assert b.review().get("proj:gone#9") is None
+    # a review table written before the marker existed reads as all current
+    table = _review_table(marked).drop_columns(["stale"])
+    old = _read_review(table)
+    assert not old.stale.any() and len(old) == 3
+    with pytest.raises(ValueError, match="one value per entry"):
+        ReviewTable(old.spectrum_id, old.status, old.k_override, old.note, old.updated,
+                    np.array([True]))
+
+
+def test_provenance_is_recorded_as_given_and_settings_compared(tmp_path, run):
+    from hxex.io import bundle_manifest, provenance_of
+    from hxex.io.bundle import settings_changed
+
+    raw, binned, meas, fit, boot = run
+    path = write_bundle(tmp_path / "p", measurements=meas, fit=fit)
+    old = bundle_manifest(path)
+    assert old["created"] and old["provenance"] is None
+    assert bundle_manifest(tmp_path / "nothing") is None
+    (tmp_path / "plain").write_text("x")
+    assert bundle_manifest(tmp_path / "plain") is None
+    review = ReviewTable.empty().update(str(fit.spectrum_id[0]), status="accepted")
+    review = review.update("proj:gone#1", note="n").mark_stale(fit)
+    new_configs = {"run": {"fit": {"k_max": 3, "screen": True}, "picker": {"noise": 100.0}},
+                   "spectra_source": {"files": ["a"], "hxex.created": "later"}}
+    prov = provenance_of({**old, "configs": {
+        "run": {"fit": {"k_max": 2, "screen": True}, "picker": {"noise": 100.0},
+                "quality": {"max_ppm": 20.0}},
+        "spectra_source": {"files": ["a"], "hxex.created": "earlier"}}},
+        path, new_configs=new_configs, review=review, moved_to=None)
+    assert prov["replaced"] == str(path) and prov["replaced_created"] == old["created"]
+    assert prov["settings_changed"] == ["fit.k_max", "quality"]
+    assert prov["review"] == {"carried": 2, "stale": 1} and prov["moved_to"] is None
+    # without run settings on one side the stage settings are compared; the spectra source
+    # counts once, whatever differs in it
+    assert settings_changed({"fit": {"k_max": 2}, "spectra_source": {"files": ["a"]}},
+                            {"fit": {"k_max": 2}, "spectra_source": {"files": ["b"]}}) == [
+        "spectra_source"]
+    assert settings_changed({"fit": {"k_max": 2}}, {"fit": {"k_max": 2, "screen": True},
+                                                    "bootstrap": {"n_boot": 2}}) == [
+        "bootstrap", "fit.screen"]
+    assert settings_changed(None, None) == []
+    again = write_bundle(tmp_path / "p", measurements=meas, fit=fit, overwrite=True,
+                         provenance=prov)
+    with open_bundle(again) as b:
+        assert b.manifest["provenance"] == prov
+    z = write_bundle(tmp_path / "p.zip", measurements=meas, fit=fit, provenance=prov)
+    assert bundle_manifest(z)["provenance"] == prov
+
+
+def test_generations_are_numbered_once_and_found(tmp_path, run):
+    from hxex.io import generations, keep_previous
+
+    raw, binned, meas, fit, boot = run
+    assert keep_previous(tmp_path / "none") is None
+    path = write_bundle(tmp_path / "g", measurements=meas, fit=fit, notes="one")
+    (tmp_path / "g_figures").mkdir()
+    (tmp_path / "g_figures" / "f.pdf").write_bytes(b"pdf")
+    assert keep_previous(path) == tmp_path / "g.1"
+    assert (tmp_path / "g.1_figures" / "f.pdf").exists() and not path.exists()
+    write_bundle(path, measurements=meas, fit=fit, notes="two")
+    (tmp_path / "g.7").write_text("a file of yours with a generation's name")
+    assert keep_previous(path) == tmp_path / "g.8"  # after every number used, bundle or not
+    assert generations(path) == [(1, tmp_path / "g.1"), (8, tmp_path / "g.8")]
+    with open_bundle(tmp_path / "g.8") as b:
+        assert b.manifest["notes"] == "two"
+    # a zip bundle: name.N.zip, and its folders name.N.zip_tables (the bundle name plus suffix)
+    z = write_bundle(tmp_path / "z.zip", measurements=meas, fit=fit)
+    (tmp_path / "z.zip_tables").mkdir()
+    assert keep_previous(z) == tmp_path / "z.1.zip"
+    assert (tmp_path / "z.1.zip_tables").is_dir() and generations(z) == [(1, tmp_path / "z.1.zip")]
+    (tmp_path / "plain").write_text("x")
+    with pytest.raises(BundleError, match="not a results bundle"):
+        keep_previous(tmp_path / "plain")

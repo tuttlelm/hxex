@@ -66,7 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write")
     p.add_argument("project_file", metavar="PROJECT")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
-    p.add_argument("--overwrite", action="store_true", help="replace an existing bundle")
+    p.add_argument("--overwrite", action="store_true",
+                   help="replace an existing bundle (and its tables and figures), carrying "
+                        "its review over")
+    p.add_argument("--keep-previous", action="store_true",
+                   help="move an existing bundle (with its tables and figures) to the next "
+                        "generation, NAME.N, before writing")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
     _spectra_option(p)
     _threads_option(p)
@@ -221,8 +226,9 @@ def cmd_init(args) -> int:
         log.error("%s exists (use --force to replace it)", out)
         return EXIT_ERROR
     out.write_text(text, encoding="utf-8")
-    log.info("wrote %s (format %s): edit the input paths, then 'hxex check %s'", out,
-             args.format, out)
+    log.info("wrote %s (format %s): edit the input paths, then 'hxex check %s'. The output "
+             "bundle and the folders named after it (NAME_tables, NAME_figures, NAME.N) are "
+             "hxex's: later runs replace or rename them", out, args.format, out)
     return 0
 
 
@@ -281,9 +287,11 @@ def cmd_check(args) -> int:
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     out = project.output
-    if out.bundle is not None and out.bundle.exists() and not out.overwrite:
+    if (out.bundle is not None and out.bundle.exists() and not out.overwrite
+            and not out.keep_previous):
         problems.append(f"the bundle {out.bundle} exists: 'hxex run' needs --overwrite or "
-                        "output.overwrite")
+                        "--keep-previous (output.overwrite or output.keep_previous), or "
+                        "another output.bundle")
     if problems:
         for p in problems:
             log.error("%s", p)
@@ -381,9 +389,18 @@ def cmd_run(args) -> int:
 
         stored_spectra_source(stored)  # a path that cannot be read: refused before anything
     overwrite = args.overwrite or out.overwrite
-    if bundle.exists() and not overwrite:
-        log.error("%s exists (use --overwrite or output.overwrite)", bundle)
+    keep_previous = args.keep_previous or out.keep_previous
+    if bundle.exists() and not (overwrite or keep_previous):
+        log.error("%s exists: --overwrite replaces it (and its tables and figures, carrying "
+                  "its review over), --keep-previous moves it to the next generation first "
+                  "(%s.N), or write to another output.bundle (the bundle and the folders "
+                  "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
+    if keep_previous and bundle.exists():
+        for key, value in (("tables", out.tables), ("figures", out.figures)):
+            if isinstance(value, Path):
+                log.info("output.%s %s is a directory of its own: not moved with the previous "
+                         "bundle (its hxex files are replaced)", key, value)
     config = project.run
     if args.device:
         b = config.fit.backend
@@ -400,7 +417,7 @@ def cmd_run(args) -> int:
         log.info("%d spectra read", len(spectra))
         result = run(
             spectra, config, out=bundle, project=project.project, notes=out.notes,
-            overwrite=overwrite, keep_spectra=out.keep_spectra,
+            overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
             figures_dir=_beside(bundle, out.figures, "_figures")
             if out.figures is not False else None,
             progress=ProgressLog(interval=args.progress_every), cancel=stop,
@@ -480,13 +497,14 @@ def cmd_report(args) -> int:
 
 
 def cmd_info(args) -> int:
-    from .io import open_bundle
+    from .io import generations, open_bundle
 
     with open_bundle(args.bundle) as b:
         m = b.manifest
         fit = b.fit()
         ks = Counter(int(k) for k in fit.selected_K)
         source = b.spectra_source() or {}
+        review = b.review()
         rows = [
             ("bundle", str(b.path)),
             ("project", b.project or "(none)"),
@@ -502,15 +520,41 @@ def cmd_info(args) -> int:
             ("quality flags", "yes" if b.has("quality") else "no"),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
+            ("review", f"{len(review)} entries" + (f" ({review.n_stale} stale)"
+                                                   if review.n_stale else "")
+             if len(review) else "none"),
         ]
         if m.get("notes"):
             rows.append(("notes", m["notes"]))
+        rows += _provenance_rows(m.get("provenance"))
+        earlier = generations(b.path)
+        if earlier:
+            rows.append(("generations", ", ".join(p.name for _, p in earlier)))
         for key, value in rows:
             _say(f"{key:14s} {value}")
         if args.verify:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _provenance_rows(prov) -> list[tuple[str, str]]:
+    """The ``hxex info`` lines of a manifest's provenance block (none without one)."""
+    if not prov:
+        return []
+    created = prov.get("replaced_created")
+    where = prov.get("moved_to")
+    rows = [("replaced", f"{prov.get('replaced')} (created {created or 'unknown'}) on "
+                         f"{prov.get('at', '')}" + (f", kept as {where}" if where else ""))]
+    changed = prov.get("settings_changed") or []
+    rows.append(("changed", "nothing" if not changed else
+                 f"{len(changed)} setting(s): " + ", ".join(changed[:8])
+                 + (", ..." if len(changed) > 8 else "")))
+    review = prov.get("review") or {}
+    if review.get("carried"):
+        rows.append(("carried", f"{review['carried']} review entries, "
+                                f"{review.get('stale', 0)} stale"))
+    return rows
 
 
 def _is_bundle(path: Path) -> bool:
@@ -614,7 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _dispatch(args) -> int:
     from .hooks import Cancelled
-    from .io import ReadError
+    from .io import OutputError, ReadError
     from .io.bundle import BundleError
 
     try:
@@ -625,7 +669,7 @@ def _dispatch(args) -> int:
     except KeyboardInterrupt:
         log.warning("aborted")
         return EXIT_STOPPED
-    except (ReadError, BundleError, ValueError, OSError, RuntimeError) as exc:
+    except (ReadError, BundleError, OutputError, ValueError, OSError, RuntimeError) as exc:
         if args.verbose:
             log.exception("failed")
         else:

@@ -39,6 +39,7 @@ from .mzml import (
     sum_centroid,
     sum_profile,
 )
+from .outputs import OutputError, output_listing, replace_outputs
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
 from .read import read_source, read_spectra, read_spectra_source, scan
 from .specexport import (
@@ -84,6 +85,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "open_bundle",
     "write_bundle",
+    "bundle_manifest",
+    "generations",
+    "keep_previous",
+    "provenance_of",
+    "OutputError",
+    "output_listing",
+    "replace_outputs",
     "CandidateMatch",
     "DEFAULT_FULLDEUT_TIME",
     "DEFAULT_UNDEUT_TIME",
@@ -114,6 +122,7 @@ __all__ = [
 
 _BUNDLE = {
     "Bundle", "BundleError", "ReviewTable", "SCHEMA_VERSION", "open_bundle", "write_bundle",
+    "bundle_manifest", "generations", "keep_previous", "provenance_of",
 }
 _SPECTRA_FILE = {"save_spectra", "load_spectra", "spectra_info"}
 
