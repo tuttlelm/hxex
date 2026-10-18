@@ -141,6 +141,7 @@ class Scan:
     intensity: np.ndarray
     isolation: tuple[float, float] = (np.nan, np.nan)
     stages: tuple[Stage, ...] = ()
+    resolution: float = np.nan  # the instrument's resolving power for the scan, if recorded
 
 
 # Thermo filter-string activation codes, as mzML activation names
@@ -376,7 +377,9 @@ class ScanTable:
     earlier stages are not stated, and for an isolation window not stated); and the
     pre-activation (the activations of the stages before the last): ``preactivation`` (their
     names joined with ``;``, empty for none, ``?`` when the file does not state them) and
-    ``preactivation_energy`` (of the first stage, NaN for none)."""
+    ``preactivation_energy`` (of the first stage, NaN for none); ``resolution``, the
+    instrument's resolving power recorded for the scan (NaN when the file has none; mzML files
+    have none, Thermo raw files record it)."""
 
     index: np.ndarray
     id: np.ndarray
@@ -395,6 +398,11 @@ class ScanTable:
     parent_upper: np.ndarray
     preactivation: np.ndarray
     preactivation_energy: np.ndarray
+    resolution: np.ndarray | None = None
+
+    def __post_init__(self):  # built without it: unknown
+        if self.resolution is None:
+            object.__setattr__(self, "resolution", np.full(len(self.index), np.nan))
 
     def __len__(self) -> int:
         return len(self.index)
@@ -437,6 +445,7 @@ class ScanTable:
             parent_upper=np.array([p.isolation[1] for p in parents], dtype=np.float64),
             preactivation=np.array([p[0] for p in pre], dtype=str),
             preactivation_energy=np.array([p[1] for p in pre], dtype=np.float64),
+            resolution=np.array([s.resolution for s in rows], dtype=np.float64),
         )
 
     def select(
@@ -1042,11 +1051,13 @@ def _read_runs(
     spectra: list[Spectrum] = []
     origin: list[int] = []  # the run (position) of each spectrum
     extra: dict = {}
+    instruments: list = []  # per file: the instrument and where it quotes its resolving power
     for n_run, run in enumerate(runs):
         check_cancel(cancel)
         with fmt.open(opened[n_run]) as f:
             if fmt.extra is not None and not extra:
                 extra = fmt.extra(f)
+            instruments.append(instrument_record(f))
             _read_run(f, run, targets, windows, series, spectra, project=project,
                       config=config)
         origin.extend([n_run] * (len(spectra) - len(origin)))
@@ -1068,6 +1079,7 @@ def _read_runs(
         "registry": registry.to_dict(),
         "series": [{"data_id": d, "sample": sample, "target": t_i}
                    for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
+        "instruments": instruments,
         **extra,
     }
     # as stored (tuples become lists), so a record read back from a file compares equal
@@ -1231,11 +1243,42 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                            else times.mean()) / 60.0
             if "fragment" not in extra:
                 parent_rt[(entry.peptide, entry.peptide_range, str(entry.charge))] = rt
+            # the resolving power the scans were recorded with (one value as a rule; the
+            # median when the summed scans differ) and the m/z the instrument quotes it at
+            resolutions = np.array([s.resolution for s in scans], dtype=float)
+            resolutions = resolutions[np.isfinite(resolutions)]
             spectra.append(Spectrum(
                 mz, y, entry, time, run.rep, data_id=data_id,
                 label=f"{f.path.name} {scan_text}",
                 spectrum_id=qualify_spectrum_id(project, local), rt=rt,
+                resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
+                resolving_power_mz=float(getattr(f, "resolving_power_mz", np.nan)),
             ))
+
+
+def instrument_record(f) -> dict | None:
+    """What a scan file says about its instrument: ``model`` and ``resolving_power_mz`` (the
+    m/z its resolving power is quoted at; NaN when the model is unknown) plus the distinct
+    recorded resolving powers per MS level (``resolving_power``, level -> value, or the values
+    joined with ``/`` when they vary); None when the file records nothing (mzML)."""
+    model = getattr(f, "instrument", None)
+    table = f.scans()
+    resolution = getattr(table, "resolution", None)
+    known = resolution is not None and bool(np.isfinite(resolution).any())
+    if not model and not known:
+        return None
+    from ..picking.config import reference_mz
+
+    by_level: dict[str, float | str] = {}
+    if known:
+        for level in sorted(set(table.ms_level.tolist())):
+            values = sorted({float(v) for v in resolution[table.ms_level == level]
+                             if np.isfinite(v)})
+            if values:
+                by_level[str(level)] = (values[0] if len(values) == 1
+                                        else "/".join(f"{v:g}" for v in values))
+    return {"model": model or None, "resolving_power_mz": reference_mz(model),
+            "resolving_power": by_level}
 
 
 def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:

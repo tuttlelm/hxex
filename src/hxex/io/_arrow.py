@@ -82,27 +82,38 @@ def _matrix(table: pa.Table, name: str, width: int, dtype=np.float64) -> np.ndar
 
 _INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", "modification")
 _INDEX_INT = ("start_seq", "end_seq", "charge", "rep", "data_id")
+# float columns a reader may leave unknown (NaN); absent in files written before them
+_OPTIONAL = ("rt", "resolving_power", "resolving_power_mz")
+# float columns a reader may leave unknown (NaN); absent in files written before them
+_OPTIONAL = ("rt", "resolving_power", "resolving_power_mz")
 
 
-def _index_table(obj) -> dict[str, pa.Array]:
+def _index_table(obj, optional: Sequence[str] = _OPTIONAL) -> dict[str, pa.Array]:
+    """The index columns of a spectrum-like table ``obj`` (``rt`` and the other ``optional``
+    float columns written when the object has them, NaN where unknown)."""
     cols: dict[str, pa.Array] = {name: _str(getattr(obj, name)) for name in _INDEX}
     for name in _INDEX_INT:
         cols[name] = pa.array(np.asarray(getattr(obj, name), dtype=np.int64))
     cols["time"] = pa.array(np.asarray(obj.time, dtype=np.float64))
-    rt = getattr(obj, "rt", None)
-    cols["rt"] = pa.array(np.asarray(rt if rt is not None else np.full(len(obj.time), np.nan),
-                                     dtype=np.float64))
+    for name in optional:
+        if not hasattr(obj, name):
+            continue
+        values = getattr(obj, name)
+        cols[name] = pa.array(np.asarray(values if values is not None
+                                         else np.full(len(obj.time), np.nan), dtype=np.float64))
     return cols
 
 
-def _index_arrays(t: pa.Table) -> dict[str, np.ndarray]:
+def _index_arrays(t: pa.Table, optional: Sequence[str] = _OPTIONAL) -> dict[str, np.ndarray]:
+    """The index columns of ``t`` as arrays (the ``optional`` float columns NaN when a table
+    written before them has none)."""
     out: dict[str, np.ndarray] = {name: _strs(t, name) for name in _INDEX}
     for name in _INDEX_INT:
         out[name] = np.asarray(_col(t, name), dtype=np.int64)
     out["time"] = np.asarray(_col(t, "time"), dtype=np.float64)
-    # tables written before retention times were kept have none: unknown
-    out["rt"] = (np.asarray(_col(t, "rt"), dtype=np.float64) if "rt" in t.column_names
-                 else np.full(t.num_rows, np.nan))
+    for name in optional:
+        out[name] = (np.asarray(_col(t, name), dtype=np.float64) if name in t.column_names
+                     else np.full(t.num_rows, np.nan))
     return out
 
 

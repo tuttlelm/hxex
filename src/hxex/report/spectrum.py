@@ -91,6 +91,42 @@ def _picked(spectrum_id: str, results: Results | None, binned: BinnedSet | None)
     return None
 
 
+def _charge_of(spectrum_id: str, results: Results | None, binned: BinnedSet | None) -> int:
+    """The charge of a picked spectrum (1 when no table knows it)."""
+    binned = binned if binned is not None else (results.binned if results else None)
+    if binned is not None:
+        try:
+            return int(binned.charge[binned.find(spectrum_id)])
+        except KeyError:
+            pass
+    return 1
+
+
+def _window_label(cfg, recorded: dict) -> str:
+    """How the picking window was set, for the legend: the ppm half-width, or the resolving
+    power it follows (a setting, or the spectrum's recorded value)."""
+    r = recorded.get("resolving_power")
+    if cfg.uses_recorded and r is not None and np.isfinite(r) and r > 0:
+        return f"window from the recorded R {r:g}"
+    if cfg.resolving_power is None or cfg.uses_recorded:
+        return f"±{cfg.resolution_ppm:g} ppm window"
+    return f"window from R {cfg.resolving_power:g} at m/z {cfg.resolving_power_mz:g}"
+
+
+def _recorded(spectrum_id: str, results: Results | None, spectra: SpectrumSet | None) -> dict:
+    """The spectrum's recorded resolving power and reference m/z (NaN when unknown), for
+    :meth:`hxex.picking.PickerConfig.half_width`."""
+    for source in (spectra, results.spectra if results is not None else None):
+        if source is not None:
+            try:
+                i = source.find(spectrum_id)
+            except KeyError:
+                continue
+            return {"resolving_power": float(source.resolving_power[i]),
+                    "resolving_power_mz": float(source.resolving_power_mz[i])}
+    return {"resolving_power": None, "resolving_power_mz": None}
+
+
 def spectrum_data(
     spectrum_id: str,
     results: Results | None = None,
@@ -108,8 +144,9 @@ def spectrum_data(
     - ``raw``: ``mz``, ``intensity``;
     - ``picked``: ``mz`` (predicted, None without the picked table), ``bins`` (deuterium bins),
       ``intensity``, ``window`` (the half width in m/z of the picker's window around each bin,
-      ``mz * ppm / 1e6``; None if the picker's ``resolution_ppm`` is unknown: it is read from the
-      results' settings, or given as ``resolution_ppm``);
+      :meth:`hxex.picking.PickerConfig.half_width` of the results' picker settings with the
+      spectrum's recorded resolving power, or ``mz * resolution_ppm / 1e6`` when that is given
+      here; None when neither is known) and ``resolution_ppm`` (the settings' value);
     - ``fit``: ``k``, ``total`` (the whole fit), ``components`` (``(K, bins)``, ascending mean;
       ``shown`` lists the ranks, from 1, that were asked for), ``mean`` and ``population`` with
       ``mean_se`` and ``population_se`` (NaN without a bootstrap), ``corrected`` (back-exchange
@@ -138,13 +175,21 @@ def spectrum_data(
         if picked is None:
             out["missing"]["picked"] = "no picked table or results with this id"
         else:
-            ppm = resolution_ppm
-            if ppm is None and results is not None and results.settings is not None:
-                cfg = results.settings.picker
-                ppm = None if cfg is None else cfg.resolution_ppm
-            window = None if ppm is None or picked[0] is None else picked[0] * ppm / 1e6
+            ppm, window = resolution_ppm, None
+            cfg = (results.settings.picker if results is not None
+                   and results.settings is not None else None)
+            label = None if ppm is None else f"±{ppm:g} ppm window"
+            if ppm is not None and picked[0] is not None:
+                window = picked[0] * ppm / 1e6
+            elif cfg is not None:
+                ppm = cfg.resolution_ppm
+                recorded = _recorded(spectrum_id, results, spectra)
+                label = _window_label(cfg, recorded)
+                if picked[0] is not None:
+                    window = cfg.half_width(picked[0], _charge_of(spectrum_id, results, binned),
+                                            **recorded)
             out["picked"] = {"mz": picked[0], "bins": picked[1], "intensity": picked[2],
-                             "window": window, "resolution_ppm": ppm}
+                             "window": window, "resolution_ppm": ppm, "window_label": label}
     if "fit" in show:
         if results is None:
             out["missing"]["fit"] = "no results"
@@ -228,12 +273,13 @@ def plot_spectrum(
     the total fit and of each drawn population (in its own colour). ``normalize`` divides by the
     tallest peak drawn. ``corrected`` (default: when the results have controls) adds the
     back-exchange-corrected mean to each population's label. ``picked_style`` is ``'window'``
-    (each picked bin as a bar spanning the picker's window, the predicted m/z times
-    1 +/- ``resolution_ppm``, which is read from the results' settings or given here; it is
-    shaded, not outlined, and never thinner than ``MIN_WINDOW_LW`` points, so it is visible at
-    any zoom), ``'stick'`` (a thin line at the bin) or ``'auto'`` (a window when it is known and
-    the axis is m/z, else a stick). Either way every picked bin has a circle on top. The fit
-    line has its own colour, ``FIT_COLOR``, and the populations theirs
+    (each picked bin as a bar spanning the picker's window around the predicted m/z, from the
+    results' picker settings (and the spectrum's recorded resolving power) or from
+    ``resolution_ppm`` given here; it is shaded, not outlined, and never thinner than
+    ``MIN_WINDOW_LW`` points, so it is visible at any zoom), ``'stick'`` (a thin line at the
+    bin) or ``'auto'`` (a window when it is known and the axis is m/z, else a stick). Either
+    way every picked bin has a circle on top. The fit line has its own colour, ``FIT_COLOR``,
+    and the populations theirs
     (``COLORS``, then the same colours with another line style beyond ``len(COLORS)``
     populations, see :func:`population_style`; the population map uses the same ones).
     ``xaxis`` is ``'mz'`` (default when raw data is drawn or the picked table is available) or
@@ -296,7 +342,7 @@ def plot_spectrum(
             # a window at least MIN_WINDOW_LW points wide at any zoom
             ax.bar(x, picked["intensity"] * scale, width=2 * picked["window"],
                    color=shade, edgecolor=shade, lw=MIN_WINDOW_LW,
-                   label=f"picked (±{picked['resolution_ppm']:g} ppm window)", gid="picked",
+                   label=f"picked ({picked.get('window_label') or 'window'})", gid="picked",
                    zorder=2)
         else:
             ax.vlines(x, 0, picked["intensity"] * scale, color=PICKED_PALE if both else STICK,

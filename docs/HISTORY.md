@@ -2658,3 +2658,39 @@ CSVs or mzML if wanted.
     peptide-table columns, the control convention, the units), a Python example and the CLI
     route for Thermo files. No private script reads the renamed columns (checked with the
     owner in the audit).
+
+98. **A picking window from the instrument's resolving power (2026-10-18; audit design item
+    4).** The picker's window was a constant relative half-width, `resolution_ppm` (50 ppm,
+    pyHXExpress's `Peak_Resolution`): a mass tolerance with no relation to the peak width, and
+    at high charge wider than the isotope spacing (at m/z 1000 and z = 20 a 50 ppm half-width
+    is 50 mDa, the whole spacing, so each window held both neighbours and the shoulder rule
+    zeroed real peaks). `PickerConfig.resolving_power` (R quoted at `resolving_power_mz`, 200
+    by default) now sets the window from the peak width instead: `R(m) = R0 (m0 / m) **
+    resolving_power_exponent` (0.5, Orbitrap; 0 TOF; 1 FT-ICR), half-width `window_fwhm`
+    (1.0) peak widths `m / R(m)`, never below `mass_accuracy_ppm` (10; the calibration error)
+    and never above half the isotope spacing `1.00235 / (2 z)` (`half_width`,
+    `window_edges`; the ppm window keeps its exact multiplicative edges and no cap, so every
+    earlier result is unchanged). For R = 60,000 at m/z 200: 29 ppm at m/z 600, 46 ppm at m/z
+    1500, 25 mDa instead of the 37 mDa peak width at m/z 1000 with z = 20. Owner's decisions:
+    Orbitrap scaling and one FWHM as defaults; the floor as its own key; the cap in the new
+    mode only, its effect on the ppm window to be measured on the tubulin and intact-peptide
+    data before any change there. `resolving_power = "recorded"` takes each spectrum's value
+    from the scan files: Thermo raw files record it per scan in the trailer (`Orbitrap
+    Resolution:` on the Tribrids and Exploris, `FT Resolution:` before; the example file, an
+    Orbitrap Ascend, has 120,000 at MS1 and 30,000 at MS2) and name the instrument model,
+    which says whether R is quoted at m/z 200 or 400 (`hxex.picking.reference_mz`: 400 for
+    the Elite, Velos, XL, Discovery and LTQ Orbitrap generation, 200 otherwise); mzML files
+    from ThermoRawFileParser carry neither. The readers record them per spectrum
+    (`Spectrum.resolving_power`, `resolving_power_mz`; `SpectrumSet` columns, in
+    `spectra.parquet` and spectra files, NaN when unknown, absent in files written before),
+    per scan (`ScanTable.resolution`) and per file in the read record (`source["instruments"]`:
+    model, reference m/z, distinct values per MS level; None for mzML). A spectrum without a
+    recorded value keeps the ppm window (one warning with the count). `hxex check` prints the
+    instrument and the recorded resolving powers of each raw file and the setting that would
+    use them. The spectrum figures draw the window actually used (`spectrum_data` `window`,
+    `window_label`: "±50 ppm window", "window from R 60000 at m/z 200" or "window from the
+    recorded R 120000"); the envelope references carry their recorded values too. Template
+    comments and PEAK_PICKING.md describe the settings. Tests: `tests/test_picking.py`
+    (`test_window_from_the_resolving_power`), `tests/test_thermo.py` (recorded values through
+    the readers, the read record and `hxex check`), `tests/test_spectra_file.py` (round trip,
+    old files read as unknown), `tests/test_report.py` (the drawn window).

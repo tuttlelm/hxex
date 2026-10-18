@@ -140,6 +140,22 @@ Each bin takes the tallest point within `resolution_ppm` of its predicted m/z (d
 The reported m/z of the bin is the predicted one; where the peak was found is reported separately
 (see "Where the peaks were found").
 
+**A window from the resolving power (optional).** A constant ppm window is a mass tolerance; it
+has no relation to the peak width, and at high charge it is wider than the isotope spacing (at
+m/z 1000 and z = 20 a 50 ppm half-width is 50 mDa, the whole spacing, so each window holds both
+neighbours). With `resolving_power` set (R quoted at `resolving_power_mz`, 200 by default, falling
+with m/z as `(m0 / m) ** resolving_power_exponent`, 0.5 for an Orbitrap) the half-width is
+`window_fwhm` peak widths `m / R(m)`, never below `mass_accuracy_ppm` (the calibration error; 10
+ppm by default) and never above half the isotope spacing `1.00235 / (2 z)`, so neighbouring
+windows do not overlap. For R = 60,000 at m/z 200 that is 29 ppm at m/z 600, 46 ppm at m/z 1500,
+and 25 mDa instead of the 37 mDa peak width at m/z 1000 with z = 20. `resolving_power =
+"recorded"` takes each spectrum's value from the scan files: Thermo raw files record it per scan
+(`Orbitrap Resolution` or `FT Resolution` in the trailer) with the instrument model, which says
+whether it is quoted at m/z 200 or 400 (`hxex check` prints both); mzML files record none, and a
+spectrum without a value keeps the `resolution_ppm` window (logged). The cap is not applied to
+the plain `resolution_ppm` window, which stays pyHXExpress's; its effect there is to be measured
+before any change. The spectrum figures draw the window actually used.
+
 **Shoulder rule (from pyHXExpress).** If the window holds `shoulder_min_points` (10) or more points
 and its tallest point is the first or the last of the window, the bin is set to 0, on the reasoning
 that the maximum is then the flank of a neighbouring peak. The rule assumes the predicted position
@@ -260,8 +276,13 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
 | Setting | Default | Meaning |
 |---|---|---|
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
-| `resolution_ppm` | 50 | half width of the window around each predicted m/z |
-| `noise` | None | absolute threshold; None or 0 uses `noise_percent` |
+| `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z |
+| `resolving_power` | None | R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
+| `resolving_power_mz` | 200 | m/z the resolving power is quoted at |
+| `resolving_power_exponent` | 0.5 | R falls as `(m0 / m) ** e` (Orbitrap 0.5, TOF 0, FT-ICR 1) |
+| `window_fwhm` | 1.0 | half width as a multiple of the peak width at half maximum |
+| `mass_accuracy_ppm` | 10 | floor of the resolving-power window |
+| `noise_threshold` | None | absolute threshold; None or 0 uses `noise_percent` (`noise` is its former name) |
 | `noise_percent` | 1.0 | threshold as a percent of the spectrum's maximum |
 | `zero_filling` | 4 | bins picked after the last bin above the threshold |
 | `env_threshold` | 0.1 | fraction of the tallest bin at which the envelope width is measured |

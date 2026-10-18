@@ -4,7 +4,7 @@ ladder, see docs/PEAK_PICKING.md), and the envelope of each series (theory, an i
 inferred from a reference)."""
 
 from .binned import BinnedSet
-from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .config import DEFAULT_PICKER_CONFIG, PickerConfig, reference_mz
 from .envelopes import (
     Envelope,
     EnvelopeConfig,
@@ -34,6 +34,7 @@ __all__ = [
     "EnvelopeTable",
     "PickedSpectrum",
     "PickerConfig",
+    "reference_mz",
     "envelope",
     "estimate_envelope",
     "pick_spectra",

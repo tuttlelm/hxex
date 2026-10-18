@@ -156,6 +156,57 @@ def test_window_edges_are_inclusive():
     assert outside.intensity[0] == 0.0 and outside.no_signal
 
 
+def test_window_from_the_resolving_power(caplog):
+    """A window from the instrument's resolving power: FWHM-based, floored at the mass
+    accuracy, capped at half the isotope spacing; the ppm window keeps its exact edges; the
+    recorded mode takes each spectrum's value and falls back where there is none."""
+    import logging
+
+    from hxex.picking import reference_mz
+
+    cfg = PickerConfig(resolving_power=60000.0)  # at m/z 200, Orbitrap scaling
+    ppm = cfg.half_width([600.0, 1500.0], 1) / np.array([600.0, 1500.0]) * 1e6
+    np.testing.assert_allclose(ppm, [28.87, 45.64], atol=0.01)
+    assert cfg.half_width([1000.0], 20)[0] == pytest.approx(1.00235 / 40)  # the cap
+    assert PickerConfig(resolving_power=1e6).half_width([1000.0], 1)[0] == pytest.approx(0.01)
+    tof = PickerConfig(resolving_power=30000.0, resolving_power_exponent=0.0, window_fwhm=2.0)
+    assert tof.half_width([900.0], 1)[0] == pytest.approx(2 * 900.0 / 30000.0)
+    # the default window is unchanged, edges computed as before
+    lo, hi = CFG.window_edges(np.array([500.0]), 2)
+    assert lo[0] == 500.0 * (1.0 - 50.0 / 1e6) and hi[0] == 500.0 * (1.0 + 50.0 / 1e6)
+    lo, hi = cfg.window_edges(np.array([500.0]), 2)
+    assert hi[0] - 500.0 == pytest.approx(cfg.half_width([500.0], 2)[0])
+    # the same peaks are picked on a clean spectrum
+    plan, a = pick({0: 1000.0, 1: 800.0, 2: 300.0})
+    _, b = pick({0: 1000.0, 1: 800.0, 2: 300.0}, cfg=replace(CFG, resolving_power=60000.0))
+    np.testing.assert_array_equal(a.intensity, b.intensity)
+    # the recorded mode: each spectrum's value, else the ppm window (logged once)
+    rec = replace(CFG, resolving_power="recorded")
+    assert rec.uses_recorded and not cfg.uses_recorded
+    assert rec.half_width([500.0], 2, resolving_power=120000.0, resolving_power_mz=200.0)[0] == (
+        pytest.approx(500.0 / (120000.0 * (200.0 / 500.0) ** 0.5)))
+    assert rec.half_width([500.0], 2)[0] == 500.0 * 50.0 / 1e6
+    assert rec.half_width([500.0], 2, resolving_power=float("nan"))[0] == 500.0 * 50.0 / 1e6
+    mz, y = sticks(plan, {0: 1000.0, 1: 800.0})
+    entry = PeptideEntry("f", "S", PEPTIDE, "0001-0010", 1, 10, 2)
+    spectra = SpectrumSet.from_spectra([
+        Spectrum(mz, y, entry, 0.0, 1, spectrum_id="a", resolving_power=120000.0,
+                 resolving_power_mz=200.0),
+        Spectrum(mz, y, entry, 0.0, 2, spectrum_id="b")])
+    assert np.isnan(spectra.resolving_power[1]) and spectra.resolving_power[0] == 120000.0
+    with caplog.at_level(logging.WARNING):
+        binned = pick_spectra(spectra, rec)
+    assert "1 of 2 spectra have no recorded resolving power" in caplog.text
+    assert binned.intensity[binned.offsets[0]] == 1000.0
+    assert "recorded" in PickerConfig.from_dict(rec.to_dict()).resolving_power
+    assert reference_mz("Orbitrap Ascend") == 200.0 and reference_mz("Orbitrap Elite") == 400.0
+    assert reference_mz("LTQ Orbitrap Velos") == 400.0 and np.isnan(reference_mz(""))
+    for bad in ({"resolving_power": "auto"}, {"resolving_power": 0}, {"resolving_power_mz": 0},
+                {"resolving_power_exponent": -1}, {"window_fwhm": 0}, {"mass_accuracy_ppm": -1}):
+        with pytest.raises(ValueError):
+            PickerConfig(**bad)
+
+
 def test_resolution_ppm():
     plan = plan_bins(PEPTIDE, 2, config=CFG)
     mz = np.array([plan.pred_mz[0] * (1 + 30e-6)])

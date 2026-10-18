@@ -48,6 +48,27 @@ def test_exact_round_trip(tmp_path):
     assert_same(load_spectra(path), s)
 
 
+def test_recorded_resolving_powers_round_trip_and_old_files_read_as_unknown(tmp_path):
+    import dataclasses
+
+    import pyarrow.parquet as pq
+
+    from hxex.io._arrow import _spectra_from_table
+
+    s = make_spectra()
+    assert np.isnan(s.resolving_power).all() and np.isnan(s.resolving_power_mz).all()
+    power = np.where(np.arange(len(s)) % 2 == 0, 120000.0, np.nan)
+    s = dataclasses.replace(s, resolving_power=power, resolving_power_mz=np.full(len(s), 200.0))
+    path = save_spectra(s, tmp_path / "spectra.parquet")
+    back = load_spectra(path)
+    np.testing.assert_array_equal(back.resolving_power, power)
+    np.testing.assert_array_equal(back.resolving_power_mz, s.resolving_power_mz)
+    assert_same(back, s)
+    old = pq.read_table(path).drop_columns(["resolving_power", "resolving_power_mz"])
+    assert np.isnan(_spectra_from_table(old).resolving_power).all()
+    assert np.isnan(s.select(np.arange(len(s)) < 2).resolving_power_mz).sum() == 0
+
+
 def test_empty_and_single_spectrum_sets(tmp_path):
     empty = SpectrumSet.from_spectra([])
     assert_same(load_spectra(save_spectra(empty, tmp_path / "e.parquet")), empty)

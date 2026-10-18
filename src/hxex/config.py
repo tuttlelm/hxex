@@ -905,6 +905,17 @@ _COMMENTS: dict[str, str] = {
                                       "edge counts as a neighbour's shoulder (bin 0)",
     "run.picker.ladder": 'bin positions: "composition" (isotope clusters of the composition) '
                          'or "exms" (pyHXExpress\'s fixed steps)',
+    "run.picker.resolving_power": "window from the instrument instead of resolution_ppm: R "
+                                  'quoted at resolving_power_mz, or "recorded" (each '
+                                  "spectrum's value from Thermo raw files; hxex check shows "
+                                  "them); false: the resolution_ppm window",
+    "run.picker.resolving_power_mz": "m/z the resolving power is quoted at (Thermo: 200; 400 "
+                                     "on the first Orbitrap generation)",
+    "run.picker.resolving_power_exponent": "R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR",
+    "run.picker.window_fwhm": "half-width as a multiple of the peak width at half maximum, "
+                              "m/R(m); never below mass_accuracy_ppm, never above half the "
+                              "isotope spacing",
+    "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
     "run.fit.k_min": "fewest populations tried",
     "run.fit.k_max": "most populations tried (one K: no model selection)",
     "run.fit.criterion": '"bic" or "aic": chooses K among those tried',

@@ -186,14 +186,17 @@ def envelope(
 
 
 def _bin_values(
-    mz: np.ndarray, y: np.ndarray, pred: np.ndarray, config: PickerConfig
+    mz: np.ndarray, y: np.ndarray, pred: np.ndarray, config: PickerConfig, charge: int,
+    recorded: Mapping[str, float | None],
 ) -> tuple[np.ndarray, np.ndarray]:
     """Window maximum for every bin (0 where the window is empty or rejected as a shoulder),
     and where it is: the m/z of the maximum, refined by a parabola through it and its two
-    neighbours in the spectrum when they are lower (NaN where the value is 0)."""
-    factors = 1.0 + np.array([-1.0, 1.0]) * config.resolution_ppm / 1e6
-    lo = np.searchsorted(mz, pred * factors[0], side="left")
-    hi = np.searchsorted(mz, pred * factors[1], side="right")
+    neighbours in the spectrum when they are lower (NaN where the value is 0). The window is
+    ``config.half_width`` either side of the predicted m/z (``recorded``: the spectrum's
+    recorded resolving power and its reference m/z)."""
+    lower, upper = config.window_edges(pred, charge, **recorded)
+    lo = np.searchsorted(mz, lower, side="left")
+    hi = np.searchsorted(mz, upper, side="right")
     values = np.zeros(len(pred))
     where = np.full(len(pred), np.nan)
     for i, (a, b) in enumerate(zip(lo, hi, strict=True)):
@@ -250,8 +253,13 @@ def pick_spectrum(
     config: PickerConfig = DEFAULT_PICKER_CONFIG,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     plan: BinPlan | None = None,
+    resolving_power: float | None = None,
+    resolving_power_mz: float | None = None,
 ) -> PickedSpectrum:
-    """Pick one spectrum (arrays of m/z and intensity; sorted by m/z if they are not)."""
+    """Pick one spectrum (arrays of m/z and intensity; sorted by m/z if they are not).
+    ``resolving_power`` and ``resolving_power_mz`` are the spectrum's recorded values, used
+    when ``config.resolving_power`` is ``'recorded'`` (:meth:`PickerConfig.half_width`)."""
+    recorded = {"resolving_power": resolving_power, "resolving_power_mz": resolving_power_mz}
     plan = plan or plan_bins(
         peptide, charge, modification=modification, config=config, registry=registry
     )
@@ -268,7 +276,7 @@ def pick_spectrum(
         threshold = float("nan")
 
     pred = plan.pred_mz
-    values, where = _bin_values(mz, intensity, pred, config)
+    values, where = _bin_values(mz, intensity, pred, config, charge, recorded)
     if config.ladder == "composition" and plan.clusters is not None:
         # the deuteration level from a first pass with the ExMS ladder, then the composition
         # ladder; the level is estimated once more from those picks (a first pass that missed
@@ -281,7 +289,7 @@ def pick_spectrum(
             centre = float((np.arange(len(strong)) * strong).sum() / strong.sum())
             level = min(max(centre - natural, 0.0), float(plan.n_sites))
             pred = composition_mz(plan, level)
-            values, where = _bin_values(mz, intensity, pred, config)
+            values, where = _bin_values(mz, intensity, pred, config, charge, recorded)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1
@@ -326,6 +334,12 @@ def pick_spectra(
     clusters = clusters or {}
     plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
+    if config.uses_recorded:
+        missing = int((~np.isfinite(spectra.resolving_power)).sum())
+        if missing:
+            log.warning("resolving_power = \"recorded\": %d of %d spectra have no recorded "
+                        "resolving power (not read from Thermo raw files), so their window is "
+                        "resolution_ppm = %g", missing, len(spectra), config.resolution_ppm)
     for i in range(len(spectra)):
         check_cancel(cancel)
         series = int(spectra.data_id[i])
@@ -340,7 +354,8 @@ def pick_spectra(
         picked.append(
             pick_spectrum(
                 mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
-                plan=plans[key],
+                plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
+                resolving_power_mz=float(spectra.resolving_power_mz[i]),
             )
         )
         report(progress, i + 1, len(spectra))

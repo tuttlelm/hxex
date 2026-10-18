@@ -95,7 +95,11 @@ class FakeReader:
                                   False),)
         return ScanInfo(number, s.get("ms_level", 1), s["time"], s.get("filter", ""),
                         bool(s.get("centroid")), reactions,
-                        charge=s["precursor"][1] if "precursor" in s else 0)
+                        charge=s["precursor"][1] if "precursor" in s else 0,
+                        resolution=s.get("resolution", float("nan")))
+
+    def instrument(self):
+        return "Orbitrap Fake"
 
     def arrays(self, number):
         s = self.scans[number - self.first]
@@ -157,8 +161,10 @@ def test_read_thermo_gives_the_spectra_of_read_mzml_and_repeats(fake_raw, tmp_pa
     assert [s.replace("run.raw", "run.mzML") for s in a.spectrum_id] == list(b.spectrum_id)
     src = a.source
     assert src["reader"] == "thermo" and src["thermo_reader"] == "RawFileReader test"
-    assert {k: v for k, v in src.items() if k not in ("reader", "thermo_reader", "runs", "files")
-            } == {k: v for k, v in b.source.items() if k not in ("reader", "runs", "files")}
+    skip = ("reader", "thermo_reader", "runs", "files", "instruments")
+    assert {k: v for k, v in src.items() if k not in skip} == {
+        k: v for k, v in b.source.items() if k not in skip}
+    assert src["instruments"][0]["model"] == "Orbitrap Fake" and b.source["instruments"] == [None]
     assert src["files"][0]["name"] == "run.raw" and src["files"][0]["algorithm"] == "sha256"
     assert mzml_series_targets(src)[1] == targets[1]
 
@@ -172,6 +178,41 @@ def test_read_thermo_gives_the_spectra_of_read_mzml_and_repeats(fake_raw, tmp_pa
         read_mzml_source(src)
     with pytest.raises(ValueError, match="not a Thermo raw read"):
         thermo.read_thermo_source(b.source)
+
+
+def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeypatch, capsys):
+    """Thermo raw files record the resolving power per scan and the instrument model; the
+    spectra carry them (mzML has none), the read record lists them and hxex check shows them."""
+    from hxex.cli import _instrument_text
+    from hxex.io.mzml import instrument_record
+    from hxex.picking import PickerConfig
+
+    scans = time_course(n=6, ms2_every=2)
+    for s in scans:
+        s["resolution"] = 120000.0 if s.get("ms_level", 1) == 1 else 30000.0
+    raw = tmp_path / "run.raw"
+    raw.write_bytes(b"not really a raw file")
+    mzml = write_mzml(tmp_path / "run.mzML", scans)
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: FakeReader(scans))
+    targets = [MzmlTarget(ENTRY), MzmlTarget(ENTRY, ms_level=2, activation="ETD")]
+    with ThermoFile(raw, thermo_dir="dlls") as f:
+        table = f.scans()
+        assert f.instrument == "Orbitrap Fake" and f.resolving_power_mz == 200.0
+        assert set(table.resolution[table.ms_level == 1]) == {120000.0}
+        record = instrument_record(f)
+    assert record == {"model": "Orbitrap Fake", "resolving_power_mz": 200.0,
+                      "resolving_power": {"1": 120000.0, "2": 30000.0}}
+    text = _instrument_text(record, PickerConfig())
+    assert "instrument Orbitrap Fake" in text and "120000 at MS1, 30000 at MS2" in text
+    assert "quoted at m/z 200" in text and 'resolving_power = "recorded"' in text
+    assert "recorded" not in _instrument_text(record, PickerConfig(resolving_power=60000.0))
+    a = read_thermo([MzmlRun(raw, "WT")], targets, project="p", thermo_dir="dlls")
+    ms1 = a.data_id == 0
+    assert set(a.resolving_power[ms1]) == {120000.0} and set(a.resolving_power[~ms1]) == {30000.0}
+    assert set(a.resolving_power_mz) == {200.0} and a.source["instruments"] == [record]
+    b = read_mzml([MzmlRun(mzml, "WT")], targets, project="p")
+    assert np.isnan(b.resolving_power).all() and b.source["instruments"] == [None]
+    assert np.isnan(MzmlFile(mzml).scans().resolution).all()
 
 
 def test_what_reading_needs_is_named(tmp_path, monkeypatch):

@@ -581,6 +581,21 @@ def test_picked_bins_are_drawn_as_the_pickers_window(results, written):
     np.testing.assert_allclose([b.get_width() for b in bars], 2 * d["window"])
     np.testing.assert_allclose([b.get_x() + b.get_width() / 2 for b in bars], d["mz"])
     assert "50 ppm window" in " ".join(t.get_text() for t in fig.axes[0].get_legend().get_texts())
+    # a window from the resolving power is drawn as picked, per m/z and charge
+    import dataclasses
+
+    configs = results.settings.configs
+    picker = {**configs["run"]["picker"], "resolving_power": 60000.0}
+    settings = dataclasses.replace(results.settings, configs={
+        **configs, "run": {**configs["run"], "picker": picker}})
+    wide = dataclasses.replace(results, settings=settings)
+    e = spectrum_data(sid, wide, show=("picked",))["picked"]
+    charge = int(results.binned.charge[results.binned.find(sid)])
+    np.testing.assert_allclose(e["window"], settings.picker.half_width(e["mz"], charge))
+    assert not np.allclose(e["window"], d["window"])
+    legend = " ".join(t.get_text() for t in plot_spectrum(sid, wide, show=("picked",))
+                      .axes[0].get_legend().get_texts())
+    assert "ppm window" not in legend and "window" in legend
     assert all(b.get_linewidth() >= 1.0 for b in bars)  # a window is never thinner than this
     assert all(b.get_edgecolor() == b.get_facecolor() for b in bars)  # shaded, no outline
     circles = [a for a in fig.axes[0].collections if a.get_gid() == "picked"]

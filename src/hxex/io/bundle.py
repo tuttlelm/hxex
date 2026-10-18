@@ -1129,7 +1129,7 @@ class Bundle:
             threshold=np.asarray(_col(t, "threshold"), dtype=np.float64),
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
-            capped=np.asarray(_col(t, "capped"), dtype=bool), **_index_arrays(t),
+            capped=np.asarray(_col(t, "capped"), dtype=bool), **_index_arrays(t, ("rt",)),
             peak_mz=peak_mz, mz_offset_ppm=offset,
         )
 

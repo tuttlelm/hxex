@@ -29,6 +29,8 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
+
 from . import __version__
 
 log = logging.getLogger("hxex.cli")
@@ -321,11 +323,26 @@ def _check_peptides(project, entries) -> list[str]:
     return problems
 
 
+def _instrument_text(record: dict, picker) -> str:
+    """One line on a scan file's instrument and recorded resolving power, for ``hxex check``."""
+    parts = [f"instrument {record['model']}" if record.get("model") else "instrument unknown"]
+    powers = record.get("resolving_power") or {}
+    if powers:
+        at = record.get("resolving_power_mz")
+        at_text = f" (quoted at m/z {at:g})" if at is not None and np.isfinite(at) else ""
+        parts.append("resolving power " + ", ".join(
+            f"{v if isinstance(v, str) else f'{v:g}'} at MS{level}" for level, v in powers.items())
+            + at_text)
+        if picker.resolving_power is None:
+            parts.append('[run.picker] resolving_power = "recorded" would use it')
+    return "; ".join(parts)
+
+
 def _check_scan_files(project) -> list[str]:
     """List each run's scans per target; the problems found."""
     from .config import scan_targets
     from .io import read_peptide_table
-    from .io.mzml import MzmlFile, _target_label, target_scans
+    from .io.mzml import MzmlFile, _target_label, instrument_record, target_scans
 
     inp = project.input
     if not inp.peptides.is_file():
@@ -352,10 +369,13 @@ def _check_scan_files(project) -> list[str]:
         with opened as f:
             table = f.scans()
             counts = [len(target_scans(table, run, t, inp.scans)) for t in targets]
+            instrument = instrument_record(f)
         none = [_target_label(t) for t, n in zip(targets, counts, strict=True) if n == 0]
         time = "scan times" if run.time is None else f"time {run.time:g} s"
         _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {time}, {len(table)} scans; "
              f"{len(targets) - len(none)} of {len(targets)} targets have scans")
+        if instrument is not None:
+            _say("  " + _instrument_text(instrument, project.run.picker))
         for label in none[:10]:
             _say(f"  no scans: {label}")
         if len(none) > 10:

@@ -131,7 +131,9 @@ def estimate_envelope(
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
 ) -> Envelope:
     """The envelope of one ion from its reference spectra (``(mz, intensity)`` pairs, normally the
-    undeuterated controls of the series; ignored for ``'theory'``).
+    undeuterated controls of the series, each optionally with a third element, the keyword
+    arguments of :func:`pick_spectrum` such as a recorded resolving power; ignored for
+    ``'theory'``).
 
     For ``'mixed'`` and ``'infer'``: start from equal weights, then ``iterations`` times pick the
     references with the bins of the current mixture, average their envelopes (each scaled to sum
@@ -203,8 +205,9 @@ def _picked_average(references, clusters, length, peptide, charge, *, modificati
     over those with signal (None without any), and how many those are."""
     plan = plan_bins(peptide, charge, modification=modification, config=picker,
                      registry=registry, clusters=clusters)
-    picked = [pick_spectrum(mz, y, peptide, charge, modification=modification, config=picker,
-                            registry=registry, plan=plan).intensity for mz, y in references]
+    picked = [pick_spectrum(ref[0], ref[1], peptide, charge, modification=modification,
+                            config=picker, registry=registry, plan=plan,
+                            **(ref[2] if len(ref) > 2 else {})).intensity for ref in references]
     picked = [p for p in picked if p.sum() > 0]
     if not picked:
         return None, 0
@@ -340,7 +343,9 @@ def series_envelopes(
 
         def at(t, d, rows=rows):
             sel = rows[d][np.abs(spectra.time[rows[d]] - t) <= atol]
-            return [spectra.spectrum(int(i)) for i in sel]
+            return [(*spectra.spectrum(int(i)),
+                     {"resolving_power": float(spectra.resolving_power[i]),
+                      "resolving_power_mz": float(spectra.resolving_power_mz[i])}) for i in sel]
 
         def estimate(refs, peptide=peptide, charge=charge, modification=modification):
             return estimate_envelope(refs, peptide, charge, modification=modification,

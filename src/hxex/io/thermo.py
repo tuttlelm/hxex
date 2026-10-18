@@ -108,8 +108,9 @@ class ScanInfo:
     """What the RawFileReader says about one scan, as plain values: scan ``number``, ``ms_order``
     (Thermo's; below 1 for parent, neutral-loss and neutral-gain scans), ``rt`` (minutes),
     ``filter``, ``centroid``, the event's ``reactions`` (in order, every stage),
-    ``supplemental`` (the filter's ``sa``), and the trailer's ``mono_mz`` and ``charge``
-    (0 when the instrument found none)."""
+    ``supplemental`` (the filter's ``sa``), the trailer's ``mono_mz`` and ``charge`` (0 when
+    the instrument found none) and ``resolution``, the Orbitrap resolving power the scan was
+    recorded at (the trailer's ``Orbitrap Resolution`` or ``FT Resolution``; NaN without)."""
 
     number: int
     ms_order: int
@@ -120,6 +121,7 @@ class ScanInfo:
     supplemental: bool = False
     mono_mz: float = 0.0
     charge: int = 0
+    resolution: float = float("nan")
 
 
 def scan_from_info(info: ScanInfo, first: int = 1) -> Scan:
@@ -164,6 +166,7 @@ def scan_from_info(info: ScanInfo, first: int = 1) -> Scan:
         intensity=np.empty(0),
         isolation=isolation,
         stages=tuple(stages),
+        resolution=float(info.resolution),
     )
 
 
@@ -277,7 +280,24 @@ class _RawFileReader:
             supplemental=str(event.SupplementalActivation) == "On",
             mono_mz=self._trailer_value(number, "Monoisotopic M/Z:", 0.0),
             charge=self._trailer_value(number, "Charge State:", 0),
+            resolution=self._resolution(number),
         )
+
+    def _resolution(self, number: int) -> float:
+        """The Orbitrap resolving power of a scan from the trailer (``Orbitrap Resolution:`` on
+        the Tribrids and Exploris, ``FT Resolution:`` on earlier instruments); NaN without."""
+        for label in ("Orbitrap Resolution:", "FT Resolution:"):
+            value = self._trailer_value(number, label, 0.0)
+            if value > 0:
+                return float(value)
+        return float("nan")
+
+    def instrument(self) -> str:
+        """The instrument model the file names (``Orbitrap Ascend``), or empty."""
+        try:
+            return str(self._raw.GetInstrumentData().Model or "").strip()
+        except Exception:  # noqa: BLE001  (a file without instrument data)
+            return ""
 
     def arrays(self, number: int) -> tuple[np.ndarray, np.ndarray]:
         # with the scan's statistics: without them the m/z values differ slightly from those
@@ -312,6 +332,20 @@ class ThermoFile:
     def reader_version(self) -> str:
         """The RawFileReader that reads the file (recorded with the spectra)."""
         return self._reader.version
+
+    @property
+    def instrument(self) -> str:
+        """The instrument model (``Orbitrap Ascend``; empty when the file does not say)."""
+        get = getattr(self._reader, "instrument", None)
+        return str(get()) if get is not None else ""
+
+    @property
+    def resolving_power_mz(self) -> float:
+        """The m/z the instrument quotes its resolving power at (200, or 400 for the first
+        Orbitrap generation; NaN for an unknown model), :func:`hxex.picking.reference_mz`."""
+        from ..picking.config import reference_mz
+
+        return reference_mz(self.instrument)
 
     def _scan_rows(self) -> list[Scan]:
         if self._rows is None:

@@ -104,6 +104,8 @@ class Spectrum:
 
     ``rt`` is the chromatographic retention time in minutes (NaN: unknown); a reader that sees
     the scans sets it, otherwise it comes from the entry's ``rt`` column (:func:`entry_rt`).
+    ``resolving_power`` is the instrument's resolving power recorded with the scans, quoted at
+    ``resolving_power_mz`` (both NaN when the file does not record it; Thermo raw files do).
     """
 
     mz: np.ndarray
@@ -115,6 +117,8 @@ class Spectrum:
     label: str = ""
     spectrum_id: str = ""
     rt: float = float("nan")
+    resolving_power: float = float("nan")
+    resolving_power_mz: float = float("nan")
 
 
 def entry_rt(entry: PeptideEntry) -> float:
@@ -164,7 +168,9 @@ class SpectrumSet:
     selects and sums scans, such as :func:`hxex.io.read_mzml`, sets it so the read can be
     repeated); it is kept by :meth:`select`, spectra files and results bundles, and is None when
     nothing was recorded. ``rt`` is each spectrum's retention time in minutes (NaN: unknown;
-    all NaN when not given).
+    all NaN when not given); ``resolving_power`` and ``resolving_power_mz`` the instrument's
+    resolving power recorded with each spectrum's scans and the m/z it is quoted at (NaN when
+    not recorded; see :class:`Spectrum`).
     """
 
     mz: np.ndarray
@@ -185,10 +191,13 @@ class SpectrumSet:
     modification: np.ndarray
     rt: np.ndarray | None = None
     source: Mapping | None = field(default=None, compare=False)
+    resolving_power: np.ndarray | None = None
+    resolving_power_mz: np.ndarray | None = None
 
-    def __post_init__(self):  # built without retention times: unknown
-        if self.rt is None:
-            object.__setattr__(self, "rt", np.full(len(self.offsets) - 1, np.nan))
+    def __post_init__(self):  # built without retention times or resolving powers: unknown
+        for name in ("rt", "resolving_power", "resolving_power_mz"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -259,4 +268,7 @@ class SpectrumSet:
             rt=np.array([s.rt if np.isfinite(s.rt) else entry_rt(s.entry) for s in spectra],
                         dtype=np.float64),
             source=source,
+            resolving_power=np.array([s.resolving_power for s in spectra], dtype=np.float64),
+            resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
+                                        dtype=np.float64),
         )
