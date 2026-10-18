@@ -39,18 +39,26 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SpeciesFilters:
-    """Which K >= 2 descriptions the analysis trusts (K = 1 is never filtered), following the
-    owner's pyHXExpress practice (docs/ANALYSIS.md).
+    """Which K >= 2 descriptions the analysis trusts (the ``[analysis.filters]`` table; K = 1 is
+    never filtered; docs/ANALYSIS.md).
 
-    Per spectrum, before replicates and charge states are combined: every population within
-    ``[min_population, 1 - min_population]``, and no component deuterated beyond ``max_fD``
-    (its ``n * p`` over the exchangeable amides, back-exchange corrected when the run has
-    controls, as reported: more than full deuteration is not physical; the fit itself allows
-    ``n`` up to the run's ``n_max_factor`` times the amides). Per species and time, after
-    combining: every rank's ``fD`` standard error below ``max_fD_se`` (unknown errors pass),
-    and, with ``k1_between_ranks``, the K = 1 value between the lowest and the highest rank
-    (``fD_low < fD_avg < fD_high``; needs K = 1 among the K analysed): a split whose average
-    does not lie between its populations does not describe the same molecules."""
+    Per spectrum, before replicates and charge states are combined:
+
+    - ``min_population``: every population within ``[min_population, 1 - min_population]`` (the
+      fit has a limit of the same name on the fitted K, and the choice on the lever-rule
+      population).
+    - ``max_fD``: no component deuterated beyond this (its ``n * p`` over the exchangeable
+      amides, back-exchange corrected when the run has controls, as reported: more than full
+      deuteration is not physical; the fit itself allows ``n`` up to the run's ``n_max_factor``
+      times the amides).
+
+    Per species and time, after combining:
+
+    - ``max_fD_se``: every rank's ``fD`` standard error below this (unknown errors pass).
+    - ``k1_between_ranks``: the K = 1 value between the lowest and the highest rank (``fD_low <
+      fD_avg < fD_high``; needs K = 1 among the K analysed): a split whose average does not lie
+      between its populations does not describe the same molecules.
+    """
 
     min_population: float = 0.05
     max_fD_se: float = 0.25
@@ -319,8 +327,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
         if k >= 2 and no_boot and not quiet:
             log.warning("K=%d: %d of %d spectra have no bootstrap, so their standard errors come "
                         "only from the scatter of replicates (or are unknown): too small for the "
-                        "choice between one and two populations (run the bootstrap at K=1 and "
-                        "K=2, BootstrapConfig.ks)", k, no_boot, int((keep & fitted).sum()))
+                        "choice between one and two populations (bootstrap at K=1 and K=2: "
+                        "[run.bootstrap] ks = [1, 2])", k, no_boot, int((keep & fitted).sum()))
         if controls is not None:
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se
@@ -375,12 +383,19 @@ def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = Fals
             dropped["k1_between_ranks"] = len(unordered)
             groups = {key: recs for key, recs in groups.items() if key[:7] not in unordered}
         if any(dropped.values()) and not quiet:
-            log.info("K >= 2 descriptions left out: %d spectra with a population outside "
-                     "[%g, %g], %d with a component above fD %g; %d species and times with "
-                     "an fD error of %g or more, %d with the K=1 value outside the ranks",
-                     dropped["population"], filters.min_population, 1 - filters.min_population,
-                     dropped["fD"], filters.max_fD, dropped["fD_se"], filters.max_fD_se,
-                     dropped["k1_between_ranks"])
+            reasons = {
+                "population": (f"{dropped['population']} spectra with a population outside "
+                               f"[{filters.min_population:g}, "
+                               f"{1 - filters.min_population:g}] (min_population)"),
+                "fD": f"{dropped['fD']} spectra with a component above fD {filters.max_fD:g} "
+                      "(max_fD)",
+                "fD_se": (f"{dropped['fD_se']} species and times with an fD error of "
+                          f"{filters.max_fD_se:g} or more (max_fD_se)"),
+                "k1_between_ranks": (f"{dropped['k1_between_ranks']} with the K=1 value "
+                                     "outside the ranks (k1_between_ranks)"),
+            }
+            log.info("K >= 2 descriptions left out by [analysis.filters]: %s",
+                     "; ".join(text for key, text in reasons.items() if dropped.get(key)))
     return groups
 
 
@@ -472,7 +487,8 @@ def species_uptake(
     out["run_offset"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in offset
                                   for a, b, c, d, e in species], dtype=bool)
     if offset:
-        log.warning("%d merged species differ systematically between runs (run_offset)",
+        log.warning("%d species merged by [analysis.merge] differ systematically between runs "
+                    "(run_offset in the species table)",
                     len({key[:3] for key in offset}))
     for name in ("start", "end", "K", "rank", "n_spectra", "n_charges"):
         out[name] = out[name].astype(np.int64)

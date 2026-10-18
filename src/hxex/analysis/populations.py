@@ -4,11 +4,11 @@
 Each residue has three values from the fixed-K fits (:func:`hxex.analysis.residue_map`): the K=1
 value ``fD_avg`` and the K=2 ranks ``fD_low`` and ``fD_high``, each with a standard error. Many
 peptides report on a residue, so whether its data support two populations is judged there rather
-than spectrum by spectrum (the owner's pyHXExpress ``choose_fits``). The two-population
+than spectrum by spectrum. The two-population
 description is kept when every test passes:
 
 - the populations are separated: ``(fD_high - fD_low) - z (se_low + se_high) >= 0``, with ``z``
-  for the ``confidence`` interval (50 % by default, as ``choose_fits``);
+  for the ``confidence`` interval (50 % by default);
 - both standard errors are below ``max_fD_se``;
 
 An unknown standard error (NaN: no bootstrap and a single spectrum behind the residue) is
@@ -19,8 +19,10 @@ value describes it (``reason`` ``'not separated'``).
   is within ``[min_population, 1 - min_population]``.
 
 Otherwise the K=1 value describes the residue. The standard error of the population is propagated
-from all three values (``choose_fits`` left a derivative unsquared).
+from all three values.
 """
+# the method follows pyHXExpress's choose_fits, per residue instead of per spectrum; its
+# population error left a derivative unsquared
 
 from __future__ import annotations
 
@@ -36,9 +38,19 @@ REASONS = ("", "no K=2", "not separated", "error", "K=1 outside", "population")
 
 @dataclass(frozen=True)
 class ChoiceConfig:
-    """Limits of :func:`choose_populations` (defaults as the owner's ``choose_fits``). A
-    residue whose K=2 standard errors are unknown (NaN) fails the separation and precision
-    tests: the one-population description is kept (see the module docstring)."""
+    """Limits of :func:`choose_populations` (the ``[analysis.choice]`` table; see the module
+    docstring).
+
+    - ``confidence``: a fraction (0.5: 50 %), the level of the interval that must separate the
+      two K=2 values for them to count as separated. (The bootstrap's ``ci`` is a percentage.)
+    - ``max_fD_se``: both K=2 standard errors must be below this.
+    - ``min_population``: the lever-rule population of the low-D component must be within
+      ``[min_population, 1 - min_population]`` (the fit and the filters have limits of the same
+      name on each spectrum's populations).
+
+    A residue whose K=2 standard errors are unknown (NaN) fails the separation and precision
+    tests: the one-population description is kept.
+    """
 
     confidence: float = 0.5
     max_fD_se: float = 0.25

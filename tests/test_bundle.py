@@ -23,7 +23,7 @@ from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_picking import sticks  # noqa: I001
 
 PEPTIDE = "RDKVQKEYAL"
-CFG = PickerConfig(zero_filling=3, noise=100.0)
+CFG = PickerConfig(zero_filling=3, noise_threshold=100.0)
 
 
 def envelope(plan, centre, width, height):
@@ -607,10 +607,11 @@ def test_provenance_is_recorded_as_given_and_settings_compared(tmp_path, run):
     assert bundle_manifest(tmp_path / "plain") is None
     review = ReviewTable.empty().update(str(fit.spectrum_id[0]), status="accepted")
     review = review.update("proj:gone#1", note="n").mark_stale(fit)
-    new_configs = {"run": {"fit": {"k_max": 3, "screen": True}, "picker": {"noise": 100.0}},
+    new_configs = {"run": {"fit": {"k_max": 3, "screen": True},
+                           "picker": {"noise_threshold": 100.0}},
                    "spectra_source": {"files": ["a"], "hxex.created": "later"}}
     prov = provenance_of({**old, "configs": {
-        "run": {"fit": {"k_max": 2, "screen": True}, "picker": {"noise": 100.0},
+        "run": {"fit": {"k_max": 2, "screen": True}, "picker": {"noise_threshold": 100.0},
                 "quality": {"max_ppm": 20.0}},
         "spectra_source": {"files": ["a"], "hxex.created": "earlier"}}},
         path, new_configs=new_configs, review=review, moved_to=None)

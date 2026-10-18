@@ -78,14 +78,32 @@ WORK_FACTOR = 12.0
 
 @dataclass(frozen=True)
 class RunConfig:
-    """Settings of :func:`run`.
+    """Settings of :func:`run`: the ``[run]`` table of a project file, one stage per sub-table.
 
-    ``controls`` None means no back-exchange correction (K=1 must then not be required). The
-    reference spectra of the noise level are those at the controls' undeuterated time if given,
-    else at ``undeut_time``. ``n_max_factor`` times the exchangeable sites bounds ``n``.
-    ``drop_no_signal`` drops spectra the picker found nothing in (``empty`` ones are always
-    dropped). ``memory_budget_bytes`` and ``max_chunk`` (measurements) limit a chunk; None means
-    automatic (see the module docstring) and no cap.
+    - ``picker``: peak picking (:class:`~hxex.picking.PickerConfig`).
+    - ``fit``: the fit of one to several populations (:class:`~hxex.fit.FitConfig`).
+    - ``bootstrap``: standard errors and intervals (:class:`~hxex.bootstrap.BootstrapConfig`);
+      None: no bootstrap.
+    - ``controls``: the back-exchange correction from the undeuterated and fully deuterated
+      controls (:class:`~hxex.controls.ControlConfig`); None: no correction, the means stay in
+      measured deuterons. The controls are the K=1 fits, so ``fit.k_min`` must be 1.
+    - ``quality``: the quality flags (:class:`~hxex.quality.QualityConfig`); None: none.
+    - ``plots``: the figures the run writes (:class:`~hxex.report.PlotConfig`); None: none.
+    - ``registry``: the modified residues a sequence may name, as modX labels
+      (:class:`~hxex.chem.ModificationRegistry`).
+    - ``envelope``: the isotope envelope that places the bins and shapes the fit
+      (:class:`~hxex.picking.EnvelopeConfig`).
+    - ``envelope_fallback_time`` (s): the spectra at this time are the envelope references of a
+      series whose own are missing or poor; None: none.
+    - ``undeut_time`` (s): the time of the undeuterated spectra, the noise references of every
+      series (the controls' ``undeut_time`` is used when it is given).
+    - ``n_max_factor``: the fit's ``n`` (exchangeable sites) may be up to this times the amide
+      count.
+    - ``drop_no_signal``: drop the spectra the picker found no signal in (``empty`` ones are
+      always dropped).
+    - ``memory_budget_bytes``: the memory of one chunk of the fit; None: automatic (see the
+      module docstring).
+    - ``max_chunk``: the most measurements in one chunk; None: no cap.
     """
 
     picker: PickerConfig = DEFAULT_PICKER_CONFIG
@@ -431,8 +449,8 @@ def analyse(
 
 def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
     """The exchangeable sites of every spectrum of ``binned``, ``(M,)`` integers: the backbone
-    amides of its peptide and ion type plus its user ``Hex`` sites (owner: they stand for
-    exchangeable amides on a modification), as :meth:`hxex.fit.Measurements.from_binned` counts
+    amides of its peptide and ion type plus its user ``Hex`` sites (they stand for exchangeable
+    amides on a modification), as :meth:`hxex.fit.Measurements.from_binned` counts
     them for ``n_max`` (0 for an ion without any site, which the controls flag ``no_amides``)."""
     cache: dict[tuple[str, str], int] = {}
     out = np.zeros(len(binned), dtype=np.int64)

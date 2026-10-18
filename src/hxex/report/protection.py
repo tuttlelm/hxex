@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Protection-factor figures (:mod:`hxex.analysis.protection`), in the layout of the coverage
-map (:func:`hxex.report.coverage.plot_coverage`; owner): each peptide a bar over its residues,
+map (:func:`hxex.report.coverage.plot_coverage`): each peptide a bar over its residues,
 stacked downwards, one panel per K and rank (the average, then the K = 2 ranks).
 
 :func:`protection_figure` colours the bars by ``log10_protection`` (the uptake map's colours

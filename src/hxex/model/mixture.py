@@ -38,7 +38,7 @@ def _log_binom(b, n, p, log_p=None, log_q=None):
     ``b <= n`` this is the ordinary binomial written with gamma functions. For ``n < b < n + 1``
     the gamma function in ``Gamma(n - b + 1)`` is finite and positive, and ``1 / Gamma`` falls to
     0 as ``n`` decreases to ``b - 1``, so the pmf is continuous in ``n`` (a mask at ``b <= n``,
-    as in the prototype and pyHXExpress, makes the loss jump each time ``n`` crosses an integer,
+    used instead, makes the loss jump each time ``n`` crosses an integer,
     loses up to 15 % of the probability between integers at high ``p`` and biases the centre of
     the component low). For integer ``n`` the result is the ordinary binomial. For ``b >= n + 1``
     the gamma function of a negative argument would give negative values, so the bin is masked.

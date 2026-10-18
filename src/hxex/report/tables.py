@@ -3,7 +3,11 @@
 
 Populations are ranked by their mean within each spectrum (1 = lowest), at the K in effect (the
 reviewer's choice, else the selected K). Means are in deuterons beyond natural abundance;
-``*_corrected`` are the back-exchange-corrected means (empty without controls).
+``*_corrected`` are the back-exchange-corrected means (empty without controls). The ``centroid``
+of a spectrum is the population-weighted mean of its components' means, the deuterium level of
+the whole spectrum (what a single-population analysis would report). ``review_status`` is the
+reviewer's decision on a spectrum (``accepted``, ``rejected`` or empty); ``control_fallback``
+says a series' back-exchange correction used a fallback instead of its own measured controls.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
             cols[name] = np.array([""] * m)
         cols["rt"] = np.full(m, np.nan)
     cols.update(_target_columns(results))
-    cols["status"] = np.asarray(results.review_status).astype(str)
+    cols["review_status"] = np.asarray(results.review_status).astype(str)
     if results.quality is not None:
         q = results.quality
         cols["flags"] = np.array([
@@ -101,7 +105,8 @@ def _populations(results: Results, i: int, k: int):
 
 
 def components_table(results: Results) -> dict[str, np.ndarray]:
-    """One row per spectrum and population at the K in effect: the index columns, ``K``,
+    """One row per spectrum and population at the K in effect: the index columns (ids, time,
+    replicate, sample, peptide, charge, the scan target, ``review_status``, ``flags``), ``K``,
     ``rank``, ``mean``, ``mean_se``, ``mean_corrected``, ``mean_corrected_se``, ``population``,
     ``population_se``."""
     index = _index_columns(results)
@@ -127,7 +132,7 @@ def components_table(results: Results) -> dict[str, np.ndarray]:
 
 
 def spectra_table(results: Results) -> dict[str, np.ndarray]:
-    """One row per spectrum, in the spirit of pyHXExpress's ``data_fits``: the index columns,
+    """One row per spectrum: the index columns,
     ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
@@ -159,12 +164,12 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
 
 def uptake_table(results: Results) -> dict[str, np.ndarray]:
     """Replicate-averaged populations: one row per series, time and population rank with the
-    number of replicates ``n``, the mean of the (corrected) means and its standard deviation over
-    replicates (NaN with one replicate), and the mean population. Spectra are the ones accepted by
-    the reviewer or not yet reviewed."""
+    number of replicates averaged (``n_replicates``), the ``mean`` of the (corrected) means over
+    them and its standard deviation (``replicate_sd``; NaN with one replicate), and the mean
+    ``population``. Spectra are the ones accepted by the reviewer or not yet reviewed."""
     comp = components_table(results)
     mean = comp["mean_corrected"] if results.controls is not None else comp["mean"]
-    ok = comp["status"] != "rejected"
+    ok = comp["review_status"] != "rejected"
     rows = []
     keys = sorted({(int(d), float(t), int(r)) for d, t, r in
                    zip(comp["data_id"][ok], comp["time"][ok], comp["rank"][ok], strict=True)})
@@ -176,8 +181,8 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
                      str(comp["peptide_range"][first]), int(len(values)), float(values.mean()),
                      float(values.std(ddof=1)) if len(values) > 1 else np.nan,
                      float(fractions.mean())))
-    names = ("data_id", "time", "rank", "sample", "peptide", "peptide_range", "n", "mean",
-             "mean_sd", "population")
+    names = ("data_id", "time", "rank", "sample", "peptide", "peptide_range", "n_replicates",
+             "mean", "replicate_sd", "population")
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
 
@@ -196,8 +201,10 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
     (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
     (``measured``, or the fallback reasons; empty without controls), ``retention`` (the
-    back-exchange retention used; NaN without controls), ``fallback`` and ``rt`` (the median
-    chromatographic retention time of its spectra, minutes; NaN: unknown)."""
+    deuterium retention used for the back-exchange correction, a fraction; NaN without
+    controls), ``control_fallback`` (the correction used a fallback, not the series' own
+    controls) and ``rt`` (the median chromatographic retention time of its spectra, minutes;
+    NaN: unknown)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
     b = results.binned
@@ -207,7 +214,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     multi = results.effective_K > 1
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
-        "n_rejected", "n_multi", "controls", "retention", "fallback", "rt")}
+        "n_rejected", "n_multi", "controls", "retention", "control_fallback", "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     for d in ids:
@@ -225,7 +232,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
             "controls": "" if r is None else ("measured" if not ctrl.fallback[r]
                                               else str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
-            "fallback": False if r is None else bool(ctrl.fallback[r]),
+            "control_fallback": False if r is None else bool(ctrl.fallback[r]),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),
         }
         for name, value in values.items():
@@ -256,7 +263,7 @@ def find_series(
     if charges is not None:
         keep &= np.isin(t["charge"], [int(x) for x in charges])
     if flagged:
-        keep &= (t["n_flagged"] > 0) | (t["n_rejected"] > 0) | t["fallback"]
+        keep &= (t["n_flagged"] > 0) | (t["n_rejected"] > 0) | t["control_fallback"]
     return [int(d) for d in t["data_id"][keep]]
 
 

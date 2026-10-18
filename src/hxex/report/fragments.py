@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Fragment-ladder kinetics figure: D content against time, one row per ladder step.
 
-Layout (after the owner's reference): the top row shows the precursor ions (``M``, ``M-NH3``)
+Layout: the top row shows the precursor ions (``M``, ``M-NH3``)
 of each condition on the left and the precursor's decay fits on the right; each further row is a
 step of one ion series, in residue order: on the left the two fragments of the step in each
 condition and their difference, on the right the difference with a fit of

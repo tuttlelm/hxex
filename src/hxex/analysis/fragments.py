@@ -13,7 +13,7 @@ b and y) add up to the precursor, a check of the fragments' fits;
 deuteration (0 to 1) to all fragments of a parent at one time, by bounded least squares.
 
 Fragment charges, precursor charges and conditions (for example with and without in-source
-activation) are kept apart: they may give different exchange (owner). Nothing is corrected for
+activation) are kept apart: they may give different exchange. Nothing is corrected for
 back-exchange.
 """
 
@@ -430,7 +430,7 @@ def closure_trace(
     **conditions,
 ) -> Trace:
     """``D(n_fragment) + D(c_fragment) - D(precursor)`` over time, matched scan by scan (the
-    closure test, HISTORY item 41). An N-terminal ion of ``k`` residues and the complementary
+    closure test). An N-terminal ion of ``k`` residues and the complementary
     C-terminal ion of ``n - k`` (``'c-1:3'`` and ``'z-dot:5'`` of an 8-residue parent) share the
     precursor's atoms, so their deuterium adds up to the precursor's whatever scrambling or
     hydrogen transfer happened; a miss points at the fragments' fits (envelope, ion types,
@@ -810,25 +810,30 @@ def ladder_rates(
         missing = sorted(set(cols["sample"]) - {s for s in cols["sample"]
                                                  if sample_conditions(conditions, s)})
         if missing:
-            log.warning("no exchange conditions for sample(s) %s: no intrinsic rates",
-                        ", ".join(missing))
+            log.warning("no exchange conditions for sample(s) %s ([analysis.fragments.exchange]):"
+                        " no intrinsic rates for them", ", ".join(missing))
     return LadderRates(**{name: np.array(v, dtype=kinds.get(name, str))
                           for name, v in cols.items()}, min_time=min_time)
 
 
 @dataclass(frozen=True)
 class FragmentAnalysis:
-    """The fragment part of a post-fitting analysis (``[analysis.fragments]``; written by
-    :func:`hxex.report.write_analysis` for runs with fragment series): ``ion_types`` (empty:
-    every fragment ion type of the run), the fragment ``charges``, ``min_time`` (s on the
-    exchange clock, the spectra's times; earlier points are drawn but not fitted; a file's
-    unusable early scans are better left out with its ``usable_from``), condition ``labels`` for
-    the figures (``{'gentle':
-    'G'}``), the closure ``tolerance`` (deuterons), ``precursor_charge`` (the closure's
-    precursor; None: the unreacted precursor); ``kint``: whether to compute intrinsic rates,
-    protection factors and theoretical curves (opt-in, False by default; needs ``exchange``)
-    and ``exchange``, the samples' exchange conditions (:class:`hxex.kint.ExchangeConditions`,
-    one set for every sample or sample -> set; used only with ``kint``)."""
+    """The fragment part of a post-fitting analysis (the ``[analysis.fragments]`` table; written
+    by :func:`hxex.report.write_analysis` for runs with fragment series).
+
+    - ``ion_types``: the fragment ion types analysed (empty: every one of the run).
+    - ``charges``: the fragment charges analysed.
+    - ``min_time`` (s, on the exchange clock, the spectra's times): earlier points are drawn but
+      not fitted; a file's unusable early scans are better left out with its ``usable_from``.
+      (The ``min_time`` of ``[input.scans]`` is on the scan clock.)
+    - ``labels``: short condition names for the figures (``{'gentle': 'G'}``).
+    - ``tolerance`` (deuterons): a closure ``c + z - M`` beyond it is flagged.
+    - ``precursor_charge``: the closure's precursor; None: the unreacted precursor.
+    - ``kint``: compute intrinsic rates, protection factors and theoretical curves (opt-in;
+      needs ``exchange``); ``exchange``: the samples' exchange conditions
+      (:class:`hxex.kint.ExchangeConditions`, one set for every sample or sample -> set), whose
+      ``d2o_fraction`` is the kinetics' solvent, not the labelling buffer's.
+    """
 
     ion_types: tuple[str, ...] = ()
     charges: tuple[int, ...] = (1,)

@@ -2618,3 +2618,43 @@ CSVs or mzML if wanted.
     program folders (README, the template's `[output]` comments, `hxex init`'s closing hint,
     BUNDLE.md, the refusal message). Tests: `tests/test_outputs.py` (new), the review, provenance
     and generation tests in `tests/test_bundle.py`, `tests/test_run.py` and `tests/test_cli.py`.
+
+97. **Audit of 2026-10-17, Session C: the readability pass (2026-10-17).** The package read as
+    a new user would read it. Template: every generated `[run.*]` and `[input.scans]` line
+    carries its meaning and unit as a trailing comment (`hxex.config._COMMENTS`, wrapped at the
+    comment column; a setting too long for one goes first and its comment follows), each table
+    a comment of its own (`_SECTION_COMMENTS`; the empty `[run.picker.amide_rules]` and
+    `[run.registry]` tables explained), the `[[input.fragments]]` block explains the
+    `TYPE:LENGTHS:CHARGES` syntax, the `[analysis]` scalars come before its sub-tables (the
+    `protection*` lines moved up), the `quench` table has an example inline value, and settings
+    that share a name elsewhere cross-refer (`min_population` in the fit, the filters and the
+    choice; `d2o_fraction` of the labelling buffer, the kinetics' solvent and the controls;
+    `reference` as a sample or a rate set; `min_time` on the scan and the exchange clocks).
+    Project files: TOML values are type-checked where they are read (`_check_types`, from the
+    config classes' annotations), so `[run.fit] k_max = "3"` is reported as `[run.fit] k_max =
+    "3": expected a whole number`, a sub-table's own value errors name the table (`[run.fit]:
+    need 1 <= k_min <= k_max`), `[analysis]` and `[input.scans]` likewise; `ci` below 1 is
+    refused as a fraction where a percentage is meant; a file read for `hxex analyse` only may
+    leave `project` out; `hxex analyse` with `coverage_times` naming times no peptide was
+    measured at (a project without time-0 spectra) falls back to every time with a warning
+    (`NoPeptideAtTime`). `[run.picker] noise` is `noise_threshold`; `noise` stays as an alias
+    (`PickerConfig(noise=)`, and in bundle manifests written before). Messages: `hxex check`
+    says what an off stage means (controls: no back-exchange correction); `hxex run` prints
+    where the tables and figures went; the analysis warnings name their TOML keys and the
+    filter summary lists only non-zero counts. Tables (old -> new): `status` ->
+    `review_status` (spectra, components), `fallback` -> `control_fallback` (series), `n` ->
+    `n_replicates` and `mean_sd` -> `replicate_sd` (uptake); `centroid`, `review_status` and
+    `control_fallback` are defined in `hxex.report.tables`; the residue and coverage tables
+    get `no_amide` (a proline or the protein's first residue(s): the row is empty whatever the
+    coverage). Figures: `hxex_overview` -> `overview`; a series' file is its label alone
+    (`figure_stems`; the `data_id` is added only where two series would share a stem); the
+    populations page is left out of a series with one population throughout (`series_kinds`).
+    Docstrings: the config classes read as user text, one line per field with its unit, and the
+    developer asides (HISTORY numbers, owner dates, pyHXExpress and prototype comparisons) left
+    the docstrings of 30-odd modules; evidence pointers moved to `#` comments. The package
+    docstring describes the package and `hxex` exports its entry points lazily (`hxex.run`,
+    `load_project`, `read_input`, `open_bundle`, `Results`, `write_tables`, `write_figures`,
+    `write_analysis`, ...). README: quick start, inputs (the five formats in a line each, the
+    peptide-table columns, the control convention, the units), a Python example and the CLI
+    route for Thermo files. No private script reads the renamed columns (checked with the
+    owner in the audit).

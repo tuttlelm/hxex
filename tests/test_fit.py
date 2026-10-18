@@ -201,7 +201,7 @@ def test_measurements_from_binned():
     from hxex.picking import PickerConfig, pick_spectra, plan_bins
     from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
-    cfg = PickerConfig(zero_filling=3, noise=100.0)
+    cfg = PickerConfig(zero_filling=3, noise_threshold=100.0)
     entry = PeptideEntry("f", "S", PEPTIDE, "0001-0015", 1, 15, 2, modification="Hex:2")
     plan = plan_bins(PEPTIDE, 2, modification="Hex:2", config=cfg)
     spectra = []

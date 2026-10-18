@@ -132,8 +132,8 @@ def residue_comparison_figure(
     length: int | None = None,
     undeut_time: float | None = None,
 ) -> Figure:
-    """One panel per sample of ``samples`` against the comparison's reference (the owner's
-    ``vsWT_byresidue`` figures), sharing the residue axis; each sample keeps its colour."""
+    """One panel per sample of ``samples`` against the comparison's reference, sharing the
+    residue axis; each sample keeps its colour."""
     samples = [s for s in samples if s != comparison.reference]
     fig = Figure(figsize=(7.5, 2.3 * len(samples) + 0.4), layout="constrained")
     axes = fig.subplots(len(samples), 1, sharex=True, squeeze=False)[:, 0]
@@ -161,12 +161,12 @@ def plot_residue_overlay(
     undeut_time: float | None = None,
     ax: Axes | None = None,
 ) -> Figure:
-    """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, in the
-    owner's ``2pop_vsWT_byresidue`` style: points with capped standard-error bars, no lines, the
+    """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, as
+    points with capped standard-error bars, no lines, the
     sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'`` (the K=2 ranks
     1 and 2, filled points) and ``'avg'`` (K=1, open points). With ``choice``
     (:func:`hxex.analysis.choose_populations`), the K=2 values are drawn only where the choice
-    keeps two populations, as in the owner's figure; the average is always drawn. A ``*`` at the
+    keeps two populations; the average is always drawn. A ``*`` at the
     top marks residues drawn for both whose values were corrected differently (one with a
     fallback control). Point groups have the gid ``overlay:<sample>:<value>``."""
     unknown = [v for v in show if v not in OVERLAY_VALUES]
@@ -249,9 +249,9 @@ def residue_overlay_figure(
     length: int | None = None,
     undeut_time: float | None = None,
 ) -> Figure:
-    """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``
-    (the owner's ``2pop_vsWT_byresidue`` figure); each sample keeps its colour. ``choice``
-    filters the K=2 values as in :func:`plot_residue_overlay`."""
+    """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``;
+    each sample keeps its colour. ``choice`` filters the K=2 values as in
+    :func:`plot_residue_overlay`."""
     samples = [s for s in samples if s != reference]
     if not samples:
         raise ValueError("no sample to compare with the reference")
@@ -329,7 +329,7 @@ def plot_region_bars(
     region_order: Sequence[str] | None = None,
     ax: Axes | None = None,
 ) -> Figure:
-    """Grouped bars of the mean ``fD`` of every region (the owner's ``RFUbarplots``), one bar per
+    """Grouped bars of the mean ``fD`` of every region, one bar per
     sample in its colour, with standard-error bars; regions without a value are left empty. Each
     bar has the gid ``region:<sample>:<region>``."""
     sel = regions.time == time

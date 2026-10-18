@@ -111,8 +111,14 @@ def test_coverage_is_judged_at_the_chosen_times():
     assert every.times == () and int(every.redundancy[every.residue == 13][0]) == 1
     late = coverage_table(up, sequences=SEQUENCE, time=[60.0])
     assert int(late.redundancy[late.residue == 3][0]) == 0
-    with pytest.raises(ValueError, match="no peptide was measured"):
+    # residue 1 (the protein's N-terminus) and the proline at 5 can never carry a value
+    assert undeut.no_amide[undeut.residue == 1][0] and undeut.no_amide[undeut.residue == 5][0]
+    assert not undeut.no_amide[undeut.residue == 3][0] and not undeut.covered[0]
+    from hxex.analysis.residues import NoPeptideAtTime
+
+    with pytest.raises(NoPeptideAtTime, match="no peptide was measured"):
         coverage_table(up, time=5.0)
+    assert issubclass(NoPeptideAtTime, ValueError)
     with pytest.raises(ValueError, match="count"):
         coverage_table(up, count="charges")
 
@@ -607,6 +613,23 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     with open_bundle(two_sample_bundle) as b, pytest.raises(ValueError, match="no reference"):
         write_analysis(Results.from_bundle(b), AnalysisConfig(reference="X"), tmp_path / "b")
 
+
+
+def test_coverage_falls_back_to_every_time_when_none_was_measured(two_sample_bundle, tmp_path,
+                                                                  caplog):
+    """coverage_times naming times without spectra (a project without time-0 spectra, say) does
+    not stop the analysis: every time is used, with a warning."""
+    import logging
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import write_analysis
+
+    cfg = AnalysisConfig(coverage_times=(999.0,), format="png")
+    with open_bundle(two_sample_bundle) as b, caplog.at_level(logging.WARNING):
+        written = write_analysis(Results.from_bundle(b), cfg, tmp_path / "c")
+    assert "coverage.csv" in {p.name for p in written}
+    assert any('coverage_times = "all" is used instead' in r.message for r in caplog.records)
 
 
 def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):

@@ -49,6 +49,7 @@ from ..analysis import (
     residue_map,
     species_uptake,
 )
+from ..analysis.residues import NoPeptideAtTime
 from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from .compare import (
@@ -129,10 +130,11 @@ def _without_times(results, times):
     out = {name: r.without_times(times) for name, r in runs.items()}
     n = sum(int(r.excluded.sum()) for r in out.values())
     if n:
-        log.info("exclude_times: %d measurement(s) at %s s left out of the analysis", n,
+        log.info("[analysis] exclude_times: %d measurement(s) at %s s left out of the analysis", n,
                  ", ".join(f"{t:g}" for t in times))
     else:
-        log.warning("exclude_times: no measurement at %s s", ", ".join(f"{t:g}" for t in times))
+        log.warning("[analysis] exclude_times: no measurement at %s s",
+                    ", ".join(f"{t:g}" for t in times))
     return RunSet(out, merge=results.merge) if isinstance(results, RunSet) else out[""]
 
 
@@ -169,8 +171,13 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
     states = [s for s in dict.fromkeys(residues.sample.tolist()) if s not in samples]
     coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
-    coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
-                              time=coverage_time)
+    try:
+        coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
+                                  time=coverage_time)
+    except NoPeptideAtTime as exc:
+        log.warning("%s: coverage_times = \"all\" is used instead (set [analysis] "
+                    "coverage_times to choose the times coverage is judged on)", exc)
+        coverage = coverage_table(up, sequences=sequences, count=config.redundancy, time="all")
     choice = choose_populations(residues, config.choice) if 2 in config.ks else None
     length = int(residues.residue.max())
     fd_times = _fd_times(results)

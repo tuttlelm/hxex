@@ -41,8 +41,10 @@ class ResidueMap:
     ``residue`` (number on the protein), ``aa`` (its letter, '' if unknown), ``fD`` and
     ``fD_se`` (NaN where no peptide covers the residue's amide, or no covering peptide has a
     value; ``fD_se`` also where a contributing peptide's error is unknown), ``redundancy``,
-    ``resolution`` (NaN where uncovered), ``proline``, ``covered`` and ``control_fallback`` (a
-    peptide covering the residue was corrected with a fallback control)."""
+    ``resolution`` (NaN where uncovered), ``proline``, ``covered``, ``control_fallback`` (a
+    peptide covering the residue was corrected with a fallback control) and ``no_amide`` (the
+    residue has no exchanging amide: a proline, or the first residue(s) of the protein, which
+    no peptide can measure; its row is empty whatever the coverage)."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -57,10 +59,13 @@ class ResidueMap:
     proline: np.ndarray
     covered: np.ndarray
     control_fallback: np.ndarray | None = None
+    no_amide: np.ndarray | None = None
 
-    def __post_init__(self):  # built without it: no fallback
+    def __post_init__(self):  # built without them: no fallback; prolines only
         if self.control_fallback is None:
             object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
+        if self.no_amide is None:
+            object.__setattr__(self, "no_amide", np.asarray(self.proline, dtype=bool).copy())
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -180,7 +185,7 @@ def residue_map(
     """The residue-level values of every sample, time, K and rank of ``uptake`` (peptides only).
 
     ``modified`` says what happens to modified peptides (a modified residue in the modX
-    sequence, or a composition change): ``'separate'`` (the default; owner, 2026-10-13) gives
+    sequence, or a composition change): ``'separate'`` (the default) gives
     each modified form a state of its own, ``'<sample> <sites>'`` such as ``'WT pS59'``
     (:func:`separate_modified`), so the sample's values come from its unmodified peptides;
     ``'combined'`` averages every peptide of a sample together.
@@ -221,6 +226,7 @@ def residue_map(
                 ("fD_se", ses[res]), ("redundancy", redundancy[res]),
                 ("resolution", resolution[res]), ("proline", known[res] == "P"),
                 ("covered", redundancy[res] > 0), ("control_fallback", bool(fell_back[res])),
+                ("no_amide", known[res] == "P" or res + 1 <= uptake.nterm_subtract),
             ):
                 cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
@@ -228,15 +234,20 @@ def residue_map(
         out[name] = out[name].astype(np.int64)
     for name in ("time", "fD", "fD_se", "resolution"):
         out[name] = out[name].astype(np.float64)
-    for name in ("proline", "covered", "control_fallback"):
+    for name in ("proline", "covered", "control_fallback", "no_amide"):
         out[name] = out[name].astype(bool)
     return ResidueMap(**out)
+
+
+class NoPeptideAtTime(ValueError):
+    """:func:`coverage_table` was asked for times at which no peptide was measured."""
 
 
 @dataclass(frozen=True)
 class CoverageTable:
     """One row per sample and residue: ``residue``, ``aa``, ``redundancy``, ``resolution`` (NaN
-    where uncovered), ``proline`` and ``covered``, from the peptides of the sample at the
+    where uncovered), ``proline``, ``covered`` and ``no_amide`` (a proline or the first
+    residue(s) of the protein: nothing can cover it), from the peptides of the sample at the
     ``times`` used (empty for every time). ``count`` says what redundancy counts:
     ``'peptides'``, or ``'spectra'`` (every replicate and charge state)."""
 
@@ -249,6 +260,11 @@ class CoverageTable:
     covered: np.ndarray
     count: str = "peptides"
     times: tuple[float, ...] = ()
+    no_amide: np.ndarray | None = None
+
+    def __post_init__(self):  # built without it: prolines only
+        if self.no_amide is None:
+            object.__setattr__(self, "no_amide", np.asarray(self.proline, dtype=bool).copy())
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -287,7 +303,7 @@ def coverage_table(
         one &= np.isclose(pep.time[:, None], np.array(times)[None, :]).any(axis=1)
         if not one.any():
             shown = ", ".join(f"{t:g}" for t in times)
-            raise ValueError(f"no peptide was measured at time(s) {shown}")
+            raise NoPeptideAtTime(f"no peptide was measured at time(s) {shown} s")
     pep = pep.select(one)
     seq_of = _sequences(pep, sequences, registry)
     cols: dict[str, list] = {f.name: [] for f in fields(CoverageTable)
@@ -307,13 +323,15 @@ def coverage_table(
         for res in range(len(known)):
             for name, value in (("sample", sample), ("residue", res + 1), ("aa", known[res]),
                                 ("redundancy", redundancy[res]), ("resolution", resolution[res]),
-                                ("proline", known[res] == "P"), ("covered", redundancy[res] > 0)):
+                                ("proline", known[res] == "P"), ("covered", redundancy[res] > 0),
+                                ("no_amide", known[res] == "P"
+                                 or res + 1 <= uptake.nterm_subtract)):
                 cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
     out["residue"] = out["residue"].astype(np.int64)
     out["redundancy"] = out["redundancy"].astype(np.int64)
     out["resolution"] = out["resolution"].astype(np.float64)
-    for name in ("proline", "covered"):
+    for name in ("proline", "covered", "no_amide"):
         out[name] = out[name].astype(bool)
     return CoverageTable(**out, count=count, times=times)
 

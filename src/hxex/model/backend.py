@@ -14,14 +14,15 @@ _DTYPES = ("auto", "float32", "float64")
 
 @dataclass(frozen=True)
 class Backend:
-    """Device and dtype of every tensor the engine creates (nothing is set globally).
+    """Device and precision of every tensor the engine creates (the ``[run.fit.backend]`` table;
+    nothing is set globally).
 
-    ``device``: ``'auto'`` (CUDA if available, else CPU), ``'cpu'``, ``'cuda'`` or ``'cuda:N'``.
-    ``dtype``: ``'auto'`` (float32, on the GPU and on the CPU), ``'float32'`` or ``'float64'``.
-    The prototype used float64 on the CPU; float32 is about 1.5 times faster there and selects the
-    same K for all but a few measurements in a thousand (docs/HISTORY.md item 46), so float64 is
-    the setting to choose for the last digits.
+    - ``device``: ``'auto'`` (CUDA if available, else CPU), ``'cpu'``, ``'cuda'`` or ``'cuda:N'``.
+    - ``dtype``: ``'auto'`` (float32, on the GPU and on the CPU), ``'float32'`` or
+      ``'float64'``. float32 is about 1.5 times faster on the CPU and selects the same K for all
+      but a few measurements in a thousand; float64 is the setting for the last digits.
     """
+    # float32 against float64 on the CPU: docs/HISTORY.md item 46
 
     device: str = "auto"
     dtype: str = "auto"

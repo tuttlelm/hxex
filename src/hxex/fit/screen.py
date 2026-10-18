@@ -8,11 +8,12 @@ supported on ``0 .. ceil(n)``, ``n < n_max``). The best non-negative distributio
 is a floor under the loss of every K. With the Gaussian loss, K cannot be selected where even
 that floor plus K's penalty does not beat the best criterion of the smaller K already fitted.
 The screen is exact: it skips only fits that cannot be selected, so the selected K is that of
-fitting every K (docs/HISTORY.md item 85).
+fitting every K.
 
 The floor needs whole-number bins and the Gaussian loss (the Poisson loss of
 :mod:`hxex.model` drops a constant and can be negative); other measurements are never skipped.
 """
+# evidence: docs/HISTORY.md item 85
 
 from __future__ import annotations
 

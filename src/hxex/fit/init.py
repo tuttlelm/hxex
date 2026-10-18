@@ -42,8 +42,8 @@ def kmeans_starts(
     """Starting ``(log_A, n_raw, logit_p)``, each ``(M, K)``, for M measurements at once.
 
     The bins are clustered with a one-dimensional k-means weighted by ``round(intensity)`` (at
-    most 2000 per bin; the same clusters as k-means on that many copies of each bin, as the
-    prototype did, without making the copies). The centroids start at the weighted quantiles
+    most 2000 per bin; the same clusters as k-means on that many copies of each bin, without
+    making the copies). The centroids start at the weighted quantiles
     (deterministic); a cluster left empty is moved to the worst-explained bin. Each cluster
     gives a method-of-moments estimate corrected for the shape's own mean and variance::
 

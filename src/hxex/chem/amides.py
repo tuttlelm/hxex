@@ -20,7 +20,7 @@ from a side chain (K, R, N, Q) or the N-terminal amine, whose hydrogens are not 
 ``c-NH3``, whose NH3 is taken to be the cleavage-site NH2 (it is then a b ion). These are
 UNVERIFIED (docs/PLAN.md, "Risks and open decisions"); :class:`AmideRules` sets any ion type's
 cleavage-site amide. In ``c-1`` (the c radical, which gave a hydrogen atom to its z partner) the
-hydrogen moved is not an amide's (HISTORY item 66). b ions are counted as linear (L - 1 from
+hydrogen moved is not an amide's. b ions are counted as linear (L - 1 from
 residue 2); an oxazolone b ion has replaced residue L's N-H with the mobile proton (L - 2,
 ``AmideRules({"b": False})``), and collisional b and y ions are scrambled anyway.
 
@@ -30,6 +30,7 @@ C-terminal ions of the parent's last residues, y_j - y_(j-1) that of the y_j's f
 z_j - z_(j-1) that of the residue after the z_j's first (:func:`amide_positions`,
 :func:`hxex.fragments.amide_difference`).
 """
+# evidence for the c-1 rule: docs/HISTORY.md item 66
 
 from __future__ import annotations
 

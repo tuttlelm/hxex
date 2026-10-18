@@ -41,18 +41,24 @@ _PERMUTATION_LIMIT = 4  # up to this K all permutations are compared at once
 
 @dataclass(frozen=True)
 class BootstrapConfig:
-    """Settings of :func:`bootstrap`.
+    """Settings of :func:`bootstrap` (the ``[run.bootstrap]`` table): standard errors and
+    intervals from resampled refits of every measurement.
 
-    ``n_boot`` resamples, intervals at ``ci`` percent. Each refit uses ``n_restarts`` starts (the
-    first is the original fit with ``warm_noise`` jitter), ``adam_steps`` Adam steps with a cosine
-    learning rate from ``lr_adam`` to ``lr_adam_end`` and ``polish_steps`` Levenberg-Marquardt
-    iterations. ``keep_draws`` keeps the individual fits of the selected K (``A``, ``n`` and
-    ``p`` of every successful resample); ``curve_band`` computes the band of the total curve.
-
-    ``ks`` says at which K a run bootstraps (:func:`hxex.run.run`; :func:`bootstrap` itself
-    always uses the selected K): ``'selected'`` (each measurement at its own selected K),
-    ``'all'`` (also every K that was fitted, for every measurement, as a fixed-K analysis) or a
-    tuple of K values (those, for every measurement). The cost grows with the number of Ks.
+    - ``n_boot``: resamples per measurement.
+    - ``ci``: the interval width in percent (95.0), not a fraction.
+    - ``n_restarts``: starting points per refit (the first is the original fit with
+      ``warm_noise`` jitter); ``adam_steps`` Adam steps with a cosine learning rate from
+      ``lr_adam`` to ``lr_adam_end``; ``polish_steps`` Levenberg-Marquardt iterations;
+      ``grad_clip`` as in :class:`hxex.fit.FitConfig`; ``seed`` of the resampling and the
+      restarts.
+    - ``keep_draws``: keep the individual fits of the selected K (``A``, ``n`` and ``p`` of
+      every successful resample) in the bundle.
+    - ``curve_band``: also compute the band of the total uptake curve.
+    - ``ks``: at which K a run bootstraps (:func:`hxex.run.run`; :func:`bootstrap` itself always
+      uses the selected K): ``'selected'`` (each measurement at its own selected K), ``'all'``
+      (also every K that was fitted, for every measurement, as a fixed-K analysis) or a list of K
+      values (those, for every measurement; the analysis' choice between one and two populations
+      wants 1 and 2). The cost grows with the number of Ks.
     """
 
     n_boot: int = 200
@@ -74,6 +80,9 @@ class BootstrapConfig:
             raise ValueError("n_boot must be at least 2")
         if not 0.0 < self.ci < 100.0:
             raise ValueError("ci must be between 0 and 100 (percent)")
+        if self.ci < 1.0:
+            raise ValueError(f"ci is a percentage (95.0 for 95 % intervals), not a fraction: "
+                             f"{self.ci!r} would be a {self.ci} % interval")
         if self.n_restarts < 1 or self.adam_steps < 0 or self.polish_steps < 0:
             raise ValueError("n_restarts must be >= 1; adam_steps and polish_steps >= 0")
         if not self.lr_adam > 0 or not self.lr_adam_end > 0:

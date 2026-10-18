@@ -232,8 +232,8 @@ def plot_spectrum(
     1 +/- ``resolution_ppm``, which is read from the results' settings or given here; it is
     shaded, not outlined, and never thinner than ``MIN_WINDOW_LW`` points, so it is visible at
     any zoom), ``'stick'`` (a thin line at the bin) or ``'auto'`` (a window when it is known and
-    the axis is m/z, else a stick). Either way every picked bin has a circle on top, as in
-    pyHXExpress. The fit line has its own colour, ``FIT_COLOR``, and the populations theirs
+    the axis is m/z, else a stick). Either way every picked bin has a circle on top. The fit
+    line has its own colour, ``FIT_COLOR``, and the populations theirs
     (``COLORS``, then the same colours with another line style beyond ``len(COLORS)``
     populations, see :func:`population_style`; the population map uses the same ones).
     ``xaxis`` is ``'mz'`` (default when raw data is drawn or the picked table is available) or

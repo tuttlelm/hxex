@@ -12,8 +12,8 @@ signal never reach the fit and are handled before it.
   spectrum's reduced deviance (``sum((obs - fit)^2)`` for Gaussian noise, the Poisson deviance
   for Poisson noise, in the noise-scaled units, divided by ``bins - 3K``) is not compared within
   the series, because at one noise level per series it grows with the height of the peaks: the
-  undeuterated controls, the most peaked spectra, were flagged for the same relative misfit
-  (docs/HISTORY.md item 57). It must still exceed ``min_deviance`` (a fit that is better than
+  undeuterated controls, the most peaked spectra, were flagged for the same relative misfit.
+  It must still exceed ``min_deviance`` (a fit that is better than
   the noise model implies is not poor, however clean the rest of its series is: on the Bimodal
   data 11 of 12 relative-only flags were fits with deviance below 0.6).
 - ``low_intensity``: the total intensity of the spectrum is below ``min_intensity`` times the
@@ -28,16 +28,17 @@ signal never reach the fit and are handled before it.
   calibration. A series-wide shift means the peaks are not where the composition puts them: a
   wrong sequence, terminal group, modification or ion type, or a different species. On fragment
   data with the right composition the series are within about 3 ppm; a wrong C-terminus moved
-  them by 23 to 41 ppm; on an intact-peptide dataset 2 % of series were beyond 15 ppm
-  (docs/HISTORY.md item 37). Not assessed without the picker's offsets (a binned table read from
+  them by 23 to 41 ppm; on an intact-peptide dataset 2 % of series were beyond 15 ppm. Not
+  assessed without the picker's offsets (a binned table read from
   elsewhere).
 - ``poor_envelope``: the series' ion-type envelope (``mixed`` or ``infer``) was not measured
   well (:attr:`hxex.picking.EnvelopeTable.poor`): left with the theory of one ion type for want
   of usable reference spectra, not describing the spectra it was fitted to, or, shared between
   conditions, not describing the series' own references. A fragment's envelope is a mixture of
   ion types (``c-1`` and ``c``, say) that the theory cannot predict, so its deuteration is then
-  off by up to a hydrogen (docs/HISTORY.md item 87). False with the theory envelope.
+  off by up to a hydrogen. False with the theory envelope.
 """
+# evidence for the screens: docs/HISTORY.md items 37, 57 and 87
 
 from __future__ import annotations
 
@@ -57,7 +58,18 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "poor_en
 
 @dataclass(frozen=True)
 class QualityConfig:
-    """Thresholds of the screens (defaults set on the tubulin data, see docs/HISTORY.md item 28)."""
+    """Thresholds of the quality screens (the ``[run.quality]`` table; see the module docstring
+    for each flag).
+
+    - ``poor_fit_factor``: ``poor_fit`` when the misfit is this many times the series' median,
+      and ``min_deviance``: the reduced deviance must also exceed this; ``min_series_fits``:
+      the fewest fitted spectra in a series for the screen to judge.
+    - ``min_intensity``: ``low_intensity`` when the total intensity is below this share of the
+      other replicates' mean at the same time.
+    - ``max_mz_offset_ppm``: ``mz_shift`` when a series' m/z offset against the run is beyond
+      this; None: screen off.
+    """
+    # defaults set on the tubulin data: docs/HISTORY.md item 28
 
     poor_fit_factor: float = 10.0
     min_deviance: float = 1.0

@@ -25,7 +25,7 @@ import numpy as np
 
 from hxex.picking import PickerConfig, pick_spectrum
 
-CONFIG = PickerConfig(zero_filling=3, noise=50.0, nterm_subtract=2)
+CONFIG = PickerConfig(zero_filling=3, noise_threshold=50.0, nterm_subtract=2)
 
 
 def load(run_dir, tag):

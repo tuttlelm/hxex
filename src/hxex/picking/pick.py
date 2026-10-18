@@ -7,7 +7,7 @@ spacing is an option and also gives the first pass that estimates the deuteratio
 bin takes the tallest point inside a +/- ppm window (docs/PEAK_PICKING.md). Picking covers
 every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the last bin
 that reaches the noise threshold, so a valley inside a multimodal envelope never ends picking
-early (pyHXExpress stopped after a cumulative count of below-threshold bins).
+early.
 """
 
 from __future__ import annotations
@@ -88,9 +88,8 @@ def plan_bins(
     The last bin is the highest possible deuteration plus the full natural-abundance envelope,
     plus the zero filling: ``amides + Hex + (natural-abundance peaks - 1) + zero_filling``. It
     only bounds the search, because picking ends ``zero_filling`` bins after the last bin that
-    reaches the threshold (pyHXExpress used ``peaks // 2`` and stopped there, cutting the
-    natural-abundance tail of strongly deuterated spectra). ``modification`` is the pyHXExpress
-    string (``'H:1 Hex:1 ion_type:c undeut_mz:...'``).
+    reaches the threshold. ``modification`` is the pyHXExpress modification string
+    (``'H:1 Hex:1 ion_type:c undeut_mz:...'``).
     """
     spec = chem.parse_modification(modification)
     amides = chem.count_amides(
@@ -261,8 +260,8 @@ def pick_spectrum(
     if len(mz) > 1 and np.any(np.diff(mz) < 0):
         order = np.argsort(mz, kind="stable")
         mz, intensity = mz[order], intensity[order]
-    if config.noise:
-        threshold = float(config.noise)
+    if config.noise_threshold:
+        threshold = float(config.noise_threshold)
     elif len(intensity):
         threshold = config.noise_percent / 100.0 * float(intensity.max())
     else:

@@ -15,41 +15,43 @@ CRITERIA = ("bic", "aic")
 
 @dataclass(frozen=True)
 class FitConfig:
-    """Settings of :func:`hxex.fit.fit_models`; defaults are the prototype's except where noted.
+    """Settings of :func:`hxex.fit.fit_models` (the ``[run.fit]`` table): how many populations
+    are tried and how each fit is found.
 
-    ``k_min`` to ``k_max``: the numbers of populations to try (1 to 3, 2 to 3, only 1, only 2).
-    With one K there is no model selection. ``criterion`` selects K among those tried;
-    ``min_population`` rejects a K in which any component's population is below it (0 turns the
-    filter off; with one K it is only reported).
-
-    Each K is fitted from ``n_restarts`` starting points: restart 0 is the (K-1)-population
-    solution with its heaviest component split in two when ``nested_init`` is set and K-1 was
-    fitted (otherwise a shape-corrected k-means start), the others are random. With
-    ``kmeans_after_warm`` (the default) a K that has a nested start is also fitted from the
-    k-means start, as one restart more, so that a K in a run of several is never worse than the
-    same K fitted alone. Adam runs
-    ``adam_steps`` steps with a cosine learning rate from ``lr_adam`` to ``lr_adam_end``, then
-    L-BFGS runs up to ``lbfgs_steps`` iterations (0, the default: it did not improve the fits, and
-    it minimises the summed loss, so it makes measurements influence each other).
-    ``split_delta`` is the shift of the two halves on the logit scale and ``warm_noise`` the sd
-    of the random jitter added to a warm start.
-    After the restarts, ``polish_steps`` Levenberg-Marquardt iterations (0 turns it off) polish
-    every measurement, taking only steps that lower its loss; it works per measurement.
-    ``grad_clip`` is how the gradient norm is limited: ``'per_measurement'`` (default) or
-    ``'global'`` over the whole batch (the prototype; one spectrum then changes the step of all
-    the others). With the defaults a measurement's fit depends only on its own data, its noise
-    reference and the seed, not on the other measurements in the batch.
-    Everything random is drawn from generators seeded by ``seed``.
-
-    ``k1_adam_steps`` (None: ``adam_steps``) is the number of Adam steps of the K=1 fit only:
-    one component rarely has more than one optimum, so it needs fewer than the larger K
-    (docs/HISTORY.md item 86).
-
-    ``screen`` (off by default) fits each K above 1 only for the measurements that could still
-    select it, judged from a lower bound on the loss of any mixture (:mod:`hxex.fit.screen`);
-    the selected K does not change, but the skipped fits are NaN, so fixed-K analyses (a
-    fixed-K bootstrap, the K=2 descriptions of the analysis) lack them. It needs ``k_min = 1``.
+    - ``k_min``, ``k_max``: the numbers of populations tried (1 to 3 by default; one K: no model
+      selection).
+    - ``criterion``: ``'bic'`` or ``'aic'``, chooses K among those tried.
+    - ``min_population``: a K in which any population is below this share is rejected (0: off;
+      with one K it is only reported). The analysis has its own limits
+      (:class:`hxex.analysis.SpeciesFilters`, :class:`hxex.analysis.ChoiceConfig`).
+    - ``n_restarts``: starting points per K. Restart 0 is the (K-1)-population fit with its
+      heaviest population split in two (``nested_init``; else a shape-corrected k-means start),
+      the others are random. With ``kmeans_after_warm`` a K that starts from the nested fit is
+      also fitted from the k-means start, so a K among several is never worse than the same K
+      fitted alone.
+    - ``adam_steps``: Adam steps per restart, with a cosine learning rate from ``lr_adam`` to
+      ``lr_adam_end``; ``k1_adam_steps``: the steps of the K=1 fit only (None: ``adam_steps``;
+      one population rarely has more than one optimum, so 200 is enough).
+    - ``lbfgs_steps``: L-BFGS iterations after Adam (0, the default: it did not improve the fits,
+      and it minimises the summed loss, so measurements then influence each other).
+    - ``split_delta``: the shift of the two halves of a split population, on the logit scale;
+      ``warm_noise``: the sd of the random jitter added to a warm start.
+    - ``polish_steps``: Levenberg-Marquardt iterations per measurement after the restarts (0:
+      none), taking only steps that lower its loss.
+    - ``grad_clip``: how the gradient norm is limited, ``'per_measurement'`` (each fit on its
+      own) or ``'global'`` over the whole batch (one spectrum then changes the step of all the
+      others).
+    - ``seed``: everything random is drawn from generators seeded by it, and each measurement
+      from its own id, so with the defaults a measurement's fit depends only on its own data,
+      its noise reference and the seed, not on the other measurements in the batch.
+    - ``screen``: fit each K above 1 only for the measurements that could still select it, from
+      a lower bound on the loss of any mixture (:mod:`hxex.fit.screen`); about a third of the
+      time. The selected K does not change, but the skipped fits are NaN, so fixed-K analyses
+      (a fixed-K bootstrap, the analysis' K=2 descriptions) lack them. Needs ``k_min = 1``.
+    - ``noise``: the noise model and level (:class:`hxex.noise.NoiseConfig`); ``backend``: the
+      device and precision (:class:`hxex.model.Backend`).
     """
+    # k1_adam_steps and the screen: docs/HISTORY.md items 85 and 86
 
     k_min: int = 1
     k_max: int = 3

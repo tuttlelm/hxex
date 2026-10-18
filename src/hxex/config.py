@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
+import textwrap
 import tomllib
 import types
 import typing
@@ -114,6 +115,67 @@ def _false_to_none(data: Mapping, cls) -> dict:
     return out
 
 
+def _form(hint) -> tuple[str, Any] | None:
+    """What a TOML value of a field annotated ``hint`` must look like: ``(words, accepts)``
+    with ``accepts(value)`` True for a value of that form; None when any value will do (an
+    untyped or ``Any`` field). A None (``false`` in the file) is checked by the caller."""
+    forms: list[tuple[str, Any]] = []
+    for member in _union_members(hint):
+        if member is type(None):
+            continue
+        origin = typing.get_origin(member) or member
+        if member is Any or origin is object or isinstance(origin, typing.TypeVar):
+            return None
+        if origin is bool:
+            forms.append(("true or false", lambda v: isinstance(v, bool)))
+        elif origin is int:
+            forms.append(("a whole number", lambda v: isinstance(v, int)
+                          and not isinstance(v, bool)))
+        elif origin is float:
+            forms.append(("a number", lambda v: isinstance(v, (int, float))
+                          and not isinstance(v, bool)))
+        elif origin is str or origin is Path:
+            forms.append(("text", lambda v: isinstance(v, str)))
+        elif isinstance(origin, type) and issubclass(origin, (tuple, list)) or (
+                isinstance(origin, type) and issubclass(origin, typing.Sequence)
+                and not issubclass(origin, str)):
+            forms.append(("a list", lambda v: isinstance(v, list)))
+        elif isinstance(origin, type) and (issubclass(origin, Mapping) or is_dataclass(origin)):
+            forms.append(("a table", lambda v: isinstance(v, Mapping)))
+        else:
+            return None
+    if not forms:
+        return None
+    words = " or ".join(dict.fromkeys(w for w, _ in forms))
+    return words, lambda v: any(accepts(v) for _, accepts in forms)
+
+
+def _check_types(data: Mapping, cls, where: str) -> None:
+    """Every key of ``data`` (a TOML table of the config class ``cls``, ``false`` already
+    read as None where the field admits it) has a value of the form its field's type says,
+    recursively through the sub-tables of nested config classes; else a :class:`ProjectError`
+    naming the table, the key, the value and the expected form. Unknown keys are left to the
+    class (its ``from_dict`` reports them)."""
+    hints = _hints(cls)
+    for key, value in data.items():
+        if key not in hints:
+            continue
+        hint = hints[key]
+        form = _form(hint)
+        if value is None:
+            if form is not None and type(None) not in _union_members(hint):
+                raise ProjectError(f"[{where}] {key} cannot be false (it has no unset state): "
+                                   f"leave it out for the default")
+            continue
+        if form is not None and not form[1](value):
+            shown = _toml_value(value) if not isinstance(value, Mapping) else "a table"
+            hint_text = (" (false stands for unset only where a setting can be unset)"
+                         if value is False else "")
+            raise ProjectError(f"[{where}] {key} = {shown}: expected {form[0]}{hint_text}")
+        if isinstance(value, Mapping) and (sub := _config_class(hint)) is not None:
+            _check_types(value, sub, f"{where}.{key}")
+
+
 def _merge(base: dict, update: Mapping, where: str) -> dict:
     """``base`` (a config's ``to_dict``) with ``update`` laid over it, key by key into tables."""
     out = dict(base)
@@ -138,7 +200,8 @@ def run_config_from(data: Mapping) -> RunConfig:
     """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table (``false`` as None
     where a setting admits it; see the module docstring)."""
     merged = RunConfig().to_dict()
-    for key, value in _false_to_none(data, RunConfig).items():
+    given = _false_to_none(data, RunConfig)
+    for key, value in given.items():
         if key in _OPTIONAL_SECTIONS:
             if value is None:
                 merged[key] = None
@@ -147,11 +210,20 @@ def run_config_from(data: Mapping) -> RunConfig:
             elif isinstance(value, Mapping):
                 merged[key] = _merge(_section_defaults(key), value, f"run.{key}")
             else:
-                raise ProjectError(f"run.{key} must be a table, true or false")
+                raise ProjectError(f"[run] {key} = {_toml_value(value)}: expected a table, "
+                                   "true or false")
         elif key in merged and isinstance(value, Mapping) and isinstance(merged[key], Mapping):
             merged[key] = _merge(merged[key], value, f"run.{key}")
         else:
             merged[key] = value
+    _check_types({k: v for k, v in given.items() if not (k in _OPTIONAL_SECTIONS
+                                                          and v is True)}, RunConfig, "run")
+    for key, value in merged.items():  # each table's own errors name it
+        if isinstance(value, Mapping) and (cls := _section_class(key)) is not None:
+            try:
+                cls.from_dict(value)
+            except (TypeError, ValueError) as exc:
+                raise ProjectError(f"[run.{key}]: {exc}") from exc
     try:
         return RunConfig.from_dict(merged)
     except (TypeError, ValueError) as exc:
@@ -180,11 +252,23 @@ def _control_times(run: RunConfig, given, inp: InputSettings) -> RunConfig:
 
 @dataclass(frozen=True)
 class FragmentSettings:
-    """Fragment targets made from every peptide of the table (``ions`` in the syntax of
-    :mod:`hxex.fragments`, for example ``'c-1:ALL z-dot:ALL'``), with their scan conditions and
-    an optional ``label`` naming the condition (``'gentle'``; kept with each entry as
-    ``condition``). A project may have several (``[[input.fragments]]``), for example the same
-    ions with and without in-source activation."""
+    """Fragment targets made from every peptide of the table (one ``[[input.fragments]]`` table;
+    a project may have several, for example the same ions with and without in-source
+    activation).
+
+    - ``ions``: the fragment list, space-separated ``TYPE:LENGTHS:CHARGES`` items such as
+      ``'c-1:ALL z-dot:2-6,9'`` (:mod:`hxex.fragments`; ``ALL`` is the default for both).
+    - ``label``: names the condition (``'gentle'``; kept with each entry as ``condition``).
+    - ``ms_level``: 2, or 3 for MS3 scans; ``activation``: of the last stage;
+      ``preactivation``: for MS3, the activation before the last stage (``'none'`` for none).
+    - ``parent_mz``: ``'parent'`` (scans whose isolation overlaps the peptide's m/z range), an
+      explicit ``[low, high]`` (m/z) or None (any parent); ``precursor_mz`` (m/z) and
+      ``precursor_charge`` (``'parent'``, a charge, or None for any) match the scan's precursor.
+    - ``filter_contains``, ``filter_excludes``: text the scan filter must or must not contain.
+    - ``rt_window`` (s): ``[start, end]`` of the scans used, for runs with a fixed time (a
+      peptide's own ``rt_start``, ``rt_end`` columns, in minutes, take its place).
+    - ``limit_charge``: fragment charges stay at or below the parent's.
+    """
 
     ions: str
     label: str | None = None
@@ -207,7 +291,25 @@ _TARGET_KEYS = ("ms_level", "activation", "precursor_mz", "precursor_charge", "r
 
 @dataclass(frozen=True)
 class InputSettings:
-    """What to read (the ``[input]`` table); paths are absolute here."""
+    """What to read (the ``[input]`` table); paths are absolute here.
+
+    - ``format``: ``specexport``, ``hxexpress``, ``pooled`` (folder formats), ``mzml`` or
+      ``thermo`` (scan formats).
+    - Folder formats: ``data_dir``; ``samples`` and ``peptide_ranges`` (only these);
+      ``sample`` (the name given to a pooled folder's entries); ``undeut_time`` and
+      ``fulldeut_time`` (s), the times recorded for the undeuterated and fully deuterated
+      control files (the controls' default times); ``peptides``, a table of the files instead of
+      finding them by name.
+    - Scan formats: ``peptides`` (the peptide table, CSV), ``runs`` (one :class:`MzmlRun` per
+      file), ``parents`` (read each peptide itself), ``target`` (how the peptides' scans are
+      chosen), ``fragments`` (fragment targets), ``scans`` (how scans become spectra,
+      :class:`MzmlConfig`), ``data_root`` (relative run paths start here) and ``thermo_dir``
+      (Thermo's DLLs).
+    - Every format: ``record_paths`` (``'path'``, ``'relative'`` or ``'name'``: how file paths
+      are recorded), ``retention_times`` (a table of retention times, minutes) and ``spectra``
+      (take the raw spectra stored by an earlier run, a bundle or a spectra file, instead of
+      reading the input).
+    """
 
     format: str
     # folder formats
@@ -437,9 +539,12 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if not parents and not fragments:
         raise ProjectError("parents = false needs [input.fragments]: there would be no target")
     scans = data.get("scans", {})
+    if not isinstance(scans, Mapping):
+        raise ProjectError(f"[input] scans = {_toml_value(scans)}: expected a table")
+    scans = _false_to_none(scans, MzmlConfig)
+    _check_types(scans, MzmlConfig, "input.scans")
     try:
-        scans = MzmlConfig.from_dict(_merge(MzmlConfig().to_dict(), {
-            k: _none(v) for k, v in scans.items()}, "input.scans"))
+        scans = MzmlConfig.from_dict(_merge(MzmlConfig().to_dict(), scans, "input.scans"))
     except (TypeError, ValueError) as exc:
         raise ProjectError(f"[input.scans]: {exc}") from exc
     return InputSettings(
@@ -482,9 +587,12 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
                                   "spectra": str(Path(spectra).resolve())}}
     _check_keys(data, {"project", "threads", "input", "run", "output", "analysis"},
                 "the project file")
-    name = data.get("project")
-    if not isinstance(name, str) or not name or ":" in name:
-        raise ProjectError("project must be a name (non-empty text without ':')")
+    only_analysis = analysis_only and "input" not in data and "analysis" in data
+    name = data.get("project", "" if only_analysis else None)
+    if not isinstance(name, str) or (not name and not only_analysis) or ":" in name:
+        raise ProjectError("project must be a name (non-empty text without ':')"
+                           + ("; a file with only an [analysis] table may leave it out"
+                              if analysis_only else ""))
     if "input" not in data and not (analysis_only and "analysis" in data):
         raise ProjectError("the project file needs an [input] table" + (
             " (or, for hxex analyse only, an [analysis] table)" if analysis_only else
@@ -529,6 +637,7 @@ def _analysis_from(data: Mapping, base: Path):
                             AnalysisConfig)
     if values.get("labelling") is False:  # typed Any: the helper cannot tell
         values["labelling"] = None
+    _check_types(values, AnalysisConfig, "analysis")
     fasta = values.get("fasta")
     if isinstance(fasta, str):
         values["fasta"] = str(_path(base, fasta, "analysis.fasta"))
@@ -755,26 +864,223 @@ def _toml_value(value) -> str:
     raise TypeError(f"cannot write {value!r} as TOML")
 
 
-def _unset_line(key: str, hint, note: tuple[str, str] | None = None) -> str:
+_COMMENT_COLUMN = 34  # where a setting's trailing comment starts
+_LINE_WIDTH = 96
+
+# What each generated template line means, with its unit, keyed table.key. A setting whose
+# default is None says what false means. Settings with the same name elsewhere cross-refer.
+_COMMENTS: dict[str, str] = {
+    "input.scans.group": 'one spectrum per scan ("each"), per "every" scans summed, or per '
+                         'time window ("windows"); runs with a fixed time sum all their scans',
+    "input.scans.every": 'scans summed per spectrum with group = "every"',
+    "input.scans.windows": 'with group = "windows": [[start, end], ...] in s of scan time',
+    "input.scans.min_time": "s of scan time: leave out every run's scans before it (false: "
+                            "none); not the exchange-clock min_time of [analysis.fragments]",
+    "input.scans.max_spectra": "most spectra per target in a run without a fixed time, spread "
+                               "over log time (false: all)",
+    "input.scans.mz_margin": "m/z kept on either side of a target's predicted bins",
+    "input.scans.sum_ppm": "centroided peaks closer than this (ppm) are summed",
+    "input.scans.gap_factor": "profile scans: a point spacing this many times its neighbours' "
+                              "is a stretch the instrument left out",
+    "input.scans.precursor_tol": "m/z tolerance matching a scan's precursor to a target's",
+    "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
+                                  "series' own are missing or poor (false: none)",
+    "run.undeut_time": "s: time of the undeuterated spectra, the noise references (scan "
+                       "formats: also the controls' undeut_time unless set)",
+    "run.n_max_factor": "n (exchangeable sites) may be up to this times the amide count",
+    "run.drop_no_signal": "drop spectra the picker found no signal in (empty ones always are)",
+    "run.memory_budget_bytes": "memory of one chunk of the fit, bytes (false: automatic)",
+    "run.max_chunk": "most measurements in one chunk (false: no cap)",
+    "run.picker.resolution_ppm": "half-width (ppm) of the window a peak is picked in around "
+                                 "its predicted m/z; not a resolving power",
+    "run.picker.zero_filling": "bins picked after the last one above the noise threshold",
+    "run.picker.noise_threshold": "absolute intensity below which a point is noise (false: "
+                                  "noise_percent of the tallest point instead)",
+    "run.picker.noise_percent": "noise threshold as percent of the spectrum's tallest point",
+    "run.picker.env_threshold": "fraction of the tallest bin at which the envelope width is "
+                                "measured",
+    "run.picker.nterm_subtract": "N-terminal residues without an exchanging amide (the amide "
+                                 "count bounds the bins)",
+    "run.picker.shoulder_min_points": "points in a window from which a maximum at the window's "
+                                      "edge counts as a neighbour's shoulder (bin 0)",
+    "run.picker.ladder": 'bin positions: "composition" (isotope clusters of the composition) '
+                         'or "exms" (pyHXExpress\'s fixed steps)',
+    "run.fit.k_min": "fewest populations tried",
+    "run.fit.k_max": "most populations tried (one K: no model selection)",
+    "run.fit.criterion": '"bic" or "aic": chooses K among those tried',
+    "run.fit.min_population": "a K whose smallest population is below this is rejected (0: "
+                              "off); [analysis.filters] and [analysis.choice] have their own",
+    "run.fit.n_restarts": "starting points per K",
+    "run.fit.adam_steps": "Adam steps per restart",
+    "run.fit.k1_adam_steps": "Adam steps of the K=1 fit only (false: adam_steps); 200 is "
+                             "enough and faster",
+    "run.fit.lbfgs_steps": "L-BFGS iterations after Adam (0: none)",
+    "run.fit.lr_adam": "Adam learning rate at the start",
+    "run.fit.lr_adam_end": "Adam learning rate at the end (cosine schedule)",
+    "run.fit.nested_init": "start each K from the K-1 fit with its heaviest population split",
+    "run.fit.kmeans_after_warm": "also start from k-means when the nested start is used",
+    "run.fit.split_delta": "logit shift between the halves of a split population",
+    "run.fit.warm_noise": "sd of the jitter added to a warm start",
+    "run.fit.grad_clip": '"per_measurement" (each fit on its own) or "global" gradient '
+                         "clipping",
+    "run.fit.polish_steps": "Levenberg-Marquardt iterations per measurement after the restarts "
+                            "(0: none)",
+    "run.fit.seed": "seed of everything random (each measurement is also seeded by its id)",
+    "run.fit.screen": "fit K > 1 only where it could be selected: about a third of the time, "
+                      "but the skipped fits are missing from fixed-K analyses",
+    "run.fit.noise.model": '"gaussian" or "poisson"',
+    "run.fit.noise.sd": "gaussian: the sd in intensity units (false: percent instead)",
+    "run.fit.noise.percent": "sd (or poisson scale) as percent of the tallest peak of the "
+                             "series' undeuterated reference spectrum",
+    "run.fit.noise.n_eff": "poisson: effective counts in the tallest peak (false: percent)",
+    "run.fit.noise.estimate": '"replicates": estimate each series\' noise from its replicate '
+                              "spectra (false: the level above)",
+    "run.fit.noise.min_replicated": "estimate: fewest time points with two or more replicates",
+    "run.fit.noise.min_share": "estimate: smallest share of a spectrum's intensity a bin needs",
+    "run.fit.noise.outlier_score": "estimate: a replicate scoring above this is left out and "
+                                   "flagged noise_outlier",
+    "run.fit.backend.device": '"auto" (CUDA if available, else CPU), "cpu", "cuda" or "cuda:N"',
+    "run.fit.backend.dtype": '"auto" (float32), "float32" or "float64" (the last digits)',
+    "run.bootstrap.n_boot": "resamples of every measurement",
+    "run.bootstrap.ci": "interval width in percent (95.0), not a fraction",
+    "run.bootstrap.n_restarts": "starting points per refit (the first is the original fit)",
+    "run.bootstrap.adam_steps": "Adam steps per refit",
+    "run.bootstrap.lr_adam": "Adam learning rate at the start of a refit",
+    "run.bootstrap.lr_adam_end": "Adam learning rate at the end of a refit",
+    "run.bootstrap.warm_noise": "sd of the jitter on the original fit",
+    "run.bootstrap.polish_steps": "Levenberg-Marquardt iterations per refit (0: none)",
+    "run.bootstrap.grad_clip": "as in [run.fit]",
+    "run.bootstrap.seed": "seed of the resampling and the restarts",
+    "run.bootstrap.keep_draws": "keep every resample's fit in the bundle",
+    "run.bootstrap.curve_band": "also the band of the total uptake curve",
+    "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
+                        "list of K (fixed-K bootstraps for the analysis)",
+    "run.controls.m0_max": "largest mean (D) of a good undeuterated control",
+    "run.controls.retention_min": "smallest deuterium retention of a good fully deuterated "
+                                  "control, as a fraction (false: half of d2o_fraction; none "
+                                  'with fd_fallback "kint"); not a retention time',
+    "run.controls.retention_max": "largest deuterium retention of a good fully deuterated "
+                                  "control, as a fraction",
+    "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
+                                 "[analysis.controls] may change it for the analysis",
+    "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
+                                '"d2o" (d2o_fraction), "median" (of the run\'s accepted '
+                                'controls) or "kint" (predicted back-exchange; needs quench); '
+                                'false: "kint" with quench, else "d2o"',
+    "run.controls.atol": "s: a spectrum this close to a control time is that control",
+    "run.controls.kint_tolerance": "kint: a measured control this far (D per amide) from the "
+                                   "prediction is rejected",
+    "run.controls.kint_min_series": "kint: fewest usable controls to fit the prediction to",
+    "run.quality.poor_fit_factor": "poor_fit: misfit this many times the series' median",
+    "run.quality.min_deviance": "poor_fit: and a reduced deviance above this",
+    "run.quality.min_series_fits": "poor_fit: fewest fitted spectra in a series to judge",
+    "run.quality.min_intensity": "low_intensity: total intensity below this share of the other "
+                                 "replicates' mean",
+    "run.quality.max_mz_offset_ppm": "mz_shift: a series' m/z offset (ppm) beyond this (false: "
+                                     "screen off)",
+    "run.plots.series": '"flagged" (series with a flag, a rejection or a control fallback), '
+                        '"all" or a list of data_id',
+    "run.plots.kinds": "pages of a series' figure: spectra, populations, uptake",
+    "run.plots.show": "layers of the spectra page: raw, picked, fit",
+    "run.plots.x": 'uptake axis: "time" or "index"',
+    "run.plots.scale": 'uptake axis: "linear" or "log"',
+    "run.plots.corrected": "draw back-exchange corrected values (unset: when there are "
+                           "controls)",
+    "run.plots.format": '"pdf" (one file per series, a page per kind), "png" or "svg" (one '
+                        "file per kind)",
+    "run.plots.dpi": "resolution of PNG files and of raster images in PDF or SVG",
+    "run.plots.overview": "also the run's overview (K selection, controls, quality flags)",
+    "run.plots.residual": "a residual panel under every spectrum",
+    "run.envelope.mode": '"theory" (the ion type\'s isotope clusters), "mixed" (ion types a '
+                         'hydrogen apart, weights fitted to the undeuterated spectra) or '
+                         '"infer" (the undeuterated envelope itself)',
+    "run.envelope.components": "mixed: number of ion types",
+    "run.envelope.max_residual": "largest relative residual of a mixture that describes its "
+                                 "references (else poor_envelope)",
+    "run.envelope.iterations": "rounds of picking and fitting the weights",
+    "run.envelope.share": "conditions of one ion that differ only in scan filters or label "
+                          "share an envelope",
+}
+
+# comment lines written before a table's header
+_SECTION_COMMENTS: dict[str, str] = {
+    "run": "Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The "
+           "bootstrap, the controls and the plots are stages that their table turns on: "
+           "uncomment the commented-out run.bootstrap, run.controls or run.plots table below to "
+           "use it; a stage's \"name = false\" turns it off.",
+    "run.picker": "Peak picking: the spectra become sticks at the predicted isotope positions "
+                  "(hxex.picking.PickerConfig; docs/PEAK_PICKING.md).",
+    "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
+                              'cleavage site, e.g. "y-NH3" = false. Empty: the ion type\'s '
+                              "composition decides (c, x, y keep it; a, b, z do not).",
+    "run.fit": "The fit of 1 to k_max populations to every spectrum (hxex.fit.FitConfig).",
+    "run.fit.noise": "Noise model and level of the fit (hxex.noise.NoiseConfig). The level "
+                     "sets the loss scale and the model selection.",
+    "run.fit.backend": "Where the fit runs (hxex.model.Backend); nothing is set globally.",
+    "run.bootstrap": "Standard errors and intervals from resampled refits of every "
+                     "measurement (hxex.bootstrap.BootstrapConfig). Slow: most of a run's time.",
+    "run.controls": "Back-exchange correction from the undeuterated and fully deuterated "
+                    "controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium "
+                    "retention here is the fraction of deuterium kept, not a retention time.",
+    "run.quality": "Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, "
+                   "low_intensity, noise_outlier, mz_shift, poor_envelope. Nothing is dropped; "
+                   "the review layer of the bundle takes the decisions.",
+    "run.plots": "Figures written by hxex run and hxex report (hxex.report.PlotConfig).",
+    "run.registry": "Modified residues, written in sequences as modX labels (a lowercase "
+                    "prefix plus the residue letter, e.g. acK, pS; a sequence is read residue "
+                    "by residue). Each [[run.registry.residues]] adds delta to the base "
+                    "residue's composition. The table itself stays empty.",
+    "run.envelope": "The isotope envelope that places the bins and shapes the fit "
+                    "(hxex.picking.EnvelopeConfig). Fragment spectra can hold several ion "
+                    "types of one fragment a hydrogen apart (c-1, c, c+1 in ETD).",
+}
+
+
+def _commented(line: str, comment: str | None, prefix: str = "") -> list[str]:
+    """``line`` with ``comment`` after it at the comment column, wrapped onto continuation lines
+    that start with ``prefix`` (``'# '`` inside a commented-out table)."""
+    if not comment:
+        return [line]
+    parts = textwrap.wrap(comment, _LINE_WIDTH - _COMMENT_COLUMN - 2)
+    pad = (prefix.rstrip() or "").ljust(_COMMENT_COLUMN)
+    if len(line) > _COMMENT_COLUMN - 2:  # too long for a trailing comment: comment lines after
+        return [line] + [pad + "# " + p for p in parts]
+    return [line.ljust(_COMMENT_COLUMN) + "# " + parts[0]] + [pad + "# " + p for p in parts[1:]]
+
+
+def _section_comment(name: str) -> list[str]:
+    text = _SECTION_COMMENTS.get(name)
+    if not text:
+        return []
+    return textwrap.wrap(text, _LINE_WIDTH, initial_indent="# ", subsequent_indent="# ")
+
+
+def _unset_line(key: str, hint, note: tuple[str, str] | None = None, table: str = "",
+                prefix: str = "# ") -> list[str]:
     """The commented line of a setting at None: valid TOML once uncommented (``false``, the
     stand-in for None, or ``true`` for a switch that may also be unset) with a comment saying
     so, or ``note``'s value and comment instead."""
     if note is None:
-        note = (("true", "not set; true or false sets it") if bool in _union_members(hint)
-                else ("false", "not set; false means unset"))
-    return f"# {key} = {note[0]}".ljust(34) + f"# {note[1]}"
+        comment = _COMMENTS.get(f"{table}.{key}")
+        value = "true" if bool in _union_members(hint) else "false"
+        if comment is None:
+            comment = ("not set; true or false sets it" if value == "true"
+                       else "not set; false means unset")
+        note = (value, comment)
+    return _commented(f"# {key} = {note[0]}", note[1], prefix)
 
 
 def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | None = None,
                 notes: Mapping[str, tuple[str, str]] | None = None) -> list[str]:
     """``[name]`` with ``data``: scalars first (None as a commented line, it is the default),
-    then sub-tables and arrays of tables. ``cls`` is the table's config class (its types say how
-    a None is written; sub-tables take theirs from it) and ``notes`` gives the value and comment
-    written for the None settings it names."""
+    then sub-tables and arrays of tables, each line with its comment from ``_COMMENTS`` and
+    the table preceded by its ``_SECTION_COMMENTS`` entry. ``cls`` is the table's config class
+    (its types say how a None is written; sub-tables take theirs from it) and ``notes`` gives
+    the value and comment written for the None settings it names."""
     c = "# " if comment else ""
     hints = _hints(cls) if cls is not None else {}
     notes = notes or {}
-    lines = [f"{c}[{name}]"]
+    lines = _section_comment(name) + [f"{c}[{name}]"]
     later: list[str] = []
     for key, value in data.items():
         if isinstance(value, Mapping):
@@ -785,9 +1091,10 @@ def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | Non
                 later += ["", f"{c}[[{name}.{key}]]"]
                 later += [f"{c}{k} = {_toml_value(v)}" for k, v in item.items()]
         elif value is None:
-            lines.append(_unset_line(key, hints.get(key), notes.get(key)))
+            lines += _unset_line(key, hints.get(key), notes.get(key), name, c)
         else:
-            lines.append(f"{c}{key} = {_toml_value(value)}")
+            lines += _commented(f"{c}{key} = {_toml_value(value)}",
+                                _COMMENTS.get(f"{name}.{key}"), c)
     return lines + later
 
 
@@ -847,7 +1154,10 @@ ms_level = 1
 # filter_excludes = "sid"        # leave out scans whose filter contains this
 
 # [[input.fragments]]            # fragment ions of every peptide (repeat the table for
-# ions = "c-1:ALL z-dot:ALL"     # other conditions, e.g. with and without in-source activation)
+#                                # other conditions, e.g. with and without in-source activation)
+# ions = "c-1:ALL z-dot:ALL"     # space-separated TYPE:LENGTHS:CHARGES; LENGTHS and CHARGES
+#                                # are ALL (the default) or numbers and ranges ("2-6,9", "3-");
+#                                # types as c, c-1, z-dot, y-NH3, M (the peptide itself)
 # label = "gentle"               # names the condition in tables and figures
 # ms_level = 2                   # 3 for MS3 scans
 # activation = "ETD"             # of the last stage
@@ -857,7 +1167,7 @@ ms_level = 1
 # precursor_charge = "parent"    # or a charge, or false for any charge
 # filter_excludes = "sid"
 
-[input.scans]                    # how scans become spectra (hxex.io.MzmlConfig)
+# How scans become spectra (hxex.io.MzmlConfig).
 {scans}
 
 # one [[input.runs]] per file; "time" is the labelling time of the whole file (s), or leave it
@@ -884,7 +1194,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     if fmt not in FORMATS:
         raise ProjectError(f"format must be one of {', '.join(FORMATS)}")
     if fmt in SCAN_FORMATS:
-        scans = "\n".join(_toml_table("x", MzmlConfig().to_dict(), cls=MzmlConfig)[1:])
+        scans = "\n".join(_toml_table("input.scans", MzmlConfig().to_dict(), cls=MzmlConfig))
         thermo = ('\n# thermo_dir = "/path/to/ThermoRawFileParser"   # Thermo\'s DLLs, or set '
                   'HXEX_THERMO_DIR' if fmt == "thermo" else "")
         input_text = _SCAN_TEMPLATE.format(fmt=fmt, scans=scans, thermo=thermo,
@@ -922,7 +1232,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# The post-fitting analysis (hxex analyse): uncomment to use. Regions and sites are",
         "# yours to define for the protein; nothing is derived.",
         "# [analysis]",
-        '# reference = "WT"                # the sample the others are compared with',
+        '# reference = "WT"                # the sample the others are compared with (the',
+        '#                                 # reference of exchange and labelling is a rate set)',
         '# samples = ["WT", "variant"]     # which samples, in this order (default: all)',
         "# times = [4.0, 60.0]             # time points of the per-time figures (default: all",
         "#                                 # but the fully deuterated control)",
@@ -938,9 +1249,14 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '#                                 # mutated or not) or identical sequences ("sequence")',
         '# modified_peptides = "separate"  # modified forms as their own states ("WT pS59") or',
         '#                                 # averaged with the sample ("combined")',
+        '# format = "pdf"                  # or "png", "svg"',
+        "# protection = true               # opt in to the peptides' protection factors",
+        "#                                 # (hxex.analysis.protection); needs the labelling table",
+        "# protection_residues = true      # also one factor per residue (opt-in)",
+        "# protection_r1 = 0.1             # smoothing of the residue-level fit",
+        "# protection_max_se = 5.0         # residues with a larger error left out of figures",
         "# [analysis.controls]             # control settings to change for the analysis (the",
         "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
-        '# format = "pdf"                  # or "png", "svg"',
         "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
         "# min_population = 0.05",
         "# max_fD_se = 0.25",
@@ -967,6 +1283,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# ion_types = ["c-1", "z-dot"]    # some; fragments = false turns them off); default:',
         "# charges = [1]                   # every fragment ion type, fragment charge 1",
         "# min_time = 20.0                 # s, exchange clock: earlier points drawn, not fitted",
+        "#                                 # (not [input.scans] min_time, on the scan clock)",
         "# tolerance = 0.25                # closure: c + z - M beyond this is flagged (D)",
         "# kint = true                     # opt in: intrinsic rates, protection factors and",
         "#                                 # theoretical curves (hxex.kint); needs exchange",
@@ -975,35 +1292,39 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.fragments.exchange]   # the kinetics' solvent, for every sample (or one",
         "# ph_read = 3.0                   # table per sample: [analysis.fragments.exchange.S])",
         "# temperature = 20.0              # degrees Celsius",
-        "# d2o_fraction = 0.05             # D atom fraction of the solvent (0 to 1)",
-        '# reference = "PDLA"              # or "3Ala"',
+        "# d2o_fraction = 0.05             # D atom fraction of the kinetics' solvent (0 to 1;",
+        "#                                 # the labelling buffer's is [run.controls])",
+        '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
         "# initial_fraction = 0.9          # D fraction when the exchange began (curves)",
-        "# protection = true               # in [analysis]: opt in to the peptides' protection",
-        "#                                 # factors (hxex.analysis.protection); needs labelling",
-        "# protection_residues = true      # in [analysis]: also one factor per residue (opt-in)",
-        "# protection_r1 = 0.1             # in [analysis]: smoothing of the residue-level fit",
-        "# protection_max_se = 5.0         # residues with a larger error left out of figures",
         "# [analysis.labelling]            # the labelling solvent, for every sample (or one",
         "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT])",
         "# temperature = 20.0              # degrees Celsius",
-        "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer",
-        '# reference = "PDLA"              # or "3Ala"',
-        "",
-        "# Run settings (hxex.run.RunConfig). A [run.bootstrap], [run.controls] or [run.plots]",
-        "# section turns that stage on; uncomment one to use it.",
+        "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer (as",
+        "#                                 # [run.controls] d2o_fraction)",
+        '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
     ]
     scalars = {k: v for k, v in run.items()
                if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
     lines += [""] + _toml_table("run", scalars, cls=RunConfig)
     if fmt in SCAN_FORMATS:
         control_times = {
-            "undeut_time": ("0.0", "default: [run] undeut_time; false: none"),
-            "fd_time": ("1000000.0", "the fully deuterated runs' time; false: none"),
+            "undeut_time": ("0.0", "s: time of the undeuterated controls (default: [run] "
+                                   "undeut_time; false: the data has none)"),
+            "fd_time": ("1000000.0", "s: time given to the fully deuterated runs in "
+                                     "[[input.runs]] (false: the data has none)"),
+            "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
+                       "pH read, degrees Celsius and D fraction of the quench and LC, for "
+                       'fd_fallback "kint" (false: none)'),
         }
     else:
         control_times = {
-            "undeut_time": ("0.0", "default: the input's undeut_time; false: none"),
-            "fd_time": ("1000000.0", "default: the input's fulldeut_time; false: none"),
+            "undeut_time": ("0.0", "s: time of the undeuterated controls (default: [input] "
+                                   "undeut_time; false: the data has none)"),
+            "fd_time": ("1000000.0", "s: time of the fully deuterated controls (default: "
+                                     "[input] fulldeut_time; false: the data has none)"),
+            "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
+                       "pH read, degrees Celsius and D fraction of the quench and LC, for "
+                       'fd_fallback "kint" (false: none)'),
         }
     for key, value in run.items():
         if key in _OPTIONAL_SECTIONS and value is None:
@@ -1025,8 +1346,11 @@ def describe(project: Project) -> dict[str, Any]:
             "" if inp.spectra is None else f" (stored in {inp.spectra})"),
         "K": f"{run.fit.k_min} to {run.fit.k_max}",
         "device": run.fit.backend.device,
-        "bootstrap": "off" if run.bootstrap is None else f"{run.bootstrap.n_boot} resamples",
-        "controls": "off" if run.controls is None else "on",
-        "quality flags": "off" if run.quality is None else "on",
+        "bootstrap": ("off: no standard errors or intervals (a [run.bootstrap] table turns "
+                      "it on)" if run.bootstrap is None
+                      else f"{run.bootstrap.n_boot} resamples"),
+        "controls": ("off: no back-exchange correction, means in deuterons measured (a "
+                     "[run.controls] table turns it on)" if run.controls is None else "on"),
+        "quality flags": "off (quality = false)" if run.quality is None else "on",
         "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
     }

@@ -54,7 +54,7 @@ class RunSet:
     """Several runs (:class:`hxex.report.Results`) by name, analysed together; the first is the
     reference run of :func:`check_identity`. Run names must not contain :data:`SEPARATOR`.
 
-    ``merge`` combines runs (pyHXExpress ``combine_batch_data``): it gives samples a label of
+    ``merge`` combines runs: it gives samples a label of
     their own (``{'A:WT': 'WT', 'B:WT': 'WT'}``), and samples with the same label are one sample,
     their replicate spectra pooled; the others keep ``run:sample``."""
 
@@ -126,10 +126,11 @@ class RunSet:
             raise ValueError("the runs subtract different numbers of N-terminal residues "
                              f"({_listing(nterm)}): their residues cannot be compared")
         if len(set(undeut.values())) > 1 and not quiet:
-            log.warning("the runs' undeuterated times differ (%s); coverage and the figures use "
-                        "the first run's", _listing(undeut))
+            log.warning("the runs of [analysis.runs] have different undeuterated times (%s); "
+                        "coverage and the figures use the first run's", _listing(undeut))
         if len(set(corrected.values())) > 1 and not quiet:
-            log.warning("back-exchange correction differs between runs (corrected: %s)",
+            log.warning("back-exchange correction differs between the runs of [analysis.runs] "
+                        "(corrected: %s)",
                         ", ".join(s for s, v in corrected.items() if v) or "none")
         first = self.names[0]
         groups = _filter_species(groups, ks, filters, dropped, quiet)

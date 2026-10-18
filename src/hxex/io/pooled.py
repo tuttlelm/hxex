@@ -39,7 +39,7 @@ def scan_specexport_pooled(
 ) -> list[PeptideEntry]:
     """List the entries (peptide range, sequence, charge) in a pooled SpecExport folder.
 
-    Every entry gets the same ``sample`` label (default empty, as in pyHXExpress). Directories
+    Every entry gets the same ``sample`` label (default empty). Directories
     not named ``START-END-SEQUENCE`` are skipped, as are those whose sequence does not parse.
     A sequence whose residue count differs from the range length is kept with a warning.
     """

@@ -22,9 +22,9 @@ Each control falls back to its theoretical value, and the series is flagged, on 
   buffer's fraction does not.
 
 With ``fd_fallback='kint'`` (the default when the ``quench`` conditions are given, which it
-needs) the fully deuterated value comes from theoretical back-exchange instead (HISTORY items 71
-and 73): every amide of the peptide keeps ``a * exp(-k_i * t0)`` of a deuteron, ``k_i`` its
-intrinsic rate at the quench conditions (:mod:`hxex.kint`), with the labelling fraction ``a``
+needs) the fully deuterated value comes from theoretical back-exchange instead: every amide of
+the peptide keeps ``a * exp(-k_i * t0)`` of a deuteron, ``k_i`` its intrinsic rate at the quench
+conditions (:mod:`hxex.kint`), with the labelling fraction ``a``
 and an effective time ``t0`` fitted to the run's measured fully deuterated controls (robustly,
 then again without the rejected ones). A measured control is rejected when it misses that
 prediction by more than ``kint_tolerance`` deuterons per amide (``fd_off_model``), in place of
@@ -35,7 +35,7 @@ keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable (
 controls nothing is fitted and every series keeps it, with its floor (logged). When every
 control in the fit has a retention
 time (``RT``, minutes; :func:`series_rt`) for at least ``kint_min_series`` of the controls, the
-effective time is ``t0 + b RT`` (``b`` fitted, not below 0; HISTORY items 71 and 83), and a
+effective time is ``t0 + b RT`` (``b`` fitted, not below 0), and a
 series without one is taken at the median RT of those that have one.
 The fitted model is :attr:`ControlTable.fd_model`.
 
@@ -65,25 +65,34 @@ FD_FALLBACKS = ("d2o", "median", "kint")
 
 @dataclass(frozen=True)
 class ControlConfig:
-    """Control times (in the units of the measurement times) and the limits for a good control.
+    """Control times and the limits for a good control (the ``[run.controls]`` table). Times
+    are in the units of the measurement times (s). "Retention" here is deuterium retention, the
+    fraction of the label a fully deuterated control kept, not a retention time.
 
-    A time of None means that the data has no control of that kind. The defaults of the limits are
-    those of the notebook the method comes from; on the Bimodal data they hardly matter (see
-    docs/HISTORY.md item 27). ``d2o_fraction`` is the deuterium fraction of the labelling buffer
-    (often 0.8 to 0.9; the default is pyHXExpress's ``Dfrac``). ``retention_min`` None (the
-    default) means half of it. ``fd_fallback`` is the retention used when a series' fully
-    deuterated control is missing or rejected: ``'d2o'`` (``d2o_fraction``), ``'median'`` (the
-    median of the run's accepted controls; ``d2o_fraction`` if there are none) or ``'kint'``
-    (theoretical back-exchange fitted to the run's controls; see the module docstring), which
-    needs ``quench``; None (the default) means ``'kint'`` when ``quench`` is given and ``'d2o'``
-    otherwise (:attr:`fd_mode`; owner, HISTORY item 73). ``quench`` holds the conditions of the
-    back-exchange (:class:`hxex.kint.ExchangeConditions`:
-    pH_read and temperature of the quench and LC, ``d2o_fraction`` of their solvent, about 0).
-    ``kint_tolerance`` (deuterons per amide) rejects a measured control that far from the
-    prediction, and ``kint_min_series`` is the fewest usable controls to fit. With ``'kint'``
-    and ``retention_min`` None there is no retention floor. See docs/HISTORY.md items 59, 61
-    and 73.
+    - ``undeut_time``, ``fd_time``: the times of the undeuterated and the fully deuterated
+      controls; None: the data has no control of that kind.
+    - ``m0_max`` (deuterons): the largest mean of a good undeuterated control.
+    - ``retention_min``, ``retention_max`` (fractions): the range of a good fully deuterated
+      control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) is half
+      of ``d2o_fraction``, or no floor with ``fd_fallback = 'kint'`` (:attr:`min_retention`).
+    - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
+      the analysis may change it for its own controls (``[analysis.controls]``).
+    - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
+      rejected: ``'d2o'`` (``d2o_fraction``), ``'median'`` (the median of the run's accepted
+      controls; ``d2o_fraction`` if there are none) or ``'kint'`` (theoretical back-exchange
+      fitted to the run's controls, see the module docstring; needs ``quench``). None (the
+      default) means ``'kint'`` when ``quench`` is given and ``'d2o'`` otherwise
+      (:attr:`fd_mode`).
+    - ``atol`` (s): a spectrum this close to a control time is that control.
+    - ``quench``: the conditions of the back-exchange (:class:`hxex.kint.ExchangeConditions`):
+      pH read and temperature of the quench and LC, and the ``d2o_fraction`` of their solvent
+      (about 0).
+    - ``kint_tolerance`` (deuterons per amide): with ``'kint'``, a measured control this far
+      from the prediction is rejected; ``kint_min_series``: the fewest usable controls to fit
+      the prediction to.
     """
+    # the limits' defaults, the fallbacks and the kint model: docs/HISTORY.md items 27, 59, 61, 71
+    # and 73
 
     undeut_time: float | None = None
     fd_time: float | None = None

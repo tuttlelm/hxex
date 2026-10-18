@@ -6,7 +6,7 @@ intrinsic rate ``kint`` (``kforw + kback`` in the labelling solvent, :mod:`hxex.
 exchanges at ``kint / protection`` (EX2), so a peptide's back-exchange-corrected fraction
 deuterated is modelled as ``mean_i(1 - exp(-kint_i t / protection))`` over the amides it
 counts, with one protection factor per peptide. The name is always ``protection``, never
-``P`` or ``p`` (the binomial parameter and the p-value; owner).
+``P`` or ``p`` (the binomial parameter and the p-value).
 
 :func:`peptide_protection` gives, per sample, peptide, K and rank, the apparent protection
 factor at each time (the value that gives the measured ``fD``) and one factor fitted over all
@@ -218,7 +218,8 @@ def _apparent(k, t, y, se):
 def _known_errors(se: np.ndarray) -> np.ndarray | None:
     """``se`` with every unknown error (NaN, or not above 0) replaced by the median of the
     known ones; None when none is known (an unweighted fit). An unknown error must not get
-    the largest weight (the audit of 2026-10-17)."""
+    the largest weight."""
+    # decided in docs/AUDIT_2026-10-17.md
     se = np.asarray(se, dtype=float)
     known = np.isfinite(se) & (se > 0)
     if not known.any():
@@ -255,9 +256,10 @@ def _fit(k, t, y, se, apparent, alpha):
 
 def _refuse_falling(pep) -> None:
     """Refuse a sample whose peptides mostly lose deuterium with time (back-exchange
-    kinetics: the model is one of forward labelling; the two-direction model is a design
-    item of the audit of 2026-10-17). A peptide falls (rises) when its last finite ``fD`` is
+    kinetics: the model is one of forward labelling; a two-direction model is a planned
+    design item). A peptide falls (rises) when its last finite ``fD`` is
     below (above) its first by more than twice their combined error, or by 0.05 without one."""
+    # the two-direction model: docs/AUDIT_2026-10-17.md
     falling: dict[str, int] = {}
     rising: dict[str, int] = {}
     groups: dict[tuple, list[int]] = {}
@@ -315,13 +317,13 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
     uncorrected = sorted({str(s) for s, c in zip(pep.sample, pep.corrected, strict=True)
                           if not c})
     if uncorrected:
-        log.warning("no protection factors for sample(s) %s: not corrected for back-exchange",
-                    ", ".join(uncorrected))
+        log.warning("no protection factors for sample(s) %s: not corrected for back-exchange "
+                    "(the run had no controls, [run.controls])", ", ".join(uncorrected))
     no_conditions = sorted({str(s) for s in pep.sample} - set(uncorrected)
                            - {str(s) for s in pep.sample if sample_conditions(conditions, s)})
     if no_conditions:
-        log.warning("no labelling conditions for sample(s) %s: no protection factors",
-                    ", ".join(no_conditions))
+        log.warning("no labelling conditions for sample(s) %s ([analysis.labelling]): no "
+                    "protection factors for them", ", ".join(no_conditions))
     pep = pep.select(~np.isin(pep.sample, uncorrected + no_conditions))
     groups: dict[tuple, list[int]] = {}
     for i in range(len(pep)):

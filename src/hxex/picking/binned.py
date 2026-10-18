@@ -26,7 +26,7 @@ class BinnedSet:
     (for example a terminal group or an ion type), one common to a file to the calibration.
     ``env_width`` is in mass units, ``max_namides`` is the backbone amide count (without
     user-specified ``Hex`` sites). Per-spectrum flags: ``empty`` (all picked intensities zero,
-    the criterion pyHXExpress uses to drop a SpecExport spectrum), ``no_signal`` (no bin
+    the usual reason to drop a SpecExport spectrum), ``no_signal`` (no bin
     reaches the threshold) and ``capped`` (the bin limit cut the zero filling short).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.

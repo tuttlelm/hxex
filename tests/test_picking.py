@@ -41,8 +41,8 @@ from hxex.picking.pick import D_MINUS_H, composition_mz
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE = "RDKVQKEYAL"  # 10 residues
-CFG = PickerConfig(ladder="exms", zero_filling=3, noise=100.0)
-GOLDEN_CFG = PickerConfig(ladder="exms", zero_filling=3, noise=50.0, nterm_subtract=2)
+CFG = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0)
+GOLDEN_CFG = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=50.0, nterm_subtract=2)
 
 
 def sticks(plan, heights, spread=0.002):
@@ -161,7 +161,7 @@ def test_resolution_ppm():
     mz = np.array([plan.pred_mz[0] * (1 + 30e-6)])
     y = np.array([500.0])
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 500.0
-    narrow = PickerConfig(ladder="exms", zero_filling=3, noise=100.0, resolution_ppm=20.0)
+    narrow = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0, resolution_ppm=20.0)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=narrow).intensity[0] == 0.0
 
 
@@ -182,7 +182,7 @@ def test_shoulder_rejection_applies_to_windows_with_many_points():
     # a window with fewer than shoulder_min_points points is treated as stick data
     mz, y = profile(plan, np.linspace(100, 1000, 9), n=9)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 1000.0
-    lenient = PickerConfig(ladder="exms", zero_filling=3, noise=100.0,
+    lenient = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0,
                            shoulder_min_points=20)
     mz, y = profile(plan, rising)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=lenient).intensity[0] == 1000.0
@@ -215,9 +215,9 @@ def test_noise_threshold_absolute_and_percent():
     p = pick_spectrum(mz, y, PEPTIDE, 2, config=percent)
     assert p.threshold == pytest.approx(0.01 * 100000.0) and len(p.mz) == 0 + 1 + 3
     # 0 means "use the percent"
-    zero = PickerConfig(ladder="exms", zero_filling=3, noise=0, noise_percent=1.0)
+    zero = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=0, noise_percent=1.0)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=zero).threshold == p.threshold
-    absolute = PickerConfig(ladder="exms", zero_filling=3, noise=50.0)
+    absolute = PickerConfig(ladder="exms", zero_filling=3, noise=50.0)  # the former name works
     q = pick_spectrum(mz, y, PEPTIDE, 2, config=absolute)
     assert q.threshold == 50.0 and len(q.mz) == 1 + 1 + 3
 
@@ -275,7 +275,7 @@ def test_envelope_columns_follow_the_reference_formulas():
 # --- configuration --------------------------------------------------------------------------
 
 def test_config_round_trip_and_json():
-    cfg = PickerConfig(ladder="exms", zero_filling=3, noise=50.0, nterm_subtract=2,
+    cfg = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=50.0, nterm_subtract=2,
                        amide_rules=chem.AmideRules({"c": False}))
     data = json.loads(json.dumps(cfg.to_dict()))
     assert PickerConfig.from_dict(data) == cfg
@@ -284,7 +284,7 @@ def test_config_round_trip_and_json():
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"resolution_ppm": 0}, {"zero_filling": -1}, {"zero_filling": 1.5}, {"noise": -1},
+    [{"resolution_ppm": 0}, {"zero_filling": -1}, {"zero_filling": 1.5}, {"noise_threshold": -1},
      {"noise_percent": -1}, {"env_threshold": 0}, {"env_threshold": 1.5},
      {"nterm_subtract": -1}, {"shoulder_min_points": 0}],
 )
@@ -503,7 +503,7 @@ def test_composition_ladder_follows_the_deuteration_level():
 def test_picking_with_the_composition_ladder_finds_peaks_off_the_exms_ladder():
     """Peaks placed at their composition positions are found in a narrow window, where the ExMS
     ladder misses them; the picked m/z are the composition positions."""
-    narrow = PickerConfig(zero_filling=3, noise=100.0, resolution_ppm=4.0)
+    narrow = PickerConfig(zero_filling=3, noise_threshold=100.0, resolution_ppm=4.0)
     plan = plan_bins(PEPTIDE, 2, config=narrow)
     level = 5.0
     pos = composition_mz(plan, level)

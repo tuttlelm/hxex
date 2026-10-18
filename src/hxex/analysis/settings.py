@@ -24,47 +24,66 @@ OVERLAY_VALUES = {"low": (2, 1), "high": (2, 2), "avg": (1, 1)}
 
 @dataclass(frozen=True)
 class AnalysisConfig:
-    """What :func:`hxex.report.write_analysis` computes and draws.
+    """What :func:`hxex.report.write_analysis` computes and draws (the ``[analysis]`` table).
 
-    ``reference``: the sample the others are compared with (empty: no comparisons);
-    ``samples``: the samples, in this order (empty: all, the reference first); ``times``: the
-    time points of the per-time figures (empty: all but the fully deuterated control);
-    ``exclude_times``: time points left out of the whole analysis (unreliable ones; the fits in
-    the bundle are kept; not a control's time); ``ks``:
-    the fixed K values analysed; ``fasta``: one sequence file for every sample, or one per sample
-    (sample -> path; empty: the sequence comes from the peptides); ``coverage_times``:
-    ``'undeuterated'``, ``'all'`` or a list of times; ``redundancy``: ``'peptides'`` or
-    ``'spectra'``; ``weight_exponent`` of the residue averaging; ``filters`` (None: none) and
-    ``choice`` limits; ``alpha`` of the comparisons; ``annotations`` (regions, sites);
-    ``exclude_flagged``; ``format`` of the figure files; ``out``, the output directory (None:
-    beside the bundle); ``runs``: separate runs to compare (run name -> bundle; empty: the one
-    run), whose samples are then named ``run:sample`` everywhere (``reference``, ``samples``,
-    ``fasta``); ``overlay``: the values the by-residue comparison figures show, any of
-    ``'low'`` and ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw
-    the K=2 values only where the choice keeps two populations (the owner's figure; the default,
-    owner 2026-10-13; False draws every K=2 value the filters keep); ``peptide_match``: which
-    peptides the peptide comparisons pair, ``'range'`` (the same residues, mutated or not) or
-    ``'sequence'`` (identical sequences only; :func:`hxex.analysis.compare_peptides`);
-    ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the residue
-    level, e.g. ``'WT pS59'``) or ``'combined'`` (averaged with the sample's other peptides;
-    :func:`hxex.analysis.residue_map`); ``controls``: control settings to change for the analysis
-    (e.g. ``{'d2o_fraction': 0.85}``; the controls are then recomputed from the run's K=1 fits,
-    :func:`hxex.analysis.species.analysis_controls`; they are also recomputed, with the run's
-    settings, when the review rejected a control spectrum); ``merge``: with ``runs``, samples to
-    combine across runs (``'run:sample'`` -> label; the same label pools them,
-    :class:`hxex.analysis.RunSet`; fragment series are not pooled but drawn side by side,
-    their conditions ``run:condition``); ``fragments``: the fragment outputs of a run with fragment
-    series (:class:`hxex.analysis.FragmentAnalysis`; ladder figures and rates, closure,
-    per-residue rates; written whenever the run has fragments, None turns them off; fragment
-    series are left out of the peptide analysis); ``protection``: the peptides' protection
-    factors (:mod:`hxex.analysis.protection`; opt-in, False by default; needs ``labelling``)
-    and ``labelling``, the labelling conditions (:class:`hxex.kint.ExchangeConditions`, one set
-    for every sample or sample -> set; used only with ``protection``);
-    ``protection_residues``: also fit one factor per residue
-    (:func:`hxex.analysis.residue_protection`; opt-in, False by default, needs ``protection``);
-    ``protection_r1``: the weight of that fit's regulariser;
-    ``protection_max_se``: residues whose fitted standard error is above this (log10 units) are
-    left out of the residue-level figures (kept in the table)."""
+    Which data:
+
+    - ``reference``: the sample the others are compared with (empty: no comparisons). (The
+      ``reference`` of the exchange and labelling conditions is an intrinsic-rate set.)
+    - ``samples``: the samples, in this order (empty: all, the reference first).
+    - ``times`` (s): the time points of the per-time figures (empty: all but the fully
+      deuterated control); ``exclude_times`` (s): time points left out of the whole analysis
+      (unreliable ones; the fits in the bundle are kept; not a control's time).
+    - ``ks``: the fixed K values analysed (1 is needed: the average, and the choice).
+    - ``exclude_flagged``: leave out spectra with a quality flag.
+    - ``filters``: which K=2 descriptions are kept (:class:`SpeciesFilters`; None: all).
+    - ``controls``: control settings to change for the analysis (``{'d2o_fraction': 0.85}``;
+      the controls are then recomputed from the run's K=1 fits; they are also recomputed, with
+      the run's settings, when the review rejected a control spectrum).
+    - ``runs``: separate runs to compare (run name -> bundle; empty: the one run), whose samples
+      are then named ``run:sample`` everywhere (``reference``, ``samples``, ``fasta``);
+      ``merge``: with ``runs``, samples to combine across runs (``'run:sample'`` -> label; the
+      same label pools them, :class:`RunSet`; fragment series are not pooled but drawn side by
+      side).
+
+    Residues:
+
+    - ``fasta``: one sequence file for every sample, or one per sample (sample -> path); empty:
+      the sequence comes from the peptides.
+    - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated spectra; when
+      there are none, ``'all'`` with a warning), ``'all'`` or a list of times (s).
+    - ``redundancy``: what it counts, ``'peptides'`` or ``'spectra'``.
+    - ``weight_exponent``: of the residue averaging (:func:`residue_map`).
+    - ``choice``: the limits of the choice between one and two populations (:class:`ChoiceConfig`).
+    - ``alpha``: the significance level of the comparisons.
+    - ``annotations``: regions and sites to mark (``[[analysis.regions]]``, ``[[analysis.sites]]``).
+    - ``overlay``: the values the by-residue comparison figures show, any of ``'low'`` and
+      ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw the K=2 values
+      only where the choice keeps two populations (the default; False draws every K=2 value
+      the filters keep).
+    - ``peptide_match``: which peptides the peptide comparisons pair, ``'range'`` (the same
+      residues, mutated or not) or ``'sequence'`` (identical sequences only;
+      :func:`compare_peptides`).
+    - ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the
+      residue level, ``'WT pS59'``) or ``'combined'`` (averaged with the sample's other
+      peptides; :func:`residue_map`).
+
+    Outputs and options:
+
+    - ``format``: of the figure files (``'pdf'``, ``'png'``, ``'svg'``); ``out``: the output
+      directory (None: beside the bundle).
+    - ``fragments``: the fragment outputs of a run with fragment series
+      (:class:`FragmentAnalysis`; ladder figures and rates, closure, per-residue rates; written
+      whenever the run has fragments; None turns them off; fragment series are left out of the
+      peptide analysis).
+    - ``protection``: the peptides' protection factors (:mod:`hxex.analysis.protection`; opt-in;
+      needs ``labelling``, the labelling conditions, :class:`hxex.kint.ExchangeConditions`, one
+      set for every sample or sample -> set); ``protection_residues``: also one factor per
+      residue (:func:`residue_protection`; opt-in, needs ``protection``); ``protection_r1``: the
+      weight of that fit's regulariser; ``protection_max_se`` (log10 units): residues with a
+      larger fitted standard error are left out of the residue-level figures (kept in the
+      table).
+    """
 
     reference: str = ""
     samples: tuple[str, ...] = ()

@@ -51,7 +51,7 @@ def plot_residue_profile(
 ) -> Figure:
     """The ``fD`` of every residue of ``sample`` at ``time`` for each ``(K, rank)`` in ``show``
     (those present in ``residues``), each with a band of the ``band`` confidence interval
-    (0.5 by default, as pyHXExpress's ``choose_fits``; 0 for none) from the residue standard
+    (0.5 by default; 0 for none) from the residue standard
     errors. ``marks`` draws vertical lines at those residues (user-defined sites or region
     boundaries); ``length`` sets the x range (else the residues of the map). Each line has the
     gid ``fD:K<k>:rank<r>``."""
@@ -131,7 +131,7 @@ def plot_population_choice(
     fig: Figure | None = None,
 ) -> Figure:
     """The choice between one and two populations along the sequence
-    (:func:`hxex.analysis.choose_populations`), in the owner's ``rfufits`` style: the K=1 and
+    (:func:`hxex.analysis.choose_populations`): the K=1 and
     K=2 curves with bands, solid where their description was chosen and dashed elsewhere;
     markers for the chosen values, K=2 sized by population and K=1 as open circles; below, the
     population of each component where two were chosen. Lines have the gid ``fD:<name>``,

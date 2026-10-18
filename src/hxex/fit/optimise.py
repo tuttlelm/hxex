@@ -197,7 +197,7 @@ def fit_batch(
     ``polish_steps`` > 0 adds a final Levenberg-Marquardt polish of that many iterations
     (:func:`~hxex.fit.polish.lm_polish`).
 
-    ``grad_clip='global'`` clips the gradient norm of the whole batch (the prototype's choice, so
+    ``grad_clip='global'`` clips the gradient norm of the whole batch (so
     measurements influence each other); ``'per_measurement'`` clips each measurement's own.
     """
     if grad_clip not in ("global", "per_measurement"):

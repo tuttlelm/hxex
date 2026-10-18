@@ -78,6 +78,64 @@ def test_every_template_reads_back_as_the_defaults(tmp_path, capsys):
     assert 'format = "pooled"' in capsys.readouterr().out
 
 
+def test_toml_values_are_type_checked(tmp_path, capsys):
+    """A value of the wrong form is reported with its table, key, value and the expected form;
+    a table's own value errors name the table."""
+    def project(text):
+        return project_from(tomllib.loads(
+            'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n' + text), tmp_path)
+
+    for text, message in [
+        ('[run.fit]\nk_max = "3"\n', '[run.fit] k_max = "3": expected a whole number'),
+        ("[run.fit]\nk_max = 2.5\n", "[run.fit] k_max = 2.5: expected a whole number"),
+        ("[run]\nn_max_factor = true\n", "[run] n_max_factor = true: expected a number"),
+        ("[run.controls]\nd2o_fraction = false\n",
+         "[run.controls] d2o_fraction = false: expected a number (false stands for unset"),
+        ("[run.plots]\nseries = 3\n", "[run.plots] series = 3: expected text or a list"),
+        ("[run]\nbootstrap = 3\n", "[run] bootstrap = 3: expected a table, true or false"),
+        ("[run.fit]\nk_min = 0\n", "[run.fit]: need 1 <= k_min"),
+        ("[run.bootstrap]\nci = 0.95\n", "[run.bootstrap]: ci is a percentage"),
+        ('[analysis]\nalpha = "x"\n', '[analysis] alpha = "x": expected a number'),
+        ('[analysis.filters]\nmin_population = "a"\n',
+         '[analysis.filters] min_population = "a": expected a number'),
+    ]:
+        with pytest.raises(ProjectError) as info:
+            project(text)
+        assert message in str(info.value), (text, str(info.value))
+    assert project("[run.fit]\nscreen = false\nk_max = 2\n").run.fit.k_max == 2
+    # a file for hxex analyse only may leave the project name out
+    only = tmp_path / "only.toml"
+    only.write_text('[analysis]\nreference = "WT"\n[output]\nbundle = "res"\n')
+    assert load_project(only, analysis_only=True).project == ""
+    with pytest.raises(ProjectError, match="project must be a name"):
+        load_project(only)
+    # hxex check says what a stage being off means
+    assert cli.main(["check", str(only)]) == 0
+    out = capsys.readouterr().out
+    assert "controls       off: no back-exchange correction" in out and "[run.controls]" in out
+
+
+def test_template_lines_carry_their_meaning_and_unit():
+    """Every generated [run.*] and [input.scans] setting has a trailing comment, sections have
+    comment lines, and the [analysis] scalars come before its sub-tables."""
+    import re
+
+    text = template("mzml")
+    lines = text.split("[run]", 1)[1].splitlines()
+    for line, following in zip(lines, lines[1:] + [""], strict=True):
+        if re.match(r"^#? ?[a-z_]+ = ", line) and not line.startswith(("label", "base", "delta")):
+            # the comment follows at the comment column, or on the next line for a long setting
+            assert "  # " in line or re.match(r"^#?\s{20,}# \S", following), line
+    assert "half-width (ppm)" in text and "not a resolving power" in text
+    assert "Deuterium retention here is the fraction" in text
+    assert "# Peak picking" in text and "Modified residues, written in sequences as modX" in text
+    assert "TYPE:LENGTHS:CHARGES" in text and "composition decides" in text
+    analysis = text.split("# [analysis]", 1)[1].split("# Run settings", 1)[0]
+    first_table = analysis.index("# [analysis.")
+    assert analysis.index("# protection_max_se") < first_table
+    assert "exchange-clock min_time" in text  # the two clocks cross-refer
+
+
 def test_project_files_are_checked(tmp_path):
     def project(text):
         return project_from(tomllib.loads('project = "p"\n' + text), tmp_path)
@@ -469,7 +527,7 @@ def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
     sections = {p for p in settings if p[0] in ("bootstrap", "controls", "plots", "quality")}
     assert {("fit", "noise", "sd"), ("fit", "noise", "percent"), ("controls", "fd_time"),
             ("controls", "retention_min"), ("controls", "quench"),
-            ("quality", "max_mz_offset_ppm"), ("picker", "noise"), ("max_chunk",),
+            ("quality", "max_mz_offset_ppm"), ("picker", "noise_threshold"), ("max_chunk",),
             ("controls", "quench", "initial_fraction")} <= set(settings)
     assert ("plots", "corrected") not in settings  # a switch that may be unset: false is off
     for path in settings:
@@ -535,7 +593,8 @@ def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
         p = project_from(tomllib.loads(head + "# Run settings" + run), tmp_path)
         assert p.run.bootstrap == BootstrapConfig() and p.run.plots is not None
         assert p.run.max_chunk is None and p.run.fit.noise.sd is None
-        assert p.run.controls.quench is None and p.run.controls.retention_min is None
+        assert p.run.controls.quench is not None and p.run.controls.fd_mode == "kint"
+        assert p.run.controls.retention_min is None
         assert p.run.controls.fd_time == 1e6
         assert p.run.controls.undeut_time == 0.0
         if fmt == "mzml":

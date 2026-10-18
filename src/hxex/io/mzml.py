@@ -23,8 +23,9 @@ targets (a peptide, the intact protein or a fragment ion, each a
 Times are in seconds. Summing profile scans interpolates them onto one common m/z grid with the
 scans' own spacing, without bridging the stretches a vendor left out (they are zero); summing
 centroided scans merges peaks within ``sum_ppm``. On a real file, sums of 10 MS1 scans agree with
-the same sums made by OpenMS (see docs/HISTORY.md item 33).
+the same sums made by OpenMS.
 """
+# the OpenMS comparison: docs/HISTORY.md item 33
 
 from __future__ import annotations
 
@@ -793,16 +794,22 @@ class MzmlTarget:
 
 @dataclass(frozen=True)
 class MzmlConfig:
-    """How scans become spectra.
+    """How scans become spectra (the ``[input.scans]`` table). Times are in seconds of scan time
+    (the acquisition clock, before a run's ``time_offset``; see :class:`MzmlRun`, whose
+    ``usable_from`` sets a start per file).
 
-    For a run without a fixed time, ``group`` is ``'each'`` (one spectrum per scan), ``'every'``
-    (``every`` consecutive selected scans summed) or ``'windows'`` (the scans inside each of the
-    ``windows``, in seconds of scan time, summed). ``min_time`` leaves out, in every such run, the
-    scans before it; ``windows`` and ``min_time`` are on the acquisition clock (the scan time,
-    before a run's ``time_offset``; see :class:`MzmlRun`, whose ``usable_from`` sets a start per
-    file). ``mz_margin`` is the m/z kept on either side
-    of a target's predicted bins. ``sum_ppm`` merges centroided peaks; ``gap_factor`` finds the
-    left-out stretches of profile scans; ``precursor_tol`` (m/z) matches a target's precursor.
+    - ``group``: for a run without a fixed time, ``'each'`` (one spectrum per scan), ``'every'``
+      (``every`` consecutive selected scans summed) or ``'windows'`` (the scans inside each of
+      the ``windows``, ``[start, end]`` pairs, summed). A run with a fixed time sums all its
+      scans.
+    - ``min_time``: in every run without a fixed time, leave out the scans before it; None: none.
+      (The ``min_time`` of ``[analysis.fragments]`` is on the exchange clock.)
+    - ``max_spectra``: the most spectra per target in such a run, spread over log time; None: all.
+    - ``mz_margin``: the m/z kept on either side of a target's predicted bins.
+    - ``sum_ppm``: centroided peaks closer than this (ppm) are merged when summed.
+    - ``gap_factor``: in profile scans, a point spacing this many times both neighbours' is a
+      stretch the instrument left out (it stays zero when summed).
+    - ``precursor_tol`` (m/z): the tolerance matching a scan's precursor to a target's.
     """
 
     group: str = "each"

@@ -35,11 +35,12 @@ Differences from the reference code: sequences are modX residues with terminal g
 acetyl group's factors, and no N-terminal factor on residue 2; a C-terminal ``-NH2`` has no
 C-terminal factor (Bai's is for the carboxyl group) and its last residue is marked
 ``approximate``; a modified residue takes the factors of its standard residue and is marked
-``approximate`` (no published factors for acK, pS, pT or pY; HISTORY item 70) unless
+``approximate`` (no published factors for acK, pS, pT or pY) unless
 :attr:`ExchangeConditions.factors` gives them; a two-residue peptide gets both terminal factors;
 no intermediate value is rounded; residues without an amide hydrogen (the first, with a free
 amine, and prolines) have NaN rates.
 """
+# evidence for the terminal and modified-residue rules: docs/HISTORY.md item 70
 
 from __future__ import annotations
 

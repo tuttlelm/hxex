@@ -305,7 +305,7 @@ def test_tables_have_the_documented_columns_and_values(results):
     comp, spec, up = components_table(results), spectra_table(results), uptake_table(results)
     ks = results.effective_K
     assert len(comp["rank"]) == ks.sum() and len(spec["K"]) == len(results)
-    assert {"mean", "mean_corrected", "mean_corrected_se", "population", "status", "flags",
+    assert {"mean", "mean_corrected", "mean_corrected_se", "population", "review_status", "flags",
             "peptide", "rep"} <= set(comp)
     assert (comp["peptide"] == "RDKVQKEYAL").all() and set(comp["rep"]) == {1, 2, 3}
     k_max = int(ks.max())
@@ -316,7 +316,7 @@ def test_tables_have_the_documented_columns_and_values(results):
     assert np.isclose(spec["mean_corrected_1"][i], comp["mean_corrected"][sel][0])
     # the replicate average: three replicates at 60 s
     row = (up["data_id"] == 0) & (up["time"] == 60) & (up["rank"] == 1)
-    assert up["n"][row][0] == 3 and np.isfinite(up["mean_sd"][row][0])
+    assert up["n_replicates"][row][0] == 3 and np.isfinite(up["replicate_sd"][row][0])
     mine = (comp["data_id"] == 0) & (comp["time"] == 60) & (comp["rank"] == 1)
     assert np.isclose(up["mean"][row][0], comp["mean_corrected"][mine].mean())
 
@@ -327,8 +327,8 @@ def test_a_rejected_spectrum_leaves_the_uptake_average(results):
     rejected = results.with_review(ReviewTable.empty().update(sid, status="rejected"))
     up = uptake_table(rejected)
     row = (up["data_id"] == 0) & (up["time"] == 60) & (up["rank"] == 1)
-    assert up["n"][row][0] == 2
-    assert components_table(rejected)["status"].tolist().count("rejected") >= 1
+    assert up["n_replicates"][row][0] == 2
+    assert components_table(rejected)["review_status"].tolist().count("rejected") >= 1
 
 
 def test_csv_files(results, tmp_path):
@@ -358,15 +358,24 @@ def test_select_series(results):
 
 
 def test_figure_files(results, tmp_path):
-    files = write_figures(results, tmp_path / "pdf", PlotConfig(series="all", overview=False))
+    from hxex.report import series_kinds
+    from hxex.report.series import series_rows
+
+    cfg = PlotConfig(series="all", overview=False)
+    files = write_figures(results, tmp_path / "pdf", cfg)
     assert len(files) == 2 and all(f.suffix == ".pdf" and f.stat().st_size > 5000 for f in files)
-    assert b"/Count 3" in files[0].read_bytes()  # one page for each kind
+    assert files[0].stem.startswith("S_0001_0010_") and "hxex" not in files[0].stem
+    for f, d in zip(files, select_series(results, "all"), strict=True):
+        kinds = series_kinds(results, d, cfg)  # one page for each kind drawn
+        assert f"/Count {len(kinds)}".encode() in f.read_bytes()
+        multi = bool((results.effective_K[series_rows(results, d)] > 1).any())
+        assert ("populations" in kinds) == multi  # no populations page at K = 1 throughout
     png = write_figures(results, tmp_path / "png",
                         PlotConfig(series=(1,), kinds=("uptake",), format="png", dpi=50,
                                    overview=False))
     assert [f.name.endswith("_uptake.png") for f in png] == [True]
     only_overview = write_figures(results, tmp_path / "none", PlotConfig())  # nothing flagged
-    assert [f.name for f in only_overview] == ["hxex_overview.pdf"]
+    assert [f.name for f in only_overview] == ["overview.pdf"]
     seen = []
     write_figures(results, tmp_path / "p",
                   PlotConfig(series="all", kinds=("uptake",), overview=False),
@@ -390,10 +399,11 @@ def test_a_run_writes_figures_when_asked(tmp_path):
     plots = PlotConfig(series="all", kinds=("uptake", "populations"))
     cfg = config(bootstrap=None, plots=plots)
     run(raw, cfg, out=tmp_path / "bundle")
-    assert len(list((tmp_path / "bundle_figures").glob("hxex_[0-9]*.pdf"))) == 2
-    assert (tmp_path / "bundle_figures" / "hxex_overview.pdf").exists()
+    series_pdfs = [p for p in (tmp_path / "bundle_figures").glob("*.pdf") if p.stem != "overview"]
+    assert len(series_pdfs) == 2
+    assert (tmp_path / "bundle_figures" / "overview.pdf").exists()
     run(raw, cfg, figures_dir=tmp_path / "elsewhere")
-    assert len(list((tmp_path / "elsewhere").glob("hxex_[0-9]*.pdf"))) == 2
+    assert len([p for p in (tmp_path / "elsewhere").glob("*.pdf") if p.stem != "overview"]) == 2
     with pytest.raises(ValueError, match="figures_dir or out"):
         run(raw, cfg)  # nowhere to write: refused before any work
     none = run(raw, config(bootstrap=None), out=tmp_path / "plain")
@@ -733,7 +743,7 @@ def test_series_table_and_finding_series(results):
     t = series_table(results)
     assert list(t["data_id"]) == [0, 1] and list(t["n_spectra"]) == [8, 8]
     assert set(t["peptide"]) == {"RDKVQKEYAL"} and list(t["charge"]) == [2, 2]
-    assert list(t["controls"]) == ["measured", "measured"] and not t["fallback"].any()
+    assert list(t["controls"]) == ["measured", "measured"] and not t["control_fallback"].any()
     np.testing.assert_allclose(t["retention"], results.controls.retention)
     assert list(t["n_multi"]) == [int((results.effective_K[results.fit.data_id == d] > 1).sum())
                                   for d in (0, 1)]
@@ -831,7 +841,7 @@ def test_overviews_are_written_with_the_figures(results, tmp_path):
     pngs = write_overview(results, tmp_path / "o.png", dpi=40)
     assert sorted(p.name for p in pngs) == ["o_controls.png", "o_k_selection.png", "o_quality.png"]
     files = write_figures(results, tmp_path / "f", PlotConfig(series=(0,), kinds=("uptake",)))
-    assert [f.name for f in files][0] == "hxex_overview.pdf" and len(files) == 2
+    assert [f.name for f in files][0] == "overview.pdf" and len(files) == 2
     none = write_figures(results, tmp_path / "n", PlotConfig(overview=False))
     assert none == []
 
@@ -961,4 +971,4 @@ def test_effective_k_and_review_status_are_computed_once(results):
     assert changed.effective_K[3] == 2 and changed.review_status[3] == "rejected"
     assert changed.review_status[0] == "unreviewed"
     assert results.effective_K[3] == results.fit.selected_K[3]  # the original is untouched
-    assert spectra_table(changed)["status"][3] == "rejected"
+    assert spectra_table(changed)["review_status"][3] == "rejected"

@@ -203,12 +203,12 @@ def compare_peptides(
     docstring for the hybrid rule). The values are those of
     :func:`hxex.analysis.species_uptake` with the same filters. ``results`` may be a
     :class:`hxex.analysis.RunSet` (samples ``run:sample``; ``delta_crit`` is then pooled over
-    every run). ``match`` says which peptides are compared: ``'range'`` (the default; owner,
-    2026-10-13) pairs the peptides over the same residues, so that a peptide containing a mutation
+    every run). ``match`` says which peptides are compared: ``'range'`` (the default) pairs the
+    peptides over the same residues, so that a peptide containing a mutation
     is compared with the reference's (``same_sequence`` False), except where a sample has several
     species over the same residues (a modified and an unmodified form): those are paired only
     with the same sequence; where one sample has only the modified form and the other only the
-    unmodified one over a range, the two are paired by range (intended: owner, 2026-10-15), and
+    unmodified one over a range, the two are paired by range, and
     ``modification`` and ``modification_reference`` show it. ``'sequence'`` pairs only
     identical sequences and modifications.
     ``controls``: control settings to change (:func:`hxex.analysis.species.analysis_controls`)."""
@@ -297,8 +297,7 @@ class ResidueComparison:
     ``two_reference`` and ``two``: whether each side's one-or-two choice
     (:func:`hxex.analysis.choose_populations`) keeps two populations at the residue, so that a
     difference is read beside whether each side supports two populations; ``None`` when the
-    comparison was made without a choice. Rows are kept whatever the choices (owner,
-    2026-10-15)."""
+    comparison was made without a choice. Rows are kept whatever the choices."""
 
     sample: np.ndarray
     time: np.ndarray

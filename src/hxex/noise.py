@@ -34,22 +34,27 @@ MODELS = ("gaussian", "poisson")
 
 @dataclass(frozen=True)
 class NoiseConfig:
-    """Noise model and level. The default is the setting used for the regression baseline:
-    Gaussian, 3 % of the tallest peak of the reference spectrum (not a general recommendation).
+    """Noise model and level of the fit (the ``[run.fit.noise]`` table): the loss scale, which
+    also sets the model selection. The default is Gaussian at 3 % of the tallest peak of the
+    series' reference spectrum, the setting of the regression baseline, not a recommendation.
 
-    ``sd`` is a scalar or one value per measurement. Exactly one of ``sd`` and ``percent`` is
-    needed for ``gaussian``; ``n_eff`` is only for ``poisson`` (alone or without ``percent``).
-
-    ``estimate='replicates'`` estimates the noise of each series (one peptide at one charge, with
-    its controls and time points) from its replicate spectra (:func:`estimate_noise`): variance
-    equal to a gain times the intensity. The loss stays Gaussian: each spectrum of the series gets
-    the sd ``sqrt(gain x its mean bin intensity)`` (the Poisson loss split two populations badly on
-    real data, docs/HISTORY.md items 49, 55 to 57); it needs the gaussian model. A series needs at
-    least ``min_replicated`` time points with two or more replicates; one without that falls back to
-    the settings above, as if ``estimate`` were not set. ``min_share`` is the smallest share of a
-    spectrum's total intensity a bin must have to be used, and a replicate whose score exceeds
-    ``outlier_score`` is flagged and left out of the estimate.
+    - ``model``: ``'gaussian'`` or ``'poisson'``.
+    - ``sd``: the Gaussian sd in intensity units, one value or one per measurement; exactly one
+      of ``sd`` and ``percent`` is given for ``gaussian``.
+    - ``percent``: the sd (or the Poisson scale) as percent of the tallest peak of the series'
+      undeuterated reference spectrum.
+    - ``n_eff``: for ``poisson`` only, the effective counts of the tallest peak (alone, or
+      without ``percent``).
+    - ``estimate``: ``'replicates'`` estimates the noise of each series (one peptide at one
+      charge, with its controls and time points) from its replicate spectra
+      (:func:`estimate_noise`): a variance equal to a gain times the intensity. The loss stays
+      Gaussian (needs the gaussian model): each spectrum of the series gets the sd ``sqrt(gain x
+      its mean bin intensity)``. A series with fewer than ``min_replicated`` time points of two
+      or more replicates falls back to the level above. ``min_share`` is the smallest share of a
+      spectrum's total intensity a bin must have to be used, and a replicate whose score exceeds
+      ``outlier_score`` is left out of the estimate and flagged ``noise_outlier``.
     """
+    # why the loss stays Gaussian: docs/HISTORY.md items 49 and 55 to 57
 
     model: str = "gaussian"
     sd: float | tuple[float, ...] | None = None
@@ -148,8 +153,8 @@ def kinetics_references(
     (``rep``) among the kinetics spectra whose tallest peak is the median of theirs (the lower
     one for an even count), so the series shares one noise level at the kinetics file's
     intensity. A separate undeuterated control can be far weaker than the kinetics scans (about
-    2 % on the private fragment dataset), and its scale would make them look almost noiseless
-    (HISTORY item 77). None for the other spectra."""
+    2 % on the private fragment dataset), and its scale would make them look almost noiseless.
+    None for the other spectra."""
     data_id, rep = np.asarray(data_id), np.asarray(rep)
     kinetics = np.asarray(kinetics, dtype=bool)
     if not (len(data_id) == len(rep) == len(observed) == len(kinetics)):

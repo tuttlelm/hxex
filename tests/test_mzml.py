@@ -368,7 +368,7 @@ def test_mzml_spectra_run_end_to_end(tmp_path):
 
     path = write_mzml(tmp_path / "e2e.mzML", time_course(n=6))
     spectra = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p")
-    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise=100.0),
+    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise_threshold=100.0),
                     fit=FitConfig(k_min=1, k_max=1, adam_steps=150, n_restarts=2,
                                   backend=Backend("cpu", "float64"),
                                   noise=NoiseConfig("gaussian", percent=3.0)),
@@ -401,7 +401,7 @@ def test_the_read_is_recorded_and_repeated(tmp_path):
     from hxex.run import RunConfig, run
 
     path = write_mzml(tmp_path / "a.mzML", time_course(n=6))
-    picker = PickerConfig(zero_filling=3, noise=100.0)
+    picker = PickerConfig(zero_filling=3, noise_threshold=100.0)
     target = MzmlTarget(ENTRY, ms_level=1, filter_excludes="sid", rt_window=None)
     config = MzmlConfig(group="every", every=2, mz_margin=1.5)
     runs = [MzmlRun(path, "WT", rep=1, time_offset=30.0)]
@@ -629,7 +629,7 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
     frag = MzmlTarget(dataclasses.replace(ENTRY, extra={"fragment": "c:10"}), ms_level=2,
                       activation="ETD", precursor_mz=1012.0, precursor_charge=20)
     spectra = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
-    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise=100.0), quality=None,
+    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise_threshold=100.0), quality=None,
                     fit=FitConfig(k_min=1, k_max=1, adam_steps=50, n_restarts=1,
                                   backend=Backend("cpu", "float64"),
                                   noise=NoiseConfig("gaussian", percent=3.0)))

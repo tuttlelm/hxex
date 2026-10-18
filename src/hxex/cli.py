@@ -427,16 +427,22 @@ def cmd_run(args) -> int:
         from .report import Results, write_tables
 
         write_tables(Results.from_run(result), tables)
-        log.info("tables in %s", tables)
-    _summary(result.fit, bundle)
+    _summary(result.fit, bundle, tables=tables,
+             figures=_beside(bundle, out.figures, "_figures") if out.figures is not False
+             else None)
     return 0
 
 
-def _summary(fit, bundle: Path) -> None:
+def _summary(fit, bundle: Path, *, tables: Path | None = None,
+             figures: Path | None = None) -> None:
     ks = Counter(int(k) for k in fit.selected_K)
     _say(f"{len(fit)} measurements; selected K: "
          + ", ".join(f"{k}: {n}" for k, n in sorted(ks.items())))
     _say(f"bundle: {bundle}")
+    if tables is not None:
+        _say(f"tables: {tables}")
+    if figures is not None:
+        _say(f"figures: {figures}")
 
 
 def cmd_resume(args) -> int:

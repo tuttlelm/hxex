@@ -26,7 +26,14 @@ from .coverage import (
     plot_redundancy_resolution,
 )
 from .curves import component_curves
-from .figures import PlotConfig, select_series, series_figures, write_figures
+from .figures import (
+    PlotConfig,
+    figure_stems,
+    select_series,
+    series_figures,
+    series_kinds,
+    write_figures,
+)
 from .fragments import closure_figure, ladder_kinetics_figure, residue_rates_figure
 from .overview import (
     controls_overview_data,
@@ -118,7 +125,9 @@ __all__ = [
     "plot_uptake",
     "population_data",
     "quality_overview_data",
+    "figure_stems",
     "select_series",
+    "series_kinds",
     "series_figures",
     "series_info",
     "series_table",

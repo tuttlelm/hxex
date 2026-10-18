@@ -44,6 +44,8 @@ def small():
 # --- configuration --------------------------------------------------------------------------
 
 def test_config_roundtrip_and_validation():
+    with pytest.raises(ValueError, match="percentage"):
+        BootstrapConfig(ci=0.95)  # a fraction where a percentage is meant
     cfg = BootstrapConfig(n_boot=50, ci=90.0, keep_draws=True, seed=3)
     assert BootstrapConfig.from_dict(json.loads(json.dumps(cfg.to_dict()))) == cfg
     assert BootstrapConfig().n_boot == 200 and BootstrapConfig().ci == 95.0

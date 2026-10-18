@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -25,6 +26,7 @@ from .series import (
     plot_series_spectra,
     plot_uptake,
     series_info,
+    series_rows,
 )
 from .spectrum import LAYERS
 
@@ -35,16 +37,25 @@ FORMATS = ("pdf", "svg", "png")
 
 @dataclass(frozen=True)
 class PlotConfig:
-    """Which figures to write. ``series`` is ``'flagged'`` (series with a flagged or rejected
-    spectrum, or a control that fell back; the default, because a large run has too many series
-    to draw), ``'all'`` or a tuple of ``data_id``. ``kinds`` is a subset of ``spectra``,
-    ``populations`` and ``uptake``; ``show`` the layers of the spectra; ``x`` and ``scale`` the
-    uptake axis; ``corrected`` the back-exchange correction (None: when the results have
-    controls); ``format`` is ``pdf`` (one file per series, one page per kind), ``svg`` or ``png``
-    (one file per kind). ``overview`` also writes the run's overviews (K selection, controls,
-    quality) as ``hxex_overview``. ``residual`` adds a residual panel under every spectrum of the
-    spectra grid. ``dpi`` (300) sets the resolution of PNG files and of any raster image inside
-    PDF or SVG files."""
+    """Which figures :func:`write_figures` writes (the ``[run.plots]`` table).
+
+    - ``series``: ``'flagged'`` (series with a flagged or rejected spectrum, or a control that
+      fell back; the default, because a large run has too many series to draw), ``'all'`` or a
+      list of ``data_id``.
+    - ``kinds``: the pages of a series' figure, any of ``spectra``, ``populations`` and
+      ``uptake``. The ``populations`` page is left out of a series in which every spectrum has
+      one population.
+    - ``show``: the layers of the spectra page, any of ``raw``, ``picked`` and ``fit``;
+      ``residual`` adds a residual panel under every spectrum.
+    - ``x`` (``'time'`` or ``'index'``) and ``scale`` (``'linear'`` or ``'log'``): the uptake
+      axis.
+    - ``corrected``: draw back-exchange corrected values; None: when the results have controls.
+    - ``format``: ``'pdf'`` (one file per series, one page per kind), ``'svg'`` or ``'png'`` (one
+      file per kind); ``dpi``: the resolution of PNG files and of raster images inside PDF or
+      SVG files.
+    - ``overview``: also write the run's overviews (K selection, controls, quality) as
+      ``overview``.
+    """
 
     series: str | tuple[int, ...] = "flagged"
     kinds: tuple[str, ...] = KINDS
@@ -115,9 +126,9 @@ def series_figures(
     results: Results, data_id: int, config: PlotConfig = PlotConfig(),  # noqa: B008
     reference: Reference | None = None,
 ) -> dict[str, Figure]:
-    """The figures of one series asked for by ``config``, by kind."""
+    """The figures of one series asked for by ``config``, by kind (:func:`series_kinds`)."""
     out: dict[str, Figure] = {}
-    for kind in config.kinds:
+    for kind in series_kinds(results, data_id, config):
         if kind == "spectra":
             out[kind] = plot_series_spectra(results, data_id, show=config.show,
                                             corrected=config.corrected,
@@ -132,6 +143,27 @@ def series_figures(
     return out
 
 
+def series_kinds(results: Results, data_id: int, config: PlotConfig) -> tuple[str, ...]:
+    """The kinds of ``config`` drawn for a series: all of them, except the ``populations`` page
+    when every spectrum of the series has one population at the K in effect (a map of one
+    population shows nothing)."""
+    kinds = config.kinds
+    if "populations" in kinds:
+        rows = series_rows(results, data_id)
+        if not (results.effective_K[rows] > 1).any():
+            kinds = tuple(k for k in kinds if k != "populations")
+    return kinds
+
+
+def figure_stems(results: Results, data_ids: Sequence[int]) -> dict[int, str]:
+    """The file stem of each series' figure: its label (sample, range, peptide or fragment,
+    charge, condition) as a file name; the ``data_id`` is added where two series would share a
+    stem."""
+    stems = {int(d): _slug(series_info(results, int(d))["file_label"]) for d in data_ids}
+    counts = Counter(stems.values())
+    return {d: stem if counts[stem] == 1 else f"{stem}_{d}" for d, stem in stems.items()}
+
+
 def write_figures(
     results: Results,
     directory: str | Path,
@@ -141,25 +173,26 @@ def write_figures(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> list[Path]:
-    """Write the run's overviews (if ``config.overview``) and the figures of the series selected
-    by ``config`` into ``directory``, and return the files. A series' figures are made and
-    released one by one. The figures hxex wrote there before are replaced (its listing,
-    :func:`hxex.io.replace_outputs`), never a file of your own."""
+    """Write the run's overviews (if ``config.overview``, as ``overview``) and the figures of
+    the series selected by ``config`` into ``directory`` (named by :func:`figure_stems`), and
+    return the files. A series' figures are made and released one by one. The figures hxex
+    wrote there before are replaced (its listing, :func:`hxex.io.replace_outputs`), never a
+    file of your own."""
     directory = Path(directory)
     chosen = select_series(results, config.series)
-    stems = {data_id: f"hxex_{data_id}_{_slug(series_info(results, data_id)['file_label'])}"
-             for data_id in chosen}
-    names = [f"hxex_overview.{config.format}"] if config.overview else []
-    for stem in stems.values():  # the files a series gives, known before anything is drawn
+    stems = figure_stems(results, chosen)
+    names = [f"overview.{config.format}"] if config.overview else []
+    for data_id, stem in stems.items():  # the files a series gives, known before it is drawn
         if config.format == "pdf":
             names.append(f"{stem}.pdf")
         else:
-            names += [f"{stem}_{kind}.{config.format}" for kind in config.kinds]
+            names += [f"{stem}_{kind}.{config.format}"
+                      for kind in series_kinds(results, data_id, config)]
     with replace_outputs(directory, names) as written:
         if config.overview:
             from .overview import write_overview
 
-            written += write_overview(results, directory / f"hxex_overview.{config.format}",
+            written += write_overview(results, directory / f"overview.{config.format}",
                                       dpi=config.dpi)
         for n, data_id in enumerate(chosen):
             check_cancel(cancel)
@@ -177,7 +210,7 @@ def write_figures(
                     fig.savefig(path, dpi=config.dpi)
                     written.append(path)
             report(progress, n + 1, len(chosen))
-    log.info("wrote %d figure file(s) for %d series", len(written), len(chosen))
+    log.info("wrote %d figure file(s) for %d series in %s", len(written), len(chosen), directory)
     return list(written)
 
 

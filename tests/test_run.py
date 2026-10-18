@@ -24,7 +24,7 @@ from test_bundle import envelope, natural
 from test_picking import sticks
 
 PEPTIDE = "RDKVQKEYAL"
-PICK = PickerConfig(zero_filling=3, noise=100.0)
+PICK = PickerConfig(zero_filling=3, noise_threshold=100.0)
 CPU = Backend("cpu", "float64")
 LAYOUT = [(0.0, 1, 0.5, 0.8), (0.0, 2, 0.5, 0.85), (0.0, 3, 0.5, 0.8), (60.0, 1, 3.0, 1.2),
           (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]

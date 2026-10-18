@@ -18,9 +18,9 @@ With ``share`` the conditions of one ion share its envelope: the series of the s
 charge, activation and precursor that differ only in their scan filters or the fragment list's
 label (gentle and harsh in-source activation, say) get one envelope, fitted to all their references
 together (:func:`hxex.io.envelope_groups` gives the groups). The ion-type mixture is set by the
-activation, not by the in-source energy: on the owner's comparison of undeuterated fragments at low
-and high energy in ETD, EThcD and UVPD the envelopes agreed unless something else was wrong with
-the data (docs/HISTORY.md item 87). So the conditions are first compared: two agree when the
+activation, not by the in-source energy: in a comparison of undeuterated fragments at low and
+high energy in ETD, EThcD and UVPD the envelopes agreed unless something else was wrong with the
+data. So the conditions are first compared: two agree when the
 envelope fitted to the references of each describes those of the other nearly as well as their own
 does (:func:`reference_residual` at most ``max_residual`` above the residual of their own envelope,
 both ways; how well the mixture fits at all is ``good``). The shared envelope is fitted to the
@@ -34,6 +34,7 @@ differences: the components are shifted by the hydrogen mass rather than by one 
 mixture also sets the bin positions. Like pyHXExpress it assumes the proportions of the ion types
 do not change with deuteration.
 """
+# the gentle/harsh comparison and the cycling rounds: docs/HISTORY.md items 87 and 88
 
 from __future__ import annotations
 
@@ -54,11 +55,18 @@ MODES = ("theory", "mixed", "infer")
 
 @dataclass(frozen=True)
 class EnvelopeConfig:
-    """How the envelope of each series is found (see the module docstring). ``components`` is the
-    number of ion types in a mixture; ``max_residual`` the largest relative residual (RMS of the
-    mixture's misfit over the RMS of the reference envelope) for which a reference counts as
-    good; ``iterations`` the rounds of picking and fitting the weights; ``share`` gives the
-    conditions of one ion one envelope (see the module docstring)."""
+    """How the envelope of each series is found (the ``[run.envelope]`` table; see the module
+    docstring).
+
+    - ``mode``: ``'theory'``, ``'mixed'`` or ``'infer'``.
+    - ``components``: the number of ion types in a mixture.
+    - ``max_residual``: the largest relative residual (RMS of the mixture's misfit over the RMS
+      of the reference envelope) for which a reference counts as described, else the series is
+      flagged ``poor_envelope``.
+    - ``iterations``: the rounds of picking and fitting the weights.
+    - ``share``: the conditions of one ion (series differing only in scan filters or label) share
+      one envelope.
+    """
 
     mode: str = "theory"
     components: int = 2
@@ -130,8 +138,8 @@ def estimate_envelope(
     to 1) and fit the weights by non-negative least squares to that average. Each set of weights
     (the starting ones, every fitted one) is scored by its misfit (at the best scale) to the
     references picked with its own bins, those a run would use, and the best is kept: the bins
-    move with the weights, so the rounds need not settle (on a weak reference they can cycle,
-    docs/HISTORY.md item 88). ``residual`` is that misfit, and with ``'infer'`` the average picked
+    move with the weights, so the rounds need not settle (on a weak reference they can cycle).
+    ``residual`` is that misfit, and with ``'infer'`` the average picked
     with the kept weights' bins is the envelope of the fit. Without a usable reference (none given,
     or nothing picked) the result is the theory with ``good`` False.
     """

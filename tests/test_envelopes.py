@@ -26,7 +26,7 @@ from hxex.run import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE, CHARGE, ION = "RDKVQKEYAL", 2, "c-1"
-PICK = PickerConfig(nterm_subtract=0, zero_filling=3, noise=50.0)
+PICK = PickerConfig(nterm_subtract=0, zero_filling=3, noise_threshold=50.0)
 TRUE_WEIGHTS = np.array([0.25, 0.75])
 
 
