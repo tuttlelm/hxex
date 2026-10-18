@@ -136,15 +136,22 @@ half a bin after about 120.
 
 ## The intensity of a bin
 
-Each bin takes the tallest point within `resolution_ppm` of its predicted m/z (default +/- 50 ppm).
-The reported m/z of the bin is the predicted one; where the peak was found is reported separately
-(see "Where the peaks were found").
+Each bin takes the tallest point within `resolution_ppm` of its predicted m/z (default +/- 50 ppm),
+but never further than half the isotope spacing, `1.00235 / (2 z)`. The reported m/z of the bin is
+the predicted one; where the peak was found is reported separately (see "Where the peaks were
+found").
 
-**A window from the resolving power (optional).** A constant ppm window is a mass tolerance; it
-has no relation to the peak width, and at high charge it is wider than the isotope spacing (at
-m/z 1000 and z = 20 a 50 ppm half-width is 50 mDa, the whole spacing, so each window holds both
-neighbours). With `resolving_power` set (R quoted at `resolving_power_mz`, 200 by default, falling
-with m/z as `(m0 / m) ** resolving_power_exponent`, 0.5 for an Orbitrap) the half-width is
+**The half-spacing cap.** A constant ppm window is a mass tolerance with no relation to the peak
+spacing: at m/z 1000 and z = 20 a 50 ppm half-width is 50 mDa, the whole isotope spacing, so each
+window holds both neighbouring peaks and the shoulder rule (below) zeroes every bin whose neighbour
+is taller. On a top-down example at charge 20 that removed a third of the real envelope and moved
+its centre by about 9 bins (HISTORY item 99). The cap binds only where m/z times charge exceeds
+about 10,000 at 50 ppm, which no peptide dataset reaches, so bottom-up results are unchanged;
+pyHXExpress has no cap (a deliberate difference, `docs/PLAN.md`).
+
+**A window from the resolving power (optional).** With `resolving_power` set (R quoted at
+`resolving_power_mz`, 200 by default, falling with m/z as `(m0 / m) ** resolving_power_exponent`,
+0.5 for an Orbitrap) the half-width is
 `window_fwhm` peak widths `m / R(m)`, never below `mass_accuracy_ppm` (the calibration error; 10
 ppm by default) and never above half the isotope spacing `1.00235 / (2 z)`, so neighbouring
 windows do not overlap. For R = 60,000 at m/z 200 that is 29 ppm at m/z 600, 46 ppm at m/z 1500,
@@ -152,18 +159,19 @@ and 25 mDa instead of the 37 mDa peak width at m/z 1000 with z = 20. `resolving_
 "recorded"` takes each spectrum's value from the scan files: Thermo raw files record it per scan
 (`Orbitrap Resolution` or `FT Resolution` in the trailer) with the instrument model, which says
 whether it is quoted at m/z 200 or 400 (`hxex check` prints both); mzML files record none, and a
-spectrum without a value keeps the `resolution_ppm` window (logged). The cap is not applied to
-the plain `resolution_ppm` window, which stays pyHXExpress's; its effect there is to be measured
-before any change. The spectrum figures draw the window actually used.
+spectrum without a value keeps the `resolution_ppm` window (logged). The spectrum figures draw
+the window actually used.
 
 **Shoulder rule (from pyHXExpress).** If the window holds `shoulder_min_points` (10) or more points
 and its tallest point is the first or the last of the window, the bin is set to 0, on the reasoning
 that the maximum is then the flank of a neighbouring peak. The rule assumes the predicted position
 is on the peak: when it is not, it removes real peaks. With the ExMS ladder on an intact protein it
 zeroed 339 bins above 5 % of the maximum in 68 spectra (genuine apexes 15 to 20 ppm from their
-predictions); with the composition ladder 17. It is kept for compatibility; whether it helps is an
-open question (see "Limitations"). Windows with fewer points (stick or coarse profile data) are not
-affected.
+predictions); with the composition ladder 17. Its worst failure was at high charge, where an
+uncapped ppm window held both neighbouring peaks and the rule zeroed every flank bin of the
+envelope (HISTORY item 99); the half-spacing cap above removes that case, since a window can then
+hold at most one peak's apex. What remains open is a predicted position off the peak (see
+"Limitations"). Windows with fewer points (stick or coarse profile data) are not affected.
 
 ## Where the peaks were found
 
@@ -245,10 +253,12 @@ changes nothing measurable, and it does not change fit accuracy there.
 | Bin positions | ExMS ladder | composition ladder (ExMS as an option) |
 | End of picking | after a running count of below-threshold bins | `zero_filling` bins after the last bin above the threshold |
 | Empty or signal-less spectra | dropped silently | flagged, dropped by the run and recorded |
-| Window, maximum, shoulder rule, threshold, predicted m/z reported | as here | unchanged |
+| Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or from the resolving power (`resolving_power`, a value or `"recorded"`) |
+| Maximum, shoulder rule, threshold, predicted m/z reported | as here | unchanged |
 
 With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
-(every bin both pickers produce identical in m/z and intensity).
+(every bin both pickers produce identical in m/z and intensity); the cap never binds on peptide
+data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffected by it.
 
 ## Limitations and open questions
 
@@ -260,8 +270,9 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
   calibration from the undeuterated control (whose isotope pattern is known) is an option to
   consider.
 - **The shoulder rule** is unvalidated: it was designed against overlapping species but cannot tell
-  their flank from a real peak off its prediction. With the composition ladder it mostly zeroes
-  small tail bins.
+  their flank from a real peak off its prediction. With the composition ladder and the capped
+  window it mostly zeroes small tail bins; the high-charge failure (a window holding both
+  neighbours) is gone with the cap.
 - **Fragment ions.** Constant offsets of -14 to -49 ppm seen for fragment targets on the
   `c-1`, `z-dot` and `M-NH3` ladders came from the ion-type mixtures above (a single assumed type
   one hydrogen off the real ions): with the right type, fragments of an undeuterated reference sit
@@ -276,7 +287,7 @@ With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its Oc
 | Setting | Default | Meaning |
 |---|---|---|
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
-| `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z |
+| `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z, capped at half the isotope spacing |
 | `resolving_power` | None | R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
 | `resolving_power_mz` | 200 | m/z the resolving power is quoted at |
 | `resolving_power_exponent` | 0.5 | R falls as `(m0 / m) ** e` (Orbitrap 0.5, TOF 0, FT-ICR 1) |

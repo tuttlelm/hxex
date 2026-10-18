@@ -68,9 +68,10 @@ class PickerConfig:
       ``m / R(m)``.
     - ``mass_accuracy_ppm``: the half-width is never below this (the calibration error a very
       high R would otherwise fall under).
-    - The half-width is never above half the isotope spacing, ``1.00235 / (2 z)``, so the
-      windows of neighbouring bins do not overlap (the ``resolution_ppm`` window has no such
-      cap).
+
+    Either way the half-width is never above half the isotope spacing, ``1.00235 / (2 z)``, so
+    the windows of neighbouring bins do not overlap: at high charge an uncapped ppm window
+    holds the neighbouring peaks and the shoulder rule then zeroes the envelope's flanks.
 
     ``noise`` is the former name of ``noise_threshold`` and is still accepted.
     """
@@ -136,8 +137,8 @@ class PickerConfig:
                    resolving_power_mz: float | None = None) -> np.ndarray:
         """The half-width, in m/z, of the picking window at each predicted ``mz`` of an ion of
         ``charge``: ``mz * resolution_ppm / 1e6`` by default; with ``resolving_power`` set, the
-        larger of ``window_fwhm`` peak widths and ``mass_accuracy_ppm``, capped at half the
-        isotope spacing. ``resolving_power`` and ``resolving_power_mz`` here are a spectrum's
+        larger of ``window_fwhm`` peak widths and ``mass_accuracy_ppm``; either capped at half
+        the isotope spacing. ``resolving_power`` and ``resolving_power_mz`` here are a spectrum's
         recorded values, used with ``'recorded'`` (NaN or None: the ``resolution_ppm`` window;
         a NaN reference m/z: the setting's)."""
         mz = np.asarray(mz, dtype=np.float64)
@@ -148,25 +149,29 @@ class PickerConfig:
                  and np.isfinite(resolving_power) and resolving_power > 0 else None)
             if resolving_power_mz is not None and np.isfinite(resolving_power_mz):
                 r_mz = float(resolving_power_mz)
+        cap = ISOTOPE_STEP / (2.0 * max(int(charge), 1))
         if r is None:
-            return mz * self.resolution_ppm / 1e6
+            return np.minimum(mz * self.resolution_ppm / 1e6, cap)
         r_at = float(r) * (r_mz / mz) ** self.resolving_power_exponent
         width = np.maximum(self.window_fwhm * mz / r_at, mz * self.mass_accuracy_ppm / 1e6)
-        return np.minimum(width, ISOTOPE_STEP / (2.0 * max(int(charge), 1)))
+        return np.minimum(width, cap)
 
     def window_edges(self, mz, charge: int, **recorded) -> tuple[np.ndarray, np.ndarray]:
         """The lower and upper edges of the picking window at each predicted ``mz``
-        (:meth:`half_width` either side; the ``resolution_ppm`` window is ``mz * (1 -/+ ppm /
-        1e6)`` exactly, as pyHXExpress computes it)."""
+        (:meth:`half_width` either side; where the ``resolution_ppm`` window is not capped
+        its edges are ``mz * (1 -/+ ppm / 1e6)`` exactly, as pyHXExpress computes them)."""
         mz = np.asarray(mz, dtype=np.float64)
         half = self.half_width(mz, charge, **recorded)
+        lower, upper = mz - half, mz + half
         if self.resolving_power is None or (self.uses_recorded and not (
                 recorded.get("resolving_power") is not None
                 and np.isfinite(recorded["resolving_power"])
                 and recorded["resolving_power"] > 0)):
             factors = 1.0 + np.array([-1.0, 1.0]) * self.resolution_ppm / 1e6
-            return mz * factors[0], mz * factors[1]
-        return mz - half, mz + half
+            plain = mz * self.resolution_ppm / 1e6 <= ISOTOPE_STEP / (2.0 * max(int(charge), 1))
+            lower = np.where(plain, mz * factors[0], lower)
+            upper = np.where(plain, mz * factors[1], upper)
+        return lower, upper
 
     def to_dict(self) -> dict[str, Any]:
         out = {f.name: getattr(self, f.name) for f in fields(self)}

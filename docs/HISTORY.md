@@ -2717,3 +2717,16 @@ CSVs or mzML if wanted.
     left to the owner (a deliberate difference from pyHXExpress if taken). Scratch script in
     the session scratchpad only; the numbers are from the stored picked table of the benchmark,
     the pooled folder's entries, and the top-down example file.
+
+100. **The half-spacing cap applies to the ppm window too (2026-10-18; owner's decision after
+    item 99: "if pyHXExpress was wrong we do not need to copy it").** `PickerConfig.half_width`
+    and `window_edges` cap every window, the `resolution_ppm` one included, at half the
+    isotope spacing `1.00235 / (2 z)`; where the cap does not bind the ppm window's edges are
+    the exact products `mz * (1 -/+ ppm / 1e6)` as before, so every bottom-up pick is unchanged
+    (the picker golden and oracle tests pass bit for bit). On the top-down example at charge 20
+    the default settings now give the capped pick of item 99: 98 strong bins instead of 73,
+    the envelope centre within a bin of the 20 ppm and recorded-resolving-power picks, no
+    spectrum of the 23 differs from the scratch capped variant. A deliberate difference from
+    pyHXExpress (PLAN); PEAK_PICKING.md, the template comment on `resolution_ppm` and the
+    user guide draft describe the cap. Test: `tests/test_picking.py`
+    (`test_window_from_the_resolving_power`).

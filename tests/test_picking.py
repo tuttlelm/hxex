@@ -171,9 +171,12 @@ def test_window_from_the_resolving_power(caplog):
     assert PickerConfig(resolving_power=1e6).half_width([1000.0], 1)[0] == pytest.approx(0.01)
     tof = PickerConfig(resolving_power=30000.0, resolving_power_exponent=0.0, window_fwhm=2.0)
     assert tof.half_width([900.0], 1)[0] == pytest.approx(2 * 900.0 / 30000.0)
-    # the default window is unchanged, edges computed as before
+    # the default window is unchanged, edges computed as before, except that it too is capped
     lo, hi = CFG.window_edges(np.array([500.0]), 2)
     assert lo[0] == 500.0 * (1.0 - 50.0 / 1e6) and hi[0] == 500.0 * (1.0 + 50.0 / 1e6)
+    assert CFG.half_width([1000.0], 20)[0] == pytest.approx(1.00235 / 40)
+    lo, hi = CFG.window_edges(np.array([1000.0, 500.0]), 20)
+    assert hi[0] - 1000.0 == pytest.approx(1.00235 / 40) and hi[1] == 500.0 * (1.0 + 50.0 / 1e6)
     lo, hi = cfg.window_edges(np.array([500.0]), 2)
     assert hi[0] - 500.0 == pytest.approx(cfg.half_width([500.0], 2)[0])
     # the same peaks are picked on a clean spectrum

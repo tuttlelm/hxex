@@ -435,10 +435,14 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   `infer`) (item 35). Opt-in `share`: the conditions of one ion (scan filters, list label)
   share its envelope, checked pairwise; an envelope not measured well is flagged
   `poor_envelope` (item 87).
+- The picking window is capped at half the isotope spacing, `1.00235 / (2 z)`: pyHXExpress's
+  constant ppm window spans a whole spacing at high charge, and its shoulder rule then zeroes
+  the envelope's flanks (a third of the bins and a 9-bin centre shift on a top-down example at
+  charge 20; no peptide dataset reaches the cap) (items 99 and 100).
 - Opt-in picking window from the instrument's resolving power (`resolving_power`, a value or
   `"recorded"` from Thermo raw files): the half-width is `window_fwhm` peak widths `m / R(m)`,
-  floored at `mass_accuracy_ppm` and capped at half the isotope spacing; pyHXExpress has only
-  the constant ppm window, which hxex keeps as the default, uncapped (item 98).
+  floored at `mass_accuracy_ppm`; pyHXExpress has only the constant ppm window, which hxex
+  keeps as the default (item 98).
 
 Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status"):
 

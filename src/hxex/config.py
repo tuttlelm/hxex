@@ -892,7 +892,8 @@ _COMMENTS: dict[str, str] = {
     "run.memory_budget_bytes": "memory of one chunk of the fit, bytes (false: automatic)",
     "run.max_chunk": "most measurements in one chunk (false: no cap)",
     "run.picker.resolution_ppm": "half-width (ppm) of the window a peak is picked in around "
-                                 "its predicted m/z; not a resolving power",
+                                 "its predicted m/z (never above half the isotope spacing); "
+                                 "not a resolving power",
     "run.picker.zero_filling": "bins picked after the last one above the noise threshold",
     "run.picker.noise_threshold": "absolute intensity below which a point is noise (false: "
                                   "noise_percent of the tallest point instead)",

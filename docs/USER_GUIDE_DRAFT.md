@@ -21,10 +21,11 @@ Each bin takes the tallest point within 50 ppm either side of its predicted m/z.
 mass-accuracy tolerance (the same as pyHXExpress's `Peak_Resolution`). It is simple and it is
 the setting every earlier hxex result was made with, so it stays the default.
 
-Its weakness is at high charge. The window scales with m/z, but the spacing of a peptide's
-isotope peaks is about 1 Da divided by the charge. At m/z 1000 a 50 ppm half-width is 50 mDa:
-for a 2+ peptide (peaks 500 mDa apart) that is a tenth of the spacing, but for a 20+ protein
-(peaks 50 mDa apart) each window reaches both neighbouring peaks.
+The window never reaches further than half the spacing of the isotope peaks, about 1 Da divided
+by the charge. That matters only at high charge: at m/z 1000 a 50 ppm half-width is 50 mDa, a
+tenth of the spacing for a 2+ peptide (peaks 500 mDa apart) but the whole spacing for a 20+
+protein (peaks 50 mDa apart). Without the cap each window would hold both neighbouring peaks,
+and hxex would discard the bins whose neighbour is taller. For peptides the cap never applies.
 
 ### A window from the instrument's resolving power
 
