@@ -24,11 +24,13 @@
 A key left out keeps its default. TOML has no null: ``false`` stands for None where a setting
 can be None (an optional stage, a scan condition a run removes, an unset limit) and is not a
 switch; a switch (``drop_no_signal``, ``overview``) set to ``false`` is off. This holds in every
-``[run]`` table and sub-table, by the type of each setting. The control times of
-``[run.controls]`` (``undeut_time``, ``fd_time``) left out are those the readers give the
-controls (``[input] undeut_time`` and ``fulldeut_time`` of a folder format; ``[run]
-undeut_time`` for the undeuterated runs of a scan format); ``false`` says the data has no such
-control. Relative paths are taken relative to the project file's directory.
+``[run]`` table and sub-table, by the type of each setting. Times are in seconds, written as a
+number or as text with a unit (``"5 min"``, ``"20 h"``; :func:`hxex.io.parse_time`), in every
+time setting (``[[input.runs]]`` ``time``, ``[analysis]`` ``times``, ...); the loader converts
+them, so nothing after it sees a unit. The controls are the spectra with a role (``undeut``,
+``fulldeut``): the folder formats' control labels, ``role`` in ``[[input.runs]]``, or the
+spectra at ``undeut_at`` and ``fulldeut_at`` of ``[run.controls]``. Relative paths are taken
+relative to the project file's directory.
 :func:`load_project` reads and checks the file, :func:`read_input` reads the spectra it names,
 and :func:`template` writes a project file with every default.
 """
@@ -36,7 +38,6 @@ and :func:`template` writes a project file with every default.
 from __future__ import annotations
 
 import logging
-import math
 import textwrap
 import tomllib
 import types
@@ -47,10 +48,11 @@ from pathlib import Path
 from typing import Any
 
 from .hooks import CancelHook, ProgressHook
+from .io.errors import ReadError
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget
-from .io.times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME
+from .io.times import parse_time
 from .run import RunConfig
-from .spectra import SpectrumSet
+from .spectra import SpectrumSet, check_role
 
 log = logging.getLogger(__name__)
 
@@ -200,6 +202,19 @@ def run_config_from(data: Mapping) -> RunConfig:
     """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table (``false`` as None
     where a setting admits it; see the module docstring)."""
     merged = RunConfig().to_dict()
+    if "undeut_time" in data:
+        raise ProjectError("[run] undeut_time: the controls are no longer identified by a time; "
+                           "the undeuterated controls (the noise references) are the spectra "
+                           "with the role undeut (the control labels, or role in "
+                           "[[input.runs]])")
+    if isinstance(data.get("controls"), Mapping):
+        _refuse_control_times(data["controls"], "[run.controls]",
+                              "the controls are the spectra with a role (the control labels, "
+                              "or role in [[input.runs]]); undeut_at and fulldeut_at make the "
+                              "spectra at a time serve as a control as well")
+        data = {**data, "controls": _times_in(data["controls"], ("undeut_at", "fulldeut_at"),
+                                              "run.controls")}
+    data = _times_in(data, ("envelope_fallback_time",), "run")
     given = _false_to_none(data, RunConfig)
     for key, value in given.items():
         if key in _OPTIONAL_SECTIONS:
@@ -228,26 +243,6 @@ def run_config_from(data: Mapping) -> RunConfig:
         return RunConfig.from_dict(merged)
     except (TypeError, ValueError) as exc:
         raise ProjectError(f"[run]: {exc}") from exc
-
-
-def _control_times(run: RunConfig, given, inp: InputSettings) -> RunConfig:
-    """``run`` with the control times its ``[run.controls]`` (``given``, the table as written)
-    leaves out taken from where the readers put the controls: the undeuterated at the input's
-    ``undeut_time`` (folder formats) or at ``[run] undeut_time`` (scan formats, whose runs carry
-    their own times); the fully deuterated at the input's ``fulldeut_time`` (folder formats
-    only: a scan format's fully deuterated runs have whatever time their ``[[input.runs]]``
-    give, so ``fd_time`` is set by hand). A time given as ``false`` (no control of that kind)
-    stays None."""
-    if run.controls is None:
-        return run
-    given = given if isinstance(given, Mapping) else {}
-    folder = inp.format in FOLDER_FORMATS
-    times = {}
-    if "undeut_time" not in given:
-        times["undeut_time"] = inp.undeut_time if folder else run.undeut_time
-    if "fd_time" not in given and folder:
-        times["fd_time"] = inp.fulldeut_time
-    return replace(run, controls=replace(run.controls, **times)) if times else run
 
 
 @dataclass(frozen=True)
@@ -296,19 +291,20 @@ class InputSettings:
     - ``format``: ``specexport``, ``hxexpress``, ``pooled`` (folder formats), ``mzml`` or
       ``thermo`` (scan formats).
     - Folder formats: ``data_dir``; ``samples`` and ``peptide_ranges`` (only these);
-      ``sample`` (the name given to a pooled folder's entries); ``undeut_time`` and
-      ``fulldeut_time`` (s), the times recorded for the undeuterated and fully deuterated
-      control files (the controls' default times); ``peptides``, a table of the files instead of
-      finding them by name.
+      ``sample`` (the name given to a pooled folder's entries); ``peptides``, a table of the
+      files instead of finding them by name. The control files (``Non``/``Full``,
+      ``undeut``/``TD``) get their role from their label.
     - Scan formats: ``peptides`` (the peptide table, CSV), ``runs`` (one :class:`MzmlRun` per
       file), ``parents`` (read each peptide itself), ``target`` (how the peptides' scans are
       chosen), ``fragments`` (fragment targets), ``scans`` (how scans become spectra,
       :class:`MzmlConfig`), ``data_root`` (relative run paths start here) and ``thermo_dir``
       (Thermo's DLLs).
     - Every format: ``record_paths`` (``'path'``, ``'relative'`` or ``'name'``: how file paths
-      are recorded), ``retention_times`` (a table of retention times, minutes) and ``spectra``
+      are recorded), ``retention_times`` (a table of retention times, minutes), ``spectra``
       (take the raw spectra stored by an earlier run, a bundle or a spectra file, instead of
-      reading the input).
+      reading the input) and ``time_scale``: ``'seconds'`` (the times are real labelling times)
+      or ``'order'`` (the times only order the points, as with dummy labels: the uptake is drawn
+      by index and the kinetics, decay and protection analyses refuse).
     """
 
     format: str
@@ -317,9 +313,8 @@ class InputSettings:
     samples: tuple[str, ...] | None = None
     peptide_ranges: tuple[str, ...] | None = None
     sample: str = ""
-    undeut_time: float = DEFAULT_UNDEUT_TIME
-    fulldeut_time: float = DEFAULT_FULLDEUT_TIME
     record_paths: str = "path"
+    time_scale: str = "seconds"
     # mzML and Thermo raw files
     peptides: Path | None = None
     runs: tuple[MzmlRun, ...] = ()
@@ -411,7 +406,54 @@ def _window(value, where: str, unit: str = "[start, end] in seconds"):
         return None
     if not isinstance(value, list) or len(value) != 2:
         raise ProjectError(f"{where} must be {unit}")
+    if unit.endswith("seconds"):  # a time window: units allowed
+        return (_time(value[0], where), _time(value[1], where))
     return (float(value[0]), float(value[1]))
+
+
+def _time(value, where: str) -> float:
+    """Seconds of a time setting written as a number or as text with units
+    (:func:`hxex.io.parse_time`); a :class:`ProjectError` names ``where`` otherwise."""
+    try:
+        return parse_time(value, where)
+    except ReadError as exc:
+        raise ProjectError(str(exc)) from exc
+
+
+def _times_in(data: Mapping, keys, where: str) -> dict:
+    """``data`` with the time settings ``keys`` (a time, or a list of times) in seconds."""
+    out = dict(data)
+    for key in keys:
+        value = out.get(key)
+        if value is None or value is False:  # false: unset (the false rule, applied later)
+            continue
+        if isinstance(value, list):
+            out[key] = [_time(v, f"{where}.{key}") for v in value]
+        else:
+            out[key] = _time(value, f"{where}.{key}")
+    return out
+
+
+TIME_SCALES = ("seconds", "order")
+CONTROL_WORDS = {"undeut": "undeut", "un": "undeut", "non": "undeut", "undeuterated": "undeut",
+                 "td": "fulldeut", "fd": "fulldeut", "full": "fulldeut", "fulldeut": "fulldeut"}
+_OLD_CONTROL_KEYS = ("undeut_time", "fulldeut_time", "fd_time", "atol")
+
+
+def _time_scale(data: Mapping) -> str:
+    scale = data.get("time_scale", "seconds")
+    if scale not in TIME_SCALES:
+        raise ProjectError(f"input.time_scale must be one of {', '.join(TIME_SCALES)}")
+    return scale
+
+
+def _refuse_control_times(data: Mapping, where: str, instead: str) -> None:
+    """The control-time keys of project files written before the roles are refused with a
+    message that names what took their place."""
+    old = [k for k in _OLD_CONTROL_KEYS if k in data]
+    if old:
+        raise ProjectError(f"{where} {', '.join(old)}: the controls are no longer identified "
+                           f"by a time; {instead}")
 
 
 def _fragment_settings(block) -> FragmentSettings:
@@ -434,10 +476,12 @@ def _fragment_settings(block) -> FragmentSettings:
 def _input_from(data: Mapping, base: Path) -> InputSettings:
     """The ``[input]`` table. With ``spectra`` (stored raw spectra) the rest of the table is
     checked as usual when it is there (the same project file can read the input or rerun from a
-    bundle), but the format and the folder formats' control times are those of the stored
-    spectra's read record (logged when the file says otherwise); with ``spectra`` alone (and
-    at most ``retention_times``) they come from the record only."""
+    bundle), but the format is that of the stored spectra's read record (logged when the file
+    says otherwise); with ``spectra`` alone (and at most ``retention_times`` and
+    ``time_scale``) it comes from the record only."""
     names = {f.name for f in fields(InputSettings)}
+    _refuse_control_times(data, "[input]", "the control labels (Non/Full, undeut/TD) give "
+                          "their spectra a role; for a scan format set role in [[input.runs]]")
     _check_keys(data, names, "[input]")
     if "spectra" not in data:
         return _read_settings(data, base)
@@ -449,15 +493,11 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
         log.debug("input.spectra: %s (resolved when the spectra are read)", exc)
         source = None
     reader = (source or {}).get("reader")
-    record = {
-        "format": reader if reader in FORMATS else "stored",
-        "undeut_time": float((source or {}).get("undeut_time", DEFAULT_UNDEUT_TIME)),
-        "fulldeut_time": float((source or {}).get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
-    }
-    if not (set(data) - {"retention_times"}):
+    record = {"format": reader if reader in FORMATS else "stored"}
+    if not (set(data) - {"retention_times", "time_scale"}):
         return InputSettings(
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
-            spectra=stored, **record)
+            time_scale=_time_scale(data), spectra=stored, **record)
     inp = _read_settings(data, base)
     if source is None:  # the file's own settings until the record can be read
         return replace(inp, spectra=stored)
@@ -488,14 +528,12 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
             samples=_strings(data.get("samples"), "input.samples"),
             peptide_ranges=_strings(data.get("peptide_ranges"), "input.peptide_ranges"),
             sample=str(data.get("sample", "")),
-            undeut_time=float(data.get("undeut_time", DEFAULT_UNDEUT_TIME)),
-            fulldeut_time=float(data.get("fulldeut_time", DEFAULT_FULLDEUT_TIME)),
             record_paths=str(data.get("record_paths", "path")),
+            time_scale=_time_scale(data),
             peptides=_path(base, data.get("peptides"), "input.peptides"),
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
         )
-    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "sample", "undeut_time",
-                         "fulldeut_time"}
+    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "sample"}
     if extra:
         raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are not used by {fmt} "
                            "(the runs give the samples and times)")
@@ -510,12 +548,28 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         where = f"input.runs #{i}" + (f" ({r['path']})" if isinstance(r.get("path"), str)
                                       else "")
         _check_keys(r, run_names, where)
+        r = dict(r)
         time = r.get("time")
-        if time is not None and (isinstance(time, bool) or not isinstance(time, (int, float))
-                                 or not math.isfinite(time)):
-            raise ProjectError(f"{where}: time must be a number of seconds (the labelling time "
-                               "of the whole file) or left out (each scan has its own time); "
-                               f"got {time!r}")
+        if isinstance(time, str) and time.strip().lower() in CONTROL_WORDS:
+            raise ProjectError(f"{where}: time = {_toml_value(time)} names a control; write "
+                               f"role = \"{CONTROL_WORDS[time.strip().lower()]}\" (and leave "
+                               "time out, or give the file's labelling time as well)")
+        if time is not None:
+            try:
+                r["time"] = parse_time(time, f"{where} time")
+            except ReadError as exc:
+                raise ProjectError(
+                    f"{where}: time must be a number of seconds or text with a unit (\"60 s\", "
+                    f"\"5 min\"), the labelling time of the whole file, or left out (each scan "
+                    f"has its own time); got {time!r} ({exc})") from None
+        for key in ("time_offset", "usable_from"):
+            if r.get(key) is not None:
+                r[key] = _time(r[key], f"{where} {key}")
+        if "role" in r:
+            try:
+                r["role"] = check_role(_none(r["role"]), f"{where} role")
+            except ValueError as exc:
+                raise ProjectError(str(exc)) from exc
         rep = r.get("rep", 1)
         if isinstance(rep, bool) or not isinstance(rep, int) or rep < 1:
             raise ProjectError(f"{where}: rep must be a whole number of 1 or more, got {rep!r}")
@@ -542,6 +596,9 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if not isinstance(scans, Mapping):
         raise ProjectError(f"[input] scans = {_toml_value(scans)}: expected a table")
     scans = _false_to_none(scans, MzmlConfig)
+    scans = _times_in(scans, ("min_time",), "input.scans")
+    if isinstance(scans.get("windows"), list):
+        scans["windows"] = [_window(w, "input.scans.windows") for w in scans["windows"]]
     _check_types(scans, MzmlConfig, "input.scans")
     try:
         scans = MzmlConfig.from_dict(_merge(MzmlConfig().to_dict(), scans, "input.scans"))
@@ -604,7 +661,6 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     inp = None
     if "input" in data:
         inp = _input_from(data["input"], base)
-        run = _control_times(run, run_table.get("controls"), inp)
     output = _output_from(data.get("output", {}), base)
     if output.figures is not False and run.plots is None:  # figures asked for: default plots
         from .report.figures import PlotConfig
@@ -633,6 +689,19 @@ def _analysis_from(data: Mapping, base: Path):
     from .analysis import AnalysisConfig
 
     _check_keys(data, ANALYSIS_KEYS, "[analysis]")
+    data = _times_in(data, ("times", "exclude_times"), "analysis")
+    if isinstance(data.get("coverage_times"), list):
+        data = _times_in(data, ("coverage_times",), "analysis")
+    if isinstance(data.get("controls"), Mapping):
+        _refuse_control_times(data["controls"], "[analysis.controls]",
+                              "the controls are the spectra with a role; undeut_at and "
+                              "fulldeut_at make the spectra at a time serve as a control as "
+                              "well")
+        data = {**data, "controls": _times_in(data["controls"], ("undeut_at", "fulldeut_at"),
+                                              "analysis.controls")}
+    if isinstance(data.get("fragments"), Mapping):
+        data = {**data, "fragments": _times_in(data["fragments"], ("min_time",),
+                                               "analysis.fragments")}
     values = _false_to_none({k: v for k, v in data.items() if k not in ("regions", "sites")},
                             AnalysisConfig)
     if values.get("labelling") is False:  # typed Any: the helper cannot tell
@@ -787,9 +856,8 @@ def project_with_spectra(project: Project, path: str | Path) -> Project:
     return load_project(project.path, spectra=path)
 
 
-_READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "sample", "undeut_time",
-               "fulldeut_time", "peptides", "runs", "parents", "target", "fragments", "scans",
-               "data_root", "thermo_dir")
+_READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "sample", "peptides",
+               "runs", "parents", "target", "fragments", "scans", "data_root", "thermo_dir")
 
 
 def read_input(
@@ -806,7 +874,7 @@ def read_input(
     if inp.spectra is not None:
         default = InputSettings(inp.format)
         base = project.path.resolve().parent if project.path is not None else Path.cwd()
-        unused = [k for k in _READ_STAGE if k not in ("format", "undeut_time", "fulldeut_time")
+        unused = [k for k in _READ_STAGE if k != "format"
                   and getattr(inp, k) != getattr(default, k)
                   and not (k == "data_root" and inp.data_root == base)]
         log.info("taking the raw spectra stored in %s%s", inp.spectra,
@@ -829,7 +897,7 @@ def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
 
         return read_spectra(
             folder_entries(project), inp.data_dir, inp.format, project=project.project,
-            fulldeut_time=inp.fulldeut_time, undeut_time=inp.undeut_time, samples=inp.samples,
+            samples=inp.samples,
             peptide_ranges=inp.peptide_ranges, record_paths=inp.record_paths,
             progress=progress, cancel=cancel,
         )
@@ -884,9 +952,8 @@ _COMMENTS: dict[str, str] = {
                               "is a stretch the instrument left out",
     "input.scans.precursor_tol": "m/z tolerance matching a scan's precursor to a target's",
     "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
-                                  "series' own are missing or poor (false: none)",
-    "run.undeut_time": "s: time of the undeuterated spectra, the noise references (scan "
-                       "formats: also the controls' undeut_time unless set)",
+                                  "series' undeuterated controls are missing or poor (false: "
+                                  "none)",
     "run.n_max_factor": "n (exchangeable sites) may be up to this times the amide count",
     "run.drop_no_signal": "drop spectra the picker found no signal in (empty ones always are)",
     "run.memory_budget_bytes": "memory of one chunk of the fit, bytes (false: automatic)",
@@ -979,7 +1046,18 @@ _COMMENTS: dict[str, str] = {
                                 '"d2o" (d2o_fraction), "median" (of the run\'s accepted '
                                 'controls) or "kint" (predicted back-exchange; needs quench); '
                                 'false: "kint" with quench, else "d2o"',
-    "run.controls.atol": "s: a spectrum this close to a control time is that control",
+    "run.controls.undeut_at": 's (or "5 min"): the spectra at this time also serve as the '
+                              "undeuterated control (false: only the files marked undeut)",
+    "run.controls.fulldeut_at": 's (or "20 h"): the spectra at this time also serve as the '
+                                "fully deuterated control, e.g. a plateaued late time point "
+                                "(false: only the files marked fulldeut)",
+    "run.controls.undeut_marked": "the files marked undeut serve as the control (false: only "
+                                  "the spectra at undeut_at do)",
+    "run.controls.fulldeut_marked": "the files marked fulldeut serve as the control (false: "
+                                    "only the spectra at fulldeut_at do, e.g. when the "
+                                    "measured file reads low)",
+    "input.time_scale": '"seconds" (real times) or "order" (the times only order the points: '
+                        "uptake drawn by index, kinetics and protection analyses refuse)",
     "run.controls.kint_tolerance": "kint: a measured control this far (D per amide) from the "
                                    "prediction is rejected",
     "run.controls.kint_min_series": "kint: fewest usable controls to fit the prediction to",
@@ -1118,9 +1196,8 @@ format = "specexport"
 data_dir = "SpecExport"          # the HDExaminer SpecExport folder
 # samples = ["WT", "mutant"]     # only these samples
 # peptide_ranges = ["0001-0010"] # only these peptides
-undeut_time = 0.0                # the time given to undeuterated controls (s)
-fulldeut_time = 1000000.0        # the time given to fully deuterated controls (s)
 record_paths = "path"            # or "name": record file names only
+time_scale = "seconds"           # or "order": the times only order the points
 # retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
 #                                # end_seq, peptide, charge (or an rt column in peptides)""",
     "hxexpress": """[input]
@@ -1132,9 +1209,8 @@ data_dir = "data"                # the folder of HX-Express spreadsheets
 #                                # finding them by name (SAMPLE_START-END-PEPTIDE-zCHARGE-...)
 # samples = ["WT"]
 # peptide_ranges = ["0001-0010"]
-undeut_time = 0.0
-fulldeut_time = 1000000.0
-record_paths = "path\"""",
+record_paths = "path"
+time_scale = "seconds\"""",
     "pooled": """[input]
 format = "pooled"
 # spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
@@ -1142,9 +1218,8 @@ format = "pooled"
 data_dir = "pooled"              # a SpecExport folder with peptides of several proteins
 sample = "pool"                  # the sample name given to its entries
 # peptide_ranges = ["0001-0010"]
-undeut_time = 0.0
-fulldeut_time = 1000000.0
-record_paths = "path\"""",
+record_paths = "path"
+time_scale = "seconds\"""",
 }
 
 _SCAN_TEMPLATE = """[input]
@@ -1157,6 +1232,7 @@ data_root = "."                  # relative run paths are taken from here
 #                                # end_seq, peptide, charge (else from the peptide table's
 #                                # rt column, else from the scans of fixed-time runs)
 record_paths = "path"            # or "relative" (to data_root) or "name"{thermo}
+time_scale = "seconds"           # or "order": the times only order the points
 parents = true                   # read each peptide itself (set false for fragments only)
 
 [input.target]                   # how the peptides' scans are chosen
@@ -1182,22 +1258,26 @@ ms_level = 1
 # How scans become spectra (hxex.io.MzmlConfig).
 {scans}
 
-# one [[input.runs]] per file; "time" is the labelling time of the whole file (s), or leave it
-# out when each scan has its own time (continuous labelling). Two clocks: the scan times (the
-# acquisition clock) and the exchange clock, scan time + "time_offset" (s; when exchange began
-# relative to acquisition). "usable_from" (s, acquisition clock) leaves out this file's scans
-# before it (e.g. spurious early points): it does not move the time axis, time_offset does.
+# one [[input.runs]] per file. "role" marks a control file: "undeut" (undeuterated) or
+# "fulldeut" (fully deuterated); its scans are summed into one spectrum without a time. "time"
+# is the labelling time of the whole file (seconds, or text with a unit: "60 s", "5 min",
+# "20 h"); leave it out when each scan has its own time (continuous labelling). A file with
+# both role and time is a time point that also serves as the control. Two clocks: the scan
+# times (the acquisition clock) and the exchange clock, scan time + "time_offset" (when
+# exchange began relative to acquisition). "usable_from" (acquisition clock) leaves out this
+# file's scans before it (e.g. spurious early points): it does not move the time axis,
+# time_offset does.
 [[input.runs]]
 path = "UN_01.{ext}"
 sample = "WT"
 rep = 1
-time = 0.0
+role = "undeut"
 
 [[input.runs]]
 path = "D_60s_01.{ext}"
 sample = "WT"
 rep = 1
-time = 60.0"""
+time = "60 s\""""
 
 
 def template(fmt: str = "specexport", project: str = "my_project") -> str:
@@ -1318,26 +1398,15 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     scalars = {k: v for k, v in run.items()
                if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
     lines += [""] + _toml_table("run", scalars, cls=RunConfig)
-    if fmt in SCAN_FORMATS:
-        control_times = {
-            "undeut_time": ("0.0", "s: time of the undeuterated controls (default: [run] "
-                                   "undeut_time; false: the data has none)"),
-            "fd_time": ("1000000.0", "s: time given to the fully deuterated runs in "
-                                     "[[input.runs]] (false: the data has none)"),
-            "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
-                       "pH read, degrees Celsius and D fraction of the quench and LC, for "
-                       'fd_fallback "kint" (false: none)'),
-        }
-    else:
-        control_times = {
-            "undeut_time": ("0.0", "s: time of the undeuterated controls (default: [input] "
-                                   "undeut_time; false: the data has none)"),
-            "fd_time": ("1000000.0", "s: time of the fully deuterated controls (default: "
-                                     "[input] fulldeut_time; false: the data has none)"),
-            "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
-                       "pH read, degrees Celsius and D fraction of the quench and LC, for "
-                       'fd_fallback "kint" (false: none)'),
-        }
+    control_times = {
+        "undeut_at": ('"5 min"', "the spectra at this time also serve as the undeuterated "
+                                 "control (false: only the files marked undeut)"),
+        "fulldeut_at": ('"20 h"', "the spectra at this time also serve as the fully "
+                                  "deuterated control (false: only the files marked fulldeut)"),
+        "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
+                   "pH read, degrees Celsius and D fraction of the quench and LC, for "
+                   'fd_fallback "kint" (false: none)'),
+    }
     for key, value in run.items():
         if key in _OPTIONAL_SECTIONS and value is None:
             lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,

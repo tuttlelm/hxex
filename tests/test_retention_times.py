@@ -125,7 +125,7 @@ def test_kint_fallback_adds_the_retention_time_when_every_control_has_one():
             rows += [(d, 1e6, 0.05 + fd), (d, 1e6, 0.05 + fd)]
         n += [len(k)] * (2 if d == 5 else 4)
     fit, n = fake_fit(rows), np.array(n, float)
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     with_rt = fit_controls(fit, n, cfg, rates=rates, rt=rts)
     m = with_rt.fd_model
     assert m["b_rt"] == pytest.approx(b, rel=0.05) and m["t0"] == pytest.approx(t0, rel=0.05)

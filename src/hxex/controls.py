@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Undeuterated and fully deuterated controls and the back-exchange correction.
 
-A series (one peptide at one charge, ``data_id``) has its controls at the user-set times
-``undeut_time`` and ``fd_time``; replicate controls are averaged. The control means ``m0`` and
+A series (one peptide at one charge, ``data_id``) has its controls among its spectra by their
+role, ``undeut`` and ``fulldeut`` (:data:`hxex.spectra.ROLES`; set by the readers from the
+formats' control labels, by ``role`` in ``[[input.runs]]``, or by :func:`apply_control_roles`
+for a time point that also serves as a control, ``undeut_at`` and ``fulldeut_at``); replicate
+controls are averaged. The control means ``m0`` and
 ``mFD`` are the means of the K=1 fits of the control spectra, in the model's units: deuterons
 beyond natural abundance (the natural-abundance shape is convolved separately, so an undeuterated
 spectrum has ``m0`` near 0, and the centre of the raw envelope must not be used instead).
@@ -57,6 +60,7 @@ from scipy.stats import norm
 
 from .fit.result import FitResult
 from .kint import ExchangeConditions
+from .spectra import FULLDEUT, UNDEUT, time_point
 
 log = logging.getLogger(__name__)
 
@@ -65,12 +69,20 @@ FD_FALLBACKS = ("d2o", "median", "kint")
 
 @dataclass(frozen=True)
 class ControlConfig:
-    """Control times and the limits for a good control (the ``[run.controls]`` table). Times
-    are in the units of the measurement times (s). "Retention" here is deuterium retention, the
-    fraction of the label a fully deuterated control kept, not a retention time.
+    """The limits for a good control and the fallbacks (the ``[run.controls]`` table).
+    "Retention" here is deuterium retention, the fraction of the label a fully deuterated
+    control kept, not a retention time.
 
-    - ``undeut_time``, ``fd_time``: the times of the undeuterated and the fully deuterated
-      controls; None: the data has no control of that kind.
+    - ``undeut_at``, ``fulldeut_at`` (s): the spectra measured at this time also serve as the
+      undeuterated or the fully deuterated control (a plateaued late time point as the fully
+      deuterated reference, the equilibrium end point of a back-exchange run as the
+      undeuterated one); None: only the spectra the readers marked. The controls themselves
+      are the spectra with that role (:mod:`hxex.spectra`), never a time.
+    - ``undeut_marked``, ``fulldeut_marked``: whether the spectra marked as that control by
+      the readers or ``[[input.runs]]`` serve as it (the default). False, with the matching
+      ``*_at``, leaves them out: the control is then the spectra at that time alone (a
+      measured fully deuterated file that reads low, replaced by the plateau of the time
+      course). Those spectra stay fitted and keep their role in the tables.
     - ``m0_max`` (deuterons): the largest mean of a good undeuterated control.
     - ``retention_min``, ``retention_max`` (fractions): the range of a good fully deuterated
       control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) is half
@@ -83,7 +95,6 @@ class ControlConfig:
       fitted to the run's controls, see the module docstring; needs ``quench``). None (the
       default) means ``'kint'`` when ``quench`` is given and ``'d2o'`` otherwise
       (:attr:`fd_mode`).
-    - ``atol`` (s): a spectrum this close to a control time is that control.
     - ``quench``: the conditions of the back-exchange (:class:`hxex.kint.ExchangeConditions`):
       pH read and temperature of the quench and LC, and the ``d2o_fraction`` of their solvent
       (about 0).
@@ -94,14 +105,15 @@ class ControlConfig:
     # the limits' defaults, the fallbacks and the kint model: docs/HISTORY.md items 27, 59, 61, 71
     # and 73
 
-    undeut_time: float | None = None
-    fd_time: float | None = None
+    undeut_at: float | None = None
+    fulldeut_at: float | None = None
+    undeut_marked: bool = True
+    fulldeut_marked: bool = True
     m0_max: float = 0.5
     retention_min: float | None = None
     retention_max: float = 1.1
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
-    atol: float = 1e-6
     quench: ExchangeConditions | None = None
     kint_tolerance: float = 0.15
     kint_min_series: int = 10
@@ -122,8 +134,19 @@ class ControlConfig:
             raise ValueError("need 0 <= retention_min < retention_max")
         if self.fd_fallback is not None and self.fd_fallback not in FD_FALLBACKS:
             raise ValueError(f"fd_fallback must be one of {', '.join(FD_FALLBACKS)}")
-        if self.atol < 0:
-            raise ValueError("atol must be >= 0")
+        for name in ("undeut_at", "fulldeut_at"):
+            value = getattr(self, name)
+            if value is not None:
+                if isinstance(value, bool) or not np.isfinite(float(value)):
+                    raise ValueError(f"{name} must be a time in seconds or None")
+                object.__setattr__(self, name, float(value))
+        if (self.undeut_at is not None and self.fulldeut_at is not None
+                and self.undeut_at == self.fulldeut_at):
+            raise ValueError("undeut_at and fulldeut_at cannot be the same time")
+        for name in ("undeut", "fulldeut"):
+            if not getattr(self, f"{name}_marked") and getattr(self, f"{name}_at") is None:
+                raise ValueError(f"{name}_marked = false needs {name}_at (the spectra that "
+                                 "serve as the control instead of the marked ones)")
         if not 0 < self.d2o_fraction <= 1:
             raise ValueError("d2o_fraction must be in (0, 1]")
 
@@ -152,9 +175,47 @@ class ControlConfig:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlConfig:
         unknown = set(data) - {f.name for f in fields(cls)}
+        if unknown & set(LEGACY_SETTINGS):
+            raise ValueError(
+                f"control setting(s) {', '.join(sorted(unknown & set(LEGACY_SETTINGS)))} no "
+                "longer exist: the controls are the spectra with a role (undeut, fulldeut), "
+                "set by the formats' control labels or role in [[input.runs]]; undeut_at and "
+                "fulldeut_at make the spectra at a time serve as a control as well")
         if unknown:
             raise ValueError(f"unknown control setting(s): {', '.join(sorted(unknown))}")
         return cls(**data)
+
+
+LEGACY_SETTINGS = ("undeut_time", "fd_time", "atol")  # the control times before the roles
+
+
+def apply_control_roles(role, time, config: ControlConfig, *, where: str = "") -> np.ndarray:
+    """``role`` (one per spectrum) with the spectra at ``config.undeut_at`` marked
+    ``'undeut'`` and those at ``config.fulldeut_at`` marked ``'fulldeut'`` (they keep their
+    time). The match is exact (times are compared as :func:`hxex.spectra.time_point` keys,
+    to the nanosecond). A time no spectrum has is an error listing the times present."""
+    role = np.array(np.asarray(role, dtype=str), dtype="<U8")
+    time = np.asarray(time, dtype=float)
+    if len(role) != len(time):
+        raise ValueError("role and time must have one entry per spectrum")
+    points = time_point(time)
+    for name, label in (("undeut_at", UNDEUT), ("fulldeut_at", FULLDEUT)):
+        at = getattr(config, name)
+        if at is None:
+            continue
+        hit = points == time_point([at])[0]
+        if not hit.any():
+            present = sorted({float(t) for t in time[np.isfinite(time)]})
+            raise ValueError(
+                f"{where + ': ' if where else ''}{name} = {at:g} s: no spectrum was measured at "
+                f"that time (times present: {', '.join(f'{t:g}' for t in present[:20])}"
+                f"{', ...' if len(present) > 20 else ''})")
+        other = hit & (role != "") & (role != label)
+        if other.any():
+            raise ValueError(f"{name} = {at:g} s: {int(other.sum())} spectra at that time are "
+                             f"already {role[other][0]} controls")
+        role[hit] = label
+    return role
 
 
 @dataclass(frozen=True)
@@ -304,6 +365,7 @@ def fit_controls(
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
+    The controls are the measurements with a role (``fit.role``: ``'undeut'``, ``'fulldeut'``).
     ``n_amides`` is the number of exchangeable amides of each measurement's peptide, ``(M,)``
     (constant within a series). ``usable`` (``(M,)`` bool) marks the spectra that may serve as
     controls; by default every spectrum that the noise estimate did not flag as an outlier.
@@ -329,13 +391,16 @@ def fit_controls(
     if usable.shape != (m,):
         raise ValueError("usable must have one value per measurement")
     means = fit.fits[1].means[:, 0]
-    time = np.asarray(fit.time, dtype=float)
+    role = np.asarray(fit.role, dtype=str)
     series = np.unique(fit.data_id)
+    serves = {UNDEUT: role == UNDEUT, FULLDEUT: role == FULLDEUT}
+    for label, at, marked in ((UNDEUT, config.undeut_at, config.undeut_marked),
+                              (FULLDEUT, config.fulldeut_at, config.fulldeut_marked)):
+        if not marked:  # only the spectra at the given time serve (apply_control_roles)
+            serves[label] &= time_point(fit.time) == time_point([at])[0]
 
-    def pick(rows: np.ndarray, t: float | None) -> np.ndarray:
-        if t is None:
-            return means[:0]
-        return means[rows[usable[rows] & (np.abs(time[rows] - t) <= config.atol)]]
+    def pick(rows: np.ndarray, label: str) -> np.ndarray:
+        return means[rows[usable[rows] & serves[label][rows]]]
 
     cols: dict[str, list] = {name: [] for name in (
         "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd",
@@ -348,8 +413,8 @@ def fit_controls(
         if len(n_am) != 1:
             raise ValueError(f"series {s} has more than one amide count: {n_am}")
         n_am = float(n_am[0])
-        m0_meas, m0_se, n_u = _mean_se(pick(rows, config.undeut_time))
-        mfd_meas, mfd_se, n_f = _mean_se(pick(rows, config.fd_time))
+        m0_meas, m0_se, n_u = _mean_se(pick(rows, UNDEUT))
+        mfd_meas, mfd_se, n_f = _mean_se(pick(rows, FULLDEUT))
         flags: list[str] = []
         if n_u == 0:
             flags.append("m0_missing")

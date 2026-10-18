@@ -78,7 +78,6 @@ def plot_residue_comparison(
     style_index: int = 1,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
     ax: Axes | None = None,
 ) -> Figure:
     """The reference (black) and ``sample`` residue by residue at ``time``, in the comparison's
@@ -118,7 +117,7 @@ def plot_residue_comparison(
     ax.set_ylabel(_label(comparison.quantity))
     ax.grid(color="#e5e5e5", linewidth=0.8)
     ax.legend(loc="upper left", ncol=2, frameon=False, fontsize=8)
-    ax.text(0.99, 0.04, _when(time, undeut_time), transform=ax.transAxes, ha="right",
+    ax.text(0.99, 0.04, _when(time), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     return fig
 
@@ -130,7 +129,6 @@ def residue_comparison_figure(
     *,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
 ) -> Figure:
     """One panel per sample of ``samples`` against the comparison's reference, sharing the
     residue axis; each sample keeps its colour."""
@@ -139,8 +137,7 @@ def residue_comparison_figure(
     axes = fig.subplots(len(samples), 1, sharex=True, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
         plot_residue_comparison(comparison, sample, time, style_index=n + 1,
-                                annotations=annotations, length=length,
-                                undeut_time=undeut_time, ax=ax)
+                                annotations=annotations, length=length, ax=ax)
         if n < len(samples) - 1:
             ax.set_xlabel("")
     axes[-1].set_xlabel("residue")
@@ -158,7 +155,6 @@ def plot_residue_overlay(
     style_index: int = 1,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
     ax: Axes | None = None,
 ) -> Figure:
     """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, as
@@ -226,7 +222,7 @@ def plot_residue_overlay(
                               color="#4d4d4d", label="corrected differently"))
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
               ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
-    ax.text(1.0, 1.02, _when(time, undeut_time), transform=ax.transAxes, ha="right",
+    ax.text(1.0, 1.02, _when(time), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     return fig
 
@@ -247,7 +243,6 @@ def residue_overlay_figure(
     choice: PopulationChoice | None = None,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
 ) -> Figure:
     """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``;
     each sample keeps its colour. ``choice`` filters the K=2 values as in
@@ -260,7 +255,7 @@ def residue_overlay_figure(
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
         plot_residue_overlay(residues, reference, sample, time, show=show, choice=choice,
                              style_index=n + 1,
-                             annotations=annotations, length=length, undeut_time=undeut_time,
+                             annotations=annotations, length=length,
                              ax=ax)
     return fig
 
@@ -272,7 +267,6 @@ def plot_peptide_differences(
     *,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
     ax: Axes | None = None,
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
@@ -316,7 +310,7 @@ def plot_peptide_differences(
     ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
-    ax.text(0.99, 0.03, f"{_when(time, undeut_time)}; {n_sig} of {len(rows)} significant",
+    ax.text(0.99, 0.03, f"{_when(time)}; {n_sig} of {len(rows)} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
     return fig
 
@@ -373,7 +367,6 @@ def plot_butterfly(
     sample: str,
     *,
     times: Sequence[float] | None = None,
-    undeut_time: float | None = None,
     max_labels: int = 60,
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
@@ -381,15 +374,14 @@ def plot_butterfly(
     sequential colour per time), with the differences below (filled where significant,
     ``+-delta_crit`` dashed); a ``*`` at the top over each peptide whose two values were corrected
     differently at a time drawn (one with a fallback control; named in the legend). ``times``
-    default to all of the
-    comparison but the undeuterated one. Lines have the gids ``butterfly:<time>:reference``,
-    ``butterfly:<time>:sample`` and ``difference:<time>``."""
+    default to every time point of the comparison (the controls are not times). Lines have the
+    gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
+    ``difference:<time>``."""
     rows = comparison.where(sample=sample)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r}")
     if times is None:
-        times = [t for t in sorted(set(comparison.time[rows].tolist()))
-                 if undeut_time is None or not np.isclose(t, undeut_time)]
+        times = sorted({float(t) for t in comparison.time[rows] if np.isfinite(t)})
     times = [float(t) for t in times]
     if not times:
         raise ValueError(f"no time to draw for {sample!r}")
@@ -416,7 +408,7 @@ def plot_butterfly(
             return out
 
         line = {"color": colour, "marker": "o", "markersize": 2.5, "linewidth": 1.0}
-        (up,) = top.plot(spread(comparison.value_reference[here]), label=_when(t, undeut_time),
+        (up,) = top.plot(spread(comparison.value_reference[here]), label=_when(t),
                          **line)
         (down,) = top.plot(spread(-comparison.value[here]), **line)
         up.set_gid(f"butterfly:{t:g}:reference")
@@ -467,7 +459,6 @@ def woods_figure(
     *,
     annotations: Annotations | None = None,
     length: int | None = None,
-    undeut_time: float | None = None,
 ) -> Figure:
     """Woods plots of ``sample`` stacked, one per ``(title, comparison)`` (for example K=1, the
     K=2 ranks and the population), sharing the residue axis; the fD panels share one y range."""
@@ -475,7 +466,7 @@ def woods_figure(
     axes = fig.subplots(len(comparisons), 1, sharex=True, squeeze=False)[:, 0]
     for n, (ax, (title, comparison)) in enumerate(zip(axes, comparisons, strict=True)):
         plot_peptide_differences(comparison, sample, time, annotations=annotations,
-                                 length=length, undeut_time=undeut_time, ax=ax)
+                                 length=length, ax=ax)
         ax.set_title(title, fontsize=10, loc="left")
         if n < len(comparisons) - 1:
             ax.set_xlabel("")

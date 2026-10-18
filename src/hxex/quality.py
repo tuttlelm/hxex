@@ -52,6 +52,7 @@ from .fit.measurements import Measurements
 from .fit.result import FitResult
 from .model import Backend
 from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
+from .spectra import time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "poor_envelope")
 
@@ -232,7 +233,7 @@ def assess_quality(
     deviance_rel = np.full(m, np.nan)
     misfit_rel = np.full(m, np.nan)
     intensity_rel = np.full(m, np.nan)
-    time = np.asarray(fit.time, dtype=float)
+    time = time_point(fit.time, fit.role)  # replicates share a point: a time, or a control role
     for s in np.unique(fit.data_id):
         rows = np.flatnonzero(fit.data_id == s)
         assessed = rows[np.isfinite(deviance[rows])]

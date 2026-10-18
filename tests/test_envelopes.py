@@ -100,11 +100,14 @@ def test_weights_are_recovered_from_the_reference():
 
 
 def series(spectra_by_time, data_id=0, sample="S"):
+    """Spectra of one series; a time of 0 makes an undeuterated control (the role, no time)."""
     entry = PeptideEntry("", sample, PEPTIDE, "0001-0010", 1, 10, CHARGE, f"ion_type:{ION}")
     out = []
     for k, (t, (mz, y)) in enumerate(spectra_by_time):
-        out.append(Spectrum(mz, y, entry, t, 1 + k % 2, data_id=data_id, label=f"{t}",
-                            spectrum_id=f"p:{data_id}/{k}"))
+        control = t == 0.0
+        out.append(Spectrum(mz, y, entry, np.nan if control else t, 1 + k % 2, data_id=data_id,
+                            label=f"{t}", spectrum_id=f"p:{data_id}/{k}",
+                            role="undeut" if control else ""))
     return out
 
 
@@ -116,14 +119,14 @@ def test_reference_fallback_and_theory():
         series([(0.0, good), (0.0, good), (60.0, good)], 0)  # a good reference
         + series([(0.0, noise), (1e7, good), (60.0, good)], 1)  # a poor one, a good fallback
         + series([(60.0, good)], 2))  # nothing to learn from
-    table, by = series_envelopes(s, config=cfg, reference_time=0.0, fallback_time=1e7,
+    table, by = series_envelopes(s, config=cfg, fallback_time=1e7,
                                  picker=PICK)
     assert list(table.source) == ["reference", "fallback", "theory"]
     assert list(table.good) == [True, True, False]
     np.testing.assert_allclose(table.weights[0], [0.25, 0.75], atol=0.01)
     assert np.isnan(table.residual[2]) and table.n_reference.tolist() == [2, 1, 0]
     assert len(table.shape(0)) == len(by[0].fit_shape)
-    no_fallback, _ = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK)
+    no_fallback, _ = series_envelopes(s, config=cfg, picker=PICK)
     assert no_fallback.source[1] == "reference" and not no_fallback.good[1]
 
 
@@ -141,7 +144,7 @@ def test_conditions_share_an_envelope():
         + series([(0.0, other), (60.0, later)], 3)  # a reference the others do not agree with
         + series([(60.0, later)], 4))  # another ion: nothing to learn from
     groups = {0: "ion", 1: "ion", 2: "ion", 3: "ion"}
-    table, by = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, groups=groups)
+    table, by = series_envelopes(s, config=cfg, picker=PICK, groups=groups)
     assert list(table.source) == ["shared"] * 4 + ["theory"]
     assert table.n_reference.tolist() == [1, 1, 0, 1, 0]
     for d in range(4):  # one envelope, fitted without series 3
@@ -158,13 +161,13 @@ def test_conditions_share_an_envelope():
     assert np.isnan(reference_residual([], by[0], PEPTIDE, CHARGE, modification=mod,
                                        picker=PICK))
     # two conditions that disagree: no telling which is right, so both are marked
-    pair, _ = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+    pair, _ = series_envelopes(s, config=cfg, picker=PICK,
                                groups={0: "ion", 3: "ion"})
     assert pair.agrees.tolist() == [False, True, True, False, True]
     assert pair.poor.tolist() == [True, False, True, True, True]
     # without share (or without groups) every series has its own
     alone, _ = series_envelopes(s, config=EnvelopeConfig(mode="mixed", components=2),
-                                reference_time=0.0, picker=PICK, groups=groups)
+                                picker=PICK, groups=groups)
     assert list(alone.source) == ["reference", "reference", "theory", "reference", "theory"]
     np.testing.assert_allclose(alone.weights[3], [0.9, 0.1], atol=0.01)
     assert np.isnan(alone.own_residual).all() and alone.agrees.all()
@@ -182,14 +185,14 @@ def test_three_conditions_agreeing_with_the_core_share_its_envelope():
     s = SpectrumSet.from_spectra(series([(0.0, a)], 0) + series([(0.0, b)], 1)
                                  + series([(0.0, c)], 2) + series([(0.0, c)], 3))
     groups = {0: "ion", 1: "ion", 2: "ion"}
-    table, by = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, groups=groups)
+    table, by = series_envelopes(s, config=cfg, picker=PICK, groups=groups)
     assert table.agrees.tolist() == [True, True, True, True]
     assert table.poor.tolist() == [False, False, False, False]
     assert by[0] is by[1] is by[2] and by[0].n_reference == 3  # refitted with all three
     assert table.n_reference.tolist() == [1, 1, 1, 1]  # each series' own references
     # the two off-core conditions alone disagree, and stay on record when the group then
     # falls back to the theory (no fallback time, the pair's envelope not good)
-    pair, _ = series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+    pair, _ = series_envelopes(s, config=cfg, picker=PICK,
                                groups={1: "ion", 2: "ion"})
     assert pair.agrees[[1, 2]].tolist() == [False, False]
     assert np.isfinite(pair.own_residual[[1, 2]]).all()
@@ -202,11 +205,11 @@ def test_envelopes_report_progress_and_stop_on_cancel(tmp_path):
     s = SpectrumSet.from_spectra(series([(0.0, good)], 0) + series([(0.0, good)], 1))
     cfg = EnvelopeConfig(mode="mixed", components=2)
     seen = []
-    series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK,
+    series_envelopes(s, config=cfg, picker=PICK,
                      progress=lambda d, t: seen.append((d, t)))
     assert seen[0] == (0, 2) and seen[-1] == (2, 2)
     with pytest.raises(Cancelled):
-        series_envelopes(s, config=cfg, reference_time=0.0, picker=PICK, cancel=lambda: True)
+        series_envelopes(s, config=cfg, picker=PICK, cancel=lambda: True)
     # the run names the stage before picking and stops there when cancelled
     stages = []
 

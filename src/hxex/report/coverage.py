@@ -23,6 +23,8 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import MultipleLocator
 
 from ..analysis import CoverageTable, SpeciesUptake
+from ..io.times import format_time
+from ..spectra import UNDEUT
 
 # CET-L20 "gouldian", a perceptually uniform map by Peter Kovesi (colorcet.com, CC BY 4.0),
 # sampled at 17 points: the map pyHDX uses for relative uptake
@@ -66,8 +68,8 @@ def autowrap(start: Sequence[int], end: Sequence[int], margin: int = 4, step: in
     return max(wrap, len(start))
 
 
-def _title(sample: str, time: float, k: int, rank: int, undeut_time: float) -> str:
-    when = "undeuterated" if np.isclose(time, undeut_time) else f"t = {time:g} s"
+def _title(sample: str, time: float, k: int, rank: int) -> str:
+    when = "undeuterated" if not np.isfinite(time) else f"t = {format_time(time)}"
     which = "" if k == 1 else f", K={k} rank {rank}"
     return f"{sample}{which}, {when}"
 
@@ -85,11 +87,13 @@ def plot_coverage(
     colorbar: bool = True,
     title: str | None = None,
 ) -> Figure:
-    """The coverage map of ``sample`` at ``time`` (peptides only), coloured by ``fD`` at ``K`` and
+    """The coverage map of ``sample`` at ``time`` (NaN: its undeuterated control; peptides
+    only), coloured by ``fD`` at ``K`` and
     ``rank`` (0 to 1; grey where it is not known). ``length`` is the protein's (the x axis runs
     from 0 to it; else to the last covered residue); ``wrap`` the rows of the stack (else
     :func:`autowrap`). Each bar has the gid ``peptide:<start>-<end>``."""
-    rows = np.flatnonzero(uptake.where(sample=sample, time=time, K=K, rank=rank, kind="peptide"))
+    at = ({"role": UNDEUT} if not np.isfinite(time) else {"time": time, "role": ""})
+    rows = np.flatnonzero(uptake.where(sample=sample, K=K, rank=rank, kind="peptide", **at))
     if not len(rows):
         raise ValueError(f"no peptides of {sample!r} at time {time:g} (K={K}, rank {rank})")
     order = rows[np.lexsort((uptake.end[rows], uptake.start[rows]))]
@@ -117,8 +121,7 @@ def plot_coverage(
     ax.grid(axis="x", color="#dddddd", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xlabel("residue")
-    ax.set_title(title if title is not None else _title(sample, time, K, rank, uptake.undeut_time),
-                 fontsize=10)
+    ax.set_title(title if title is not None else _title(sample, time, K, rank), fontsize=10)
     if colorbar:
         from matplotlib.cm import ScalarMappable
 
@@ -137,16 +140,25 @@ def coverage_figure(
     length: int | None = None,
     cell: tuple[float, float] = (4.2, 3.2),
 ) -> Figure:
-    """Coverage maps of several samples (rows) and times (columns), all with one colour scale and
-    the same number of rows per stack. Empty cells (no peptide of that sample at that time) are
-    left blank."""
+    """Coverage maps of several samples (rows) and points (columns: the undeuterated control
+    when there is one, then the ``times``, by default every time point), all with one colour
+    scale and the same number of rows per stack. Empty cells (no peptide of that sample at
+    that point) are left blank."""
     pep = uptake.select(uptake.where(K=K, rank=rank, kind="peptide"))
     samples = list(samples) if samples is not None else sorted(set(pep.sample.tolist()))
-    times = list(times) if times is not None else sorted(set(pep.time.tolist()))
+    times = (list(times) if times is not None
+             else sorted({float(t) for t in pep.time if np.isfinite(t)}))
+    if (pep.role == UNDEUT).any():
+        times = [np.nan, *times]  # the undeuterated control's column (its time is NaN)
+
+    def at(s, t):
+        return pep.where(sample=s, role=UNDEUT) if not np.isfinite(t) else pep.where(
+            sample=s, time=t, role="")
+
     wraps = []
     for s in samples:
         for t in times:
-            sel = np.flatnonzero(pep.where(sample=s, time=t))
+            sel = np.flatnonzero(at(s, t))
             if len(sel):
                 o = sel[np.lexsort((pep.end[sel], pep.start[sel]))]
                 wraps.append(autowrap(pep.start[o], pep.end[o]))
@@ -158,7 +170,7 @@ def coverage_figure(
     for r, s in enumerate(samples):
         for c, t in enumerate(times):
             ax = axes[r][c]
-            if not pep.where(sample=s, time=t).any():
+            if not at(s, t).any():
                 ax.set_axis_off()
                 continue
             plot_coverage(uptake, s, t, K=K, rank=rank, length=top, wrap=wrap, ax=ax,

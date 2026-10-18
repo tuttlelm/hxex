@@ -84,13 +84,14 @@ _INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", 
 _INDEX_INT = ("start_seq", "end_seq", "charge", "rep", "data_id")
 # float columns a reader may leave unknown (NaN); absent in files written before them
 _OPTIONAL = ("rt", "resolving_power", "resolving_power_mz")
-# float columns a reader may leave unknown (NaN); absent in files written before them
-_OPTIONAL = ("rt", "resolving_power", "resolving_power_mz")
+# the role column ("undeut", "fulldeut" or ""): absent in files written before the roles, where
+# the controls were known by their times (the reader derives it, see hxex.io.bundle)
+ROLE = "role"
 
 
 def _index_table(obj, optional: Sequence[str] = _OPTIONAL) -> dict[str, pa.Array]:
     """The index columns of a spectrum-like table ``obj`` (``rt`` and the other ``optional``
-    float columns written when the object has them, NaN where unknown)."""
+    float columns written when the object has them, NaN where unknown; ``role`` likewise)."""
     cols: dict[str, pa.Array] = {name: _str(getattr(obj, name)) for name in _INDEX}
     for name in _INDEX_INT:
         cols[name] = pa.array(np.asarray(getattr(obj, name), dtype=np.int64))
@@ -101,12 +102,14 @@ def _index_table(obj, optional: Sequence[str] = _OPTIONAL) -> dict[str, pa.Array
         values = getattr(obj, name)
         cols[name] = pa.array(np.asarray(values if values is not None
                                          else np.full(len(obj.time), np.nan), dtype=np.float64))
+    role = getattr(obj, ROLE, None)
+    cols[ROLE] = _str(role if role is not None else [""] * len(obj.time))
     return cols
 
 
 def _index_arrays(t: pa.Table, optional: Sequence[str] = _OPTIONAL) -> dict[str, np.ndarray]:
     """The index columns of ``t`` as arrays (the ``optional`` float columns NaN when a table
-    written before them has none)."""
+    written before them has none; ``role`` all ``''`` then)."""
     out: dict[str, np.ndarray] = {name: _strs(t, name) for name in _INDEX}
     for name in _INDEX_INT:
         out[name] = np.asarray(_col(t, name), dtype=np.int64)
@@ -114,6 +117,7 @@ def _index_arrays(t: pa.Table, optional: Sequence[str] = _OPTIONAL) -> dict[str,
     for name in optional:
         out[name] = (np.asarray(_col(t, name), dtype=np.float64) if name in t.column_names
                      else np.full(t.num_rows, np.nan))
+    out[ROLE] = _strs(t, ROLE) if ROLE in t.column_names else np.full(t.num_rows, "", dtype="<U8")
     return out
 
 

@@ -20,8 +20,10 @@ class Measurements:
     ``bins`` are the deuteration bins (``n_deut``), ``observed`` the intensities, ``shapes`` the
     natural-abundance envelope (normalised when fitted), ``n_max`` the upper bound of the number
     of exchanging sites ``n`` of every population, and ``references`` the reference spectra of
-    each measurement's noise level (see :mod:`hxex.noise`). ``spectrum_id``, ``data_id`` and
-    ``time`` identify the measurements and are carried into the results.
+    each measurement's noise level (see :mod:`hxex.noise`). ``spectrum_id``, ``data_id``,
+    ``time`` and ``role`` (``'undeut'``, ``'fulldeut'`` or ``''``: the controls of a series are
+    the measurements with a role; all ``''`` when not given) identify the measurements and are
+    carried into the results.
     """
 
     bins: tuple[np.ndarray, ...]
@@ -32,11 +34,16 @@ class Measurements:
     spectrum_id: np.ndarray
     data_id: np.ndarray
     time: np.ndarray
+    role: np.ndarray | None = None
 
     def __post_init__(self):
         m = len(self.bins)
+        if self.role is None:  # built without roles: time points only
+            object.__setattr__(self, "role", np.full(m, "", dtype="<U8"))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
         sizes = (len(self.observed), len(self.shapes), len(self.n_max), len(self.references),
-                 len(self.spectrum_id), len(self.data_id), len(self.time))
+                 len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role))
         if any(s != m for s in sizes):
             raise ValueError("every field needs one entry per measurement")
         for i, (b, o) in enumerate(zip(self.bins, self.observed, strict=True)):
@@ -71,7 +78,7 @@ class Measurements:
             observed=tuple(self.observed[i] for i in index),
             shapes=tuple(self.shapes[i] for i in index), n_max=self.n_max[index],
             references=tuple(refs), spectrum_id=self.spectrum_id[index],
-            data_id=self.data_id[index], time=self.time[index],
+            data_id=self.data_id[index], time=self.time[index], role=self.role[index],
         )
 
     @classmethod
@@ -85,9 +92,10 @@ class Measurements:
         spectrum_id: Sequence[str] | None = None,
         data_id: Sequence[int] | None = None,
         time: Sequence[float] | None = None,
+        role: Sequence[str] | None = None,
     ) -> Measurements:
         """Measurements from plain arrays (for tests and for data that did not come from the
-        picker). Missing identifiers become ``m0, m1, ...``, series 0 and time 0."""
+        picker). Missing identifiers become ``m0, m1, ...``, series 0, time 0 and no role."""
         m = len(bins)
         return cls(
             bins=tuple(np.asarray(b, dtype=np.float64) for b in bins),
@@ -102,6 +110,7 @@ class Measurements:
             ),
             data_id=np.asarray(data_id if data_id is not None else [0] * m, dtype=np.int64),
             time=np.asarray(time if time is not None else [0.0] * m, dtype=np.float64),
+            role=None if role is None else np.asarray(role, dtype=str),
         )
 
     @classmethod
@@ -110,7 +119,6 @@ class Measurements:
         binned: BinnedSet,
         *,
         n_max_factor: float = 1.2,
-        undeut_time: float = 0.0,
         nterm_subtract: int = 1,
         amide_rules: chem.AmideRules = chem.DEFAULT_AMIDE_RULES,
         registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
@@ -126,7 +134,8 @@ class Measurements:
         ``n_max = n_max_factor * exchangeable sites`` (amides plus user ``Hex``; at least one site,
         for fragment ions without any); the shape is
         the natural-abundance envelope of the peptide and ion type (``chem.natural_abundance``);
-        the references are the spectra of the same series (``data_id``) at ``undeut_time``.
+        the references are the undeuterated controls of the same series (``data_id``, role
+        ``'undeut'``; :func:`hxex.noise.control_references`).
         ``nterm_subtract`` and ``amide_rules`` should be those used for picking.
         """
         if not n_max_factor > 0:
@@ -157,7 +166,7 @@ class Measurements:
             # an ion without exchangeable sites (a z ion of one residue) is fitted with the cap of
             # one: its mass shift can still be measured (scrambling)
             n_max.append(n_max_factor * max(sites_cache[key], 1))
-        references = control_references(binned.data_id, binned.time, undeut_time)
+        references = control_references(binned.data_id, binned.role)
         if kinetics is not None:
             if len(kinetics) != len(binned):
                 raise ValueError("kinetics must have one entry per spectrum")
@@ -169,4 +178,5 @@ class Measurements:
             n_max=np.asarray(n_max, dtype=np.float64),
             references=tuple(references),
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,
+            role=binned.role,
         )

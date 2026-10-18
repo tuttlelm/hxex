@@ -47,6 +47,7 @@ from scipy.optimize import nnls
 
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
+from ..spectra import UNDEUT, time_point
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .pick import pick_spectrum, plan_bins
 
@@ -300,19 +301,18 @@ def series_envelopes(
     spectra,
     *,
     config: EnvelopeConfig,
-    reference_time: float,
     fallback_time: float | None = None,
     picker: PickerConfig = DEFAULT_PICKER_CONFIG,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     groups: Mapping[int, Hashable] | None = None,
-    atol: float = 1e-6,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> tuple[EnvelopeTable, dict[int, Envelope]]:
     """The envelope of every series (``data_id``) of a :class:`~hxex.spectra.SpectrumSet` from
-    its spectra at ``reference_time`` (the undeuterated control). If those are missing or the
-    mixture does not describe them (``good`` False), the spectra at ``fallback_time`` are used
-    (for example a fully exchanged end-state run), and the source is recorded as ``fallback``;
+    its undeuterated controls (the spectra with the role ``'undeut'``). If those are missing or
+    the mixture does not describe them (``good`` False), the spectra at ``fallback_time`` (s)
+    are used (for example a fully exchanged end-state run), and the source is recorded as
+    ``fallback``;
     with neither, the theory. With ``config.share``, the series of one group (``groups``:
     ``data_id`` to a key, :func:`hxex.io.envelope_groups`; a series not in it is a group of its
     own) share one envelope (see the module docstring). ``progress(done, total)`` counts the
@@ -324,6 +324,7 @@ def series_envelopes(
     own_residual: dict[int, float] = {}
     agrees: dict[int, bool] = {}
     ids_all = [int(d) for d in np.unique(spectra.data_id)]
+    points = time_point(spectra.time) if fallback_time is not None else None
     if config.share and groups:
         keyed: dict[Hashable, list[int]] = {}
         for d in ids_all:
@@ -341,11 +342,16 @@ def series_envelopes(
         peptide, charge = str(spectra.peptide[i0]), int(spectra.charge[i0])
         modification = str(spectra.modification[i0])
 
-        def at(t, d, rows=rows):
-            sel = rows[d][np.abs(spectra.time[rows[d]] - t) <= atol]
+        def taken(sel):
             return [(*spectra.spectrum(int(i)),
                      {"resolving_power": float(spectra.resolving_power[i]),
                       "resolving_power_mz": float(spectra.resolving_power_mz[i])}) for i in sel]
+
+        def controls(d, rows=rows):
+            return taken(rows[d][spectra.role[rows[d]] == UNDEUT])
+
+        def at(t, d, rows=rows):
+            return taken(rows[d][points[rows[d]] == time_point([t])[0]])
 
         def estimate(refs, peptide=peptide, charge=charge, modification=modification):
             return estimate_envelope(refs, peptide, charge, modification=modification,
@@ -357,7 +363,7 @@ def series_envelopes(
                                       modification=modification, picker=picker,
                                       registry=registry)
 
-        own = {d: at(reference_time, d) for d in group}
+        own = {d: controls(d) for d in group}
         chosen, source = None, "theory"
         refs = [r for d in group for r in own[d]]
         if refs:

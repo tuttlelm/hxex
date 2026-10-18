@@ -19,7 +19,6 @@ from .hxexpress import read_hxexpress_file, scan_hxexpress
 from .identity import CHANGE_ACTIONS, compare_identity, identity
 from .pooled import scan_specexport_pooled
 from .specexport import read_specexport_dir, scan_specexport
-from .times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +56,6 @@ def read_spectra(
     fmt: Format,
     *,
     project: str,
-    fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
-    undeut_time: float = DEFAULT_UNDEUT_TIME,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
     record_paths: str = "path",
@@ -71,13 +68,13 @@ def read_spectra(
     (``PROJECT:LOCAL_ID``) so ids stay unique when sets from different directories are combined.
 
     ``data_id`` is each entry's position in ``entries`` (before filtering by ``samples`` and
-    ``peptide_ranges``, so ids stay stable when a filter is applied). ``undeut_time`` and
-    ``fulldeut_time`` are the times given to the control labels (``undeut``/``Non`` and
-    ``TD``/``Full``); they must differ. Raises
+    ``peptide_ranges``, so ids stay stable when a filter is applied). The control labels
+    (``undeut``/``Non`` and ``TD``/``Full``) give their spectra the role ``undeut`` or
+    ``fulldeut`` and no time (:mod:`hxex.io.times`). Raises
     :class:`~hxex.hooks.Cancelled` if ``cancel`` returns True between entries.
 
     The spectra's ``source`` records the read (the format, ``project``, the data directory, the
-    entries, the filters and the control times) and the identity of every entry's input (its
+    entries and the filters) and the identity of every entry's input (its
     HX-Express file, or its SpecExport folder: :mod:`hxex.io.identity`), so that
     :func:`read_spectra_source` repeats it and notices a changed input. ``record_paths`` is
     ``'path'`` (the data directory as given) or ``'name'`` (its name only, for results to be
@@ -88,11 +85,9 @@ def read_spectra(
     if record_paths not in PATH_MODES:
         raise ValueError(f"record_paths must be one of {', '.join(PATH_MODES)}")
     qualify_spectrum_id(project, "")  # validate the name before any reading
-    if undeut_time == fulldeut_time:
-        raise ValueError("undeut_time and fulldeut_time must differ")
     root = Path(data_dir)
-    return _read(entries, root, fmt, project=project, fulldeut_time=fulldeut_time,
-                 undeut_time=undeut_time, samples=samples, peptide_ranges=peptide_ranges,
+    return _read(entries, root, fmt, project=project, samples=samples,
+                 peptide_ranges=peptide_ranges,
                  recorded_dir=str(root) if record_paths == "path" else root.name,
                  record_paths=record_paths, known=None, on_change="warn", progress=progress,
                  cancel=cancel)
@@ -105,7 +100,7 @@ def _input_path(fmt: str, entry: PeptideEntry) -> str:
     return f"{entry.sample}/{entry.file}"
 
 
-def _read(entries, root: Path, fmt: str, *, project, fulldeut_time, undeut_time, samples,
+def _read(entries, root: Path, fmt: str, *, project, samples,
           peptide_ranges, recorded_dir: str, record_paths: str, known: Mapping | None,
           on_change: str, progress, cancel) -> SpectrumSet:
     kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges)
@@ -125,15 +120,9 @@ def _read(entries, root: Path, fmt: str, *, project, fulldeut_time, undeut_time,
                           else compare_identity(root / rel, known.get(rel), on_change,
                                                 ReadError))
         if fmt == "hxexpress":
-            spectra += read_hxexpress_file(
-                root / rel, entry, data_id=data_id, fulldeut_time=fulldeut_time,
-                undeut_time=undeut_time,
-            )
+            spectra += read_hxexpress_file(root / rel, entry, data_id=data_id)
         else:
-            spectra += read_specexport_dir(
-                root / rel, entry, data_id=data_id, fulldeut_time=fulldeut_time,
-                undeut_time=undeut_time, id_prefix=rel,
-            )
+            spectra += read_specexport_dir(root / rel, entry, data_id=data_id, id_prefix=rel)
         report(progress, done + 1, len(jobs))
     source = {
         "reader": fmt,
@@ -143,8 +132,6 @@ def _read(entries, root: Path, fmt: str, *, project, fulldeut_time, undeut_time,
         "entries": [e.to_dict() for e in entries],
         "samples": None if samples is None else list(samples),
         "peptide_ranges": None if peptide_ranges is None else list(peptide_ranges),
-        "fulldeut_time": float(fulldeut_time),
-        "undeut_time": float(undeut_time),
         "files": files,
     }
     return SpectrumSet.from_spectra(
@@ -176,10 +163,12 @@ def read_spectra_source(
     root = Path(directory) if directory is not None else Path(source["data_dir"])
     if not root.is_dir():
         raise ReadError(f"{root} not found (give the directory that holds the data)")
+    if "undeut_time" in source or "fulldeut_time" in source:  # records before the roles
+        log.info("the record's control times (undeut_time, fulldeut_time) are no longer used: "
+                 "the control labels give their spectra a role")
     return _read(
         [PeptideEntry.from_dict(e) for e in source["entries"]], root, fmt,
-        project=source["project"], fulldeut_time=source["fulldeut_time"],
-        undeut_time=source["undeut_time"], samples=source.get("samples"),
+        project=source["project"], samples=source.get("samples"),
         peptide_ranges=source.get("peptide_ranges"), recorded_dir=source["data_dir"],
         record_paths=source.get("record_paths", "path"), known=source.get("files", {}),
         on_change=on_change, progress=progress, cancel=cancel,

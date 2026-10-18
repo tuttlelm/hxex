@@ -57,16 +57,20 @@ finding files by name). Required columns: `file`, `sample`, `peptide`, `peptide_
 modX: a modified residue is a lowercase prefix plus its letter (`acK`, `pS`, `pT`, `pY`, or any
 label defined in `[run.registry]`), and a sequence is read residue by residue.
 
-**Controls.** The undeuterated and fully deuterated controls are identified by their times.
-The folder formats record `Non`/`undeut` files at `[input] undeut_time` (0 s) and `Full`/`TD`
-files at `fulldeut_time` (1,000,000 s); for the scan formats each file's `time` in
-`[[input.runs]]` says what it is. `[run.controls]` turns the back-exchange correction on and
-takes those times unless its own `undeut_time` and `fd_time` are set; replicate controls are
-averaged, and a series whose control is missing or fails the limits falls back to a theoretical
-value and is flagged (`control_fallback` in the tables).
+**Controls.** The undeuterated and fully deuterated controls are identified by a *role*, not
+by a time. The folder formats take it from the file labels (`Non`/`undeut` and `Full`/`TD`);
+for the scan formats each control file gets `role = "undeut"` or `role = "fulldeut"` in
+`[[input.runs]]` (a file with a `time` as well is a time point that also serves as the
+control). A control carries no time in the tables and figures. `[run.controls]` turns the
+back-exchange correction on; `undeut_at` and `fulldeut_at` there make the spectra at a time
+serve as a control too (a plateaued late point as the fully deuterated reference). Replicate
+controls are averaged, and a series whose control is missing or fails the limits falls back to
+a theoretical value and is flagged (`control_fallback` in the tables).
 
-**Units.** Times are in seconds everywhere, including `rt_window`; chromatographic retention
-times (`rt` columns, `retention_times` tables) are in minutes. `resolution_ppm` is the picker's
+**Units.** Times are in seconds everywhere, including `rt_window`, and may be written with a
+unit in the project file (`time = "5 min"`, `times = ["1 min", "20 h"]`; `s`, `sec`, `m`,
+`min`, `h`, `hr`, `ms` and their long forms); stored values are seconds. Chromatographic
+retention times (`rt` columns, `retention_times` tables) are in minutes. `resolution_ppm` is the picker's
 half-width around each predicted peak, not a resolving power; `retention_min` and
 `retention_max` are deuterium retention (a fraction), not retention times. The bootstrap's `ci`
 is a percentage (95.0), the analysis' `confidence` a fraction (0.5).

@@ -32,7 +32,8 @@ from typing import Any
 import numpy as np
 
 from .. import chem
-from ..controls import ControlConfig, correct_means, fit_controls
+from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
+from ..spectra import point_order_key
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ TREND_Z = 2.0
 TREND_SHARE = 0.5
 
 
-_SCALARS = ("nterm_subtract", "undeut_time")  # settings of the table, not columns
+_SCALARS = ("nterm_subtract",)  # settings of the table, not columns
 
 
 @dataclass(frozen=True)
@@ -97,9 +98,10 @@ class SpeciesUptake:
     (the runs its spectra come from, e.g. ``'A,B'`` for a merged sample; '' for one run),
     ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
     systematically; see :func:`species_uptake`); ``rt``: the median retention time of its
-    spectra (minutes; NaN: unknown). ``nterm_subtract`` (the
-    N-terminal residues that do not count) and ``undeut_time`` (the undeuterated control's time,
-    which coverage, redundancy and resolution refer to) are the run's.
+    spectra (minutes; NaN: unknown); ``role``: ``'undeut'`` or ``'fulldeut'`` for a control
+    (whose ``time`` is NaN unless it was also a time point), ``''`` for a time point: coverage,
+    redundancy and resolution refer to the undeuterated controls. ``nterm_subtract`` (the
+    N-terminal residues that do not count) is the run's.
     """
 
     sample: np.ndarray
@@ -127,11 +129,15 @@ class SpeciesUptake:
     n_spectra_by_run: np.ndarray | None = None
     run_offset: np.ndarray | None = None
     rt: np.ndarray | None = None
+    role: np.ndarray | None = None
     nterm_subtract: int = 1
-    undeut_time: float = 0.0
 
-    def __post_init__(self):  # built without them: no fallback, one run
+    def __post_init__(self):  # built without them: no fallback, one run, no controls
         n = len(self.sample)
+        if self.role is None:
+            object.__setattr__(self, "role", np.full(n, "", dtype="<U8"))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
         for name, empty in (("control_fallback", np.zeros(n, dtype=bool)),
                             ("runs", np.full(n, "", dtype=object)),
                             ("n_spectra_by_run", np.full(n, "", dtype=object)),
@@ -151,11 +157,15 @@ class SpeciesUptake:
         mask = np.asarray(mask)
         return SpeciesUptake(**{f.name: getattr(self, f.name)[mask] for f in fields(self)
                                 if f.name not in _SCALARS},
-                             nterm_subtract=self.nterm_subtract, undeut_time=self.undeut_time)
+                             nterm_subtract=self.nterm_subtract)
 
-    def where(self, *, sample=None, time=None, K=None, rank=None, kind=None) -> np.ndarray:
-        """Rows matching every condition given (a value, or a list of values)."""
+    def where(self, *, sample=None, time=None, K=None, rank=None, kind=None,
+              role=None) -> np.ndarray:
+        """Rows matching every condition given (a value, or a list of values); ``role``
+        ``'undeut'``/``'fulldeut'`` selects the controls, ``''`` the time points."""
         keep = np.ones(len(self), dtype=bool)
+        if role is not None:
+            keep &= np.isin(self.role, np.atleast_1d(role))
         for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank),
                             ("kind", kind)):
             if value is not None:
@@ -192,15 +202,15 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         base = ControlConfig()
     fit = results.fit
     rejected = np.asarray(results.review_status == "rejected", dtype=bool)
-    time = np.asarray(fit.time, dtype=float)
-    at_control = np.zeros(len(fit), dtype=bool)
-    for t in (base.undeut_time, base.fd_time):
-        if t is not None:
-            at_control |= np.abs(time - t) <= base.atol
+    config = dataclasses.replace(base, **dict(changes or {}))
+    if config.undeut_at is not None or config.fulldeut_at is not None:
+        # a time point promoted to a control for the analysis (or by the run)
+        fit = dataclasses.replace(fit, role=apply_control_roles(
+            fit.role, fit.time, config, where="[analysis.controls]"))
+    at_control = np.asarray(fit.role, dtype=str) != ""
     n_rejected = int((rejected & at_control).sum())
     if stored is not None and not changes and not n_rejected:
         return stored
-    config = dataclasses.replace(base, **dict(changes or {}))
     usable = ~rejected
     if fit.noise_estimate is not None:
         usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
@@ -255,16 +265,17 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
     end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
     rep, control_fallback, run)`` (run: '' for one run, the run's name in a
     :class:`hxex.analysis.RunSet`); with whether each sample's values are corrected
-    (sample -> bool), ``nterm_subtract`` and the undeuterated time. ``results`` may be a
+    (sample -> bool) and ``nterm_subtract``. The point of a group is a :class:`Point`
+    (``(time, role)``: a time, or a control role). ``results`` may be a
     :class:`hxex.analysis.RunSet` (its samples are then labelled ``run:sample``)."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
         return results._records(ks, exclude_flagged, filters, quiet, controls_changes)
-    groups, corrected, nterm, undeut, dropped = _spectrum_records(
+    groups, corrected, nterm, dropped = _spectrum_records(
         results, ks, exclude_flagged, filters, quiet, controls_changes)
     groups = _filter_species(groups, ks, filters, dropped, quiet)
-    return groups, corrected, nterm, undeut
+    return groups, corrected, nterm
 
 
 def _kept(results, exclude_flagged: bool) -> np.ndarray:
@@ -291,7 +302,6 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     missing = [k for k in ks if k not in fit.fits]
     if missing:
         raise ValueError(f"K = {missing} were not fitted (fitted: {list(fit.k_values)})")
-    run = results.settings.run if results.settings is not None else None
     picker = results.settings.picker if results.settings is not None else None
     nterm = picker.nterm_subtract if picker is not None else 1
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
@@ -304,7 +314,9 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
         n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
         fell_back = np.asarray(controls.fallback, dtype=bool)[controls.rows(fit.data_id)]
 
-    # one record per spectrum and rank, then grouped by species, time, K and rank
+    # one record per spectrum and rank, then grouped by species, point (a time, or a control
+    # role), K and rank
+    points = _points(fit)
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
     dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0}
     for k in ks:
@@ -343,7 +355,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
         for i in np.flatnonzero(usable):
             j = rows[i]
             key = (str(binned.sample[j]), str(binned.peptide[j]), str(binned.modification[j]),
-                   int(binned.start_seq[j]), int(binned.end_seq[j]), float(fit.time[i]), k)
+                   int(binned.start_seq[j]), int(binned.end_seq[j]), points[i], k)
             for r in range(k):
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
@@ -351,9 +363,35 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     int(binned.rep[j]), bool(fell_back[i]), "",
                 ))
 
-    undeut = run.reference_time if run is not None else float(np.min(fit.time))
     corrected = {str(s): controls is not None for s in np.unique(binned.sample)}
-    return groups, corrected, int(nterm), float(undeut), dropped
+    return groups, corrected, int(nterm), dropped
+
+
+class Point(tuple):
+    """A measurement point as a grouping key: ``(time, role)`` with NaN as None, so that the
+    controls without a time group by role (``('undeut',)``-like keys compare equal, which NaN
+    floats do not). Sorts the undeuterated control first, times in order, the fully deuterated
+    control last."""
+
+    __slots__ = ()
+
+    @property
+    def time(self) -> float:
+        return float("nan") if self[0] is None else float(self[0])
+
+    @property
+    def role(self) -> str:
+        return str(self[1])
+
+    def __lt__(self, other):
+        return point_order_key(self.time, self.role) < point_order_key(other.time, other.role)
+
+
+def _points(fit) -> list[Point]:
+    time = np.asarray(fit.time, dtype=float)
+    role = np.asarray(fit.role, dtype=str)
+    return [Point((None if not np.isfinite(t) else float(t), str(r)))
+            for t, r in zip(time, role, strict=True)]
 
 
 def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = False) -> dict:
@@ -426,13 +464,14 @@ def species_uptake(
     ``TREND_SHARE`` of the times both were measured, and at two times at least (the charge-trend
     rule): a difference between runs (a batch effect) that pooling would otherwise hide.
     """
-    groups, corrected, nterm, undeut = _records(results, ks, exclude_flagged, filters,
+    groups, corrected, nterm = _records(results, ks, exclude_flagged, filters,
                                                 controls_changes=controls)
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
-        sample, peptide, mod, start, end, time, k, rank = key
+        sample, peptide, mod, start, end, point, k, rank = key
+        time, role = point.time, point.role
         v = np.array([r[0] for r in recs])
         s = np.array([r[1] for r in recs])
         f = np.array([r[2] for r in recs])
@@ -446,7 +485,7 @@ def species_uptake(
         for name, value in (
             ("sample", sample), ("peptide", peptide), ("modification", mod),
             ("kind", "peptide" if ion == "M" else "fragment"), ("start", start), ("end", end),
-            ("time", time), ("K", k), ("rank", rank), ("mean", d * amides),
+            ("time", time), ("role", role), ("K", k), ("rank", rank), ("mean", d * amides),
             ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
@@ -497,12 +536,12 @@ def species_uptake(
         out[name] = out[name].astype(np.float64)
     out["corrected"] = out["corrected"].astype(bool)
     out["control_fallback"] = out["control_fallback"].astype(bool)
-    for name in ("runs", "n_spectra_by_run"):
+    for name in ("runs", "n_spectra_by_run", "role"):
         out[name] = out[name].astype(str)
     rts = _species_rt(results, exclude_flagged)
     out["rt"] = np.array([rts.get((str(a), str(b), str(c)), np.nan) for a, b, c in zip(
         out["sample"], out["peptide"], out["modification"], strict=True)], dtype=np.float64)
-    return SpeciesUptake(**out, nterm_subtract=nterm, undeut_time=undeut)
+    return SpeciesUptake(**out, nterm_subtract=nterm)
 
 
 def _species_rt(results, exclude_flagged: bool = False) -> dict[tuple[str, str, str], float]:

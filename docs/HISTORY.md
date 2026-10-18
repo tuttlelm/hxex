@@ -2730,3 +2730,38 @@ CSVs or mzML if wanted.
     pyHXExpress (PLAN); PEAK_PICKING.md, the template comment on `resolution_ppm` and the
     user guide draft describe the cap. Test: `tests/test_picking.py`
     (`test_window_from_the_resolving_power`).
+
+101. **Controls by role, not by time; times with units (2026-10-18; audit design item 1,
+    session 1).** A `role` column (`undeut`, `fulldeut` or empty) on every per-spectrum table
+    (spectra, picked, measurements, fit, bundle) replaces the control times: the readers set it
+    from the formats' labels (`Non`/`Full`, `undeut`/`TD`), `role` in `[[input.runs]]` marks a
+    control file (summed into one spectrum without a time), and `undeut_at`/`fulldeut_at` in
+    `[run.controls]` and `[analysis.controls]` make the spectra at a time serve as a control as
+    well (`apply_control_roles`; the match is exact through the shared parser), and
+    `undeut_marked`/`fulldeut_marked = false` make those spectra the control instead of the
+    marked files (needed by the private targeted LC-MS example, whose analysis replaces a
+    fully deuterated run that reads 0.12 D per amide low with the 27 h plateau: with the
+    additive `fulldeut_at` alone the two were averaged; the owner confirmed the 27 h spectra
+    serve alone, the TD file being under-deuterated). A control's time is NaN unless it is also a time point. Removed: `[input] undeut_time`/`fulldeut_time`,
+    `[run] undeut_time`, `[run.controls] undeut_time`/`fd_time`/`atol`, the 1e6 sentinel, the
+    collision warning (a real 0 s point beside the undeuterated control needs nothing now) and
+    `RunConfig.reference_time`; the old keys are refused with a message naming what replaced
+    them, and bundles written before the roles derive them from their recorded control times
+    at load (`modernise_manifest`, `legacy_roles`; the file is left as written, so their
+    controls keep the recorded times 0 and 1e6 in `time` until the bundle is rerun; checked on
+    the intact-peptide benchmark bundle: 3,248 undeuterated and 2,274 fully deuterated
+    measurements recognised). Grouping by
+    point: `time_point` (a time, or a control role) and the role-aware `time_index` (the
+    undeuterated control first, the fully deuterated last) replace equality on the time in
+    the noise estimate, the quality checks, the species, residue and uptake tables and the
+    series figures. The analysis's per-time figures and comparisons are over time points
+    only; coverage is judged on the undeuterated controls by role. Times: `parse_time`
+    accepts a number of seconds or text with a unit (`"5 min"`, `"20 h"`, `"1h21m"`) in
+    every time setting of the project file (runs, `[run.controls]`, `envelope_fallback_time`,
+    `[input.scans]`, `[analysis]` lists); `format_time` labels figures (`20 h`); the
+    HX-Express replicate-marker rule stays in that reader. `[input] time_scale`
+    (`seconds`/`order`) is parsed and stored; its effect on the plots and analyses is part of
+    session 2, with `hxex check`/`info` reporting the roles and the user-guide section's
+    figures. Golden picker and engine fixtures unchanged (roles do not enter the picker or the
+    fits; the noise references are the same spectra). Private project files updated to the new
+    keys.

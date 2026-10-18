@@ -19,7 +19,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from ..controls import correct_means
-from ..spectra import time_index
+from ..io.times import format_time
+from ..spectra import FULLDEUT, UNDEUT, time_index
 from .results import Results
 from .spectrum import LAYERS, plot_spectrum, population_style
 
@@ -79,7 +80,9 @@ def series_rows(results: Results, data_id: int) -> np.ndarray:
     if not len(rows):
         raise KeyError(data_id)
     rep = _reps(results)[rows]
-    return rows[np.lexsort((np.arange(len(rows)), rep, results.fit.time[rows]))]
+    fit = results.fit
+    rank = time_index(fit.data_id[rows], fit.time[rows], fit.role[rows])
+    return rows[np.lexsort((np.arange(len(rows)), rep, rank))]
 
 
 def _reps(results: Results) -> np.ndarray:
@@ -148,8 +151,8 @@ def series_info(results: Results, data_id: int) -> dict:
     return {
         "data_id": data_id, "rows": rows, "label": label, "file_label": file_label,
         "n_amides": n_amides,
-        "times": fit.time[rows], "reps": _reps(results)[rows],
-        "time_index": time_index(fit.data_id[rows], fit.time[rows]),
+        "times": fit.time[rows], "roles": fit.role[rows], "reps": _reps(results)[rows],
+        "time_index": time_index(fit.data_id[rows], fit.time[rows], fit.role[rows]),
     }
 
 
@@ -161,11 +164,12 @@ def _layout(info: dict, columns: int | None) -> tuple[int, int, list[tuple[int, 
     square of at most 4 columns), so that a long single-replicate time course is not one tall
     column. The last value says whether the layout is time by replicate."""
     n = len(info["rows"])
-    times, reps = np.unique(info["times"]), np.unique(info["reps"])
+    # a point is a time or a control role; ``time_index`` ranks them (the controls at the ends)
+    points, reps = np.unique(info["time_index"]), np.unique(info["reps"])
     if columns is None and len(reps) > 1:
-        pos = [(int(np.searchsorted(times, t)), int(np.searchsorted(reps, r)))
-               for t, r in zip(info["times"], info["reps"], strict=True)]
-        return len(times), len(reps), pos, True
+        pos = [(int(np.searchsorted(points, t)), int(np.searchsorted(reps, r)))
+               for t, r in zip(info["time_index"], info["reps"], strict=True)]
+        return len(points), len(reps), pos, True
     if columns is not None and columns < 1:
         raise ValueError("columns must be at least 1")
     ncols = columns or max(1, min(4, math.ceil(math.sqrt(n))))
@@ -251,8 +255,8 @@ def plot_series_spectra(
             ax.text(0.5, 0.5, str(exc), ha="center", va="center", fontsize=6, wrap=True,
                     transform=ax.transAxes)
         pos = list(info["rows"]).index(i)
-        ax.set_title(f"{_time_text(results, info['times'][pos])}, rep {info['reps'][pos]}",
-                     fontsize=8)
+        when = _time_text(info["times"][pos], info["roles"][pos])
+        ax.set_title(f"{when}, rep {info['reps'][pos]}", fontsize=8)
     lo, hi = _series_range(results, [str(results.fit.spectrum_id[i]) for i in cells],
                            [ax for ax, _ in cells.values()])
     if np.isfinite(lo) and hi > lo:
@@ -271,24 +275,23 @@ def _err(value: float) -> float | None:
     return float(value) if np.isfinite(value) else None
 
 
-def _control_role(results: Results, t: float) -> str | None:
-    """``'FD'`` or ``'UN'`` if ``t`` is the fully deuterated or undeuterated control time (matched
-    within the controls' ``atol``, so the controls may be at any time, as in an experiment that
+ROLE_SHORT = {UNDEUT: "UN", FULLDEUT: "FD"}
+
+
+def _control_role(role: str) -> str | None:
+    """``'FD'`` or ``'UN'`` for a spectrum with the fully deuterated or undeuterated role (the
+    controls are known by their role, so they may be at any time, as in an experiment that
     starts deuterated and exchanges into H2O), else None."""
-    ctrl = results.controls
-    if ctrl is None:
-        return None
-    cfg = ctrl.config
-    if cfg.fd_time is not None and abs(t - cfg.fd_time) <= cfg.atol:
-        return "FD"
-    if cfg.undeut_time is not None and abs(t - cfg.undeut_time) <= cfg.atol:
-        return "UN"
-    return None
+    return ROLE_SHORT.get(str(role))
 
 
-def _time_text(results: Results, t: float) -> str:
-    """A time for a title: ``FD`` or ``UN`` for a control, else seconds."""
-    return _control_role(results, t) or f"{t:g} s"
+def _time_text(t: float, role: str = "") -> str:
+    """A point for a title: ``FD`` or ``UN`` for a control (with its time when it has one),
+    else the time in a readable unit (:func:`hxex.io.format_time`)."""
+    short = _control_role(role)
+    if short is not None:
+        return f"{short} ({format_time(t)})" if np.isfinite(t) else short
+    return format_time(t)
 
 
 def _control_row(results: Results, data_id: int) -> int | None:
@@ -421,7 +424,7 @@ def plot_populations(
         d = population_data(results, sid, k=k, corrected=corrected, components=components)
         ax = axes[positions[pos]]
         ax.set_visible(True)
-        label = f"{_time_text(results, info['times'][pos])}, rep {info['reps'][pos]}"
+        label = f"{_time_text(info['times'][pos], info['roles'][pos])}, rep {info['reps'][pos]}"
         _draw_population_map(ax, d, label)
         if reference is not None and d["n_amides"] is not None:
             known = reference.at(float(info["times"][pos]), d["n_amides"])
@@ -440,7 +443,8 @@ def plot_populations(
                             fillstyle=population_style(rank)["fillstyle"],
                             gid=f"overlay:{info['reps'][pos]}")
             ov.set_ylim(-0.05, 1.1)
-            ov.set_title(f"{_time_text(results, info['times'][pos])}, replicates", fontsize=8)
+            when = _time_text(info["times"][pos], info["roles"][pos])
+            ov.set_title(f"{when}, replicates", fontsize=8)
             _limits(ov, d["n_amides"])
             if reference is not None and d["n_amides"] is not None:
                 known = reference.at(float(info["times"][pos]), d["n_amides"])
@@ -465,13 +469,12 @@ def uptake_data(
     spectrum and population: ``index`` (position in the results), ``time``, ``time_index``,
     ``rep``, ``rank``, ``mean`` (corrected if asked and possible), ``mean_se``, ``population``,
     ``population_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
-    controls), ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
-    control, matched to the control times) and ``fd_time`` (the fully deuterated time of the
-    controls, or None)."""
+    controls) and ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
+    control, by its role; a control's ``time`` is NaN unless it was also a time point)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (
         "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "population",
-        "population_se")}
+        "population_se", "role")}
     use = False
     for pos, i in enumerate(info["rows"]):
         if k is not None and not results.fit.fitted(k)[i]:
@@ -483,20 +486,20 @@ def uptake_data(
             c = rank - 1
             for name, value in (
                 ("index", i), ("time", info["times"][pos]), ("time_index", info["time_index"][pos]),
+                ("role", _control_role(info["roles"][pos]) or ""),
                 ("rep", info["reps"][pos]), ("rank", rank), ("mean", d["mean"][c]),
                 ("mean_se", d["mean_se"][c]), ("population", d["population"][c]),
                 ("population_se", d["population_se"][c]),
             ):
                 cols[name].append(value)
     out: dict = {n: np.array(v) for n, v in cols.items()}
+    out["role"] = np.asarray(out["role"], dtype=str)
     ctrl = results.controls
     row = _control_row(results, data_id)
     out.update({
         "label": info["label"], "corrected": use, "n_amides": info["n_amides"],
         "m0": None if row is None else float(ctrl.m0[row]),
         "mfd": None if row is None else float(ctrl.mfd[row]),
-        "fd_time": None if ctrl is None else ctrl.config.fd_time,
-        "role": np.array([_control_role(results, float(t)) or "" for t in out["time"]], dtype=str),
         "control_fallback": None if row is None else bool(ctrl.fallback[row]),
     })
     return out
@@ -520,11 +523,11 @@ def plot_uptake(
     mean, and each replicate has its own colour).
 
     ``x='time'`` plots against the measured time (``scale='linear'`` or ``'log'``; a log axis
-    leaves out times of 0 or less, and the fully deuterated control, recognised by its time
-    whether it comes first or last, is drawn as a line, not a
-    point). ``x='index'`` plots against the position of the time point in the series (0, 1, 2,
-    ..., labelled with the times), with every time point including the controls, as for the
-    test data sets. ``corrected`` (default: if the results have controls) uses the back-exchange
+    leaves out times of 0 or less; the controls, known by their role, are drawn as lines, not
+    points, unless they are time points as well). ``x='index'`` plots against the position of
+    the point in the series (0, 1, 2, ..., labelled with the times), with every point including
+    the controls (the undeuterated first, the fully deuterated last), as for the test data
+    sets. ``corrected`` (default: if the results have controls) uses the back-exchange
     corrected means, and the limits drawn are then 0 and the number of amides; otherwise the
     measured control levels. ``reference`` marks the known populations (open circles; in the
     measured units, ``m0 + level * (mfd - m0)``, when the plot is not corrected).
@@ -536,8 +539,7 @@ def plot_uptake(
     d = uptake_data(results, data_id, corrected=corrected, components=components, k=k)
     fig = ax.figure if ax is not None else Figure(figsize=(6.5, 4.5))
     ax = ax if ax is not None else fig.subplots()
-    is_fd = d["role"] == "FD"
-    keep = np.ones(len(d["time"]), dtype=bool) if x == "index" else ~is_fd
+    keep = np.ones(len(d["time"]), dtype=bool) if x == "index" else np.isfinite(d["time"])
     if x == "time" and scale == "log":
         keep &= d["time"] > 0
     xs = d["time_index"] if x == "index" else d["time"]
@@ -571,9 +573,9 @@ def plot_uptake(
         for t in ticks:
             time = d["time"][d["time_index"] == t][0]
             role = d["role"][d["time_index"] == t][0]
-            labels.append(role or f"{time:g}")
+            labels.append(role or format_time(time))
         ax.set_xticks(ticks, labels, rotation=45 if len(ticks) > 8 else 0, fontsize=8)
-        ax.set_xlabel("time point (s)")
+        ax.set_xlabel("time point")
     else:
         ax.set_xlabel("time (s)")
         ax.set_xscale(scale)

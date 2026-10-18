@@ -19,12 +19,11 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..spectra import PeptideEntry, Spectrum
+from ..spectra import PeptideEntry, Spectrum, point_order_key, time_point
 from ._common import clean_spectrum, to_number
 from .entries import filter_entries, read_fasta_sequence, sort_entries
 from .errors import ReadError
-from .hxexpress import _warn_control_clash
-from .times import DEFAULT_FULLDEUT_TIME, DEFAULT_UNDEUT_TIME, parse_specexport_time
+from .times import format_time, parse_specexport_token
 
 log = logging.getLogger(__name__)
 
@@ -113,14 +112,15 @@ def read_specexport_dir(
     entry: PeptideEntry,
     *,
     data_id: int = 0,
-    fulldeut_time: float = DEFAULT_FULLDEUT_TIME,
-    undeut_time: float = DEFAULT_UNDEUT_TIME,
     id_prefix: str | None = None,
 ) -> list[Spectrum]:
     """Read every spectrum of ``entry``'s charge in one peptide directory.
 
-    Spectra are ordered by time, then replicate, then file name. ``spectrum_id`` is
-    ``id_prefix/FILE``, with ``id_prefix`` defaulting to ``SAMPLE/PEPTIDE_DIR``.
+    ``Non`` files are the undeuterated controls and ``Full`` files the fully deuterated ones
+    (the role set, no time; :func:`parse_specexport_token`). Spectra are ordered by point
+    (the undeuterated control, the times, the fully deuterated control), then replicate, then
+    file name. ``spectrum_id`` is ``id_prefix/FILE``, with ``id_prefix`` defaulting to
+    ``SAMPLE/PEPTIDE_DIR``.
     """
     if id_prefix is None:
         id_prefix = f"{entry.sample}/{entry.file}"
@@ -129,28 +129,35 @@ def read_specexport_dir(
     for path in spec_dir.glob("*.csv"):
         parsed = parse_specexport_filename(path.name)
         if parsed is not None and parsed[2] == entry.charge:
-            found.append((parse_specexport_time(parsed[0], fulldeut_time, undeut_time),
-                          parsed[1], path, parsed[0]))
+            time, role = parse_specexport_token(parsed[0])
+            found.append((time, role, parsed[1], path))
     if not found:
         raise ReadError(f"{spec_dir}: no spectrum files for charge {entry.charge}")
-    _warn_control_clash(spec_dir, [(token, t) for t, _, _, token in found])
-    # two files for one time and replicate (``60s-1`` and ``1m-1``) cannot both be that
-    # spectrum; a control next to a time point of the same time is the warning above
-    seen: dict[tuple[float, int, bool], Path] = {}
-    for time, rep, path, token in sorted(found, key=lambda t: t[2].name):
-        key = (time, rep, token in ("Non", "Full"))
+    # two files for one point and replicate (``60s-1`` and ``1m-1``) cannot both be that
+    # spectrum
+    seen: dict[tuple[str, int], Path] = {}
+    for time, role, rep, path in sorted(found, key=lambda t: t[3].name):
+        key = (str(time_point([time], [role])[0]), rep)
         other = seen.setdefault(key, path)
         if other is not path:
             raise ReadError(
                 f"{spec_dir}: {other.name} and {path.name} are both replicate {rep} at "
-                f"{time:g} s for charge {entry.charge}; rename or remove one")
+                f"{role or format_time(time)} for charge {entry.charge}; rename or remove one")
     spectra = []
-    for time, rep, path, _ in sorted(found, key=lambda t: (t[0], t[1], t[2].name)):
+    for time, role, rep, path in sorted(found, key=lambda t: _point_order(t)):
         mz, intensity = clean_spectrum(*_read_two_columns(path))
         spectra.append(
             Spectrum(
                 mz, intensity, entry, time, rep,
                 data_id=data_id, label=path.name, spectrum_id=f"{id_prefix}/{path.name}",
+                role=role,
             )
         )
     return spectra
+
+
+def _point_order(item) -> tuple:
+    """Sort key: the undeuterated control, the times in order, the fully deuterated control;
+    then replicate and file name."""
+    time, role, rep, path = item
+    return (*point_order_key(float(time), role), rep, path.name)

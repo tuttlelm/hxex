@@ -9,6 +9,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from ..io.times import parse_time
 from .compare import MATCHES, Annotations
 from .fragments import FragmentAnalysis
 from .populations import ChoiceConfig
@@ -31,9 +32,9 @@ class AnalysisConfig:
     - ``reference``: the sample the others are compared with (empty: no comparisons). (The
       ``reference`` of the exchange and labelling conditions is an intrinsic-rate set.)
     - ``samples``: the samples, in this order (empty: all, the reference first).
-    - ``times`` (s): the time points of the per-time figures (empty: all but the fully
-      deuterated control); ``exclude_times`` (s): time points left out of the whole analysis
-      (unreliable ones; the fits in the bundle are kept; not a control's time).
+    - ``times`` (s, or text with a unit such as ``"5 min"``): the time points of the per-time
+      figures (empty: all); ``exclude_times``: time points left out of the whole analysis
+      (unreliable ones; the fits in the bundle are kept; the controls are not times).
     - ``ks``: the fixed K values analysed (1 is needed: the average, and the choice).
     - ``exclude_flagged``: leave out spectra with a quality flag.
     - ``filters``: which K=2 descriptions are kept (:class:`SpeciesFilters`; None: all).
@@ -50,8 +51,8 @@ class AnalysisConfig:
 
     - ``fasta``: one sequence file for every sample, or one per sample (sample -> path); empty:
       the sequence comes from the peptides.
-    - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated spectra; when
-      there are none, ``'all'`` with a warning), ``'all'`` or a list of times (s).
+    - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated controls; when
+      there are none, ``'all'`` with a warning), ``'all'`` or a list of times.
     - ``redundancy``: what it counts, ``'peptides'`` or ``'spectra'``.
     - ``weight_exponent``: of the residue averaging (:func:`residue_map`).
     - ``choice``: the limits of the choice between one and two populations (:class:`ChoiceConfig`).
@@ -147,8 +148,9 @@ class AnalysisConfig:
                     raise ValueError(f"run name {name!r}: must be non-empty without "
                                      f"{SEPARATOR!r}")
         object.__setattr__(self, "samples", tuple(str(s) for s in self.samples))
-        object.__setattr__(self, "times", tuple(float(t) for t in self.times))
-        object.__setattr__(self, "exclude_times", tuple(float(t) for t in self.exclude_times))
+        object.__setattr__(self, "times", tuple(parse_time(t, "times") for t in self.times))
+        object.__setattr__(self, "exclude_times",
+                           tuple(parse_time(t, "exclude_times") for t in self.exclude_times))
         object.__setattr__(self, "ks", tuple(int(k) for k in self.ks))
         if not self.ks or 1 not in self.ks:
             raise ValueError("ks must include 1 (the average, and the choice needs it)")
@@ -157,7 +159,7 @@ class AnalysisConfig:
                 raise ValueError("coverage_times must be 'undeuterated', 'all' or a list of times")
         else:
             object.__setattr__(self, "coverage_times",
-                               tuple(float(t) for t in self.coverage_times))
+                               tuple(parse_time(t, "coverage_times") for t in self.coverage_times))
         if self.redundancy not in COUNTS:
             raise ValueError(f"redundancy must be one of {', '.join(COUNTS)}")
         if self.format not in FORMATS:

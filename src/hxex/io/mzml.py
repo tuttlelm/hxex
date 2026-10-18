@@ -49,6 +49,7 @@ from ..spectra import (
     PeptideEntry,
     Spectrum,
     SpectrumSet,
+    check_role,
     entry_rt,
     qualify_spectrum_id,
     split_spectrum_id,
@@ -691,9 +692,12 @@ SCAN_CONDITIONS = ("activation", "precursor_mz", "precursor_charge", "filter_con
 @dataclass(frozen=True)
 class MzmlRun:
     """One mzML file of an experiment: its ``sample`` and replicate ``rep``. ``time`` is the
-    labelling time of the whole file (an LC-MS file per time point, or a control file at the
-    control's time), or None when every scan has its own time (the scan time plus
-    ``time_offset``, in seconds).
+    labelling time of the whole file (an LC-MS file per time point), or None when every scan
+    has its own time (the scan time plus ``time_offset``, in seconds). ``role`` marks a control
+    file: ``'undeut'`` (undeuterated) or ``'fulldeut'`` (fully deuterated), whose scans are
+    summed into one spectrum with that role and no time, unless the file is also a time point
+    (``time`` given as well: a time point that serves as the reference). A file with neither
+    ``time`` nor ``role`` is a kinetics run (:attr:`fixed` False).
 
     Two clocks: the **acquisition clock** is the scan time the file records (from the start of
     acquisition); the **exchange clock** is the time of the spectra, the scan time plus
@@ -720,11 +724,25 @@ class MzmlRun:
     precursor_charge: int | str | None = TARGET
     filter_contains: str | None = TARGET
     filter_excludes: str | None = TARGET
+    role: str = ""
 
     def __post_init__(self):
         for name in ("precursor_mz", "precursor_charge"):
             if isinstance(getattr(self, name), str) and getattr(self, name) != TARGET:
                 raise ValueError(f"{name} must be a number, None or {TARGET!r}")
+        object.__setattr__(self, "role", check_role(self.role))
+
+    @property
+    def fixed(self) -> bool:
+        """Whether the whole file is one spectrum (a time point or a control file: ``time`` or
+        ``role`` given), as opposed to a kinetics run where every scan has its own time."""
+        return self.time is not None or bool(self.role)
+
+    @property
+    def spectrum_time(self) -> float:
+        """The time of the file's spectrum when it is :attr:`fixed`: ``time``, or NaN for a
+        control file without one."""
+        return float(self.time) if self.time is not None else float("nan")
 
     def conditions(self, target: MzmlTarget) -> dict:
         """The scan conditions of ``target`` in this file (this run's where it sets them)."""
@@ -736,7 +754,8 @@ class MzmlRun:
                **({"usable_from": float(self.usable_from)} if self.usable_from is not None
                   else {}),
                "time": None if self.time is None else float(self.time),
-               "time_offset": float(self.time_offset)}
+               "time_offset": float(self.time_offset),
+               **({"role": self.role} if self.role else {})}
         out.update({name: getattr(self, name) for name in SCAN_CONDITIONS
                     if getattr(self, name) != TARGET})  # only those set, as older records
         return out
@@ -1132,7 +1151,8 @@ def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.n
     files += [None] * (len(runs) - len(files))
     prefixes = tuple(
         f"{r['sample']}/{(known or {}).get('name') or _run_file_name(r['path'])}/"
-        for r, known in zip(runs, files, strict=True) if r.get("time") is None)
+        for r, known in zip(runs, files, strict=True)
+        if r.get("time") is None and not r.get("role"))
     if not prefixes:
         return out
     for i, sid in enumerate(spectrum_id):
@@ -1146,7 +1166,7 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     :func:`read_mzml` chooses them: the MS level and the scan conditions (the run's where it sets
     them), within the retention window for a run with a fixed time, or from ``config.min_time``
     otherwise, and from the run's ``usable_from`` (all on the acquisition clock: scan times)."""
-    if run.time is not None:
+    if run.fixed:
         time_range = target.rt_window
     else:
         time_range = None if config.min_time is None else (config.min_time, np.inf)
@@ -1176,9 +1196,8 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             plans.append(None)
             continue
         order = rows[np.argsort(table.time[rows], kind="stable")]
-        groups = [np.arange(len(order))] if run.time is not None else _groups(
-            table.time[order], config)
-        if run.time is None and config.max_spectra is not None and len(groups) > 1:
+        groups = [np.arange(len(order))] if run.fixed else _groups(table.time[order], config)
+        if not run.fixed and config.max_spectra is not None and len(groups) > 1:
             centre = np.array([table.time[order][g].mean() for g in groups])
             groups = [groups[i] for i in _sample_log(centre, config.max_spectra)]
         plans.append((order, groups))
@@ -1221,7 +1240,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
             first, last = scans[0].index, scans[-1].index
             scan_text = f"scan{first}" if len(scans) == 1 else f"scans{first}-{last}"
-            time = (float(run.time) if run.time is not None
+            time = (run.spectrum_time if run.fixed
                     else float(np.mean([s.time for s in scans])) + run.time_offset)
             local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
             # retention time (minutes): the scans' acquisition times weighted by their signal in
@@ -1236,7 +1255,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             rt = entry_rt(entry)
             if not np.isfinite(rt) and "fragment" in extra and parent_key in parent_rt:
                 rt = parent_rt[parent_key]
-            elif not np.isfinite(rt) and run.time is not None:
+            elif not np.isfinite(rt) and run.fixed:
                 weight = np.array([float(np.sum(p[1])) for p in parts])
                 times = np.array([s.time for s in scans], dtype=float)
                 rt = float(np.average(times, weights=weight) if weight.sum() > 0
@@ -1253,6 +1272,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 spectrum_id=qualify_spectrum_id(project, local), rt=rt,
                 resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
                 resolving_power_mz=float(getattr(f, "resolving_power_mz", np.nan)),
+                role=run.role,
             ))
 
 

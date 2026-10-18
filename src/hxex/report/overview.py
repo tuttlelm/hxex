@@ -11,7 +11,9 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
+from ..io.times import format_time
 from ..quality import FLAG_NAMES
+from ..spectra import point_order_key, time_point
 from .results import Results
 from .series import _control_role
 from .spectrum import COLORS, FIT_COLOR, plot_spectrum
@@ -261,9 +263,15 @@ def k_selection_data(results: Results) -> dict:
     fit = results.fit
     ks = tuple(fit.k_values)
     eff = results.effective_K
-    times = np.unique(fit.time)
-    share = np.array([[np.mean(eff[fit.time == t] == k) for k in ks] for t in times])
-    labels = [_control_role(results, float(t)) or f"{t:g}" for t in times]
+    points = time_point(fit.time, fit.role)
+    order = {}
+    for i, key in enumerate(points):  # the undeuterated control first, the fully deuterated last
+        order.setdefault(key, (point_order_key(float(fit.time[i]), str(fit.role[i])), i))
+    keys = sorted(order, key=lambda key: order[key][0])
+    times = np.array([float(fit.time[order[key][1]]) for key in keys])
+    share = np.array([[np.mean(eff[points == key] == k) for k in ks] for key in keys])
+    labels = [_control_role(fit.role[order[key][1]]) or format_time(fit.time[order[key][1]])
+              for key in keys]
     return {
         "k_values": ks,
         "selected": np.array([int((fit.selected_K == k).sum()) for k in ks]),

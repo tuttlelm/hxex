@@ -29,6 +29,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import chi2
 
+from .spectra import UNDEUT, time_point
+
 MODELS = ("gaussian", "poisson")
 
 
@@ -124,19 +126,22 @@ Reference = Sequence[int] | None
 
 
 def control_references(
-    data_id: Sequence[int], time: Sequence[float], undeut_time: float, atol: float = 1e-6
+    data_id: Sequence[int], role: Sequence[str]
 ) -> list[tuple[int, ...] | None]:
-    """The reference spectra of every measurement: those of the same series (``data_id``) at the
-    user-set undeuterated time. A series without one gives None (the measurement is its own
-    reference). Replicate controls are all returned."""
+    """The reference spectra of every measurement: the undeuterated controls (``role``
+    ``'undeut'``, :data:`hxex.spectra.UNDEUT`) of the same series (``data_id``). A series
+    without one gives None (the measurement is its own reference). Replicate controls are all
+    returned."""
     data_id = np.asarray(data_id)
-    time = np.asarray(time, dtype=float)
+    undeut = np.asarray(role, dtype=str) == UNDEUT
+    if len(undeut) != len(data_id):
+        raise ValueError("data_id and role must have one entry per measurement")
     out: list[tuple[int, ...] | None] = []
     cache: dict[int, tuple[int, ...] | None] = {}
     for series in data_id:
         s = int(series)
         if s not in cache:
-            idx = np.flatnonzero((data_id == series) & (np.abs(time - undeut_time) <= atol))
+            idx = np.flatnonzero((data_id == series) & undeut)
             cache[s] = tuple(int(i) for i in idx) or None
         out.append(cache[s])
     return out
@@ -321,11 +326,14 @@ def estimate_noise(
     data_id: Sequence[int],
     time: Sequence[float],
     config: NoiseConfig,
+    role: Sequence[str] | None = None,
 ) -> NoiseEstimate:
     """Estimate the noise of every series from its replicate spectra.
 
     A series is one ``data_id`` (a peptide at one charge); replicates are the spectra of a series
-    at the same time (the controls included). For each time point with two or more replicates the
+    at the same point: the same time, or the same control ``role`` (:func:`hxex.spectra.time_point`;
+    without roles the controls are known by their times). For each point with two or more
+    replicates the
     replicates are rescaled to a common total (the amplitude of a spectrum is a free parameter of
     the fit, so only the shape and the noise matter), and the variance of every bin of enough
     intensity is compared with its mean: the noise is taken as variance = gain x intensity, which
@@ -345,7 +353,7 @@ def estimate_noise(
     """
     m = len(observed)
     data_id = np.asarray(data_id)
-    time = np.round(np.asarray(time, dtype=float), 9)
+    time = time_point(time, role)
     gain = np.full(m, np.nan)
     estimated = np.zeros(m, dtype=bool)
     reason = np.full(m, "", dtype=object)

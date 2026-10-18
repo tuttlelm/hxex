@@ -88,12 +88,13 @@ def test_noise_config_defaults_roundtrip_and_flags():
 
 
 def test_control_references():
-    refs = control_references([0, 0, 0, 1, 1, 2], [0.0, 60.0, 0.0, 0.0, 60.0, 60.0], 0.0)
+    un = "undeut"
+    refs = control_references([0, 0, 0, 1, 1, 2], [un, "", un, un, "", ""])
     assert refs == [(0, 2), (0, 2), (0, 2), (3,), (3,), None]
-    close = control_references([5, 5], [1e-9, 60.0], 0.0)
-    assert close == [(0,), (0,)]  # within the tolerance
-    assert control_references([0], [0.0], 30.0) == [None]
-    assert control_references([], [], 0.0) == []
+    assert control_references([0], ["fulldeut"]) == [None]  # only the undeuterated serve
+    with pytest.raises(ValueError, match="one entry per measurement"):
+        control_references([0, 1], [un])
+    assert control_references([], []) == []
 
 
 

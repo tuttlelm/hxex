@@ -51,8 +51,10 @@ replaced). `hxex info` lists the generations (`hxex.io.generations`) and the pro
   `myproj:0001-0006-PEPTIDE/60s-2-z2.csv`, or `bimodal:Angio_2_HI.xlsx#3`). It is unique within a
   bundle. `measurement` is the row number (0-based) of a measurement in `measurements.parquet`
   and joins the per-measurement tables.
-- Time is in seconds (0 undeuterated, the user-set time for the fully deuterated control).
-  `data_id` identifies a series (one peptide at one charge with its controls and time points).
+- Time is in seconds. The controls are the rows with a `role` (`undeut` or `fulldeut`; `""`
+  for a time point); a control's `time` is NaN unless it was also a time point (a late point
+  serving as the fully deuterated reference, `[run.controls] fulldeut_at`). `data_id`
+  identifies a series (one peptide at one charge with its controls and time points).
 - Intensities, amplitudes `A` and the noise scale are in the units of the data. The optimiser's
   own parameters (`log_A`, `n_raw`, `logit_p`) are in the noise-scaled units the fit works in.
 - Per-measurement values that depend on K are lists of K values in the order of the original
@@ -103,8 +105,8 @@ read's record with `stored_in`, the path they were taken from. Then
 
 | file | one row per | content |
 |---|---|---|
-| `measurements.parquet` | measurement | what was fitted: `measurement`, `spectrum_id`, `data_id`, `time`, `n_max`, `bins` (n_deut), `observed` (intensity), `shape` (the natural-abundance envelope used), `references` (indices of the noise-reference spectra, null = the spectrum itself) |
-| `fit.parquet` | measurement | `measurement`, `spectrum_id`, `data_id`, `time`, `selected_K`, `obs_scale` (the noise scale the spectrum was divided by), `sample_size` (the N of the BIC), `n_max`, `noise_kind` (`gaussian` or `poisson`), `score` (selection criterion for each K tried, inf where the population filter rejected it) |
+| `measurements.parquet` | measurement | what was fitted: `measurement`, `spectrum_id`, `data_id`, `time`, `role`, `n_max`, `bins` (n_deut), `observed` (intensity), `shape` (the natural-abundance envelope used), `references` (indices of the noise-reference spectra, null = the spectrum itself) |
+| `fit.parquet` | measurement | `measurement`, `spectrum_id`, `data_id`, `time`, `role`, `selected_K`, `obs_scale` (the noise scale the spectrum was divided by), `sample_size` (the N of the BIC), `n_max`, `noise_kind` (`gaussian` or `poisson`), `score` (selection criterion for each K tried, inf where the population filter rejected it) |
 | `fit_k.parquet` | measurement and K | `measurement`, `fit_K`, `A`, `n`, `p` (lists of K), `log_A`, `n_raw`, `logit_p` (the optimiser's parameters), `nll`, `bic`, `aic`, `passes_min_pop` |
 | `noise_estimate.parquet` | measurement | when the noise was estimated from replicates: `gain`, `estimated`, `reason` (why a series was not estimated), `score` (consistency with replicates), `outlier` (flagged), `n_replicated` |
 | `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `population_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `population_ci` (lists of `k_max * 2`: low and high of each component); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin); `component_lo`, `component_hi` (the same band for each population, `K * bins` values: population by population in the order of the original fit; absent in bundles written before they were added) |
@@ -121,9 +123,16 @@ read's record with `stored_in`, the path they were taken from. Then
 
 Index columns of `binned` and `spectra`: `spectrum_id`, `sample`, `peptide` (modX labels such as
 `acK`), `peptide_range`, `file`, `label`, `modification`, `start_seq`, `end_seq`, `charge`,
-`rep`, `data_id`, `time`, `rt` (the chromatographic retention time in minutes, NaN when unknown;
-from `[input] retention_times`, a peptide table's `rt` column or the scans of a fixed-time run;
-absent in bundles written before 2026-10-15, read as unknown).
+`rep`, `data_id`, `time`, `role`, `rt` (the chromatographic retention time in minutes, NaN when
+unknown; from `[input] retention_times`, a peptide table's `rt` column or the scans of a
+fixed-time run; absent in bundles written before 2026-10-15, read as unknown).
+
+`role` (`undeut`, `fulldeut` or empty) is in every per-spectrum table (`spectra`, `binned`,
+`measurements`, `fit`, `components`). Bundles written before 2026-10-18 have no `role` column
+and know their controls by the times recorded in `configs.controls` (`undeut_time`, `fd_time`,
+`atol`) and `configs.run.undeut_time`: the reader derives the roles from those times and drops
+the keys from the settings it returns (the file is left as written); the settings classes no
+longer accept them.
 
 ## The review layer
 

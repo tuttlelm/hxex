@@ -26,8 +26,16 @@ from test_picking import sticks
 PEPTIDE = "RDKVQKEYAL"
 PICK = PickerConfig(zero_filling=3, noise_threshold=100.0)
 CPU = Backend("cpu", "float64")
+# (time, rep, centre, width): time 0 is an undeuterated control and 1e6 a fully deuterated one
+# (the role is set from them; a control's time is NaN, as the readers leave it)
 LAYOUT = [(0.0, 1, 0.5, 0.8), (0.0, 2, 0.5, 0.85), (0.0, 3, 0.5, 0.8), (60.0, 1, 3.0, 1.2),
           (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]
+ROLES = {0.0: "undeut", 1e6: "fulldeut"}
+
+
+def control(t: float) -> tuple[float, str]:
+    """``(time, role)`` of a layout time: the controls have a role and no time."""
+    return (np.nan, ROLES[t]) if t in ROLES else (t, "")
 
 
 def raw_spectra(n_series=3, project="proj", empty=None):
@@ -43,8 +51,9 @@ def raw_spectra(n_series=3, project="proj", empty=None):
             y = y + np.random.default_rng(100 * s + k).normal(0, 15, len(y))
             if empty == (s, k):
                 y = np.zeros_like(y)
-            spectra.append(Spectrum(mz, y, entry, t, rep, data_id=s, label=f"s{s}c{k}",
-                                    spectrum_id=f"{project}:f{s}.xlsx#{k + 1}"))
+            time, role = control(t)
+            spectra.append(Spectrum(mz, y, entry, time, rep, data_id=s, label=f"s{s}c{k}",
+                                    spectrum_id=f"{project}:f{s}.xlsx#{k + 1}", role=role))
     return SpectrumSet.from_spectra(spectra)
 
 
@@ -53,8 +62,7 @@ def config(**kw):
                     noise=NoiseConfig("gaussian", percent=3.0, estimate="replicates",
                                       min_replicated=2))
     boot = BootstrapConfig(n_boot=3, n_restarts=1, adam_steps=30, polish_steps=0, keep_draws=True)
-    base = dict(picker=PICK, fit=fit, bootstrap=boot,
-                controls=ControlConfig(undeut_time=0.0, fd_time=1e6))
+    base = dict(picker=PICK, fit=fit, bootstrap=boot, controls=ControlConfig())
     return RunConfig(**{**base, **kw})
 
 
@@ -219,14 +227,17 @@ def test_a_picked_set_can_be_run_directly():
 
 def test_config_checks_and_round_trip():
     with pytest.raises(ValueError, match="k_min"):
-        RunConfig(fit=FitConfig(k_min=2), controls=ControlConfig(undeut_time=0.0, fd_time=1e6))
+        RunConfig(fit=FitConfig(k_min=2), controls=ControlConfig())
     with pytest.raises(ValueError):
         RunConfig(max_chunk=0)
     with pytest.raises(ValueError, match="unknown"):
         RunConfig.from_dict({"bogus": 1})
-    c = RunConfig(quality=QualityConfig(min_intensity=0.2), undeut_time=5.0)
-    assert RunConfig.from_dict(c.to_dict()) == c and c.reference_time == 5.0
-    assert config().reference_time == 0.0
+    c = RunConfig(quality=QualityConfig(min_intensity=0.2), envelope_fallback_time=5.0)
+    assert RunConfig.from_dict(c.to_dict()) == c
+    with pytest.raises(ValueError, match="undeut_time no longer exists"):
+        RunConfig.from_dict({**c.to_dict(), "undeut_time": 0.0})
+    with pytest.raises(ValueError, match="no longer exist"):
+        ControlConfig.from_dict({"undeut_time": 0.0, "fd_time": 1e6})
 
 
 def test_select_and_merge_are_checked(whole):
@@ -389,7 +400,7 @@ def test_controls_can_fall_back_to_theoretical_back_exchange(tmp_path):
     from hxex.report import Results
 
     quench = {"ph_read": 2.5, "temperature": 0.0, "d2o_fraction": 0.0}
-    ctrl = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=quench,
+    ctrl = ControlConfig(fd_fallback="kint", quench=quench,
                          kint_min_series=3)
     res = run(raw_spectra(), config(bootstrap=None, controls=ctrl), out=tmp_path / "b")
     m = res.controls.fd_model
@@ -527,3 +538,15 @@ def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tm
         np.testing.assert_array_equal(b.fit().fitted(2), screened.fit.fitted(2))
         np.testing.assert_array_equal(b.fit().selected_K, screened.fit.selected_K)
         assert RunConfig.from_dict(b.manifest["configs"]["run"]).fit.screen
+
+
+def test_a_late_time_point_serves_as_the_fully_deuterated_control(whole):
+    """[run.controls] fulldeut_at: the spectra at that time are the control as well."""
+    raw, _ = whole
+    cfg = config(controls=ControlConfig(fulldeut_at=60.0), bootstrap=None)
+    res = run(raw, cfg)
+    assert set(res.fit.role[np.isclose(res.fit.time, 60.0)]) == {"fulldeut"}
+    assert np.isfinite(res.fit.time[res.fit.role == "fulldeut"]).sum() == 3 * 3
+    assert (res.controls.n_fd == 5).all()  # the two marked files plus the three at 60 s
+    with pytest.raises(ValueError, match="fulldeut_at = 61 s: no spectrum"):
+        run(raw, config(controls=ControlConfig(fulldeut_at=61.0), bootstrap=None))

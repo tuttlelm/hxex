@@ -38,7 +38,7 @@ SEPARATOR = ":"
 # settings whose difference matters when runs are compared (a setting or a section, dotted)
 MATTERS = ("picker", "fit.noise", "fit.k_min", "fit.k_max", "fit.criterion",
            "fit.min_population", "bootstrap", "controls", "envelope", "envelope_fallback_time",
-           "undeut_time", "n_max_factor", "drop_no_signal", "registry")
+           "n_max_factor", "drop_no_signal", "registry")
 # settings that do not change the results (resources and drawing)
 IGNORED = ("plots", "memory_budget_bytes", "max_chunk", "fit.backend", "bootstrap.keep_draws",
            "bootstrap.curve_band")
@@ -107,10 +107,10 @@ class RunSet:
         merged samples have pooled their spectra."""
         from .species import _filter_species, _spectrum_records
 
-        groups, corrected, nterm, undeut = {}, {}, {}, {}
+        groups, corrected, nterm = {}, {}, {}
         dropped: dict[str, int] = {}
         for name, results in self.runs.items():
-            g, c, nterm[name], undeut[name], d = _spectrum_records(
+            g, c, nterm[name], d = _spectrum_records(
                 results, ks, exclude_flagged, filters, quiet, controls_changes)
             for key, n in d.items():
                 dropped[key] = dropped.get(key, 0) + n
@@ -125,16 +125,13 @@ class RunSet:
         if len(set(nterm.values())) > 1:
             raise ValueError("the runs subtract different numbers of N-terminal residues "
                              f"({_listing(nterm)}): their residues cannot be compared")
-        if len(set(undeut.values())) > 1 and not quiet:
-            log.warning("the runs of [analysis.runs] have different undeuterated times (%s); "
-                        "coverage and the figures use the first run's", _listing(undeut))
         if len(set(corrected.values())) > 1 and not quiet:
             log.warning("back-exchange correction differs between the runs of [analysis.runs] "
                         "(corrected: %s)",
                         ", ".join(s for s, v in corrected.items() if v) or "none")
         first = self.names[0]
         groups = _filter_species(groups, ks, filters, dropped, quiet)
-        return groups, corrected, nterm[first], undeut[first]
+        return groups, corrected, nterm[first]
 
 
 def _listing(values: Mapping) -> str:

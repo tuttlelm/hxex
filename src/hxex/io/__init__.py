@@ -49,10 +49,10 @@ from .specexport import (
 )
 from .thermo import ThermoError, ThermoFile, read_thermo, read_thermo_source
 from .times import (
-    DEFAULT_FULLDEUT_TIME,
-    DEFAULT_UNDEUT_TIME,
-    parse_hxexpress_time,
-    parse_specexport_time,
+    format_time,
+    parse_hxexpress_label,
+    parse_specexport_token,
+    parse_time,
 )
 
 __all__ = [
@@ -93,14 +93,14 @@ __all__ = [
     "output_listing",
     "replace_outputs",
     "CandidateMatch",
-    "DEFAULT_FULLDEUT_TIME",
-    "DEFAULT_UNDEUT_TIME",
     "ReadError",
     "filter_entries",
     "parse_hxexpress_filename",
-    "parse_hxexpress_time",
+    "parse_hxexpress_label",
     "parse_specexport_filename",
-    "parse_specexport_time",
+    "parse_specexport_token",
+    "parse_time",
+    "format_time",
     "match_candidates",
     "read_fasta_records",
     "read_fasta_sequence",

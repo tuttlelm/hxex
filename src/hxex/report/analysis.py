@@ -52,6 +52,7 @@ from ..analysis import (
 from ..analysis.residues import NoPeptideAtTime
 from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
+from ..io.times import format_time
 from .compare import (
     plot_butterfly,
     plot_region_bars,
@@ -78,8 +79,10 @@ def _columns(table) -> dict[str, np.ndarray]:
             if isinstance(getattr(table, f.name), np.ndarray)}
 
 
-def _time_label(time: float, undeut: float) -> str:
-    return "undeuterated" if np.isclose(time, undeut) else f"{time:g}s"
+def _time_label(time: float) -> str:
+    """A time for a file name: ``5min``, ``20h``, ``4s`` (``undeuterated`` for a control
+    without a time, NaN)."""
+    return "undeuterated" if not np.isfinite(time) else format_time(time).replace(" ", "")
 
 
 def _stem(name: str) -> str:
@@ -101,32 +104,21 @@ def _has_overlay(residues, sample: str, time: float, show, choice=None) -> bool:
     return False
 
 
-def _fd_times(results) -> list[float]:
-    """The fully deuterated control times of the run (or of every run of a RunSet)."""
-    out = []
-    for r in results.runs.values() if isinstance(results, RunSet) else [results]:
-        run = r.settings.run if r.settings is not None else None
-        if run is not None and run.controls is not None and run.controls.fd_time is not None:
-            out.append(float(run.controls.fd_time))
-    return out
-
-
 def _without_times(results, times):
     """``results`` (a run or a RunSet) with ``times`` left out of the analysis
-    (:meth:`hxex.report.Results.without_times`); a control's time is refused."""
+    (:meth:`hxex.report.Results.without_times`); the time of a control that is only a control
+    (a time point serving as a control as well may be left out) is refused."""
     runs = results.runs if isinstance(results, RunSet) else {"": results}
-    controls = set(_fd_times(results))
+    clash = set()
     for r in runs.values():
-        run = r.settings.run if r.settings is not None else None
-        if run is None:
-            continue
-        undeut = run.controls.undeut_time if run.controls is not None else run.undeut_time
-        if undeut is not None:
-            controls.add(float(undeut))
-    clash = [t for t in times if any(np.isclose(t, c) for c in controls)]
+        fit = r.fit
+        only = (np.asarray(fit.role, dtype=str) != "") & np.isfinite(np.asarray(fit.time, float))
+        for t in times:
+            if np.any(only & np.isclose(np.asarray(fit.time, float), t)):
+                clash.add(float(t))
     if clash:
-        raise ValueError(f"exclude_times {', '.join(f'{t:g}' for t in clash)}: a control's time "
-                         "(the controls are set by the run)")
+        raise ValueError(f"exclude_times {', '.join(f'{t:g}' for t in sorted(clash))}: a "
+                         "control's time (the controls are set by the run)")
     out = {name: r.without_times(times) for name, r in runs.items()}
     n = sum(int(r.excluded.sum()) for r in out.values())
     if n:
@@ -180,10 +172,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy, time="all")
     choice = choose_populations(residues, config.choice) if 2 in config.ks else None
     length = int(residues.residue.max())
-    fd_times = _fd_times(results)
-    times = list(config.times) or [t for t in sorted(set(up.time.tolist()))
-                                   if not any(np.isclose(t, f) for f in fd_times)]
-    undeut = up.undeut_time
+    # the per-time figures: every time point (the controls are not times; a control that is
+    # also a time point is one)
+    times = list(config.times) or sorted({float(t) for t in up.time if np.isfinite(t)})
     ann = config.annotations
     marks = ann.marks()
     tables: dict[str, dict] = {"species_uptake": up.columns(), "residues": residues.columns(),
@@ -240,12 +231,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         )
 
         protection, by_time = peptide_protection(up, config.labelling, sequences=sequences,
-                                                 exclude_times=fd_times, alpha=config.alpha)
+                                                 exclude_times=(), alpha=config.alpha)
         tables["protection"] = protection.columns()
         tables["protection_by_time"] = by_time.columns()
         if config.protection_residues:
             res_prot = residue_protection(up, config.labelling, sequences=sequences,
-                                          exclude_times=fd_times, r1=config.protection_r1,
+                                          exclude_times=(), r1=config.protection_r1,
                                           peptides=protection,
                                           modified=config.modified_peptides, cancel=cancel)
             tables["protection_residues"] = res_prot.columns()
@@ -270,19 +261,19 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         coverage, samples=samples, marks=marks)))
     for s in samples + states:
         for t in times:
-            label = _time_label(t, undeut)
+            label = _time_label(t)
             if choice is not None and choice.where(sample=s, time=t).any():
                 jobs.append((f"choice_{s}_{label}", lambda s=s, t=t: plot_population_choice(
-                    choice, s, t, marks=marks, length=length, undeut_time=undeut)))
+                    choice, s, t, marks=marks, length=length)))
             elif residues.where(sample=s, time=t).any():
                 jobs.append((f"profile_{s}_{label}", lambda s=s, t=t: plot_residue_profile(
-                    residues, s, t, marks=marks, length=length, undeut_time=undeut)))
+                    residues, s, t, marks=marks, length=length)))
     if config.reference:
         others = [s for s in samples if s != config.reference]
         residue_others = others + states  # the residue comparisons include the states
         stack = list(comparisons.items())
         for t in times:
-            label = _time_label(t, undeut)
+            label = _time_label(t)
             only = choice if config.overlay_two_only else None
             shown = [s for s in residue_others
                      if _has_overlay(residues, s, t, config.overlay, only)]
@@ -290,26 +281,23 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, config.reference, shown, t, show=config.overlay,
-                                 choice=only, annotations=ann, length=length,
-                                 undeut_time=undeut)))
+                                 choice=only, annotations=ann, length=length)))
             with_pop = [s for s in residue_others
                         if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
             if with_pop:
                 jobs.append((f"compare_populations_{label}",
                              lambda t=t, with_pop=with_pop: residue_comparison_figure(
-                                 pop_cmp, with_pop, t, annotations=ann, length=length,
-                                 undeut_time=undeut)))
+                                 pop_cmp, with_pop, t, annotations=ann, length=length)))
             for s in others:
                 if all(c.where(sample=s, time=t).any() for _, c in stack):
                     jobs.append((f"woods_{s}_{label}", lambda s=s, t=t: woods_figure(
-                        stack, s, t, annotations=ann, length=length, undeut_time=undeut)))
+                        stack, s, t, annotations=ann, length=length)))
         k1 = comparisons["K=1 fD"]
-        drawn = [t for t in times if not np.isclose(t, undeut)]
+        drawn = list(times)
         for s in others:
             if drawn and k1.where(sample=s, time=drawn).any():
                 jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
-                    k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
-                    undeut_time=undeut)))
+                    k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()])))
     if protection is not None:
         for s in samples:
             if protection.where(sample=s).any():
@@ -335,7 +323,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     if regions is not None:
         for t in times:
             if (regions.time == t).any():
-                jobs.append((f"regions_{_time_label(t, undeut)}", lambda t=t: plot_region_bars(
+                jobs.append((f"regions_{_time_label(t)}", lambda t=t: plot_region_bars(
                     regions, t, samples=samples)))
 
     return tables, jobs

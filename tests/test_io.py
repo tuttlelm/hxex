@@ -31,53 +31,79 @@ ENTRY = PeptideEntry("f.xlsx", "S", "PEPTIDE", "0001-0007", 1, 7, 2)
 # --- time labels ----------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    "label, seconds",
+    "label, seconds, role",
     [
-        ("undeut", 0.0), ("Undeut_1", 0.0), ("TD", 1e6), ("td", 1e6), ("60 s", 60.0),
-        ("5 min", 300.0), ("2 h", 7200.0), ("1.2 min", 60.0), ("10.3 s", 10.0),
-        ("0.5 min", 30.0), ("15 sec", 15.0), ("  3 min ", 180.0),
+        ("undeut", np.nan, "undeut"), ("Undeut_1", np.nan, "undeut"), ("TD", np.nan, "fulldeut"),
+        ("td", np.nan, "fulldeut"), ("60 s", 60.0, ""),
+        ("5 min", 300.0, ""), ("2 h", 7200.0, ""), ("1.2 min", 60.0, ""), ("10.3 s", 10.0, ""),
+        ("0.5 min", 30.0, ""), ("15 sec", 15.0, ""), ("  3 min ", 180.0, ""),
     ],
 )
-def test_hxexpress_time(label, seconds):
-    assert hio.parse_hxexpress_time(label) == seconds
-
-
-def test_hxexpress_fulldeut_time_is_user_set():
-    assert hio.parse_hxexpress_time("TD", fulldeut_time=86400.0) == 86400.0
+def test_hxexpress_label(label, seconds, role):
+    time, got = hio.parse_hxexpress_label(label)
+    assert got == role and (time == seconds or (np.isnan(time) and np.isnan(seconds)))
 
 
 def test_decimal_times_are_exact():
     for token, expected in [("4.1m", 246.0), ("0.1m", 6.0), ("1.1h", 3960.0), ("0.3s", 0.3)]:
-        assert hio.parse_specexport_time(token) == expected
-    assert hio.parse_hxexpress_time("0.7 min") == 42.0
-    assert hio.parse_specexport_time("4.1m") == hio.parse_specexport_time("246s")
+        assert hio.parse_specexport_token(token)[0] == expected
+    assert hio.parse_hxexpress_label("0.7 min")[0] == 42.0
+    assert hio.parse_specexport_token("4.1m") == hio.parse_specexport_token("246s")
+    assert hio.parse_time("4.1 min") == 246.0 == hio.parse_time("4.1m")
 
 
 @pytest.mark.parametrize(
     "label",
     ["60", "5 x", "nan min", "inf s", "abc min", ".5 min", "", 5, None, float("nan")],
 )
-def test_hxexpress_time_errors(label):
+def test_hxexpress_label_errors(label):
     with pytest.raises(hio.ReadError):
-        hio.parse_hxexpress_time(label)
+        hio.parse_hxexpress_label(label)
 
 
 @pytest.mark.parametrize(
-    "token, seconds",
-    [("Non", 0.0), ("Full", 1e6), ("60s", 60.0), ("5m", 300.0), ("2h", 7200.0), ("1.5m", 90.0)],
+    "value, seconds",
+    [(60, 60.0), (0.5, 0.5), ("60", 60.0), ("60 s", 60.0), ("5 min", 300.0), ("5min", 300.0),
+     ("20 h", 72000.0), ("250 ms", 0.25), ("1.5 min", 90.0), ("1h21m", 4860.0),
+     ("10m30s", 630.0), ("2 hours", 7200.0), ("15 SEC", 15.0), (" 3 min ", 180.0),
+     ("-1", -1.0)],
 )
-def test_specexport_time(token, seconds):
-    assert hio.parse_specexport_time(token) == seconds
+def test_parse_time(value, seconds):
+    assert hio.parse_time(value) == seconds
 
 
-def test_specexport_fulldeut_time_is_user_set():
-    assert hio.parse_specexport_time("Full", fulldeut_time=5.0) == 5.0
+@pytest.mark.parametrize(
+    "value", ["", "5 x", "nan", "inf s", "abc min", "undeut", "5 min 3", True, None, [60]],
+)
+def test_parse_time_errors(value):
+    with pytest.raises(hio.ReadError, match="setting"):
+        hio.parse_time(value, "setting")
+
+
+@pytest.mark.parametrize(
+    "seconds, text",
+    [(4.0, "4 s"), (60.0, "1 min"), (90.0, "1.5 min"), (300.0, "5 min"), (72000.0, "20 h"),
+     (5400.0, "1.5 h"), (0.25, "250 ms"), (0.0, "0 s"), (10.3, "10.3 s"), (61.0, "61 s"),
+     (float("nan"), ""), (-60.0, "-1 min")],
+)
+def test_format_time(seconds, text):
+    assert hio.format_time(seconds) == text
+
+
+@pytest.mark.parametrize(
+    "token, seconds, role",
+    [("Non", np.nan, "undeut"), ("Full", np.nan, "fulldeut"), ("60s", 60.0, ""),
+     ("5m", 300.0, ""), ("2h", 7200.0, ""), ("1.5m", 90.0, "")],
+)
+def test_specexport_token(token, seconds, role):
+    time, got = hio.parse_specexport_token(token)
+    assert got == role and (time == seconds or (np.isnan(time) and np.isnan(seconds)))
 
 
 @pytest.mark.parametrize("token", ["60x", "abc", "s", "", "nans", "infs"])
-def test_specexport_time_errors(token):
+def test_specexport_token_errors(token):
     with pytest.raises(hio.ReadError):
-        hio.parse_specexport_time(token)
+        hio.parse_specexport_token(token)
 
 
 # --- file names -----------------------------------------------------------------------------
@@ -145,9 +171,10 @@ def write_hx_csv(path, header=HEADER, body=BODY):
 def test_read_hxexpress_file(tmp_path, writer, name):
     writer(tmp_path / name)
     sp = hio.read_hxexpress_file(tmp_path / name, ENTRY, data_id=7)
-    assert [(s.label, s.time, s.rep) for s in sp] == [
-        ("undeut", 0.0, 1), ("1 min", 60.0, 1), ("1.2 min", 60.0, 2), ("TD", 1e6, 1),
+    assert [(s.label, s.rep, s.role) for s in sp] == [
+        ("undeut", 1, "undeut"), ("1 min", 1, ""), ("1.2 min", 2, ""), ("TD", 1, "fulldeut"),
     ]
+    assert np.isnan(sp[0].time) and np.isnan(sp[3].time) and [s.time for s in sp[1:3]] == [60.0] * 2
     assert all(s.data_id == 7 and s.entry is ENTRY for s in sp)
     np.testing.assert_array_equal(sp[0].mz, [500.1, 500.2, 500.3])  # sorted
     np.testing.assert_array_equal(sp[0].intensity, [20.0, 10.0, 30.0])
@@ -157,34 +184,27 @@ def test_read_hxexpress_file(tmp_path, writer, name):
     assert sp[0].mz.dtype == np.float64
 
 
-def test_read_hxexpress_fulldeut_time(tmp_path):
-    write_xlsx(tmp_path / "a.xlsx")
-    sp = hio.read_hxexpress_file(tmp_path / "a.xlsx", ENTRY, fulldeut_time=123.0)
-    assert sp[-1].time == 123.0
-
-
-def test_the_undeuterated_label_time_is_user_set(tmp_path, caplog):
-    assert hio.parse_hxexpress_time("undeut", undeut_time=-1.0) == -1.0
-    assert hio.parse_specexport_time("Non", undeut_time=-1.0) == -1.0
-    assert hio.parse_hxexpress_time("undeut") == 0.0 == hio.parse_specexport_time("Non")
-    # a reverse experiment: a real 0 s time point next to the undeuterated control
+def test_controls_are_roles_not_times(tmp_path):
+    """A reverse experiment: a real 0 s time point next to the undeuterated control. The
+    control has a role and no time, so the two are told apart without a user-set time."""
     write_xlsx(tmp_path / "r.xlsx", header=["undeut", None, "0 s", None, "TD", None])
-    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
-        sp = hio.read_hxexpress_file(tmp_path / "r.xlsx", ENTRY)
-    assert "cannot be told apart" in caplog.text and [s.time for s in sp][:2] == [0.0, 0.0]
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
-        sp = hio.read_hxexpress_file(tmp_path / "r.xlsx", ENTRY, undeut_time=-1.0)
-    assert caplog.text == "" and [s.time for s in sp] == [-1.0, 0.0, 1e6]
+    sp = hio.read_hxexpress_file(tmp_path / "r.xlsx", ENTRY)
+    assert [s.role for s in sp] == ["undeut", "", "fulldeut"]
+    assert np.isnan(sp[0].time) and sp[1].time == 0.0 and np.isnan(sp[2].time)
+    assert [s.rep for s in sp] == [1, 1, 1]
+    s = SpectrumSet.from_spectra(sp)
+    assert list(s.role) == ["undeut", "", "fulldeut"] and list(s.time_idx()) == [0, 1, 2]
+    assert list(s.is_control("undeut")) == [True, False, False]
 
 
-def test_read_spectra_refuses_equal_control_times(specroot):
-    with pytest.raises(ValueError, match="must differ"):
-        hio.read_spectra(hio.scan(specroot, "specexport"), specroot, "specexport",
-                         project="proj", undeut_time=5.0, fulldeut_time=5.0)
+def test_read_spectra_records_no_control_times(specroot):
     s = hio.read_spectra(hio.scan(specroot, "specexport"), specroot, "specexport",
-                         project="proj", undeut_time=-1.0)
-    assert -1.0 in set(s.time.tolist()) and 0.0 not in set(s.time.tolist())
+                         project="proj")
+    assert "undeut_time" not in s.source and "fulldeut_time" not in s.source
+    assert set(s.role.tolist()) == {"undeut", "", "fulldeut"}
+    # a record written before the roles still reads (its times are ignored, logged)
+    again = hio.read_spectra_source({**s.source, "undeut_time": 0.0, "fulldeut_time": 1e6})
+    assert list(again.role) == list(s.role)
 
 
 def test_read_hxexpress_errors(tmp_path):
@@ -269,11 +289,12 @@ def test_scan_specexport_range_outside_fasta(specroot):
 
 def test_read_specexport_dir(specroot):
     e = hio.scan_specexport(specroot)[0]
-    sp = hio.read_specexport_dir(specroot / "S1" / e.file, e, data_id=3, fulldeut_time=999.0)
-    assert [(s.label, s.time, s.rep) for s in sp] == [
-        ("Non-D-1-z2.csv", 0.0, 1), ("60s-1-z2.csv", 60.0, 1), ("60s-2-z2.csv", 60.0, 2),
-        ("Full-D-1-z2.csv", 999.0, 1),
+    sp = hio.read_specexport_dir(specroot / "S1" / e.file, e, data_id=3)
+    assert [(s.label, s.rep, s.role) for s in sp] == [
+        ("Non-D-1-z2.csv", 1, "undeut"), ("60s-1-z2.csv", 1, ""), ("60s-2-z2.csv", 2, ""),
+        ("Full-D-1-z2.csv", 1, "fulldeut"),
     ]
+    assert np.isnan(sp[0].time) and np.isnan(sp[3].time) and sp[1].time == sp[2].time == 60.0
     np.testing.assert_array_equal(sp[0].mz, [300.1, 300.2, 300.3])
     np.testing.assert_array_equal(sp[0].intensity, [4, 5, 0])
     assert all(s.data_id == 3 for s in sp)
@@ -383,10 +404,11 @@ def test_read_spectra_progress_and_cancel(hxdir):
 
 def test_read_spectra_specexport(specroot):
     entries = hio.scan(specroot, "specexport")
-    s = hio.read_spectra(entries, specroot, "specexport", project="proj", fulldeut_time=500.0)
+    s = hio.read_spectra(entries, specroot, "specexport", project="proj")
     assert len(s) == 5
-    assert sorted(set(s.time)) == [0.0, 60.0, 240.0, 500.0]
+    assert sorted(set(s.time[np.isfinite(s.time)])) == [60.0, 240.0]
     assert list(s.time_idx()[s.data_id == 0]) == [0, 1, 1, 2]
+    assert list(s.role[s.data_id == 0]) == ["undeut", "", "", "fulldeut"]
 
 
 def same_spectra(a, b):
@@ -394,15 +416,15 @@ def same_spectra(a, b):
     np.testing.assert_array_equal(a.mz, b.mz)
     np.testing.assert_array_equal(a.intensity, b.intensity)
     np.testing.assert_array_equal(a.time, b.time)
+    np.testing.assert_array_equal(a.role, b.role)
 
 
 def test_read_spectra_records_the_read_and_repeats_it(hxdir, tmp_path_factory, caplog):
     entries = hio.scan(hxdir, "hxexpress")
-    s = hio.read_spectra(entries, hxdir, "hxexpress", project="proj", samples=["B"],
-                         fulldeut_time=500.0)
+    s = hio.read_spectra(entries, hxdir, "hxexpress", project="proj", samples=["B"])
     src = s.source
     assert src["reader"] == "hxexpress" and src["data_dir"] == str(hxdir)
-    assert src["samples"] == ["B"] and src["fulldeut_time"] == 500.0
+    assert src["samples"] == ["B"]
     assert [PeptideEntry.from_dict(e) for e in src["entries"]] == entries
     name = entries[1].file
     assert list(src["files"]) == [name] and src["files"][name] == hio.file_identity(hxdir / name)
@@ -459,6 +481,12 @@ BIMODAL = os.environ.get("HXEX_BIMODAL_DATA")
 SPECEXPORT = os.environ.get("HXEX_SPECEXPORT_EXAMPLE")
 
 
+def pyhxexpress_time(s, i: int) -> float:
+    """pyHXExpress's time stamp of spectrum ``i``: 0 for an undeuterated control, 1e6 for a
+    fully deuterated one (hxex keeps a role and no time), else the time."""
+    return {"undeut": 0.0, "fulldeut": 1e6}.get(str(s.role[i]), float(s.time[i]))
+
+
 @pytest.mark.skipif(not BIMODAL, reason="HXEX_BIMODAL_DATA not set")
 def test_bimodal_raw_spectra_match_pyhxexpress_exactly():
     root = Path(BIMODAL)
@@ -474,7 +502,7 @@ def test_bimodal_raw_spectra_match_pyhxexpress_exactly():
     assert len(s) == len(ref) == 566
     assert len(s.mz) == 496708
     for i in range(len(s)):
-        expected = np.array(ref[(str(s.file[i]), float(s.time[i]), int(s.rep[i]))])
+        expected = np.array(ref[(str(s.file[i]), pyhxexpress_time(s, i), int(s.rep[i]))])
         mz, inten = s.spectrum(i)
         np.testing.assert_array_equal(mz, expected[:, 0])
         np.testing.assert_array_equal(inten, expected[:, 1])
@@ -495,7 +523,7 @@ def test_specexport_example_matches_pyhxexpress_run():
     s = hio.read_spectra(entries, root, "specexport", project="proj")
     mine = {
         (str(s.sample[i]), str(s.peptide_range[i]), int(s.charge[i]),
-         float(s.time[i]), int(s.rep[i]))
+         pyhxexpress_time(s, i), int(s.rep[i]))
         for i in range(len(s))
     }
     theirs = {
@@ -638,8 +666,8 @@ def test_spectrum_ids_are_unique_and_stable(hxdir, specroot):
         entries = hio.scan(root, fmt)
         s = hio.read_spectra(entries, root, fmt, project="proj")
         assert len(set(s.spectrum_id)) == len(s)
-        again = hio.read_spectra(entries[::-1], root, fmt, project="proj", fulldeut_time=7.0)
-        assert set(again.spectrum_id) == set(s.spectrum_id)  # independent of order and times
+        again = hio.read_spectra(entries[::-1], root, fmt, project="proj")
+        assert set(again.spectrum_id) == set(s.spectrum_id)  # independent of order
         i = s.find(str(s.spectrum_id[3]))
         assert i == 3
     with pytest.raises(KeyError):
@@ -686,14 +714,14 @@ def test_split_spectrum_id_errors(bad):
      ("5 MIN", 300.0), ("2 hrs", 7200.0), ("1 hour", 3600.0), ("2 Hr", 7200.0)],
 )
 def test_time_units_are_whole_words(label, seconds):
-    assert hio.parse_hxexpress_time(label) == seconds
+    assert hio.parse_hxexpress_label(label)[0] == seconds
 
 
 @pytest.mark.parametrize("label", ["5 mi", "5 minu", "500 msx", "2 hz", "3 sx", "4 m2"])
 def test_unknown_time_units_raise(label):
     """A unit is not matched on its first letter ('500 ms' was 30000 s)."""
     with pytest.raises(hio.ReadError, match="unknown time unit"):
-        hio.parse_hxexpress_time(label)
+        hio.parse_hxexpress_label(label)
 
 
 def test_scan_hxexpress_takes_csv_and_any_suffix_case(tmp_path):
@@ -744,11 +772,33 @@ def test_specexport_two_files_for_one_time_and_replicate(specroot, caplog):
     e = hio.scan_specexport(specroot)[0]
     write_spec(pep / "1m-1-z2.csv", [(300.5, 7)])  # the same spectrum as 60s-1-z2.csv
     with pytest.raises(hio.ReadError, match="1m-1-z2.csv and 60s-1-z2.csv are both replicate 1 "
-                                            "at 60 s"):
+                                            "at 1 min"):
         hio.read_specexport_dir(pep, e)
     (pep / "1m-1-z2.csv").unlink()
-    # a control next to a time point of the control's time stays the warning it was
+    # a time point at 0 s next to the undeuterated control: told apart by the role, no warning
     write_spec(pep / "0s-1-z2.csv", [(300.5, 7)])
-    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
+    with caplog.at_level(logging.WARNING, logger="hxex.io"):
         sp = hio.read_specexport_dir(pep, e)
-    assert "cannot be told apart" in caplog.text and [s.time for s in sp][:2] == [0.0, 0.0]
+    assert caplog.text == "" and [s.role for s in sp][:2] == ["undeut", ""]
+    assert np.isnan(sp[0].time) and sp[1].time == 0.0 and sp[0].rep == sp[1].rep == 1
+
+
+# --- points: times and roles ------------------------------------------------------------------
+
+def test_time_index_and_time_point_put_the_controls_at_the_ends():
+    from hxex.spectra import check_role, point_order_key, time_index, time_point
+
+    time = np.array([np.nan, 60.0, np.nan, 4.0, 60.0, 72000.0])
+    role = np.array(["fulldeut", "", "undeut", "", "", "fulldeut"])
+    data_id = np.zeros(6, dtype=int)
+    assert list(time_index(data_id, time, role)) == [4, 2, 0, 1, 2, 3]
+    assert list(time_index(data_id, time)) == [3, 1, 3, 0, 1, 2]  # without roles: NaN last
+    points = time_point(time, role)
+    assert list(points) == ["fulldeut", "t=60.0", "undeut", "t=4.0", "t=60.0", "t=72000.0"]
+    assert point_order_key(np.nan, "undeut") < point_order_key(0.0, "") < point_order_key(
+        np.nan, "fulldeut")
+    assert check_role(None) == "" and check_role("undeut") == "undeut"
+    with pytest.raises(ValueError, match="role must be"):
+        check_role("control")
+    with pytest.raises(ValueError, match="where"):
+        check_role("TD", "where")

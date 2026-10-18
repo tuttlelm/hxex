@@ -28,6 +28,7 @@ from dataclasses import dataclass, fields
 import numpy as np
 
 from .. import chem
+from ..spectra import UNDEUT, point_order_key, time_point
 from .species import SpeciesUptake
 
 
@@ -44,7 +45,9 @@ class ResidueMap:
     ``resolution`` (NaN where uncovered), ``proline``, ``covered``, ``control_fallback`` (a
     peptide covering the residue was corrected with a fallback control) and ``no_amide`` (the
     residue has no exchanging amide: a proline, or the first residue(s) of the protein, which
-    no peptide can measure; its row is empty whatever the coverage)."""
+    no peptide can measure; its row is empty whatever the coverage). ``role`` is the point's
+    (``'undeut'``, ``'fulldeut'`` or ``''``; a control's ``time`` is NaN unless it was also a
+    time point)."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -60,12 +63,17 @@ class ResidueMap:
     covered: np.ndarray
     control_fallback: np.ndarray | None = None
     no_amide: np.ndarray | None = None
+    role: np.ndarray | None = None
 
-    def __post_init__(self):  # built without them: no fallback; prolines only
+    def __post_init__(self):  # built without them: no fallback; prolines only; time points
         if self.control_fallback is None:
             object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
         if self.no_amide is None:
             object.__setattr__(self, "no_amide", np.asarray(self.proline, dtype=bool).copy())
+        if self.role is None:
+            object.__setattr__(self, "role", np.full(len(self.sample), "", dtype="<U8"))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -73,9 +81,10 @@ class ResidueMap:
     def columns(self) -> dict[str, np.ndarray]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
-    def where(self, *, sample=None, time=None, K=None, rank=None) -> np.ndarray:
+    def where(self, *, sample=None, time=None, K=None, rank=None, role=None) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)
-        for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank)):
+        for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank),
+                            ("role", role)):
             if value is not None:
                 values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
                 keep &= np.isin(getattr(self, name), values)
@@ -208,10 +217,18 @@ def residue_map(
             sequences = {state: sequences[s] for state, s in base.items() if s in sequences}
     seq_of = _sequences(pep, sequences, registry)
     cols: dict[str, list] = {f.name: [] for f in fields(ResidueMap)}
-    conditions = sorted({(str(s), float(t), int(k), int(r)) for s, t, k, r in
-                         zip(pep.sample, pep.time, pep.K, pep.rank, strict=True)})
-    for sample, time, k, rank in conditions:
-        rows = np.flatnonzero(pep.where(sample=sample, time=time, K=k, rank=rank))
+    points = time_point(pep.time, pep.role)  # a time, or a control role
+    first = {}
+    for i, key in enumerate(points):
+        first.setdefault(key, i)
+    conditions = sorted({(str(s), key, int(k), int(r)) for s, key, k, r in
+                         zip(pep.sample, points, pep.K, pep.rank, strict=True)},
+                        key=lambda c: (c[0], point_order_key(float(pep.time[first[c[1]]]),
+                                                             str(pep.role[first[c[1]]])),
+                                       c[2], c[3]))
+    for sample, key, k, rank in conditions:
+        rows = np.flatnonzero(pep.where(sample=sample, K=k, rank=rank) & (points == key))
+        time, role = float(pep.time[rows[0]]), str(pep.role[rows[0]])
         peptides = [(str(pep.peptide[i]), int(pep.start[i]), int(pep.end[i])) for i in rows]
         known = _letters(sample, peptides, seq_of, registry)
         z, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
@@ -221,7 +238,7 @@ def residue_map(
             axis=0)
         for res in range(len(known)):
             for name, value in (
-                ("sample", sample), ("time", time), ("K", k), ("rank", rank),
+                ("sample", sample), ("time", time), ("role", role), ("K", k), ("rank", rank),
                 ("residue", res + 1), ("aa", known[res]), ("fD", values[res]),
                 ("fD_se", ses[res]), ("redundancy", redundancy[res]),
                 ("resolution", resolution[res]), ("proline", known[res] == "P"),
@@ -286,17 +303,19 @@ def coverage_table(
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
 ) -> CoverageTable:
     """Redundancy and resolution of every residue of every sample, from its peptides at ``time``:
-    the undeuterated control (``uptake.undeut_time``) by default, as coverage is judged on the
-    undeuterated spectra; another time; a list of times (the peptides measured at any of them);
-    or ``'all'`` for every time. ``sequences`` as for :func:`residue_map`."""
+    the undeuterated controls (the rows with the role ``'undeut'``) by default, as coverage is
+    judged on the undeuterated spectra; a time; a list of times (the peptides measured at any
+    of them); or ``'all'`` for every point. ``sequences`` as for :func:`residue_map`."""
     if count not in COUNTS:
         raise ValueError(f"count must be one of {', '.join(COUNTS)}")
     pep = _peptides_only(uptake)
     one = pep.where(K=int(pep.K.min()), rank=1)  # each spectrum once
-    if time is None:
-        time = uptake.undeut_time
     times: tuple[float, ...] = ()
-    if not (isinstance(time, str) and time == "all"):
+    if time is None:
+        one &= pep.role == UNDEUT
+        if not one.any():
+            raise NoPeptideAtTime("no peptide has an undeuterated control")
+    elif not (isinstance(time, str) and time == "all"):
         if isinstance(time, str):
             raise ValueError("time must be a time, a list of times, 'all' or None")
         times = tuple(float(t) for t in np.atleast_1d(time))

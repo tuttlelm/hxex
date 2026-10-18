@@ -55,7 +55,9 @@ class FitResult:
     (the only K if one was tried). ``score`` is the criterion used for selection, ``(M, nK)``,
     with ``inf`` where the minimum-population filter rejected that K. ``obs_scale`` is the noise
     scale each spectrum was divided by, ``sample_size`` the ``N`` of the BIC penalty, ``n_max``
-    the bound on ``n`` and ``noise_kind`` the noise model of each measurement.
+    the bound on ``n`` and ``noise_kind`` the noise model of each measurement. ``role`` is each
+    measurement's role (``'undeut'``, ``'fulldeut'`` or ``''``, the spectra's; all ``''`` when
+    not given): the controls of a series are the measurements with a role.
     """
 
     config: FitConfig
@@ -71,6 +73,13 @@ class FitResult:
     n_max: np.ndarray
     noise_kind: np.ndarray  # the noise model of each measurement
     noise_estimate: NoiseEstimate | None = None  # set when the noise was estimated
+    role: np.ndarray | None = None
+
+    def __post_init__(self):
+        if self.role is None:  # built without roles: time points only
+            object.__setattr__(self, "role", np.full(len(self.spectrum_id), "", dtype="<U8"))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
 
     def __len__(self) -> int:
         return len(self.selected_K)
@@ -115,7 +124,8 @@ class FitResult:
             })
         return cls(
             config=first.config, spectrum_id=cat("spectrum_id"), data_id=cat("data_id"),
-            time=cat("time"), k_values=first.k_values, fits=fits, selected_K=cat("selected_K"),
+            time=cat("time"), role=cat("role"), k_values=first.k_values, fits=fits,
+            selected_K=cat("selected_K"),
             score=cat("score"), obs_scale=cat("obs_scale"), sample_size=cat("sample_size"),
             n_max=cat("n_max"), noise_kind=cat("noise_kind"), noise_estimate=estimate,
         )
@@ -135,7 +145,8 @@ class FitResult:
             })
         return dataclasses.replace(
             self, spectrum_id=self.spectrum_id[rows], data_id=self.data_id[rows],
-            time=self.time[rows], fits=fits, selected_K=self.selected_K[rows],
+            time=self.time[rows], role=self.role[rows], fits=fits,
+            selected_K=self.selected_K[rows],
             score=self.score[rows], obs_scale=self.obs_scale[rows],
             sample_size=self.sample_size[rows], n_max=self.n_max[rows],
             noise_kind=self.noise_kind[rows], noise_estimate=estimate,
@@ -190,6 +201,7 @@ class FitResult:
                     row = {
                         "measurement": m, "spectrum_id": self.spectrum_id[m],
                         "data_id": self.data_id[m], "time": self.time[m],
+                        "role": self.role[m],
                         "selected_K": self.selected_K[m], "fit_K": k, "is_selected": is_sel,
                         "component": c + 1, "k_ordered": order[m, c],
                         "amplitude": fit.A[m, c], "n": fit.n[m, c], "p": fit.p[m, c],
@@ -211,7 +223,7 @@ _KFIT_ARRAYS = (
 )
 
 _TABLE_COLUMNS = (
-    "measurement", "spectrum_id", "data_id", "time", "selected_K", "fit_K", "is_selected",
+    "measurement", "spectrum_id", "data_id", "time", "role", "selected_K", "fit_K", "is_selected",
     "component", "k_ordered", "amplitude", "n", "p", "population", "mean", "variance",
     "nll", "bic", "aic", "passes_min_population",
 )

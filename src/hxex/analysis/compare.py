@@ -229,9 +229,10 @@ def compare_peptides(
     ses: dict[tuple, np.ndarray] = {}
     fell_back: dict[tuple, bool] = {}
     for key, recs in groups.items():
-        sample, peptide, mod, start, end, time, k, r = key
-        if (k, r) != (K, rank):
+        sample, peptide, mod, start, end, point, k, r = key
+        if (k, r) != (K, rank) or point.role:  # the controls are not time points
             continue
+        time = point.time
         by_sample.setdefault(sample, {})[(peptide, mod, start, end, time)] = np.array(
             [x[at] for x in recs])
         ses[(sample, peptide, mod, start, end, time)] = np.array([x[at + 1] for x in recs])

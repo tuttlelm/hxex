@@ -43,7 +43,14 @@ from .bootstrap import (
     bootstrap_by_k,
     selected_from,
 )
-from .controls import ControlConfig, ControlTable, fit_controls, series_rates, series_rt
+from .controls import (
+    ControlConfig,
+    ControlTable,
+    apply_control_roles,
+    fit_controls,
+    series_rates,
+    series_rt,
+)
 from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report, start_stage
 from .picking import (
@@ -94,9 +101,7 @@ class RunConfig:
     - ``envelope``: the isotope envelope that places the bins and shapes the fit
       (:class:`~hxex.picking.EnvelopeConfig`).
     - ``envelope_fallback_time`` (s): the spectra at this time are the envelope references of a
-      series whose own are missing or poor; None: none.
-    - ``undeut_time`` (s): the time of the undeuterated spectra, the noise references of every
-      series (the controls' ``undeut_time`` is used when it is given).
+      series whose own (its undeuterated controls) are missing or poor; None: none.
     - ``n_max_factor``: the fit's ``n`` (exchangeable sites) may be up to this times the amide
       count.
     - ``drop_no_signal``: drop the spectra the picker found no signal in (``empty`` ones are
@@ -115,7 +120,6 @@ class RunConfig:
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
     envelope: EnvelopeConfig = EnvelopeConfig()  # noqa: RUF009
     envelope_fallback_time: float | None = None
-    undeut_time: float = 0.0
     n_max_factor: float = 1.2
     drop_no_signal: bool = True
     memory_budget_bytes: int | None = None
@@ -135,12 +139,6 @@ class RunConfig:
         if self.controls is not None and self.fit.k_min > 1:
             raise ValueError("the controls come from the K=1 fits: set fit.k_min to 1")
 
-    @property
-    def reference_time(self) -> float:
-        if self.controls is not None and self.controls.undeut_time is not None:
-            return float(self.controls.undeut_time)
-        return self.undeut_time
-
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for f in fields(self):
@@ -151,6 +149,11 @@ class RunConfig:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> RunConfig:
         unknown = set(data) - {f.name for f in fields(cls)}
+        if "undeut_time" in unknown:
+            raise ValueError("run setting undeut_time no longer exists: the undeuterated "
+                             "controls (the noise references) are the spectra with the role "
+                             "undeut, set by the formats' control labels or role in "
+                             "[[input.runs]]")
         if unknown:
             raise ValueError(f"unknown run setting(s): {', '.join(sorted(unknown))}")
         from .report.figures import PlotConfig
@@ -447,6 +450,17 @@ def analyse(
     return fit, boot, by_k, controls, quality
 
 
+def with_control_roles(data, config: RunConfig):
+    """``data`` (a :class:`~hxex.spectra.SpectrumSet` or a :class:`~hxex.picking.BinnedSet`)
+    with the spectra at the controls' ``undeut_at`` and ``fulldeut_at`` given that role as well
+    (:func:`hxex.controls.apply_control_roles`); unchanged when neither is set."""
+    c = config.controls
+    if c is None or (c.undeut_at is None and c.fulldeut_at is None):
+        return data
+    return dataclasses.replace(data, role=apply_control_roles(data.role, data.time, c,
+                                                              where="[run.controls]"))
+
+
 def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
     """The exchangeable sites of every spectrum of ``binned``, ``(M,)`` integers: the backbone
     amides of its peptide and ion type plus its user ``Hex`` sites (they stand for exchangeable
@@ -514,6 +528,7 @@ def run(
         if out is None:
             raise ValueError("config.plots needs figures_dir or out to say where to write")
         figures_dir = Path(out).with_name(Path(out).name + "_figures")
+    data = with_control_roles(data, config)
     raw = data if isinstance(data, SpectrumSet) else None
     if raw is not None and raw.source and raw.source.get("stored_in"):
         _check_stored_windows(raw.source, config)
@@ -534,7 +549,7 @@ def run(
                             "every series keeps its own envelope")
         start_stage(progress, "envelope", 0.0, UNITS * envelope_share)
         envelopes, by_series = series_envelopes(
-            raw, config=config.envelope, reference_time=config.reference_time,
+            raw, config=config.envelope,
             fallback_time=config.envelope_fallback_time, picker=config.picker,
             registry=config.registry, groups=groups,
             progress=_Span(progress, 0.0, UNITS * envelope_share), cancel=cancel,
@@ -580,7 +595,7 @@ def run(
 
     measurements = Measurements.from_binned(
         picked, n_max_factor=config.n_max_factor,
-        undeut_time=config.reference_time, nterm_subtract=config.picker.nterm_subtract,
+        nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )

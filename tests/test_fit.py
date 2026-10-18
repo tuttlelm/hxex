@@ -205,10 +205,11 @@ def test_measurements_from_binned():
     entry = PeptideEntry("f", "S", PEPTIDE, "0001-0015", 1, 15, 2, modification="Hex:2")
     plan = plan_bins(PEPTIDE, 2, modification="Hex:2", config=cfg)
     spectra = []
-    for i, t in enumerate((0.0, 60.0, 0.0)):
+    for i, t in enumerate((0.0, 60.0, 0.0)):  # time 0: an undeuterated control (role, no time)
         mz = plan.pred_mz[:4]
-        spectra.append(Spectrum(mz, np.array([1000.0, 800.0, 300.0, 100.0]), entry, t, i,
-                                data_id=0 if i < 2 else 1, spectrum_id=f"p:s{i}"))
+        spectra.append(Spectrum(mz, np.array([1000.0, 800.0, 300.0, 100.0]), entry,
+                                np.nan if t == 0.0 else t, i, data_id=0 if i < 2 else 1,
+                                spectrum_id=f"p:s{i}", role="undeut" if t == 0.0 else ""))
     meas = Measurements.from_binned(pick_spectra(SpectrumSet.from_spectra(spectra), cfg),
                                     n_max_factor=1.2)
     spec = chem.parse_modification("Hex:2")

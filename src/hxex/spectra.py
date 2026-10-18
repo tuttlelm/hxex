@@ -26,12 +26,61 @@ def split_spectrum_id(spectrum_id: str) -> tuple[str, str]:
     return project, local_id
 
 
-def time_index(data_id: np.ndarray, time: np.ndarray) -> np.ndarray:
-    """Rank of each time among the sorted distinct times of its data set (``data_id``)."""
+UNDEUT = "undeut"
+FULLDEUT = "fulldeut"
+ROLES = (UNDEUT, FULLDEUT)
+ROLE_TEXT = "undeut or fulldeut (a control), or empty (a time point)"
+
+
+def check_role(value: object, where: str = "role") -> str:
+    """``value`` as a role: ``'undeut'``, ``'fulldeut'`` or ``''`` (none; None is taken as
+    ``''``). Anything else raises ValueError naming ``where``."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or value not in (*ROLES, ""):
+        raise ValueError(f"{where} must be {ROLE_TEXT}, got {value!r}")
+    return value
+
+
+def _no_role(n: int) -> np.ndarray:
+    return np.full(n, "", dtype="<U8")
+
+
+def time_point(time, role=None) -> np.ndarray:
+    """One hashable key per spectrum for grouping spectra measured at the same point: the
+    role (``'undeut'``, ``'fulldeut'``) for a control that carries no time, else the time
+    (rounded to the nanosecond, as text). Replicates share a key; a control that also carries
+    a time (a time point serving as a reference) is keyed by its time, with the others
+    measured then."""
+    time = np.asarray(time, dtype=float)
+    role = _no_role(len(time)) if role is None else np.asarray(role, dtype=str)
+    out = np.empty(len(time), dtype=object)
+    for i, (t, r) in enumerate(zip(time, role, strict=True)):
+        out[i] = f"t={float(np.round(t, 9))!r}" if np.isfinite(t) else (str(r) or "t=nan")
+    return out
+
+
+def point_order_key(t: float, r: str) -> tuple[int, float]:
+    """Sort key of a spectrum's point: the undeuterated control first, the times in order,
+    the fully deuterated control last (a control that carries a time sorts by that time)."""
+    if np.isfinite(t):
+        return (1, float(t))
+    return (0, 0.0) if r == UNDEUT else (2, 0.0) if r == FULLDEUT else (1, np.inf)
+
+
+def time_index(data_id: np.ndarray, time: np.ndarray, role=None) -> np.ndarray:
+    """Rank of each spectrum's point among the distinct points of its data set (``data_id``):
+    the undeuterated control (no time) is 0, the times follow in order and the fully
+    deuterated control (no time) comes last; replicates share a rank."""
+    time = np.asarray(time, dtype=float)
+    role = _no_role(len(time)) if role is None else np.asarray(role, dtype=str)
     out = np.zeros(len(time), dtype=np.int64)
     for d in np.unique(data_id):
-        sel = data_id == d
-        out[sel] = np.searchsorted(np.unique(time[sel]), time[sel])
+        sel = np.flatnonzero(data_id == d)
+        keys = [point_order_key(float(time[i]), str(role[i])) for i in sel]
+        distinct = sorted(set(keys))
+        rank = {k: n for n, k in enumerate(distinct)}
+        out[sel] = [rank[k] for k in keys]
     return out
 
 
@@ -89,10 +138,12 @@ class PeptideEntry:
 class Spectrum:
     """One raw spectrum (m/z sorted, no missing values) and where it came from.
 
-    ``time`` is in seconds (0 for the undeuterated control, the user-set time for the fully
-    deuterated one); ``rep`` counts spectra with the same time within a data set; ``data_id`` is
-    the position of the entry in the list that was read; ``label`` names the source for display
-    (a column label or file name).
+    ``time`` is in seconds, NaN for a control that carries none; ``role`` says what the spectrum
+    is to the series: ``'undeut'`` (an undeuterated control), ``'fulldeut'`` (a fully
+    deuterated control) or ``''`` (a time point; :data:`ROLES`). A control may also carry a
+    time, a time point that serves as the series' reference. ``rep`` counts spectra at the
+    same point within a data set; ``data_id`` is the position of the entry in the list that
+    was read; ``label`` names the source for display (a column label or file name).
 
     ``spectrum_id`` identifies the spectrum for later reference. The file readers set the local
     part, built from where the spectrum was read, so it is unique within a data directory and
@@ -119,6 +170,10 @@ class Spectrum:
     rt: float = float("nan")
     resolving_power: float = float("nan")
     resolving_power_mz: float = float("nan")
+    role: str = ""
+
+    def __post_init__(self):
+        object.__setattr__(self, "role", check_role(self.role))
 
 
 def entry_rt(entry: PeptideEntry) -> float:
@@ -170,7 +225,9 @@ class SpectrumSet:
     nothing was recorded. ``rt`` is each spectrum's retention time in minutes (NaN: unknown;
     all NaN when not given); ``resolving_power`` and ``resolving_power_mz`` the instrument's
     resolving power recorded with each spectrum's scans and the m/z it is quoted at (NaN when
-    not recorded; see :class:`Spectrum`).
+    not recorded; see :class:`Spectrum`). ``role`` is each spectrum's role (``'undeut'``,
+    ``'fulldeut'`` or ``''``; all ``''`` when not given): the controls of a series are the
+    spectra with a role, never a time.
     """
 
     mz: np.ndarray
@@ -193,11 +250,20 @@ class SpectrumSet:
     source: Mapping | None = field(default=None, compare=False)
     resolving_power: np.ndarray | None = None
     resolving_power_mz: np.ndarray | None = None
+    role: np.ndarray | None = None
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
         for name in ("rt", "resolving_power", "resolving_power_mz"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        if self.role is None:  # built without roles: time points only
+            object.__setattr__(self, "role", _no_role(len(self.offsets) - 1))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
+
+    def is_control(self, role: str) -> np.ndarray:
+        """Whether each spectrum is a control of this ``role`` (``'undeut'`` or ``'fulldeut'``)."""
+        return self.role == check_role(role) if role else np.zeros(len(self), dtype=bool)
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -215,12 +281,14 @@ class SpectrumSet:
         return int(hits[0])
 
     def time_idx(self) -> np.ndarray:
-        """Index of each spectrum's time among the sorted distinct times of its data set.
+        """Index of each spectrum's point among the distinct points of its data set
+        (:func:`time_index`: the undeuterated control first, then the times, the fully
+        deuterated control last).
 
         Derived from the spectra in this set, so it changes if spectra are dropped. Prefer
         ``spectrum_id`` to refer to spectra.
         """
-        return time_index(self.data_id, self.time)
+        return time_index(self.data_id, self.time, self.role)
 
     def select(self, keep: np.ndarray) -> SpectrumSet:
         """A new set with the spectra where the boolean array ``keep`` is True."""
@@ -271,4 +339,5 @@ class SpectrumSet:
             resolving_power=np.array([s.resolving_power for s in spectra], dtype=np.float64),
             resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
                                         dtype=np.float64),
+            role=np.array([s.role for s in spectra], dtype="<U8"),
         )

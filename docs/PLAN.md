@@ -368,6 +368,14 @@ Project and design:
   replotting").
 - Modifications live in a private registry passed to pyteomics through `aa_comp`; pyHXExpress
   edits pyteomics' global residue table ("Sequence syntax and PTMs").
+- Controls are identified by a **role** (`undeut`, `fulldeut`) that the readers set from the
+  formats' control labels (`Non`/`Full`, `undeut`/`TD`) or that `role` in `[[input.runs]]`
+  gives a control file; their time is blank. pyHXExpress stamps them with the times 0 and
+  `FullDeut_Time` (1e6) and finds them by those numbers, which collides with a real 0 s point
+  in a back-exchange run. `undeut_at` and `fulldeut_at` in `[run.controls]` (and
+  `[analysis.controls]`) make the spectra at a time serve as a control as well. Every time in
+  a project file may be written with a unit (`"5 min"`, `"20 h"`); stored values stay in
+  seconds (`docs/AUDIT_2026-10-17.md` design item 1; HISTORY 101).
 
 Chemistry (HISTORY "Phase 1 status: `hxex.chem`"):
 

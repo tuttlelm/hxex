@@ -905,3 +905,22 @@ def test_fragments_take_their_parents_retention_time(tmp_path):
     assert backwards.rt[0] == pytest.approx(2.45) and backwards.rt[1] == s.rt[0]
     kinetics = read_mzml([MzmlRun(path, "WT")], targets, project="p")
     assert np.isnan(kinetics.rt).all()
+
+
+def test_a_control_run_has_a_role_and_no_time(tmp_path):
+    from hxex.io import kinetics_spectra
+
+    kin = write_mzml(tmp_path / "kin.mzML", time_course(n=4, ms2_every=2))
+    un = write_mzml(tmp_path / "un.mzML", time_course(n=2, ms2_every=2))
+    td = write_mzml(tmp_path / "td.mzML", time_course(n=2, ms2_every=2))
+    runs = [MzmlRun(un, "WT", role="undeut"), MzmlRun(td, "WT", role="fulldeut", time=97200.0),
+            MzmlRun(kin, "WT")]
+    assert [r.fixed for r in runs] == [True, True, False]
+    s = read_mzml(runs, [MzmlTarget(ENTRY)], project="p")
+    assert list(s.role) == ["undeut", "fulldeut", "", "", "", ""]
+    assert np.isnan(s.time[0]) and s.time[1] == 97200.0 and np.isfinite(s.time[2:]).all()
+    assert kinetics_spectra(s.source, s.spectrum_id).tolist() == [False, False] + [True] * 4
+    assert s.source["runs"][0]["role"] == "undeut" and "role" not in s.source["runs"][2]
+    assert MzmlRun.from_dict(runs[1].to_dict()).to_dict() == runs[1].to_dict()
+    with pytest.raises(ValueError, match="role must be"):
+        MzmlRun(un, "WT", role="TD")

@@ -302,7 +302,7 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
         raise ValueError(f"modified must be one of {', '.join(MODIFIED)}")
     pep = uptake.select(uptake.where(kind="peptide"))
     times = np.asarray(pep.time, dtype=float)
-    keep = times > pep.undeut_time
+    keep = (pep.role == "") & np.isfinite(times)  # the time points, not the controls
     for t in exclude_times:
         keep &= ~np.isclose(times, t)
     pep = pep.select(keep)
@@ -374,8 +374,8 @@ def peptide_protection(
 ) -> tuple[ProtectionTable, ProtectionByTime]:
     """The protection factors of the peptides of ``uptake`` (every K and rank it holds) in the
     labelling ``conditions`` (one set for every sample, or sample -> set): see the module
-    docstring. Times at or below the undeuterated control's and those in ``exclude_times``
-    (the fully deuterated controls') are left out. ``sequences`` (the protein's, one or per
+    docstring. The controls (the rows with a role) and the times in ``exclude_times`` are
+    left out. ``sequences`` (the protein's, one or per
     sample; :meth:`hxex.analysis.AnalysisConfig.sequences`) gives the residue before each
     peptide and the protein's C-terminus; without it the residue before comes from the other
     peptides, and no peptide ends at a free carboxyl. Samples without back-exchange correction,

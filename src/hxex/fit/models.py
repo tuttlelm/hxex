@@ -54,7 +54,7 @@ def fit_models(
         # expected sum of squared residuals is the estimated one); the others keep the noise
         # settings above. The Poisson loss is never chosen here (docs/HISTORY.md item 57).
         estimate = estimate_noise(
-            data.bins, data.observed, data.data_id, data.time, config.noise
+            data.bins, data.observed, data.data_id, data.time, config.noise, role=data.role
         )
         mean_intensity = np.array([float(np.mean(o)) for o in data.observed])
         sd = np.sqrt(estimate.gain * mean_intensity)
@@ -141,6 +141,7 @@ def fit_models(
     selected = np.array(k_values)[np.argmin(score, axis=1)]
     return FitResult(
         config=config, spectrum_id=data.spectrum_id, data_id=data.data_id, time=data.time,
+        role=data.role,
         k_values=k_values, fits=fits, selected_K=selected, score=score, obs_scale=scale,
         sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
         noise_estimate=estimate,

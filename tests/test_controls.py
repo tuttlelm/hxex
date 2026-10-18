@@ -12,13 +12,18 @@ from hxex.fit import FitConfig
 from hxex.fit.result import FitResult, KFit
 from hxex.noise import NoiseEstimate
 
-CFG = ControlConfig(undeut_time=0.0, fd_time=1e6)
+CFG = ControlConfig()
+UN, FD = 0.0, 1e6  # the test rows name the controls by these times: fake_fit gives them roles
 
 
 def fake_fit(rows, outlier=None):
-    """rows: (data_id, time, K=1 mean). One component, n=mean, p=1."""
+    """rows: (data_id, time, K=1 mean). One component, n=mean, p=1. A row at time ``UN`` is an
+    undeuterated control and one at ``FD`` a fully deuterated one (their role; a control's
+    time is NaN, as the readers leave it)."""
     d = np.array([r[0] for r in rows])
     t = np.array([r[1] for r in rows], dtype=float)
+    role = np.where(t == UN, "undeut", np.where(t == FD, "fulldeut", ""))
+    t = np.where(role == "", t, np.nan)
     mean = np.array([r[2] for r in rows], dtype=float)
     m = len(rows)
     one = np.ones((m, 1))
@@ -33,7 +38,7 @@ def fake_fit(rows, outlier=None):
                             n_replicated=np.zeros(m, dtype=np.int64))
     return FitResult(
         config=FitConfig(), spectrum_id=np.array([f"p:{i}" for i in range(m)]), data_id=d,
-        time=t, k_values=(1,), fits={1: kf}, selected_K=np.ones(m, dtype=int),
+        time=t, role=role, k_values=(1,), fits={1: kf}, selected_K=np.ones(m, dtype=int),
         score=np.zeros((m, 1)), obs_scale=np.ones(m), sample_size=np.ones(m),
         n_max=np.ones(m), noise_kind=np.array(["gaussian"] * m), noise_estimate=est)
 
@@ -74,7 +79,7 @@ def test_missing_controls_use_theory_and_are_flagged():
     assert c.retention[0] == pytest.approx(0.9)  # the buffer's D2O fraction
     # the buffer's fraction is a user setting
     full = fit_controls(fake_fit([(0, 5, 3.0)]), np.full(1, 10.0),
-                        ControlConfig(undeut_time=0.0, fd_time=1e6, d2o_fraction=0.8))
+                        ControlConfig(d2o_fraction=0.8))
     assert full.mfd[0] == pytest.approx(8.0) and full.retention[0] == pytest.approx(0.8)
     for bad in (0.0, 1.2):
         with pytest.raises(ValueError, match="d2o_fraction"):
@@ -146,7 +151,7 @@ def test_the_lower_limit_follows_the_buffer_and_the_fallback_can_be_the_median()
     assert c.retention[3] == pytest.approx(0.9) and "fd_missing" in c.flags[3].split(";")
     # with fd_fallback='median' the missing control takes the median accepted retention (0.6)
     med = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
-                       ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="median"))
+                       ControlConfig(fd_fallback="median"))
     assert med.retention[3] == pytest.approx(0.6) and med.mfd[3] == pytest.approx(6.0)
     assert med.flags[3].split(";")[-2:] == ["fd_missing", "fd_median"] and med.fallback[3]
     assert ControlConfig(d2o_fraction=0.8).min_retention == pytest.approx(0.4)
@@ -199,7 +204,7 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
     from hxex.controls import _kint_predict
 
     fit, n, rates = kint_case(off=(3,), missing=(5,), extra=(99,))
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     c = fit_controls(fit, n, cfg, rates=rates)
     m = c.fd_model
     assert m["a"] == pytest.approx(0.85, rel=0.05) and m["t0"] == pytest.approx(2000, rel=0.2)
@@ -228,12 +233,12 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
 
 def test_kint_fallback_needs_conditions_rates_and_enough_controls():
     fit, n, rates = kint_case(missing=tuple(range(8)))
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     c = fit_controls(fit, n, cfg, rates=rates)  # 7 controls < kint_min_series 10
     assert c.fd_model is None and "fd_kint" not in ";".join(c.flags)
     i = c.rows([0])[0]
     assert c.mfd[i] == pytest.approx(c.m0[i] + 0.9 * c.n_amides[i])
-    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint",
+    c = fit_controls(fit, n, ControlConfig(fd_fallback="kint",
                                            quench=QUENCH, kint_min_series=5), rates=rates)
     assert c.fd_model["n_series"] == 7
     with pytest.raises(ValueError, match="intrinsic rates"):
@@ -247,7 +252,7 @@ def test_kint_fallback_needs_conditions_rates_and_enough_controls():
     # the fitted model is kept in the bundle's control table
     from hxex.io.bundle import _controls_table, _read_controls
 
-    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint",
+    c = fit_controls(fit, n, ControlConfig(fd_fallback="kint",
                                            quench=QUENCH, kint_min_series=5), rates=rates)
     back = _read_controls(_controls_table(c), cfg.to_dict())
     assert back.fd_model == c.fd_model
@@ -276,14 +281,14 @@ def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
     assert ControlConfig(quench=QUENCH, fd_fallback="d2o").fd_mode == "d2o"  # explicit wins
     assert ControlConfig(quench=QUENCH, fd_fallback="median").fd_mode == "median"
     fit, n, rates = kint_case()
-    c = fit_controls(fit, n, ControlConfig(undeut_time=0.0, fd_time=1e6, quench=QUENCH),
+    c = fit_controls(fit, n, ControlConfig(quench=QUENCH),
                      rates=rates)
     assert c.fd_model is not None
 
 
 def test_a_fully_deuterated_level_not_above_m0_is_rejected_whatever_the_floor(caplog):
     # no retention floor (as with fd_fallback='kint'): a span of 0 or less still scales nothing
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, retention_min=0.0)
+    cfg = ControlConfig(retention_min=0.0)
     for fd in (0.1, 0.05):
         c = fit_controls(fake_fit([(0, 0, 0.1), (0, 0, 0.1), (0, 1e6, fd), (0, 1e6, fd)]),
                          np.full(4, 10.0), cfg)
@@ -312,7 +317,7 @@ def test_too_few_controls_for_the_kint_model_keep_the_retention_floor(caplog):
     rows = [(0, 0.0, 0.0), (0, 0.0, 0.0), (0, 1e6, 0.1 * n[0]),
             (1, 0.0, 0.0), (1, 0.0, 0.0), (1, 1e6, 0.6 * n[1])]
     amides = np.array([n[0]] * 3 + [n[1]] * 3)
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6, fd_fallback="kint", quench=QUENCH)
+    cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     with caplog.at_level(logging.WARNING):
         c = fit_controls(fake_fit(rows), amides, cfg, rates=rates)
     assert c.fd_model is None and "below the retention floor" in caplog.text
@@ -326,3 +331,51 @@ def test_too_few_controls_for_the_kint_model_keep_the_retention_floor(caplog):
     c = fit_controls(fake_fit(rows), amides, dataclasses.replace(cfg, retention_min=0.05),
                      rates=rates)
     assert not c.fallback.any()
+
+
+def test_a_time_point_can_serve_as_a_control_as_well():
+    """undeut_at / fulldeut_at: the spectra at that time gain the role and keep their time."""
+    from hxex.controls import apply_control_roles
+
+    role = np.array(["undeut", "", "", "", ""])
+    time = np.array([np.nan, 4.0, 60.0, 72000.0, 72000.0])
+    cfg = ControlConfig(fulldeut_at=72000.0)
+    out = apply_control_roles(role, time, cfg)
+    assert list(out) == ["undeut", "", "", "fulldeut", "fulldeut"] and list(role[3:]) == ["", ""]
+    both = apply_control_roles(out, time, ControlConfig(undeut_at="4"))
+    assert list(both) == ["undeut", "undeut", "", "fulldeut", "fulldeut"]
+    with pytest.raises(ValueError, match="no spectrum was measured at that time.*4, 60, 72000"):
+        apply_control_roles(role, time, ControlConfig(fulldeut_at=61.0), where="here")
+    with pytest.raises(ValueError, match="already undeut"):
+        apply_control_roles(both, time, ControlConfig(fulldeut_at=4.0))
+    with pytest.raises(ValueError, match="cannot be the same time"):
+        ControlConfig(undeut_at=4.0, fulldeut_at=4.0)
+    with pytest.raises(ValueError, match="fulldeut_at must be a time"):
+        ControlConfig(fulldeut_at=float("inf"))
+    # the controls are then fitted from the promoted spectra
+    fit = fake_fit([(0, UN, 0.0), (0, UN, 0.1), (0, 60.0, 4.0), (0, 72000.0, 8.0),
+                    (0, 72000.0, 8.2)])
+    fit = dataclasses.replace(fit, role=apply_control_roles(fit.role, fit.time, cfg))
+    c = fit_controls(fit, np.full(5, 10.0), cfg)
+    assert c.n_fd[0] == 2 and c.mfd[0] == pytest.approx(8.1) and not c.fallback[0]
+
+
+def test_the_marked_controls_can_be_replaced_by_a_time_point():
+    """fulldeut_marked = false: the marked fully deuterated files do not serve; only the
+    spectra at fulldeut_at do (a measured file that reads low, replaced by the plateau)."""
+    from hxex.controls import apply_control_roles
+
+    rows = [(0, UN, 0.0), (0, UN, 0.0), (0, 60.0, 4.0), (0, 72000.0, 8.0), (0, 72000.0, 8.2),
+            (0, FD, 6.0)]
+    fit = fake_fit(rows)
+    both = ControlConfig(fulldeut_at=72000.0)
+    fit = dataclasses.replace(fit, role=apply_control_roles(fit.role, fit.time, both))
+    assert fit_controls(fit, np.full(6, 10.0), both).mfd[0] == pytest.approx((8.0 + 8.2 + 6) / 3)
+    only = ControlConfig(fulldeut_at=72000.0, fulldeut_marked=False)
+    c = fit_controls(fit, np.full(6, 10.0), only)
+    assert c.n_fd[0] == 2 and c.mfd[0] == pytest.approx(8.1)
+    assert list(fit.role) == ["undeut", "undeut", "", "fulldeut", "fulldeut", "fulldeut"]
+    with pytest.raises(ValueError, match="fulldeut_marked = false needs fulldeut_at"):
+        ControlConfig(fulldeut_marked=False)
+    with pytest.raises(ValueError, match="undeut_marked = false needs undeut_at"):
+        ControlConfig(undeut_marked=False)

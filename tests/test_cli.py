@@ -180,8 +180,9 @@ def test_run_time_and_rep_are_checked(tmp_path):
     assert project("").input.runs[0].time is None
     assert project("time = 60\n").input.runs[0].time == 60.0
     assert project("time = 0.0\nrep = 2\n").input.runs[0].rep == 2
+    assert project('time = "1 min"\n').input.runs[0].time == 60.0
     for bad, match in (("time = false", "time must be a number"), ("time = true", "got True"),
-                       ('time = "60 s"', "left out"), ("time = inf", "got inf"),
+                       ('time = "60 parsecs"', "time must be a number"), ("time = inf", "got inf"),
                        ("rep = false", "rep must be"), ("rep = 0", "got 0"),
                        ("rep = 1.5", "rep must be")):
         with pytest.raises(ProjectError, match=match) as info:
@@ -342,7 +343,6 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     import numpy as np
 
     from hxex.io import save_spectra
-    from hxex.io.times import DEFAULT_FULLDEUT_TIME
 
     path = mzml_project(tmp_path)
     assert cli.main(["-q", "run", str(path)]) == 0
@@ -394,28 +394,28 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     assert cli.main(["-q", "run", str(no_spectra)]) == 0
     assert cli.main(["run", str(path), "--spectra", str(tmp_path / "bare" / "out")]) == 1
     assert "holds no raw spectra" in capsys.readouterr().err
-    # the format and the control stamps are the stored record's, not the project file's
-    # (which is logged), and the inherited control times follow them
+    # the format is the stored record's, not the project file's (which is logged)
     other = tmp_path / "other.toml"
     other.write_text(f'project = "o"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
-                     f'fulldeut_time = 50.0\nspectra = "out"\n[run.controls]\n'
+                     f'spectra = "out"\n[run.controls]\n'
                      f'[output]\nbundle = "out5"\n{FAST_RUN}')
     with caplog.at_level(logging.WARNING):
         p = load_project(other)
-    assert p.input.format == "mzml" and p.input.fulldeut_time == DEFAULT_FULLDEUT_TIME
-    assert "read with format = 'mzml'" in caplog.text and "fulldeut_time = 50.0" in caplog.text
-    assert p.run.controls.fd_time is None  # a scan format: fd_time is set by hand
-    stored = dataclasses.replace(spectra, source={**spectra.source, "reader": "specexport",
-                                                  "undeut_time": 0.5, "fulldeut_time": 99.0})
+    assert p.input.format == "mzml"
+    assert "read with format = 'mzml'" in caplog.text
+    stored = dataclasses.replace(spectra, source={**spectra.source, "reader": "specexport"})
     save_spectra(stored, tmp_path / "s2.parquet")
     other.write_text(other.read_text().replace('spectra = "out"', 'spectra = "s2.parquet"'))
     p = load_project(other)
-    assert (p.input.format, p.input.undeut_time, p.input.fulldeut_time) == ("specexport", 0.5,
-                                                                            99.0)
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
+    assert p.input.format == "specexport"
     p = load_project(other, spectra=tmp_path / "out")  # the command line's --spectra
     assert p.input.format == "mzml" and p.input.spectra == tmp_path / "out"
-    assert p.run.controls.fd_time is None
+    # the control times of project files written before the roles are refused by name
+    old = other.read_text().replace('data_dir = "d"\n', 'data_dir = "d"\nfulldeut_time = 50.0\n')
+    other.write_text(old)
+    with pytest.raises(ProjectError, match="fulldeut_time.*no longer identified by a time"):
+        load_project(other)
+    other.write_text(other.read_text().replace("fulldeut_time = 50.0\n", ""))
     # a stored path that cannot be read yet leaves the file's own settings until the spectra
     # are read: check reports it as a problem, run refuses it before anything else
     other.write_text(other.read_text().replace('spectra = "s2.parquet"', 'spectra = "gone"'))
@@ -525,7 +525,7 @@ def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
 
     settings = _optional_settings(RunConfig)
     sections = {p for p in settings if p[0] in ("bootstrap", "controls", "plots", "quality")}
-    assert {("fit", "noise", "sd"), ("fit", "noise", "percent"), ("controls", "fd_time"),
+    assert {("fit", "noise", "sd"), ("fit", "noise", "percent"), ("controls", "fulldeut_at"),
             ("controls", "retention_min"), ("controls", "quench"),
             ("quality", "max_mz_offset_ppm"), ("picker", "noise_threshold"), ("max_chunk",),
             ("controls", "quench", "initial_fraction")} <= set(settings)
@@ -550,34 +550,64 @@ def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
     assert p.run.fit.noise.sd == 50.0 and p.run.fit.noise.percent is None
     with pytest.raises(ProjectError, match="sd"):
         project("[run.fit.noise]\nsd = 50.0\n")  # both set
-    p = project("[run.controls]\nfd_time = false\nquench = false\n[run.quality]\n"
+    p = project("[run.controls]\nfulldeut_at = false\nquench = false\n[run.quality]\n"
                 "max_mz_offset_ppm = false\n")
-    assert p.run.controls.fd_time is None and p.run.controls.quench is None
+    assert p.run.controls.fulldeut_at is None and p.run.controls.quench is None
     assert p.run.quality.max_mz_offset_ppm is None
 
 
-def test_control_times_default_to_the_input_times(tmp_path):
-    def project(text, fmt='format = "specexport"\ndata_dir = "d"\nundeut_time = 0.5\n'
-                                'fulldeut_time = 99.0\n'):
-        return project_from(tomllib.loads(f'project = "p"\n[input]\n{fmt}' + text), tmp_path)
+def test_controls_are_roles_and_times_take_units(tmp_path):
+    head = 'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+
+    def project(text):
+        return project_from(tomllib.loads(head + text), tmp_path)
 
     p = project("[run.controls]\nd2o_fraction = 0.85\n")
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
-    assert p.run.reference_time == 0.5
-    p = project("[run]\ncontrols = true\n")
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.5, 99.0)
-    p = project("[run.controls]\nundeut_time = 1.0\nfd_time = 100.0\n")  # explicit values win
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (1.0, 100.0)
-    p = project("[run.controls]\nundeut_time = false\nfd_time = false\n")  # no such controls
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (None, None)
-    assert project("").run.controls is None
-    # a scan format: its runs carry the times; the undeuterated ones are at [run] undeut_time
-    scan = ('format = "mzml"\npeptides = "p.csv"\n[[input.runs]]\npath = "a"\nsample = "S"\n'
-            "time = 0.0\n")
-    p = project("[run]\nundeut_time = 2.0\n[run.controls]\n", scan)
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (2.0, None)
-    p = project("[run.controls]\nfd_time = 1e6\n", scan)
-    assert (p.run.controls.undeut_time, p.run.controls.fd_time) == (0.0, 1e6)
+    assert (p.run.controls.undeut_at, p.run.controls.fulldeut_at) == (None, None)
+    p = project('[run.controls]\nfulldeut_at = "20 h"\nundeut_at = 4\n')
+    assert (p.run.controls.undeut_at, p.run.controls.fulldeut_at) == (4.0, 72000.0)
+    p = project('[run]\nenvelope_fallback_time = "1 min"\n[analysis]\ntimes = ["1 min", 20]\n'
+                'exclude_times = ["20 h"]\ncoverage_times = ["4 s"]\n')
+    assert p.run.envelope_fallback_time == 60.0 and p.analysis.times == (60.0, 20.0)
+    assert p.analysis.exclude_times == (72000.0,) and p.analysis.coverage_times == (4.0,)
+    p = project('time_scale = "order"\n')
+    assert p.input.time_scale == "order"
+    for text, message in [
+        ("undeut_time = 0.0\n", "undeut_time.*no longer identified"),
+        ("[run]\nundeut_time = 0.0\n", "undeut_time.*no longer identified"),
+        ("[run.controls]\nfd_time = 1e6\n", "fd_time.*no longer identified"),
+        ("[run.controls]\natol = 1.0\n", "atol.*no longer identified"),
+        ("[analysis.controls]\nundeut_time = 0.0\n", "undeut_time.*no longer identified"),
+        ('[run.controls]\nfulldeut_at = "20 x"\n', "unknown time unit"),
+        ('[run.controls]\nfulldeut_at = true\n', "fulldeut_at"),
+        ('time_scale = "minutes"\n', "time_scale must be one of"),
+        ('[analysis]\ntimes = ["soon"]\n', "analysis.times"),
+    ]:
+        with pytest.raises(ProjectError, match=message):
+            project(text)
+
+
+def test_scan_runs_take_roles(tmp_path):
+    head = ('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n')
+
+    def project(runs):
+        return project_from(tomllib.loads(head + runs), tmp_path)
+
+    p = project('[[input.runs]]\npath = "un.mzML"\nsample = "WT"\nrole = "undeut"\n'
+                '[[input.runs]]\npath = "td.mzML"\nsample = "WT"\nrole = "fulldeut"\n'
+                'time = "27 h"\n[[input.runs]]\npath = "k.mzML"\nsample = "WT"\n'
+                'time_offset = "2 s"\nusable_from = "20 s"\n')
+    un, td, kin = p.input.runs
+    assert (un.role, un.time, un.fixed) == ("undeut", None, True)
+    assert (td.role, td.time, td.fixed) == ("fulldeut", 97200.0, True)
+    assert (kin.role, kin.time, kin.fixed, kin.time_offset, kin.usable_from) == (
+        "", None, False, 2.0, 20.0)
+    with pytest.raises(ProjectError, match='role = "undeut"'):
+        project('[[input.runs]]\npath = "un.mzML"\nsample = "WT"\ntime = "undeut"\n')
+    with pytest.raises(ProjectError, match="role must be"):
+        project('[[input.runs]]\npath = "un.mzML"\nsample = "WT"\nrole = "control"\n')
+    with pytest.raises(ProjectError, match="time"):
+        project('[[input.runs]]\npath = "un.mzML"\nsample = "WT"\ntime = "5 parsecs"\n')
 
 
 def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
@@ -595,8 +625,11 @@ def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
         assert p.run.max_chunk is None and p.run.fit.noise.sd is None
         assert p.run.controls.quench is not None and p.run.controls.fd_mode == "kint"
         assert p.run.controls.retention_min is None
-        assert p.run.controls.fd_time == 1e6
-        assert p.run.controls.undeut_time == 0.0
+        assert p.run.controls.fulldeut_at == 72000.0  # "20 h" in the template
+        assert p.run.controls.undeut_at == 300.0  # "5 min"
+        if fmt == "mzml":
+            assert [r.role for r in p.input.runs] == ["undeut", ""]
+            assert p.input.runs[0].time is None and p.input.runs[1].time == 60.0
         if fmt == "mzml":
             assert p.input.scans.min_time is None and p.input.scans.max_spectra is None
 

@@ -59,6 +59,7 @@ class BinnedSet:
     peak_mz: np.ndarray | None = None
     mz_offset_ppm: np.ndarray | None = None
     rt: np.ndarray | None = None
+    role: np.ndarray | None = None
 
     def __post_init__(self):
         if self.rt is None:  # retention times (minutes) not given: unknown
@@ -67,6 +68,10 @@ class BinnedSet:
             object.__setattr__(self, "peak_mz", np.full(len(self.mz), np.nan))
         if self.mz_offset_ppm is None:
             object.__setattr__(self, "mz_offset_ppm", np.full(len(self.offsets) - 1, np.nan))
+        if self.role is None:  # built without roles: time points only
+            object.__setattr__(self, "role", np.full(len(self.offsets) - 1, "", dtype="<U8"))
+        else:
+            object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
 
     def __len__(self) -> int:
         return len(self.offsets) - 1
@@ -86,7 +91,7 @@ class BinnedSet:
     def time_idx(self) -> np.ndarray:
         """Rank of each spectrum's time among the distinct times of its data set, derived from
         the spectra in this set (so dropping spectra can change it)."""
-        return time_index(self.data_id, self.time)
+        return time_index(self.data_id, self.time, self.role)
 
     def select(self, keep: np.ndarray) -> BinnedSet:
         """A new set with the spectra where the boolean array ``keep`` is True."""

@@ -21,6 +21,7 @@ import numpy as np
 from ..controls import correct_means
 from ..io.outputs import replace_outputs
 from ..quality import FLAG_NAMES
+from ..spectra import point_order_key, time_point
 from .results import Results
 from .series import _control_row, _reps
 
@@ -29,7 +30,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     fit = results.fit
     m = len(fit)
     cols = {"spectrum_id": fit.spectrum_id, "data_id": fit.data_id, "time": fit.time,
-            "rep": _reps(results)}
+            "role": fit.role, "rep": _reps(results)}
     b = results.binned
     names = ("sample", "peptide_range", "peptide", "charge")
     if b is not None:
@@ -171,18 +172,24 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     mean = comp["mean_corrected"] if results.controls is not None else comp["mean"]
     ok = comp["review_status"] != "rejected"
     rows = []
-    keys = sorted({(int(d), float(t), int(r)) for d, t, r in
-                   zip(comp["data_id"][ok], comp["time"][ok], comp["rank"][ok], strict=True)})
-    for d, t, r in keys:
-        sel = ok & (comp["data_id"] == d) & (comp["time"] == t) & (comp["rank"] == r)
+    role = comp["role"] if "role" in comp else np.full(len(comp["time"]), "", dtype="<U8")
+    points = time_point(comp["time"], role)  # replicates share a point: a time, or a control
+    keys = {}
+    for i in np.flatnonzero(ok):
+        key = (int(comp["data_id"][i]), points[i], int(comp["rank"][i]))
+        keys.setdefault(key, (key[0], *point_order_key(float(comp["time"][i]), str(role[i])),
+                              key[2]))
+    for d, point, r in sorted(keys, key=lambda k: keys[k]):
+        sel = ok & (comp["data_id"] == d) & (points == point) & (comp["rank"] == r)
         values, fractions = mean[sel], comp["population"][sel]
         first = np.flatnonzero(sel)[0]
-        rows.append((d, t, r, str(comp["sample"][first]), str(comp["peptide"][first]),
+        rows.append((d, float(comp["time"][first]), str(role[first]), r,
+                     str(comp["sample"][first]), str(comp["peptide"][first]),
                      str(comp["peptide_range"][first]), int(len(values)), float(values.mean()),
                      float(values.std(ddof=1)) if len(values) > 1 else np.nan,
                      float(fractions.mean())))
-    names = ("data_id", "time", "rank", "sample", "peptide", "peptide_range", "n_replicates",
-             "mean", "replicate_sd", "population")
+    names = ("data_id", "time", "role", "rank", "sample", "peptide", "peptide_range",
+             "n_replicates", "mean", "replicate_sd", "population")
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
 

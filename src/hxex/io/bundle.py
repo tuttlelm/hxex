@@ -44,8 +44,9 @@ from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
-from ..spectra import SpectrumSet
+from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
 from ._arrow import (
+    ROLE,
     _col,
     _flat_ragged,
     _index_arrays,
@@ -142,6 +143,7 @@ def _measurements_table(m: Measurements) -> pa.Table:
         "spectrum_id": _str(m.spectrum_id),
         "data_id": pa.array(np.asarray(m.data_id, dtype=np.int64)),
         "time": pa.array(np.asarray(m.time, dtype=np.float64)),
+        ROLE: _str(m.role),
         "n_max": pa.array(np.asarray(m.n_max, dtype=np.float64)),
         "bins": _ragged(list(m.bins), pa.float64()),
         "observed": _ragged(list(m.observed), pa.float64()),
@@ -157,6 +159,7 @@ def _fit_tables(fit: FitResult) -> dict[str, pa.Table]:
         "spectrum_id": _str(fit.spectrum_id),
         "data_id": pa.array(np.asarray(fit.data_id, dtype=np.int64)),
         "time": pa.array(np.asarray(fit.time, dtype=np.float64)),
+        ROLE: _str(fit.role),
         "selected_K": pa.array(np.asarray(fit.selected_K, dtype=np.int64)),
         "obs_scale": pa.array(np.asarray(fit.obs_scale, dtype=np.float64)),
         "sample_size": pa.array(np.asarray(fit.sample_size, dtype=np.float64)),
@@ -934,7 +937,8 @@ class Bundle:
     rows needed), and the objects returned are the ones the run produced."""
 
     def __init__(self, path: Path, store, manifest: dict[str, Any]):
-        self.path, self._store, self.manifest = path, store, manifest
+        self.path, self._store = path, store
+        self.manifest, self._legacy_times = modernise_manifest(manifest)
         self._cache: dict[str, Any] = {}
 
     @property
@@ -944,6 +948,13 @@ class Bundle:
     @property
     def schema_version(self) -> int:
         return int(self.manifest["schema_version"])
+
+    def _roles(self, t: pa.Table) -> np.ndarray:
+        """The ``role`` column of a per-spectrum table, or, for a bundle written before the
+        roles, the roles its control times imply (:func:`legacy_roles`)."""
+        if ROLE in t.column_names:
+            return _strs(t, ROLE)
+        return legacy_roles(np.asarray(_col(t, "time"), dtype=np.float64), self._legacy_times)
 
     @property
     def pending(self) -> list[str]:
@@ -998,6 +1009,7 @@ class Bundle:
                 spectrum_id=_strs(t, "spectrum_id"),
                 data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
+                role=self._roles(t),
             )
         return self._cache["measurements"]
 
@@ -1039,6 +1051,7 @@ class Bundle:
                 spectrum_id=_strs(t, "spectrum_id"),
                 data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
+                role=self._roles(t),
                 k_values=k_values, fits=fits,
                 selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
                 score=_matrix(t, "score", len(k_values)),
@@ -1129,7 +1142,8 @@ class Bundle:
             threshold=np.asarray(_col(t, "threshold"), dtype=np.float64),
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
-            capped=np.asarray(_col(t, "capped"), dtype=bool), **_index_arrays(t, ("rt",)),
+            capped=np.asarray(_col(t, "capped"), dtype=bool),
+            **{**_index_arrays(t, ("rt",)), ROLE: self._roles(t)},
             peak_mz=peak_mz, mz_offset_ppm=offset,
         )
 
@@ -1140,8 +1154,9 @@ class Bundle:
         if ids is not None and len(ids) == 0:
             return SpectrumSet.from_spectra([], source=self.spectra_source())
         filters = None if ids is None else [("spectrum_id", "in", [str(i) for i in ids])]
-        return dataclasses.replace(_spectra_from_table(self._table("spectra", filters=filters)),
-                                   source=self.spectra_source())
+        t = self._table("spectra", filters=filters)
+        return dataclasses.replace(_spectra_from_table(t), source=self.spectra_source(),
+                                   role=self._roles(t))
 
     def spectra_source(self) -> dict | None:
         """How the raw spectra were read (for example the runs, targets and settings of
@@ -1198,6 +1213,56 @@ class Bundle:
         tmp.write_text(json.dumps(manifest, indent=2) + "\n")
         os.replace(tmp, self.path / MANIFEST)
         self.manifest = manifest
+
+
+LEGACY_TIME_KEYS = ("undeut_time", "fd_time", "atol")
+
+
+def modernise_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float]]:
+    """``manifest`` with the settings of bundles written before the roles (control times in
+    ``configs.controls`` and ``configs.run``, which the config classes no longer know) taken
+    out, and those times (``undeut_time``, ``fd_time``, ``atol``) for :func:`legacy_roles`.
+    A current manifest comes back as it is, with an empty record."""
+    configs = manifest.get("configs") or {}
+    controls = configs.get("controls")
+    run = configs.get("run")
+    run_controls = (run or {}).get("controls") if isinstance(run, dict) else None
+    legacy: dict[str, float] = {}
+    for table in (controls, run_controls):
+        if isinstance(table, dict):
+            for key in LEGACY_TIME_KEYS:
+                if key in table and table[key] is not None and key not in legacy:
+                    legacy[key] = float(table[key])
+    if isinstance(run, dict) and run.get("undeut_time") is not None and "undeut_time" not in legacy:
+        legacy["undeut_time"] = float(run["undeut_time"])
+    stale = (isinstance(controls, dict) and any(k in controls for k in LEGACY_TIME_KEYS)) or (
+        isinstance(run_controls, dict) and any(k in run_controls for k in LEGACY_TIME_KEYS)) or (
+        isinstance(run, dict) and "undeut_time" in run)
+    if not stale:
+        return manifest, {}
+    manifest = json.loads(json.dumps(manifest))  # a copy: the file is left as written
+    configs = manifest["configs"]
+    for table in (configs.get("controls"), (configs.get("run") or {}).get("controls")):
+        if isinstance(table, dict):
+            for key in LEGACY_TIME_KEYS:
+                table.pop(key, None)
+    if isinstance(configs.get("run"), dict):
+        configs["run"].pop("undeut_time", None)
+    log.info("bundle written before the roles: its controls are known by their recorded times "
+             "(%s)", ", ".join(f"{k} = {v:g}" for k, v in legacy.items()))
+    return manifest, legacy
+
+
+def legacy_roles(time: np.ndarray, legacy: Mapping[str, float]) -> np.ndarray:
+    """The roles of spectra of a bundle written before the roles, from the control times it
+    recorded (``undeut_time``, ``fd_time``, within ``atol``); no roles when it recorded none."""
+    time = np.asarray(time, dtype=float)
+    role = np.full(len(time), "", dtype="<U8")
+    atol = float(legacy.get("atol", 1e-6))
+    for key, label in (("undeut_time", UNDEUT), ("fd_time", FULLDEUT)):
+        if key in legacy:
+            role[np.abs(time - legacy[key]) <= atol] = label
+    return role
 
 
 def open_bundle(path: str | Path) -> Bundle:

@@ -34,23 +34,25 @@ SEQUENCE = "MAKLPGSTVEDRWQAFKLT"  # residue 1 is M; a proline at 5
 
 
 def table(rows, *, nterm=1, undeut_time=0.0):
-    """A species table from (sample, peptide, start, time, fD, fD_se[, n_spectra])."""
+    """A species table from (sample, peptide, start, time, fD, fD_se[, n_spectra]); the rows
+    at ``undeut_time`` are the undeuterated controls (role ``undeut``, time NaN)."""
     cols = {name: [] for name in ("sample", "peptide", "modification", "kind", "start", "end",
-                                  "time", "K", "rank", "mean", "mean_se", "fD", "fD_se",
+                                  "time", "role", "K", "rank", "mean", "mean_se", "fD", "fD_se",
                                   "population", "population_se", "n_amides", "n_spectra",
                                   "n_charges", "corrected", "charge_trend")}
     for row in rows:
         sample, peptide, start, time, fd, se = row[:6]
         n = row[6] if len(row) > 6 else 1
+        control = undeut_time is not None and time == undeut_time
         values = {"sample": sample, "peptide": peptide, "modification": "", "kind": "peptide",
-                  "start": start, "end": start + len(peptide) - 1, "time": time, "K": 1,
-                  "rank": 1, "mean": fd * 10, "mean_se": se * 10, "fD": fd, "fD_se": se,
+                  "start": start, "end": start + len(peptide) - 1,
+                  "time": np.nan if control else time, "role": "undeut" if control else "",
+                  "K": 1, "rank": 1, "mean": fd * 10, "mean_se": se * 10, "fD": fd, "fD_se": se,
                   "population": 1.0, "population_se": 0.0, "n_amides": 10.0, "n_spectra": n,
                   "n_charges": 1, "corrected": True, "charge_trend": False}
         for name, value in values.items():
             cols[name].append(value)
-    return SpeciesUptake(**{k: np.array(v) for k, v in cols.items()}, nterm_subtract=nterm,
-                         undeut_time=undeut_time)
+    return SpeciesUptake(**{k: np.array(v) for k, v in cols.items()}, nterm_subtract=nterm)
 
 
 # --- residue level ------------------------------------------------------------------------------
@@ -103,7 +105,7 @@ def test_coverage_is_judged_at_the_chosen_times():
     up = table([("S", "AKLPGSTV", 2, 0.0, 0.0, 0.0, 3), ("S", "GSTVED", 6, 0.0, 0.0, 0.0, 2),
                 ("S", "TVEDRWQ", 8, 60.0, 0.5, 0.1, 1)], undeut_time=0.0)
     undeut = coverage_table(up, sequences=SEQUENCE)  # the undeuterated control by default
-    assert undeut.times == (0.0,) and int(undeut.redundancy[undeut.residue == 13][0]) == 0
+    assert undeut.times == () and int(undeut.redundancy[undeut.residue == 13][0]) == 0
     assert int(undeut.redundancy[undeut.residue == 8][0]) == 2
     spectra = coverage_table(up, sequences=SEQUENCE, count="spectra")
     assert int(spectra.redundancy[spectra.residue == 8][0]) == 5
@@ -134,7 +136,9 @@ def results():
 def test_species_uptake_combines_replicates_at_each_fixed_k(results):
     up = species_uptake(results, ks=(1, 2))
     assert set(up.K.tolist()) == {1, 2} and set(up.rank[up.K == 2].tolist()) == {1, 2}
-    assert up.corrected.all() and up.undeut_time == 0.0 and up.nterm_subtract == 1
+    assert up.corrected.all() and up.nterm_subtract == 1
+    assert set(up.role.tolist()) == {"undeut", "", "fulldeut"}
+    assert np.isnan(up.time[up.role != ""]).all()
     k1 = up.select(up.where(K=1))
     # both series are the same peptide of the same sample (as two charge states would be), so they
     # are combined: 2 x 3 replicates, 2 x 2 at the last time
@@ -143,11 +147,13 @@ def test_species_uptake_combines_replicates_at_each_fixed_k(results):
     np.testing.assert_allclose(k1.population, 1.0)
     k2 = up.select(up.where(K=2))
     for s, t in set(zip(k2.sample, k2.time, strict=True)):
+        if not np.isfinite(t):
+            continue  # the controls (no time) are checked by role above
         rows = k2.where(sample=s, time=t)
         assert k2.fD[rows & (k2.rank == 1)] <= k2.fD[rows & (k2.rank == 2)]
     # the fully deuterated control is near 1 after the back-exchange correction
-    fd_time = k1.fD[k1.time == k1.time.max()]
-    assert np.all(np.abs(fd_time - 1.0) < 0.2)
+    fd_level = k1.fD[k1.role == "fulldeut"]
+    assert len(fd_level) and np.all(np.abs(fd_level - 1.0) < 0.2)
     with pytest.raises(ValueError, match="were not fitted"):
         species_uptake(results, ks=(4,))
 
@@ -196,6 +202,8 @@ def test_filters_keep_only_credible_k2_descriptions(results, caplog):
     assert np.all((k2.population >= 0.05) & (k2.population <= 0.95))
     # the K=1 value lies between the ranks of every kept K=2 description
     for s, p, t in set(zip(k2.sample, k2.peptide, k2.time, strict=True)):
+        if not np.isfinite(t):
+            continue  # a control: no time to select by
         row = default.where(sample=s, time=t) & (default.peptide == p)
         low, high = (default.fD[row & (default.K == 2) & (default.rank == r)][0] for r in (1, 2))
         avg = default.fD[row & (default.K == 1)][0]
@@ -282,9 +290,9 @@ def test_residue_profile():
         getattr(k2, f.name) if f.name not in ("K", "rank", "fD") else
         {"K": np.full(2, 2), "rank": np.full(2, r), "fD": k2.fD + 0.1 * r}[f.name]
         for r in (1, 2)]) for f in dataclasses.fields(SpeciesUptake)
-        if f.name not in ("nterm_subtract", "undeut_time")}, nterm_subtract=1)
+        if f.name not in ("nterm_subtract",)}, nterm_subtract=1)
     rm = residue_map(both, sequences=SEQUENCE)
-    fig = plot_residue_profile(rm, "S", 4.0, marks=(7,), undeut_time=0.0)
+    fig = plot_residue_profile(rm, "S", 4.0, marks=(7,))
     ax = fig.axes[0]
     gids = [line.get_gid() for line in ax.lines if line.get_gid()]
     assert gids == ["fD:K1:rank1", "fD:K2:rank1", "fD:K2:rank2"]
@@ -634,7 +642,7 @@ def test_coverage_falls_back_to_every_time_when_none_was_measured(two_sample_bun
 
 def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
     """exclude_times: the measurements at those times leave every table; controls refused."""
-    import csv
+    import dataclasses
 
     from hxex.analysis import AnalysisConfig
     from hxex.io import open_bundle
@@ -642,31 +650,26 @@ def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
 
     with open_bundle(two_sample_bundle) as b:
         res = Results.from_bundle(b)
-        run_cfg = res.settings.run
-        controls = (run_cfg.undeut_time, run_cfg.controls.fd_time)
-        times = sorted(set(species_uptake(res, ks=(1,)).time.tolist()) - set(controls))
+        up = species_uptake(res, ks=(1,))
+        times = sorted({float(t) for t in up.time if np.isfinite(t)})
         late = times[-1]
         dropped = res.without_times([late])
         assert dropped.excluded.sum() == np.isclose(res.fit.time, late).sum() > 0
         assert late not in species_uptake(dropped, ks=(1,)).time.tolist()
         cfg = AnalysisConfig(reference="S", ks=(1,), overlay=("avg",), exclude_times=[late])
-        write_analysis(res, cfg, tmp_path / "a")
-        with open(tmp_path / "a" / "compare_peptides.csv") as f:
-            assert all(float(r["time"]) != late for r in csv.DictReader(f))
-        for control in controls:
-            with pytest.raises(ValueError, match="a control's time"):
-                write_analysis(res, AnalysisConfig(exclude_times=[control]), tmp_path / "b")
-        # the controls' undeuterated time is the one refused, not the run's reference time
-        import dataclasses
-
-        moved = dataclasses.replace(res, settings=dataclasses.replace(
-            res.settings, configs={**res.settings.configs, "run": {
-                **res.settings.configs["run"], "undeut_time": 777.0}}))
-        assert moved.settings.run.undeut_time == 777.0
+        # the synthetic run has one time point: without it the controls alone (not time
+        # points) leave nothing to compare
+        with pytest.raises(ValueError, match="no reference sample"):
+            write_analysis(res, cfg, tmp_path / "a")
+        assert all(float(t) != late for t in species_uptake(dropped, ks=(1,)).time)
+        # the controls have no time, so no time names them; a time point that also serves as
+        # a control (a role and a time) is refused
+        fit = res.fit
+        role = np.array(fit.role, dtype="<U8")
+        role[np.isclose(fit.time, late)] = "fulldeut"
+        promoted = dataclasses.replace(res, fit=dataclasses.replace(fit, role=role))
         with pytest.raises(ValueError, match="a control's time"):
-            write_analysis(moved, AnalysisConfig(exclude_times=[run_cfg.controls.undeut_time]),
-                           tmp_path / "b")
-        assert moved.without_times([777.0]).excluded.sum() == 0
+            write_analysis(promoted, AnalysisConfig(exclude_times=[late]), tmp_path / "b")
     assert AnalysisConfig.from_dict(cfg.to_dict()).exclude_times == (late,)
 
 
@@ -760,7 +763,8 @@ def test_runs_are_analysed_like_samples(results):
     np.testing.assert_array_equal(a.fD, b.fD)
     np.testing.assert_array_equal(a.fD_se, b.fD_se)
     pc = compare_peptides(rs, "A:S")
-    assert set(pc.sample.tolist()) == {"B:S"} and len(pc) == len(set(a.time.tolist()))
+    assert set(pc.sample.tolist()) == {"B:S"}
+    assert len(pc) == len({float(t) for t in a.time if np.isfinite(t)})  # the time points
     np.testing.assert_allclose(pc.delta, 0.0)
     assert not pc.significant.any()
     assert len(check_identity(up)) == 0 and len(compare_settings(rs)) == 0
@@ -1032,7 +1036,7 @@ def test_controls_follow_the_review_and_can_be_recomputed(results, caplog):
     from hxex.analysis import analysis_controls
 
     assert analysis_controls(results) is results.controls  # nothing rejected, no changes
-    fd = np.flatnonzero(results.fit.time == 1e6)
+    fd = np.flatnonzero(results.fit.role == "fulldeut")
     series = int(results.fit.data_id[fd[0]])
     before = results.controls.n_fd[results.controls.rows([series])[0]]
     review = ReviewTable.empty().update(str(results.fit.spectrum_id[fd[0]]), status="rejected")
@@ -1042,7 +1046,7 @@ def test_controls_follow_the_review_and_can_be_recomputed(results, caplog):
     assert c.n_fd[c.rows([series])[0]] == before - 1
     # changed settings: recomputed with them, the rest of the run's settings kept
     changed = analysis_controls(results, {"d2o_fraction": 0.8, "retention_min": 0.99})
-    assert changed.config.d2o_fraction == 0.8 and changed.config.fd_time == 1e6
+    assert changed.config.d2o_fraction == 0.8 and changed.config.retention_min == 0.99
     assert changed.fallback.all() and changed.retention == pytest.approx(0.8)
     up = species_uptake(results, controls={"d2o_fraction": 0.8, "retention_min": 0.99})
     base = species_uptake(results)

@@ -44,16 +44,19 @@ def natural(plan, height):
 def build_run(project="proj", n_boot=4):
     plan = plan_bins(PEPTIDE, 2, config=CFG)
     entry = PeptideEntry("f.xlsx", "S", PEPTIDE, "0001-0010", 1, 10, 2)
+    # time 0 is an undeuterated control and 1e6 a fully deuterated one: a role, no time
     layout = [(0.0, 1, 0.5, 0.8), (0.0, 2, 0.5, 0.85), (0.0, 3, 0.5, 0.8), (60.0, 1, 3.0, 1.2),
               (60.0, 2, 3.1, 1.2), (60.0, 3, 2.9, 1.1), (1e6, 1, 8.0, 1.3), (1e6, 2, 8.1, 1.3)]
+    roles = {0.0: "undeut", 1e6: "fulldeut"}
     spectra = []
     for k, (t, rep, centre, width) in enumerate(layout):
         height = 4e4 * (0.9 + 0.1 * (k % 3))
         peaks = natural(plan, height) if t == 0.0 else envelope(plan, centre, width, height)
         mz, y = sticks(plan, peaks)
         y = y + np.random.default_rng(k).normal(0, 15, len(y))
-        spectra.append(Spectrum(mz, y, entry, t, rep, data_id=0, label=f"c{k}",
-                                spectrum_id=f"{project}:f.xlsx#{k + 1}"))
+        spectra.append(Spectrum(mz, y, entry, np.nan if t in roles else t, rep, data_id=0,
+                                label=f"c{k}", spectrum_id=f"{project}:f.xlsx#{k + 1}",
+                                role=roles.get(t, "")))
     raw = SpectrumSet.from_spectra(spectra)
     binned = pick_spectra(raw, CFG)
     meas = Measurements.from_binned(binned)
@@ -442,7 +445,7 @@ def test_a_review_given_at_writing(tmp_path, run):
 def test_controls_and_corrected_means_are_kept(tmp_path, run):
     from hxex.controls import ControlConfig, fit_controls
     raw, binned, meas, fit, boot = run
-    cfg = ControlConfig(undeut_time=0.0, fd_time=1e6)
+    cfg = ControlConfig()
     ctrl = fit_controls(fit, binned.max_namides, cfg)
     path = write_bundle(tmp_path / "c", measurements=meas, fit=fit, bootstrap=boot,
                         controls=ctrl)
@@ -659,3 +662,32 @@ def test_generations_are_numbered_once_and_found(tmp_path, run):
     (tmp_path / "plain").write_text("x")
     with pytest.raises(BundleError, match="not a results bundle"):
         keep_previous(tmp_path / "plain")
+
+
+def test_bundles_written_before_the_roles_derive_them_from_their_control_times():
+    from hxex.io.bundle import legacy_roles, modernise_manifest
+
+    manifest = {"configs": {"controls": {"undeut_time": 0.0, "fd_time": 1e6, "atol": 1e-6,
+                                         "d2o_fraction": 0.85},
+                            "run": {"undeut_time": 0.0, "controls": {"undeut_time": 0.0,
+                                                                     "fd_time": 1e6}}}}
+    new, legacy = modernise_manifest(manifest)
+    assert legacy == {"undeut_time": 0.0, "fd_time": 1e6, "atol": 1e-6}
+    assert new["configs"]["controls"] == {"d2o_fraction": 0.85}
+    assert new["configs"]["run"] == {"controls": {}}
+    assert "undeut_time" in manifest["configs"]["controls"]  # the original is untouched
+    roles = legacy_roles(np.array([0.0, 60.0, 1e6, 1e-9]), legacy)
+    assert list(roles) == ["undeut", "", "fulldeut", "undeut"]
+    assert list(legacy_roles(np.array([0.0, 1e6]), {})) == ["", ""]
+    current = {"configs": {"controls": {"d2o_fraction": 0.9}, "run": {"controls": None}}}
+    assert modernise_manifest(current) == (current, {})
+
+
+def test_the_role_is_stored_in_every_per_spectrum_table(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    path = write_bundle(tmp_path / "r", measurements=meas, fit=fit, bootstrap=boot,
+                        binned=binned, spectra=raw)
+    with open_bundle(path) as b:
+        for got in (b.spectra(), b.binned(), b.measurements(), b.fit()):
+            assert list(got.role) == list(raw.role)
+        assert "role" in b.components_table()

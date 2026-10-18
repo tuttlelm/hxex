@@ -167,9 +167,10 @@ def test_residues_by_least_squares():
 
 
 class _Fit:
-    def __init__(self, means, data_id, time, ids):
+    def __init__(self, means, data_id, time, ids, role=None):
         self.fits = {1: SimpleNamespace(means=np.asarray(means, float)[:, None])}
         self.data_id, self.time, self.spectrum_id = data_id, time, ids
+        self.role = np.full(len(ids), "", dtype="<U8") if role is None else np.asarray(role)
 
     def __len__(self):
         return len(self.time)
@@ -198,7 +199,7 @@ def test_fragment_uptake_from_a_run():
     assert np.isnan(u.mean_se).all() and u.parent_entry().start_seq == 11
     assert u.select(c4).time.tolist() == [30.0]
     # the fully deuterated control is not a point of the kinetics
-    results.settings.run = SimpleNamespace(controls=SimpleNamespace(fd_time=30.0))
+    results.fit.role = np.full(n, "fulldeut")
     assert len(fragment_uptake(results)) == 0
     with pytest.raises(ValueError, match="mzML"):
         fragment_uptake(SimpleNamespace(settings=SimpleNamespace(spectra_source=None)))

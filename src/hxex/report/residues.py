@@ -20,6 +20,7 @@ from matplotlib.figure import Figure
 from scipy.stats import norm
 
 from ..analysis import ResidueMap
+from ..io.times import format_time
 from .coverage import MARK_LINE
 
 # (K, rank) -> colour of its line and band, and its legend label (the owner's figures)
@@ -30,10 +31,10 @@ PROFILE_STYLES = {
 }
 
 
-def _when(time: float, undeut_time: float | None) -> str:
-    if undeut_time is not None and np.isclose(time, undeut_time):
-        return "undeuterated"
-    return f"{time:g} s"
+def _when(time: float) -> str:
+    """A time for a figure: in a readable unit, or ``undeuterated`` for a control without
+    one (NaN)."""
+    return "undeuterated" if not np.isfinite(time) else format_time(time)
 
 
 def plot_residue_profile(
@@ -45,7 +46,6 @@ def plot_residue_profile(
     band: float = 0.5,
     marks: Sequence[float] = (),
     length: int | None = None,
-    undeut_time: float | None = None,
     ax: Axes | None = None,
     legend: bool = True,
 ) -> Figure:
@@ -94,7 +94,7 @@ def plot_residue_profile(
     ax.set_xlabel("residue")
     ax.set_ylabel("fD (fractional deuteration)")
     ax.grid(color="#e5e5e5", linewidth=0.8)
-    ax.text(0.99, 0.04, f"{sample} {_when(time, undeut_time)}", transform=ax.transAxes,
+    ax.text(0.99, 0.04, f"{sample} {_when(time)}", transform=ax.transAxes,
             ha="right", va="bottom", fontsize=10)
     if legend:
         ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=drawn, frameon=False)
@@ -127,7 +127,6 @@ def plot_population_choice(
     band: float = 0.5,
     marks: Sequence[float] = (),
     length: int | None = None,
-    undeut_time: float | None = None,
     fig: Figure | None = None,
 ) -> Figure:
     """The choice between one and two populations along the sequence
@@ -185,7 +184,7 @@ def plot_population_choice(
     finite = finite[np.isfinite(finite)]
     top.set_ylim(0, max(1.1, float(finite.max()) * 1.05 if len(finite) else 1.1))
     top.set_ylabel("fD (fractional deuteration)")
-    top.text(0.99, 0.04, f"{sample} {_when(time, undeut_time)}", transform=top.transAxes,
+    top.text(0.99, 0.04, f"{sample} {_when(time)}", transform=top.transAxes,
              ha="right", va="bottom", fontsize=10)
     top.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=6, frameon=False,
                fontsize=8)

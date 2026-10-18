@@ -195,7 +195,8 @@ def test_the_review_layer_changes_the_k_without_touching_the_fit(results):
 
 def test_series_info_orders_by_time_then_replicate(results):
     info = series_info(results, 1)
-    assert list(info["times"]) == [0, 0, 0, 60, 60, 60, 1e6, 1e6]
+    assert list(info["roles"]) == ["undeut"] * 3 + [""] * 3 + ["fulldeut"] * 2
+    assert np.isnan(info["times"][[0, 1, 2, 6, 7]]).all() and list(info["times"][3:6]) == [60] * 3
     assert list(info["reps"]) == [1, 2, 3, 1, 2, 3, 1, 2]
     assert list(info["time_index"]) == [0, 0, 0, 1, 1, 1, 2, 2]
     assert info["n_amides"] == results.controls.n_amides[1] and "RDKVQKEYAL" in info["label"]
@@ -210,11 +211,11 @@ def test_uptake_data_corrected_and_raw(results):
     assert cor["corrected"] and not raw["corrected"] and len(raw["mean"]) == len(cor["mean"])
     m0, mfd, n = cor["m0"], cor["mfd"], cor["n_amides"]
     np.testing.assert_allclose(cor["mean"], np.maximum((raw["mean"] - m0) / (mfd - m0) * n, 0))
-    assert not cor["control_fallback"] and cor["fd_time"] == 1e6
+    assert not cor["control_fallback"] and list(cor["role"][-2:]) == ["FD", "FD"]
     nocontrols = Results(measurements=results.measurements, fit=results.fit,
                          bootstrap=results.bootstrap, bootstrap_by_k=results.bootstrap_by_k)
     d = uptake_data(nocontrols, 0)
-    assert not d["corrected"] and d["m0"] is None and d["fd_time"] is None
+    assert not d["corrected"] and d["m0"] is None and list(d["role"][:3]) == ["UN"] * 3
     np.testing.assert_allclose(d["mean"], raw["mean"])
 
 
@@ -228,7 +229,7 @@ def test_uptake_components_and_k(results):
 def test_plot_uptake_axes(results):
     by_index = plot_uptake(results, 0, x="index")
     ax = by_index.axes[0]
-    assert [t.get_text() for t in ax.get_xticklabels()] == ["UN", "60", "FD"]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["UN", "1 min", "FD"]
     assert {"rep:1", "rep:2", "rep:3", "limits"} <= gids(by_index)
     assert ax.get_ylabel().endswith("corrected)")
     by_time = plot_uptake(results, 0, x="time", corrected=False)
@@ -420,7 +421,8 @@ def test_grid_layout_wraps_a_single_replicate_time_course():
     def info(n_times, n_reps):
         times = np.repeat(np.arange(n_times, dtype=float), n_reps)
         reps = np.tile(np.arange(1, n_reps + 1), n_times)
-        return {"rows": np.arange(len(times)), "times": times, "reps": reps}
+        return {"rows": np.arange(len(times)), "times": times, "reps": reps,
+                "time_index": np.repeat(np.arange(n_times), n_reps)}
 
     nrows, ncols, pos, by_rep = _layout(info(24, 1), None)
     assert (nrows, ncols, by_rep) == (6, 4, False)
@@ -733,20 +735,29 @@ def test_populations_beyond_the_palette_change_line_style(results, monkeypatch):
 
 
 def test_controls_are_recognised_at_any_time_as_in_a_reverse_experiment(results):
-    """Deuterated first, then exchanged into H2O: the fully deuterated control at time 0 and the
-    undeuterated one at the end. The plots must find them by their times, not by order."""
+    """Deuterated first, then exchanged into H2O: the fully deuterated reference measured
+    first and the undeuterated end state last. The controls are known by their role, so the
+    plots find them whatever their order; by index the undeuterated control always comes
+    first and the fully deuterated last."""
+    import dataclasses
+
     from hxex.controls import ControlConfig, fit_controls
 
-    swapped = fit_controls(results.fit, results.measurements.n_max / 1.2,
-                           ControlConfig(undeut_time=1e6, fd_time=0.0))
-    rev = Results(measurements=results.measurements, fit=results.fit, controls=swapped,
+    fit = results.fit
+    swapped_role = np.where(fit.role == "undeut", "fulldeut",
+                            np.where(fit.role == "fulldeut", "undeut", ""))
+    rev_fit = dataclasses.replace(fit, role=swapped_role)
+    swapped = fit_controls(rev_fit, results.measurements.n_max / 1.2, ControlConfig())
+    rev = Results(measurements=results.measurements, fit=rev_fit, controls=swapped,
                   binned=results.binned)
     by_index = plot_uptake(rev, 0, x="index")
-    assert [t.get_text() for t in by_index.axes[0].get_xticklabels()] == ["FD", "60", "UN"]
+    assert [t.get_text() for t in by_index.axes[0].get_xticklabels()] == ["UN", "1 min", "FD"]
+    d = uptake_data(rev, 0)  # in point order: the (new) undeuterated controls come first
+    assert list(d["role"][:2]) == ["UN", "UN"] and list(d["role"][-3:]) == ["FD"] * 3
+    assert list(d["index"][:2]) == [6, 7]  # the spectra that were the fully deuterated ones
     by_time = plot_uptake(rev, 0, x="time", corrected=False)
     pts = [a for a in by_time.axes[0].get_children() if a.get_gid() == "rep:1"][0]
-    assert sorted(pts.get_offsets()[:, 0]) == [60.0, 1e6]  # the control at 0 s is a line now
-    assert list(uptake_data(rev, 0)["role"][:3]) == ["FD"] * 3
+    assert sorted(pts.get_offsets()[:, 0]) == [60.0]  # the controls have no time: lines only
     titles = [ax.get_title() for ax in plot_series_spectra(rev, 0, show=("picked",)).axes]
     assert any(t.startswith("FD, rep") for t in titles)
     assert any(t.startswith("UN, rep") for t in titles)
@@ -834,7 +845,7 @@ def test_k_selection_overview(results):
 
     d = k_selection_data(results)
     assert d["selected"].sum() == len(results.fit) == d["effective"].sum()
-    assert d["time_labels"] == ["UN", "60", "FD"] and not d["reviewed"]
+    assert d["time_labels"] == ["UN", "1 min", "FD"] and not d["reviewed"]
     np.testing.assert_allclose(d["share"].sum(axis=1), 1.0)
     assert {"selected", "share:1", "share:2"} <= gids(plot_k_selection(results))
     sid = str(results.fit.spectrum_id[3])

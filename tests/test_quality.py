@@ -65,14 +65,15 @@ def test_a_weak_spectrum_is_flagged_low_intensity_and_only_it(run):
 def test_unreplicated_time_points_and_small_series_are_not_assessed(run):
     meas, fit = run
     # keep one of the two fully deuterated spectra
-    keep = np.setdiff1d(np.arange(len(fit)), np.flatnonzero(fit.time == 1e6)[1:])
+    keep = np.setdiff1d(np.arange(len(fit)), np.flatnonzero(fit.role == "fulldeut")[1:])
     sub_meas = dataclasses.replace(
         meas, **{f: tuple(getattr(meas, f)[i] for i in keep) if isinstance(getattr(meas, f), tuple)
                  else getattr(meas, f)[keep]
                  for f in ("bins", "observed", "shapes", "n_max", "references", "spectrum_id",
-                           "data_id", "time")})
+                           "data_id", "time", "role")})
     sub_fit = dataclasses.replace(
         fit, spectrum_id=fit.spectrum_id[keep], data_id=fit.data_id[keep], time=fit.time[keep],
+        role=fit.role[keep],
         selected_K=fit.selected_K[keep], score=fit.score[keep], obs_scale=fit.obs_scale[keep],
         sample_size=fit.sample_size[keep], n_max=fit.n_max[keep], noise_kind=fit.noise_kind[keep],
         fits={k: dataclasses.replace(
@@ -81,8 +82,8 @@ def test_unreplicated_time_points_and_small_series_are_not_assessed(run):
             for k, kf in fit.fits.items()},
         noise_estimate=None)
     q = assess_quality(sub_meas, sub_fit)
-    assert np.isnan(q.intensity_rel[sub_fit.time == 1e6]).all()
-    assert not q.low_intensity[sub_fit.time == 1e6].any()
+    assert np.isnan(q.intensity_rel[sub_fit.role == "fulldeut"]).all()
+    assert not q.low_intensity[sub_fit.role == "fulldeut"].any()
     q = assess_quality(sub_meas, sub_fit, QualityConfig(min_series_fits=50))
     assert np.isnan(q.misfit_rel).all() and not q.poor_fit.any()
 
