@@ -344,7 +344,8 @@ def test_a_time_point_can_serve_as_a_control_as_well():
     assert list(out) == ["undeut", "", "", "fulldeut", "fulldeut"] and list(role[3:]) == ["", ""]
     both = apply_control_roles(out, time, ControlConfig(undeut_at="4"))
     assert list(both) == ["undeut", "undeut", "", "fulldeut", "fulldeut"]
-    with pytest.raises(ValueError, match="no spectrum was measured at that time.*4, 60, 72000"):
+    with pytest.raises(ValueError, match="fulldeut_at = 61 s: no spectrum was measured at that "
+                                          "time.*4 s, 1 min, 20 h"):
         apply_control_roles(role, time, ControlConfig(fulldeut_at=61.0), where="here")
     with pytest.raises(ValueError, match="already undeut"):
         apply_control_roles(both, time, ControlConfig(fulldeut_at=4.0))

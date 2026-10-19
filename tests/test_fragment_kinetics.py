@@ -573,3 +573,13 @@ def test_fragment_outputs_of_several_runs(tmp_path):
     other.settings.picker = PickerConfig(nterm_subtract=2)
     with pytest.raises(ValueError, match="count fragment amides differently"):
         fragment_uptake(RunSet({"a": runs["etd"], "b": other}))
+
+
+def test_the_fragment_analysis_refuses_times_that_only_order_the_points(tmp_path):
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis
+    from hxex.report import write_analysis
+
+    run = stub_run()
+    run.time_scale = "order"  # as hxex.report.Results.time_scale reads it from the bundle
+    with pytest.raises(ValueError, match="only order the points"):
+        write_analysis(run, AnalysisConfig(fragments=FragmentAnalysis()), tmp_path)

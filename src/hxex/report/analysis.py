@@ -79,10 +79,17 @@ def _columns(table) -> dict[str, np.ndarray]:
             if isinstance(getattr(table, f.name), np.ndarray)}
 
 
-def _time_label(time: float) -> str:
+def _time_scale(results) -> str:
+    """:attr:`hxex.report.Results.time_scale` of a run or a RunSet (seconds for results that
+    do not say, such as the fragment readers' stand-ins)."""
+    return getattr(results, "time_scale", "seconds")
+
+
+def _time_label(time: float, scale: str = "seconds") -> str:
     """A time for a file name: ``5min``, ``20h``, ``4s`` (``undeuterated`` for a control
-    without a time, NaN)."""
-    return "undeuterated" if not np.isfinite(time) else format_time(time).replace(" ", "")
+    without a time, NaN; the number alone when the times only order the points)."""
+    return ("undeuterated" if not np.isfinite(time)
+            else format_time(time, scale).replace(" ", ""))
 
 
 def _stem(name: str) -> str:
@@ -116,17 +123,18 @@ def _without_times(results, times):
         for t in times:
             if np.any(only & np.isclose(np.asarray(fit.time, float), t)):
                 clash.add(float(t))
+    scale = _time_scale(results)
     if clash:
-        raise ValueError(f"exclude_times {', '.join(f'{t:g}' for t in sorted(clash))}: a "
-                         "control's time (the controls are set by the run)")
+        raise ValueError(f"exclude_times {', '.join(format_time(t, scale) for t in sorted(clash))}"
+                         ": a control's time (the controls are set by the run)")
     out = {name: r.without_times(times) for name, r in runs.items()}
     n = sum(int(r.excluded.sum()) for r in out.values())
     if n:
-        log.info("[analysis] exclude_times: %d measurement(s) at %s s left out of the analysis", n,
-                 ", ".join(f"{t:g}" for t in times))
+        log.info("[analysis] exclude_times: %d measurement(s) at %s left out of the analysis", n,
+                 ", ".join(format_time(t, scale) for t in times))
     else:
-        log.warning("[analysis] exclude_times: no measurement at %s s",
-                    ", ".join(f"{t:g}" for t in times))
+        log.warning("[analysis] exclude_times: no measurement at %s",
+                    ", ".join(format_time(t, scale) for t in times))
     return RunSet(out, merge=results.merge) if isinstance(results, RunSet) else out[""]
 
 
@@ -175,6 +183,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     # the per-time figures: every time point (the controls are not times; a control that is
     # also a time point is one)
     times = list(config.times) or sorted({float(t) for t in up.time if np.isfinite(t)})
+    scale = _time_scale(results)
+    when = {"time_scale": scale}  # the figures label their time by the scale
     ann = config.annotations
     marks = ann.marks()
     tables: dict[str, dict] = {"species_uptake": up.columns(), "residues": residues.columns(),
@@ -223,6 +233,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             tables["compare_choices"] = compare_choices(choice, ref).columns()
     protection = prot_cmp = res_prot = res_cmp = None
     if config.protection:
+        if scale == "order":
+            raise ValueError("[analysis] protection needs real labelling times, and [input] "
+                             "time_scale = \"order\" says the times only order the points")
         from ..analysis.protection import (
             compare_protection,
             compare_residue_protection,
@@ -256,24 +269,24 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     jobs = []  # (file stem, function drawing the figure)
     for s in samples:
         jobs.append((f"coverage_{s}", lambda s=s: coverage_figure(
-            up, samples=[s], times=times, length=length)))
+            up, samples=[s], times=times, length=length, **when)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
         coverage, samples=samples, marks=marks)))
     for s in samples + states:
         for t in times:
-            label = _time_label(t)
+            label = _time_label(t, scale)
             if choice is not None and choice.where(sample=s, time=t).any():
                 jobs.append((f"choice_{s}_{label}", lambda s=s, t=t: plot_population_choice(
-                    choice, s, t, marks=marks, length=length)))
+                    choice, s, t, marks=marks, length=length, **when)))
             elif residues.where(sample=s, time=t).any():
                 jobs.append((f"profile_{s}_{label}", lambda s=s, t=t: plot_residue_profile(
-                    residues, s, t, marks=marks, length=length)))
+                    residues, s, t, marks=marks, length=length, **when)))
     if config.reference:
         others = [s for s in samples if s != config.reference]
         residue_others = others + states  # the residue comparisons include the states
         stack = list(comparisons.items())
         for t in times:
-            label = _time_label(t)
+            label = _time_label(t, scale)
             only = choice if config.overlay_two_only else None
             shown = [s for s in residue_others
                      if _has_overlay(residues, s, t, config.overlay, only)]
@@ -281,23 +294,25 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, config.reference, shown, t, show=config.overlay,
-                                 choice=only, annotations=ann, length=length)))
+                                 choice=only, annotations=ann, length=length, **when)))
             with_pop = [s for s in residue_others
                         if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
             if with_pop:
                 jobs.append((f"compare_populations_{label}",
                              lambda t=t, with_pop=with_pop: residue_comparison_figure(
-                                 pop_cmp, with_pop, t, annotations=ann, length=length)))
+                                 pop_cmp, with_pop, t, annotations=ann, length=length,
+                                 **when)))
             for s in others:
                 if all(c.where(sample=s, time=t).any() for _, c in stack):
                     jobs.append((f"woods_{s}_{label}", lambda s=s, t=t: woods_figure(
-                        stack, s, t, annotations=ann, length=length)))
+                        stack, s, t, annotations=ann, length=length, **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
         for s in others:
             if drawn and k1.where(sample=s, time=drawn).any():
                 jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
-                    k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()])))
+                    k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
+                    **when)))
     if protection is not None:
         for s in samples:
             if protection.where(sample=s).any():
@@ -323,8 +338,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     if regions is not None:
         for t in times:
             if (regions.time == t).any():
-                jobs.append((f"regions_{_time_label(t)}", lambda t=t: plot_region_bars(
-                    regions, t, samples=samples)))
+                jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
+                    regions, t, samples=samples, **when)))
 
     return tables, jobs
 
@@ -354,6 +369,10 @@ def write_analysis(
     any_fragments = any(series for series, _ in split.values())
     only_fragments = all(only for _, only in split.values())
     if config.fragments is not None and any_fragments:
+        if _time_scale(results) == "order":
+            raise ValueError("the fragment analysis (ladder kinetics) needs real times, and "
+                             "[input] time_scale = \"order\" says the times only order the "
+                             "points (fragments = false leaves it out)")
         frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
     tables, jobs = {}, []
     if not only_fragments:

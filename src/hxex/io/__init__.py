@@ -49,6 +49,7 @@ from .specexport import (
 )
 from .thermo import ThermoError, ThermoFile, read_thermo, read_thermo_source
 from .times import (
+    TIME_SCALES,
     format_time,
     parse_hxexpress_label,
     parse_specexport_token,
@@ -101,6 +102,7 @@ __all__ = [
     "parse_specexport_token",
     "parse_time",
     "format_time",
+    "TIME_SCALES",
     "match_candidates",
     "read_fasta_records",
     "read_fasta_sequence",

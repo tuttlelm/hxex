@@ -77,6 +77,16 @@ class RunSet:
                 raise ValueError(f"merge: {key!r} needs a non-empty label")
         object.__setattr__(self, "merge", merge)
 
+    @property
+    def time_scale(self) -> str:
+        """The runs' time scale (:attr:`hxex.report.Results.time_scale`), which must agree
+        (times only ordering the points in one run cannot be compared with real times)."""
+        scales = {name: getattr(r, "time_scale", "seconds") for name, r in self.runs.items()}
+        if len(set(scales.values())) > 1:
+            raise ValueError("the runs' time scales differ ([input] time_scale): "
+                             + ", ".join(f"{name}: {s}" for name, s in scales.items()))
+        return next(iter(scales.values()))
+
     def unmerged(self) -> RunSet:
         """The same runs without ``merge``."""
         return RunSet(self.runs)

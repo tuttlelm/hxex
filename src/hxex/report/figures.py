@@ -47,8 +47,10 @@ class PlotConfig:
       one population.
     - ``show``: the layers of the spectra page, any of ``raw``, ``picked`` and ``fit``;
       ``residual`` adds a residual panel under every spectrum.
-    - ``x`` (``'time'`` or ``'index'``) and ``scale`` (``'linear'`` or ``'log'``): the uptake
-      axis.
+    - ``x`` (``'time'`` or ``'index'``; None, the default: ``'time'``, or ``'index'`` when the
+      times only order the points, ``[input] time_scale = "order"``, which also turns an
+      explicit ``'time'`` into ``'index'`` with a warning) and ``scale`` (``'linear'`` or
+      ``'log'``): the uptake axis (:func:`plot_uptake`).
     - ``corrected``: draw back-exchange corrected values; None: when the results have controls.
     - ``format``: ``'pdf'`` (one file per series, one page per kind), ``'svg'`` or ``'png'`` (one
       file per kind); ``dpi``: the resolution of PNG files and of raster images inside PDF or
@@ -60,7 +62,7 @@ class PlotConfig:
     series: str | tuple[int, ...] = "flagged"
     kinds: tuple[str, ...] = KINDS
     show: tuple[str, ...] = LAYERS
-    x: str = "time"
+    x: str | None = None
     scale: str = "linear"
     corrected: bool | None = None
     format: str = "pdf"
@@ -79,7 +81,7 @@ class PlotConfig:
             raise ValueError(f"kinds must be a non-empty subset of {KINDS}")
         if not self.show or any(s not in LAYERS for s in self.show):
             raise ValueError(f"show must be a non-empty subset of {LAYERS}")
-        if self.x not in ("time", "index") or self.scale not in ("linear", "log"):
+        if self.x not in ("time", "index", None) or self.scale not in ("linear", "log"):
             raise ValueError("x must be 'time' or 'index' and scale 'linear' or 'log'")
         if self.format not in FORMATS:
             raise ValueError(f"format must be one of {FORMATS}")
@@ -138,9 +140,18 @@ def series_figures(
             out[kind] = plot_populations(results, data_id, corrected=config.corrected,
                                          reference=reference)
         else:
-            out[kind] = plot_uptake(results, data_id, x=config.x, scale=config.scale,
-                                    corrected=config.corrected, reference=reference)
+            out[kind] = plot_uptake(results, data_id, x=uptake_axis(results, config),
+                                    scale=config.scale, corrected=config.corrected,
+                                    reference=reference)
     return out
+
+
+def uptake_axis(results: Results, config: PlotConfig) -> str | None:
+    """``config.x`` for ``results``: ``'time'`` becomes None (an index axis) when the times only
+    order the points (:attr:`Results.time_scale` ``'order'``)."""
+    if config.x == "time" and results.time_scale == "order":
+        return None
+    return config.x
 
 
 def series_kinds(results: Results, data_id: int, config: PlotConfig) -> tuple[str, ...]:
@@ -181,6 +192,10 @@ def write_figures(
     directory = Path(directory)
     chosen = select_series(results, config.series)
     stems = figure_stems(results, chosen)
+    if chosen and "uptake" in config.kinds and config.x == "time" and \
+            results.time_scale == "order":
+        log.warning("plots: x = \"time\" is drawn by index: the times only order the points "
+                    "([input] time_scale = \"order\")")
     names = [f"overview.{config.format}"] if config.overview else []
     for data_id, stem in stems.items():  # the files a series gives, known before it is drawn
         if config.format == "pdf":

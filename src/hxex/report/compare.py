@@ -79,12 +79,16 @@ def plot_residue_comparison(
     annotations: Annotations | None = None,
     length: int | None = None,
     ax: Axes | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The reference (black) and ``sample`` residue by residue at ``time``, in the comparison's
     quantity (``fD``, or the low-D population from :func:`hxex.analysis.compare_populations`),
     with standard-error bars; residues with a significant difference get a band at the top of
     the axes (red up, blue down), and residues whose two values were corrected differently (one
-    with a fallback control) a ``*`` below it."""
+    with a fallback control) a ``*`` below it.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     rows = comparison.where(sample=sample, time=time)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
@@ -117,7 +121,7 @@ def plot_residue_comparison(
     ax.set_ylabel(_label(comparison.quantity))
     ax.grid(color="#e5e5e5", linewidth=0.8)
     ax.legend(loc="upper left", ncol=2, frameon=False, fontsize=8)
-    ax.text(0.99, 0.04, _when(time), transform=ax.transAxes, ha="right",
+    ax.text(0.99, 0.04, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     return fig
 
@@ -129,15 +133,20 @@ def residue_comparison_figure(
     *,
     annotations: Annotations | None = None,
     length: int | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """One panel per sample of ``samples`` against the comparison's reference, sharing the
-    residue axis; each sample keeps its colour."""
+    residue axis; each sample keeps its colour.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     samples = [s for s in samples if s != comparison.reference]
     fig = Figure(figsize=(7.5, 2.3 * len(samples) + 0.4), layout="constrained")
     axes = fig.subplots(len(samples), 1, sharex=True, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
         plot_residue_comparison(comparison, sample, time, style_index=n + 1,
-                                annotations=annotations, length=length, ax=ax)
+                                annotations=annotations, length=length, ax=ax,
+                                time_scale=time_scale)
         if n < len(samples) - 1:
             ax.set_xlabel("")
     axes[-1].set_xlabel("residue")
@@ -156,6 +165,7 @@ def plot_residue_overlay(
     annotations: Annotations | None = None,
     length: int | None = None,
     ax: Axes | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, as
     points with capped standard-error bars, no lines, the
@@ -164,7 +174,10 @@ def plot_residue_overlay(
     (:func:`hxex.analysis.choose_populations`), the K=2 values are drawn only where the choice
     keeps two populations; the average is always drawn. A ``*`` at the
     top marks residues drawn for both whose values were corrected differently (one with a
-    fallback control). Point groups have the gid ``overlay:<sample>:<value>``."""
+    fallback control). Point groups have the gid ``overlay:<sample>:<value>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     unknown = [v for v in show if v not in OVERLAY_VALUES]
     if unknown or not show:
         raise ValueError(f"show must be some of {', '.join(OVERLAY_VALUES)}")
@@ -222,7 +235,7 @@ def plot_residue_overlay(
                               color="#4d4d4d", label="corrected differently"))
     ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
               ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
-    ax.text(1.0, 1.02, _when(time), transform=ax.transAxes, ha="right",
+    ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     return fig
 
@@ -243,10 +256,14 @@ def residue_overlay_figure(
     choice: PopulationChoice | None = None,
     annotations: Annotations | None = None,
     length: int | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``;
     each sample keeps its colour. ``choice`` filters the K=2 values as in
-    :func:`plot_residue_overlay`."""
+    :func:`plot_residue_overlay`.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     samples = [s for s in samples if s != reference]
     if not samples:
         raise ValueError("no sample to compare with the reference")
@@ -254,7 +271,7 @@ def residue_overlay_figure(
     axes = fig.subplots(len(samples), 1, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
         plot_residue_overlay(residues, reference, sample, time, show=show, choice=choice,
-                             style_index=n + 1,
+                             style_index=n + 1, time_scale=time_scale,
                              annotations=annotations, length=length,
                              ax=ax)
     return fig
@@ -268,12 +285,16 @@ def plot_peptide_differences(
     annotations: Annotations | None = None,
     length: int | None = None,
     ax: Axes | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
     grey otherwise, with the standard error as a vertical bar and ``+-delta_crit`` dashed; a
     ``*`` at the top over the middle of each peptide whose two values were corrected differently
-    (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``."""
+    (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     rows = np.flatnonzero(comparison.where(sample=sample, time=time))
     if not len(rows):
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
@@ -310,7 +331,7 @@ def plot_peptide_differences(
     ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
-    ax.text(0.99, 0.03, f"{_when(time)}; {n_sig} of {len(rows)} significant",
+    ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {len(rows)} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
     return fig
 
@@ -322,10 +343,14 @@ def plot_region_bars(
     samples: Sequence[str] | None = None,
     region_order: Sequence[str] | None = None,
     ax: Axes | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """Grouped bars of the mean ``fD`` of every region, one bar per
     sample in its colour, with standard-error bars; regions without a value are left empty. Each
-    bar has the gid ``region:<sample>:<region>``."""
+    bar has the gid ``region:<sample>:<region>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     sel = regions.time == time
     if not sel.any():
         raise ValueError(f"no regions at time {time:g}")
@@ -368,6 +393,7 @@ def plot_butterfly(
     *,
     times: Sequence[float] | None = None,
     max_labels: int = 60,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
@@ -376,7 +402,10 @@ def plot_butterfly(
     differently at a time drawn (one with a fallback control; named in the legend). ``times``
     default to every time point of the comparison (the controls are not times). Lines have the
     gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
-    ``difference:<time>``."""
+    ``difference:<time>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     rows = comparison.where(sample=sample)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r}")
@@ -408,7 +437,7 @@ def plot_butterfly(
             return out
 
         line = {"color": colour, "marker": "o", "markersize": 2.5, "linewidth": 1.0}
-        (up,) = top.plot(spread(comparison.value_reference[here]), label=_when(t),
+        (up,) = top.plot(spread(comparison.value_reference[here]), label=_when(t, time_scale),
                          **line)
         (down,) = top.plot(spread(-comparison.value[here]), **line)
         up.set_gid(f"butterfly:{t:g}:reference")
@@ -459,14 +488,18 @@ def woods_figure(
     *,
     annotations: Annotations | None = None,
     length: int | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """Woods plots of ``sample`` stacked, one per ``(title, comparison)`` (for example K=1, the
-    K=2 ranks and the population), sharing the residue axis; the fD panels share one y range."""
+    K=2 ranks and the population), sharing the residue axis; the fD panels share one y range.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     fig = Figure(figsize=(7.5, 2.7 * len(comparisons) + 0.3), layout="constrained")
     axes = fig.subplots(len(comparisons), 1, sharex=True, squeeze=False)[:, 0]
     for n, (ax, (title, comparison)) in enumerate(zip(axes, comparisons, strict=True)):
         plot_peptide_differences(comparison, sample, time, annotations=annotations,
-                                 length=length, ax=ax)
+                                 length=length, ax=ax, time_scale=time_scale)
         ax.set_title(title, fontsize=10, loc="left")
         if n < len(comparisons) - 1:
             ax.set_xlabel("")

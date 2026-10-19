@@ -270,8 +270,8 @@ def k_selection_data(results: Results) -> dict:
     keys = sorted(order, key=lambda key: order[key][0])
     times = np.array([float(fit.time[order[key][1]]) for key in keys])
     share = np.array([[np.mean(eff[points == key] == k) for k in ks] for key in keys])
-    labels = [_control_role(fit.role[order[key][1]]) or format_time(fit.time[order[key][1]])
-              for key in keys]
+    labels = [_control_role(fit.role[order[key][1]])
+              or format_time(fit.time[order[key][1]], results.time_scale) for key in keys]
     return {
         "k_values": ks,
         "selected": np.array([int((fit.selected_K == k).sum()) for k in ks]),

@@ -31,10 +31,13 @@ PROFILE_STYLES = {
 }
 
 
-def _when(time: float) -> str:
+def _when(time: float, scale: str = "seconds") -> str:
     """A time for a figure: in a readable unit, or ``undeuterated`` for a control without
-    one (NaN)."""
-    return "undeuterated" if not np.isfinite(time) else format_time(time)
+    one (NaN); ``point 2`` when the times only order the points (``scale='order'``; the
+    figure functions' ``time_scale``, :attr:`hxex.report.Results.time_scale`)."""
+    if not np.isfinite(time):
+        return "undeuterated"
+    return f"point {format_time(time, scale)}" if scale == "order" else format_time(time)
 
 
 def plot_residue_profile(
@@ -48,13 +51,17 @@ def plot_residue_profile(
     length: int | None = None,
     ax: Axes | None = None,
     legend: bool = True,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The ``fD`` of every residue of ``sample`` at ``time`` for each ``(K, rank)`` in ``show``
     (those present in ``residues``), each with a band of the ``band`` confidence interval
     (0.5 by default; 0 for none) from the residue standard
     errors. ``marks`` draws vertical lines at those residues (user-defined sites or region
     boundaries); ``length`` sets the x range (else the residues of the map). Each line has the
-    gid ``fD:K<k>:rank<r>``."""
+    gid ``fD:K<k>:rank<r>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     if not 0 <= band < 1:
         raise ValueError("band must be a confidence level in [0, 1)")
     z = norm.ppf(0.5 + band / 2) if band > 0 else 0.0
@@ -94,7 +101,7 @@ def plot_residue_profile(
     ax.set_xlabel("residue")
     ax.set_ylabel("fD (fractional deuteration)")
     ax.grid(color="#e5e5e5", linewidth=0.8)
-    ax.text(0.99, 0.04, f"{sample} {_when(time)}", transform=ax.transAxes,
+    ax.text(0.99, 0.04, f"{sample} {_when(time, time_scale)}", transform=ax.transAxes,
             ha="right", va="bottom", fontsize=10)
     if legend:
         ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=drawn, frameon=False)
@@ -128,13 +135,17 @@ def plot_population_choice(
     marks: Sequence[float] = (),
     length: int | None = None,
     fig: Figure | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The choice between one and two populations along the sequence
     (:func:`hxex.analysis.choose_populations`): the K=1 and
     K=2 curves with bands, solid where their description was chosen and dashed elsewhere;
     markers for the chosen values, K=2 sized by population and K=1 as open circles; below, the
     population of each component where two were chosen. Lines have the gid ``fD:<name>``,
-    markers ``chosen:<name>``."""
+    markers ``chosen:<name>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     rows = choice.where(sample=sample, time=time)
     if not rows.any():
         raise ValueError(f"no choice for {sample!r} at time {time:g}")
@@ -184,7 +195,7 @@ def plot_population_choice(
     finite = finite[np.isfinite(finite)]
     top.set_ylim(0, max(1.1, float(finite.max()) * 1.05 if len(finite) else 1.1))
     top.set_ylabel("fD (fractional deuteration)")
-    top.text(0.99, 0.04, f"{sample} {_when(time)}", transform=top.transAxes,
+    top.text(0.99, 0.04, f"{sample} {_when(time, time_scale)}", transform=top.transAxes,
              ha="right", va="bottom", fontsize=10)
     top.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=6, frameon=False,
                fontsize=8)

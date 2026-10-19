@@ -72,6 +72,12 @@ class Settings:
         return self.configs.get("spectra_source")
 
     @property
+    def time_scale(self) -> str:
+        """``'seconds'`` (the times are labelling times) or ``'order'`` (they only order the
+        points; ``[input] time_scale``, in the read record; bundles without it: seconds)."""
+        return str((self.spectra_source or {}).get("time_scale", "seconds"))
+
+    @property
     def picker(self) -> PickerConfig | None:
         """The picker settings (from the stage entry, else from the run settings), or None."""
         data = self.configs.get("picker") or (self.configs.get("run") or {}).get("picker")
@@ -152,6 +158,13 @@ class Results:
         """The same results with the series ``data_ids`` left out of the analysis (as
         :meth:`without_times`)."""
         return replace(self, excluded_series=tuple(sorted({int(d) for d in data_ids})))
+
+    @property
+    def time_scale(self) -> str:
+        """``'seconds'`` or ``'order'`` (:attr:`Settings.time_scale`; seconds without
+        settings): whether the times are real labelling times. With ``'order'`` the uptake is
+        drawn by index and the kinetics and protection analyses refuse."""
+        return self.settings.time_scale if self.settings is not None else "seconds"
 
     @property
     def excluded(self) -> np.ndarray:

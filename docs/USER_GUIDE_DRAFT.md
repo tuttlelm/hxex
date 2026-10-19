@@ -135,6 +135,41 @@ or `FD`, first and last on an index axis, as a line on a time axis. That is why 
 back-exchange experiment, where a real time point can be at 0 s next to the undeuterated
 control, needs no trick to keep the two apart.
 
+![Uptake of one peptide against time: the controls are the dotted limits at 0 and the number of amides](images/guide_uptake_time.svg)
+
+![The same peptide by index: UN first, FD last, every point labelled with its time](images/guide_uptake_index.svg)
+
+*The same series of the published B5 data drawn against time (`x = "time"`, log scale; the
+controls set the dotted limits) and by index (`x = "index"`; the controls are the first and
+last points).*
+
+### Seeing the roles
+
+`hxex check` counts the control files of every sample before anything is read (for HX-Express
+sheets, whose labels are inside, it says so instead), and names each scan-format run's role:
+
+```
+entries        9 in SpecExport
+  D109H: 3 entries, 9 undeuterated and 5 fully deuterated control files
+  R120G: 3 entries, 6 undeuterated and 5 fully deuterated control files
+  WT: 3 entries, 9 undeuterated and 9 fully deuterated control files
+```
+
+```
+run UN_01.raw: sample WT, rep 1, undeuterated control, 412 scans; 12 of 12 targets have scans
+run D_5min_01.raw: sample WT, rep 1, time 5 min, 398 scans; 12 of 12 targets have scans
+```
+
+Its `controls` line repeats any `undeut_at`, `fulldeut_at` and `*_marked = false` setting in
+words. After the run, `hxex info` counts the control spectra of the bundle (and the times they
+also have, when they are time points too) and says whether the times are real:
+
+```
+controls       yes
+roles          24 undeuterated (9 series); 19 fully deuterated (9 series)
+times          seconds
+```
+
 ### A time point that is also a control
 
 Some data have no separate fully deuterated file, but a late time point that has reached its
@@ -163,5 +198,20 @@ always hold seconds; figures label times in a readable unit (`20 h`, not `72000 
 HX-Express sheet the labels keep that format's own convention, where `1.2 min` means the second
 spectrum at 1 min; in the project file `"1.5 min"` is 90 s.
 
-`[input] time_scale = "order"` says the times only order the points (dummy labels such as 1, 2,
-3): the uptake is drawn by index, and the kinetics and protection analyses refuse.
+### Times that only order the points
+
+Some data carry no labelling times, only labels that order the points (1, 2, 3, or the
+HX-Express test sets' dummy times). `[input] time_scale = "order"` says so:
+
+```toml
+[input]
+time_scale = "order"
+```
+
+The numbers are still read and stored as given, but hxex never treats them as seconds: the
+uptake is drawn by index whatever `[run.plots] x` says (with a warning when it says
+`"time"`), figures and file names label the points by their number (`point 2`,
+`profile_WT_2.png`), and the analyses that need real times, the fragment ladder kinetics and
+the protection factors, refuse with a message that names the setting. The scale is recorded
+with the spectra, so a rerun from a stored bundle keeps it unless the project file sets it
+again, and `hxex check` and `hxex info` show it on their `times` line.

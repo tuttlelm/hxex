@@ -1199,3 +1199,32 @@ def test_woods_plot_without_a_finite_difference_keeps_a_default_range():
         reference="R", delta_crit=np.nan)
     fig = plot_peptide_differences(pc, "V", 4.0)
     np.testing.assert_allclose(fig.axes[0].get_ylim(), (-0.22, 0.22))
+
+
+def test_times_that_only_order_the_points(two_sample_bundle, tmp_path):
+    """With [input] time_scale = "order" the per-time outputs are named by the number given,
+    the figures say "point", and the protection analysis refuses."""
+    import dataclasses
+    import re
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import write_analysis
+    from hxex.report.residues import _when
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    settings = dataclasses.replace(results.settings, configs={
+        **results.settings.configs, "spectra_source": {"time_scale": "order"}})
+    results = dataclasses.replace(results, settings=settings)
+    assert results.time_scale == "order"
+    assert _when(60.0, "order") == "point 60" and _when(60.0) == "1 min"
+    written = write_analysis(results, AnalysisConfig(reference="S", format="png"),
+                             tmp_path / "order")
+    names = {p.name for p in written}
+    assert any(re.fullmatch(r"(choice|profile)_V_\d+\.png", n) for n in names)
+    assert not any(re.search(r"_\d+(s|min|h)\.png$", n) for n in names)
+    labelling = {"ph_read": 7.0, "temperature": 20.0, "d2o_fraction": 0.9}
+    cfg = AnalysisConfig.from_dict({"protection": True, "labelling": labelling})
+    with pytest.raises(ValueError, match="only order the points"):
+        write_analysis(results, cfg, tmp_path / "protection")

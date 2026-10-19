@@ -642,3 +642,64 @@ def test_runtime_errors_are_messages_too(tmp_path, capsys, monkeypatch):
     assert cli.main(["info", str(tmp_path)]) == 1
     err = capsys.readouterr().err
     assert "CUDA is not available" in err and "Traceback" not in err
+
+
+def test_check_and_info_report_the_roles_and_the_time_scale(tmp_path, capsys):
+    """A scan-format run's role is named by hxex check; after the run, hxex info counts the
+    control spectra and says whether the times are real ([input] time_scale)."""
+    path = mzml_project(tmp_path, extra_input=(
+        'time_scale = "order"\n\n[[input.runs]]\npath = "run1.mzML"\nsample = "WT"\n'
+        'role = "undeut"\n'))
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "run run1.mzML: sample WT, rep 1, undeuterated control, 6 scans" in out
+    assert "run run1.mzML: sample WT, rep 1, scan times, 6 scans" in out
+    assert "times          order: the times only order the points" in out
+    assert cli.main(["-q", "run", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    info = capsys.readouterr().out
+    assert "roles          1 undeuterated (1 series)" in info
+    assert "times          order: the times only order the points" in info
+    with open_bundle(tmp_path / "out") as b:
+        assert b.spectra_source()["time_scale"] == "order"
+    # the uptake figure of such a run is drawn by index without any setting
+    assert cli.main(["report", str(tmp_path / "out"), "--figures", str(tmp_path / "f"),
+                     "--series", "all", "--format", "png"]) == 0
+    assert any(p.name.endswith("_uptake.png") for p in (tmp_path / "f").iterdir())
+    # a rerun from the stored spectra keeps the scale unless the file says otherwise
+    rerun = tmp_path / "rerun.toml"
+    rerun.write_text('project = "cli"\n[input]\nspectra = "out"\n[output]\nbundle = "again"\n')
+    assert load_project(rerun).input.time_scale == "order"
+    rerun.write_text('project = "cli"\n[input]\nspectra = "out"\ntime_scale = "seconds"\n'
+                     '[output]\nbundle = "again"\n')
+    assert load_project(rerun).input.time_scale == "seconds"
+
+
+def test_check_summarises_the_promoted_controls(tmp_path):
+    from hxex.config import describe
+
+    text = ('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+            '[run.controls]\nfulldeut_at = "20 h"\nfulldeut_marked = false\n')
+    summary = describe(project_from(tomllib.loads(text), tmp_path))
+    assert summary["controls"].startswith("on; fulldeut_at = 20 h (the spectra at that time")
+    assert "fulldeut_marked = false (the files marked fulldeut do not)" in summary["controls"]
+    assert summary["times"] == "seconds"
+
+
+def test_check_counts_the_control_files_of_a_specexport_folder(tmp_path, capsys):
+    """For a SpecExport folder hxex check counts the control files per sample from their
+    names (Non, Full) without reading them."""
+    data = tmp_path / "d"
+    (data / "WT" / f"0001-0010-{PEPTIDE}").mkdir(parents=True)
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    for name in ("Non-D-1-z2.csv", "Non-D-2-z2.csv", "Full-D-1-z2.csv", "60s-1-z2.csv",
+                 "60s-1-z3.csv"):
+        (data / "WT" / f"0001-0010-{PEPTIDE}" / name).write_text("")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    '[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "entries        2 in" in out
+    assert "  WT: 2 entries, 2 undeuterated and 1 fully deuterated control files" in out

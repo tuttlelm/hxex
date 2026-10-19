@@ -279,8 +279,11 @@ def cmd_check(args) -> int:
             entries = folder_entries(project)
             samples = Counter(e.sample for e in entries)
             _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
+            roles = _folder_control_files(inp, entries)
             for s, n in sorted(samples.items()):
-                _say(f"  {s or '(no sample)'}: {n}")
+                _say(f"  {s or '(no sample)'}: {n}" + _control_file_text(roles, s))
+            if roles is None:
+                _say(f"{'controls':14s} the column labels of each sheet mark them (undeut, TD)")
             if not entries:
                 problems.append(f"no spectra of format {inp.format} in {inp.data_dir}")
             problems += _check_peptides(project, entries)
@@ -371,9 +374,9 @@ def _check_scan_files(project) -> list[str]:
             counts = [len(target_scans(table, run, t, inp.scans)) for t in targets]
             instrument = instrument_record(f)
         none = [_target_label(t) for t, n in zip(targets, counts, strict=True) if n == 0]
-        time = "scan times" if run.time is None else f"time {run.time:g} s"
-        _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {time}, {len(table)} scans; "
-             f"{len(targets) - len(none)} of {len(targets)} targets have scans")
+        _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {_run_time_text(run)}, "
+             f"{len(table)} scans; {len(targets) - len(none)} of {len(targets)} targets have "
+             "scans")
         if instrument is not None:
             _say("  " + _instrument_text(instrument, project.run.picker))
         for label in none[:10]:
@@ -383,6 +386,50 @@ def _check_scan_files(project) -> list[str]:
         if len(none) == len(targets):
             problems.append(f"run {path.name}: no target has scans")
     return problems
+
+
+_ROLE_NAMES = {"undeut": "undeuterated", "fulldeut": "fully deuterated"}
+
+
+def _run_time_text(run) -> str:
+    """What a scan-format run's spectra are: its time, its control role, both, or scan times."""
+    from .io import format_time
+
+    parts = [] if run.time is None else [f"time {format_time(run.time)}"]
+    if run.role:
+        parts.append(f"{_ROLE_NAMES[run.role]} control")
+    return ", ".join(parts) if parts else "scan times"
+
+
+def _folder_control_files(inp, entries) -> dict | None:
+    """The control files of a SpecExport or pooled folder by (sample, role), counted from the
+    file names (the data are not read); None for HX-Express sheets, whose labels are inside."""
+    if inp.format == "hxexpress":
+        return None
+    from .io.read import _input_path
+    from .io.specexport import parse_specexport_filename, parse_specexport_token
+
+    counts: Counter = Counter()
+    for entry in entries:
+        folder = inp.data_dir / _input_path(inp.format, entry)
+        if not folder.is_dir():
+            continue
+        for path in folder.glob("*.csv"):
+            parsed = parse_specexport_filename(path.name)
+            if parsed is not None and parsed[2] == entry.charge:
+                role = parse_specexport_token(parsed[0])[1]
+                if role:
+                    counts[(entry.sample, role)] += 1
+    return counts
+
+
+def _control_file_text(roles: dict | None, sample: str) -> str:
+    """``, N undeuterated and M fully deuterated control files`` for a sample's line."""
+    if roles is None:
+        return ""
+    n_un, n_fd = roles.get((sample, "undeut"), 0), roles.get((sample, "fulldeut"), 0)
+    return (f" entries, {n_un} undeuterated and {n_fd} fully deuterated control files"
+            if n_un or n_fd else " entries, no control files")
 
 
 def cmd_run(args) -> int:
@@ -522,6 +569,39 @@ def cmd_report(args) -> int:
     return 0
 
 
+def _role_counts_text(fit) -> str:
+    """``N undeuterated (S series), M fully deuterated (T series)`` from the fit's roles."""
+    from .io import format_time
+
+    if fit.role is None:
+        return "none"
+    role = np.asarray(fit.role, dtype=str)
+    parts = []
+    for key, name in _ROLE_NAMES.items():
+        sel = role == key
+        if sel.any():
+            series = len(set(fit.data_id[sel].tolist()))
+            timed = np.asarray(fit.time, dtype=float)[sel]
+            timed = timed[np.isfinite(timed)]
+            also = (f", at {', '.join(format_time(t) for t in sorted(set(timed.tolist())))}"
+                    if len(timed) else "")
+            parts.append(f"{int(sel.sum())} {name} ({series} series{also})")
+    return "; ".join(parts) if parts else "none"
+
+
+def _promotion_text(controls: dict | None) -> str:
+    """``; undeut_at = 5 min`` and the like from a run's recorded control settings."""
+    from .io import format_time
+
+    if not controls:
+        return ""
+    parts = [f"{name} = {format_time(float(controls[name]))}"
+             for name in ("undeut_at", "fulldeut_at") if controls.get(name) is not None]
+    parts += [f"{name} = false" for name in ("undeut_marked", "fulldeut_marked")
+              if controls.get(name) is False]
+    return "; " + ", ".join(parts) if parts else ""
+
+
 def cmd_info(args) -> int:
     from .io import generations, open_bundle
 
@@ -531,6 +611,7 @@ def cmd_info(args) -> int:
         ks = Counter(int(k) for k in fit.selected_K)
         source = b.spectra_source() or {}
         review = b.review()
+        run_config = m.get("configs", {}).get("run") or {}
         rows = [
             ("bundle", str(b.path)),
             ("project", b.project or "(none)"),
@@ -542,7 +623,11 @@ def cmd_info(args) -> int:
             ("K tried", ", ".join(str(k) for k in fit.k_values)),
             ("selected K", ", ".join(f"{k}: {n}" for k, n in sorted(ks.items()))),
             ("bootstrap", "yes" if b.bootstrap() is not None else "no"),
-            ("controls", "yes" if b.has("controls") else "no"),
+            ("controls", ("yes" if b.has("controls") else "no")
+             + _promotion_text(run_config.get("controls"))),
+            ("roles", _role_counts_text(fit)),
+            ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
+             else "order: the times only order the points"),
             ("quality flags", "yes" if b.has("quality") else "no"),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),

@@ -50,7 +50,7 @@ from typing import Any
 from .hooks import CancelHook, ProgressHook
 from .io.errors import ReadError
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget
-from .io.times import parse_time
+from .io.times import TIME_SCALES, parse_time
 from .run import RunConfig
 from .spectra import SpectrumSet, check_role
 
@@ -434,14 +434,15 @@ def _times_in(data: Mapping, keys, where: str) -> dict:
     return out
 
 
-TIME_SCALES = ("seconds", "order")
 CONTROL_WORDS = {"undeut": "undeut", "un": "undeut", "non": "undeut", "undeuterated": "undeut",
                  "td": "fulldeut", "fd": "fulldeut", "full": "fulldeut", "fulldeut": "fulldeut"}
 _OLD_CONTROL_KEYS = ("undeut_time", "fulldeut_time", "fd_time", "atol")
 
 
-def _time_scale(data: Mapping) -> str:
-    scale = data.get("time_scale", "seconds")
+def _time_scale(data: Mapping, record: Mapping | None = None) -> str:
+    """``[input] time_scale``; when the file does not set it and stored spectra are taken,
+    the scale their read record carries (``record``)."""
+    scale = data.get("time_scale", (record or {}).get("time_scale", "seconds"))
     if scale not in TIME_SCALES:
         raise ProjectError(f"input.time_scale must be one of {', '.join(TIME_SCALES)}")
     return scale
@@ -497,8 +498,8 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
     if not (set(data) - {"retention_times", "time_scale"}):
         return InputSettings(
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
-            time_scale=_time_scale(data), spectra=stored, **record)
-    inp = _read_settings(data, base)
+            time_scale=_time_scale(data, source), spectra=stored, **record)
+    inp = replace(_read_settings(data, base), time_scale=_time_scale(data, source))
     if source is None:  # the file's own settings until the record can be read
         return replace(inp, spectra=stored)
     differs = {k: getattr(inp, k) for k, v in record.items() if getattr(inp, k) != v
@@ -608,6 +609,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         format=fmt, peptides=_path(base, data["peptides"], "input.peptides"),
         runs=tuple(parsed_runs), parents=parents, target=target, fragments=fragments,
         scans=scans, record_paths=str(data.get("record_paths", "path")),
+        time_scale=_time_scale(data),
         data_root=_path(base, data.get("data_root", "."), "input.data_root"),
         thermo_dir=_path(base, data.get("thermo_dir"), "input.thermo_dir"),
         retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
@@ -869,7 +871,8 @@ def read_input(
     """The raw spectra the project's ``[input]`` names (recorded, so the read can be
     repeated), with the retention times of ``retention_times`` when it names a table. With
     ``spectra`` they are the spectra stored by an earlier run (:func:`load_stored_spectra`):
-    the settings of the read itself (files, targets, scans) do not apply then."""
+    the settings of the read itself (files, targets, scans) do not apply then. The read record
+    (``source``) carries ``time_scale``, so the results know whether the times are real."""
     inp = project.input
     if inp.spectra is not None:
         default = InputSettings(inp.format)
@@ -882,6 +885,12 @@ def read_input(
         spectra = load_stored_spectra(inp.spectra)
     else:
         spectra = _read_input(project, progress=progress, cancel=cancel)
+    if (spectra.source or {}).get("time_scale", "seconds") != inp.time_scale:
+        if inp.spectra is not None:
+            log.info("input.time_scale = %r replaces the stored spectra's %r", inp.time_scale,
+                     (spectra.source or {}).get("time_scale", "seconds"))
+        spectra = replace(spectra, source={**(spectra.source or {}),
+                                           "time_scale": inp.time_scale})
     if project.input.retention_times is not None:
         from .io import apply_retention_times, read_retention_times
 
@@ -1072,7 +1081,8 @@ _COMMENTS: dict[str, str] = {
                         '"all" or a list of data_id',
     "run.plots.kinds": "pages of a series' figure: spectra, populations, uptake",
     "run.plots.show": "layers of the spectra page: raw, picked, fit",
-    "run.plots.x": 'uptake axis: "time" or "index"',
+    "run.plots.x": 'uptake axis: "time" or "index" (unset: "time", or "index" when the '
+                   'times only order the points, input.time_scale = "order")',
     "run.plots.scale": 'uptake axis: "linear" or "log"',
     "run.plots.corrected": "draw back-exchange corrected values (unset: when there are "
                            "controls)",
@@ -1407,11 +1417,13 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
                    "pH read, degrees Celsius and D fraction of the quench and LC, for "
                    'fd_fallback "kint" (false: none)'),
     }
+    plot_axis = {"x": ('"time"', _COMMENTS["run.plots.x"])}
     for key, value in run.items():
         if key in _OPTIONAL_SECTIONS and value is None:
             lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
                                         cls=_section_class(key),
-                                        notes=control_times if key == "controls" else None)
+                                        notes={"controls": control_times,
+                                               "plots": plot_axis}.get(key))
         elif isinstance(value, Mapping):
             lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
     return "\n".join(lines) + "\n"
@@ -1431,7 +1443,26 @@ def describe(project: Project) -> dict[str, Any]:
                       "it on)" if run.bootstrap is None
                       else f"{run.bootstrap.n_boot} resamples"),
         "controls": ("off: no back-exchange correction, means in deuterons measured (a "
-                     "[run.controls] table turns it on)" if run.controls is None else "on"),
+                     "[run.controls] table turns it on)" if run.controls is None
+                     else "on" + _promotions(run.controls)),
         "quality flags": "off (quality = false)" if run.quality is None else "on",
+        "times": ("seconds" if inp is None or inp.time_scale == "seconds"
+                  else "order: the times only order the points (uptake drawn by index; the "
+                       "kinetics and protection analyses refuse)"),
         "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
     }
+
+
+def _promotions(controls) -> str:
+    """The time points a control config promotes to controls (``undeut_at``, ``fulldeut_at``)
+    and the marked files it sets aside (``*_marked = false``), for a summary line."""
+    from .io.times import format_time
+
+    parts = [f"{name} = {format_time(getattr(controls, name))} (the spectra at that time "
+             f"serve as the {label} control)"
+             for name, label in (("undeut_at", "undeuterated"), ("fulldeut_at", "fully deuterated"))
+             if getattr(controls, name) is not None]
+    parts += [f"{name} = false (the files marked {label} do not)"
+              for name, label in (("undeut_marked", "undeut"), ("fulldeut_marked", "fulldeut"))
+              if not getattr(controls, name)]
+    return "; " + "; ".join(parts) if parts else ""

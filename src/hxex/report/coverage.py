@@ -68,8 +68,10 @@ def autowrap(start: Sequence[int], end: Sequence[int], margin: int = 4, step: in
     return max(wrap, len(start))
 
 
-def _title(sample: str, time: float, k: int, rank: int) -> str:
-    when = "undeuterated" if not np.isfinite(time) else f"t = {format_time(time)}"
+def _title(sample: str, time: float, k: int, rank: int, scale: str = "seconds") -> str:
+    when = ("undeuterated" if not np.isfinite(time)
+            else f"point {format_time(time, scale)}" if scale == "order"
+            else f"t = {format_time(time)}")
     which = "" if k == 1 else f", K={k} rank {rank}"
     return f"{sample}{which}, {when}"
 
@@ -86,12 +88,16 @@ def plot_coverage(
     ax: Axes | None = None,
     colorbar: bool = True,
     title: str | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """The coverage map of ``sample`` at ``time`` (NaN: its undeuterated control; peptides
     only), coloured by ``fD`` at ``K`` and
     ``rank`` (0 to 1; grey where it is not known). ``length`` is the protein's (the x axis runs
     from 0 to it; else to the last covered residue); ``wrap`` the rows of the stack (else
-    :func:`autowrap`). Each bar has the gid ``peptide:<start>-<end>``."""
+    :func:`autowrap`). Each bar has the gid ``peptide:<start>-<end>``.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     at = ({"role": UNDEUT} if not np.isfinite(time) else {"time": time, "role": ""})
     rows = np.flatnonzero(uptake.where(sample=sample, K=K, rank=rank, kind="peptide", **at))
     if not len(rows):
@@ -121,7 +127,8 @@ def plot_coverage(
     ax.grid(axis="x", color="#dddddd", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xlabel("residue")
-    ax.set_title(title if title is not None else _title(sample, time, K, rank), fontsize=10)
+    ax.set_title(title if title is not None else _title(sample, time, K, rank, time_scale),
+                 fontsize=10)
     if colorbar:
         from matplotlib.cm import ScalarMappable
 
@@ -139,11 +146,15 @@ def coverage_figure(
     rank: int = 1,
     length: int | None = None,
     cell: tuple[float, float] = (4.2, 3.2),
+    time_scale: str = "seconds",
 ) -> Figure:
     """Coverage maps of several samples (rows) and points (columns: the undeuterated control
     when there is one, then the ``times``, by default every time point), all with one colour
     scale and the same number of rows per stack. Empty cells (no peptide of that sample at
-    that point) are left blank."""
+    that point) are left blank.
+
+    ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
+    labelled as a point number, not a time."""
     pep = uptake.select(uptake.where(K=K, rank=rank, kind="peptide"))
     samples = list(samples) if samples is not None else sorted(set(pep.sample.tolist()))
     times = (list(times) if times is not None
@@ -174,7 +185,7 @@ def coverage_figure(
                 ax.set_axis_off()
                 continue
             plot_coverage(uptake, s, t, K=K, rank=rank, length=top, wrap=wrap, ax=ax,
-                          colorbar=False)
+                          colorbar=False, time_scale=time_scale)
             if r < len(samples) - 1:
                 ax.set_xlabel("")
     from matplotlib.cm import ScalarMappable

@@ -96,12 +96,21 @@ def parse_time(value: object, where: str = "time") -> float:
     return float(total)
 
 
-def format_time(seconds: float) -> str:
+TIME_SCALES = ("seconds", "order")  # [input] time_scale: real times, or an order of points
+
+
+def format_time(seconds: float, scale: str = "seconds") -> str:
     """A time for a label, in the largest unit that keeps it a short number: ``4 s``,
-    ``1.5 min``, ``20 h``, ``250 ms``, ``0 s``; NaN is ``""`` (a control without a time)."""
+    ``1.5 min``, ``20 h``, ``250 ms``, ``0 s``; NaN is ``""`` (a control without a time).
+    With ``scale='order'`` (``[input] time_scale``: the times only order the points) the
+    number alone, ``2``, since it is not a time."""
     if seconds is None or not math.isfinite(seconds):
         return ""
+    if scale not in TIME_SCALES:
+        raise ValueError(f"scale must be one of {TIME_SCALES}")
     t = float(seconds)
+    if scale == "order":
+        return f"{t:g}"
     sign = "-" if t < 0 else ""
     t = abs(t)
     for unit, size in (("h", 3600.0), ("min", 60.0)):

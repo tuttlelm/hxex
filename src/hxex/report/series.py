@@ -509,7 +509,7 @@ def plot_uptake(
     results: Results,
     data_id: int,
     *,
-    x: str = "time",
+    x: str | None = None,
     scale: str = "linear",
     corrected: bool | None = None,
     components: Sequence[int] | None = None,
@@ -527,15 +527,24 @@ def plot_uptake(
     points, unless they are time points as well). ``x='index'`` plots against the position of
     the point in the series (0, 1, 2, ..., labelled with the times), with every point including
     the controls (the undeuterated first, the fully deuterated last), as for the test data
-    sets. ``corrected`` (default: if the results have controls) uses the back-exchange
-    corrected means, and the limits drawn are then 0 and the number of amides; otherwise the
-    measured control levels. ``reference`` marks the known populations (open circles; in the
-    measured units, ``m0 + level * (mfd - m0)``, when the plot is not corrected).
+    sets. ``x=None`` (the default) is ``'time'``, or ``'index'`` when the times only order the
+    points (:attr:`Results.time_scale` ``'order'``: the labels are then the numbers given, and
+    ``x='time'`` is refused). ``corrected`` (default: if the results have controls) uses the
+    back-exchange corrected means, and the limits drawn are then 0 and the number of amides;
+    otherwise the measured control levels. ``reference`` marks the known populations (open
+    circles; in the measured units, ``m0 + level * (mfd - m0)``, when the plot is not
+    corrected).
     """
-    if x not in ("time", "index"):
+    if x not in ("time", "index", None):
         raise ValueError("x must be 'time' or 'index'")
     if scale not in ("linear", "log"):
         raise ValueError("scale must be 'linear' or 'log'")
+    time_scale = results.time_scale
+    if x is None:
+        x = "index" if time_scale == "order" else "time"
+    elif x == "time" and time_scale == "order":
+        raise ValueError("the times of these results only order the points ([input] "
+                         "time_scale = \"order\"): the uptake is drawn by index (x='index')")
     d = uptake_data(results, data_id, corrected=corrected, components=components, k=k)
     fig = ax.figure if ax is not None else Figure(figsize=(6.5, 4.5))
     ax = ax if ax is not None else fig.subplots()
@@ -573,7 +582,7 @@ def plot_uptake(
         for t in ticks:
             time = d["time"][d["time_index"] == t][0]
             role = d["role"][d["time_index"] == t][0]
-            labels.append(role or format_time(time))
+            labels.append(role or format_time(time, time_scale))
         ax.set_xticks(ticks, labels, rotation=45 if len(ticks) > 8 else 0, fontsize=8)
         ax.set_xlabel("time point")
     else:

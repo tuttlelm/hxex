@@ -998,3 +998,36 @@ def test_effective_k_and_review_status_are_computed_once(results):
     assert changed.review_status[0] == "unreviewed"
     assert results.effective_K[3] == results.fit.selected_K[3]  # the original is untouched
     assert spectra_table(changed)["review_status"][3] == "rejected"
+
+
+def ordered(results):
+    """``results`` whose times only order the points ([input] time_scale = "order")."""
+    import dataclasses
+
+    settings = dataclasses.replace(results.settings, configs={
+        **results.settings.configs, "spectra_source": {"time_scale": "order"}})
+    return dataclasses.replace(results, settings=settings)
+
+
+def test_times_that_only_order_the_points_are_drawn_by_index(results, tmp_path, caplog):
+    from hxex.io import format_time
+    from hxex.report.figures import PlotConfig, uptake_axis, write_figures
+    from hxex.report.overview import k_selection_data
+
+    assert results.time_scale == "seconds"
+    by_order = ordered(results)
+    assert by_order.time_scale == "order"
+    ax = plot_uptake(by_order, 0).axes[0]  # the default axis: by index, the numbers as given
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["UN", "60", "FD"]
+    assert ax.get_xlabel() == "time point"
+    with pytest.raises(ValueError, match="only order the points"):
+        plot_uptake(by_order, 0, x="time")
+    assert plot_uptake(results, 0).axes[0].get_xlabel() == "time (s)"  # the default: time
+    assert PlotConfig().x is None and uptake_axis(results, PlotConfig(x="time")) == "time"
+    assert uptake_axis(by_order, PlotConfig(x="time")) is None
+    assert format_time(90, "order") == "90" and format_time(90) == "1.5 min"
+    assert k_selection_data(by_order)["time_labels"] == ["UN", "60", "FD"]
+    with caplog.at_level(logging.WARNING):
+        write_figures(by_order, tmp_path, PlotConfig(x="time", series=[0], format="png",
+                                                     overview=False))
+    assert any("drawn by index" in r.message for r in caplog.records)

@@ -2765,3 +2765,28 @@ CSVs or mzML if wanted.
     figures. Golden picker and engine fixtures unchanged (roles do not enter the picker or the
     fits; the noise references are the same spectra). Private project files updated to the new
     keys.
+
+102. **Times that only order the points, roles in `hxex check` and `info` (2026-10-18; audit
+    design item 1, session 2).** `[input] time_scale` now acts: the loader records it in the
+    spectra's read record (`source["time_scale"]`; the scan-format branch had dropped the
+    setting in session 1, fixed), `Results.time_scale` and `RunSet.time_scale` (which must
+    agree) read it back, and a rerun from stored spectra keeps the stored scale unless the
+    project file sets one. With `"order"`: `plot_uptake` draws by index when `x` is unset
+    (the new default, None, in `PlotConfig` too), refuses `x='time'`, and `write_figures`
+    turns a configured `"time"` into the index axis with one warning; `format_time(t,
+    "order")` is the bare number, the series, overview and analysis figures label such a
+    point `point 2` and name their files `profile_WT_2`; the protection analysis and the
+    fragment ladder kinetics refuse with a message naming the setting. Every figure function
+    that prints a time took a `time_scale` keyword (the analysis dispatcher passes the
+    results'). The figure-label review found the remaining raw seconds in `hxex check`'s run
+    line and the `undeut_at`/`fulldeut_at` error messages, now `format_time`; the tables stay
+    in seconds. `hxex check` counts the control files per sample of a SpecExport or pooled
+    folder from the file names (HX-Express labels are inside the sheets: it says so), names a
+    scan-format run's role, and `describe` (its summary) spells out `undeut_at`,
+    `fulldeut_at` and `*_marked = false` and shows the time scale; `hxex info` gained
+    `roles` (control spectra and series per role, with the times they also carry) and
+    `times`. User guide: the controls section got the uptake figures of one series of the
+    published B5 data (`docs/images/guide_uptake_*.svg`, a three-peptide scratch run), the
+    `check`/`info` excerpts and a section on `time_scale = "order"`. Tests: order-scale plots
+    and labels, the analysis refusals, the CLI roles and scale lines, the SpecExport control
+    counts, the stored-scale rule.

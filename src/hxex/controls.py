@@ -59,6 +59,7 @@ import numpy as np
 from scipy.stats import norm
 
 from .fit.result import FitResult
+from .io.times import format_time
 from .kint import ExchangeConditions
 from .spectra import FULLDEUT, UNDEUT, time_point
 
@@ -207,13 +208,14 @@ def apply_control_roles(role, time, config: ControlConfig, *, where: str = "") -
         if not hit.any():
             present = sorted({float(t) for t in time[np.isfinite(time)]})
             raise ValueError(
-                f"{where + ': ' if where else ''}{name} = {at:g} s: no spectrum was measured at "
-                f"that time (times present: {', '.join(f'{t:g}' for t in present[:20])}"
+                f"{where + ': ' if where else ''}{name} = {format_time(at)}: no spectrum was "
+                f"measured at that time (times present: "
+                f"{', '.join(format_time(t) for t in present[:20])}"
                 f"{', ...' if len(present) > 20 else ''})")
         other = hit & (role != "") & (role != label)
         if other.any():
-            raise ValueError(f"{name} = {at:g} s: {int(other.sum())} spectra at that time are "
-                             f"already {role[other][0]} controls")
+            raise ValueError(f"{name} = {format_time(at)}: {int(other.sum())} spectra at that "
+                             f"time are already {role[other][0]} controls")
         role[hit] = label
     return role
 
