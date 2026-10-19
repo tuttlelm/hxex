@@ -230,7 +230,8 @@ def cmd_init(args) -> int:
         return EXIT_ERROR
     out.write_text(text, encoding="utf-8")
     log.info("wrote %s (format %s): edit the input paths, then 'hxex check %s'. The output "
-             "bundle and the folders named after it (NAME_tables, NAME_figures, NAME.N) are "
+             "bundle and the folders named after it (NAME_tables, NAME_figures, NAME_analysis, "
+             "NAME.N) are "
              "hxex's: later runs replace or rename them", out, args.format, out)
     return 0
 
@@ -511,6 +512,10 @@ def cmd_run(args) -> int:
     _summary(result.fit, bundle, tables=tables,
              figures=_beside(bundle, out.figures, "_figures") if out.figures is not False
              else None)
+    analysis = bundle.with_name(bundle.name + "_analysis")
+    if overwrite and analysis.is_dir():
+        log.warning("%s still holds the analysis of the results just replaced: run "
+                    "'hxex analyse' again to bring it up to date", analysis)
     return 0
 
 

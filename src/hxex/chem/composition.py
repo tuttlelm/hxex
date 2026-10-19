@@ -3,9 +3,16 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
-from brainpy import isotopic_variants
 from pyteomics import mass
+
+with warnings.catch_warnings():
+    # brainpy's docstrings hold invalid escape sequences: newer Pythons print a SyntaxWarning
+    # the first time they compile it, which looks like an error to a user
+    warnings.filterwarnings("ignore", category=SyntaxWarning, message=".*invalid escape sequence")
+    from brainpy import isotopic_variants
 
 from .amides import DEFAULT_AMIDE_RULES, AmideRules, exchangeable_sites
 from .ions import check_ion_type, ion_terminus

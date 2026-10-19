@@ -4,7 +4,7 @@
 
 Every key a project file (`hxex.toml`) accepts, table by table, with its type, its default and what it does. `hxex init --format FORMAT` writes a file with these defaults and shorter comments; [The project file](project-file.md) explains how the file works.
 
-Conventions: a key left out keeps its default. TOML has no null, so `false` stands for *unset* where a setting can be unset (an optional stage, a limit); a switch set to `false` is off. Times are in seconds, written as a number or as text with a unit (`"5 min"`, `"20 h"`). Relative paths are relative to the project file. *required* means the table needs the key.
+Conventions: a key left out keeps its default. TOML has no null, so `false` stands for *unset* where a setting can be unset (an optional stage, a limit); a switch set to `false` is off. Times are in seconds, written as a number or as text with a unit (`"5 min"`, `"20 h"`). Relative paths are relative to the project file. *required* means the table needs the key. A heading in double brackets (`[[input.runs]]`) is for something there can be several of: write the heading once for each, each followed by its own settings (with only one, single brackets work too).
 
 ## Tables
 
@@ -47,7 +47,7 @@ Top-level keys, before the first table.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `project` | text | required | the project's name (text without ':'); prefixes every spectrum id |
+| `project` | text | required | the project's name (text without a colon, `:`); prefixes every spectrum id |
 | `threads` | integer | unset | CPU threads for the command (unset: PyTorch's default, the physical cores); about half the physical cores was fastest on a 24-core machine |
 
 ## `[input]`
@@ -146,11 +146,11 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 
 ## `[output]`
 
-Where results go. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures and the generations <bundle>.1, ...) belong to hxex: a later run replaces or renames them.
+Where results go. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures, <bundle>_analysis, and the generations <bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `bundle` | path | unset | the results bundle: a directory, or a .zip |
+| `bundle` | path | unset | name of the folder (or .zip archive, a name ending in .zip) that `hxex run` creates for the results (the bundle); it must not exist yet unless overwrite or keep_previous is set |
 | `overwrite` | true/false | `false` | replace an existing bundle (its review is carried over) and its tables and figures |
 | `keep_previous` | true/false | `false` | move the existing bundle, tables and figures to the next generation (results.1, ...) first |
 | `keep_spectra` | true/false | `true` | store the raw spectra in the bundle (needed to rerun from it) |
@@ -341,11 +341,11 @@ The isotope envelope that places the bins and shapes the fit (hxex.picking.Envel
 
 ## `[analysis]`
 
-The post-fitting analysis that hxex analyse writes (hxex.analysis). See docs/ANALYSIS.md for the methods.
+The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs/ANALYSIS.md for the methods.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `reference` | text | `""` | the sample the others are compared with (empty: no comparisons); "run:sample" names one run's sample |
+| `reference` | text | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample |
 | `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
@@ -397,7 +397,7 @@ Separate runs to compare: run name = bundle path (default: this project's bundle
 
 ## `[analysis.merge]`
 
-Samples combined across runs: "run:sample" = label; the same label pools them (fragment series are drawn side by side, not pooled).
+Samples combined across runs: `"run:sample" = label`; the same label pools them (fragment series are drawn side by side, not pooled).
 
 
 ## `[[analysis.regions]]`

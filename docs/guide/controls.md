@@ -2,7 +2,7 @@
 
 Every series (a peptide at one charge) has two kinds of spectra: **time points**, measured
 after a labelling time, and **controls**: the undeuterated spectrum and the fully deuterated
-one, which set the scale of the back-exchange correction. hxex tells them apart by a **role**,
+one, which set the scale of the back-exchange correction. *hxex* tells them apart by a **role**,
 never by a number.
 
 ## Where the role comes from
@@ -11,26 +11,26 @@ never by a number.
   and `undeut` (HX-Express) files are undeuterated controls, `Full` and `TD` files are fully
   deuterated controls. Nothing to set.
 - **mzML and Thermo raw files.** Each control file gets a `role` in its `[[input.runs]]` table
-  and no `time`:
+  and no `time` (example below).
 
-  ```toml
-  [[input.runs]]
-  path = "UN_01.raw"
-  sample = "WT"
-  role = "undeut"
+```toml
+[[input.runs]]
+path = "UN_01.raw"
+sample = "WT"
+role = "undeut"
 
-  [[input.runs]]
-  path = "TD_01.raw"
-  sample = "WT"
-  role = "fulldeut"
+[[input.runs]]
+path = "TD_01.raw"
+sample = "WT"
+role = "fulldeut"
 
-  [[input.runs]]
-  path = "D_5min_01.raw"
-  sample = "WT"
-  time = "5 min"
-  ```
+[[input.runs]]
+path = "D_5min_01.raw"
+sample = "WT"
+time = "5 min"
+```
 
-  A file with neither `time` nor `role` is a kinetics run, where every scan has its own time.
+A file with neither `time` nor `role` is a kinetics run, where every scan has its own time.
 
 A control carries no time: its `time` is blank in every table and the figures show it as `UN`
 or `FD`, first and last on an index axis, as a line on a time axis. That is why a
@@ -87,7 +87,7 @@ fulldeut_at = "20 h"
 a back-exchange run. When the data also have a marked fully deuterated file that you do not
 trust (one that reads low, say), add `fulldeut_marked = false`: the marked file then does not
 serve as the control, only the spectra at `fulldeut_at` do, and its spectra stay fitted. The
-same settings exist in `[analysis.controls]` for an analysis of an existing bundle. The time must be one at which spectra were measured; otherwise hxex lists the
+same settings exist in `[analysis.controls]` for an analysis of an existing bundle. The time must be one at which spectra were measured; otherwise *hxex* lists the
 times it has. For a scan-format file, giving the run both `time` and `role` in `[[input.runs]]`
 does the same thing.
 
@@ -95,7 +95,7 @@ does the same thing.
 
 Every time in the project file is a number of seconds or text with a unit: `60`, `"60 s"`,
 `"5 min"`, `"20 h"`, `"250 ms"`, `"1h21m"`. The units are `s`, `sec`, `m`, `min`, `h`, `hr`,
-`ms` and their long forms, in any case. hxex converts them when it reads the file, so the tables
+`ms` and their long forms, in any case. *hxex* converts them when it reads the file, so the tables
 always hold seconds; figures label times in a readable unit (`20 h`, not `72000 s`). In an
 HX-Express sheet the labels keep that format's own convention, where `1.2 min` means the second
 spectrum at 1 min; in the project file `"1.5 min"` is 90 s.
@@ -110,7 +110,7 @@ HX-Express test sets' dummy times). `[input] time_scale = "order"` says so:
 time_scale = "order"
 ```
 
-The numbers are still read and stored as given, but hxex never treats them as seconds: the
+The numbers are still read and stored as given, but *hxex* never treats them as seconds: the
 uptake is drawn by index whatever `[run.plots] x` says (with a warning when it says
 `"time"`), figures and file names label the points by their number (`point 2`,
 `profile_WT_2.png`), and the analyses that need real times, the fragment ladder kinetics and

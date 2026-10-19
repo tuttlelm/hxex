@@ -14,6 +14,7 @@ Regenerate both with ``python -m hxex._reference docs/guide``.
 
 from __future__ import annotations
 
+import re
 import sys
 import types
 import typing
@@ -60,7 +61,7 @@ _CONDITIONS = {
 }
 
 _DESCRIPTIONS: dict[str, str] = {
-    ".project": "the project's name (text without ':'); prefixes every spectrum id",
+    ".project": "the project's name (text without a colon, `:`); prefixes every spectrum id",
     ".threads": "CPU threads for the command (unset: PyTorch's default, the physical cores); "
                 "about half the physical cores was fastest on a 24-core machine",
     "input.format": "specexport, hxexpress, pooled (folder formats), mzml or thermo (scan "
@@ -140,7 +141,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "input.fragments.limit_charge": "ALL charges run from 1 to the parent's charge - 1 (false: "
                                     "to the parent's charge); charges written out are used as "
                                     "given",
-    "output.bundle": "the results bundle: a directory, or a .zip",
+    "output.bundle": "name of the folder (or .zip archive, a name ending in .zip) that `hxex run` "
+                     "creates for the results (the bundle); it must not exist yet unless "
+                     "overwrite or keep_previous is set",
     "output.overwrite": "replace an existing bundle (its review is carried over) and its tables "
                         "and figures",
     "output.keep_previous": "move the existing bundle, tables and figures to the next "
@@ -151,7 +154,7 @@ _DESCRIPTIONS: dict[str, str] = {
     "output.figures": "figures: true beside the bundle (<bundle>_figures), a directory, or false",
     "output.notes": "free text kept in the bundle's manifest",
     "analysis.reference": "the sample the others are compared with (empty: no comparisons); "
-                          '"run:sample" names one run\'s sample',
+                          '`"run:sample"` names one run\'s sample',
     "analysis.samples": "which samples, in this order (empty: all, the reference first)",
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "
@@ -251,9 +254,10 @@ _INTROS: dict[str, str] = {
                        "activation).",
     "input.scans": "Scan formats: how scans become spectra (hxex.io.MzmlConfig).",
     "output": "Where results go. The bundle and the folders named after it (<bundle>_tables, "
-              "<bundle>_figures and the generations <bundle>.1, ...) belong to hxex: a later "
+              "<bundle>_figures, <bundle>_analysis, and the generations <bundle>.1, ...) "
+              "belong to *hxex*: a later "
               "run replaces or renames them.",
-    "analysis": "The post-fitting analysis that hxex analyse writes (hxex.analysis). See "
+    "analysis": "The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See "
                 "docs/ANALYSIS.md for the methods.",
     "analysis.filters": "Which K=2 descriptions the analysis trusts. Per spectrum: "
                         "min_population, max_fD; per species and time: max_fD_se, "
@@ -265,7 +269,7 @@ _INTROS: dict[str, str] = {
                          "run's K=1 fits.",
     "analysis.runs": "Separate runs to compare: run name = bundle path (default: this "
                      "project's bundle). The tables then get a run column.",
-    "analysis.merge": 'Samples combined across runs: "run:sample" = label; the same label pools '
+    "analysis.merge": 'Samples combined across runs: `"run:sample" = label`; the same label pools '
                       "them (fragment series are drawn side by side, not pooled).",
     "analysis.regions": "Repeat the table for every region (regions may overlap).",
     "analysis.sites": "Repeat the table for every site (a modification, a mutation).",
@@ -498,7 +502,10 @@ def markdown() -> str:
         "*unset* where a setting can be unset (an optional stage, a limit); a switch set to "
         "`false` is off. Times are in seconds, written as a number or as text with a unit "
         '(`"5 min"`, `"20 h"`). Relative paths are relative to the project file. '
-        "*required* means the table needs the key.",
+        "*required* means the table needs the key. A heading in double brackets "
+        "(`[[input.runs]]`) is for something there can be several of: write the heading once "
+        "for each, each followed by its own settings (with only one, single brackets work "
+        "too).",
         "",
         "## Tables",
         "",
@@ -549,6 +556,9 @@ def _arguments(parser) -> list[str]:
             text = "print the version and exit"
         else:
             text = action.help or ""
+        # a NAME:name pair (RUN:sample) is something to type: code, which also keeps
+        # emoji-converting previews from reading ":s" as a face
+        text = re.sub(r"(?<![`\w])([A-Za-z_]+:[A-Za-z_]+)(?![`\w])", r"`\1`", text)
         rows.append(f"| {_cell(_flags(action))} | {_cell(text)} |")
     if not rows:
         return []
@@ -590,7 +600,7 @@ def commands_markdown() -> str:
         "",
         "# Command-line reference",
         "",
-        "Every command and option of `hxex`, from the program's own definitions (`hxex "
+        "Every command and option of *hxex*, from the program's own definitions (`hxex "
         "COMMAND --help` prints the same). [The project file and the commands]"
         "(project-file.md) shows how they fit together.",
         "",

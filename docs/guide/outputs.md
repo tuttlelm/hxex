@@ -5,9 +5,11 @@ of Parquet tables with a `manifest.json`), CSV tables beside it (`results_tables
 figures (`results_figures`). `hxex report` writes the tables and figures again from a bundle;
 `hxex analyse` writes the post-fitting analysis to `results_analysis`.
 
-These folders, and their earlier generations (`results.1`, `results.1_tables`, ...), belong to
-hxex: a later run refuses to write over them unless given `--overwrite` (replace them; the review
-is carried over) or `--keep-previous` (move them to the next generation first). Keep your own files
+These folders, and their earlier generations (`results.1`, `results.1_tables`,
+`results.1_analysis`, ...), belong to *hxex*: a later run refuses to write over them unless given
+`--overwrite` (replace them; the review is carried over) or `--keep-previous` (move them to the
+next generation first). Running `hxex analyse` again replaces the earlier analysis in
+`results_analysis`. In all of them, *hxex* removes only the files it wrote itself. Keep your own files
 elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
 
 ## Words used in the tables
@@ -116,3 +118,19 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `residue_rates_<sample>_<range>` | per-residue rates, amplitudes and, with `kint`, protection |
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
+
+## Sharing results
+
+To send your results to someone, zip the results folder (`results`) in the usual way: on
+Windows, right-click it and choose **Send to > Compressed (zipped) folder**; on macOS,
+right-click it and choose **Compress**. The person receiving it does not need to unpack it:
+every *hxex* command reads the zip as it is, for example `hxex report results.zip --figures`.
+Include `results_tables`, `results_figures`, and `results_analysis` as well if they should see
+those without running *hxex*.
+
+*hxex* can also write the results as a zip from the start: give the bundle a name ending in
+`.zip` (`bundle = "results.zip"` in `[output]`, or `hxex run hxex.toml --bundle results.zip`).
+The tables and figures are still written as ordinary folders beside it.
+
+A zip cannot be changed in place, so review decisions cannot be saved into one; unpack it
+first if you need to.

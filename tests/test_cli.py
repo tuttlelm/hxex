@@ -749,3 +749,105 @@ def test_a_peptide_is_read_from_the_runs_of_its_sample(tmp_path, capsys):
     table.write_text(head + "x,WT," + row)
     assert cli.main(["check", str(path)]) == 1
     assert "no peptide of the table is for sample M" in capsys.readouterr().err
+
+
+def test_a_windows_path_in_double_quotes_gets_a_hint(tmp_path):
+    """The commonest mistake of a user new to TOML: backslashes between double quotes."""
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\n'
+                    'data_dir = "C:\\Users\\me\\data"\n')
+    with pytest.raises(ProjectError, match="not valid TOML.*forward slashes.*single quotes"):
+        load_project(path)
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\n'
+                    "data_dir = 'C:\\Users\\me\\data'\n")
+    assert str(load_project(path).input.data_dir).endswith("C:\\Users\\me\\data")
+    path.write_text('project = "p"\n[input\n')
+    with pytest.raises(ProjectError, match="not valid TOML") as info:
+        load_project(path)
+    assert "backslash" not in str(info.value)
+
+
+def test_a_bundle_zipped_by_the_operating_system_is_read(tmp_path, capsys):
+    """Windows' "Compressed (zipped) folder" and macOS "Compress" put the bundle folder inside
+    the zip (macOS adds __MACOSX and .DS_Store); hxex reads it as it reads its own zips. A zip
+    with two folders is not a bundle."""
+    import shutil
+    import zipfile
+
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    folder = tmp_path / "out"
+    by_os = shutil.make_archive(str(tmp_path / "by_os"), "zip", root_dir=tmp_path,
+                                base_dir="out")
+    with zipfile.ZipFile(by_os, "a") as zf:
+        zf.writestr("__MACOSX/out/._manifest.json", b"junk")
+        zf.writestr("out/.DS_Store", b"junk")
+    with open_bundle(folder) as a, open_bundle(by_os) as b:
+        assert a.manifest == b.manifest and a.fit().spectrum_id.tolist() == \
+            b.fit().spectrum_id.tolist()
+    capsys.readouterr()
+    assert cli.main(["info", by_os]) == 0 and "measurements   6" in capsys.readouterr().out
+    assert cli.main(["-q", "report", by_os, "--tables", str(tmp_path / "t")]) == 0
+    assert (tmp_path / "t" / "spectra.csv").is_file()
+    two = shutil.make_archive(str(tmp_path / "two"), "zip", root_dir=tmp_path)  # every folder
+    with pytest.raises(Exception, match="manifest"):
+        open_bundle(two)
+
+
+def test_one_item_of_a_list_may_be_written_with_single_brackets(tmp_path):
+    """A list of tables ([[name]]) with one item, written [name] as most headings are, is read
+    as that one item; a single-bracket heading written twice is refused with a hint."""
+    def project(text):
+        return project_from(tomllib.loads('project = "p"\n' + text), tmp_path)
+
+    scan = '[input]\nformat = "mzml"\npeptides = "p.csv"\n'
+    for brackets in ("[input.runs]", "[[input.runs]]"):
+        p = project(scan + f'{brackets}\npath = "a.mzML"\nsample = "WT"\n')
+        assert [r.sample for r in p.input.runs] == ["WT"]
+    folder = '[input]\nformat = "specexport"\ndata_dir = "d"\n'
+    p = project(folder + '[analysis.regions]\nname = "N"\nstart = 1\nend = 63\n'
+                '[analysis.sites]\nresidue = 19\nlabel = "S19"\n')
+    assert [r.name for r in p.analysis.annotations.regions] == ["N"]
+    assert [s.residue for s in p.analysis.annotations.sites] == [19]
+    p = project(folder + '[run.registry.residues]\nlabel = "meK"\nbase = "K"\n'
+                'delta = { C = 1, H = 2 }\n')
+    assert "meK" in {r["label"] for r in p.run.registry.to_dict()["residues"]}
+    path = tmp_path / "hxex.toml"
+    path.write_text(scan + '[input.runs]\npath = "a"\nsample = "A"\n'
+                    '[input.runs]\npath = "b"\nsample = "B"\n')
+    with pytest.raises(ProjectError, match=r"write each under \[\[input.runs\]\]"):
+        load_project(path)
+    path.write_text(scan + '[input]\nformat = "mzml"\n')
+    with pytest.raises(ProjectError, match=r"\[input\] may appear only once"):
+        load_project(path)
+
+
+def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, capsys):
+    """hxex analyse replaces the files of the earlier analysis (a file it no longer writes
+    goes) and keeps the user's own; --keep-previous moves the analysis folder with the bundle
+    and its tables (out.1_analysis)."""
+    import json
+
+    from hxex.io import output_listing
+
+    path = mzml_project(tmp_path)
+    path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
+    assert cli.main(["-q", "run", str(path)]) == 0
+    folder = tmp_path / "out_analysis"
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    listed = output_listing(folder)
+    assert listed and "species_uptake.csv" in listed
+    # a figure an earlier analysis wrote and this one does not, and a file of the user's
+    (folder / "woods_old.pdf").write_text("stale")
+    (folder / "my_notes.txt").write_text("mine")
+    data = json.loads((folder / "hxex_listing.json").read_text())
+    data["files"].append("woods_old.pdf")
+    (folder / "hxex_listing.json").write_text(json.dumps(data))
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    assert not (folder / "woods_old.pdf").exists() and (folder / "my_notes.txt").exists()
+    capsys.readouterr()
+    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    assert "still holds the analysis" in capsys.readouterr().err  # until analyse runs again
+    assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
+    assert (tmp_path / "out.1_analysis" / "species_uptake.csv").is_file()
+    assert (tmp_path / "out.1_tables").is_dir() and not folder.exists()

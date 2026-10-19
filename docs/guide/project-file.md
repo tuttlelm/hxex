@@ -54,7 +54,7 @@ n_boot = 200
 d2o_fraction = 0.9
 
 [output]
-bundle = "results"
+bundle = "results"                # the folder (or .zip archive) hxex creates for the results
 
 [analysis]
 reference = "WT"
@@ -119,22 +119,10 @@ The bootstrap takes most of a run's time. To save time:
 The bundle has a **review layer**: per spectrum, a status (rejected or not), an optional K
 override and a note. Rejected spectra are left out of the uptake, the reports and the analysis;
 an override replaces the selected K. The review is kept when the bundle is overwritten by a new
-run; entries the new run cannot hold are kept but marked stale. See [BUNDLE.md](../BUNDLE.md).
+run; entries the new run cannot hold are kept but marked stale. For now there is no command to
+enter review decisions; it is done from Python ([Using *hxex* from Python](python.md#reviewing-spectra)).
 
 ## From Python
 
-```python
-import hxex
-
-project = hxex.load_project("hxex.toml")
-spectra = hxex.read_input(project)                      # raw spectra, with their read record
-result = hxex.run(spectra, project.run, out="results", project=project.project)
-
-with hxex.open_bundle("results") as bundle:             # later, or in a notebook
-    results = hxex.Results.from_bundle(bundle)
-hxex.write_tables(results, "results_tables")
-hxex.write_figures(results, "results_figures", hxex.PlotConfig(series="all"))
-```
-
-Plot functions return Matplotlib figures and never show them. Long operations take `progress` and
-`cancel` hooks (`hxex.hooks`).
+Programmers can run every step from their own scripts: see
+[Using *hxex* from Python](python.md).

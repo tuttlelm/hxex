@@ -18,8 +18,9 @@ command line work; nothing is released yet. The project plan is in
 [pyHXExpress](https://github.com/tuttlelm/pyHXExpress). It is standalone and does not depend
 on it.
 
-**Documentation:** the [user guide](docs/guide/README.md) (input formats, experiment types,
-outputs, and every setting in the [settings reference](docs/guide/settings.md)).
+**Documentation:** the [user guide](docs/guide/README.md), starting with
+[installing hxex](docs/guide/install.md) (no Python knowledge needed) and
+[your first project](docs/guide/first-project.md). The rest of this page is for developers.
 
 ## Quick start
 
@@ -149,7 +150,8 @@ hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs (a
 ```
 
 The output bundle (`[output] bundle`, say `results`) and the folders named after it
-(`results_tables`, `results_figures` and the generations `results.1`, `results.1_tables`, ...)
+(`results_tables`, `results_figures`, `results_analysis`, and the generations `results.1`,
+`results.1_tables`, ...)
 are hxex's: a later `hxex run` refuses to write over them unless told to, and then either
 replaces them (`--overwrite`; the review layer is carried over) or moves them to the next
 generation first (`--keep-previous`). Files of your own inside them are kept, but one named

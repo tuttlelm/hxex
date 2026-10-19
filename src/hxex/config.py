@@ -16,7 +16,7 @@
     [run.bootstrap]             # a section turns its stage on; "bootstrap = false" turns it off
 
     [output]
-    bundle = "results"          # the results bundle
+    bundle = "results"          # the folder (or .zip) hxex creates for the results
 
     [analysis]                  # the post-fitting analysis (hxex analyse; hxex.analysis)
     reference = "WT"
@@ -71,6 +71,14 @@ def _check_keys(data: Mapping, allowed, where: str) -> None:
     unknown = set(data) - set(allowed)
     if unknown:
         raise ProjectError(f"unknown key(s) in {where}: {', '.join(sorted(unknown))}")
+
+
+def _items(value) -> list:
+    """The items of a list of tables (``[[name]]``): a single table (``[name]``, one item
+    written with single brackets) as a list of one."""
+    if value is None:
+        return []
+    return [value] if isinstance(value, Mapping) else value
 
 
 def _none(value):
@@ -215,6 +223,9 @@ def run_config_from(data: Mapping) -> RunConfig:
         data = {**data, "controls": _times_in(data["controls"], ("undeut_at", "fulldeut_at"),
                                               "run.controls")}
     data = _times_in(data, ("envelope_fallback_time",), "run")
+    registry = data.get("registry")
+    if isinstance(registry, Mapping) and isinstance(registry.get("residues"), Mapping):
+        data = {**data, "registry": {**registry, "residues": _items(registry["residues"])}}
     given = _false_to_none(data, RunConfig)
     for key, value in given.items():
         if key in _OPTIONAL_SECTIONS:
@@ -552,7 +563,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if "peptides" not in data:
         raise ProjectError("input.peptides (a peptide table, CSV) is needed for mzml and thermo")
     _record_paths(data, ("path", "relative", "name"), fmt)
-    runs = data.get("runs") or []
+    runs = _items(data.get("runs"))
     if not isinstance(runs, list) or not runs:
         raise ProjectError("give at least one [[input.runs]] (path and sample)")
     run_names = {f.name for f in fields(MzmlRun)}
@@ -599,9 +610,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if target.get("parent_mz") is not None:
         target["parent_mz"] = _window(target["parent_mz"], "input.target.parent_mz",
                                       "[low, high] (m/z) or false")
-    blocks = data.get("fragments") or []
-    fragments = tuple(_fragment_settings(b) for b in
-                      ([blocks] if isinstance(blocks, Mapping) else blocks))
+    fragments = tuple(_fragment_settings(b) for b in _items(data.get("fragments")))
     parents = bool(data.get("parents", True))
     if not parents and not fragments:
         raise ProjectError("parents = false needs [input.fragments]: there would be no target")
@@ -746,8 +755,8 @@ def _analysis_from(data: Mapping, base: Path):
             raise ProjectError("[analysis.runs] must be a table of run name = bundle")
         values["runs"] = {str(k): str(_path(base, v, f"analysis.runs.{k}"))
                           for k, v in values["runs"].items()}
-    values["annotations"] = {"regions": list(data.get("regions", [])),
-                             "sites": list(data.get("sites", []))}
+    values["annotations"] = {"regions": list(_items(data.get("regions"))),
+                             "sites": list(_items(data.get("sites")))}
     try:
         if isinstance(values.get("filters"), Mapping):
             from .analysis import SpeciesFilters
@@ -764,6 +773,37 @@ def _analysis_from(data: Mapping, base: Path):
         raise ProjectError(f"[analysis]: {exc}") from exc
 
 
+# the tables that hold a list of items (``[[name]]``; a single ``[name]`` is read as one item)
+LIST_TABLES = ("input.runs", "input.fragments", "analysis.regions", "analysis.sites",
+               "run.registry.residues")
+
+
+def _toml_hint(text: str, exc: Exception) -> str:
+    """A hint for the commonest mistakes in a project file: a Windows path with backslashes
+    between double quotes, where a backslash starts an escape ("C:\\Users" is an error), and
+    a heading in single brackets written twice (several items of a list need double
+    brackets; any other table's settings go under one heading)."""
+    import re
+
+    found = re.search(r"at line (\d+)", str(exc))
+    lines = text.splitlines()
+    if found is None or not 0 < int(found[1]) <= len(lines):
+        return ""
+    line = lines[int(found[1]) - 1]
+    twice = re.search(r"Cannot declare \(([^)]*)\) twice", str(exc))
+    if twice:
+        name = ".".join(p for part in twice[1].split(",") if (p := part.strip(" '\"")))
+        if name in LIST_TABLES:
+            return (f"; a heading in single brackets, [{name}], may appear only once: for "
+                    f"several items, write each under [[{name}]], with double brackets")
+        return f"; [{name}] may appear only once: put all its settings under one heading"
+    if re.search(r'"[^"]*\\[^"]*"', line):
+        return ("; a backslash between double quotes starts an escape: write the path with "
+                "forward slashes (\"C:/Users/me/data\") or between single quotes "
+                "('C:\\Users\\me\\data')")
+    return ""
+
+
 def load_project(path: str | Path, *, analysis_only: bool = False,
                  spectra: str | Path | None = None) -> Project:
     """Read and check a project file (``analysis_only``: one that may have only an
@@ -771,11 +811,12 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
     spectra in place of the input, :func:`project_from`)."""
     path = Path(path)
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        data = tomllib.loads(text)
     except OSError as exc:
         raise ProjectError(f"cannot read {path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
-        raise ProjectError(f"{path}: not valid TOML ({exc})") from exc
+        raise ProjectError(f"{path}: not valid TOML ({exc}){_toml_hint(text, exc)}") from exc
     return project_from(data, path.resolve().parent, path, analysis_only=analysis_only,
                         spectra=spectra)
 
@@ -1371,11 +1412,12 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         input_text,
         "",
         "[output]",
-        "# The bundle and the folders named after it (results_tables, results_figures and",
-        "# the generations results.1, results.1_tables, ...) belong to hxex: a later run",
-        "# replaces or renames them. Keep your own files elsewhere (files of yours inside",
-        "# them are kept, but one named like an hxex file stops the run).",
-        'bundle = "results"               # the results bundle (a directory, or .zip)',
+        "# The bundle and the folders named after it (results_tables, results_figures,",
+        "# results_analysis, and the generations results.1, results.1_tables, ...) belong to",
+        "# hxex: a later run replaces or renames them. Keep your own files elsewhere (files",
+        "# of yours inside them are kept, but one named like an hxex file stops the run).",
+        'bundle = "results"               # name of the folder (or .zip archive) hxex creates',
+        "#                                 # for the results: it must not exist yet",
         "overwrite = false                # replace an existing bundle (its review is carried",
         "#                                 # over) and its tables and figures",
         "keep_previous = false            # move the existing bundle, tables and figures to",

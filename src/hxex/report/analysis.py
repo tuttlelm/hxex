@@ -55,6 +55,7 @@ from ..analysis.residues import states as _states
 from ..analysis.runs import display_labels, label, resolve_sample
 from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
+from ..io.outputs import replace_outputs
 from ..io.times import format_time
 from .compare import (
     plot_butterfly,
@@ -364,7 +365,6 @@ def write_analysis(
     ``directory``; returns the files. Relative FASTA paths are taken from
     ``base``. ``progress(done, total)`` counts the files."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
     frag_tables, frag_jobs = {}, []
@@ -394,17 +394,20 @@ def write_analysis(
     tables.update(frag_tables)
     jobs += frag_jobs
 
-    written = []
     total = len(tables) + len(jobs)
-    for n, (name, cols) in enumerate(tables.items()):
-        check_cancel(cancel)
-        written.append(write_csv(cols, directory / f"{name}.csv"))
-        report(progress, n + 1, total)
-    for n, (stem, draw) in enumerate(jobs):
-        check_cancel(cancel)
-        path = directory / f"{_stem(stem)}.{config.format}"
-        draw().savefig(path, dpi=150, bbox_inches="tight")
-        written.append(path)
-        report(progress, len(tables) + n + 1, total)
+    names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"
+                                                   for stem, _ in jobs]
+    # as the tables and figures folders: the files of the earlier analysis go, yours stay
+    with replace_outputs(directory, names) as written:
+        for n, (name, cols) in enumerate(tables.items()):
+            check_cancel(cancel)
+            written.append(write_csv(cols, directory / f"{name}.csv"))
+            report(progress, n + 1, total)
+        for n, (stem, draw) in enumerate(jobs):
+            check_cancel(cancel)
+            path = directory / f"{_stem(stem)}.{config.format}"
+            draw().savefig(path, dpi=150, bbox_inches="tight")
+            written.append(path)
+            report(progress, len(tables) + n + 1, total)
     log.info("analysis: %d tables and %d figures in %s", len(tables), len(jobs), directory)
     return written

@@ -1,6 +1,6 @@
 # Input formats
 
-hxex reads five kinds of input, chosen by `[input] format` in the project file:
+*hxex* reads five kinds of input, chosen by `[input] format` in the project file:
 
 | Format | What it reads | Where the peptides come from | Where the times and controls come from |
 |---|---|---|---|
@@ -12,12 +12,12 @@ hxex reads five kinds of input, chosen by `[input] format` in the project file:
 
 The first three are **folder formats**: the spectra have already been extracted (by HX-Express
 or HDExaminer), one spectrum per file or per column pair. The last two are **scan formats**:
-hxex finds each peptide's scans in the raw data itself, by m/z, MS level, activation and
+*hxex* finds each peptide's scans in the raw data itself, by m/z, MS level, activation and
 retention time, and sums them into spectra.
 
 Every format ends in the same place: a set of raw spectra, each with a sample, a peptide (its
 sequence, residue range and charge), a time or a control role, and a replicate number. The rest
-of hxex (picking, fitting, reports, analysis) does not depend on the format.
+of *hxex* (picking, fitting, reports, analysis) does not depend on the format.
 
 `hxex init --format FORMAT -o hxex.toml` writes a project file with the `[input]` table of that
 format and every other setting at its default. Edit the paths, then run `hxex check hxex.toml`:
@@ -209,9 +209,8 @@ pooled/
   skipped with a warning; one whose residue count differs from its range is kept, with a warning.
 - The spectrum files, the time tokens and the controls are as in SpecExport.
 
-To find which protein of a FASTA file each peptide could come from, use
-`hxex.io.match_candidates` from Python (it lists every matching record, so ambiguous peptides
-show up). The command line does not do this matching.
+*hxex* does not work out which protein each pooled peptide comes from: the command line has no
+such step (programmers can use `match_candidates`, [Using *hxex* from Python](python.md)).
 
 ---
 
@@ -237,7 +236,7 @@ sample = "WT"
 time = "60 s"
 ```
 
-hxex predicts the m/z of every peptide's isotope peaks, from undeuterated to fully deuterated,
+*hxex* predicts the m/z of every peptide's isotope peaks, from undeuterated to fully deuterated,
 and reads only those stretches of the matching scans. It needs two things: a **peptide table**
 that says what to look for, and one **`[[input.runs]]`** table per file that says what the file
 is.
@@ -378,7 +377,9 @@ the signal-weighted time of the summed scans. Kinetics spectra have none.
 
 `format = "thermo"` reads `.raw` files directly, with the same settings as mzML. It needs:
 
-- `pip install "hxex[thermo]"` (pythonnet);
+- *hxex* installed with its Thermo extra: step 3 of [Installing *hxex*](install.md) with
+  `"hxex[thermo] @ https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip"` in place of
+  the plain address (the quotes are needed);
 - a .NET runtime: Mono on Linux and macOS, the .NET Framework on Windows (built in), or .NET 8 or
   newer with `PYTHONNET_RUNTIME=coreclr`;
 - Thermo's `ThermoFisher.CommonCore.Data.dll` and `ThermoFisher.CommonCore.RawFileReader.dll`

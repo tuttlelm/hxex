@@ -2955,3 +2955,50 @@ CSVs or mzML if wanted.
     help text (`PROJECT`, `BUNDLE`; also shown by `--help`), and `init --force` says that
     without it an existing file is refused. Tests: the page is current, and every argument of
     every command has a help text.
+
+110. **The guide for users who know no Python (owner, 2026-10-19).** Owner: users are likely
+    not computer savvy, and are not expected to know Python. New pages: `install.md` (uv, then
+    `uv tool install` from the GitHub zip, so no git, Python, or pip knowledge is needed; tested
+    on Linux, including the CPU-only PyTorch variant, updating with `--reinstall --refresh`,
+    and the `[thermo]` extra; Windows and macOS untested), `first-project.md` (opening a
+    terminal in a folder, editing the project file in a plain text editor, writing Windows
+    paths, and the commands in order), and `python.md` (the Python material moved out of the
+    user pages, and how to enter review decisions, which has no command yet). Fixes found on
+    the way: the build-system bound `hatchling>=1.25` let a resolver choose a hatchling that
+    cannot read the `license-files` list (it happened with PyTorch's index first, which carries
+    an old `packaging`): now `>=1.27`. brainpy's invalid escape sequences printed a
+    SyntaxWarning on the first run under Python 3.12 and later: silenced around its import. A
+    Windows path with backslashes between double quotes gave TOML's bare "Invalid hex value":
+    the message now says to use forward slashes or single quotes.
+
+111. **Bundles zipped by the operating system are read (owner, 2026-10-19).** hxex writes a
+    zip bundle with `manifest.json` at the zip's top (`bundle = "results.zip"`); Windows'
+    "Compressed (zipped) folder" and macOS "Compress" put the folder inside the zip, which
+    hxex refused as not a bundle, so a user who zipped results to share them sent an
+    unreadable file. `_zip_root` finds the bundle at the top or in the zip's one folder
+    (ignoring `__MACOSX/` and `.DS_Store`); the zip store, `bundle_manifest`, and the
+    replaceable-bundle check use it. A zip with several folders is still not a bundle. The
+    guide's outputs page has a "Sharing results" section.
+
+112. **Lists of tables forgive single brackets (owner, 2026-10-19).** A list of tables with one
+    item written with single brackets, as most headings are (`[input.runs]`,
+    `[analysis.regions]`, `[analysis.sites]`, `[run.registry.residues]`), is read as a list of
+    one, as `[input.fragments]` already was (`config._items`). Before, `[input.runs]` said
+    "give at least one [[input.runs]]", regions and sites gave a Python error, and the registry
+    said "expected a list". A single-bracket heading written twice (TOML refuses it) now gets a
+    hint: double brackets for the list tables (`config.LIST_TABLES`), one heading for any
+    other. The guide's first project and the settings reference explain double brackets.
+
+113. **The analysis folder treated like the tables and figures folders (owner, 2026-10-19).**
+    `write_analysis` writes through `replace_outputs` (the `hxex_listing.json` of item 96): a
+    second `hxex analyse` removes the files of the first (a figure it no longer draws goes),
+    keeps the user's own files, and refuses one of theirs named like a new file. `_analysis`
+    joins the bundle's sibling folders, so `--keep-previous` moves `results_analysis` to
+    `results.N_analysis`; an analysis directory named by `[analysis] out` or `--out` is not
+    moved. `hxex run` does not write the analysis: after `--overwrite` it warns that
+    `results_analysis` still describes the replaced results. No other output folder lacked
+    this: tables and figures (from `run`, `resume`, and `report`) already had it, and the
+    multi-run default `runs_analysis` and explicit directories now get the listing too. As for
+    the tables in item 96, an analysis folder written before the listing (nine in the private
+    examples) is written again only if none of its files is named like a new one; move them,
+    or write elsewhere, once.

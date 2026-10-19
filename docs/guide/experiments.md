@@ -51,7 +51,7 @@ summed. See [Input formats](inputs.md).
   difference), per residue, per population, with Woods and butterfly plots. `peptide_match =
   "range"` pairs a mutant's peptide with the reference's over the same residues.
 - Regions and sites (`[[analysis.regions]]`, `[[analysis.sites]]`) are drawn and summarised;
-  hxex derives none itself.
+  *hxex* derives none itself.
 - Separate runs compared or pooled: see [Comparing separate runs](comparing-runs.md).
 - Peptide protection factors (opt-in, `protection = true`, with the labelling conditions in
   `[analysis.labelling]`): one factor per peptide, from the uptake against the intrinsic rates.
@@ -75,7 +75,7 @@ row per charge state). In direct infusion there is usually no retention window; 
 of scans (`[input.scans] group = "every"`, `every = 20`) gives spectra with enough signal.
 
 **The picking window.** At high charge the isotope peaks are close together, and a fixed ppm
-window can be wider than half their spacing. hxex caps every window at half the spacing,
+window can be wider than half their spacing. *hxex* caps every window at half the spacing,
 which matters only here: on a top-down example at charge 20, the uncapped window had zeroed
 more than a quarter of the envelope's bins and moved its centre by about 9 bins. Better still, size the window from the instrument's resolving power:
 
@@ -128,7 +128,7 @@ the kinetics spectra look almost noiseless and favour two populations.
 **Direction.** Forward labelling (the deuterium rises) and back-exchange (it falls) use the same
 model and the same settings; nothing names the direction. A back-exchange is described by the
 solvent conditions: `initial_fraction` (the D fraction the amides began with) above
-`d2o_fraction` (the solvent's). If the data go the other way from the conditions given, hxex
+`d2o_fraction` (the solvent's). If the data go the other way from the conditions given, *hxex*
 refuses and says which setting to check. See
 [Protection factors from back-exchange kinetics](back-exchange-protection.md).
 

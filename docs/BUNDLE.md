@@ -1,7 +1,9 @@
 # The hxex results bundle (schema version 1)
 
 A bundle holds everything needed to replot and review a run without refitting. It is a
-directory (or a read-only zip of it) with a `manifest.json` and Parquet files (zstd). Every
+directory (or a read-only zip of it, with the files at the zip's top as hxex writes it, or
+in its one folder as the operating systems zip a folder) with a `manifest.json` and Parquet
+files (zstd). Every
 number is stored exactly: float64, int64, bool or string, with list columns for ragged data
 (`list<double>` and so on), so reading a table gives back the values the run produced. The
 tables can be read with any Parquet reader (`pyarrow`, R `arrow::read_parquet`, Julia
@@ -18,15 +20,15 @@ manifest: the directory does not open until the bundle is written again.
 
 ## What a results folder holds, and what a later run does with it
 
-The bundle and the folders named after it (`results_tables`, `results_figures`, and the
-earlier generations `results.1`, `results.1_tables`, `results.1_figures`, or `results.1.zip`
-for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
+The bundle and the folders named after it (`results_tables`, `results_figures`,
+`results_analysis`, and the earlier generations `results.1`, `results.1_tables`,
+`results.1_figures`, `results.1_analysis`, or `results.1.zip` for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
 live there and are treated differently:
 
 - **Computed results** (the bundle's tables, the CSV tables, the figures) are replaced. A
-  bundle directory is replaced file by file as above. A tables or figures folder keeps a
-  listing of the files hxex wrote, `hxex_listing.json`; writing again (`hxex run`, `resume`,
-  `report`, `write_tables`, `write_figures`) removes the listed files and writes the new ones,
+  bundle directory is replaced file by file as above. A tables, figures, or analysis folder
+  keeps a listing of the files hxex wrote, `hxex_listing.json`; writing again (`hxex run`,
+  `resume`, `report`, `analyse`, `write_tables`, `write_figures`, `write_analysis`) removes the listed files and writes the new ones,
   so the folder holds what the current bundle gives. A folder with files but no listing (one
   written before the listing existed) is written only if no file in it is named like a new
   one.
@@ -39,11 +41,14 @@ live there and are treated differently:
   under other names.
 
 `hxex run --overwrite` (or `[output] overwrite = true`) replaces in place; `--keep-previous`
-(`keep_previous = true`) first moves the bundle, with its `_tables` and `_figures` folders, to
-the next generation (`results.N`, `results.N_tables`, `results.N_figures`; N is one more than
+(`keep_previous = true`) first moves the bundle, with its `_tables`, `_figures`, and
+`_analysis` folders, to the next generation (`results.N`, `results.N_tables`,
+`results.N_figures`, `results.N_analysis`; N is one more than
 any number ever used beside the bundle, so a name is never reused; `hxex.io.keep_previous`).
-A tables or figures directory named explicitly in `[output]` is not moved (its hxex files are
-replaced). `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
+A tables or figures directory named explicitly in `[output]`, or an analysis directory named
+by `[analysis] out` or `--out`, is not moved (its hxex files are replaced). `hxex run` does not
+write the analysis: after `--overwrite`, `results_analysis` describes the replaced results until
+`hxex analyse` runs again (the run warns). `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
 
 ## Keys and conventions
 

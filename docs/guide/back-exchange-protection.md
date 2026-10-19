@@ -23,14 +23,14 @@ initial_fraction = 0.9     # the amides began in 90 % D2O
 
 Leave `initial_fraction` out for forward labelling. If the data go the other way from the
 conditions (deuterium falls with time but no `initial_fraction` is set, or rises when it
-is), hxex stops and says which setting to change.
+is), *hxex* stops and says which setting to change.
 
-**Where the exchange starts.** By default hxex fits each peptide's starting deuteration
+**Where the exchange starts.** By default *hxex* fits each peptide's starting deuteration
 (`fD0` in `protection.csv`) along with its protection factor, because the protein may not
 have been fully deuterated when the exchange began. If the run has a measured fully
 deuterated control (a run with `role = "fulldeut"`), each peptide is taken to start there
 (`fD0 = 1`). Early points of a kinetics run are often unreliable: leave them out with
-`[analysis] exclude_times`. hxex never drops them on its own.
+`[analysis] exclude_times`. *hxex* never drops them on its own.
 
 **Without a fully deuterated control.** Back-exchange samples without one are fitted on the
 absolute scale (deuterons per amide), relaxing to the solvent's equilibrium deuteration;
@@ -46,7 +46,7 @@ is poorly known and its error is too small. Peptides with fewer than three time 
 no value when the start is fitted.
 
 **Per residue.** Protection factors from peptides are per peptide only. Overlapping peptides
-do not determine single residues reliably, so hxex does not offer that. Residue-level rates
+do not determine single residues reliably, so *hxex* does not offer that. Residue-level rates
 and protection factors come from fragment ladders ([Residue-level rates and protection factors from fragment
 ladders](fragment-residues.md)).
 

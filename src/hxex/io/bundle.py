@@ -96,17 +96,33 @@ class _DirStore:
         pass
 
 
+def _zip_root(zf: zipfile.ZipFile) -> str:
+    """Where the bundle is inside a zip: ``''`` when ``manifest.json`` is at the top (as hxex
+    writes it), or ``'NAME/'`` when the zip holds one folder with the bundle in it (as Windows'
+    "Compressed (zipped) folder" and macOS "Compress" make it; the ``__MACOSX`` folder and
+    ``.DS_Store`` files macOS adds are ignored). ``''`` when neither fits (no bundle there)."""
+    names = [n for n in zf.namelist() if not n.startswith("__MACOSX/")
+             and n.rsplit("/", 1)[-1] != ".DS_Store"]
+    if MANIFEST in names:
+        return ""
+    roots = {n.split("/", 1)[0] + "/" for n in names}
+    if len(roots) == 1 and (root := roots.pop()) + MANIFEST in names:
+        return root
+    return ""
+
+
 class _ZipStore:
     writable = False
 
     def __init__(self, path: Path):
         self.zf = zipfile.ZipFile(path)
+        self.root = _zip_root(self.zf)
 
     def exists(self, name: str) -> bool:
-        return name in self.zf.namelist()
+        return self.root + name in self.zf.namelist()
 
     def read(self, name: str) -> bytes:
-        return self.zf.read(name)
+        return self.zf.read(self.root + name)
 
     def table(self, name: str, columns=None, filters=None) -> pa.Table:
         return pq.read_table(pa.BufferReader(self.read(name)), columns=columns, filters=filters)
@@ -433,7 +449,7 @@ def _is_bundle_zip(path: Path) -> bool:
         return False
     try:
         with zipfile.ZipFile(path) as zf:
-            manifest = json.loads(zf.read(MANIFEST).decode())
+            manifest = json.loads(zf.read(_zip_root(zf) + MANIFEST).decode())
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
         return False
     return isinstance(manifest, dict) and manifest.get("kind") == KIND
@@ -455,7 +471,7 @@ def bundle_manifest(path: str | Path) -> dict | None:
     if path.is_file() and zipfile.is_zipfile(path):
         try:
             with zipfile.ZipFile(path) as zf:
-                manifest = json.loads(zf.read(MANIFEST).decode())
+                manifest = json.loads(zf.read(_zip_root(zf) + MANIFEST).decode())
         except (OSError, KeyError, ValueError, zipfile.BadZipFile):
             return None
         if isinstance(manifest, dict) and manifest.get("kind") == KIND:
@@ -527,7 +543,7 @@ def provenance_of(
 
 # --- generations: a bundle kept beside its replacement ---------------------------------------
 
-SIBLINGS = ("_tables", "_figures")  # the output folders named after a bundle
+SIBLINGS = ("_tables", "_figures", "_analysis")  # the output folders named after a bundle
 
 
 def _generation_stem(path: Path) -> tuple[str, str]:
@@ -569,11 +585,11 @@ def _size_of(path: Path) -> int:
 
 def keep_previous(path: str | Path) -> Path | None:
     """Move the bundle at ``path`` to its next generation, ``name.N`` (``name.N.zip`` for a
-    zip), with its ``name_tables`` and ``name_figures`` folders moved to ``name.N_tables`` and
-    ``name.N_figures``, and return the generation's path (None when there is nothing at
-    ``path``). N is one more than any number used beside the bundle before, so a generation's
-    name is never reused. A path that holds something other than a bundle is refused. Sizes
-    are logged."""
+    zip), with its ``name_tables``, ``name_figures``, and ``name_analysis`` folders moved to
+    ``name.N_tables``, ``name.N_figures``, and ``name.N_analysis``, and return the generation's
+    path (None when there is nothing at ``path``). N is one more than any number used beside the
+    bundle before, so a generation's name is never reused. A path that holds something other
+    than a bundle is refused. Sizes are logged."""
     path = Path(path)
     if not path.exists():
         return None
@@ -1266,7 +1282,8 @@ def legacy_roles(time: np.ndarray, legacy: Mapping[str, float]) -> np.ndarray:
 
 
 def open_bundle(path: str | Path) -> Bundle:
-    """Open a bundle (a directory or a ``.zip``). Raises :class:`BundleError` if it is not one,
+    """Open a bundle (a directory or a ``.zip``: the bundle's files at its top, or in its one
+    folder, as a zipped bundle folder holds them). Raises :class:`BundleError` if it is not one,
     or was written by a newer schema."""
     path = Path(path)
     if path.is_dir() and not (path / MANIFEST).exists() and (path / REPLACING).exists():

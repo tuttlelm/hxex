@@ -2,7 +2,7 @@
 
 # Command-line reference
 
-Every command and option of `hxex`, from the program's own definitions (`hxex COMMAND --help` prints the same). [The project file and the commands](project-file.md) shows how they fit together.
+Every command and option of *hxex*, from the program's own definitions (`hxex COMMAND --help` prints the same). [The project file and the commands](project-file.md) shows how they fit together.
 
 Messages and progress go to the terminal's error stream, results and summaries to its output. Ctrl-C stops a run cleanly after the current step (a second Ctrl-C aborts at once). Exit status: 0 done, 1 an error (its message is printed), 2 a usage error, 130 stopped.
 
@@ -99,7 +99,7 @@ Also spelt `hxex analyze`.
 | `PROJECT\|BUNDLE ...` | a project file (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
 | `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle) |
 | `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis) |
-| `--reference` `REFERENCE` | the reference sample (instead of [analysis] reference; RUN:sample when the sample is in several runs) |
+| `--reference` `REFERENCE` | the reference sample (instead of [analysis] reference; `RUN:sample` when the sample is in several runs) |
 | `--format` `{pdf,png,svg}` | figure file format |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 
