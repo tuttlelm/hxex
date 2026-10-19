@@ -603,7 +603,8 @@ class DecayFit:
     the fit failed or had too few points) and ``resolved``: whether the time range shows the
     decay (``rate * t_last >= 0.1`` and ``rate * t_first <= 3``); a decay too slow for the
     range fits a straight line as a tiny rate with huge amplitude and offset, and one over
-    before the first point has no shape, so their rates mean nothing."""
+    before the first point has no shape, so their rates mean nothing. ``amplitude_se``: the
+    amplitude's standard error, from the same covariance."""
 
     rate: float
     rate_se: float
@@ -612,6 +613,7 @@ class DecayFit:
     n: int
     ok: bool
     resolved: bool = False
+    amplitude_se: float = np.nan
 
     def curve(self, t) -> np.ndarray:
         return self.amplitude * np.exp(-self.rate * np.asarray(t, float)) + self.offset
@@ -659,10 +661,15 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     _, p, cov = best
     rate_se = float(np.sqrt(cov[1, 1])) if np.all(np.isfinite(cov)) else np.nan
     rate = float(p[1])
-    with np.errstate(over="ignore"):  # the amplitude at time 0 of an unresolved fast decay
-        amplitude = float(p[0] * np.exp(rate * t_first))
+    with np.errstate(over="ignore", invalid="ignore"):  # an unresolved fast decay's amplitude
+        grow = np.exp(rate * t_first)
+        amplitude = float(p[0] * grow)
+        # amplitude = A' exp(k t_first): its gradient in (A', k, C)
+        g = np.array([grow, p[0] * t_first * grow, 0.0])
+        var = float(g @ cov @ g) if np.all(np.isfinite(cov)) else np.nan
+    amplitude_se = float(np.sqrt(var)) if np.isfinite(var) and var >= 0 else np.nan
     resolved = rate * t_last >= 0.1 and rate * t_first <= 3.0
-    return DecayFit(rate, rate_se, amplitude, float(p[2]), len(t), True, resolved)
+    return DecayFit(rate, rate_se, amplitude, float(p[2]), len(t), True, resolved, amplitude_se)
 
 
 # --- per-residue values from all fragments ------------------------------------------------------
@@ -726,13 +733,17 @@ class LadderRates:
     type, fragment charge and step (``run`` and ``merged`` as in :class:`FragmentUptake`):
     the ``residue`` (protein numbering) and its amino acid ``aa``,
     the fragments (``larger`` minus ``smaller``; ``smaller`` empty for the shortest fragment
-    alone), ``rate`` and ``rate_se`` (1/s), ``amplitude`` and ``offset`` (deuterons), the
+    alone), ``rate`` and ``rate_se`` (1/s), ``amplitude``, its ``amplitude_se``, and
+    ``offset`` (deuterons), the
     number of points ``n`` and whether the decay is ``resolved`` in the time range (an
     unresolved rate means nothing). Only when computed with exchange conditions (otherwise
     None, and not among the columns): ``kint``, the residue's intrinsic rate in the sample's
     solvent (1/s; ``kforw + kback``, :mod:`hxex.kint`, from the parent's sequence; NaN for a
     sample without conditions) and ``protection``, ``kint / rate`` (NaN where the decay is not
-    resolved: such a rate means nothing)."""
+    resolved: such a rate means nothing), with ``log10_protection`` and its
+    ``log10_protection_se`` (from ``rate_se``; ``kint`` is exact). ``precise``: the decay is
+    resolved and ``rate_se / rate`` is at most ``max_rate_error``, the steps
+    :func:`ladder_residues` combines."""
 
     sample: np.ndarray
     parent: np.ndarray
@@ -748,17 +759,24 @@ class LadderRates:
     rate: np.ndarray
     rate_se: np.ndarray
     amplitude: np.ndarray
+    amplitude_se: np.ndarray
     offset: np.ndarray
     n: np.ndarray
     resolved: np.ndarray
+    precise: np.ndarray | None = None
     kint: np.ndarray | None = None
     protection: np.ndarray | None = None
+    log10_protection: np.ndarray | None = None
+    log10_protection_se: np.ndarray | None = None
     min_time: float | None = None
+    max_rate_error: float | None = None
     run: np.ndarray | None = None
     merged: np.ndarray | None = None
 
     def __post_init__(self):
         _fill_runs(self)
+        if self.precise is None:
+            object.__setattr__(self, "precise", np.asarray(self.resolved, dtype=bool).copy())
 
     def __len__(self) -> int:
         return len(self.residue)
@@ -783,6 +801,9 @@ class LadderRates:
         return keep
 
 
+MAX_RATE_ERROR = 0.5  # rate_se / rate of a step ladder_residues uses (log10 se about 0.22)
+
+
 def fragment_ion_types(uptake: FragmentUptake) -> list[str]:
     """The fragment ion types of the table (not the precursor ions), N-terminal first."""
     ions = {str(i) for i in np.unique(uptake.ion_type) if chem.ion_terminus(str(i)) != "M"}
@@ -796,6 +817,7 @@ def ladder_rates(
     charges: Sequence[int] = (1,),
     min_time: float | None = None,
     conditions: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None,
+    max_rate_error: float = MAX_RATE_ERROR,
 ) -> LadderRates:
     """Fit ``A exp(-k t) + C`` (:func:`fit_decay`, from ``min_time``) to every single-residue
     step (:func:`ladder_steps`) of the ``ion_types`` (default: every fragment ion type of the
@@ -804,12 +826,16 @@ def ladder_rates(
     it holds one amide. With the exchange ``conditions`` (the solvent of the kinetics: one set
     for every sample, or by sample with per-run entries, :func:`hxex.analysis.sample_setting`),
     each step also gets its residue's intrinsic rate and protection factor (NaN for a sample
-    without conditions); without them there are no such columns."""
+    without conditions); without them there are no such columns. ``precise`` marks the
+    resolved steps whose ``rate_se / rate`` is at most ``max_rate_error``."""
+    if not max_rate_error > 0:
+        raise ValueError("max_rate_error must be positive")
     from ..kint import intrinsic_rates
     from .runs import sample_setting
 
     ion_types = list(ion_types) if ion_types is not None else fragment_ion_types(uptake)
-    cols: dict[str, list] = {f.name: [] for f in fields(LadderRates) if f.name != "min_time"}
+    cols: dict[str, list] = {f.name: [] for f in fields(LadderRates)
+                             if f.name not in ("min_time", "max_rate_error")}
     state_run = uptake.state_run
     groups = sorted({(str(u), str(s), str(p), int(z)) for u, s, p, z in zip(
         state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
@@ -844,6 +870,8 @@ def ladder_rates(
                         if not len(tr):
                             continue
                         f = fit_decay(tr, min_time=min_time)
+                        relative = f.rate_se / f.rate if f.rate > 0 else np.nan
+                        protection = (k_int / f.rate if f.resolved and f.rate > 0 else np.nan)
                         for name, value in (
                                 ("run", run), ("merged", merged),
                                 ("sample", sample), ("parent", parent),
@@ -853,17 +881,24 @@ def ladder_rates(
                                 ("aa", residues[residue - entry.start_seq]),
                                 ("larger", step.larger), ("smaller", step.smaller or ""),
                                 ("rate", f.rate), ("rate_se", f.rate_se),
-                                ("amplitude", f.amplitude), ("offset", f.offset), ("n", f.n),
-                                ("resolved", f.resolved), ("kint", k_int),
-                                ("protection", k_int / f.rate
-                                 if f.resolved and f.rate > 0 else np.nan)):
+                                ("amplitude", f.amplitude), ("amplitude_se", f.amplitude_se),
+                                ("offset", f.offset), ("n", f.n),
+                                ("resolved", f.resolved),
+                                ("precise", bool(f.resolved and relative <= max_rate_error)),
+                                ("kint", k_int), ("protection", protection),
+                                ("log10_protection", np.log10(protection)),
+                                ("log10_protection_se", relative / np.log(10)
+                                 if np.isfinite(protection) else np.nan)):
                             cols[name].append(value)
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
              "residue": np.int64, "rate": float, "rate_se": float, "amplitude": float,
-             "offset": float, "n": np.int64, "resolved": bool, "kint": float,
-             "protection": float, "run": object, "merged": bool}
+             "amplitude_se": float, "offset": float, "n": np.int64, "resolved": bool,
+             "precise": bool, "kint": float,
+             "protection": float, "log10_protection": float, "log10_protection_se": float,
+             "run": object, "merged": bool}
     if conditions is None:
-        del cols["kint"], cols["protection"]
+        for name in ("kint", "protection", "log10_protection", "log10_protection_se"):
+            del cols[name]
     else:
         from .runs import label as _label
 
@@ -872,8 +907,128 @@ def ladder_rates(
         if missing:
             log.warning("no exchange conditions for sample(s) %s ([analysis.fragments.exchange]):"
                         " no intrinsic rates for them", ", ".join(_label(*m) for m in missing))
-    return LadderRates(**{name: np.array(v, dtype=kinds.get(name, str))
-                          for name, v in cols.items()}, min_time=min_time)
+    with np.errstate(divide="ignore", invalid="ignore"):  # log10 of NaN protection factors
+        arrays = {name: np.array(v, dtype=kinds.get(name, str)) for name, v in cols.items()}
+    return LadderRates(**arrays, min_time=min_time, max_rate_error=max_rate_error)
+
+
+@dataclass(frozen=True)
+class LadderResidues:
+    """One rate per residue from the precise ladder steps (:attr:`LadderRates.precise`), the
+    N-terminal ladder's estimate combined with the C-terminal ladder's: one row per run,
+    sample, parent, precursor charge, condition, fragment ``charge``, residue and pair of ion
+    types (``n_ion``, ``c_ion``; blank where that side has no precise step). Different
+    conditions (gentle and harsh), precursor charges, fragment charges and runs are never
+    combined, and neither are ion types of one terminus (c and c-1 are read from the same
+    peaks, not independent): a residue with c, c-1 and z steps has the rows (c, z) and (c-1,
+    z), alternatives, not to be averaged. ``n`` estimates (1 or 2), ``log10_rate`` (their mean
+    weighted by ``1 / se**2`` in log10, each with ``rate_se / (rate ln 10)``) and
+    ``log10_rate_se`` (scaled by ``sqrt(misfit)`` when the misfit is above 1), ``rate``,
+    ``misfit`` (chi-square of the two about their mean; NaN for one) and ``agreement``:
+    ``'agree'`` (within its limit at ``alpha``), ``'disagree'`` (the two ladders give different
+    rates: the mean is then a poor summary) or ``'single'``. With exchange conditions (as
+    :class:`LadderRates`): ``kint``, ``log10_protection`` (``log10(kint) - log10_rate``), its
+    se and ``protection``."""
+
+    sample: np.ndarray
+    parent: np.ndarray
+    parent_start: np.ndarray
+    parent_charge: np.ndarray
+    condition: np.ndarray
+    charge: np.ndarray
+    residue: np.ndarray
+    aa: np.ndarray
+    n_ion: np.ndarray
+    c_ion: np.ndarray
+    n: np.ndarray
+    log10_rate: np.ndarray
+    log10_rate_se: np.ndarray
+    rate: np.ndarray
+    misfit: np.ndarray
+    agreement: np.ndarray
+    kint: np.ndarray | None = None
+    log10_protection: np.ndarray | None = None
+    log10_protection_se: np.ndarray | None = None
+    protection: np.ndarray | None = None
+    run: np.ndarray | None = None
+    merged: np.ndarray | None = None
+
+    def __post_init__(self):
+        _fill_runs(self)
+
+    def __len__(self) -> int:
+        return len(self.residue)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return _columns(self)
+
+    def where(self, **conditions) -> np.ndarray:
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in conditions.items():
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, set)) else [value]
+                keep &= np.isin(getattr(self, name), list(values))
+        return keep
+
+
+def ladder_residues(rates: LadderRates, *, alpha: float = 0.05) -> LadderResidues:
+    """Combine the precise steps of :func:`ladder_rates` per residue, the N-terminal ladder
+    with the C-terminal one (see :class:`LadderResidues`); residues without a precise step
+    have no row."""
+    from itertools import product
+
+    from scipy import stats
+
+    with_kint = rates.kint is not None
+    keys = ("run", "merged", "sample", "parent", "parent_start", "parent_charge", "condition",
+            "charge", "residue", "aa")
+    groups: dict[tuple, dict[str, dict[str, int]]] = {}
+    for i in np.flatnonzero(rates.precise):
+        key = tuple(np.asarray(getattr(rates, k))[i] for k in keys)
+        key = tuple(v.item() if isinstance(v, np.generic) else v for v in key)
+        side = "N" if chem.ion_terminus(str(rates.ion_type[i])) == "N" else "C"
+        groups.setdefault(key, {"N": {}, "C": {}})[side][str(rates.ion_type[i])] = int(i)
+    cols: dict[str, list] = {f.name: [] for f in fields(LadderResidues)}
+    for key in sorted(groups, key=lambda k: tuple(map(str, k))):
+        sides = groups[key]
+        for n_ion, c_ion in product(sorted(sides["N"]) or [""], sorted(sides["C"]) or [""]):
+            rows = [sides["N"][n_ion]] if n_ion else []
+            rows += [sides["C"][c_ion]] if c_ion else []
+            rate, rate_se = rates.rate[rows], rates.rate_se[rows]
+            x = np.log10(rate)
+            w = 1.0 / (rate_se / (rate * np.log(10))) ** 2
+            mean = float(np.sum(w * x) / np.sum(w))
+            mean_se = float(np.sqrt(1.0 / np.sum(w)))
+            n = len(rows)
+            chi2 = float(np.sum(w * (x - mean) ** 2))
+            misfit = chi2 / (n - 1) if n > 1 else np.nan
+            if n > 1:
+                mean_se *= float(np.sqrt(max(1.0, misfit)))
+                agreement = "agree" if chi2 <= stats.chi2.ppf(1 - alpha, n - 1) else "disagree"
+            else:
+                agreement = "single"
+            for k, v in zip(keys, key, strict=True):
+                cols[k].append(v)
+            for name, v in (("n_ion", n_ion), ("c_ion", c_ion), ("n", n),
+                            ("log10_rate", mean), ("log10_rate_se", mean_se),
+                            ("rate", 10.0**mean), ("misfit", misfit), ("agreement", agreement)):
+                cols[name].append(v)
+            if with_kint:
+                k_int = float(rates.kint[rows[0]])
+                lp = np.log10(k_int) - mean if k_int > 0 else np.nan
+                for name, v in (("kint", k_int), ("log10_protection", lp),
+                                ("log10_protection_se", mean_se if np.isfinite(lp) else np.nan),
+                                ("protection", 10.0**lp)):
+                    cols[name].append(v)
+    kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
+             "residue": np.int64, "n": np.int64, "log10_rate": float, "log10_rate_se": float,
+             "rate": float, "misfit": float, "kint": float, "log10_protection": float,
+             "log10_protection_se": float, "protection": float, "run": object, "merged": bool}
+    if not with_kint:
+        for name in ("kint", "log10_protection", "log10_protection_se", "protection"):
+            del cols[name]
+    return LadderResidues(**{name: np.array(v, dtype=kinds.get(name, str))
+                             for name, v in cols.items()})
 
 
 @dataclass(frozen=True)
@@ -890,6 +1045,9 @@ class FragmentAnalysis:
       under its name, ``{'etd': {'gentle': 'ETD G'}}``, for a merged sample's runs).
     - ``tolerance`` (deuterons): a closure ``c + z - M`` beyond it is flagged.
     - ``precursor_charge``: the closure's precursor; None: the unreacted precursor.
+    - ``max_rate_error``: a ladder step's ``rate_se / rate`` at most this is ``precise`` and
+      enters the per-residue rates (:func:`ladder_residues`, ``ladder_residues.csv``: the N-
+      and C-terminal ladders combined, fragment charges and conditions kept apart).
     - ``kint``: compute intrinsic rates, protection factors and theoretical curves (opt-in;
       needs ``exchange``); ``exchange``: the samples' exchange conditions
       (:class:`hxex.kint.ExchangeConditions`, one set for every sample, or by sample with a
@@ -903,6 +1061,7 @@ class FragmentAnalysis:
     labels: Mapping[str, str] | None = None
     tolerance: float = 0.25
     precursor_charge: int | None = None
+    max_rate_error: float = MAX_RATE_ERROR
     kint: bool = False
     exchange: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None
 
@@ -928,12 +1087,16 @@ class FragmentAnalysis:
                          else str(v)) for k, v in self.labels.items()})
         if not self.tolerance > 0:
             raise ValueError("tolerance must be positive")
+        object.__setattr__(self, "max_rate_error", float(self.max_rate_error))
+        if not self.max_rate_error > 0:
+            raise ValueError("max_rate_error must be positive")
 
     def to_dict(self) -> dict:
         return {"ion_types": list(self.ion_types), "charges": list(self.charges),
                 "min_time": self.min_time, "labels": dict(self.labels or {}) or None,
                 "tolerance": self.tolerance, "precursor_charge": self.precursor_charge,
-                "kint": self.kint, "exchange": conditions_dict(self.exchange)}
+                "max_rate_error": self.max_rate_error, "kint": self.kint,
+                "exchange": conditions_dict(self.exchange)}
 
     @classmethod
     def from_dict(cls, data: Mapping) -> FragmentAnalysis:

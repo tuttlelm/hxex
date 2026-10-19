@@ -2849,3 +2849,29 @@ CSVs or mzML if wanted.
       100 (fD already 0.46 of 0.8 at 10 s) the start is poorly determined and its error
       understated (0.15 against 0.09; log10 protection 0.096 against 0.081).
     - Not tried on real data: no back-exchange dataset with known conditions yet.
+
+105. **Residue-level protection factors from fragment ladders (owner, 2026-10-19).** The
+    owner judged the peptide-derived residue factors poor (B5) and chose fragment ladders,
+    where they resolve single residues with low error, for residue-level factors; the
+    peptide-derived residue fit is not extended to back-exchange. Built on `ladder_rates`
+    (whose free `A exp(-k t) + C` already fits either direction): `log10_protection` and its
+    se (`rate_se / (rate ln 10)`), `precise` (resolved and `rate_se / rate <= max_rate_error`,
+    new `[analysis.fragments] max_rate_error`, default 0.5), and `ladder_residues`
+    (`ladder_residues.csv`): the N- and C-terminal ladders' estimates combined per residue by
+    weighted mean in log10, se scaled by the misfit above 1, `agreement` from the chi-square
+    at alpha 0.05. Owner's pooling rules: conditions (gentle, harsh) never pooled; fragment
+    charges kept separate; ion types of one terminus not combined (c-type ions are mixtures,
+    c and c-1 read from the same peaks), so each (N ion, C ion) pair is a row. Check on the
+    synthetic ladder (8 residues, noise 0.02 D, 60 seeds): each step's scatter in log10 rate
+    matches its reported se (0.011 to 0.031 against 0.011 to 0.029), no bias above 0.006,
+    the combined se halves the variance as expected, and 94 % of two-ladder residues agree
+    at alpha 0.05. Not tried on real data: the fragment-kinetics infusion conditions (needed
+    for kint) are still awaited.
+    - **Error ranges in the fragment figures (owner, 2026-10-19).** The ladder kinetics and
+      closure figures draw +-1 se bars on every point (light, alpha 0.35, no caps; the trace's
+      `mean_se`). The residue-rates figure's rate panel already had them; the amplitude panel
+      now has them from the new `amplitude_se` (`DecayFit`, `ladder_rates.csv`: propagated
+      from the fit's covariance, `A = A' exp(k t_first)`; on the synthetic ladder 0.012
+      scatter against 0.011 reported), the protection panel the +-1 se range of
+      `log10_protection`. The combined per-residue values are not drawn (a figure change
+      waits for the owner's reference).

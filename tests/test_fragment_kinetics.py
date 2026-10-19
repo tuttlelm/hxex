@@ -391,7 +391,7 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     written = write_analysis(run, cfg, tmp_path)
     names = sorted(p.name for p in written)
     assert names == sorted([
-        "fragment_uptake.csv", "ladder_rates.csv", "closure.csv",
+        "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
     assert all(p.stat().st_size > 0 for p in written)
@@ -428,8 +428,8 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
         min_time=10.0, kint=True, exchange={"S": cond}))
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
-    assert header.endswith("kint,protection,merged")
-    assert len(written) == 7
+    assert header.endswith("kint,protection,log10_protection,log10_protection_se,merged")
+    assert len(written) == 8
     # without the opt-in the same conditions change nothing
     off = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
                                                                   exchange={"S": cond}))
@@ -481,7 +481,8 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
 
     run = stub_run(conditions=("gentle",))
     cfg = FragmentAnalysis(min_time=10.0)
-    assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "ladder_rates", "closure"}
+    assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
+                                                     "ladder_residues", "closure"}
     no_source = SimpleNamespace(**{**vars(run), "settings": SimpleNamespace(
         spectra_source=None, picker=run.settings.picker)})
     assert fragment_outputs(no_source, cfg) == ({}, [])
@@ -498,7 +499,7 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
     both = RunSet({"ms1": folder, "frag": run})
     assert set(fragment_uptake(both).run) == {"frag"}
     assert fragment_outputs(both, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
-                                                      "closure"}
+                                                      "ladder_residues", "closure"}
     assert fragment_outputs(RunSet({"ms1": folder}), cfg) == ({}, [])
     # once there are fragment series, any other error is raised, not swallowed
     other = stub_run(conditions=("gentle",))
@@ -557,10 +558,10 @@ def test_fragment_outputs_of_several_runs(tmp_path):
     cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
     written = write_analysis(merged, cfg, tmp_path / "merged")
     assert sorted(p.name for p in written) == sorted([
-        "fragment_uptake.csv", "ladder_rates.csv", "closure.csv",
+        "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
-    for name in ("fragment_uptake", "ladder_rates", "closure"):
+    for name in ("fragment_uptake", "ladder_rates", "ladder_residues", "closure"):
         head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
         assert head.startswith("run,sample,"), head
 
@@ -597,3 +598,76 @@ def test_the_fragment_analysis_refuses_times_that_only_order_the_points(tmp_path
     run.time_scale = "order"  # as hxex.report.Results.time_scale reads it from the bundle
     with pytest.raises(ValueError, match="only order the points"):
         write_analysis(run, AnalysisConfig(fragments=FragmentAnalysis()), tmp_path)
+
+
+def test_ladder_protection_errors_and_precise_steps():
+    from hxex.analysis import ladder_rates
+    from hxex.kint import ExchangeConditions
+
+    u = synthetic(noise=0.01, seed=1)
+    cond = ExchangeConditions(7.0, 20.0, 0.05)
+    rates = ladder_rates(u, min_time=10.0, conditions=cond)
+    ok = np.isfinite(rates.protection)
+    assert np.allclose(rates.log10_protection[ok], np.log10(rates.protection[ok]))
+    assert np.allclose(rates.log10_protection_se[ok],
+                       rates.rate_se[ok] / (rates.rate[ok] * np.log(10)))
+    assert np.array_equal(rates.precise, rates.resolved & (rates.rate_se / rates.rate <= 0.5))
+    assert rates.max_rate_error == 0.5
+    strict = ladder_rates(u, min_time=10.0, max_rate_error=1e-9)
+    assert not strict.precise.any() and "log10_protection" not in strict.columns()
+    with pytest.raises(ValueError, match="max_rate_error"):
+        ladder_rates(u, max_rate_error=0)
+    # the amplitude's error, and error bars in every panel of the residue-rates figure
+    from matplotlib.container import ErrorbarContainer
+
+    from hxex.report import residue_rates_figure
+
+    assert np.all(np.isfinite(rates.amplitude_se[rates.resolved]))
+    assert np.all(rates.amplitude_se[rates.resolved] < 0.1)
+    fig = residue_rates_figure(rates)
+    assert all(any(isinstance(c, ErrorbarContainer) for c in ax.containers) for ax in fig.axes)
+
+
+def test_ladder_residues_combine_the_two_ladders_within_a_condition():
+    from hxex.analysis import ladder_rates, ladder_residues
+    from hxex.kint import ExchangeConditions
+
+    u = synthetic(conditions=("gentle", "harsh"), noise=0.005, seed=2)
+    cond = ExchangeConditions(7.0, 20.0, 0.05)
+    rates = ladder_rates(u, min_time=10.0, conditions=cond)
+    res = ladder_residues(rates)
+    # gentle and harsh are never pooled: one row per condition and residue
+    for c in ("gentle", "harsh"):
+        rows = res.where(condition=c)
+        assert sorted(res.residue[rows].tolist()) == sorted(
+            set(rates.residue[rates.where(condition=c) & rates.precise].tolist()))
+    both = res.n == 2
+    assert both.any() and (res.n_ion[both] == "c").all() and (res.c_ion[both] == "z").all()
+    for r, k in zip(res.residue, res.rate, strict=True):
+        assert k == pytest.approx(RATES[r], rel=0.1)
+    assert set(res.agreement[both]) <= {"agree", "disagree"}
+    assert (res.agreement[res.n == 1] == "single").all()
+    one = res.where(residue=12)  # c1 alone: no z step names residue 12
+    assert res.c_ion[one].tolist() == ["", ""]
+    assert np.allclose(res.log10_protection, np.log10(res.kint) - res.log10_rate)
+    # a disagreement between the ladders
+    i, j = np.flatnonzero(rates.where(condition="gentle", residue=16) & rates.precise)[:2]
+    fast = rates.rate.copy()
+    fast[j] = rates.rate[i] * 10.0
+    bad = ladder_residues(dataclasses.replace(rates, rate=fast, rate_se=fast * 0.05))
+    row = bad.where(condition="gentle", residue=16)
+    assert bad.agreement[row].tolist() == ["disagree"] and bad.misfit[row][0] > 10
+    # fragment charges are not combined; two ion types of one terminus are alternatives
+    z2 = dataclasses.replace(rates, charge=np.where(rates.ion_type == "z", 2, rates.charge))
+    split = ladder_residues(z2)
+    assert (split.n == 1).all() and set(split.charge) == {1, 2}
+    variant = dataclasses.replace(rates, ion_type=np.where(
+        (rates.ion_type == "c") & (rates.condition == "harsh"), "c-1", rates.ion_type),
+        condition=np.full(len(rates), "gentle"))
+    rows = ladder_residues(variant).where(residue=16)
+    pairs = sorted(zip(ladder_residues(variant).n_ion[rows], ladder_residues(variant).c_ion[rows],
+                       strict=True))
+    assert pairs == [("c", "z"), ("c-1", "z")]
+    # without conditions: no kint columns
+    plain = ladder_residues(ladder_rates(u, min_time=10.0))
+    assert "kint" not in plain.columns() and len(plain) == len(res)

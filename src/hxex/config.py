@@ -1392,6 +1392,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# min_time = 20.0                 # s, exchange clock: earlier points drawn, not fitted",
         "#                                 # (not [input.scans] min_time, on the scan clock)",
         "# tolerance = 0.25                # closure: c + z - M beyond this is flagged (D)",
+        "# max_rate_error = 0.5            # ladder steps with rate_se / rate at most this",
+        "#                                 # give the per-residue rates (ladder_residues.csv)",
         "# kint = true                     # opt in: intrinsic rates, protection factors and",
         "#                                 # theoretical curves (hxex.kint); needs exchange",
         '# [analysis.fragments.labels]     # short condition names in the figures',

@@ -209,6 +209,23 @@ How fragment data differs, and what this branch does about it:
   rate` per step, `expected_uptake` the deuterium of unprotected amides over time, drawn
   dashed in the ladder figure, and the residue-rates figure gains a protection-factor panel.
   Modified residues borrow their standard residue's factors and are marked approximate.
+- **Residue-level protection factors from ladders (owner, 2026-10-19; HISTORY item 105).**
+  The owner's choice for residue-level factors where the ladders allow it (the peptide-derived
+  residue fit gave poor factors). `ladder_rates` adds `log10_protection` and its se (from
+  `rate_se`; `kint` is exact) and `precise` (resolved, `rate_se / rate` at most
+  `[analysis.fragments] max_rate_error`, default 0.5). `ladder_residues`
+  (`ladder_residues.csv`) combines the precise steps of a residue: the N-terminal ladder's
+  estimate with the C-terminal one's (weighted mean in log10 rate, se scaled by the misfit
+  when above 1, `agreement` `agree`, `disagree` or `single`), within one run, sample, parent,
+  precursor charge, condition and fragment charge. Owner: gentle and harsh are never pooled,
+  fragment charges stay separate, and ion types of one terminus (c and c-1) are not combined
+  because c-type ions are mixtures read from the same peaks: each (N ion, C ion) pair is its
+  own row, alternatives rather than replicates. The fit is the free `A exp(-k t) + C` of
+  `fit_decay`, so either direction works; fixing `C` at the solvent's equilibrium is a
+  possible later option (opt-in; it would hide scrambling or a wrong solvent). Every
+  fragment figure shows +-1 se error ranges (points of the ladder and closure figures; rate,
+  amplitude, from `amplitude_se`, and protection in the residue-rates figure); the combined
+  values of `ladder_residues` are not drawn.
 - **Variants of one fragment**: charge states are kept separate for now (owner: they may give
   different exchange rates), as is the precursor charge (fragment deuteration differed by
   precursor charge, HISTORY items 39 to 41); ion-type variants (c and c-1, z-dot and z+1) are
@@ -374,6 +391,9 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   - Owner's assessment (B5): the residue-level factors carry little information for data of
     this kind (multimodal exchange); the peptide-level factors make sense, and the residue-level
     fD is valid, but the factors do not translate well to single residues.
+  - Not extended to back-exchange (owner, 2026-10-19): the peptide-derived residue factors
+    were poor, so residue-level factors come from fragment ladders where they are good
+    enough (fragment branch, "Residue-level protection factors from ladders").
   - Not now: pyHDX's second regulariser (`r2`, pulling samples towards a reference); a fit
     across several samples at once; choosing `r1` by cross-validation.
 

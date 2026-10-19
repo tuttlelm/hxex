@@ -34,6 +34,7 @@ from .fragments import (
     FragmentAnalysis,
     FragmentUptake,
     LadderRates,
+    LadderResidues,
     LadderStep,
     ResidueFit,
     Trace,
@@ -46,6 +47,7 @@ from .fragments import (
     fragment_trace,
     fragment_uptake,
     ladder_rates,
+    ladder_residues,
     ladder_steps,
 )
 from .populations import (
@@ -95,8 +97,10 @@ __all__ = [
     "DecayFit",
     "FragmentAnalysis",
     "LadderRates",
+    "LadderResidues",
     "fragment_ion_types",
     "ladder_rates",
+    "ladder_residues",
     "FragmentUptake",
     "LadderStep",
     "ResidueFit",

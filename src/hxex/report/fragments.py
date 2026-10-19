@@ -43,6 +43,17 @@ _SOURCE_COLOURS = [*_DIFF_COLOURS, "tab:green", "tab:red", "tab:purple", "tab:br
                    "tab:olive"]
 _EXTRA_COLOURS = ["#08306b", "#67000d", "#00441b", "#3f007d", "#7f2704"]
 _MARKER = {"marker": "v", "s": 9, "linewidths": 0}
+_ERRORS = {"fmt": "none", "elinewidth": 0.6, "alpha": 0.35, "capsize": 0}  # +-1 se, light
+
+
+def _points(ax, trace, colour, label=None, alpha=None, **style) -> None:
+    """``trace`` as points with light +-1 se error bars (where the error is known)."""
+    known = np.isfinite(trace.mean_se)
+    if known.any():
+        ax.errorbar(trace.time[known], trace.mean[known], yerr=trace.mean_se[known],
+                    ecolor=colour, **{**_ERRORS, "alpha": _ERRORS["alpha"] * (alpha or 1.0)})
+    ax.scatter(trace.time, trace.mean, color=colour, label=label, alpha=alpha,
+               **(style or _MARKER))
 # closure splits: a colour and a marker each (10 colours, 7 markers: 70 distinct pairs)
 _SPLIT_COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown",
                   "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
@@ -133,8 +144,7 @@ def ladder_kinetics_figure(
             label = f"{ion}:{len(residues)}"
             tr = fragment_trace(table, label, run=cond[0], condition=cond[1], charge=pre_z)
             if len(tr):
-                left.scatter(tr.time, tr.mean, color=colours[m % 2],
-                             label=f"{ion} {names[cond]}", **_MARKER)
+                _points(left, tr, colours[m % 2], f"{ion} {names[cond]}")
         tr = fragment_trace(table, f"M:{len(residues)}", run=cond[0], condition=cond[1],
                             charge=pre_z)
         if len(tr) and right_defaults:
@@ -172,16 +182,14 @@ def ladder_kinetics_figure(
                     continue
                 tr = fragment_trace(table, frag, run=cond[0], condition=cond[1], charge=charge)
                 if len(tr):
-                    left.scatter(tr.time, tr.mean, color=colours[m],
-                                 label=f"{names[cond]}:{frag.replace(':', '_')}_z{charge}",
-                                 **_MARKER)
+                    _points(left, tr, colours[m],
+                            f"{names[cond]}:{frag.replace(':', '_')}_z{charge}")
             if step.smaller is not None:
                 tr = difference_trace(table, step.larger, step.smaller, run=cond[0],
                                       condition=cond[1], charge=charge)
                 colour = _DIFF_COLOURS[j % len(_DIFF_COLOURS)]
                 if len(tr):
-                    left.scatter(tr.time, tr.mean, color=colour,
-                                 label=f"D {names[cond]}", **_MARKER)
+                    _points(left, tr, colour, f"D {names[cond]}")
                     if right_defaults:
                         _fitted(right, tr, colour, f"D {names[cond]}", min_time,
                                 fit and step.single)
@@ -229,7 +237,7 @@ def _intrinsic(ax, kint, residues, times, label) -> None:
 def _fitted(ax, trace, colour, label, min_time, fit) -> None:
     """``trace`` as points, with its decay fit (from ``min_time``) when ``fit`` (else the
     points carry the label)."""
-    ax.scatter(trace.time, trace.mean, color=colour, label=None if fit else label, **_MARKER)
+    _points(ax, trace, colour, None if fit else label)
     if not fit:
         return
     f = fit_decay(trace, min_time=min_time)
@@ -349,13 +357,14 @@ def closure_figure(
                                run=cond[0], condition=cond[1])
             if not len(tr):
                 continue
-            style = {"color": _SPLIT_COLOURS[m % len(_SPLIT_COLOURS)],
-                     "marker": _SPLIT_MARKERS[m % len(_SPLIT_MARKERS)], "s": 10,
+            colour = _SPLIT_COLOURS[m % len(_SPLIT_COLOURS)]
+            style = {"marker": _SPLIT_MARKERS[m % len(_SPLIT_MARKERS)], "s": 10,
                      "linewidths": 0}
             early = tr.time < (min_time if min_time is not None else -np.inf)
-            ax.scatter(tr.time[~early], tr.mean[~early], alpha=0.8,
-                       label=f"{n_ion}_{k} + {c_ion}_{n - k}", **style)
-            ax.scatter(tr.time[early], tr.mean[early], alpha=0.25, **style)
+            _points(ax, Trace(tr.time[~early], tr.mean[~early], tr.mean_se[~early]), colour,
+                    f"{n_ion}_{k} + {c_ion}_{n - k}", 0.8, **style)
+            _points(ax, Trace(tr.time[early], tr.mean[early], tr.mean_se[early]), colour,
+                    None, 0.25, **style)
         ax.set_title(f"{shown} (Z{pz})  {names[cond]}", fontsize=9)
         ax.set_xlabel("Time, sec")
         ax.grid(True, which="major", alpha=0.4)
@@ -378,18 +387,18 @@ def residue_rates_figure(
 ) -> Figure:
     """The rates of every single-residue ladder step (:func:`hxex.analysis.ladder_rates`) by
     residue: on top the rate (log axis, with its standard error), below the fitted amplitude
-    (the deuterium that exchanges over the time range). Ion types are told apart by marker,
-    conditions by colour; a fragment charge other than 1 is named in the legend. Every
-    precursor charge of the parent is drawn unless ``parent_charge`` chooses one; with several,
-    each condition and precursor charge has a colour of its own (``Z3`` in the legend), so
-    that runs of one sample on different precursors (two activations, say) are compared in
-    one figure. Unresolved
-    fits (the decay not shown by the time range) are drawn as open markers along the bottom of
-    the rate panel and have no amplitude; the rate axis spans the rates whose standard error is
-    below the rate (others may reach beyond it). When the rates carry intrinsic rates
-    (``kint``, :func:`hxex.analysis.ladder_rates` with exchange conditions), each residue's is
-    drawn as a black bar on the rate panel and a third panel shows the protection factors
-    (``kint / rate``, log axis; unresolved fits left out)."""
+    (the deuterium that exchanges over the time range, with its standard error). Ion types are
+    told apart by marker, conditions by colour; a fragment charge other than 1 is named in the
+    legend. Every precursor charge of the parent is drawn unless ``parent_charge`` chooses one;
+    with several, each condition and precursor charge has a colour of its own (``Z3`` in the
+    legend), so that runs of one sample on different precursors (two activations, say) are
+    compared in one figure. Unresolved fits (the decay not shown by the time range) are drawn as
+    open markers along the bottom of the rate panel and have no amplitude; the rate axis spans
+    the rates whose standard error is below the rate (others may reach beyond it). When the
+    rates carry intrinsic rates (``kint``, :func:`hxex.analysis.ladder_rates` with exchange
+    conditions), each residue's is drawn as a black bar on the rate panel and a third panel
+    shows the protection factors (``kint / rate``, log axis, with the +-1 se range of its log10;
+    unresolved fits left out)."""
     pick = rates.where(sample=sample, parent=parent, parent_charge=parent_charge)
     if run is not None:
         pick &= rates.state_run == run
@@ -430,9 +439,13 @@ def residue_rates_figure(
                      color=colour, ms=5, capsize=2, lw=0.8, label=name)
         top.scatter(x[~ok], np.zeros(int((~ok).sum())), marker=marker, facecolors="none",
                     edgecolors=colour, s=25, transform=top.get_xaxis_transform(), clip_on=False)
-        bottom.scatter(x[ok], rates.amplitude[rows][ok], marker=marker, color=colour, s=25)
+        bottom.errorbar(x[ok], rates.amplitude[rows][ok], yerr=rates.amplitude_se[rows][ok],
+                        fmt=marker, color=colour, ms=5, capsize=2, lw=0.8)
         if with_kint:
-            axes[2].scatter(x[ok], rates.protection[rows][ok], marker=marker, color=colour, s=25)
+            p = rates.protection[rows][ok]
+            spread = 10.0 ** rates.log10_protection_se[rows][ok]  # +-1 se in log10
+            axes[2].errorbar(x[ok], p, yerr=[p - p / spread, p * spread - p], fmt=marker,
+                             color=colour, ms=5, capsize=2, lw=0.8)
     if with_kint:
         known = pick & np.isfinite(rates.kint)
         ks = sorted({(int(r), float(k)) for r, k in zip(rates.residue[known], rates.kint[known],
@@ -488,8 +501,9 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
     ``ladder_..._<ion>_z<charge>``, ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``;
-    tables ``fragment_uptake``, ``ladder_rates`` and ``closure``. A parent read at several
-    precursor charges has one ``residue_rates_<sample>_<range>`` (no charge) for all of them.
+    tables ``fragment_uptake``, ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
+    read at several precursor charges has one ``residue_rates_<sample>_<range>`` (no charge)
+    for all of them.
     ``results`` may be a
     :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables' ``run``
     column then names each row's run, and the figures of an unmerged sample found in several
@@ -500,6 +514,7 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         fragment_ion_types,
         fragment_uptake,
         ladder_rates,
+        ladder_residues,
     )
     from ..analysis.runs import RunSet
 
@@ -521,14 +536,16 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     ions = list(config.ion_types) or fragment_ion_types(uptake)
     rates = ladder_rates(uptake, ion_types=ions, charges=config.charges,
                          min_time=config.min_time,
-                         conditions=config.exchange if config.kint else None)
+                         conditions=config.exchange if config.kint else None,
+                         max_rate_error=config.max_rate_error)
     pairs = [(a, b) for a in ions for b in ions
              if chem.ion_terminus(a) == "N" and chem.ion_terminus(b) == "C"
              and _PARTNERS[a[0]] == b[0]]
     closures = [closure_table(uptake, a, b, precursor_charge=config.precursor_charge,
                               min_time=config.min_time, tolerance=config.tolerance)
                 for a, b in pairs]
-    tables = {"fragment_uptake": uptake.columns(), "ladder_rates": rates.columns()}
+    tables = {"fragment_uptake": uptake.columns(), "ladder_rates": rates.columns(),
+              "ladder_residues": ladder_residues(rates).columns()}
     if closures:
         cols = [c.columns() for c in closures]
         tables["closure"] = {name: np.concatenate([c[name] for c in cols]) for name in cols[0]}

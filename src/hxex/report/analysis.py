@@ -14,7 +14,8 @@ values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
 ``compare_populations_<time>``, ``woods_<sample>_<time>``, ``butterfly_<sample>`` and
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
-``closure.csv`` and per parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
+``ladder_residues.csv``, ``closure.csv`` and per parent
+``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
 ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. With ``protection`` (opt-in,
 :mod:`hxex.analysis.protection`): ``protection.csv``, ``protection_by_time.csv`` and the
 figures ``protection_<sample>``, and with a reference ``compare_protection.csv`` and
