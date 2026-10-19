@@ -235,7 +235,7 @@ def test_modified_residue_counts_as_approximate():
 
 def test_protection_figures_and_settings(tmp_path):
     from hxex.analysis import AnalysisConfig
-    from hxex.config import load_project
+    from hxex.config import ProjectError, load_project
     from hxex.report import protection_difference_figure, protection_figure
 
     k1, k2 = rates_in_protein(2, 9), rates_in_protein(10, 20)
@@ -272,6 +272,20 @@ def test_protection_figures_and_settings(tmp_path):
                        'd2o_fraction = 0.9\n')
     loaded = load_project(project).analysis
     assert loaded.protection and loaded.labelling == {"WT": LABELLING}
+    # per run of [analysis.runs]: [analysis.labelling.<run>.<sample>]
+    project.write_text(project.read_text() + '[analysis.runs]\nA = "a.zip"\n'
+                       '[analysis.labelling.A.WT]\nph_read = 7.4\ntemperature = 20.0\n'
+                       'd2o_fraction = 0.9\n')
+    loaded = load_project(project).analysis
+    assert loaded.labelling["A"]["WT"].ph_read == 7.4
+    _rewrite(project, '[analysis.runs]\nA = "a.zip"', '[analysis.runs]\nB = "a.zip"')
+    with pytest.raises(ProjectError, match="'A' is not a run"):
+        load_project(project)
+
+
+def _rewrite(path, old, new):
+    path.write_text(path.read_text().replace(old, new))
+    return path
 
 
 def residue_uptake(sample, true, peptides, *, noise=0.0, seed=0, times=TIMES):

@@ -84,9 +84,13 @@ _SCALARS = ("nterm_subtract",)  # settings of the table, not columns
 
 @dataclass(frozen=True)
 class SpeciesUptake:
-    """One row per sample, species, time, ``K`` and ``rank`` (columns of equal length).
+    """One row per run, sample, species, time, ``K`` and ``rank`` (columns of equal length).
 
-    Identity: ``sample``, ``peptide`` (modX), ``modification``, ``kind`` (``'peptide'``, or
+    Identity: ``run`` (the run the row's spectra come from: '' for one run, the run's name in a
+    :class:`hxex.analysis.RunSet`, and '' for a merged sample, whose spectra pool several
+    runs; a species is identified by ``(run, sample, ...)``, and ``run:sample`` is a display
+    label only, :func:`hxex.analysis.display_labels`), ``sample``, ``peptide`` (modX),
+    ``modification``, ``kind`` (``'peptide'``, or
     ``'fragment'`` for an ion type other than ``M``), ``start`` and ``end`` (residues on the
     protein, inclusive). Values: ``time``, ``K``, ``rank``, ``mean`` and ``mean_se`` (deuterons),
     ``fD`` and ``fD_se`` (``mean / n_amides``),
@@ -130,10 +134,15 @@ class SpeciesUptake:
     run_offset: np.ndarray | None = None
     rt: np.ndarray | None = None
     role: np.ndarray | None = None
+    run: np.ndarray | None = None
     nterm_subtract: int = 1
 
     def __post_init__(self):  # built without them: no fallback, one run, no controls
         n = len(self.sample)
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(n, "", dtype=object))
+        else:
+            object.__setattr__(self, "run", np.asarray(self.run, dtype=object))
         if self.role is None:
             object.__setattr__(self, "role", np.full(n, "", dtype="<U8"))
         else:
@@ -150,8 +159,9 @@ class SpeciesUptake:
         return len(self.sample)
 
     def columns(self) -> dict[str, np.ndarray]:
-        """The table as columns (for :func:`hxex.report.write_csv`)."""
-        return {f.name: getattr(self, f.name) for f in fields(self) if f.name not in _SCALARS}
+        """The table as columns (for :func:`hxex.report.write_csv`), ``run`` first."""
+        return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                    if f.name not in _SCALARS and f.name != "run"}}
 
     def select(self, mask) -> SpeciesUptake:
         mask = np.asarray(mask)
@@ -160,14 +170,15 @@ class SpeciesUptake:
                              nterm_subtract=self.nterm_subtract)
 
     def where(self, *, sample=None, time=None, K=None, rank=None, kind=None,
-              role=None) -> np.ndarray:
+              role=None, run=None) -> np.ndarray:
         """Rows matching every condition given (a value, or a list of values); ``role``
-        ``'undeut'``/``'fulldeut'`` selects the controls, ``''`` the time points."""
+        ``'undeut'``/``'fulldeut'`` selects the controls, ``''`` the time points; ``sample``
+        alone matches the sample in every run."""
         keep = np.ones(len(self), dtype=bool)
         if role is not None:
             keep &= np.isin(self.role, np.atleast_1d(role))
-        for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank),
-                            ("kind", kind)):
+        for name, value in (("run", run), ("sample", sample), ("time", time), ("K", K),
+                            ("rank", rank), ("kind", kind)):
             if value is not None:
                 values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
                 keep &= np.isin(getattr(self, name), values)
@@ -261,13 +272,13 @@ def _site_counts(results) -> np.ndarray:
 
 
 def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
-    """The filtered values of every spectrum, grouped by (sample, peptide, modification, start,
-    end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge, n_amides,
-    rep, control_fallback, run)`` (run: '' for one run, the run's name in a
-    :class:`hxex.analysis.RunSet`); with whether each sample's values are corrected
-    (sample -> bool) and ``nterm_subtract``. The point of a group is a :class:`Point`
-    (``(time, role)``: a time, or a control role). ``results`` may be a
-    :class:`hxex.analysis.RunSet` (its samples are then labelled ``run:sample``)."""
+    """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
+    start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
+    n_amides, rep, control_fallback, run)`` (run: '' for one run, the run's name in a
+    :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
+    each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
+    point of a group is a :class:`Point` (``(time, role)``: a time, or a control role).
+    ``results`` may be a :class:`hxex.analysis.RunSet`."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
@@ -354,8 +365,9 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
             usable &= ~(bad_pop | bad_fd)
         for i in np.flatnonzero(usable):
             j = rows[i]
-            key = (str(binned.sample[j]), str(binned.peptide[j]), str(binned.modification[j]),
-                   int(binned.start_seq[j]), int(binned.end_seq[j]), points[i], k)
+            key = ("", str(binned.sample[j]), str(binned.peptide[j]),
+                   str(binned.modification[j]), int(binned.start_seq[j]),
+                   int(binned.end_seq[j]), points[i], k)
             for r in range(k):
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
@@ -363,7 +375,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     int(binned.rep[j]), bool(fell_back[i]), "",
                 ))
 
-    corrected = {str(s): controls is not None for s in np.unique(binned.sample)}
+    corrected = {("", str(s)): controls is not None for s in np.unique(binned.sample)}
     return groups, corrected, int(nterm), dropped
 
 
@@ -401,25 +413,25 @@ def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = Fals
     if filters is not None:  # a K >= 2 description whose fD error is too large is not kept
         worst: dict[tuple, float] = {}
         for key, recs in groups.items():
-            if key[6] >= 2:
+            if key[7] >= 2:
                 _, se = _combine(np.array([r[0] for r in recs]), np.array([r[1] for r in recs]))
-                worst[key[:7]] = max(worst.get(key[:7], 0.0), se if np.isfinite(se) else 0.0)
+                worst[key[:8]] = max(worst.get(key[:8], 0.0), se if np.isfinite(se) else 0.0)
         too_wide = {key for key, se in worst.items() if se >= filters.max_fD_se}
         dropped["fD_se"] = len(too_wide)
-        groups = {key: recs for key, recs in groups.items() if key[:7] not in too_wide}
+        groups = {key: recs for key, recs in groups.items() if key[:8] not in too_wide}
         if filters.k1_between_ranks and 1 in ks:  # the K=1 value between the K >= 2 ranks
             value = {key: _combine(np.array([r[0] for r in recs]),
                                    np.array([r[1] for r in recs]))[0]
                      for key, recs in groups.items()}
             unordered = set()
             for key in value:
-                base, k, rank = key[:6], key[6], key[7]
+                base, k, rank = key[:7], key[7], key[8]
                 if k < 2 or rank != 1 or base + (1, 1) not in value or base + (k, k) not in value:
                     continue
                 if not value[key] < value[base + (1, 1)] < value[base + (k, k)]:
                     unordered.add(base + (k,))
             dropped["k1_between_ranks"] = len(unordered)
-            groups = {key: recs for key, recs in groups.items() if key[:7] not in unordered}
+            groups = {key: recs for key, recs in groups.items() if key[:8] not in unordered}
         if any(dropped.values()) and not quiet:
             reasons = {
                 "population": (f"{dropped['population']} spectra with a population outside "
@@ -470,7 +482,7 @@ def species_uptake(
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
-        sample, peptide, mod, start, end, point, k, rank = key
+        run, sample, peptide, mod, start, end, point, k, rank = key
         time, role = point.time, point.role
         v = np.array([r[0] for r in recs])
         s = np.array([r[1] for r in recs])
@@ -483,13 +495,13 @@ def species_uptake(
         run_names = [x for x in dict.fromkeys(r[8] for r in recs) if x] or [""]  # RunSet order
         ion = chem.parse_modification(mod).ion_type
         for name, value in (
-            ("sample", sample), ("peptide", peptide), ("modification", mod),
+            ("run", run), ("sample", sample), ("peptide", peptide), ("modification", mod),
             ("kind", "peptide" if ion == "M" else "fragment"), ("start", start), ("end", end),
             ("time", time), ("role", role), ("K", k), ("rank", rank), ("mean", d * amides),
             ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
-            ("corrected", corrected[sample]), ("charge_trend", False),
+            ("corrected", corrected[(run, sample)]), ("charge_trend", False),
             ("control_fallback", any(r[7] for r in recs)),
             ("runs", ",".join(run_names)),
             ("n_spectra_by_run", ",".join(str(sum(r[8] == x for r in recs)) for x in run_names)
@@ -501,9 +513,9 @@ def species_uptake(
             per_run = {x: _combine(*map(np.array, zip(*[(r[0], r[1]) for r in recs
                                                           if r[8] == x], strict=True)))
                        for x in run_names}
-            by_run.setdefault((sample, peptide, mod, k, rank), []).append(per_run)
+            by_run.setdefault((run, sample, peptide, mod, k, rank), []).append(per_run)
         if len(charges) > 1:
-            per = by_charge.setdefault((sample, peptide, mod, k, rank), {})
+            per = by_charge.setdefault((run, sample, peptide, mod, k, rank), {})
             low = [(r[0], r[1]) for r in recs if r[4] == charges[0]]
             high = [(r[0], r[1]) for r in recs if r[4] == charges[-1]]
             a, b = _combine(*map(np.array, zip(*low, strict=True))), _combine(
@@ -511,10 +523,10 @@ def species_uptake(
             per[len(per)] = [a, b]
     trend = {key for key, times in by_charge.items() if _is_trend(list(times.values()))}
     out = {name: np.array(values) for name, values in cols.items()}
-    species = list(zip(out["sample"], out["peptide"], out["modification"], out["K"], out["rank"],
-                       strict=True))
-    out["charge_trend"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in trend
-                                    for a, b, c, d, e in species], dtype=bool)
+    species = list(zip(out["run"], out["sample"], out["peptide"], out["modification"], out["K"],
+                       out["rank"], strict=True))
+    out["charge_trend"] = np.array([(str(a), str(b), str(c), str(d), int(e), int(f)) in trend
+                                    for a, b, c, d, e, f in species], dtype=bool)
     offset = set()
     for key, times in by_run.items():
         first = next(iter(times[0]))  # the first run is the same at every time if present
@@ -523,12 +535,12 @@ def species_uptake(
             pairs = [[per[first], per[other]] for per in times if first in per and other in per]
             if _is_trend(pairs):
                 offset.add(key)
-    out["run_offset"] = np.array([(str(a), str(b), str(c), int(d), int(e)) in offset
-                                  for a, b, c, d, e in species], dtype=bool)
+    out["run_offset"] = np.array([(str(a), str(b), str(c), str(d), int(e), int(f)) in offset
+                                  for a, b, c, d, e, f in species], dtype=bool)
     if offset:
         log.warning("%d species merged by [analysis.merge] differ systematically between runs "
                     "(run_offset in the species table)",
-                    len({key[:3] for key in offset}))
+                    len({key[:4] for key in offset}))
     for name in ("start", "end", "K", "rank", "n_spectra", "n_charges"):
         out[name] = out[name].astype(np.int64)
     for name in ("time", "mean", "mean_se", "fD", "fD_se", "population", "population_se",
@@ -538,20 +550,23 @@ def species_uptake(
     out["control_fallback"] = out["control_fallback"].astype(bool)
     for name in ("runs", "n_spectra_by_run", "role"):
         out[name] = out[name].astype(str)
+    out["run"] = out["run"].astype(object)
     rts = _species_rt(results, exclude_flagged)
-    out["rt"] = np.array([rts.get((str(a), str(b), str(c)), np.nan) for a, b, c in zip(
-        out["sample"], out["peptide"], out["modification"], strict=True)], dtype=np.float64)
+    out["rt"] = np.array([rts.get((str(a), str(b), str(c), str(d)), np.nan) for a, b, c, d in
+                          zip(out["run"], out["sample"], out["peptide"], out["modification"],
+                              strict=True)], dtype=np.float64)
     return SpeciesUptake(**out, nterm_subtract=nterm)
 
 
-def _species_rt(results, exclude_flagged: bool = False) -> dict[tuple[str, str, str], float]:
-    """(sample, peptide, modification) -> the median retention time (minutes) of its spectra
-    (those the tables use, :func:`_kept`; samples labelled as in a
+def _species_rt(results, exclude_flagged: bool = False
+                ) -> dict[tuple[str, str, str, str], float]:
+    """(run, sample, peptide, modification) -> the median retention time (minutes) of its
+    spectra (those the tables use, :func:`_kept`; run and sample as in the table of a
     :class:`hxex.analysis.RunSet`); species without one are absent."""
     from .runs import RunSet
 
     runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
-    values: dict[tuple[str, str, str], list[float]] = {}
+    values: dict[tuple[str, str, str, str], list[float]] = {}
     for name, r in runs:
         b = r.binned
         if b is None or getattr(b, "rt", None) is None:
@@ -560,8 +575,8 @@ def _species_rt(results, exclude_flagged: bool = False) -> dict[tuple[str, str, 
         used = np.zeros(len(b.spectrum_id), dtype=bool)
         used[[index[str(s)] for s in r.fit.spectrum_id[_kept(r, exclude_flagged)]]] = True
         for i in np.flatnonzero(np.isfinite(b.rt) & used):
-            sample = results.sample_label(name, str(b.sample[i])) if name else str(b.sample[i])
-            values.setdefault((sample, str(b.peptide[i]), str(b.modification[i])),
+            run, sample = results.state(name, str(b.sample[i])) if name else ("", str(b.sample[i]))
+            values.setdefault((run, sample, str(b.peptide[i]), str(b.modification[i])),
                               []).append(float(b.rt[i]))
     return {key: float(np.median(v)) for key, v in values.items()}
 

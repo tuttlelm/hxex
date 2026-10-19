@@ -38,7 +38,8 @@ class SequenceMismatch(ValueError):
 
 @dataclass(frozen=True)
 class ResidueMap:
-    """One row per sample, time, ``K``, ``rank`` and residue (columns of equal length):
+    """One row per run, sample, time, ``K``, ``rank`` and residue (columns of equal length):
+    ``run`` and ``sample`` as in the species table (``run`` '' for one run or a merged sample),
     ``residue`` (number on the protein), ``aa`` (its letter, '' if unknown), ``fD`` and
     ``fD_se`` (NaN where no peptide covers the residue's amide, or no covering peptide has a
     value; ``fD_se`` also where a contributing peptide's error is unknown), ``redundancy``,
@@ -64,8 +65,13 @@ class ResidueMap:
     control_fallback: np.ndarray | None = None
     no_amide: np.ndarray | None = None
     role: np.ndarray | None = None
+    run: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback; prolines only; time points
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+        else:
+            object.__setattr__(self, "run", np.asarray(self.run, dtype=object))
         if self.control_fallback is None:
             object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
         if self.no_amide is None:
@@ -79,12 +85,14 @@ class ResidueMap:
         return len(self.sample)
 
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                    if f.name != "run"}}
 
-    def where(self, *, sample=None, time=None, K=None, rank=None, role=None) -> np.ndarray:
+    def where(self, *, sample=None, time=None, K=None, rank=None, role=None,
+              run=None) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)
-        for name, value in (("sample", sample), ("time", time), ("K", K), ("rank", rank),
-                            ("role", role)):
+        for name, value in (("run", run), ("sample", sample), ("time", time), ("K", K),
+                            ("rank", rank), ("role", role)):
             if value is not None:
                 values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
                 keep &= np.isin(getattr(self, name), values)
@@ -115,10 +123,10 @@ def check_sequence(peptide: str, start: int, letters: list[str], registry) -> No
                                f"({''.join(there)!r})")
 
 
-def _letters(sample: str, peptides, seq_of: dict, registry) -> list[str]:
-    """The residue letters of ``sample``: its sequence (each peptide checked against it), else
-    what the peptides show ('' where none covers a residue)."""
-    letters = seq_of.get(sample)
+def _letters(state: tuple[str, str], peptides, seq_of: dict, registry) -> list[str]:
+    """The residue letters of ``state`` (run, sample): its sequence (each peptide checked
+    against it), else what the peptides show ('' where none covers a residue)."""
+    letters = seq_of.get(state)
     if letters is not None:
         for p, s, _ in peptides:
             check_sequence(p, s, letters, registry)
@@ -131,14 +139,26 @@ def _letters(sample: str, peptides, seq_of: dict, registry) -> list[str]:
     return known
 
 
-def _sequences(pep: SpeciesUptake, sequences, registry) -> dict[str, list[str]]:
-    seq_of: dict[str, list[str]] = {}
-    for sample in np.unique(pep.sample):
-        seq = sequences if isinstance(sequences, str) else (
-            sequences.get(str(sample)) if sequences is not None else None)
+def _sequences(pep: SpeciesUptake, sequences, registry, base: Mapping | None = None
+               ) -> dict[tuple[str, str], list[str]]:
+    """(run, sample) -> residue letters, from ``sequences`` (one for every sample, or by
+    sample with per-run entries, :func:`hxex.analysis.sample_setting`); ``base`` maps a
+    modified state (run, state) to its sample (:func:`separate_modified`)."""
+    from .runs import sample_setting
+
+    seq_of: dict[tuple[str, str], list[str]] = {}
+    for state in states(pep):
+        sample = base.get(state, state[1]) if base else state[1]
+        seq = sample_setting(sequences, state[0], sample)
         if seq is not None:
-            seq_of[str(sample)] = _sequence_letters(seq, registry)
+            seq_of[state] = _sequence_letters(seq, registry)
     return seq_of
+
+
+def states(table) -> list[tuple[str, str]]:
+    """The distinct ``(run, sample)`` pairs of a table, in order of first appearance."""
+    return list(dict.fromkeys(zip((str(r) for r in table.run), (str(s) for s in table.sample),
+                                  strict=True)))
 
 
 MODIFIED = ("separate", "combined")
@@ -162,17 +182,18 @@ def modified_state(peptide: str, start: int, modification: str = "",
 
 def separate_modified(uptake: SpeciesUptake,
                       registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
-                      ) -> tuple[SpeciesUptake, dict[str, str]]:
+                      ) -> tuple[SpeciesUptake, dict[tuple[str, str], str]]:
     """``uptake`` with every modified peptide moved to a state of its own, labelled
-    ``'<sample> <sites>'`` (:func:`modified_state`), and the base sample of every state."""
+    ``'<sample> <sites>'`` (:func:`modified_state`) in ``sample``, and the base sample of
+    every state ``(run, state label)``."""
     labels = []
-    base: dict[str, str] = {}
-    for s, p, a, m in zip(uptake.sample, uptake.peptide, uptake.start, uptake.modification,
-                          strict=True):
+    base: dict[tuple[str, str], str] = {}
+    for u, s, p, a, m in zip(uptake.run, uptake.sample, uptake.peptide, uptake.start,
+                             uptake.modification, strict=True):
         state = modified_state(str(p), int(a), str(m), registry)
         label = f"{s} {state}" if state else str(s)
         labels.append(label)
-        base[label] = str(s)
+        base[(str(u), label)] = str(s)
     return dataclasses.replace(uptake, sample=np.array(labels, dtype=str)), base
 
 
@@ -199,7 +220,8 @@ def residue_map(
     (:func:`separate_modified`), so the sample's values come from its unmodified peptides;
     ``'combined'`` averages every peptide of a sample together.
 
-    ``sequences`` is the protein sequence (one for every sample, or one per sample), residue 1
+    ``sequences`` is the protein sequence (one for every sample, or one per sample, with
+    per-run entries under a run's name; :func:`hxex.analysis.sample_setting`), residue 1
     first; with it, every residue of the protein appears (uncovered ones with NaN), prolines are
     marked everywhere, and each peptide is checked against it. Without it, the residues run from
     1 to the last covered one and are known only where a peptide covers them. Redundancy and
@@ -211,26 +233,27 @@ def residue_map(
     if modified not in MODIFIED:
         raise ValueError(f"modified must be one of {', '.join(MODIFIED)}")
     pep = _peptides_only(uptake)
+    base = None
     if modified == "separate":
-        pep, base = separate_modified(pep, registry)
-        if isinstance(sequences, Mapping):  # a state has the sequence of its sample
-            sequences = {state: sequences[s] for state, s in base.items() if s in sequences}
-    seq_of = _sequences(pep, sequences, registry)
+        pep, base = separate_modified(pep, registry)  # a state has the sequence of its sample
+    seq_of = _sequences(pep, sequences, registry, base)
     cols: dict[str, list] = {f.name: [] for f in fields(ResidueMap)}
     points = time_point(pep.time, pep.role)  # a time, or a control role
     first = {}
     for i, key in enumerate(points):
         first.setdefault(key, i)
-    conditions = sorted({(str(s), key, int(k), int(r)) for s, key, k, r in
-                         zip(pep.sample, points, pep.K, pep.rank, strict=True)},
-                        key=lambda c: (c[0], point_order_key(float(pep.time[first[c[1]]]),
-                                                             str(pep.role[first[c[1]]])),
-                                       c[2], c[3]))
-    for sample, key, k, rank in conditions:
-        rows = np.flatnonzero(pep.where(sample=sample, K=k, rank=rank) & (points == key))
+    conditions = sorted({(str(u), str(s), key, int(k), int(r)) for u, s, key, k, r in
+                         zip(pep.run, pep.sample, points, pep.K, pep.rank, strict=True)},
+                        key=lambda c: (c[0], c[1],
+                                       point_order_key(float(pep.time[first[c[2]]]),
+                                                       str(pep.role[first[c[2]]])),
+                                       c[3], c[4]))
+    for run, sample, key, k, rank in conditions:
+        rows = np.flatnonzero(pep.where(run=run, sample=sample, K=k, rank=rank)
+                              & (points == key))
         time, role = float(pep.time[rows[0]]), str(pep.role[rows[0]])
         peptides = [(str(pep.peptide[i]), int(pep.start[i]), int(pep.end[i])) for i in rows]
-        known = _letters(sample, peptides, seq_of, registry)
+        known = _letters((run, sample), peptides, seq_of, registry)
         z, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
                                               registry)
         values, ses = _weighted(z, pep.fD[rows], pep.fD_se[rows], weight_exponent)
@@ -238,8 +261,8 @@ def residue_map(
             axis=0)
         for res in range(len(known)):
             for name, value in (
-                ("sample", sample), ("time", time), ("role", role), ("K", k), ("rank", rank),
-                ("residue", res + 1), ("aa", known[res]), ("fD", values[res]),
+                ("run", run), ("sample", sample), ("time", time), ("role", role), ("K", k),
+                ("rank", rank), ("residue", res + 1), ("aa", known[res]), ("fD", values[res]),
                 ("fD_se", ses[res]), ("redundancy", redundancy[res]),
                 ("resolution", resolution[res]), ("proline", known[res] == "P"),
                 ("covered", redundancy[res] > 0), ("control_fallback", bool(fell_back[res])),
@@ -253,6 +276,7 @@ def residue_map(
         out[name] = out[name].astype(np.float64)
     for name in ("proline", "covered", "control_fallback", "no_amide"):
         out[name] = out[name].astype(bool)
+    out["run"] = out["run"].astype(object)
     return ResidueMap(**out)
 
 
@@ -262,7 +286,7 @@ class NoPeptideAtTime(ValueError):
 
 @dataclass(frozen=True)
 class CoverageTable:
-    """One row per sample and residue: ``residue``, ``aa``, ``redundancy``, ``resolution`` (NaN
+    """One row per run, sample and residue: ``residue``, ``aa``, ``redundancy``, ``resolution`` (NaN
     where uncovered), ``proline``, ``covered`` and ``no_amide`` (a proline or the first
     residue(s) of the protein: nothing can cover it), from the peptides of the sample at the
     ``times`` used (empty for every time). ``count`` says what redundancy counts:
@@ -278,17 +302,22 @@ class CoverageTable:
     count: str = "peptides"
     times: tuple[float, ...] = ()
     no_amide: np.ndarray | None = None
+    run: np.ndarray | None = None
 
     def __post_init__(self):  # built without it: prolines only
         if self.no_amide is None:
             object.__setattr__(self, "no_amide", np.asarray(self.proline, dtype=bool).copy())
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+        else:
+            object.__setattr__(self, "run", np.asarray(self.run, dtype=object))
 
     def __len__(self) -> int:
         return len(self.sample)
 
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self)
-                if f.name not in ("count", "times")}
+        return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                    if f.name not in ("count", "times", "run")}}
 
 
 COUNTS = ("peptides", "spectra")
@@ -327,8 +356,8 @@ def coverage_table(
     seq_of = _sequences(pep, sequences, registry)
     cols: dict[str, list] = {f.name: [] for f in fields(CoverageTable)
                              if f.name not in ("count", "times")}
-    for sample in sorted(set(pep.sample.tolist())):
-        rows = np.flatnonzero(pep.sample == sample)
+    for run, sample in sorted(states(pep)):
+        rows = np.flatnonzero(pep.where(run=run, sample=sample))
         spectra: dict[tuple, int] = {}
         for i in rows:
             key = (str(pep.peptide[i]), int(pep.start[i]), int(pep.end[i]),
@@ -336,11 +365,12 @@ def coverage_table(
             spectra[key] = spectra.get(key, 0) + int(pep.n_spectra[i])
         peptides = [k[:3] for k in spectra]
         weights = [spectra[k] if count == "spectra" else 1 for k in spectra]
-        known = _letters(sample, peptides, seq_of, registry)
+        known = _letters((run, sample), peptides, seq_of, registry)
         _, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
                                               registry, weights)
         for res in range(len(known)):
-            for name, value in (("sample", sample), ("residue", res + 1), ("aa", known[res]),
+            for name, value in (("run", run), ("sample", sample), ("residue", res + 1),
+                                ("aa", known[res]),
                                 ("redundancy", redundancy[res]), ("resolution", resolution[res]),
                                 ("proline", known[res] == "P"), ("covered", redundancy[res] > 0),
                                 ("no_amide", known[res] == "P"
@@ -352,6 +382,7 @@ def coverage_table(
     out["resolution"] = out["resolution"].astype(np.float64)
     for name in ("proline", "covered", "no_amide"):
         out[name] = out[name].astype(bool)
+    out["run"] = out["run"].astype(object)
     return CoverageTable(**out, count=count, times=times)
 
 

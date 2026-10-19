@@ -45,7 +45,12 @@ class FragmentUptake:
     (from the K = 1 bootstrap, NaN without one), ``n_amides`` (the exchangeable amides the
     fragment holds; :func:`hxex.fragments.fragment_amides`), ``flagged`` (quality flags) and
     ``spectrum_id``. ``nterm_subtract`` and ``amide_rules`` are those of the run's picker.
-    ``run``: the run of each row when read from a :class:`hxex.analysis.RunSet` (else None)."""
+    ``run``: the run each row comes from ('' for one run, the run's name in a
+    :class:`hxex.analysis.RunSet`; fragment rows always keep their run, as fragment series are
+    never pooled) and ``merged``: whether the row's sample is a merged one (``merge`` of the
+    set: its runs are drawn side by side in the sample's figures). The figures group rows by
+    :attr:`state_run` and ``sample``: a merged sample is one state (``state_run`` ''), an
+    unmerged one is a state per run; within a state the series are ``(run, condition)``."""
 
     sample: np.ndarray
     condition: np.ndarray
@@ -68,13 +73,26 @@ class FragmentUptake:
     nterm_subtract: int = 1
     amide_rules: chem.AmideRules = chem.DEFAULT_AMIDE_RULES
     run: np.ndarray | None = None
+    merged: np.ndarray | None = None
+
+    def __post_init__(self):  # built without them: one run, nothing merged
+        _fill_runs(self)
 
     def __len__(self) -> int:
         return len(self.time)
 
+    @property
+    def state_run(self) -> np.ndarray:
+        """The run of each row's state: its ``run``, or '' for a merged sample."""
+        return _state_run(self)
+
+    def states(self) -> list[tuple[str, str]]:
+        """The distinct ``(state_run, sample)`` of the table, in order of first appearance."""
+        return list(dict.fromkeys(zip(self.state_run.tolist(), self.sample.astype(str).tolist(),
+                                      strict=True)))
+
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self)
-                if isinstance(getattr(self, f.name), np.ndarray)}
+        return _columns(self)
 
     def select(self, mask) -> FragmentUptake:
         mask = np.asarray(mask)
@@ -117,6 +135,25 @@ def _condition(target) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _fill_runs(table) -> None:
+    n = len(table)
+    run = table.run if table.run is not None else np.full(n, "", dtype=object)
+    object.__setattr__(table, "run", np.asarray(run, dtype=object))
+    merged = table.merged if table.merged is not None else np.zeros(n, dtype=bool)
+    object.__setattr__(table, "merged", np.asarray(merged, dtype=bool))
+
+
+def _state_run(table) -> np.ndarray:
+    return np.where(np.asarray(table.merged, dtype=bool), "", table.run.astype(str)).astype(str)
+
+
+def _columns(table) -> dict[str, np.ndarray]:
+    """The table's columns, ``run`` first and ``merged`` last."""
+    cols = {f.name: getattr(table, f.name) for f in fields(table)
+            if isinstance(getattr(table, f.name), np.ndarray) and f.name not in ("run", "merged")}
+    return {"run": table.run, **cols, "merged": table.merged}
+
+
 def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake:
     """The K = 1 deuteration of every fragment-ion spectrum of ``results`` (a run read from mzML
     or Thermo files with fragment targets, :func:`hxex.fragments.fragment_targets`). Spectra
@@ -126,10 +163,10 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     the kinetics.
 
     From a :class:`hxex.analysis.RunSet`, the fragments of every run read from scan files, in
-    one table with a ``run`` column: samples are labelled as in the rest of the analysis
-    (``run:sample``, or the ``merge`` label), and the conditions of a merged sample become
-    ``run:condition``, so that the runs of one sample (two activations, say) are drawn side by
-    side in its figures and never pooled (each run has an exchange clock of its own)."""
+    one table whose ``run`` column names each row's run; a merged sample (``merge``) keeps the
+    merge label in ``sample`` with ``merged`` True, so that the runs of one sample (two
+    activations, say) are drawn side by side in its figures, as series ``(run, condition)``,
+    and never pooled (each run has an exchange clock of its own)."""
     from ..fragments import fragment_amides
     from ..io.mzml import mzml_series_targets
     from .runs import RunSet
@@ -162,7 +199,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     means = fit.fits[1].means[:, 0]
     amides: dict[tuple, int] = {}
     rows: dict[str, list] = {f.name: [] for f in fields(FragmentUptake)
-                             if f.name not in ("nterm_subtract", "amide_rules", "run")}
+                             if f.name not in ("nterm_subtract", "amide_rules", "run", "merged")}
     skipped = 0
     for i in np.flatnonzero(keep):
         target = targets.get(int(fit.data_id[i]))
@@ -208,7 +245,6 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
 def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
     """:func:`fragment_uptake` of the runs of a :class:`hxex.analysis.RunSet`."""
     from ..io.mzml import SCAN_READERS
-    from .runs import SEPARATOR
 
     tables = {}
     for name, results in runs.runs.items():
@@ -232,12 +268,9 @@ def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
     parts = []
     for name, u in tables.items():
         cols = u.columns()
-        merged = np.array([runs.label(name, s) in runs.merge for s in cols["sample"]], bool)
-        cols["sample"] = np.array([runs.sample_label(name, s) for s in cols["sample"]], str)
-        cols["condition"] = np.where(
-            merged, np.char.add(f"{name}{SEPARATOR}", cols["condition"].astype(str)),
-            cols["condition"])
-        cols["run"] = np.full(len(u), name)
+        cols["merged"] = np.array([runs.is_merged(name, s) for s in cols["sample"]], bool)
+        cols["sample"] = np.array([runs.state(name, s)[1] for s in cols["sample"]], str)
+        cols["run"] = np.full(len(u), name, dtype=object)
         parts.append(cols)
     return FragmentUptake(**{key: np.concatenate([c[key] for c in parts]) for key in parts[0]},
                           nterm_subtract=first.nterm_subtract, amide_rules=first.amide_rules)
@@ -386,13 +419,13 @@ def difference_trace(uptake: FragmentUptake, larger: str, smaller: str | None,
     if smaller is None:
         return _average(uptake.time[a], uptake.mean[a], uptake.mean_se[a])
     b = np.flatnonzero(uptake.where(fragment=smaller, **conditions))
-    other = {(str(uptake.sample[j]), str(uptake.condition[j]), int(uptake.charge[j]),
-              int(uptake.parent_charge[j]), int(uptake.rep[j]), round(float(uptake.time[j]), 6)):
-             j for j in b}
+    other = {(str(uptake.run[j]), str(uptake.sample[j]), str(uptake.condition[j]),
+              int(uptake.charge[j]), int(uptake.parent_charge[j]), int(uptake.rep[j]),
+              round(float(uptake.time[j]), 6)): j for j in b}
     t, y, se = [], [], []
     for i in a:
-        j = other.get((str(uptake.sample[i]), str(uptake.condition[i]), int(uptake.charge[i]),
-                       int(uptake.parent_charge[i]), int(uptake.rep[i]),
+        j = other.get((str(uptake.run[i]), str(uptake.sample[i]), str(uptake.condition[i]),
+                       int(uptake.charge[i]), int(uptake.parent_charge[i]), int(uptake.rep[i]),
                        round(float(uptake.time[i]), 6)))
         if j is None:
             continue
@@ -449,8 +482,8 @@ def closure_trace(
         raise ValueError(f"{n_fragment} and {c_fragment} do not make up the {n}-residue parent")
 
     def key(i):
-        return (str(uptake.sample[i]), str(uptake.condition[i]), int(uptake.parent_charge[i]),
-                int(uptake.rep[i]), round(float(uptake.time[i]), 6))
+        return (str(uptake.run[i]), str(uptake.sample[i]), str(uptake.condition[i]),
+                int(uptake.parent_charge[i]), int(uptake.rep[i]), round(float(uptake.time[i]), 6))
 
     def index(label, charge):
         sel = np.flatnonzero(rows & uptake.where(fragment=label, charge=charge))
@@ -476,11 +509,11 @@ def closure_trace(
 
 @dataclass(frozen=True)
 class ClosureTable:
-    """The closure test of every complementary pair (:func:`closure_table`), one row per
+    """The closure test of every complementary pair (:func:`closure_table`), one row per run,
     sample, condition, parent, precursor charge and split ``k`` (residues of the N-terminal
     ion): the two fragments, the number of matched scans ``n``, the ``median`` miss (deuterons),
     its ``spread`` (half the interquartile range), the ``mean`` and ``flagged`` (the median
-    beyond ``tolerance``)."""
+    beyond ``tolerance``). ``run`` and ``merged`` as in :class:`FragmentUptake`."""
 
     sample: np.ndarray
     condition: np.ndarray
@@ -495,13 +528,21 @@ class ClosureTable:
     mean: np.ndarray
     flagged: np.ndarray
     tolerance: float = 0.25
+    run: np.ndarray | None = None
+    merged: np.ndarray | None = None
+
+    def __post_init__(self):
+        _fill_runs(self)
 
     def __len__(self) -> int:
         return len(self.k)
 
+    @property
+    def state_run(self) -> np.ndarray:
+        return _state_run(self)
+
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self)
-                if isinstance(getattr(self, f.name), np.ndarray)}
+        return _columns(self)
 
 
 def closure_table(
@@ -523,11 +564,12 @@ def closure_table(
     y for collisional activation)."""
     _check_partners(n_ion, c_ion)
     cols: dict[str, list] = {f.name: [] for f in fields(ClosureTable) if f.name != "tolerance"}
-    groups = sorted({(str(s), str(c), str(p), int(z)) for s, c, p, z in zip(
-        uptake.sample, uptake.condition, uptake.parent, uptake.parent_charge, strict=True)})
-    for sample, condition, parent, pz in groups:
+    groups = sorted({(str(r), str(s), str(c), str(p), int(z), bool(m)) for r, s, c, p, z, m in zip(
+        uptake.run, uptake.sample, uptake.condition, uptake.parent, uptake.parent_charge,
+        uptake.merged, strict=True)})
+    for run, sample, condition, parent, pz, merged in groups:
         n = len(chem.parse_sequence(parent))
-        sel = dict(sample=sample, condition=condition, parent=parent, parent_charge=pz)
+        sel = dict(run=run, sample=sample, condition=condition, parent=parent, parent_charge=pz)
         have = set(uptake.fragment[uptake.where(**sel)].tolist())
         for k in range(1, n):
             a, b = f"{n_ion}:{k}", f"{c_ion}:{n - k}"
@@ -539,7 +581,8 @@ def closure_table(
             if not len(tr):
                 continue
             q1, med, q3 = np.percentile(tr.mean, [25, 50, 75])
-            for name, value in (("sample", sample), ("condition", condition),
+            for name, value in (("run", run), ("merged", merged), ("sample", sample),
+                                ("condition", condition),
                                 ("parent", parent), ("parent_charge", pz), ("k", k),
                                 ("n_fragment", a), ("c_fragment", b), ("n", len(tr)),
                                 ("median", med), ("spread", (q3 - q1) / 2),
@@ -547,7 +590,7 @@ def closure_table(
                                 ("flagged", bool(abs(med) > tolerance))):
                 cols[name].append(value)
     kinds = {"parent_charge": np.int64, "k": np.int64, "n": np.int64, "median": float,
-             "spread": float, "mean": float, "flagged": bool}
+             "spread": float, "mean": float, "flagged": bool, "run": object, "merged": bool}
     return ClosureTable(**{name: np.array(v, dtype=kinds.get(name, str))
                            for name, v in cols.items()}, tolerance=tolerance)
 
@@ -679,8 +722,9 @@ def fit_residues(
 @dataclass(frozen=True)
 class LadderRates:
     """The decay fit (:func:`fit_decay`) of every single-residue ladder step
-    (:func:`ladder_rates`), one row per sample, parent, precursor charge, condition, ion type,
-    fragment charge and step: the ``residue`` (protein numbering) and its amino acid ``aa``,
+    (:func:`ladder_rates`), one row per run, sample, parent, precursor charge, condition, ion
+    type, fragment charge and step (``run`` and ``merged`` as in :class:`FragmentUptake`):
+    the ``residue`` (protein numbering) and its amino acid ``aa``,
     the fragments (``larger`` minus ``smaller``; ``smaller`` empty for the shortest fragment
     alone), ``rate`` and ``rate_se`` (1/s), ``amplitude`` and ``offset`` (deuterons), the
     number of points ``n`` and whether the decay is ``resolved`` in the time range (an
@@ -710,13 +754,25 @@ class LadderRates:
     kint: np.ndarray | None = None
     protection: np.ndarray | None = None
     min_time: float | None = None
+    run: np.ndarray | None = None
+    merged: np.ndarray | None = None
+
+    def __post_init__(self):
+        _fill_runs(self)
 
     def __len__(self) -> int:
         return len(self.residue)
 
+    @property
+    def state_run(self) -> np.ndarray:
+        return _state_run(self)
+
+    def states(self) -> list[tuple[str, str]]:
+        return list(dict.fromkeys(zip(self.state_run.tolist(), self.sample.astype(str).tolist(),
+                                      strict=True)))
+
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self)
-                if isinstance(getattr(self, f.name), np.ndarray)}
+        return _columns(self)
 
     def where(self, **conditions) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)
@@ -744,24 +800,29 @@ def ladder_rates(
     """Fit ``A exp(-k t) + C`` (:func:`fit_decay`, from ``min_time``) to every single-residue
     step (:func:`ladder_steps`) of the ``ion_types`` (default: every fragment ion type of the
     table) at the fragment ``charges``, in every sample, parent, precursor charge and
-    condition. The shortest fragment counts as a step when it holds one amide. With the
-    exchange ``conditions`` (the solvent of the kinetics: one set for every sample, or sample ->
-    set), each step also gets its residue's intrinsic rate and protection factor (NaN for a
-    sample without conditions); without them there are no such columns."""
-    from ..kint import intrinsic_rates, sample_conditions
+    condition (a merged sample's runs separately). The shortest fragment counts as a step when
+    it holds one amide. With the exchange ``conditions`` (the solvent of the kinetics: one set
+    for every sample, or by sample with per-run entries, :func:`hxex.analysis.sample_setting`),
+    each step also gets its residue's intrinsic rate and protection factor (NaN for a sample
+    without conditions); without them there are no such columns."""
+    from ..kint import intrinsic_rates
+    from .runs import sample_setting
 
     ion_types = list(ion_types) if ion_types is not None else fragment_ion_types(uptake)
     cols: dict[str, list] = {f.name: [] for f in fields(LadderRates) if f.name != "min_time"}
-    groups = sorted({(str(s), str(p), int(z)) for s, p, z in zip(
-        uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
-    for sample, parent, pz in groups:
-        rows = uptake.where(sample=sample, parent=parent, parent_charge=pz)
+    state_run = uptake.state_run
+    groups = sorted({(str(u), str(s), str(p), int(z)) for u, s, p, z in zip(
+        state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
+    for state, sample, parent, pz in groups:
+        rows = uptake.where(sample=sample, parent=parent, parent_charge=pz) & (state_run == state)
         entry = uptake.parent_entry(int(np.flatnonzero(rows)[0]))
         residues = chem.parse_sequence(parent)
-        solvent = sample_conditions(conditions, sample)
+        solvent = sample_setting(conditions, state, sample)
         kint = (intrinsic_rates(parent, solvent, start=entry.start_seq)
                 if solvent is not None else None)
-        scan_conditions = sorted(np.unique(uptake.condition[rows]).tolist())
+        merged = bool(uptake.merged[rows][0])
+        scan_conditions = sorted({(str(r), str(c)) for r, c in zip(
+            uptake.run[rows], uptake.condition[rows], strict=True)})
         for ion in ion_types:
             for z in charges:
                 series = rows & uptake.where(ion_type=ion, charge=z)
@@ -776,14 +837,15 @@ def ladder_rates(
                     (residue,) = step.residues
                     k_int = (float(kint.rate[kint.at([residue])[0]]) if kint is not None
                              else np.nan)
-                    for cond in scan_conditions:
-                        tr = difference_trace(uptake, step.larger, step.smaller, sample=sample,
-                                              parent=parent, parent_charge=pz, condition=cond,
-                                              charge=z).after(1e-9)
+                    for run, cond in scan_conditions:
+                        tr = difference_trace(uptake, step.larger, step.smaller, run=run,
+                                              sample=sample, parent=parent, parent_charge=pz,
+                                              condition=cond, charge=z).after(1e-9)
                         if not len(tr):
                             continue
                         f = fit_decay(tr, min_time=min_time)
                         for name, value in (
+                                ("run", run), ("merged", merged),
                                 ("sample", sample), ("parent", parent),
                                 ("parent_start", entry.start_seq), ("parent_charge", pz),
                                 ("condition", cond), ("ion_type", ion), ("charge", z),
@@ -799,15 +861,17 @@ def ladder_rates(
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "charge": np.int64,
              "residue": np.int64, "rate": float, "rate_se": float, "amplitude": float,
              "offset": float, "n": np.int64, "resolved": bool, "kint": float,
-             "protection": float}
+             "protection": float, "run": object, "merged": bool}
     if conditions is None:
         del cols["kint"], cols["protection"]
     else:
-        missing = sorted(set(cols["sample"]) - {s for s in cols["sample"]
-                                                 if sample_conditions(conditions, s)})
+        from .runs import label as _label
+
+        missing = sorted({(u, s) for u, s, *_ in groups
+                          if sample_setting(conditions, u, s) is None})
         if missing:
             log.warning("no exchange conditions for sample(s) %s ([analysis.fragments.exchange]):"
-                        " no intrinsic rates for them", ", ".join(missing))
+                        " no intrinsic rates for them", ", ".join(_label(*m) for m in missing))
     return LadderRates(**{name: np.array(v, dtype=kinds.get(name, str))
                           for name, v in cols.items()}, min_time=min_time)
 
@@ -822,12 +886,14 @@ class FragmentAnalysis:
     - ``min_time`` (s, on the exchange clock, the spectra's times): earlier points are drawn but
       not fitted; a file's unusable early scans are better left out with its ``usable_from``.
       (The ``min_time`` of ``[input.scans]`` is on the scan clock.)
-    - ``labels``: short condition names for the figures (``{'gentle': 'G'}``).
+    - ``labels``: short condition names for the figures (``{'gentle': 'G'}``; a run's own
+      under its name, ``{'etd': {'gentle': 'ETD G'}}``, for a merged sample's runs).
     - ``tolerance`` (deuterons): a closure ``c + z - M`` beyond it is flagged.
     - ``precursor_charge``: the closure's precursor; None: the unreacted precursor.
     - ``kint``: compute intrinsic rates, protection factors and theoretical curves (opt-in;
       needs ``exchange``); ``exchange``: the samples' exchange conditions
-      (:class:`hxex.kint.ExchangeConditions`, one set for every sample or sample -> set), whose
+      (:class:`hxex.kint.ExchangeConditions`, one set for every sample, or by sample with a
+      run's own under its name, ``[analysis.fragments.exchange.<run>.<sample>]``), whose
       ``d2o_fraction`` is the kinetics' solvent, not the labelling buffer's.
     """
 
@@ -857,7 +923,9 @@ class FragmentAnalysis:
         if not self.charges or min(self.charges) < 1:
             raise ValueError("charges must be one or more positive charges")
         if self.labels is not None:
-            object.__setattr__(self, "labels", {str(k): str(v) for k, v in self.labels.items()})
+            object.__setattr__(self, "labels", {
+                str(k): ({str(c): str(n) for c, n in v.items()} if isinstance(v, Mapping)
+                         else str(v)) for k, v in self.labels.items()})
         if not self.tolerance > 0:
             raise ValueError("tolerance must be positive")
 

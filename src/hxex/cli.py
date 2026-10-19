@@ -105,13 +105,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a project file (its [analysis] settings, and [analysis.runs] or "
                         "output.bundle; a file with only [analysis] is enough), a bundle, or "
                         "several bundles to compare as separate "
-                        "runs (NAME=BUNDLE, or BUNDLE named after its file; samples become "
-                        "NAME:sample)")
+                        "runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a "
+                        "run column)")
     p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis)")
     p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
-                                       "run:sample for several runs)")
+                                       "RUN:sample when the sample is in several runs)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
     _threads_option(p)

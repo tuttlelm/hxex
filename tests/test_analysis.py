@@ -593,6 +593,26 @@ def test_analysis_config_checks_and_round_trips():
             AnalysisConfig(**bad)
     with pytest.raises(ValueError, match="unknown"):
         AnalysisConfig.from_dict({"colour": "red"})
+    # per-sample settings take a run's own entries under its name (a run of runs)
+    nested = AnalysisConfig(runs={"A": "a.zip", "B": "b.zip"},
+                            fasta={"S": "s.fasta", "A": {"S": "s_a.fasta"}})
+    assert AnalysisConfig.from_dict(nested.to_dict()) == nested
+    with pytest.raises(ValueError, match="'C' is not a run"):
+        AnalysisConfig(runs={"A": "a.zip"}, fasta={"S": "s.fasta", "C": {"S": "x.fasta"}})
+    with pytest.raises(ValueError, match="'A' is not a run"):
+        AnalysisConfig(fasta={"A": {"S": "x.fasta"}})
+
+
+def test_sample_settings_resolve_by_run_then_sample():
+    from hxex.analysis import sample_setting
+
+    setting = {"S": "all", "A": {"S": "a's", "V": "a's V"}}
+    assert sample_setting(setting, "A", "S") == "a's"
+    assert sample_setting(setting, "B", "S") == "all"
+    assert sample_setting(setting, "", "S") == "all"  # a merged sample, or one run
+    assert sample_setting(setting, "B", "V") is None  # only run A has V's
+    assert sample_setting(setting, "", "A") is None  # a run's table is not a sample's value
+    assert sample_setting("one", "A", "S") == "one" and sample_setting(None, "A", "S") is None
 
 
 def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
@@ -754,22 +774,39 @@ def _with_settings(results, **changes):
 
 
 def test_runs_are_analysed_like_samples(results):
-    from hxex.analysis import RunSet, check_identity, compare_peptides, compare_settings
+    from hxex.analysis import (
+        RunSet,
+        check_identity,
+        compare_peptides,
+        compare_settings,
+        display_labels,
+        resolve_sample,
+    )
 
     rs = RunSet({"A": results, "B": results})
     up = species_uptake(rs)
-    assert set(up.sample.tolist()) == {"A:S", "B:S"}
-    a, b = up.select(up.sample == "A:S"), up.select(up.sample == "B:S")
+    # the run is a column: the sample keeps its name, and run:sample is a display label
+    assert set(up.sample.tolist()) == {"S"} and set(up.run.tolist()) == {"A", "B"}
+    assert list(up.columns())[:2] == ["run", "sample"]
+    assert display_labels(up.run, up.sample) == {("A", "S"): "A:S", ("B", "S"): "B:S"}
+    assert display_labels(["", ""], ["S", "V"]) == {("", "S"): "S", ("", "V"): "V"}
+    assert display_labels(["A", "B"], ["S", "V"]) == {("A", "S"): "S", ("B", "V"): "V"}
+    assert resolve_sample(up.run, up.sample, "B:S") == ("B", "S")
+    assert resolve_sample(["A", "B"], ["S", "V"], "V") == ("B", "V")
+    a, b = up.select(up.where(run="A")), up.select(up.where(run="B"))
     np.testing.assert_array_equal(a.fD, b.fD)
     np.testing.assert_array_equal(a.fD_se, b.fD_se)
     pc = compare_peptides(rs, "A:S")
-    assert set(pc.sample.tolist()) == {"B:S"}
+    assert set(pc.sample.tolist()) == {"S"} and set(pc.run.tolist()) == {"B"}
+    assert (pc.reference, pc.reference_run) == ("S", "A")
     assert len(pc) == len({float(t) for t in a.time if np.isfinite(t)})  # the time points
     np.testing.assert_allclose(pc.delta, 0.0)
     assert not pc.significant.any()
     assert len(check_identity(up)) == 0 and len(compare_settings(rs)) == 0
-    with pytest.raises(ValueError, match="samples: A:S, B:S"):
+    with pytest.raises(ValueError, match="several runs: name one of A:S, B:S"):
         compare_peptides(rs, "S")
+    with pytest.raises(ValueError, match="samples: A:S, B:S"):
+        compare_peptides(rs, "X")
     for bad in ({}, {"a:b": results}, {"": results}):
         with pytest.raises(ValueError):
             RunSet(bad)
@@ -798,10 +835,11 @@ def test_identity_is_checked_between_runs():
 
     from hxex.analysis import check_identity
 
-    up = table([("A:S", "AKLPGSTV", 2, 4.0, 0.3, 0.01), ("B:S", "AKLPGSTV", 3, 4.0, 0.3, 0.01),
-                ("A:S", "GSTVED", 6, 4.0, 0.6, 0.01), ("B:V", "GSTVED", 6, 4.0, 0.6, 0.01),
-                ("A:S", "TVEDRWQ", 8, 4.0, 0.6, 0.01), ("B:S", "TVEDRWQ", 8, 4.0, 0.6, 0.01)])
-    up = dataclasses.replace(up, n_amides=np.array([10.0, 10.0, 10.0, 10.0, 6.0, 5.0]))
+    up = table([("S", "AKLPGSTV", 2, 4.0, 0.3, 0.01), ("S", "AKLPGSTV", 3, 4.0, 0.3, 0.01),
+                ("S", "GSTVED", 6, 4.0, 0.6, 0.01), ("V", "GSTVED", 6, 4.0, 0.6, 0.01),
+                ("S", "TVEDRWQ", 8, 4.0, 0.6, 0.01), ("S", "TVEDRWQ", 8, 4.0, 0.6, 0.01)])
+    up = dataclasses.replace(up, n_amides=np.array([10.0, 10.0, 10.0, 10.0, 6.0, 5.0]),
+                             run=np.array(["A", "B", "A", "B", "A", "B"], dtype=object))
     check = check_identity(up)
     issues = {(str(p), str(r)): (str(s), str(i)) for p, r, s, i in zip(
         check.peptide, check.run, check.start, check.issue, strict=True)}
@@ -867,8 +905,10 @@ def test_analyse_separate_runs(two_sample_bundle, tmp_path, capsys):
     for table in ("run_settings", "run_identity", "compare_peptides", "compare_choices"):
         assert f"{table}.csv" in names
     assert {"coverage_A_S.png", "butterfly_B_S.png", "butterfly_A_V.png"} <= names
-    rows = (out / "compare_peptides.csv").read_text().splitlines()[1:]
-    assert {r.split(",")[1] for r in rows} == {"A:V", "B:S", "B:V"}  # the compared samples
+    rows = (out / "compare_peptides.csv").read_text().splitlines()
+    assert rows[0].startswith("comparison,run,sample,")
+    assert {tuple(r.split(",")[1:3]) for r in rows[1:]} == {
+        ("A", "V"), ("B", "S"), ("B", "V")}  # the compared samples
     project = tmp_path / "hxex.toml"
     project.write_text(f"""project = "p"
 [input]
@@ -1077,12 +1117,14 @@ def test_merged_runs_pool_their_spectra(results):
     np.testing.assert_allclose(pc.delta, compare_peptides(two, "S").delta, atol=1e-12)
     assert (pc.n == 2 * compare_peptides(two, "S").n).all()
     partly = species_uptake(RunSet({"A": two, "B": two}, merge={"A:S": "S"}))
-    assert set(partly.sample.tolist()) == {"S", "A:V", "B:S", "B:V"}
+    assert set(zip(partly.run, partly.sample, strict=True)) == {
+        ("", "S"), ("A", "V"), ("B", "S"), ("B", "V")}  # a merged sample has no run of its own
+    assert set(up.run.tolist()) == {""}
     # run identity: the runs and their spectra are listed; identical runs do not differ
     assert set(up.runs.tolist()) == {"A,B"} and not up.run_offset.any()
     assert all(c == f"{n // 2},{n // 2}" for c, n in zip(up.n_spectra_by_run, up.n_spectra,
                                                          strict=True))
-    assert set(partly.runs[partly.sample == "A:V"].tolist()) == {"A"}
+    assert set(partly.runs[partly.where(run="A", sample="V")].tolist()) == {"A"}
     assert set(single.runs.tolist()) == {""}
     # run B corrected with a smaller fully deuterated control: higher values throughout
     c = two.controls
@@ -1120,7 +1162,7 @@ B = "{two_sample_bundle.as_posix()}"
 """)
     assert cli.main(["-q", "analyse", str(project)]) == 0
     rows = (tmp_path / "merged" / "compare_peptides.csv").read_text().splitlines()[1:]
-    assert {r.split(",")[1] for r in rows} == {"V"}
+    assert {tuple(r.split(",")[1:3]) for r in rows} == {("", "V")}
     assert (tmp_path / "merged" / "run_identity.csv").is_file()
 
 

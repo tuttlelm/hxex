@@ -118,6 +118,14 @@ def test_conditions_per_sample():
     per = read_conditions({"WT": one, "S59D": {**one, "ph_read": 3.0}})
     assert sample_conditions(per, "S59D").ph_read == 3.0 and sample_conditions(per, "X") is None
     assert read_conditions(conditions_dict(per)) == per
+    # a run's own conditions under its name (a table of per-sample tables)
+    nested = read_conditions({"WT": one, "A": {"WT": {**one, "ph_read": 3.5}}})
+    assert sample_conditions(nested, "WT", "A").ph_read == 3.5
+    assert sample_conditions(nested, "WT", "B").ph_read == 2.8
+    assert sample_conditions(nested, "WT").ph_read == 2.8
+    assert read_conditions(conditions_dict(nested)) == nested
+    with pytest.raises(ValueError, match="one table per sample"):
+        read_conditions({"A": {"WT": {"X": one}}})
     assert sample_conditions(per["WT"], "anything") == per["WT"]
     with pytest.raises(ValueError, match="initial_fraction"):
         ExchangeConditions(2.8, 20, 0.05, initial_fraction=90)

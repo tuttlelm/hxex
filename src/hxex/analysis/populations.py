@@ -78,7 +78,7 @@ class ChoiceConfig:
 
 @dataclass(frozen=True)
 class PopulationChoice:
-    """One row per sample, time and residue (columns of equal length): ``fD_avg`` (K=1),
+    """One row per run, sample, time and residue (columns of equal length): ``fD_avg`` (K=1),
     ``fD_low`` and ``fD_high`` (K=2 ranks 1 and 2) with their ``*_se``; ``population_low`` (the
     low-D component's share by the lever rule, NaN where it does not apply) with
     ``population_low_se``; ``two_populations`` (the choice) and ``reason`` (why not: one of
@@ -102,20 +102,26 @@ class PopulationChoice:
     reason: np.ndarray
     config: ChoiceConfig = ChoiceConfig()  # noqa: RUF009
     control_fallback: np.ndarray | None = None
+    run: np.ndarray | None = None
 
-    def __post_init__(self):  # built without it: no fallback
+    def __post_init__(self):  # built without it: no fallback, one run
         if self.control_fallback is None:
             object.__setattr__(self, "control_fallback", np.zeros(len(self.sample), dtype=bool))
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+        else:
+            object.__setattr__(self, "run", np.asarray(self.run, dtype=object))
 
     def __len__(self) -> int:
         return len(self.sample)
 
     def columns(self) -> dict[str, np.ndarray]:
-        return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "config"}
+        return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                    if f.name not in ("config", "run")}}
 
-    def where(self, *, sample=None, time=None) -> np.ndarray:
+    def where(self, *, sample=None, time=None, run=None) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)
-        for name, value in (("sample", sample), ("time", time)):
+        for name, value in (("run", run), ("sample", sample), ("time", time)):
             if value is not None:
                 values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
                 keep &= np.isin(getattr(self, name), values)
@@ -146,7 +152,8 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         k, rank = int(residues.K[i]), int(residues.rank[i])
         if (k, rank) not in ((1, 1), (2, 1), (2, 2)):
             continue
-        key = (str(residues.sample[i]), float(residues.time[i]), int(residues.residue[i]))
+        key = (str(residues.run[i]), str(residues.sample[i]), float(residues.time[i]),
+               int(residues.residue[i]))
         name = {(1, 1): "avg", (2, 1): "low", (2, 2): "high"}[(k, rank)]
         table.setdefault(key, {})[name] = (float(residues.fD[i]), float(residues.fD_se[i]))
         fell_back[key] = fell_back.get(key, False) or bool(residues.control_fallback[i])
@@ -176,8 +183,9 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
     reason = np.where(two | ~np.isfinite(avg), "", reason)
     usable = has_k2 & between
     return PopulationChoice(
-        sample=np.array([k[0] for k in keys]), time=np.array([k[1] for k in keys], dtype=float),
-        residue=np.array([k[2] for k in keys], dtype=np.int64), fD_avg=avg, fD_avg_se=avg_se,
+        run=np.array([k[0] for k in keys], dtype=object), sample=np.array([k[1] for k in keys]),
+        time=np.array([k[2] for k in keys], dtype=float),
+        residue=np.array([k[3] for k in keys], dtype=np.int64), fD_avg=avg, fD_avg_se=avg_se,
         fD_low=low, fD_low_se=low_se, fD_high=high, fD_high_se=high_se,
         population_low=np.where(usable, pop, np.nan),
         population_low_se=np.where(usable, pop_se, np.nan), two_populations=two,

@@ -2790,3 +2790,33 @@ CSVs or mzML if wanted.
     `check`/`info` excerpts and a section on `time_scale = "order"`. Tests: order-scale plots
     and labels, the analysis refusals, the CLI roles and scale lines, the SpecExport control
     counts, the stored-scale rule.
+
+103. **The run as a variable in the analysis (2026-10-18; audit design item 2).** A
+    `RunSet`'s tables no longer name a sample `run:sample`: every analysis table (species
+    uptake, residues, coverage, populations, the peptide, residue, population and choice
+    comparisons, regions, the protection tables and their comparisons, the fragment uptake,
+    ladder rates and closure) has a `run` column before `sample`, and a species is identified
+    by `(run, sample, ...)` throughout (`where(run=..., sample=...)`; the comparison tables
+    carry `reference_run` beside `reference`). `run` is blank for an analysis of one bundle
+    and for a merged sample (its spectra pool several runs, listed in `runs`); fragment rows
+    keep their run, with a `merged` flag, because fragment series are never pooled: a merged
+    sample is one state (`state_run` '') whose series are `(run, condition)`, drawn side by
+    side, and `condition` stays as recorded (the `run:condition` prefix is gone, so
+    `[analysis.fragments.labels]` keys match again). `run:sample` is a display label
+    (`display_labels`): figure titles, legends and file stems use it only where the same
+    sample name occurs in several runs of the table, and the sample's name otherwise; the
+    figures are drawn from copies of the tables whose `sample` is that label, so the plot
+    functions did not change. Settings name a sample, with the run as a qualifier
+    (`resolve_sample`): `reference`, `samples` and `--reference` take a sample name, which
+    must be in one run of the set (an error lists the `run:sample` choices otherwise), or
+    `run:sample`; a merged sample or a one-bundle sample is always named by its name alone.
+    The per-sample tables `[analysis.fasta]`, `[analysis.labelling]`,
+    `[analysis.fragments.exchange]` and `[analysis.fragments.labels]` take a run's own entries
+    under the run's name (`[analysis.labelling.A.WT]`; `sample_setting` looks up the run's
+    entry, then the sample's), and a nested table whose name is not a run of `[analysis.runs]`
+    is refused. `merge` is unchanged. Decided by me, for the owner to confirm: the display
+    rule (prefix only where ambiguous) and the blank `run` of merged species rows. The private
+    two-run fragment example's labels moved to the per-run form. Tests: the run column and
+    labels, the resolution and its errors, the nested settings (fasta, labelling, exchange,
+    labels) and their refusal, the merged and unmerged fragment states; the former
+    `run:sample` assertions updated. Design note in docs/ANALYSIS.md ("The run as a variable").

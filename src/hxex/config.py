@@ -712,9 +712,12 @@ def _analysis_from(data: Mapping, base: Path):
     fasta = values.get("fasta")
     if isinstance(fasta, str):
         values["fasta"] = str(_path(base, fasta, "analysis.fasta"))
-    elif isinstance(fasta, Mapping):
-        values["fasta"] = {str(k): str(_path(base, v, f"analysis.fasta.{k}"))
-                           for k, v in fasta.items()}
+    elif isinstance(fasta, Mapping):  # per sample, or per run then sample
+        values["fasta"] = {
+            str(k): ({str(s): str(_path(base, w, f"analysis.fasta.{k}.{s}"))
+                      for s, w in v.items()} if isinstance(v, Mapping)
+                     else str(_path(base, v, f"analysis.fasta.{k}")))
+            for k, v in fasta.items()}
     if "out" in values:
         values["out"] = str(_path(base, values["out"], "analysis.out"))
     if values.get("runs") is not None:
@@ -1342,6 +1345,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# exclude_times = [0.1, 0.8]      # times left out of the whole analysis (unreliable;",
         "#                                 # the fits are kept)",
         '# fasta = "protein.fasta"         # or one per sample: [analysis.fasta] WT = "wt.fasta"',
+        '#                                 # (for one run of [analysis.runs]: [analysis.fasta.A])',
         '# coverage_times = "undeuterated" # or "all", or a list of times',
         '# redundancy = "peptides"         # or "spectra"',
         "# alpha = 0.05                    # significance of the comparisons",
@@ -1375,8 +1379,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [[analysis.sites]]",
         "# residue = 19",
         '# label = "S19"',
-        "# [analysis.runs]                 # compare separate runs: samples become run:sample",
-        '# A = "runA.zip"                  # (reference = "A:WT"); default: this project\'s bundle',
+        "# [analysis.runs]                 # compare separate runs: the tables get a run column;",
+        '# A = "runA.zip"                  # reference = "WT", or "A:WT" when WT is in several',
+        '#                                 # runs; default: this project\'s bundle',
         '# B = "../other/runB.zip"',
         "# [analysis.merge]                # combine runs: these samples become one, pooled",
         '# "A:WT" = "WT"',
@@ -1392,14 +1397,16 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# [analysis.fragments.labels]     # short condition names in the figures',
         '# gentle = "G"',
         "# [analysis.fragments.exchange]   # the kinetics' solvent, for every sample (or one",
-        "# ph_read = 3.0                   # table per sample: [analysis.fragments.exchange.S])",
+        "# ph_read = 3.0                   # table per sample: [analysis.fragments.exchange.S],",
+        "#                                 # or per run: [analysis.fragments.exchange.A.S])",
         "# temperature = 20.0              # degrees Celsius",
         "# d2o_fraction = 0.05             # D atom fraction of the kinetics' solvent (0 to 1;",
         "#                                 # the labelling buffer's is [run.controls])",
         '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
         "# initial_fraction = 0.9          # D fraction when the exchange began (curves)",
         "# [analysis.labelling]            # the labelling solvent, for every sample (or one",
-        "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT])",
+        "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT], or per",
+        "#                                 # run of [analysis.runs]: [analysis.labelling.A.WT])",
         "# temperature = 20.0              # degrees Celsius",
         "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer (as",
         "#                                 # [run.controls] d2o_fraction)",

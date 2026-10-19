@@ -220,12 +220,12 @@ How fragment data differs, and what this branch does about it:
   differences (`amide_difference`). The reference is pyHXExpress's kinetics notebooks; the
   owner provides references when this branch starts.
 - **Several runs** (owner, 2026-10-15; HISTORY item 80): activations and ladders are compared
-  across runs with a `RunSet`, as peptides are. Samples are `run:sample` unless `merge` gives
-  runs one sample; then each run's conditions become `run:condition`, so the runs are drawn
-  side by side in that sample's figures and never pooled (each run has its own exchange
-  clock). The tables start with a `run` column. The residue-rate figure holds every precursor
-  charge of a parent (an ETD 3+ run beside an EThcD 2+ run); the ladder and closure figures
-  stay per precursor charge.
+  across runs with a `RunSet`, as peptides are. Each row keeps its `run`; `merge` gives
+  runs one sample, whose runs are then drawn side by side in that sample's figures (one
+  series per run and condition) and never pooled (each run has its own exchange clock). The
+  tables start with a `run` column ("The run as a variable", below). The residue-rate figure
+  holds every precursor charge of a parent (an ETD 3+ run beside an EThcD 2+ run); the ladder
+  and closure figures stay per precursor charge.
 
 ### MS1 protection factors (owner, 2026-10-15; peptide level built, HISTORY item 81)
 
@@ -267,7 +267,8 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   protection factor has no EX2 meaning: a rank's value is an apparent one.
 - **Settings.** `[analysis] protection = true` and `[analysis.labelling]` (an
   `ExchangeConditions`: `ph_read`, `temperature`, `d2o_fraction`, `reference`; one table for
-  every sample or one per sample, `[analysis.labelling.<sample>]`). Labelling conditions alone
+  every sample or one per sample, `[analysis.labelling.<sample>]`, and per run
+  `[analysis.labelling.<run>.<sample>]`). Labelling conditions alone
   change nothing; `protection` without them is refused. Not the `[run.controls] quench`
   conditions, which are the quench and LC's.
 - **Outputs.** `protection.csv`: sample, peptide, range, `protection`, `protection_se`,
@@ -389,7 +390,8 @@ Plots (matplotlib, returning figures):
   limits); and a rule for a peptide and time fitted with one population in one run and two in
   another.
   As built (phase 4; HISTORY item 53): a `RunSet` (run name -> results) is analysed like one
-  run whose samples are `run:sample`, so every table, comparison and figure of phases 1 to 3
+  run whose samples carry their run in a `run` column (since HISTORY item 103; before, the
+  sample was labelled `run:sample`), so every table, comparison and figure of phases 1 to 3
   works across runs (`hxex analyse A=a.zip B=b.zip --reference A:WT`, or `[analysis.runs]`).
   Peptides are matched by residue range by default (see "Comparisons within a run"; charge
   states are combined); `check_identity` lists species whose position or amide count differs
@@ -420,6 +422,32 @@ Plots (matplotlib, returning figures):
   the species table lists a merged species' `runs` and `n_spectra_by_run`, and `run_offset`
   flags one whose runs differ systematically (the charge-trend rule, each run against the
   first), a batch effect pooling would otherwise hide (owner, 2026-10-13).
+- **The run as a variable** (audit design item 2, docs/AUDIT_2026-10-17.md; built
+  2026-10-18, HISTORY item 103). The run is a column, not part of a sample's name:
+  - Every analysis table has a `run` column before `sample`. `run` is the run the row's
+    values come from: blank for an analysis of one bundle, the run's name in a `RunSet`, and
+    blank for a merged sample (its spectra pool several runs; `runs` and `n_spectra_by_run`
+    list them). Fragment rows always keep their run, because fragment series are never pooled:
+    a merged sample's runs are drawn side by side in its figures (one series per run and
+    condition; `condition` stays as recorded, no `run:` prefix). A species is identified by
+    `(run, sample, ...)` everywhere (`where(run=..., sample=...)`); the comparison tables carry
+    `reference_run` beside `reference`.
+  - `run:sample` is a display label only: figure titles, legends and file stems use it where
+    the same sample name occurs in several runs of the table, and the plain sample name
+    otherwise (`hxex.analysis.display_labels`). A merged sample is one sample and is never
+    prefixed. Conditions of a merged fragment sample are labelled `run:condition` in the figures
+    where a condition occurs in several of its runs, by the same rule.
+  - Settings name samples, with the run as a qualifier: `reference`, `samples` (and the CLI
+    `--reference`) take a sample name, which must be in one run of the set (an error lists
+    the `run:sample` choices when it is in several), or `run:sample` to name one run's.
+    Per-sample tables (`[analysis.fasta]`, `[analysis.labelling]`,
+    `[analysis.fragments.exchange]`) are keyed by sample for every run, with a nested table
+    under a run's name for that run alone: `[analysis.labelling.WT]` for WT in every run,
+    `[analysis.labelling.A.WT]` for WT of run A (the run-specific entry wins; a nested table
+    whose name is not a run of `[analysis.runs]` is refused). `[analysis.fragments.labels]`
+    takes a run's own condition names the same way (`[analysis.fragments.labels.etd]`), which
+    replaces the former `"etd:gentle"` keys. `merge` is unchanged: its keys are `run:sample`,
+    which names one run's sample.
 - **Export** to the DynamX-like format pyHDX reads (`hdexa_to_pyhdx`): not needed (owner,
   2026-10-13).
 

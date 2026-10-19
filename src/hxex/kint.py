@@ -161,18 +161,23 @@ class ExchangeConditions:
 
 
 def sample_conditions(
-    conditions: ExchangeConditions | Mapping[str, ExchangeConditions] | None, sample: str
+    conditions: ExchangeConditions | Mapping[str, ExchangeConditions] | None, sample: str,
+    run: str = "",
 ) -> ExchangeConditions | None:
-    """The conditions of ``sample``: ``conditions`` itself when it is one set for every sample,
-    its entry for ``sample`` when it is a mapping (None when the sample has none)."""
-    if conditions is None or isinstance(conditions, ExchangeConditions):
-        return conditions
-    return conditions.get(sample)
+    """The conditions of ``sample`` (of ``run``): ``conditions`` itself when it is one set for
+    every sample, else its entry for the sample under the run's name when there is one, else
+    its entry for the sample (None when the sample has none;
+    :func:`hxex.analysis.sample_setting`)."""
+    from .analysis.runs import sample_setting
+
+    return sample_setting(conditions, run, sample)
 
 
-def read_conditions(data) -> ExchangeConditions | dict[str, ExchangeConditions] | None:
+def read_conditions(data) -> ExchangeConditions | dict | None:
     """Conditions from plain data (a project file): one set for every sample (a table with
-    ``ph_read``), or one per sample (sample -> table); objects are passed through."""
+    ``ph_read``), or one per sample (sample -> table), with a run's own under the run's name
+    (run -> sample -> table; a table without ``ph_read`` whose values are tables); objects
+    are passed through."""
     if data is None or isinstance(data, ExchangeConditions):
         return data
     if not isinstance(data, Mapping):
@@ -183,11 +188,20 @@ def read_conditions(data) -> ExchangeConditions | dict[str, ExchangeConditions] 
         return ExchangeConditions.from_dict(data)
     out = {}
     for sample, value in data.items():
-        if not isinstance(value, (Mapping, ExchangeConditions)):
+        if isinstance(value, ExchangeConditions):
+            out[str(sample)] = value
+        elif isinstance(value, Mapping) and "ph_read" in value:
+            out[str(sample)] = ExchangeConditions.from_dict(value)
+        elif isinstance(value, Mapping) and value and all(
+                isinstance(v, (Mapping, ExchangeConditions)) for v in value.values()):
+            nested = read_conditions(value)  # a run's table: sample -> conditions
+            if not isinstance(nested, dict) or any(isinstance(v, dict) for v in nested.values()):
+                raise ValueError(f"exchange conditions of run {sample!r}: one table per sample "
+                                 "(ph_read, temperature, d2o_fraction)")
+            out[str(sample)] = nested
+        else:
             raise ValueError(f"exchange conditions of sample {sample!r} must be a table "
-                             f"(ph_read, temperature, d2o_fraction)")
-        out[str(sample)] = (value if isinstance(value, ExchangeConditions)
-                            else ExchangeConditions.from_dict(value))
+                             f"(ph_read, temperature, d2o_fraction), or a run's table of them")
     return out
 
 
@@ -197,7 +211,7 @@ def conditions_dict(conditions) -> dict | None:
         return None
     if isinstance(conditions, ExchangeConditions):
         return conditions.to_dict()
-    return {sample: c.to_dict() for sample, c in conditions.items()}
+    return {sample: conditions_dict(c) for sample, c in conditions.items()}
 
 
 @dataclass(frozen=True)

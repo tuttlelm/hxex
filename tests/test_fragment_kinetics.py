@@ -428,7 +428,7 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
         min_time=10.0, kint=True, exchange={"S": cond}))
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
-    assert header.endswith("kint,protection")
+    assert header.endswith("kint,protection,merged")
     assert len(written) == 7
     # without the opt-in the same conditions change nothing
     off = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
@@ -531,16 +531,28 @@ def test_fragment_outputs_of_several_runs(tmp_path):
                                         parent=dataclasses.replace(PARENT, charge=2))}
     merged = RunSet(runs, merge={"etd:S": "S", "ethcd:S": "S"})
     u = fragment_uptake(merged)
-    assert set(u.sample) == {"S"} and set(u.condition) == {"etd:gentle", "ethcd:gentle"}
+    # the rows keep their run; the merged sample is one state (state_run ''), the condition
+    # stays as recorded and the figures name it run:condition where both runs have it
+    assert set(u.sample) == {"S"} and set(u.condition) == {"gentle"} and u.merged.all()
     assert set(u.run) == {"etd", "ethcd"} and len(u) == 2 * len(fragment_uptake(runs["etd"]))
+    assert u.states() == [("", "S")]
     assert u.select(u.where(run="etd")).run.tolist() == ["etd"] * (len(u) // 2)
     rates = ladder_rates(u, min_time=10.0)
     single = ladder_rates(fragment_uptake(runs["etd"]), min_time=10.0)
     assert len(rates) == 2 * len(single)
-    assert np.array_equal(rates.n[rates.where(condition="etd:gentle")], single.n)  # not pooled
+    assert np.array_equal(rates.n[rates.where(run="etd")], single.n)  # not pooled
     fig = residue_rates_figure(rates)
     assert [t.get_text() for t in fig.axes[0].get_legend().get_texts()] == [
         "etd:gentle c", "etd:gentle z", "ethcd:gentle c", "ethcd:gentle z"]
+
+    # a run's own labels under its name; a plain label is prefixed by the run where needed
+    named = FragmentAnalysis(labels={"gentle": "G", "etd": {"gentle": "ETD G"}})
+    fig = residue_rates_figure(rates, labels=named.labels)
+    assert [t.get_text() for t in fig.axes[0].get_legend().get_texts()] == [
+        "ETD G c", "ETD G z", "ethcd:G c", "ethcd:G z"]
+    with pytest.raises(ValueError, match="'uvpd' is not a run"):
+        AnalysisConfig(runs={"etd": "a"}, fragments=FragmentAnalysis(
+            labels={"uvpd": {"gentle": "U"}}))
 
     cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
     written = write_analysis(merged, cfg, tmp_path / "merged")
@@ -552,9 +564,11 @@ def test_fragment_outputs_of_several_runs(tmp_path):
         head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
         assert head.startswith("run,sample,"), head
 
-    # unmerged: run:sample, the conditions as they are, figures per run
+    # unmerged: a state per run (shown as run:sample), the conditions as they are, figures
+    # per run
     plain = fragment_uptake(RunSet(runs))
-    assert set(plain.sample) == {"etd:S", "ethcd:S"} and set(plain.condition) == {"gentle"}
+    assert set(plain.sample) == {"S"} and set(plain.condition) == {"gentle"}
+    assert plain.states() == [("etd", "S"), ("ethcd", "S")] and not plain.merged.any()
     names = {p.name for p in write_analysis(RunSet(runs), cfg, tmp_path / "plain")}
     assert {"residue_rates_etd_S_11-18_z3.png", "residue_rates_ethcd_S_11-18_z3.png"} <= names
 

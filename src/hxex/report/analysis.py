@@ -21,12 +21,15 @@ figures ``protection_<sample>``, and with a reference ``compare_protection.csv``
 ``protection_difference_<sample>``; with ``protection_residues`` (opt-in) the residue level:
 ``protection_residues.csv``, the
 figure ``protection_residues`` and with a reference ``compare_protection_residues.csv`` and
-``protection_residue_comparison_<sample>``. Characters a file name cannot
-hold (the ``:`` of ``run:sample``) become ``_``.
+``protection_residue_comparison_<sample>``. The ``<sample>`` of a figure is its display label
+(:func:`hxex.analysis.display_labels`: ``run:sample`` where the sample's name is in several
+runs of a :class:`hxex.analysis.RunSet`); characters a file name cannot hold (that ``:``)
+become ``_``. The tables name the run in a ``run`` column instead.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from dataclasses import fields
@@ -50,6 +53,8 @@ from ..analysis import (
     species_uptake,
 )
 from ..analysis.residues import NoPeptideAtTime
+from ..analysis.residues import states as _states
+from ..analysis.runs import display_labels, label, resolve_sample
 from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.times import format_time
@@ -75,8 +80,21 @@ log = logging.getLogger(__name__)
 
 
 def _columns(table) -> dict[str, np.ndarray]:
-    return {f.name: getattr(table, f.name) for f in fields(table)
-            if isinstance(getattr(table, f.name), np.ndarray)}
+    cols = {f.name: getattr(table, f.name) for f in fields(table)
+            if isinstance(getattr(table, f.name), np.ndarray) and f.name != "run"}
+    return {"run": table.run, **cols}
+
+
+def _display(table, labels: dict, reference=None):
+    """A copy of a table for the figures, its ``sample`` replaced by the display label of each
+    row's ``(run, sample)`` (``labels``, :func:`hxex.analysis.display_labels`), so that every
+    state has one name, and its ``reference`` by the reference's label if given."""
+    shown = np.array([labels.get((str(r), str(s)), label(str(r), str(s))) for r, s in
+                      zip(table.run, table.sample, strict=True)], dtype=object)
+    changes = {"sample": shown}
+    if reference is not None:
+        changes["reference"] = reference
+    return dataclasses.replace(table, **changes)
 
 
 def _time_scale(results) -> str:
@@ -154,22 +172,28 @@ def _fragment_series(results) -> tuple[set[int], bool]:
 def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     """The tables (name -> columns) and figures (stem -> drawing function) of the peptide
     analysis of the species table ``up``."""
-    present = list(dict.fromkeys(up.sample.tolist()))
-    samples = list(config.samples) if config.samples else present
-    missing = [s for s in samples if s not in present]
-    if missing:
-        raise ValueError(f"no sample(s) {', '.join(missing)} in the results")
-    if config.reference:
-        if config.reference not in present:
-            raise ValueError(f"no reference sample {config.reference!r} in the results "
-                             f"(samples: {', '.join(present)})")
-        samples = [config.reference] + [s for s in samples if s != config.reference]
-    up = up.select(np.isin(up.sample, samples))
+    # the samples are states (run, sample); the settings name them by sample (run:sample for
+    # one run's), and the figures by their display label
+    present = _states(up)
+    wanted = ([resolve_sample(up.run, up.sample, s) for s in config.samples]
+              if config.samples else present)
+    ref_state = (resolve_sample(up.run, up.sample, config.reference, "reference sample")
+                 if config.reference else None)
+    if ref_state is not None:
+        wanted = [ref_state] + [s for s in wanted if s != ref_state]
+    pairs = list(zip(up.run.astype(str), up.sample.astype(str), strict=True))
+    up = up.select(np.array([p in set(wanted) for p in pairs], dtype=bool))
     sequences = config.sequences(base)
     residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent,
                            modified=config.modified_peptides)
     # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
-    states = [s for s in dict.fromkeys(residues.sample.tolist()) if s not in samples]
+    state_pairs = [s for s in _states(residues) if s not in wanted]
+    all_states = wanted + state_pairs
+    labels = display_labels([s[0] for s in all_states], [s[1] for s in all_states])
+    samples = [labels[s] for s in wanted]  # display labels, the reference first
+    states_shown = [labels[s] for s in state_pairs]
+    reference = labels[ref_state] if ref_state is not None else ""
+    ref_name = label(*ref_state) if ref_state is not None else ""  # names it for the analyses
     coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
     try:
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
@@ -191,6 +215,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                "coverage": coverage.columns()}
     if choice is not None:
         tables["populations"] = choice.columns()
+    # the figures take the tables with each state's display label as its sample
+    up_d, residues_d, coverage_d = (_display(t, labels) for t in (up, residues, coverage))
+    choice_d = _display(choice, labels) if choice is not None else None
     if isinstance(results, RunSet):
         tables["run_settings"] = compare_settings(results).columns()
         # the identity check compares the runs, so merged samples are looked at run by run
@@ -199,11 +226,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             filters=config.filters, controls=config.controls)
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
+    pop_cmp = None
     if config.reference:
-        ref = config.reference
+        ref = ref_name
         kw = {"exclude_flagged": config.exclude_flagged, "filters": config.filters,
-              "alpha": config.alpha, "samples": samples, "match": config.peptide_match,
-              "controls": config.controls}
+              "alpha": config.alpha, "samples": [label(*s) for s in wanted],
+              "match": config.peptide_match, "controls": config.controls}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,
@@ -224,13 +252,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
                                    delta_crit=comparisons["K=1 fD"].delta_crit, choice=choice)
         tables["compare_residues"] = _columns(res_cmp)
-        pop_cmp = None
         if choice is not None:
             pop_cmp = compare_populations(
                 choice, ref, alpha=config.alpha,
                 delta_crit=comparisons["K=2 rank 1 (low D) population"].delta_crit)
             tables["compare_populations"] = _columns(pop_cmp)
             tables["compare_choices"] = compare_choices(choice, ref).columns()
+            pop_cmp = _display(pop_cmp, labels, reference)
+        comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
     protection = prot_cmp = res_prot = res_cmp = None
     if config.protection:
         if scale == "order":
@@ -254,17 +283,24 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                           modified=config.modified_peptides, cancel=cancel)
             tables["protection_residues"] = res_prot.columns()
         if config.reference:
-            prot_cmp = compare_protection(protection, config.reference, alpha=config.alpha,
+            prot_cmp = compare_protection(protection, ref_name, alpha=config.alpha,
                                           match=config.peptide_match)
             tables["compare_protection"] = prot_cmp.columns()
+            prot_cmp = _display(prot_cmp, labels, reference)
             if res_prot is not None:
-                res_cmp = compare_residue_protection(res_prot, config.reference,
-                                                     alpha=config.alpha)
+                res_cmp = compare_residue_protection(res_prot, ref_name, alpha=config.alpha)
                 tables["compare_protection_residues"] = res_cmp.columns()
+                res_cmp = _display(res_cmp, labels, reference)
+        protection = _display(protection, labels)
+        if res_prot is not None:
+            res_prot = _display(res_prot, labels)
     regions = None
     if ann.regions:
         regions = region_summary(residues, ann)
         tables["regions"] = _columns(regions)
+        regions = _display(regions, labels)
+    up, residues, coverage, choice = up_d, residues_d, coverage_d, choice_d
+    states = states_shown
 
     jobs = []  # (file stem, function drawing the figure)
     for s in samples:
@@ -274,37 +310,37 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         coverage, samples=samples, marks=marks)))
     for s in samples + states:
         for t in times:
-            label = _time_label(t, scale)
+            when_ = _time_label(t, scale)
             if choice is not None and choice.where(sample=s, time=t).any():
-                jobs.append((f"choice_{s}_{label}", lambda s=s, t=t: plot_population_choice(
+                jobs.append((f"choice_{s}_{when_}", lambda s=s, t=t: plot_population_choice(
                     choice, s, t, marks=marks, length=length, **when)))
             elif residues.where(sample=s, time=t).any():
-                jobs.append((f"profile_{s}_{label}", lambda s=s, t=t: plot_residue_profile(
+                jobs.append((f"profile_{s}_{when_}", lambda s=s, t=t: plot_residue_profile(
                     residues, s, t, marks=marks, length=length, **when)))
     if config.reference:
-        others = [s for s in samples if s != config.reference]
+        others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
         stack = list(comparisons.items())
         for t in times:
-            label = _time_label(t, scale)
+            when_ = _time_label(t, scale)
             only = choice if config.overlay_two_only else None
             shown = [s for s in residue_others
                      if _has_overlay(residues, s, t, config.overlay, only)]
-            if shown and _has_overlay(residues, config.reference, t, config.overlay, only):
-                jobs.append((f"compare_residues_{label}", lambda t=t, shown=shown, only=only:
+            if shown and _has_overlay(residues, reference, t, config.overlay, only):
+                jobs.append((f"compare_residues_{when_}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
-                                 residues, config.reference, shown, t, show=config.overlay,
+                                 residues, reference, shown, t, show=config.overlay,
                                  choice=only, annotations=ann, length=length, **when)))
             with_pop = [s for s in residue_others
                         if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
             if with_pop:
-                jobs.append((f"compare_populations_{label}",
+                jobs.append((f"compare_populations_{when_}",
                              lambda t=t, with_pop=with_pop: residue_comparison_figure(
                                  pop_cmp, with_pop, t, annotations=ann, length=length,
                                  **when)))
             for s in others:
                 if all(c.where(sample=s, time=t).any() for _, c in stack):
-                    jobs.append((f"woods_{s}_{label}", lambda s=s, t=t: woods_figure(
+                    jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_figure(
                         stack, s, t, annotations=ann, length=length, **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)

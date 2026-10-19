@@ -41,16 +41,19 @@ class AnalysisConfig:
     - ``controls``: control settings to change for the analysis (``{'d2o_fraction': 0.85}``;
       the controls are then recomputed from the run's K=1 fits; they are also recomputed, with
       the run's settings, when the review rejected a control spectrum).
-    - ``runs``: separate runs to compare (run name -> bundle; empty: the one run), whose samples
-      are then named ``run:sample`` everywhere (``reference``, ``samples``, ``fasta``);
-      ``merge``: with ``runs``, samples to combine across runs (``'run:sample'`` -> label; the
-      same label pools them, :class:`RunSet`; fragment series are not pooled but drawn side by
-      side).
+    - ``runs``: separate runs to compare (run name -> bundle; empty: the one run). The run is
+      then a column (``run``) beside ``sample`` in every table; ``reference`` and ``samples``
+      name a sample (in one run of the set) or ``run:sample`` (one run's sample), and the
+      per-sample settings (``fasta``, ``labelling``, ``fragments.exchange``) take a run's own
+      entries under its name (``{'WT': ..., 'A': {'WT': ...}}``;
+      :func:`hxex.analysis.sample_setting`). ``merge``: with ``runs``, samples to combine
+      across runs (``'run:sample'`` -> label; the same label pools them, :class:`RunSet`;
+      fragment series are not pooled but drawn side by side).
 
     Residues:
 
-    - ``fasta``: one sequence file for every sample, or one per sample (sample -> path); empty:
-      the sequence comes from the peptides.
+    - ``fasta``: one sequence file for every sample, or one per sample (sample -> path, with a
+      run's own under its name); empty: the sequence comes from the peptides.
     - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated controls; when
       there are none, ``'all'`` with a warning), ``'all'`` or a list of times.
     - ``redundancy``: what it counts, ``'peptides'`` or ``'spectra'``.
@@ -147,6 +150,11 @@ class AnalysisConfig:
                 if not name or SEPARATOR in name:
                     raise ValueError(f"run name {name!r}: must be non-empty without "
                                      f"{SEPARATOR!r}")
+        for what, setting in (("fasta", self.fasta), ("labelling", self.labelling)):
+            self._check_nested(what, setting)
+        if self.fragments is not None:
+            self._check_nested("fragments.exchange", self.fragments.exchange)
+            self._check_nested("fragments.labels", self.fragments.labels)
         object.__setattr__(self, "samples", tuple(str(s) for s in self.samples))
         object.__setattr__(self, "times", tuple(parse_time(t, "times") for t in self.times))
         object.__setattr__(self, "exclude_times",
@@ -187,8 +195,19 @@ class AnalysisConfig:
         if self.reference and self.samples and self.reference not in self.samples:
             raise ValueError(f"the reference {self.reference!r} is not among the samples")
 
-    def sequences(self, base: str | Path = ".") -> str | dict[str, str] | None:
-        """The protein sequence(s) of ``fasta`` (relative paths from ``base``)."""
+    def _check_nested(self, what: str, setting) -> None:
+        """A per-sample setting's nested tables (a run's own entries) must be named after runs
+        of ``runs``."""
+        if not isinstance(setting, Mapping):
+            return
+        for key, value in setting.items():
+            if isinstance(value, Mapping) and key not in (self.runs or {}):
+                raise ValueError(f"{what}.{key} is a table of samples, but {key!r} is not a run "
+                                 "of runs ([analysis.runs]); a sample's entry is one value")
+
+    def sequences(self, base: str | Path = ".") -> str | dict | None:
+        """The protein sequence(s) of ``fasta`` (relative paths from ``base``): one, or by
+        sample with a run's own under its name (:func:`hxex.analysis.sample_setting`)."""
         from ..io import read_fasta_sequence
 
         def read(path: str) -> str:
@@ -199,7 +218,9 @@ class AnalysisConfig:
             return None
         if isinstance(self.fasta, str):
             return read(self.fasta)
-        return {str(sample): read(path) for sample, path in self.fasta.items()}
+        return {str(key): ({str(s): read(p) for s, p in value.items()}
+                           if isinstance(value, Mapping) else read(value))
+                for key, value in self.fasta.items()}
 
     def to_dict(self) -> dict:
         out = {}

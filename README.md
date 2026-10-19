@@ -138,7 +138,8 @@ hxex report results --figures                # figures (and --tables) from the b
 hxex resume results                          # finish a run stopped during its bootstrap
 hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,
                                              # populations, comparisons ([analysis])
-hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs
+hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs (a run column;
+                                                      # RUN:sample names one run's sample)
 ```
 
 The output bundle (`[output] bundle`, say `results`) and the folders named after it

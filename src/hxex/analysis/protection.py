@@ -30,9 +30,11 @@ import numpy as np
 
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from ..kint import ExchangeConditions, intrinsic_rates, sample_conditions
+from ..kint import ExchangeConditions, intrinsic_rates
 from .compare import _pairs
-from .residues import MODIFIED, separate_modified
+from .residues import MODIFIED, separate_modified, states
+from .runs import label as _label
+from .runs import resolve_sample, sample_setting
 from .species import SpeciesUptake
 
 log = logging.getLogger(__name__)
@@ -43,8 +45,15 @@ _LOG_RANGE = (-6.0, 15.0)  # log10 protection searched
 
 
 def _columns(obj) -> dict[str, np.ndarray]:
-    return {f.name: getattr(obj, f.name) for f in fields(obj)
-            if isinstance(getattr(obj, f.name), np.ndarray)}
+    return {"run": obj.run, **{f.name: getattr(obj, f.name) for f in fields(obj)
+                               if isinstance(getattr(obj, f.name), np.ndarray)
+                               and f.name != "run"}}
+
+
+def _runs(obj) -> None:
+    """Fill a table's ``run`` column (blank: one run) and make it an object array."""
+    run = obj.run if obj.run is not None else np.full(len(obj), "", dtype=object)
+    object.__setattr__(obj, "run", np.asarray(run, dtype=object))
 
 
 def _where(obj, **conditions) -> np.ndarray:
@@ -58,8 +67,8 @@ def _where(obj, **conditions) -> np.ndarray:
 
 @dataclass(frozen=True)
 class ProtectionTable:
-    """One row per sample, peptide (``peptide``, ``modification``, ``start``, ``end``), ``K``
-    and ``rank``: ``log10_protection`` and ``log10_protection_se`` (one factor fitted over
+    """One row per run, sample, peptide (``peptide``, ``modification``, ``start``, ``end``),
+    ``K`` and ``rank``: ``log10_protection`` and ``log10_protection_se`` (one factor fitted over
     every time; NaN for a bound), ``protection`` (``10**log10_protection``), ``bound``
     (``'upper'``: exchanged at every time, the factor is at most ``limit``; ``'lower'``: barely
     exchanged at every time, at least ``limit``; ``''``: a value), ``limit``, ``n_times``,
@@ -88,6 +97,10 @@ class ProtectionTable:
     one_factor_fits: np.ndarray
     n_amides: np.ndarray
     n_approximate: np.ndarray
+    run: np.ndarray | None = None
+
+    def __post_init__(self):
+        _runs(self)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -101,7 +114,7 @@ class ProtectionTable:
 
 @dataclass(frozen=True)
 class ProtectionByTime:
-    """The apparent protection factor of every sample, peptide, ``K``, ``rank`` and ``time``:
+    """The apparent protection factor of every run, sample, peptide, ``K``, ``rank`` and ``time``:
     the measured ``fD`` and ``fD_se``, ``log10_protection`` and its ``log10_protection_se``
     (from ``fD_se``), ``bound`` and ``limit`` as in :class:`ProtectionTable` (at that time)."""
 
@@ -119,6 +132,10 @@ class ProtectionByTime:
     log10_protection_se: np.ndarray
     bound: np.ndarray
     limit: np.ndarray
+    run: np.ndarray | None = None
+
+    def __post_init__(self):
+        _runs(self)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -132,10 +149,10 @@ class ProtectionByTime:
 
 # --- intrinsic rates in the protein --------------------------------------------------------------
 
-def _known_residues(uptake: SpeciesUptake, sample: str, registry) -> dict[int, str]:
-    """Residue number -> modX label, from the sample's peptides."""
+def _known_residues(uptake: SpeciesUptake, state: tuple[str, str], registry) -> dict[int, str]:
+    """Residue number -> modX label, from the peptides of ``state`` (run, sample)."""
     known: dict[int, str] = {}
-    rows = np.flatnonzero(uptake.where(sample=sample))
+    rows = np.flatnonzero(uptake.where(run=state[0], sample=state[1]))
     for pep, start in {(str(uptake.peptide[i]), int(uptake.start[i])) for i in rows}:
         for j, label in enumerate(chem.parse_sequence(pep, registry)):
             known.setdefault(start + j, label)
@@ -260,12 +277,13 @@ def _refuse_falling(pep) -> None:
     design item). A peptide falls (rises) when its last finite ``fD`` is
     below (above) its first by more than twice their combined error, or by 0.05 without one."""
     # the two-direction model: docs/AUDIT_2026-10-17.md
-    falling: dict[str, int] = {}
-    rising: dict[str, int] = {}
+    falling: dict[tuple, int] = {}
+    rising: dict[tuple, int] = {}
     groups: dict[tuple, list[int]] = {}
     for i in np.argsort(pep.time, kind="stable"):
-        key = (str(pep.sample[i]), str(pep.peptide[i]), str(pep.modification[i]),
-               int(pep.start[i]), int(pep.end[i]), int(pep.K[i]), int(pep.rank[i]))
+        key = ((str(pep.run[i]), str(pep.sample[i])), str(pep.peptide[i]),
+               str(pep.modification[i]), int(pep.start[i]), int(pep.end[i]), int(pep.K[i]),
+               int(pep.rank[i]))
         if np.isfinite(pep.fD[i]):
             groups.setdefault(key, []).append(int(i))
     for key, rows in groups.items():
@@ -281,9 +299,11 @@ def _refuse_falling(pep) -> None:
             rising[key[0]] = rising.get(key[0], 0) + 1
     bad = sorted(s for s, n in falling.items() if n > rising.get(s, 0))
     if bad:
+        names = [_label(*s) for s in bad]
         raise ValueError(
-            f"sample(s) {', '.join(bad)}: fD falls with time in most peptides "
-            f"({', '.join(f'{s}: {falling[s]} falling, {rising.get(s, 0)} rising' for s in bad)})"
+            f"sample(s) {', '.join(names)}: fD falls with time in most peptides "
+            + "(" + ", ".join(f"{_label(*s)}: {falling[s]} falling, {rising.get(s, 0)} rising"
+                              for s in bad) + ")"
             ". Protection factors are fitted to forward labelling; back-exchange kinetics "
             "(deuterated then diluted into H2O) need the two-direction model, which is not "
             "built: leave protection off for this run")
@@ -291,10 +311,13 @@ def _refuse_falling(pep) -> None:
 
 def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="combined"):
     """The peptides of ``uptake`` that get protection factors: (the table, its rows grouped by
-    sample, peptide, modification, start, end, K and rank, the rates of each peptide by its
-    first five keys (``(kint of the counted amides, how many approximate, their residue
-    numbers)``, None where not all known), each sample's residue labels by number, and the
-    base sample of every state). With ``modified='separate'`` every modified peptide moves
+    (run, sample), peptide, modification, start, end, K and rank, the rates of each peptide by
+    its first five keys (``(kint of the counted amides, how many approximate, their residue
+    numbers)``, None where not all known), each (run, sample)'s residue labels by number, and
+    the base sample of every state (run, state)). ``conditions`` and ``sequences`` are one
+    value for every sample, or by sample with per-run entries
+    (:func:`hxex.analysis.sample_setting`). With ``modified='separate'`` every modified peptide
+    moves
     to a state of its own (:func:`hxex.analysis.separate_modified`, named ``'<sample>
     <sites>'``), which takes its sample's sequence and conditions; ``'combined'`` keeps the
     forms in one sample."""
@@ -307,47 +330,51 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
         keep &= ~np.isclose(times, t)
     pep = pep.select(keep)
     _refuse_falling(pep)
-    base = {str(s): str(s) for s in pep.sample}
+    base = {state: state[1] for state in states(pep)}
     if modified == "separate":
         pep, base = separate_modified(pep, registry)
-        if isinstance(sequences, Mapping):
-            sequences = {state: sequences[s] for state, s in base.items() if s in sequences}
-        if isinstance(conditions, Mapping):
-            conditions = {state: conditions[s] for state, s in base.items() if s in conditions}
-    uncorrected = sorted({str(s) for s, c in zip(pep.sample, pep.corrected, strict=True)
-                          if not c})
+
+    def setting_of(setting, state):  # a state takes its sample's sequence and conditions
+        return sample_setting(setting, state[0], base.get(state, state[1]))
+
+    all_states = states(pep)
+    state_of = list(zip(pep.run.astype(str), pep.sample.astype(str), strict=True))
+    uncorrected = sorted({st for st, c in zip(state_of, pep.corrected, strict=True) if not c})
     if uncorrected:
         log.warning("no protection factors for sample(s) %s: not corrected for back-exchange "
-                    "(the run had no controls, [run.controls])", ", ".join(uncorrected))
-    no_conditions = sorted({str(s) for s in pep.sample} - set(uncorrected)
-                           - {str(s) for s in pep.sample if sample_conditions(conditions, s)})
+                    "(the run had no controls, [run.controls])",
+                    ", ".join(_label(*st) for st in uncorrected))
+    no_conditions = sorted(set(all_states) - set(uncorrected)
+                           - {st for st in all_states if setting_of(conditions, st)})
     if no_conditions:
         log.warning("no labelling conditions for sample(s) %s ([analysis.labelling]): no "
-                    "protection factors for them", ", ".join(no_conditions))
-    pep = pep.select(~np.isin(pep.sample, uncorrected + no_conditions))
+                    "protection factors for them", ", ".join(_label(*st) for st in no_conditions))
+    left_out = set(uncorrected + no_conditions)
+    pep = pep.select(np.array([st not in left_out for st in state_of], dtype=bool))
     groups: dict[tuple, list[int]] = {}
     for i in range(len(pep)):
-        key = (str(pep.sample[i]), str(pep.peptide[i]), str(pep.modification[i]),
-               int(pep.start[i]), int(pep.end[i]), int(pep.K[i]), int(pep.rank[i]))
+        key = ((str(pep.run[i]), str(pep.sample[i])), str(pep.peptide[i]),
+               str(pep.modification[i]), int(pep.start[i]), int(pep.end[i]), int(pep.K[i]),
+               int(pep.rank[i]))
         groups.setdefault(key, []).append(i)
-    labels: dict[str, dict[int, str]] = {}
-    for sample in dict.fromkeys(pep.sample.tolist()):
-        seq = sequences.get(sample) if isinstance(sequences, Mapping) else sequences
-        labels[sample] = ({j + 1: lab for j, lab in enumerate(chem.parse_sequence(seq, registry))}
-                          if seq else _known_residues(pep, sample, registry))
+    labels: dict[tuple[str, str], dict[int, str]] = {}
+    for state in states(pep):
+        seq = setting_of(sequences, state)
+        labels[state] = ({j + 1: lab for j, lab in enumerate(chem.parse_sequence(seq, registry))}
+                         if seq else _known_residues(pep, state, registry))
     rates: dict[tuple, tuple | None] = {}
-    skipped: dict[str, int] = {}
+    skipped: dict[tuple, int] = {}
     for key, rows in groups.items():
-        sample, peptide, mod, start, end = rkey = key[:5]
+        state, peptide, mod, start, end = rkey = key[:5]
         if rkey in rates:
             continue
         rates[rkey] = None
         spec = chem.parse_modification(mod)
         if spec.ion_type == "M" and not spec.hex:
-            seq = sequences.get(sample) if isinstance(sequences, Mapping) else sequences
-            last = bool(seq) and end == len(labels[sample])
-            k, approx = peptide_rates(peptide, start, sample_conditions(conditions, sample),
-                                      before=labels[sample].get(start - 1), protein_end=last,
+            seq = setting_of(sequences, state)
+            last = bool(seq) and end == len(labels[state])
+            k, approx = peptide_rates(peptide, start, setting_of(conditions, state),
+                                      before=labels[state].get(start - 1), protein_end=last,
                                       nterm_subtract=pep.nterm_subtract, registry=registry)
             pos = np.array(chem.amide_positions(peptide, "M", None,
                                                 nterm_subtract=pep.nterm_subtract,
@@ -355,11 +382,11 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
             if len(k) == int(pep.n_amides[rows[0]]) and len(k) and not np.isnan(k).any():
                 rates[rkey] = (k, int(approx.sum()), start + pos - 1)
         if rates[rkey] is None:
-            skipped[sample] = skipped.get(sample, 0) + 1
+            skipped[state] = skipped.get(state, 0) + 1
     if skipped:
         log.warning("protection factors: %s peptide(s) left out (rates not all known: a modified "
                     "ion type, or the residue before unknown)",
-                    ", ".join(f"{s}: {n}" for s, n in skipped.items()))
+                    ", ".join(f"{_label(*s)}: {n}" for s, n in skipped.items()))
     return pep, groups, rates, labels, base
 
 
@@ -391,6 +418,7 @@ def peptide_protection(
         if rates[key[:5]] is None:
             continue
         k, n_approx, _ = rates[key[:5]]
+        key = (*key[0], *key[1:])  # (run, sample, peptide, ...)
         rows = sorted(rows, key=lambda i: pep.time[i])
         t = pep.time[rows].astype(float)
         y = pep.fD[rows].astype(float)
@@ -398,8 +426,8 @@ def peptide_protection(
         app = [_apparent(k, ti, yi, si) for ti, yi, si in zip(t, y, se, strict=True)]
         x_t = np.array([a[0] for a in app])
         for j, (ti, a) in enumerate(zip(t, app, strict=True)):
-            for name, value in zip(("sample", "peptide", "modification", "start", "end", "K",
-                                    "rank"), key, strict=True):
+            for name, value in zip(("run", "sample", "peptide", "modification", "start", "end",
+                                    "K", "rank"), key, strict=True):
                 by_time[name].append(value)
             for name, value in (("time", ti), ("fD", y[j]), ("fD_se", se[j]),
                                 ("log10_protection", a[0]), ("log10_protection_se", a[1]),
@@ -417,8 +445,8 @@ def peptide_protection(
             x, x_se, misfit, fits = _fit(k, t[finite], y[finite], se[finite], x_t[finite], alpha)
         inside = x_t[np.isfinite(x_t)]
         drift = float(inside[-1] - inside[0]) if len(inside) > 1 else np.nan
-        for name, value in zip(("sample", "peptide", "modification", "start", "end", "K", "rank"),
-                               key, strict=True):
+        for name, value in zip(("run", "sample", "peptide", "modification", "start", "end", "K",
+                                "rank"), key, strict=True):
             out[name].append(value)
         for name, value in (("log10_protection", x), ("log10_protection_se", x_se),
                             ("protection", 10.0**x), ("bound", bound), ("limit", limit),
@@ -430,6 +458,8 @@ def peptide_protection(
     text = ("sample", "peptide", "modification", "bound")
 
     def array(name, values):
+        if name == "run":
+            return np.array(values, dtype=object)
         if name in text:
             return np.array(values, dtype=str)
         if name == "one_factor_fits":
@@ -449,7 +479,7 @@ HOP_PATIENCE = 40  # basin hops without improvement before the search stops
 
 @dataclass(frozen=True)
 class ResidueProtection:
-    """One row per state (``sample``, ``K``, ``rank``) and fitted residue
+    """One row per state (``run``, ``sample``, ``K``, ``rank``) and fitted residue
     (:func:`residue_protection`): ``residue``, ``aa``, ``log10_protection`` and
     ``log10_protection_se`` (for the regulariser weight ``r1`` used; NaN for a bound),
     ``protection``, ``bound`` and ``limit`` (every covering peptide bounded the same way),
@@ -471,6 +501,10 @@ class ResidueProtection:
     n_peptides: np.ndarray
     misfit: np.ndarray
     r1: float = R1
+    run: np.ndarray | None = None
+
+    def __post_init__(self):
+        _runs(self)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -629,9 +663,9 @@ def residue_protection(
                                                 registry, modified)
     start_value = {}
     for i in range(len(peptides)):
-        key = (str(peptides.sample[i]), str(peptides.peptide[i]), str(peptides.modification[i]),
-               int(peptides.start[i]), int(peptides.end[i]), int(peptides.K[i]),
-               int(peptides.rank[i]))
+        key = ((str(peptides.run[i]), str(peptides.sample[i])), str(peptides.peptide[i]),
+               str(peptides.modification[i]), int(peptides.start[i]), int(peptides.end[i]),
+               int(peptides.K[i]), int(peptides.rank[i]))
         x = peptides.log10_protection[i]
         start_value[key] = ((float(x) if np.isfinite(x) else
                              float(np.log10(peptides.limit[i])) if peptides.bound[i] else np.nan),
@@ -643,12 +677,12 @@ def residue_protection(
         log.info("residue protection: %d peptide(s) without a finite fD left out", len(empty))
     states = sorted({(k[0], k[5], k[6]) for k in groups
                      if rates[k[:5]] is not None and k not in empty},
-                    key=lambda s: (list(labels).index(s[0]), s[1], s[2]))
+                    key=lambda s: (list(labels).index(s[0]), s[1], s[2]))  # (run, sample)
     cols = {f.name: [] for f in fields(ResidueProtection) if f.name != "r1"}
-    for n_done, (sample, kk_, rank) in enumerate(states):
+    for n_done, (state, kk_, rank) in enumerate(states):
         report(progress, n_done, len(states))
         check_cancel(cancel)
-        keys = [k for k in groups if (k[0], k[5], k[6]) == (sample, kk_, rank)
+        keys = [k for k in groups if (k[0], k[5], k[6]) == (state, kk_, rank)
                 and rates[k[:5]] is not None and k not in empty]
         rate_of: dict[int, float] = {}
         for key in keys:
@@ -671,7 +705,7 @@ def residue_protection(
             peps.append((idx, float(np.sum(~np.isfinite(k))), float(len(k))))
             for r in idx:  # the peptide table names the sample, not the state
                 covering[residues[r]].append(start_value.get(
-                    (base.get(key[0], key[0]), *key[1:]), (np.nan, "", np.nan)))
+                    ((key[0][0], base.get(key[0], key[0][1])), *key[1:]), (np.nan, "", np.nan)))
             for i in groups[key]:
                 if np.isfinite(pep.fD[i]):
                     for target, value in zip(obs, (j, pep.time[i], pep.fD[i], pep.fD_se[i]),
@@ -682,8 +716,8 @@ def residue_protection(
         pairs = []
         for r0, r1_ in zip(residues[:-1], residues[1:], strict=True):
             gap = range(r0 + 1, r1_)
-            if all(labels[sample].get(g) is not None
-                   and registry.base_residue(labels[sample][g]) == "P" for g in gap):
+            if all(labels[state].get(g) is not None
+                   and registry.base_residue(labels[state][g]) == "P" for g in gap):
                 pairs.append((col[r0], col[r1_]))
         x0 = []
         for r in residues:
@@ -702,19 +736,21 @@ def residue_protection(
                 limits = [v[2] for v in covering[r]]
                 limit = min(limits) if bound == "upper" else max(limits)
                 value = err = np.nan
-            for name, v in (("sample", sample), ("K", kk_), ("rank", rank), ("residue", r),
-                            ("aa", labels[sample].get(r, "")), ("log10_protection", value),
+            for name, v in (("run", state[0]), ("sample", state[1]), ("K", kk_), ("rank", rank),
+                            ("residue", r),
+                            ("aa", labels[state].get(r, "")), ("log10_protection", value),
                             ("log10_protection_se", err), ("protection", 10.0**value),
                             ("bound", bound), ("limit", limit),
                             ("resolved", bool(resolved[j])),
                             ("n_peptides", len(covering[r])), ("misfit", misfit)):
                 cols[name].append(v)
         log.info("residue protection %s K=%d rank %d: %d residues, %d resolved, misfit %.3g "
-                 "(r1 %g)", sample, kk_, rank, len(residues), int(resolved.sum()), misfit, r1)
+                 "(r1 %g)", _label(*state), kk_, rank, len(residues), int(resolved.sum()),
+                 misfit, r1)
     report(progress, len(states), len(states))
     kinds = {"K": np.int64, "rank": np.int64, "residue": np.int64, "log10_protection": float,
              "log10_protection_se": float, "protection": float, "limit": float,
-             "resolved": bool, "n_peptides": np.int64, "misfit": float}
+             "resolved": bool, "n_peptides": np.int64, "misfit": float, "run": object}
     return ResidueProtection(**{n: np.array(v, dtype=kinds.get(n, str)) for n, v in cols.items()},
                              r1=r1)
 
@@ -745,6 +781,11 @@ class ProtectionComparison:
     note: np.ndarray
     reference: str = ""
     alpha: float = 0.05
+    run: np.ndarray | None = None
+    reference_run: str = ""
+
+    def __post_init__(self):
+        _runs(self)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -776,15 +817,18 @@ def compare_protection(
         return (str(table.peptide[i]), str(table.modification[i]), int(table.start[i]),
                 int(table.end[i]), int(table.K[i]), int(table.rank[i]))
 
-    ref = {ident(i): i for i in np.flatnonzero(table.where(sample=reference))}
+    reference = resolve_sample(table.run, table.sample, reference, "reference sample")
+    ref = {ident(i): i for i in np.flatnonzero(table.where(run=reference[0],
+                                                           sample=reference[1]))}
     crit = float(stats.norm.ppf(1 - alpha / 2))
-    cols = {f.name: [] for f in fields(ProtectionComparison) if f.name not in ("reference",
-                                                                              "alpha")}
+    cols = {f.name: [] for f in fields(ProtectionComparison)
+            if f.name not in ("reference", "reference_run", "alpha")}
     pairs = []
-    for sample in dict.fromkeys(table.sample.tolist()):
-        if sample == reference:
+    for state in states(table):
+        if state == reference:
             continue
-        other = {ident(i): i for i in np.flatnonzero(table.where(sample=sample))}
+        other = {ident(i): i for i in np.flatnonzero(table.where(run=state[0],
+                                                                 sample=state[1]))}
         pairs += [(ref[rkey], other[key]) for rkey, key in _pairs(ref, other, match)]
     for j, i in sorted(pairs, key=lambda p: p[1]):
         note = ""
@@ -794,7 +838,8 @@ def compare_protection(
         d = float(table.log10_protection[i] - table.log10_protection[j])
         se = float(np.hypot(table.log10_protection_se[i], table.log10_protection_se[j]))
         z = d / se if np.isfinite(se) and se > 0 else np.nan
-        for name, value in (("sample", table.sample[i]), ("peptide", table.peptide[i]),
+        for name, value in (("run", table.run[i]), ("sample", table.sample[i]),
+                            ("peptide", table.peptide[i]),
                             ("modification", table.modification[i]), ("start", table.start[i]),
                             ("end", table.end[i]), ("K", table.K[i]), ("rank", table.rank[i]),
                             ("peptide_reference", table.peptide[j]), ("delta", d),
@@ -803,9 +848,10 @@ def compare_protection(
                             ("note", note)):
             cols[name].append(value)
     kinds = {"start": np.int64, "end": np.int64, "K": np.int64, "rank": np.int64,
-             "delta": float, "delta_se": float, "z": float, "significant": bool}
+             "delta": float, "delta_se": float, "z": float, "significant": bool, "run": object}
     return ProtectionComparison(**{n: np.array(v, dtype=kinds.get(n, str))
-                                   for n, v in cols.items()}, reference=reference, alpha=alpha)
+                                   for n, v in cols.items()}, reference=reference[1],
+                                reference_run=reference[0], alpha=alpha)
 
 
 @dataclass(frozen=True)
@@ -829,6 +875,11 @@ class ResidueProtectionComparison:
     note: np.ndarray
     reference: str = ""
     alpha: float = 0.05
+    run: np.ndarray | None = None
+    reference_run: str = ""
+
+    def __post_init__(self):
+        _runs(self)
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -852,12 +903,14 @@ def compare_residue_protection(
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
+    reference = resolve_sample(table.run, table.sample, reference, "reference sample")
+    is_ref = table.where(run=reference[0], sample=reference[1])
     ref = {(int(table.K[i]), int(table.rank[i]), int(table.residue[i])): i
-           for i in np.flatnonzero(table.where(sample=reference))}
+           for i in np.flatnonzero(is_ref)}
     crit = float(stats.norm.ppf(1 - alpha / 2))
     cols = {f.name: [] for f in fields(ResidueProtectionComparison)
-            if f.name not in ("reference", "alpha")}
-    for i in np.flatnonzero(~table.where(sample=reference)):
+            if f.name not in ("reference", "reference_run", "alpha")}
+    for i in np.flatnonzero(~is_ref):
         j = ref.get((int(table.K[i]), int(table.rank[i]), int(table.residue[i])))
         if j is None:
             continue
@@ -869,14 +922,16 @@ def compare_residue_protection(
         d = float(table.log10_protection[i] - table.log10_protection[j])
         se = float(np.hypot(table.log10_protection_se[i], table.log10_protection_se[j]))
         z = d / se if np.isfinite(se) and se > 0 else np.nan
-        for name, value in (("sample", table.sample[i]), ("K", table.K[i]),
+        for name, value in (("run", table.run[i]), ("sample", table.sample[i]),
+                            ("K", table.K[i]),
                             ("rank", table.rank[i]), ("residue", table.residue[i]),
                             ("aa", table.aa[i]), ("delta", d), ("delta_se", se), ("z", z),
                             ("significant", bool(resolved and np.isfinite(z) and abs(z) > crit)),
                             ("resolved", resolved), ("note", "; ".join(notes))):
             cols[name].append(value)
     kinds = {"K": np.int64, "rank": np.int64, "residue": np.int64, "delta": float,
-             "delta_se": float, "z": float, "significant": bool, "resolved": bool}
+             "delta_se": float, "z": float, "significant": bool, "resolved": bool, "run": object}
     return ResidueProtectionComparison(**{n: np.array(v, dtype=kinds.get(n, str))
                                           for n, v in cols.items()},
-                                       reference=reference, alpha=alpha)
+                                       reference=reference[1], reference_run=reference[0],
+                                       alpha=alpha)
