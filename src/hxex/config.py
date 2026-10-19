@@ -1411,6 +1411,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer (as",
         "#                                 # [run.controls] d2o_fraction)",
         '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
+        "# initial_fraction = 0.9          # back-exchange only: the D fraction the amides",
+        "#                                 # began with (above d2o_fraction: fD falls with",
+        "#                                 # time); leave it out for labelling",
     ]
     scalars = {k: v for k, v in run.items()
                if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}

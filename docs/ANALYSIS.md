@@ -273,8 +273,11 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   conditions, which are the quench and LC's.
 - **Outputs.** `protection.csv`: sample, peptide, range, `protection`, `protection_se`,
   `log10_protection`, `n_times`, `bound`, `protection_drift`, `misfit`, `one_factor_fits`,
-  `n_approximate` (amides whose `kint` borrows a factor: modified residues);
-  `protection_by_time.csv`: the apparent protection factor per time. With a reference,
+  `n_approximate` (amides whose `kint` borrows a factor: modified residues), `direction`
+  (`forward` or `back`), `corrected`, `fD0` and `fD0_se` (NaN when fixed), `equilibrium`
+  (the mean `e_i`; 1 forward);
+  `protection_by_time.csv`: the apparent protection factor per time, with the exchange's
+  `progress`. With a reference,
   `compare_protection.csv` (`delta` in log10 units, `delta_se`, `z`, `significant` at
   `alpha`, `note` where a bound leaves no value; peptides matched as `peptide_match` says).
   Figures (owner: the coverage map's layout): `protection_<sample>` (a panel per K and rank,
@@ -287,10 +290,40 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   peptides (`intrinsic_rates(..., free_termini=)`). Without a FASTA no peptide ends at a free
   carboxyl.
 - **Unreliable times** are left out with `[analysis] exclude_times` (the whole analysis).
-- **Direction.** The model is one of forward labelling (`fD` rises with time). A sample whose
-  peptides mostly lose deuterium with time (back-exchange kinetics) is refused with a message:
-  protection factors apply there too (the same ratio under EX2), but through the
-  two-direction model of the audit of 2026-10-17, a design item not yet built.
+- **Direction (two-direction model, built 2026-10-19 at the peptide level, HISTORY item 104;
+  audit design item 3).** Protection factors apply to back-exchange kinetics too (the same
+  ratio under EX2). No setting names the direction (owner, 2026-10-13): it follows from the
+  labelling conditions. `initial_fraction` (the D fraction the amides began with) above
+  `d2o_fraction` (the solvent the exchange happens in) is a back-exchange; without it,
+  forward labelling. One model covers both:
+  `fD(t) = mean_i(e_i + (fD0 - e_i) exp(-kint_i t / protection))`, with `kint_i = kforw +
+  kback` and `e_i = kforw / (kforw + kback)` from `hxex.kint` for that solvent.
+  - Forward labelling: `fD0 = 0`, `e_i = 1` (the corrected plateau): the model above, unchanged.
+  - Back-exchange, corrected: `e_i` is the amide's equilibrium over `initial_fraction` (the
+    fully deuterated reference is taken to be made in the labelling solvent; owner,
+    2026-10-19). `fD0` is fitted by default (owner, 2026-10-18), between the largest `e_i`
+    and 2, from three starting factors; it is fixed at 1 only when the series has a measured
+    fully deuterated control (corrected, no control fallback). The first usable point stays
+    the user's choice (`exclude_times`), never chosen automatically.
+  - Back-exchange, not corrected (no fully deuterated control, as in infusion kinetics with
+    an undeuterated control and a low-D end point): fitted on the absolute scale, `fD =
+    mean / n_amides`, `e_i` the amide's equilibrium, `fD0` fitted (owner, 2026-10-19). A
+    retention loss mostly goes into the fitted `fD0`, because `e` is small. Forward labelling
+    without correction stays left out (its plateau height is unknown).
+  - Apparent factors per time and the bounds use the progress `(fD0 - fD) / (fD0 - e)` (`e`
+    the mean of `e_i`) in place of `fD`, so `upper` and `lower` mean the same in both
+    directions. With `fD0` fitted, a peptide at equilibrium at every time (from the largest
+    start the data can have, 1 or `initial_fraction`) is an `upper` bound with `fD0` NaN, and
+    one with fewer than three times gets no value (logged).
+  - A sample whose peptides mostly go against its conditions' direction is refused, with a
+    message saying which setting to change (the falling-or-rising test of the audit).
+  - Errors: from the Jacobian, as for one parameter. On synthetic data (200 noisy repeats,
+    fD error 0.01) they match the scatter when the decay falls within the time range; when
+    most of it is over before the first time, `fD0` is poorly determined and its standard
+    error understates the scatter (0.09 against 0.15 at protection 100 with the first point
+    at 10 s).
+  - The residue level is forward only for now: back-exchange states are left out with a
+    warning (their peptide-level factors are in `protection.csv`).
 - **Modified forms** at the residue level follow `[analysis] modified_peptides`: `'separate'`
   (the default) fits each modified form as a state of its own (`'WT pS59'`, as the residue
   map does), `'combined'` pools it with the sample's other peptides. A peptide with no finite

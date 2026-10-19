@@ -2820,3 +2820,32 @@ CSVs or mzML if wanted.
     labels, the resolution and its errors, the nested settings (fasta, labelling, exchange,
     labels) and their refusal, the merged and unmerged fragment states; the former
     `run:sample` assertions updated. Design note in docs/ANALYSIS.md ("The run as a variable").
+
+104. **Protection factors in both directions, peptide level (2026-10-19; audit design item
+    3).** The forward-only refusal of falling series is replaced by one two-direction model,
+    `fD(t) = mean_i(e_i + (fD0 - e_i) exp(-kint_i t / protection))`, `kint_i = kforw + kback`
+    and `e_i = kforw / (kforw + kback)` of the exchange solvent (`hxex.kint`). Owner's
+    decisions of 2026-10-19: the direction comes from the labelling conditions (no direction
+    setting, as decided 2026-10-13): `initial_fraction` above `d2o_fraction` is a
+    back-exchange; on the corrected scale `e_i` is the equilibrium over `initial_fraction`
+    (the fully deuterated reference made in the labelling solvent); back-exchange samples
+    without correction are fitted on the absolute scale (`fD = mean / n_amides`, `e_i` the
+    equilibrium); peptide level only this session. As decided on 2026-10-18, `fD0` is fitted
+    (bounded by the largest `e_i` and 2, three starting factors) unless the series has a
+    measured fully deuterated control (corrected, no control fallback), which fixes it at 1.
+    Forward labelling is the same model with `fD0 = 0` and `e = 1`, computed as before: the
+    forward tests are unchanged. Per-time apparent factors and bounds use the progress
+    `(fD0 - fD) / (fD0 - mean e)`. A fitted start with every point at equilibrium (judged
+    from the largest start possible) is an upper bound with `fD0` NaN; fewer than three
+    times, no value (logged). A sample going against its conditions' direction is refused
+    in both directions, with the setting to change. New columns: `protection.csv`
+    `direction`, `corrected`, `fD0`, `fD0_se`, `equilibrium`; `protection_by_time.csv`
+    `progress`. The residue fit leaves back-exchange states out with a warning.
+    - **Errors on synthetic data** (one 11-residue peptide in 10 % D2O at pH 7, 20 degrees,
+      `initial_fraction` 0.9, start 0.8 fitted, seven times 10 s to 10,000 s, fD error 0.01,
+      200 repeats): at protection 1,000 and 10,000 (the decay inside the range) the scatter
+      matches the reported errors (log10 protection 0.023 against 0.022 and 0.017 against
+      0.018; start 0.010 against 0.011 and 0.006 against 0.006) without bias. At protection
+      100 (fD already 0.46 of 0.8 at 10 s) the start is poorly determined and its error
+      understated (0.15 against 0.09; log10 protection 0.096 against 0.081).
+    - Not tried on real data: no back-exchange dataset with known conditions yet.

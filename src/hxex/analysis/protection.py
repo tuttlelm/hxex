@@ -15,6 +15,13 @@ values too: two populations come from EX1 or mixed exchange, where a protection 
 EX2 meaning. :func:`compare_protection` gives the differences between samples in
 ``log10_protection``.
 
+Both directions (docs/ANALYSIS.md, "Direction"): with ``initial_fraction`` in the conditions
+above their ``d2o_fraction`` the amides began deuterated and lose deuterium (back-exchange
+kinetics), and the model is ``mean_i(e_i + (fD0 - e_i) exp(-kint_i t / protection))``: ``e_i``
+the amide's equilibrium in the solvent (``kforw / (kforw + kback)``, over ``initial_fraction``
+on the corrected scale), ``fD0`` fitted unless a measured fully deuterated control fixes it
+at 1. Forward labelling is the same model with ``fD0 = 0`` and ``e_i = 1``.
+
 Intrinsic rates are those of the protein labelled whole: a peptide's ends are not termini
 unless they are the protein's (or written, ``Ac-``, ``-NH2``), and its first amide's rate
 depends on the residue before it (from the protein sequence, else from the other peptides).
@@ -77,7 +84,13 @@ class ProtectionTable:
     differently make it rise), ``misfit`` (reduced chi-square of the fit; NaN without errors
     or with one time) and ``one_factor_fits`` (``misfit`` within the chi-square limit at
     ``alpha``; False where it cannot be tested), ``n_amides`` and ``n_approximate`` (amides
-    whose intrinsic rate borrows a factor: modified residues)."""
+    whose intrinsic rate borrows a factor: modified residues), ``direction`` (``'forward'``,
+    labelling from 0 towards the plateau 1; ``'back'``, the amides began deuterated: the
+    conditions' ``initial_fraction`` is above their ``d2o_fraction``), ``corrected`` (for
+    back-exchange without correction, ``fD`` is ``mean / n_amides``, the absolute scale),
+    ``fD0`` (the ``fD`` at time 0: 0 forward, 1 for back-exchange from a measured fully
+    deuterated control, otherwise fitted, with ``fD0_se``, NaN when fixed or unknown) and
+    ``equilibrium`` (the ``fD`` the peptide relaxes to, the mean of its amides': 1 forward)."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -97,6 +110,11 @@ class ProtectionTable:
     one_factor_fits: np.ndarray
     n_amides: np.ndarray
     n_approximate: np.ndarray
+    direction: np.ndarray
+    corrected: np.ndarray
+    fD0: np.ndarray
+    fD0_se: np.ndarray
+    equilibrium: np.ndarray
     run: np.ndarray | None = None
 
     def __post_init__(self):
@@ -115,8 +133,11 @@ class ProtectionTable:
 @dataclass(frozen=True)
 class ProtectionByTime:
     """The apparent protection factor of every run, sample, peptide, ``K``, ``rank`` and ``time``:
-    the measured ``fD`` and ``fD_se``, ``log10_protection`` and its ``log10_protection_se``
-    (from ``fD_se``), ``bound`` and ``limit`` as in :class:`ProtectionTable` (at that time)."""
+    the measured ``fD`` and ``fD_se``, the ``progress`` of the exchange (``(fD0 - fD) / (fD0 -
+    equilibrium)`` with the values of :class:`ProtectionTable`: ``fD`` itself in forward
+    labelling; NaN where ``fD0`` is unknown), ``log10_protection`` and its
+    ``log10_protection_se`` (from ``fD_se``), ``bound`` and ``limit`` as in
+    :class:`ProtectionTable` (at that time)."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -128,6 +149,7 @@ class ProtectionByTime:
     time: np.ndarray
     fD: np.ndarray
     fD_se: np.ndarray
+    progress: np.ndarray
     log10_protection: np.ndarray
     log10_protection_se: np.ndarray
     bound: np.ndarray
@@ -175,6 +197,17 @@ def peptide_rates(
     ``protein_end``: its last residue is the protein's (a free carboxyl). A counted N-terminal
     amine of the protein exchanges at once (infinite rate); an amide whose rate is unknown (the
     residue before is) is NaN."""
+    k, _, approx = _peptide_exchange(peptide, start, conditions, before=before,
+                                     protein_end=protein_end, nterm_subtract=nterm_subtract,
+                                     registry=registry)
+    return k, approx
+
+
+def _peptide_exchange(peptide, start, conditions, *, before, protein_end, nterm_subtract,
+                      registry):
+    """:func:`peptide_rates` with the amides' equilibrium D fractions in the solvent
+    (:attr:`hxex.kint.IntrinsicRates.equilibrium`; NaN where the rate is not finite):
+    ``(rates, equilibria, approximate)``."""
     nterm, core, cterm = chem.split_termini(peptide)
     n_free = start == 1 or nterm != "H-"
     seq, first = peptide, start
@@ -188,14 +221,19 @@ def peptide_rates(
     k = rates.rate[at]
     if n_free and nterm == "H-":
         k = np.where((pos == 1) & ~np.isfinite(k), np.inf, k)  # the free amine
-    return k, rates.approximate[at]
+    return k, rates.equilibrium[at], rates.approximate[at]
 
 
 # --- the fits ------------------------------------------------------------------------------------
 
-def _model(x: float, k: np.ndarray, t) -> np.ndarray:
-    """``mean_i(1 - exp(-k_i t / 10**x))`` at the times ``t``."""
-    return np.mean(-np.expm1(-np.multiply.outer(np.atleast_1d(t), k / 10.0**x)), axis=-1)
+F0_MAX = 2.0  # the largest fitted fD0 (corrected values can exceed 1 a little)
+
+
+def _model(x: float, k: np.ndarray, t, f0: float = 0.0, e=1.0) -> np.ndarray:
+    """``mean_i(e_i + (f0 - e_i) exp(-k_i t / 10**x))`` at the times ``t``: forward labelling
+    (``mean_i(1 - exp(...))``) with the defaults."""
+    rise = -np.expm1(-np.multiply.outer(np.atleast_1d(t), k / 10.0**x))
+    return np.mean(f0 + (e - f0) * rise, axis=-1)
 
 
 def _slope(x: float, k: np.ndarray, t: float) -> float:
@@ -244,9 +282,11 @@ def _known_errors(se: np.ndarray) -> np.ndarray | None:
     return np.where(known, se, float(np.median(se[known])))
 
 
-def _fit(k, t, y, se, apparent, alpha):
-    """(log10 protection, its se, misfit, one factor fits) over every time; weighted by the
-    errors when any is known (:func:`_known_errors`)."""
+def _fit(k, t, y, se, apparent, alpha, f0=0.0, e=1.0, free=False):
+    """(log10 protection, its se, fD0, its se, misfit, one factor fits) over every time;
+    weighted by the errors when any is known (:func:`_known_errors`). ``f0`` is fixed unless
+    ``free`` (then fitted, from a few starting factors, between the largest equilibrium
+    ``e`` and :data:`F0_MAX`; its se is NaN when fixed)."""
     from scipy import stats
     from scipy.optimize import least_squares
 
@@ -255,28 +295,54 @@ def _fit(k, t, y, se, apparent, alpha):
     w = 1.0 / se if weighted else np.ones_like(y)
     finite = np.isfinite(apparent)
     x0 = float(np.median(apparent[finite])) if finite.any() else 0.0
-    res = least_squares(lambda x: (_model(x[0], k, t) - y) * w, [x0], bounds=_LOG_RANGE)
+    lo, hi = _LOG_RANGE
+    if free:
+        f_lo = float(np.max(e))
+        f_start = float(np.clip(np.max(y), f_lo + 1e-3, F0_MAX - 1e-3))
+        best = None
+        for dx in (-2.0, 0.0, 2.0):
+            start = [float(np.clip(x0 + dx, lo + 1e-3, hi - 1e-3)), f_start]
+            res = least_squares(lambda p: (_model(p[0], k, t, p[1], e) - y) * w, start,
+                                bounds=([lo, f_lo], [hi, F0_MAX]))
+            if best is None or res.cost < best.cost:
+                best = res
+        res = best
+        f0 = float(res.x[1])
+    else:
+        res = least_squares(lambda x: (_model(x[0], k, t, f0, e) - y) * w, [x0], bounds=_LOG_RANGE)
     x = float(res.x[0])
-    n = len(y)
-    jtj = float(res.jac[:, 0] @ res.jac[:, 0])
+    n, n_par = len(y), res.jac.shape[1]
+    dof = n - n_par
     chi2 = float(np.sum(res.fun**2))
-    misfit = chi2 / (n - 1) if n > 1 and weighted else np.nan
-    if jtj <= 0:
-        return x, np.nan, misfit, False
+    misfit = chi2 / dof if dof > 0 and weighted else np.nan
+    try:
+        cov = np.linalg.inv(res.jac.T @ res.jac)
+    except np.linalg.LinAlgError:
+        cov = np.full((n_par, n_par), np.nan)
     if weighted:
         scale = max(1.0, misfit) if np.isfinite(misfit) else 1.0
     else:  # no errors: the residuals' scatter
-        scale = chi2 / (n - 1) if n > 1 else np.nan
-    fits = bool(np.isfinite(misfit) and chi2 <= stats.chi2.ppf(1 - alpha, n - 1))
-    return x, float(np.sqrt(scale / jtj)), misfit, fits
+        scale = chi2 / dof if dof > 0 else np.nan
+    var = np.diag(cov) * scale
+    var = np.where(var > 0, var, np.nan)
+    fits = bool(np.isfinite(misfit) and chi2 <= stats.chi2.ppf(1 - alpha, dof))
+    return (x, float(np.sqrt(var[0])), f0, float(np.sqrt(var[1])) if free else np.nan, misfit,
+            fits)
 
 
-def _refuse_falling(pep) -> None:
-    """Refuse a sample whose peptides mostly lose deuterium with time (back-exchange
-    kinetics: the model is one of forward labelling; a two-direction model is a planned
-    design item). A peptide falls (rises) when its last finite ``fD`` is
-    below (above) its first by more than twice their combined error, or by 0.05 without one."""
-    # the two-direction model: docs/AUDIT_2026-10-17.md
+def _back(conditions) -> bool:
+    """Whether ``conditions`` describe a back-exchange: the amides began with more deuterium
+    (``initial_fraction``) than the solvent holds (``d2o_fraction``)."""
+    return (conditions is not None and conditions.initial_fraction is not None
+            and conditions.initial_fraction > conditions.d2o_fraction)
+
+
+def _check_direction(pep, back: set, judged: set) -> None:
+    """Refuse a sample of ``judged`` (the (run, sample) pairs with conditions) whose peptides
+    mostly go the other way from its conditions' direction (``back``: the back-exchange
+    pairs). A peptide falls (rises) when its last finite ``fD`` is below (above) its first by
+    more than twice their combined error, or by 0.05 without one."""
+    # the two-direction model: docs/AUDIT_2026-10-17.md, design item 3
     falling: dict[tuple, int] = {}
     rising: dict[tuple, int] = {}
     groups: dict[tuple, list[int]] = {}
@@ -297,25 +363,39 @@ def _refuse_falling(pep) -> None:
             falling[key[0]] = falling.get(key[0], 0) + 1
         elif change > step:
             rising[key[0]] = rising.get(key[0], 0) + 1
-    bad = sorted(s for s, n in falling.items() if n > rising.get(s, 0))
-    if bad:
-        names = [_label(*s) for s in bad]
+
+    def counts(states):
+        return ", ".join(f"{_label(*s)}: {falling.get(s, 0)} falling, {rising.get(s, 0)} rising"
+                         for s in states)
+
+    found = (set(falling) | set(rising)) & judged
+    down = sorted(s for s in found - back if falling.get(s, 0) > rising.get(s, 0))
+    up = sorted(s for s in found & back if rising.get(s, 0) > falling.get(s, 0))
+    if down:
         raise ValueError(
-            f"sample(s) {', '.join(names)}: fD falls with time in most peptides "
-            + "(" + ", ".join(f"{_label(*s)}: {falling[s]} falling, {rising.get(s, 0)} rising"
-                              for s in bad) + ")"
-            ". Protection factors are fitted to forward labelling; back-exchange kinetics "
-            "(deuterated then diluted into H2O) need the two-direction model, which is not "
-            "built: leave protection off for this run")
+            f"sample(s) {', '.join(_label(*s) for s in down)}: fD falls with time in most "
+            f"peptides ({counts(down)}), but the labelling conditions describe forward "
+            "labelling. For back-exchange kinetics (deuterated, then exchanged in a solvent "
+            "with less deuterium) set initial_fraction in [analysis.labelling] to the D "
+            "fraction the amides began with, above the d2o_fraction of the solvent the "
+            "exchange happens in")
+    if up:
+        raise ValueError(
+            f"sample(s) {', '.join(_label(*s) for s in up)}: fD rises with time in most "
+            f"peptides ({counts(up)}), but initial_fraction above d2o_fraction in "
+            "[analysis.labelling] describes back-exchange: leave initial_fraction out for "
+            "forward labelling")
 
 
 def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="combined"):
     """The peptides of ``uptake`` that get protection factors: (the table, its rows grouped by
     (run, sample), peptide, modification, start, end, K and rank, the rates of each peptide by
     its first five keys (``(kint of the counted amides, how many approximate, their residue
-    numbers)``, None where not all known), each (run, sample)'s residue labels by number, and
-    the base sample of every state (run, state)). ``conditions`` and ``sequences`` are one
-    value for every sample, or by sample with per-run entries
+    numbers, their equilibria on the state's scale)``, None where not all known), each (run,
+    sample)'s residue labels by number, the base sample of every state (run, state), and the
+    back-exchange states with the ``fD`` their amides began with when it is not fitted from
+    the data: 1 corrected, ``initial_fraction`` on the absolute scale). ``conditions`` and
+    ``sequences`` are one value for every sample, or by sample with per-run entries
     (:func:`hxex.analysis.sample_setting`). With ``modified='separate'`` every modified peptide
     moves
     to a state of its own (:func:`hxex.analysis.separate_modified`, named ``'<sample>
@@ -329,7 +409,9 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
     for t in exclude_times:
         keep &= ~np.isclose(times, t)
     pep = pep.select(keep)
-    _refuse_falling(pep)
+    judged = {st for st in states(pep) if sample_setting(conditions, *st)}
+    _check_direction(pep, {st for st in judged if _back(sample_setting(conditions, *st))},
+                     judged)
     base = {state: state[1] for state in states(pep)}
     if modified == "separate":
         pep, base = separate_modified(pep, registry)
@@ -339,11 +421,19 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
 
     all_states = states(pep)
     state_of = list(zip(pep.run.astype(str), pep.sample.astype(str), strict=True))
-    uncorrected = sorted({st for st, c in zip(state_of, pep.corrected, strict=True) if not c})
+    back = {st for st in all_states if _back(setting_of(conditions, st))}
+    raw = sorted({st for st, c in zip(state_of, pep.corrected, strict=True) if not c})
+    uncorrected = [st for st in raw if st not in back]
     if uncorrected:
         log.warning("no protection factors for sample(s) %s: not corrected for back-exchange "
                     "(the run had no controls, [run.controls])",
                     ", ".join(_label(*st) for st in uncorrected))
+    if set(raw) & back:
+        log.info("back-exchange sample(s) %s not corrected: fitted on the absolute scale (fD = "
+                 "mean / n_amides, relaxing to the solvent's equilibrium)",
+                 ", ".join(_label(*st) for st in sorted(set(raw) & back)))
+    start_of = {st: (float(setting_of(conditions, st).initial_fraction) if st in raw else 1.0)
+                for st in back}
     no_conditions = sorted(set(all_states) - set(uncorrected)
                            - {st for st in all_states if setting_of(conditions, st)})
     if no_conditions:
@@ -373,21 +463,50 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry, modified="c
         if spec.ion_type == "M" and not spec.hex:
             seq = setting_of(sequences, state)
             last = bool(seq) and end == len(labels[state])
-            k, approx = peptide_rates(peptide, start, setting_of(conditions, state),
-                                      before=labels[state].get(start - 1), protein_end=last,
-                                      nterm_subtract=pep.nterm_subtract, registry=registry)
+            cond = setting_of(conditions, state)
+            k, eq, approx = _peptide_exchange(peptide, start, cond,
+                                              before=labels[state].get(start - 1),
+                                              protein_end=last, nterm_subtract=pep.nterm_subtract,
+                                              registry=registry)
             pos = np.array(chem.amide_positions(peptide, "M", None,
                                                 nterm_subtract=pep.nterm_subtract,
                                                 registry=registry), dtype=np.int64)
             if len(k) == int(pep.n_amides[rows[0]]) and len(k) and not np.isnan(k).any():
-                rates[rkey] = (k, int(approx.sum()), start + pos - 1)
+                if state in back:  # a free amine (infinite rate) takes the others' equilibrium
+                    known = np.isfinite(eq)
+                    eq = np.where(known, eq, np.mean(eq[known]) if known.any()
+                                  else cond.d2o_fraction)
+                    e = eq / cond.initial_fraction if start_of[state] == 1.0 else eq
+                else:
+                    e = np.ones(len(k))
+                rates[rkey] = (k, int(approx.sum()), start + pos - 1, e)
         if rates[rkey] is None:
             skipped[state] = skipped.get(state, 0) + 1
     if skipped:
         log.warning("protection factors: %s peptide(s) left out (rates not all known: a modified "
                     "ion type, or the residue before unknown)",
                     ", ".join(f"{_label(*s)}: {n}" for s, n in skipped.items()))
-    return pep, groups, rates, labels, base
+    return pep, groups, rates, labels, base, start_of
+
+
+def _progress(y, se, f0, equilibrium):
+    """The exchange's progress ``(f0 - y) / (f0 - equilibrium)`` at each time and its se
+    (``y`` itself in forward labelling); NaN without a start."""
+    span = f0 - equilibrium
+    if not np.isfinite(span) or abs(span) < 1e-6:
+        return np.full(len(y), np.nan), np.full(len(y), np.nan)
+    return (f0 - y) / span, se / abs(span)
+
+
+def _start(pep, rows, state, start_of) -> tuple[float, bool, float]:
+    """(fD0, whether it is fitted, the largest fD0 the data can have) of one peptide: 0 in
+    forward labelling; for back-exchange 1 from a measured fully deuterated control (the run's
+    corrected values, no control fallback), otherwise fitted."""
+    if state not in start_of:
+        return 0.0, False, 0.0
+    if start_of[state] == 1.0 and not np.asarray(pep.control_fallback)[rows].any():
+        return 1.0, False, 1.0
+    return np.nan, True, start_of[state]
 
 
 def peptide_protection(
@@ -405,44 +524,77 @@ def peptide_protection(
     left out. ``sequences`` (the protein's, one or per
     sample; :meth:`hxex.analysis.AnalysisConfig.sequences`) gives the residue before each
     peptide and the protein's C-terminus; without it the residue before comes from the other
-    peptides, and no peptide ends at a free carboxyl. Samples without back-exchange correction,
-    or without conditions, are left out with a warning, and so are peptides whose rates are not
-    all known (a modified ion type, or the residue before unknown). A sample whose peptides
-    lose deuterium with time (back-exchange kinetics) is refused: the model is one of forward
-    labelling. The fit over all times is weighted by ``fD_se`` where it is known; an unknown
-    error takes the median of the peptide's known ones (none known: unweighted)."""
-    pep, groups, rates, _, _ = _prepare(uptake, conditions, sequences, exclude_times, registry)
+    peptides, and no peptide ends at a free carboxyl. Forward-labelling samples without
+    back-exchange correction, and samples without conditions, are left out with a warning,
+    and so are peptides whose rates are not all known (a modified ion type, or the residue
+    before unknown). A sample whose peptides
+    lose deuterium with time is fitted in the other direction when its conditions say so
+    (``initial_fraction`` above ``d2o_fraction``; see the module docstring), and refused
+    otherwise, as is a back-exchange sample whose peptides gain deuterium. Back-exchange
+    samples without correction are fitted on the absolute scale. The fit over all times is
+    weighted by ``fD_se`` where it is known; an unknown error takes the median of the
+    peptide's known ones (none known: unweighted)."""
+    pep, groups, rates, _, _, start_of = _prepare(uptake, conditions, sequences, exclude_times,
+                                                  registry)
+    too_few = 0
     out = {f.name: [] for f in fields(ProtectionTable)}
     by_time = {f.name: [] for f in fields(ProtectionByTime)}
     for key, rows in groups.items():
         if rates[key[:5]] is None:
             continue
-        k, n_approx, _ = rates[key[:5]]
+        k, n_approx, _, e = rates[key[:5]]
+        f0, free, f0_ref = _start(pep, rows, key[0], start_of)
+        e_mean = float(np.mean(e))
         key = (*key[0], *key[1:])  # (run, sample, peptide, ...)
         rows = sorted(rows, key=lambda i: pep.time[i])
         t = pep.time[rows].astype(float)
         y = pep.fD[rows].astype(float)
         se = pep.fD_se[rows].astype(float)
-        app = [_apparent(k, ti, yi, si) for ti, yi, si in zip(t, y, se, strict=True)]
+        finite = np.isfinite(y)
+        x = x_se = misfit = f0_se = np.nan
+        fits, bound, limit = False, "", np.nan
+
+        if free:
+            # every amide at equilibrium by the first time (from the largest start the data
+            # can have): neither the start nor the speed is known, the factor is a bound
+            u_ref, _ = _progress(y, se, f0_ref, e_mean)
+            if finite.any() and np.all(u_ref[finite] >= HIGH):
+                f0, basis = np.nan, f0_ref
+            elif finite.sum() >= 3:
+                x_ref = np.array([_apparent(k, ti, ui, np.nan)[0]
+                                  for ti, ui in zip(t, u_ref, strict=True)])
+                x, x_se, f0, f0_se, misfit, fits = _fit(
+                    k, t[finite], y[finite], se[finite], x_ref[finite], alpha, e=e, free=True)
+                basis = f0
+            else:
+                f0 = basis = np.nan
+                too_few += 1
+        else:
+            basis = f0
+        u, u_se = _progress(y, se, basis, e_mean)
+        app = [_apparent(k, ti, ui, si) for ti, ui, si in zip(t, u, u_se, strict=True)]
         x_t = np.array([a[0] for a in app])
         for j, (ti, a) in enumerate(zip(t, app, strict=True)):
             for name, value in zip(("run", "sample", "peptide", "modification", "start", "end",
                                     "K", "rank"), key, strict=True):
                 by_time[name].append(value)
             for name, value in (("time", ti), ("fD", y[j]), ("fD_se", se[j]),
+                                ("progress", u[j]),
                                 ("log10_protection", a[0]), ("log10_protection_se", a[1]),
                                 ("bound", a[2]), ("limit", a[3])):
                 by_time[name].append(value)
-        finite = np.isfinite(y)
         bounds = [a[2] for a, f in zip(app, finite, strict=True) if f]
-        x = x_se = misfit = np.nan
-        fits, bound, limit = False, "", np.nan
         if bounds and all(b == "upper" for b in bounds):
             bound, limit = "upper", min(a[3] for a in app if a[2] == "upper")
+            x = x_se = misfit = np.nan
+            fits = False
         elif bounds and all(b == "lower" for b in bounds):
             bound, limit = "lower", max(a[3] for a in app if a[2] == "lower")
-        elif finite.any():
-            x, x_se, misfit, fits = _fit(k, t[finite], y[finite], se[finite], x_t[finite], alpha)
+            x = x_se = misfit = np.nan
+            fits = False
+        elif finite.any() and not free:
+            x, x_se, _, _, misfit, fits = _fit(k, t[finite], y[finite], se[finite],
+                                               x_t[finite], alpha, f0=f0, e=e)
         inside = x_t[np.isfinite(x_t)]
         drift = float(inside[-1] - inside[0]) if len(inside) > 1 else np.nan
         for name, value in zip(("run", "sample", "peptide", "modification", "start", "end", "K",
@@ -452,17 +604,23 @@ def peptide_protection(
                             ("protection", 10.0**x), ("bound", bound), ("limit", limit),
                             ("n_times", int(finite.sum())), ("protection_drift", drift),
                             ("misfit", misfit), ("one_factor_fits", fits),
-                            ("n_amides", len(k)), ("n_approximate", n_approx)):
+                            ("n_amides", len(k)), ("n_approximate", n_approx),
+                            ("direction", "back" if f0_ref else "forward"),
+                            ("corrected", bool(np.asarray(pep.corrected)[rows].all())),
+                            ("fD0", f0), ("fD0_se", f0_se), ("equilibrium", e_mean)):
             out[name].append(value)
+    if too_few:
+        log.warning("protection factors: %d back-exchange peptide(s) with fewer than 3 times "
+                    "left without a value (their starting fD is fitted)", too_few)
     ints = ("start", "end", "K", "rank", "n_times", "n_amides", "n_approximate")
-    text = ("sample", "peptide", "modification", "bound")
+    text = ("sample", "peptide", "modification", "bound", "direction")
 
     def array(name, values):
         if name == "run":
             return np.array(values, dtype=object)
         if name in text:
             return np.array(values, dtype=str)
-        if name == "one_factor_fits":
+        if name in ("one_factor_fits", "corrected"):
             return np.array(values, dtype=bool)
         return np.array(values, dtype=np.int64 if name in ints else float)
 
@@ -659,8 +817,13 @@ def residue_protection(
     if peptides is None:
         peptides = peptide_protection(uptake, conditions, sequences=sequences,
                                       exclude_times=exclude_times, registry=registry)[0]
-    pep, groups, rates, labels, base = _prepare(uptake, conditions, sequences, exclude_times,
-                                                registry, modified)
+    pep, groups, rates, labels, base, start_of = _prepare(uptake, conditions, sequences,
+                                                          exclude_times, registry, modified)
+    if start_of:  # the residue fit is one of forward labelling (the two-direction one: later)
+        log.warning("residue protection: back-exchange sample(s) %s left out (not built for "
+                    "back-exchange; their peptide-level factors are in protection.csv)",
+                    ", ".join(_label(*st) for st in sorted(start_of)))
+        groups = {k: v for k, v in groups.items() if k[0] not in start_of}
     start_value = {}
     for i in range(len(peptides)):
         key = ((str(peptides.run[i]), str(peptides.sample[i])), str(peptides.peptide[i]),
@@ -686,7 +849,7 @@ def residue_protection(
                 and rates[k[:5]] is not None and k not in empty]
         rate_of: dict[int, float] = {}
         for key in keys:
-            k, _, res = rates[key[:5]]
+            k, _, res, _ = rates[key[:5]]
             for r, kr in zip(res.tolist(), k.tolist(), strict=True):
                 if np.isfinite(kr):
                     rate_of.setdefault(r, kr)
@@ -698,7 +861,7 @@ def residue_protection(
         member = np.zeros((len(keys), len(residues)))
         covering: dict[int, list[tuple]] = {r: [] for r in residues}
         for j, key in enumerate(keys):
-            k, _, res = rates[key[:5]]
+            k, _, res, _ = rates[key[:5]]
             idx = [col[r] for r, kr in zip(res.tolist(), k.tolist(), strict=True)
                    if np.isfinite(kr)]
             member[j, idx] = 1.0
