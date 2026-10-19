@@ -332,32 +332,35 @@ otherwise read nothing), as is a peptide listed twice for the same runs (twice f
 or once for a sample and once for every run); the message names the line. `hxex check` says
 when a run has no peptide of its sample at all.
 
-### `[[input.runs]]`: what each file is
+### `[[input.runs]]`: one table per run
+
+A *run* is one acquisition on the instrument, saved as one mzML or raw file. Each run gets its
+own `[[input.runs]]` table, which names the file and says what was measured in it.
 
 | Key | Meaning |
 |---|---|
-| `path` | the file (relative paths start at `data_root`) |
+| `path` | the run's file (relative paths start at `data_root`) |
 | `sample` | its sample |
 | `rep` | replicate number (default 1) |
 | `time` | the labelling time of the whole file (`"60 s"`, `"5 min"`) |
-| `role` | `"undeut"` or `"fulldeut"`: a control file |
+| `role` | `"undeut"` or `"fulldeut"`: a control run |
 | `time_offset`, `usable_from` | for kinetics runs (below) |
-| `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes` | replace one scan condition of every target for this file only (`false` removes it) |
+| `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes` | replace one scan condition of every target for this run only (`false` removes it) |
 
-What the file is depends on `time` and `role`:
+What a run holds depends on `time` and `role`:
 
 - **A time point** (`time` given): an LC-MS run of one labelled sample. Each peptide's scans
   inside its retention window are summed into one spectrum at that time.
 - **A control** (`role` given): the same, but the spectrum is a control, without a time. With
-  `time` as well, the file is a time point that also serves as the control (a long time point
+  `time` as well, the run is a time point that also serves as the control (a long time point
   that has reached full deuteration, for example).
 - **A kinetics run** (neither given): every scan has its own time, the scan time. Used for
   continuous infusion, where exchange runs while the instrument acquires. See
   [Experiment types](experiments.md#kinetics).
 
-The scan-condition keys are for files acquired differently from the rest. For example, a control
-file acquired with in-source activation throughout takes `filter_excludes = false` while the
-other files exclude `"sid"`, and a file whose scans record a wrong precursor charge takes
+The scan-condition keys are for runs acquired differently from the rest. For example, a control
+run acquired with in-source activation throughout takes `filter_excludes = false` while the
+other runs exclude `"sid"`, and a run whose scans record a wrong precursor charge takes
 `precursor_charge = false`.
 
 ### `[input.target]`: which scans hold the peptides
@@ -381,8 +384,9 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `group` | `"each"` | kinetics runs: one spectrum per scan (`"each"`), per `every` scans (`"every"`), or per time window (`"windows"`) |
-| `every`, `windows` | | the size of the groups |
+| `group` | `"each"` | kinetics runs: how scans are grouped into spectra: `"each"` (every scan is a spectrum), `"every"` (see `every`), or `"windows"` (see `windows`) |
+| `every` | 1 | with `group = "every"`: this many consecutive scans are summed into one spectrum (`every = 5`: scans 1 to 5, 6 to 10, ...). Summing raises the signal, at the cost of fewer time points |
+| `windows` | | with `group = "windows"`: the stretches of scan time (s) whose scans are summed, one spectrum per stretch: `windows = [[0, 30], [30, 90], [90, 300]]` |
 | `min_time` | | kinetics runs: leave out scans before this scan time (s) |
 | `max_spectra` | | kinetics runs: at most this many spectra per peptide, spread over log time |
 | `mz_margin` | 2.0 | m/z read on either side of a peptide's predicted peaks |
@@ -425,6 +429,18 @@ filter_excludes = "sid"
 - Repeat the table for other conditions of the same ions (with and without in-source
   activation, say); `label` keeps them apart.
 - `[input] parents = false` reads only the fragments.
+
+**Which ion type to name: the envelope.** In ETD and ECD spectra, one fragment often appears as
+several ion types a hydrogen apart (c-1 and c, or z-dot and z+2), whose isotope peaks overlap.
+By default (`[run.envelope] mode = "theory"`) *hxex* expects only the ion type you name. With
+`mode = "mixed"`, it fits a mixture of that ion type and the next one a hydrogen heavier (the
+number is `components`, default 2), learning their proportions from the undeuterated spectra.
+The ion type you name is the *lightest* of the mixture, so name the lighter one: `c-1` with
+`mode = "mixed"` covers c-1 and c, while `c` would cover c and c+1 and miss real peaks at c-1.
+The same holds for `z-dot`, which covers z-dot and z+2 (in the names *hxex* takes from
+pyteomics, `z+1` is the same ion as `z-dot`). See
+[Experiment types](experiments.md#fragments) and the `[run.envelope]` settings in the
+[settings reference](settings.md#runenvelope).
 
 The fragments' own analysis is described in [Experiment types](experiments.md#fragments).
 
