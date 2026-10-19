@@ -224,7 +224,8 @@ How fragment data differs, and what this branch does about it:
   `fit_decay`, so either direction works; fixing `C` at the solvent's equilibrium is a
   possible later option (opt-in; it would hide scrambling or a wrong solvent). Every
   fragment figure shows +-1 se error ranges (points of the ladder and closure figures; rate,
-  amplitude, from `amplitude_se`, and protection in the residue-rates figure); the combined
+  amplitude, from `amplitude_se`, and protection in the residue-rates figure; a band around
+  each resolved fitted curve of the ladder figure, from the fit's covariance); the combined
   values of `ladder_residues` are not drawn.
 - **Variants of one fragment**: charge states are kept separate for now (owner: they may give
   different exchange rates), as is the precursor charge (fragment deuteration differed by

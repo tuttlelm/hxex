@@ -358,5 +358,8 @@ for c with z and one for c-1 with z. `agreement` says whether the two ladders ag
 whether only one ladder measures the residue (`single`).
 
 **Error ranges in the figures.** Every point of the ladder and closure figures carries a
-light bar of plus and minus one standard error. In the residue-rates figure, the rate, the
-amplitude and the protection factor of each step have error bars.
+light bar of plus and minus one standard error, when the points have one (they need a
+bootstrap or replicates; a kinetics run fitted without a bootstrap has none). Every fitted
+curve of the ladder figure has a shaded band of plus and minus one standard error of the
+fit, whatever the points carry; with many points the band is narrow. In the residue-rates
+figure, the rate, the amplitude and the protection factor of each step have error bars.

@@ -236,7 +236,7 @@ def _intrinsic(ax, kint, residues, times, label) -> None:
 
 def _fitted(ax, trace, colour, label, min_time, fit) -> None:
     """``trace`` as points, with its decay fit (from ``min_time``) when ``fit`` (else the
-    points carry the label)."""
+    points carry the label): a resolved fit with its +-1 se band, an unresolved one dashed."""
     _points(ax, trace, colour, None if fit else label)
     if not fit:
         return
@@ -248,7 +248,10 @@ def _fitted(ax, trace, colour, label, min_time, fit) -> None:
         ax.plot(t, f.curve(t), color=colour, lw=1.0, ls="--",
                 label=f"{label}, rate not resolved")
         return
-    ax.plot(t, f.curve(t), color=colour, lw=1.5,
+    curve, se = f.curve(t), f.curve_se(t)
+    if np.isfinite(se).all():  # +-1 se of the fitted curve
+        ax.fill_between(t, curve - se, curve + se, color=colour, alpha=0.2, lw=0)
+    ax.plot(t, curve, color=colour, lw=1.5,
             label=f"{label}, rate: {f.rate:.2e}±{f.rate_se:.2e} s⁻¹")
 
 

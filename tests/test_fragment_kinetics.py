@@ -617,6 +617,21 @@ def test_ladder_protection_errors_and_precise_steps():
     assert not strict.precise.any() and "log10_protection" not in strict.columns()
     with pytest.raises(ValueError, match="max_rate_error"):
         ladder_rates(u, max_rate_error=0)
+    # the fitted curve's error: about the scatter over the square root of the points, and
+    # in a band around the curve in the ladder figure
+    from hxex.analysis import difference_trace, fit_decay
+
+    tr = difference_trace(u, "c:5", "c:4", condition="gentle", charge=1)
+    f = fit_decay(tr, min_time=10.0)
+    se = f.curve_se(tr.time)
+    assert np.all(np.isfinite(se)) and 0.001 < float(np.median(se)) < 0.01
+    assert np.all(np.isnan(dataclasses.replace(f, covariance=None).curve_se(tr.time)))
+    from matplotlib.collections import PolyCollection
+
+    from hxex.report import ladder_kinetics_figure
+
+    fig = ladder_kinetics_figure(u, "c", min_time=10.0)
+    assert any(isinstance(c, PolyCollection) for ax in fig.axes for c in ax.collections)
     # the amplitude's error, and error bars in every panel of the residue-rates figure
     from matplotlib.container import ErrorbarContainer
 

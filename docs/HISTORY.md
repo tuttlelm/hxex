@@ -2875,3 +2875,12 @@ CSVs or mzML if wanted.
       scatter against 0.011 reported), the protection panel the +-1 se range of
       `log10_protection`. The combined per-residue values are not drawn (a figure change
       waits for the owner's reference).
+    - **A band on the fitted curves (owner, 2026-10-19).** On real kinetics data the points
+      have no `mean_se` (K = 1 fits without a bootstrap, one replicate per time), so the
+      point bars do not show; the owner chose a band on the fitted curves over a bootstrap
+      refit. `DecayFit` keeps the fit's covariance (`covariance`, `t_first`) and gives
+      `curve_se(t)`; the ladder figure fills +-1 se around every resolved fit (unresolved
+      fits stay dashed, no band). Coverage on the synthetic ladder (200 repeats, residue 16):
+      the true curve inside the band 62 to 70 % of the time at 10, 50, 200 and 800 s. On the
+      private fragment example (about 150 points per trace) the band is about as wide as the
+      line except near the ends of the range: the curves are well determined.

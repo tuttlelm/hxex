@@ -604,7 +604,9 @@ class DecayFit:
     decay (``rate * t_last >= 0.1`` and ``rate * t_first <= 3``); a decay too slow for the
     range fits a straight line as a tiny rate with huge amplitude and offset, and one over
     before the first point has no shape, so their rates mean nothing. ``amplitude_se``: the
-    amplitude's standard error, from the same covariance."""
+    amplitude's standard error, from the same covariance. ``covariance`` (of the fit's
+    ``A'``, ``k`` and ``C``, ``A'`` at ``t_first``, the first fitted time) gives the curve's
+    standard error (:meth:`curve_se`)."""
 
     rate: float
     rate_se: float
@@ -614,9 +616,22 @@ class DecayFit:
     ok: bool
     resolved: bool = False
     amplitude_se: float = np.nan
+    covariance: np.ndarray | None = None
+    t_first: float = np.nan
 
     def curve(self, t) -> np.ndarray:
         return self.amplitude * np.exp(-self.rate * np.asarray(t, float)) + self.offset
+
+    def curve_se(self, t) -> np.ndarray:
+        """The standard error of :meth:`curve` at ``t`` (from ``covariance``; NaN without)."""
+        t = np.asarray(t, float)
+        if self.covariance is None or not np.all(np.isfinite(self.covariance)):
+            return np.full(t.shape, np.nan)
+        decay = np.exp(-self.rate * (t - self.t_first))
+        a = self.amplitude * np.exp(-self.rate * self.t_first)  # A' at t_first
+        g = np.stack([decay, -a * (t - self.t_first) * decay, np.ones_like(t)])
+        var = np.einsum("i...,ij,j...->...", g, self.covariance, g)
+        return np.sqrt(np.clip(var, 0.0, None))
 
 
 def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
@@ -669,7 +684,8 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
         var = float(g @ cov @ g) if np.all(np.isfinite(cov)) else np.nan
     amplitude_se = float(np.sqrt(var)) if np.isfinite(var) and var >= 0 else np.nan
     resolved = rate * t_last >= 0.1 and rate * t_first <= 3.0
-    return DecayFit(rate, rate_se, amplitude, float(p[2]), len(t), True, resolved, amplitude_se)
+    return DecayFit(rate, rate_se, amplitude, float(p[2]), len(t), True, resolved, amplitude_se,
+                    np.asarray(cov, dtype=float), t_first)
 
 
 # --- per-residue values from all fragments ------------------------------------------------------
