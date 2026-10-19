@@ -2814,8 +2814,8 @@ CSVs or mzML if wanted.
     `[analysis.fragments.exchange]` and `[analysis.fragments.labels]` take a run's own entries
     under the run's name (`[analysis.labelling.A.WT]`; `sample_setting` looks up the run's
     entry, then the sample's), and a nested table whose name is not a run of `[analysis.runs]`
-    is refused. `merge` is unchanged. Decided by me, for the owner to confirm: the display
-    rule (prefix only where ambiguous) and the blank `run` of merged species rows. The private
+    is refused. `merge` is unchanged. The display rule (prefix only where ambiguous) and the
+    blank `run` of merged species rows were confirmed by the owner (2026-10-18). The private
     two-run fragment example's labels moved to the per-run form. Tests: the run column and
     labels, the resolution and its errors, the nested settings (fasta, labelling, exchange,
     labels) and their refusal, the merged and unmerged fragment states; the former
