@@ -58,6 +58,7 @@ def scan_hxexpress(
     *,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
 ) -> list[PeptideEntry]:
     """List the entries for the ``.xlsx`` and ``.csv`` files in ``data_dir`` named in the
     HX-Express way (the suffix in any case).
@@ -74,7 +75,8 @@ def scan_hxexpress(
             entries.append(parse_hxexpress_filename(path.name))
         except ReadError as exc:
             log.warning("skipping %s: %s", path.name, exc)
-    return sort_entries(filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges))
+    return sort_entries(filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
+                                       peptide_region=peptide_region))
 
 
 def _read_rows(path: Path) -> list[tuple]:

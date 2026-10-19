@@ -56,9 +56,10 @@ Five formats, chosen by `[input] format` (in detail in
 - `thermo`: Thermo `.raw` files read directly (see below); the same settings as `mzml`.
 
 The scan formats need a **peptide table** (CSV; a folder format may give one instead of
-finding files by name). Required columns: `peptide`, `peptide_range`, `start_seq`, `end_seq`,
-`charge`. Optional: `sample` (the peptide is read from the runs of that sample; empty or left
-out, from every run), `file` (for reference), `modification`, `rt` (retention time, minutes),
+finding files by name). Required columns: `peptide`, `start_seq`, `end_seq`, `charge`.
+Optional: `sample` (the peptide is read from the runs of that sample; empty or left out, from
+every run), `file` (for reference), `peptide_range` (the range's label; made from `start_seq`
+and `end_seq` when left out, a warning when it names other residues), `modification`, `rt` (retention time, minutes),
 `rt_start` and `rt_end` (the peptide's retention window, minutes). A folder format's table
 needs `file` and `sample` as well. Sequences are written in
 modX: a modified residue is a lowercase prefix plus its letter (`acK`, `pS`, `pT`, `pY`, or any

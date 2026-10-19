@@ -193,6 +193,8 @@ class RunResult:
     envelopes: EnvelopeTable | None = None
     spectra_source: dict | None = None
     review: Any = None  # the hxex.io.bundle.ReviewTable carried over to the bundle, if any
+    excluded: dict | None = None  # the run-level exclusions (hxex.exclusions.exclusion_record)
+    view_exclude: tuple = ()  # [[analysis.exclude]] rules applied to the run's figures
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -211,11 +213,13 @@ class RunResult:
         """Write the series figures described by ``plots`` (default: ``config.plots``, or the
         default settings if that is None) with the run's review applied; ``spectra`` adds the
         raw layer. Returns the files."""
+        from .exclusions import exclude_from_results
         from .report import Results
         from .report.figures import PlotConfig, write_figures
 
         return write_figures(
-            Results.from_run(self, spectra=spectra), directory,
+            exclude_from_results(Results.from_run(self, spectra=spectra), self.view_exclude),
+            directory,
             plots or self.config.plots or PlotConfig(),
             reference=reference, progress=progress, cancel=cancel,
         )
@@ -245,7 +249,7 @@ class RunResult:
             spectra_source=self.spectra_source if spectra is None or spectra.source is None
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
-            provenance=provenance,
+            provenance=provenance, excluded=self.excluded,
         )
 
 
@@ -503,10 +507,18 @@ def run(
     keep_spectra: bool = True,
     figures_dir: str | Path | None = None,
     reference: Reference | None = None,
+    exclude: Sequence = (),
+    view_exclude: Sequence = (),
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
     """Run the whole analysis on raw spectra (picked here) or on an already picked set.
+
+    ``exclude`` (:class:`hxex.exclusions.Exclusion` rules, ``[[input.exclude]]``) leaves the
+    spectra it matches out before anything else: they are stored with the raw spectra but not
+    picked or fitted, and the bundle records the rules and the spectra they left out.
+    ``view_exclude`` (``[[analysis.exclude]]``) treats its spectra as rejected in the run's
+    figures (in memory; the fits are kept).
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
     recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
@@ -529,6 +541,20 @@ def run(
             raise ValueError("config.plots needs figures_dir or out to say where to write")
         figures_dir = Path(out).with_name(Path(out).name + "_figures")
     data = with_control_roles(data, config)
+    stored = data if isinstance(data, SpectrumSet) else None  # every spectrum, for the bundle
+    excluded = None
+    if exclude:
+        from .exclusions import exclusion_mask, exclusion_record
+
+        reader = (data.source or {}).get("reader") if isinstance(data, SpectrumSet) else None
+        mask, counts = exclusion_mask(exclude, data, reader, "input.exclude")
+        excluded = exclusion_record(exclude, counts, np.asarray(data.spectrum_id)[mask])
+        if mask.all():
+            raise ValueError("[[input.exclude]] leaves no spectrum to fit")
+        if mask.any():
+            log.info("[[input.exclude]]: %d of %d spectra left out (stored, not fitted)",
+                     int(mask.sum()), len(mask))
+            data = data.select(~mask)
     raw = data if isinstance(data, SpectrumSet) else None
     if raw is not None and raw.source and raw.source.get("stored_in"):
         _check_stored_windows(raw.source, config)
@@ -612,8 +638,9 @@ def run(
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
         controls=controls, quality=quality, envelopes=envelopes,
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
+        excluded=excluded, view_exclude=tuple(view_exclude),
     )
-    spectra = raw if keep_spectra else None
+    spectra = stored if keep_spectra else None
     review = _review_for(review, fit)
     provenance = None
     if previous is not None:
@@ -759,6 +786,7 @@ def resume_bootstrap(
         review = b.review() if b.has("review") else None
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
         provenance = b.manifest.get("provenance")
+        excluded = b.manifest.get("excluded")
     plots = None
     if config.plots is not None and figures_dir is None:
         figures_dir = path.with_name(path.name + "_figures")
@@ -777,6 +805,7 @@ def resume_bootstrap(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
+        excluded=excluded,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -16,19 +17,29 @@ from .errors import ReadError
 
 log = logging.getLogger(__name__)
 
-_REQUIRED = ("file", "sample", "peptide", "peptide_range", "start_seq", "end_seq", "charge")
+_REQUIRED = ("file", "sample", "peptide", "start_seq", "end_seq", "charge")
 # the peptide table of the scan formats: file is for reference only, and an empty or missing
 # sample means every run
-SCAN_REQUIRED = ("peptide", "peptide_range", "start_seq", "end_seq", "charge")
+SCAN_REQUIRED = ("peptide", "start_seq", "end_seq", "charge")
+_RANGE = re.compile(r"\s*0*(\d+)\s*-\s*0*(\d+)\s*")
+
+
+def peptide_range_text(start: int, end: int) -> str:
+    """The range label of residues ``start`` to ``end``, zero-padded as in the file names of
+    the folder formats (``0001-0010``)."""
+    return f"{start:04d}-{end:04d}"
 
 
 def read_peptide_table(path: str | Path, *,
                        required: Sequence[str] = _REQUIRED) -> list[PeptideEntry]:
     """Read a metadata CSV (columns as in pyHXExpress's ``metadf``).
 
-    Required (``required``, by default): file, sample, peptide, peptide_range, start_seq,
-    end_seq, charge; the scan formats need :data:`SCAN_REQUIRED` only (a missing file or
-    sample column reads as empty). Optional:
+    Required (``required``, by default): file, sample, peptide, start_seq, end_seq, charge;
+    the scan formats need :data:`SCAN_REQUIRED` only (a missing file or sample column reads as
+    empty). ``peptide_range`` (the range label, text) is optional: an empty or missing one is
+    made from ``start_seq`` and ``end_seq`` (:func:`peptide_range_text`), and one that names
+    other residues is logged as a warning (the residues are ``start_seq`` and ``end_seq``).
+    Optional too:
     modification, ``rt`` (the retention time in minutes, kept with the spectra), ``rt_start``
     and ``rt_end`` (the peptide's retention window in minutes: for mzML and Thermo runs with a
     fixed time, the scans summed for it and its fragments). The ``Index``
@@ -45,9 +56,16 @@ def read_peptide_table(path: str | Path, *,
             entries = []
             for line, row in enumerate(reader, start=2):
                 try:
-                    entries.append(_entry_from_row(row))
+                    entry = _entry_from_row(row)
                 except (ValueError, TypeError) as exc:
                     raise ReadError(f"{path} line {line}: {exc}") from exc
+                m = _RANGE.fullmatch(entry.peptide_range)
+                if m is None or (int(m[1]), int(m[2])) != (entry.start_seq, entry.end_seq):
+                    log.warning("%s line %d: peptide_range %r does not match start_seq %d and "
+                                "end_seq %d; the residues are %d to %d (peptide_range is only "
+                                "the label)", path, line, entry.peptide_range, entry.start_seq,
+                                entry.end_seq, entry.start_seq, entry.end_seq)
+                entries.append(entry)
     except (OSError, UnicodeDecodeError) as exc:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     return entries
@@ -62,14 +80,15 @@ def _whole(value: str, name: str) -> int:
 
 
 def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
-    known = set(_REQUIRED) | {"modification", "Index"}
+    known = set(_REQUIRED) | {"peptide_range", "modification", "Index"}
+    start, end = _whole(row["start_seq"], "start_seq"), _whole(row["end_seq"], "end_seq")
     entry = PeptideEntry(
         file=row.get("file") or "",
         sample=row.get("sample") or "",
         peptide=row["peptide"],
-        peptide_range=row["peptide_range"],
-        start_seq=_whole(row["start_seq"], "start_seq"),
-        end_seq=_whole(row["end_seq"], "end_seq"),
+        peptide_range=(row.get("peptide_range") or "").strip() or peptide_range_text(start, end),
+        start_seq=start,
+        end_seq=end,
         charge=_whole(row["charge"], "charge"),
         modification=(row.get("modification") or "").strip(),
         extra={k: v for k, v in row.items() if k not in known and k is not None},
@@ -194,18 +213,39 @@ def read_fasta_sequence(path: str | Path) -> str:
     return records[-1][1]
 
 
+def parse_range(text: str) -> tuple[int, int]:
+    """``(start, end)`` of a range written ``START-END`` (leading zeros and spaces ignored:
+    ``"0001-0010"`` and ``"1-10"`` are the same range); a :class:`ValueError` otherwise."""
+    m = _RANGE.fullmatch(str(text))
+    if m is None:
+        raise ValueError(f"{text!r} is not a range START-END (for example 1-10 or 0001-0010)")
+    return int(m[1]), int(m[2])
+
+
 def filter_entries(
     entries: Iterable[PeptideEntry],
     *,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
 ) -> list[PeptideEntry]:
-    """Keep entries whose sample and peptide range are listed (exact match; None keeps all)."""
+    """Keep the entries of the listed samples (None: all) whose residues are one of the
+    ``peptide_ranges`` (``START-END``, compared as numbers with ``start_seq`` and ``end_seq``)
+    or lie wholly within ``peptide_region`` (``[first, last]`` residue); with neither, every
+    peptide; with both, a peptide that matches either."""
+    exact = None if peptide_ranges is None else {parse_range(r) for r in peptide_ranges}
+    region = None if peptide_region is None else tuple(int(x) for x in peptide_region)
+
+    def wanted(e: PeptideEntry) -> bool:
+        if exact is None and region is None:
+            return True
+        return ((exact is not None and (e.start_seq, e.end_seq) in exact)
+                or (region is not None and region[0] <= e.start_seq and e.end_seq <= region[1]))
+
     kept = [
         e
         for e in entries
-        if (samples is None or e.sample in samples)
-        and (peptide_ranges is None or e.peptide_range in peptide_ranges)
+        if (samples is None or e.sample in samples) and wanted(e)
     ]
     return kept
 

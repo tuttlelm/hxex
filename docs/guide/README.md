@@ -26,6 +26,8 @@ a short text file.
 
 - [Controls and times](controls.md): undeuterated and fully deuterated controls, a time point as
   a control, writing times, times that only order the points.
+- [Excluding spectra](excluding.md): leaving out bad spectra, before or after fitting, without
+  deleting anything.
 - [The peak-picking window](picking-window.md): the ppm window, or one from the instrument's
   resolving power.
 - [Comparing separate runs](comparing-runs.md): several bundles in one analysis, pooled or side

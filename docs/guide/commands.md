@@ -75,11 +75,11 @@ Add the bootstrap to a bundle that is waiting for it.
 
 Write tables and figures from a saved bundle.
 
-`hxex report BUNDLE [options]`
+`hxex report BUNDLE|PROJECT [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE` | a results bundle (a folder, or .zip) |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [[analysis.exclude]] rules applied |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | write the tables (default: beside the bundle) |
 | `--figures` `[DIR]` | write the figures (default: beside the bundle) |

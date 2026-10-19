@@ -43,10 +43,11 @@ REQUIRED = "required"
 UNSET = "unset"
 
 _FOLDER = "folder"
-_SCAN = "mzml, thermo"
+_SCAN = "scan"
 # [input] keys by the formats they apply to (the rest apply to every format)
 _INPUT_FORMATS = {
-    "data_dir": _FOLDER, "samples": _FOLDER, "peptide_ranges": _FOLDER, "sample": "pooled",
+    "data_dir": _FOLDER, "samples": _FOLDER, "peptide_ranges": _FOLDER,
+    "peptide_region": _FOLDER, "sample": "pooled",
     "runs": _SCAN, "parents": _SCAN, "target": _SCAN, "fragments": _SCAN, "scans": _SCAN,
     "data_root": _SCAN, "thermo_dir": "thermo",
 }
@@ -68,10 +69,13 @@ _DESCRIPTIONS: dict[str, str] = {
                     "formats)",
     "input.data_dir": "the folder to read (needed for the folder formats)",
     "input.samples": "only these samples (unset: all)",
-    "input.peptide_ranges": 'only these peptides, by range ("0001-0010"; unset: all)',
+    "input.peptide_ranges": 'only these peptides, by their residues: "1-10" selects the peptide '
+                            'from residue 1 to 10 ("0001-0010" is the same); unset: all',
+    "input.peptide_region": "[first, last]: only peptides wholly within these residues; with "
+                            "peptide_ranges too, a peptide that matches either; unset: all",
     "input.sample": "the sample name given to the entries of a pooled folder",
     "input.record_paths": 'how the files read are recorded in the bundle: "path" (as given), '
-                          '"name" (file names only), or for mzml and thermo "relative" (to '
+                          '"name" (file names only), or for the scan formats "relative" (to '
                           "data_root)",
     "input.peptides": "scan formats: the peptide table (CSV), needed; each row is read from "
                       "the runs of its sample (every run when it has none); folder formats: a "
@@ -87,6 +91,9 @@ _DESCRIPTIONS: dict[str, str] = {
                         "environment variable)",
     "input.retention_times": "a table of retention times in minutes (columns rt and sample, "
                              "start_seq, end_seq, peptide, charge)",
+    "input.exclude": "spectra left out before fitting: [[input.exclude]] rules (below)",
+    "analysis.exclude": "spectra treated as rejected in the tables, figures, and analysis: "
+                        "[[analysis.exclude]] rules (below)",
     "input.spectra": "take the raw spectra stored by an earlier run (a bundle or a spectra "
                      "file) instead of reading the input",
     "input.target.ms_level": "MS level of the peptides' scans",
@@ -241,9 +248,18 @@ _DESCRIPTIONS: dict[str, str] = {
 }
 
 _INTROS: dict[str, str] = {
+    "input.exclude": "Spectra left out before fitting: they are stored with the raw spectra "
+                     "but not picked or fitted, and the bundle records them. A spectrum is "
+                     "excluded when it matches every key one rule names; repeat the heading "
+                     "for each rule. See [Excluding spectra](excluding.md).",
+    "analysis.exclude": "Spectra treated as rejected by hxex analyse, and by hxex run and hxex "
+                        "report (given the project file) in their tables and figures; their "
+                        "fits stay in the bundle. The same keys as [[input.exclude]]. See "
+                        "[Excluding spectra](excluding.md).",
     "": "Top-level keys, before the first table.",
-    "input": "What to read. Which keys apply depends on the format (the Formats column; "
-             "folder = specexport, hxexpress, pooled). See [Input formats](inputs.md).",
+    "input": "What to read. Which keys apply depends on the format (the Formats column): "
+             "folder = the folder formats (specexport, hxexpress, pooled), scan = the scan "
+             "formats (mzml, thermo), all = every format. See [Input formats](inputs.md).",
     "input.target": "Scan formats: how the scans of the peptides themselves are chosen.",
     "input.runs": "Scan formats: one table per file. A file with a time is one time point, a "
                   "file with a role is a control, and a file with neither is a kinetics run "
@@ -414,6 +430,24 @@ def _run_tables(name: str, cls, values: Mapping) -> list[Table]:
     return tables
 
 
+# the keys of an exclusion rule ([[input.exclude]], [[analysis.exclude]]; hxex.exclusions)
+_RULE = (
+    Setting("sample", "text", UNSET, "the sample"),
+    Setting("peptide_range", "text", UNSET, 'the peptide, by its residues ("45-60" is '
+            '"0045-0060")'),
+    Setting("charge", "integer", UNSET, "the charge state"),
+    Setting("time", "number or text", UNSET, 'a time point (s, or text with a unit: "30 s"); '
+            "a control has no time"),
+    Setting("role", "text", UNSET, '"undeut" or "fulldeut": the controls'),
+    Setting("rep", "integer", UNSET, "the replicate"),
+    Setting("file", "text", UNSET, "the data file's name: a run's mzML or raw file, an "
+            "HX-Express spreadsheet, or a SpecExport spectrum file"),
+    Setting("spectrum_id", "text", UNSET, "one spectrum, by its id (spectra.csv)"),
+    Setting("note", "text", '`""`', "why: kept with the record, and shown by hxex check and "
+            "hxex info"),
+)
+
+
 def tables() -> list[Table]:
     """Every table a project file accepts, in the order of the reference."""
     out = [Table("", False, (
@@ -428,6 +462,7 @@ def tables() -> list[Table]:
                      _INTROS["input.runs"]))
     out.append(Table("input.fragments", True, _settings(FragmentSettings, "input.fragments"),
                      _INTROS["input.fragments"]))
+    out.append(Table("input.exclude", True, _RULE, _INTROS["input.exclude"]))
     out.append(Table("input.scans", False, _settings(MzmlConfig, "input.scans"),
                      _INTROS["input.scans"]))
     out.append(Table("output", False, _settings(OutputSettings, "output"), _INTROS["output"]))
@@ -460,6 +495,7 @@ def tables() -> list[Table]:
         FragmentAnalysis, "analysis.fragments", skip=("labels", "exchange")),
         _INTROS["analysis.fragments"]))
     out.append(Table("analysis.fragments.labels", False, (), _INTROS["analysis.fragments.labels"]))
+    out.append(Table("analysis.exclude", True, _RULE, _INTROS["analysis.exclude"]))
     for name in ("analysis.fragments.exchange", "analysis.labelling"):
         out.append(Table(name, False, _settings(ExchangeConditions, name), _INTROS[name]))
     return out

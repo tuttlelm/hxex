@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from ..controls import correct_means
+from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
@@ -250,6 +251,14 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     return out
 
 
+def _range_of(label) -> tuple[int, int] | None:
+    """The residues a range label names, or None for one that is not ``START-END``."""
+    try:
+        return parse_range(label)
+    except ValueError:
+        return None
+
+
 def find_series(
     results: Results,
     *,
@@ -265,8 +274,9 @@ def find_series(
     keep = np.ones(len(t["data_id"]), dtype=bool)
     if samples is not None:
         keep &= np.isin(t["sample"], [str(x) for x in samples])
-    if peptide_ranges is not None:
-        keep &= np.isin(t["peptide_range"], [str(x) for x in peptide_ranges])
+    if peptide_ranges is not None:  # by residues: "1-10" is "0001-0010"
+        wanted = {parse_range(r) for r in peptide_ranges}
+        keep &= np.array([_range_of(r) in wanted for r in t["peptide_range"]], dtype=bool)
     if charges is not None:
         keep &= np.isin(t["charge"], [int(x) for x in charges])
     if flagged:

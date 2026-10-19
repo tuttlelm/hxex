@@ -365,6 +365,14 @@ def write_analysis(
     ``directory``; returns the files. Relative FASTA paths are taken from
     ``base``. ``progress(done, total)`` counts the files."""
     directory = Path(directory)
+    if config.exclude:  # [[analysis.exclude]]: rejected in memory, the bundle's fits kept
+        from ..exclusions import exclude_from_results
+
+        if isinstance(results, RunSet):
+            results = RunSet({name: exclude_from_results(r, config.exclude)
+                              for name, r in results.runs.items()}, merge=results.merge)
+        else:
+            results = exclude_from_results(results, config.exclude)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
     frag_tables, frag_jobs = {}, []

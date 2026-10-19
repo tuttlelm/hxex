@@ -1031,3 +1031,27 @@ def test_times_that_only_order_the_points_are_drawn_by_index(results, tmp_path, 
         write_figures(by_order, tmp_path, PlotConfig(x="time", series=[0], format="png",
                                                      overview=False))
     assert any("drawn by index" in r.message for r in caplog.records)
+
+
+def test_rejected_spectra_are_drawn_hollow_and_grey(results):
+    """A spectrum the review rejects (or an [[analysis.exclude]] rule excludes) stays visible in
+    the uptake and population figures, hollow and grey, and out of its replicate's points."""
+    from hxex.exclusions import Exclusion, exclude_from_results
+
+    rows = series_info(results, 0)["rows"]
+    gone = str(results.fit.spectrum_id[rows[4]])  # the 1 min point of replicate 2
+    out = exclude_from_results(results, [Exclusion(spectrum_id=gone, note="test")])
+    d = uptake_data(out, 0)
+    assert d["rejected"].sum() == np.sum(results.fit.spectrum_id[d["index"]] == gone) > 0
+    fig = plot_uptake(out, 0, x="index")
+    ax = fig.axes[0]
+    hollow = [a for a in ax.get_children() if a.get_gid() == "rejected"][0]
+    assert len(hollow.get_offsets()) == d["rejected"].sum()
+    assert hollow.get_facecolors().size == 0 or (hollow.get_facecolors()[:, 3] == 0).all()
+    rep2 = [a for a in ax.get_children() if a.get_gid() == "rep:2"][0]
+    assert len(rep2.get_offsets()) == np.sum((d["rep"] == 2) & ~d["rejected"])
+    assert "rejected / excluded" in [t.get_text() for t in ax.get_legend().get_texts()]
+    assert "rejected" not in gids(plot_uptake(results, 0, x="index"))
+    pops = plot_populations(out, 0)
+    assert any("(rejected)" in a.get_title() for a in pops.axes)
+    assert any(str(g).endswith(":rejected") for g in gids(pops))

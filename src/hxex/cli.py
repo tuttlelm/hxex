@@ -89,7 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also write the figures (default: beside the bundle)")
 
     p = sub.add_parser("report", help="write tables and figures from a saved bundle")
-    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
+    p.add_argument("bundle", metavar="BUNDLE|PROJECT",
+                   help="a results bundle (a folder, or .zip), or a project file: its [output] "
+                        "bundle, with its [[analysis.exclude]] rules applied")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the tables (default: beside the bundle)")
@@ -502,13 +504,16 @@ def cmd_run(args) -> int:
             overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
             figures_dir=_beside(bundle, out.figures, "_figures")
             if out.figures is not False else None,
+            exclude=project.input.exclude, view_exclude=_view_exclude(project),
             progress=ProgressLog(interval=args.progress_every), cancel=stop,
         )
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
     if tables is not None:
+        from .exclusions import exclude_from_results
         from .report import Results, write_tables
 
-        write_tables(Results.from_run(result), tables)
+        write_tables(exclude_from_results(Results.from_run(result), _view_exclude(project)),
+                     tables)
     _summary(result.fit, bundle, tables=tables,
              figures=_beside(bundle, out.figures, "_figures") if out.figures is not False
              else None)
@@ -517,6 +522,11 @@ def cmd_run(args) -> int:
         log.warning("%s still holds the analysis of the results just replaced: run "
                     "'hxex analyse' again to bring it up to date", analysis)
     return 0
+
+
+def _view_exclude(project) -> tuple:
+    """The project's [[analysis.exclude]] rules (none without an [analysis] table)."""
+    return tuple(project.analysis.exclude) if project.analysis is not None else ()
 
 
 def _summary(fit, bundle: Path, *, tables: Path | None = None,
@@ -559,7 +569,15 @@ def cmd_report(args) -> int:
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
 
-    bundle = Path(args.bundle)
+    bundle, rules = Path(args.bundle), ()
+    if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle and rules
+        from .config import load_project
+
+        project = load_project(bundle, analysis_only=True)
+        if project.output.bundle is None:
+            log.error("%s names no [output] bundle to report on", bundle)
+            return EXIT_ERROR
+        bundle, rules = project.output.bundle, _view_exclude(project)
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
     if tables is None and figures is None:
@@ -569,7 +587,9 @@ def cmd_report(args) -> int:
         if b.pending:
             log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
                         ", ".join(b.pending))
-        results = Results.from_bundle(b)
+        from .exclusions import exclude_from_results
+
+        results = exclude_from_results(Results.from_bundle(b), rules)
         if tables is not None:
             written = write_tables(results, tables)
             _say(f"{len(written)} table(s) in {tables}")
@@ -656,6 +676,16 @@ def cmd_info(args) -> int:
         ]
         if m.get("notes"):
             rows.append(("notes", m["notes"]))
+        if m.get("excluded"):
+            ex = m["excluded"]
+            rows.append(("excluded", f"{len(ex.get('spectrum_ids', []))} spectra left out "
+                                     "before fitting ([[input.exclude]], stored, not fitted)"))
+            for rule in ex.get("rules", []):
+                matched = rule.get("matched", 0)
+                text = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in rule.items()
+                                 if k not in ("note", "matched"))
+                rows.append(("", f"  {text}: {matched}"
+                             + (f" ({rule['note']})" if rule.get("note") else "")))
         rows += _provenance_rows(m.get("provenance"))
         earlier = generations(b.path)
         if earlier:

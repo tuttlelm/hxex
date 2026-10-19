@@ -636,6 +636,7 @@ def write_bundle(
     pending: Sequence[str] = (),
     overwrite: bool = False,
     provenance: Mapping | None = None,
+    excluded: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
@@ -653,7 +654,8 @@ def write_bundle(
     manifest whether or not the spectra are stored. ``pending`` names the stages the run has
     still to add (``'bootstrap'`` for the bundle a run writes before its bootstrap, see
     :func:`hxex.run.resume_bootstrap`). ``provenance`` is recorded as given (see
-    :func:`provenance_of`: the bundle this one replaces, what changed, the review carried).
+    :func:`provenance_of`: the bundle this one replaces, what changed, the review carried), and
+    ``excluded`` too (the run-level exclusions: :func:`hxex.exclusions.exclusion_record`).
     """
     path = Path(path)
     unknown = set(pending) - set(PENDING_STAGES)
@@ -731,6 +733,7 @@ def write_bundle(
             "n_measurements": len(fit),
             "pending": list(pending),
             "provenance": None if provenance is None else dict(provenance),
+            **({} if not excluded else {"excluded": dict(excluded)}),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),

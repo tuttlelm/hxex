@@ -119,8 +119,9 @@ The bootstrap takes most of a run's time. To save time:
 The bundle has a **review layer**: per spectrum, a status (rejected or not), an optional K
 override and a note. Rejected spectra are left out of the uptake, the reports and the analysis;
 an override replaces the selected K. The review is kept when the bundle is overwritten by a new
-run; entries the new run cannot hold are kept but marked stale. For now there is no command to
-enter review decisions; it is done from Python ([Using *hxex* from Python](python.md#reviewing-spectra)).
+run; entries the new run cannot hold are kept but marked stale. To leave spectra out without
+Python, write rules in the project file ([Excluding spectra](excluding.md)); single review
+decisions are entered from Python ([Using *hxex* from Python](python.md#reviewing-spectra)).
 
 ## From Python
 

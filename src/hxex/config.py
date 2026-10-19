@@ -302,7 +302,10 @@ class InputSettings:
 
     - ``format``: ``specexport``, ``hxexpress``, ``pooled`` (folder formats), ``mzml`` or
       ``thermo`` (scan formats).
-    - Folder formats: ``data_dir``; ``samples`` and ``peptide_ranges`` (only these);
+    - Folder formats: ``data_dir``; ``samples`` and ``peptide_ranges`` (only these; a range
+      ``START-END`` selects the peptide with those residues, however it is written) and
+      ``peptide_region`` (``[first, last]``: every peptide wholly within those residues; with
+      ``peptide_ranges`` too, a peptide that matches either);
       ``sample`` (the name given to a pooled folder's entries); ``peptides``, a table of the
       files instead of finding them by name. The control files (``Non``/``Full``,
       ``undeut``/``TD``) get their role from their label.
@@ -324,6 +327,7 @@ class InputSettings:
     data_dir: Path | None = None
     samples: tuple[str, ...] | None = None
     peptide_ranges: tuple[str, ...] | None = None
+    peptide_region: tuple[int, int] | None = None
     sample: str = ""
     record_paths: str = "path"
     time_scale: str = "seconds"
@@ -341,6 +345,8 @@ class InputSettings:
     # every format: take the raw spectra stored by an earlier run (a bundle, or a spectra file)
     # instead of reading the input
     spectra: Path | None = None
+    # every format: rules of spectra left out before fitting (stored, not fitted)
+    exclude: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -410,6 +416,41 @@ def _strings(value, where: str) -> tuple[str, ...] | None:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ProjectError(f"{where} must be text or a list of text")
     return tuple(value)
+
+
+def _exclude(data: Mapping) -> tuple:
+    """``[[input.exclude]]``: the rules of spectra left out before fitting."""
+    from .exclusions import read_exclusions
+
+    try:
+        return read_exclusions(data.get("exclude"), "input.exclude")
+    except ValueError as exc:
+        raise ProjectError(str(exc)) from None
+
+
+def _ranges(value) -> tuple[str, ...] | None:
+    """``[input] peptide_ranges``: each ``START-END`` (checked here, so hxex check reports it)."""
+    from .io.entries import parse_range
+
+    ranges = _strings(value, "input.peptide_ranges")
+    for r in ranges or ():
+        try:
+            parse_range(r)
+        except ValueError as exc:
+            raise ProjectError(f"input.peptide_ranges: {exc}") from None
+    return ranges
+
+
+def _region(value) -> tuple[int, int] | None:
+    """``[input] peptide_region``: ``[first, last]``, residue numbers, first <= last."""
+    if value is None:
+        return None
+    if (not isinstance(value, list) or len(value) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in value)
+            or not 1 <= value[0] <= value[1]):
+        raise ProjectError(f"input.peptide_region = {value!r}: expected [first, last], two "
+                           "residue numbers with first <= last (for example [1, 50])")
+    return int(value[0]), int(value[1])
 
 
 def _window(value, where: str, unit: str = "[start, end] in seconds"):
@@ -507,10 +548,11 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
         source = None
     reader = (source or {}).get("reader")
     record = {"format": reader if reader in FORMATS else "stored"}
-    if not (set(data) - {"retention_times", "time_scale"}):
+    if not (set(data) - {"retention_times", "time_scale", "exclude"}):
         return InputSettings(
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
-            time_scale=_time_scale(data, source), spectra=stored, **record)
+            time_scale=_time_scale(data, source), spectra=stored, exclude=_exclude(data),
+            **record)
     inp = replace(_read_settings(data, base), time_scale=_time_scale(data, source))
     if source is None:  # the file's own settings until the record can be read
         return replace(inp, spectra=stored)
@@ -549,14 +591,16 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         return InputSettings(
             format=fmt, data_dir=_path(base, data["data_dir"], "input.data_dir"),
             samples=_strings(data.get("samples"), "input.samples"),
-            peptide_ranges=_strings(data.get("peptide_ranges"), "input.peptide_ranges"),
+            peptide_ranges=_ranges(data.get("peptide_ranges")),
+            peptide_region=_region(data.get("peptide_region")),
             sample=str(data.get("sample", "")),
             record_paths=str(data.get("record_paths", "path")),
             time_scale=_time_scale(data),
             peptides=_path(base, data.get("peptides"), "input.peptides"),
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
+            exclude=_exclude(data),
         )
-    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "sample"}
+    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "peptide_region", "sample"}
     if extra:
         raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are not used by {fmt} "
                            "(the runs give the samples and times)")
@@ -634,6 +678,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         data_root=_path(base, data.get("data_root", "."), "input.data_root"),
         thermo_dir=_path(base, data.get("thermo_dir"), "input.thermo_dir"),
         retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
+        exclude=_exclude(data),
     )
 
 
@@ -697,7 +742,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     return Project(name, inp, run, output, path, threads, analysis)
 
 
-ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta",
+ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "exclude", "ks", "fasta",
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
@@ -721,6 +766,8 @@ def _analysis_from(data: Mapping, base: Path):
             "true); residue-level rates and protection factors come from fragment ladders "
             "([analysis.fragments], ladder_residues.csv). Delete the setting")
     _check_keys(data, ANALYSIS_KEYS, "[analysis]")
+    if isinstance(data.get("exclude"), Mapping):  # one rule written [analysis.exclude]
+        data = {**data, "exclude": [data["exclude"]]}
     data = _times_in(data, ("times", "exclude_times"), "analysis")
     if isinstance(data.get("coverage_times"), list):
         data = _times_in(data, ("coverage_times",), "analysis")
@@ -757,6 +804,13 @@ def _analysis_from(data: Mapping, base: Path):
                           for k, v in values["runs"].items()}
     values["annotations"] = {"regions": list(_items(data.get("regions"))),
                              "sites": list(_items(data.get("sites")))}
+    if "exclude" in data:
+        from .exclusions import read_exclusions
+
+        try:
+            values["exclude"] = read_exclusions(data["exclude"], "analysis.exclude")
+        except ValueError as exc:
+            raise ProjectError(str(exc)) from None
     try:
         if isinstance(values.get("filters"), Mapping):
             from .analysis import SpeciesFilters
@@ -774,8 +828,8 @@ def _analysis_from(data: Mapping, base: Path):
 
 
 # the tables that hold a list of items (``[[name]]``; a single ``[name]`` is read as one item)
-LIST_TABLES = ("input.runs", "input.fragments", "analysis.regions", "analysis.sites",
-               "run.registry.residues")
+LIST_TABLES = ("input.runs", "input.fragments", "input.exclude", "analysis.regions",
+               "analysis.sites", "analysis.exclude", "run.registry.residues")
 
 
 def _toml_hint(text: str, exc: Exception) -> str:
@@ -893,7 +947,8 @@ def folder_entries(project: Project):
     if inp.peptides is not None:
         return read_peptide_table(inp.peptides)
     return scan(inp.data_dir, inp.format, samples=inp.samples,
-                peptide_ranges=inp.peptide_ranges, sample=inp.sample,
+                peptide_ranges=inp.peptide_ranges, peptide_region=inp.peptide_region,
+                sample=inp.sample,
                 registry=project.run.registry)
 
 
@@ -953,7 +1008,8 @@ def project_with_spectra(project: Project, path: str | Path) -> Project:
     return load_project(project.path, spectra=path)
 
 
-_READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "sample", "peptides",
+_READ_STAGE = ("format", "data_dir", "samples", "peptide_ranges", "peptide_region", "sample",
+               "peptides",
                "runs", "parents", "target", "fragments", "scans", "data_root", "thermo_dir")
 
 
@@ -1002,7 +1058,8 @@ def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
         return read_spectra(
             folder_entries(project), inp.data_dir, inp.format, project=project.project,
             samples=inp.samples,
-            peptide_ranges=inp.peptide_ranges, record_paths=inp.record_paths,
+            peptide_ranges=inp.peptide_ranges, peptide_region=inp.peptide_region,
+            record_paths=inp.record_paths,
             progress=progress, cancel=cancel,
         )
     common = dict(project=project.project, config=inp.scans, picker=project.run.picker,
@@ -1300,7 +1357,8 @@ format = "specexport"
 #                                # file) instead of reading the files below
 data_dir = "SpecExport"          # the HDExaminer SpecExport folder
 # samples = ["WT", "mutant"]     # only these samples
-# peptide_ranges = ["0001-0010"] # only these peptides
+# peptide_ranges = ["1-10"]      # only these peptides (by residues: "0001-0010" is the same)
+# peptide_region = [1, 50]       # only peptides wholly within these residues
 record_paths = "path"            # or "name": record file names only
 time_scale = "seconds"           # or "order": the times only order the points
 # retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
@@ -1313,7 +1371,8 @@ data_dir = "data"                # the folder of HX-Express spreadsheets
 # peptides = "metadf.csv"        # a table of the files (pyHXExpress's metadf) instead of
 #                                # finding them by name (SAMPLE_START-END-PEPTIDE-zCHARGE-...)
 # samples = ["WT"]
-# peptide_ranges = ["0001-0010"]
+# peptide_ranges = ["1-10"]
+# peptide_region = [1, 50]
 record_paths = "path"
 time_scale = "seconds\"""",
     "pooled": """[input]
@@ -1322,7 +1381,8 @@ format = "pooled"
 #                                # file) instead of reading the files below
 data_dir = "pooled"              # a SpecExport folder with peptides of several proteins
 sample = "pool"                  # the sample name given to its entries
-# peptide_ranges = ["0001-0010"]
+# peptide_ranges = ["1-10"]
+# peptide_region = [1, 50]
 record_paths = "path"
 time_scale = "seconds\"""",
 }
@@ -1411,6 +1471,12 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "",
         input_text,
         "",
+        "# [[input.exclude]]               # spectra left out before fitting (stored, not",
+        '# sample = "WT"                   # fitted): a spectrum matching every key is left out;',
+        '# peptide_range = "45-60"         # repeat the table for each rule (keys: sample,',
+        "# charge = 3                      # peptide_range, charge, time, role, rep, file,",
+        '# note = "co-eluting species"     # spectrum_id, note)',
+        "",
         "[output]",
         "# The bundle and the folders named after it (results_tables, results_figures,",
         "# results_analysis, and the generations results.1, results.1_tables, ...) belong to",
@@ -1462,6 +1528,10 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# confidence = 0.5",
         "# max_fD_se = 0.25",
         "# min_population = 0.05",
+        "# [[analysis.exclude]]            # spectra treated as rejected in the tables, figures",
+        '# sample = "WT"                   # and analysis (their fits are kept); the keys of',
+        '# time = "30 s"                   # [[input.exclude]]',
+        "# rep = 2",
         "# [[analysis.regions]]",
         '# name = "N-terminal region"',
         "# start = 1",
@@ -1552,7 +1622,20 @@ def describe(project: Project) -> dict[str, Any]:
                   else "order: the times only order the points (uptake drawn by index; the "
                        "kinetics and protection analyses refuse)"),
         "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
+        **_exclusion_lines("excluded", () if inp is None else inp.exclude,
+                           "left out before fitting (stored, not fitted)"),
+        **_exclusion_lines("excluded later", () if project.analysis is None
+                           else project.analysis.exclude,
+                           "treated as rejected in the tables, figures and analysis"),
     }
+
+
+def _exclusion_lines(key: str, rules, what: str) -> dict[str, str]:
+    """The summary lines of exclusion rules (none without rules)."""
+    if not rules:
+        return {}
+    return {key: f"{len(rules)} rule(s), {what}: "
+                 + "; ".join(r.describe() for r in rules)}
 
 
 def _promotions(controls) -> str:

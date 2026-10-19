@@ -424,7 +424,9 @@ def plot_populations(
         d = population_data(results, sid, k=k, corrected=corrected, components=components)
         ax = axes[positions[pos]]
         ax.set_visible(True)
-        label = f"{_time_text(info['times'][pos], info['roles'][pos])}, rep {info['reps'][pos]}"
+        rejected = results.review_status[i] == "rejected"
+        label = (f"{_time_text(info['times'][pos], info['roles'][pos])}, rep {info['reps'][pos]}"
+                 + (" (rejected)" if rejected else ""))
         _draw_population_map(ax, d, label)
         if reference is not None and d["n_amides"] is not None:
             known = reference.at(float(info["times"][pos]), d["n_amides"])
@@ -436,12 +438,15 @@ def plot_populations(
             ov.set_visible(True)
             for rank in d["shown"]:
                 c = rank - 1
-                # the colour is the population's (as in the single cells), the shape the replicate
+                # the colour is the population's (as in the single cells), the shape the replicate;
+                # a rejected or excluded spectrum hollow and grey
+                style = ({"color": "grey", "fillstyle": "none", "alpha": 0.6} if rejected else
+                         {"color": population_style(rank)["color"],
+                          "fillstyle": population_style(rank)["fillstyle"]})
                 ov.errorbar(d["mean"][c], d["population"][c], xerr=_err(d["mean_se"][c]),
                             yerr=_err(d["population_se"][c]), marker=REP_MARKERS[r_idx % 6], ms=5,
-                            lw=1, color=population_style(rank)["color"],
-                            fillstyle=population_style(rank)["fillstyle"],
-                            gid=f"overlay:{info['reps'][pos]}")
+                            lw=1, gid=f"overlay:{info['reps'][pos]}"
+                            + (":rejected" if rejected else ""), **style)
             ov.set_ylim(-0.05, 1.1)
             when = _time_text(info["times"][pos], info["roles"][pos])
             ov.set_title(f"{when}, replicates", fontsize=8)
@@ -470,7 +475,9 @@ def uptake_data(
     ``rep``, ``rank``, ``mean`` (corrected if asked and possible), ``mean_se``, ``population``,
     ``population_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
     controls) and ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
-    control, by its role; a control's ``time`` is NaN unless it was also a time point)."""
+    control, by its role; a control's ``time`` is NaN unless it was also a time point), and
+    ``rejected`` (the review rejected the spectrum, or an [[analysis.exclude]] rule excluded
+    it: drawn hollow and grey)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (
         "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "population",
@@ -494,6 +501,8 @@ def uptake_data(
                 cols[name].append(value)
     out: dict = {n: np.array(v) for n, v in cols.items()}
     out["role"] = np.asarray(out["role"], dtype=str)
+    status = results.review_status
+    out["rejected"] = np.array([status[int(i)] == "rejected" for i in out["index"]], dtype=bool)
     ctrl = results.controls
     row = _control_row(results, data_id)
     out.update({
@@ -553,14 +562,24 @@ def plot_uptake(
         keep &= d["time"] > 0
     xs = d["time_index"] if x == "index" else d["time"]
     reps = np.unique(d["rep"])
+    rejected = d["rejected"]
     for r in reps:
-        sel = keep & (d["rep"] == r)
+        sel = keep & (d["rep"] == r) & ~rejected
         color = REP_COLORS[(int(r) - 1) % len(REP_COLORS)]
         ax.errorbar(xs[sel], d["mean"][sel],
                     yerr=np.where(np.isfinite(d["mean_se"][sel]), d["mean_se"][sel], 0.0),
                     fmt="none", ecolor=color, elinewidth=1.2, capsize=0, gid=f"errors:rep{r}")
         ax.scatter(xs[sel], d["mean"][sel], s=20 + 160 * np.nan_to_num(d["population"][sel]),
                    color=color, marker="v", alpha=0.9, label=f"rep {r}", gid=f"rep:{r}")
+    out = keep & rejected  # rejected or excluded: visible, but hollow and grey
+    if out.any():
+        ax.errorbar(xs[out], d["mean"][out],
+                    yerr=np.where(np.isfinite(d["mean_se"][out]), d["mean_se"][out], 0.0),
+                    fmt="none", ecolor="grey", elinewidth=1.0, alpha=0.6, capsize=0,
+                    gid="errors:rejected")
+        ax.scatter(xs[out], d["mean"][out], s=20 + 160 * np.nan_to_num(d["population"][out]),
+                   facecolors="none", edgecolors="grey", marker="v", lw=1.2,
+                   label="rejected / excluded", gid="rejected")
     if reference is not None and d["n_amides"] is not None:
         for t in np.unique(d["time"][keep]):
             known = reference.at(float(t), d["n_amides"])
@@ -590,7 +609,7 @@ def plot_uptake(
         ax.set_xscale(scale)
     ax.set_ylabel("deuterium (back-exchange corrected)" if d["corrected"] else "deuterium")
     ax.set_title(d["label"], fontsize=9)
-    if legend and len(reps) > 1:
+    if legend and (len(reps) > 1 or out.any()):
         ax.legend(fontsize=7, frameon=False, loc="lower right")
     try:
         fig.tight_layout()

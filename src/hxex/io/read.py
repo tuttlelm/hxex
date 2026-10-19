@@ -32,6 +32,7 @@ def scan(
     *,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
     sample: str = "",
     registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
 ) -> list[PeptideEntry]:
@@ -42,11 +43,14 @@ def scan(
     ``registry`` the modified residues its folder names may hold.
     """
     if fmt == "hxexpress":
-        return scan_hxexpress(data_dir, samples=samples, peptide_ranges=peptide_ranges)
+        return scan_hxexpress(data_dir, samples=samples, peptide_ranges=peptide_ranges,
+                              peptide_region=peptide_region)
     if fmt == "specexport":
-        return scan_specexport(data_dir, samples=samples, peptide_ranges=peptide_ranges)
+        return scan_specexport(data_dir, samples=samples, peptide_ranges=peptide_ranges,
+                               peptide_region=peptide_region)
     if fmt == "pooled":
         return scan_specexport_pooled(data_dir, sample=sample, peptide_ranges=peptide_ranges,
+                                      peptide_region=peptide_region,
                                       registry=registry)
     raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
 
@@ -62,6 +66,7 @@ def read_spectra(
     project: str,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
     record_paths: str = "path",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
@@ -91,7 +96,7 @@ def read_spectra(
     qualify_spectrum_id(project, "")  # validate the name before any reading
     root = Path(data_dir)
     return _read(entries, root, fmt, project=project, samples=samples,
-                 peptide_ranges=peptide_ranges,
+                 peptide_ranges=peptide_ranges, peptide_region=peptide_region,
                  recorded_dir=str(root) if record_paths == "path" else root.name,
                  record_paths=record_paths, known=None, on_change="warn", progress=progress,
                  cancel=cancel)
@@ -106,8 +111,10 @@ def _input_path(fmt: str, entry: PeptideEntry) -> str:
 
 def _read(entries, root: Path, fmt: str, *, project, samples,
           peptide_ranges, recorded_dir: str, record_paths: str, known: Mapping | None,
+          peptide_region=None,
           on_change: str, progress, cancel) -> SpectrumSet:
-    kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges)
+    kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
+                          peptide_region=peptide_region)
     wanted = {id(e) for e in kept}
     jobs = [(i, e) for i, e in enumerate(entries) if id(e) in wanted]
     spectra: list[Spectrum] = []
@@ -136,6 +143,7 @@ def _read(entries, root: Path, fmt: str, *, project, samples,
         "entries": [e.to_dict() for e in entries],
         "samples": None if samples is None else list(samples),
         "peptide_ranges": None if peptide_ranges is None else list(peptide_ranges),
+        **({} if peptide_region is None else {"peptide_region": [int(x) for x in peptide_region]}),
         "files": files,
     }
     return SpectrumSet.from_spectra(
@@ -174,6 +182,7 @@ def read_spectra_source(
         [PeptideEntry.from_dict(e) for e in source["entries"]], root, fmt,
         project=source["project"], samples=source.get("samples"),
         peptide_ranges=source.get("peptide_ranges"), recorded_dir=source["data_dir"],
+        peptide_region=source.get("peptide_region"),
         record_paths=source.get("record_paths", "path"), known=source.get("files", {}),
         on_change=on_change, progress=progress, cancel=cancel,
     )

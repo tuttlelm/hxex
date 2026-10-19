@@ -43,7 +43,7 @@ elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
   - **populations**: each population's mean and share over time (left out when every spectrum has
     K=1);
   - **uptake**: deuteration against time (or index with `time_scale = "order"`), corrected by
-    default when there are controls.
+    default when there are controls. A rejected or excluded spectrum is drawn hollow and grey.
 
 By default only the flagged series get figures (a quality flag, a rejection or a control
 fallback); `[run.plots] series = "all"` or `hxex report --figures --series all` draws them all.

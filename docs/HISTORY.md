@@ -3002,3 +3002,45 @@ CSVs or mzML if wanted.
     the tables in item 96, an analysis folder written before the listing (nine in the private
     examples) is written again only if none of its files is named like a new one; move them,
     or write elsewhere, once.
+
+114. **`peptide_range` optional and checked (owner, 2026-10-19).** The range label is used only
+    as text (the `peptide_ranges` selection, figure titles and file names, table columns, the
+    input's sort order, retention-time tables); residues always come from `start_seq` and
+    `end_seq`, and nothing checked that the two agreed. In a peptide or file table it is now
+    optional: left out or empty, it is `peptide_range_text(start, end)`, zero-padded as the
+    folder formats' file names (`0001-0010`); one whose numbers differ from `start_seq` and
+    `end_seq` (or that is not `START-END`) is a warning naming the line. No table in the test
+    data or the private examples triggers it. Next: the `peptide_ranges` selection, which
+    compares the label's text exactly ("1-10" does not select "0001-0010").
+
+115. **Peptides selected by their residues; a region selection (owner, 2026-10-19).**
+    `[input] peptide_ranges` compared the range label's text exactly ("1-10" did not select
+    "0001-0010"); it now compares residues (`parse_range`, leading zeros ignored) with
+    `start_seq` and `end_seq`, and an entry that is not `START-END` is refused when the project
+    file is read. Owner's choice: an entry stays one exact peptide, and a new
+    `[input] peptide_region = [first, last]` selects every peptide wholly within those residues;
+    with both, a peptide that matches either is read. Folder formats only, as `peptide_ranges`
+    (a scan format's peptide table says what to read). Recorded in the read record
+    (`peptide_region`) so a repeated read selects the same; `find_series(peptide_ranges=)`
+    compares residues too.
+
+116. **Excluding spectra from the project file (owner, 2026-10-19; PLAN "Excluding spectra").**
+    `hxex.exclusions`: rules (`Exclusion`: sample, peptide_range by residues, charge, time,
+    role, rep, file, spectrum_id, note) in `[[input.exclude]]` and `[[analysis.exclude]]`; a
+    spectrum matching every key of one rule is excluded, a rule must name a key, and one that
+    matches nothing is a warning. Run level: `run(exclude=)` sets the matched spectra aside
+    after the control roles are assigned (not picked, fitted, used as controls, noise
+    references, or envelope references) but stores them with the raw spectra; the manifest's
+    `excluded` records the rules, their counts, and the ids (`hxex info`; kept by `resume`); a
+    rerun with `--spectra` and without the rule fits them. Analysis level:
+    `exclude_from_results` adds rejections to an in-memory copy of the review layer (note
+    "excluded by [[analysis.exclude]]: ..."), so every consumer of the review honours them:
+    `hxex analyse` (each run of a RunSet), and the tables and figures of `hxex run` and of
+    `hxex report`, which now also takes a project file (its `[output] bundle` and rules). The
+    bundle is not changed. `hxex check` lists the rules (it reads no spectra, so it does not
+    count them for the folder formats; the run logs the counts). The review layer stays; both
+    apply. A `file` is the run file (scan formats), the HX-Express spreadsheet, or the
+    SpecExport spectrum file. Found on the way: the uptake figure drew rejected spectra like
+    any other (review rejections too); owner's choice: visible, but hollow and grey
+    (`uptake_data` gives `rejected`; the legend says "rejected / excluded"), and the population
+    figure labels the panel "(rejected)" and draws its overlay point hollow and grey.

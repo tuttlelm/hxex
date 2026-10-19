@@ -80,6 +80,8 @@ class AnalysisConfig:
       (:class:`FragmentAnalysis`; ladder figures and rates, closure, per-residue rates; written
       whenever the run has fragments; None turns them off; fragment series are left out of the
       peptide analysis).
+    - ``exclude``: rules (:class:`hxex.exclusions.Exclusion`, ``[[analysis.exclude]]``) whose
+      spectra are treated as rejected, in memory (the bundle's fits are kept).
     - ``protection``: the peptides' protection factors (:mod:`hxex.analysis.protection`; opt-in;
       needs ``labelling``, the labelling conditions, :class:`hxex.kint.ExchangeConditions`, one
       set for every sample or sample -> set). There are no residue-level factors from
@@ -112,6 +114,7 @@ class AnalysisConfig:
     fragments: FragmentAnalysis | None = FragmentAnalysis()  # noqa: RUF009
     protection: bool = False
     labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
+    exclude: tuple = ()  # hxex.exclusions.Exclusion rules: spectra treated as rejected
 
     def __post_init__(self):
         from ..kint import read_conditions
@@ -216,6 +219,8 @@ class AnalysisConfig:
                                             for g in fields(value)}
             elif f.name == "annotations":
                 value = value.to_dict()
+            elif f.name == "exclude":
+                value = [r.to_dict() for r in value]
             elif f.name == "labelling":
                 from ..kint import conditions_dict
 
@@ -241,6 +246,12 @@ class AnalysisConfig:
             values["choice"] = ChoiceConfig.from_dict(values["choice"])
         if "annotations" in values:
             values["annotations"] = Annotations.from_dict(values["annotations"])
+        if "exclude" in values:
+            from ..exclusions import Exclusion, read_exclusions
+
+            values["exclude"] = tuple(
+                r if isinstance(r, Exclusion) else read_exclusions(r, "analysis.exclude")[0]
+                for r in values["exclude"])
         if "fragments" in values:
             f = values["fragments"]
             values["fragments"] = None if f is None or f is False else (

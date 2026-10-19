@@ -13,6 +13,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[input.target]`](#inputtarget)
 - [`[[input.runs]]`](#inputruns)
 - [`[[input.fragments]]`](#inputfragments)
+- [`[[input.exclude]]`](#inputexclude)
 - [`[input.scans]`](#inputscans)
 - [`[output]`](#output)
 - [`[run]`](#run)
@@ -38,6 +39,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[[analysis.sites]]`](#analysissites)
 - [`[analysis.fragments]`](#analysisfragments)
 - [`[analysis.fragments.labels]`](#analysisfragmentslabels)
+- [`[[analysis.exclude]]`](#analysisexclude)
 - [`[analysis.fragments.exchange]`](#analysisfragmentsexchange)
 - [`[analysis.labelling]`](#analysislabelling)
 
@@ -52,27 +54,29 @@ Top-level keys, before the first table.
 
 ## `[input]`
 
-What to read. Which keys apply depends on the format (the Formats column; folder = specexport, hxexpress, pooled). See [Input formats](inputs.md).
+What to read. Which keys apply depends on the format (the Formats column): folder = the folder formats (specexport, hxexpress, pooled), scan = the scan formats (mzml, thermo), all = every format. See [Input formats](inputs.md).
 
 | Key | Type | Default | Formats | Meaning |
 |---|---|---|---|---|
 | `format` | text | required | all | specexport, hxexpress, pooled (folder formats), mzml or thermo (scan formats) |
 | `data_dir` | path | unset | folder | the folder to read (needed for the folder formats) |
 | `samples` | list | unset | folder | only these samples (unset: all) |
-| `peptide_ranges` | list | unset | folder | only these peptides, by range ("0001-0010"; unset: all) |
+| `peptide_ranges` | list | unset | folder | only these peptides, by their residues: "1-10" selects the peptide from residue 1 to 10 ("0001-0010" is the same); unset: all |
+| `peptide_region` | list | unset | folder | [first, last]: only peptides wholly within these residues; with peptide_ranges too, a peptide that matches either; unset: all |
 | `sample` | text | `""` | pooled | the sample name given to the entries of a pooled folder |
-| `record_paths` | text | `"path"` | all | how the files read are recorded in the bundle: "path" (as given), "name" (file names only), or for mzml and thermo "relative" (to data_root) |
+| `record_paths` | text | `"path"` | all | how the files read are recorded in the bundle: "path" (as given), "name" (file names only), or for the scan formats "relative" (to data_root) |
 | `time_scale` | text | `"seconds"` | all | "seconds" (real times) or "order" (the times only order the points: uptake drawn by index, kinetics and protection analyses refuse) |
 | `peptides` | path | unset | all | scan formats: the peptide table (CSV), needed; each row is read from the runs of its sample (every run when it has none); folder formats: a table of the files instead of finding them by name |
-| `runs` | list | `[]` | mzml, thermo | one [[input.runs]] table per file (below) |
-| `parents` | true/false | `true` | mzml, thermo | read each peptide itself; false reads only its fragments (needs [[input.fragments]]) |
-| `target` | table | {} | mzml, thermo | how the peptides' scans are chosen: the [input.target] table (below) |
-| `fragments` | list | `[]` | mzml, thermo | fragment ions of every peptide: [[input.fragments]] tables (below) |
-| `scans` | table | (table) | mzml, thermo | how scans become spectra: the [input.scans] table (below) |
-| `data_root` | path | `"."` | mzml, thermo | relative run paths are taken from here |
+| `runs` | list | `[]` | scan | one [[input.runs]] table per file (below) |
+| `parents` | true/false | `true` | scan | read each peptide itself; false reads only its fragments (needs [[input.fragments]]) |
+| `target` | table | {} | scan | how the peptides' scans are chosen: the [input.target] table (below) |
+| `fragments` | list | `[]` | scan | fragment ions of every peptide: [[input.fragments]] tables (below) |
+| `scans` | table | (table) | scan | how scans become spectra: the [input.scans] table (below) |
+| `data_root` | path | `"."` | scan | relative run paths are taken from here |
 | `thermo_dir` | path | unset | thermo | the folder of Thermo's RawFileReader DLLs (else the HXEX_THERMO_DIR environment variable) |
 | `retention_times` | path | unset | all | a table of retention times in minutes (columns rt and sample, start_seq, end_seq, peptide, charge) |
 | `spectra` | path | unset | all | take the raw spectra stored by an earlier run (a bundle or a spectra file) instead of reading the input |
+| `exclude` | list | `[]` | all | spectra left out before fitting: [[input.exclude]] rules (below) |
 
 ## `[input.target]`
 
@@ -127,6 +131,22 @@ Scan formats: fragment ions made from every peptide of the table. Repeat the tab
 | `filter_excludes` | text | unset | text the scan filter must not contain |
 | `rt_window` | list | unset | [start, end] in s of scan time, for runs with a fixed time (a peptide's rt_start, rt_end columns take its place) |
 | `limit_charge` | true/false | `true` | ALL charges run from 1 to the parent's charge - 1 (false: to the parent's charge); charges written out are used as given |
+
+## `[[input.exclude]]`
+
+Spectra left out before fitting: they are stored with the raw spectra but not picked or fitted, and the bundle records them. A spectrum is excluded when it matches every key one rule names; repeat the heading for each rule. See [Excluding spectra](excluding.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `sample` | text | unset | the sample |
+| `peptide_range` | text | unset | the peptide, by its residues ("45-60" is "0045-0060") |
+| `charge` | integer | unset | the charge state |
+| `time` | number or text | unset | a time point (s, or text with a unit: "30 s"); a control has no time |
+| `role` | text | unset | "undeut" or "fulldeut": the controls |
+| `rep` | integer | unset | the replicate |
+| `file` | text | unset | the data file's name: a run's mzML or raw file, an HX-Express spreadsheet, or a SpecExport spectrum file |
+| `spectrum_id` | text | unset | one spectrum, by its id (spectra.csv) |
+| `note` | text | `""` | why: kept with the record, and shown by hxex check and hxex info |
 
 ## `[input.scans]`
 
@@ -349,6 +369,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
+| `exclude` | list | `[]` | spectra treated as rejected in the tables, figures, and analysis: [[analysis.exclude]] rules (below) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed) |
 | `fasta` | text or table | unset | one sequence file for every sample, or a table of sample = file (a run's own under its name); unset: the sequence comes from the peptides |
 | `coverage_times` | text or list | `"undeuterated"` | "undeuterated" (judged on the undeuterated controls), "all", or a list of times |
@@ -437,6 +458,22 @@ The fragment outputs of a run with fragment series (ladders, rates, closure, per
 
 Short condition names: condition = name ("gentle" = "G"), or a run's own under its name ([analysis.fragments.labels.RUN]).
 
+
+## `[[analysis.exclude]]`
+
+Spectra treated as rejected by hxex analyse, and by hxex run and hxex report (given the project file) in their tables and figures; their fits stay in the bundle. The same keys as [[input.exclude]]. See [Excluding spectra](excluding.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `sample` | text | unset | the sample |
+| `peptide_range` | text | unset | the peptide, by its residues ("45-60" is "0045-0060") |
+| `charge` | integer | unset | the charge state |
+| `time` | number or text | unset | a time point (s, or text with a unit: "30 s"); a control has no time |
+| `role` | text | unset | "undeut" or "fulldeut": the controls |
+| `rep` | integer | unset | the replicate |
+| `file` | text | unset | the data file's name: a run's mzML or raw file, an HX-Express spreadsheet, or a SpecExport spectrum file |
+| `spectrum_id` | text | unset | one spectrum, by its id (spectra.csv) |
+| `note` | text | `""` | why: kept with the record, and shown by hxex check and hxex info |
 
 ## `[analysis.fragments.exchange]`
 

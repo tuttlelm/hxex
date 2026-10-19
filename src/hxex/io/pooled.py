@@ -35,6 +35,7 @@ def scan_specexport_pooled(
     *,
     sample: str = "",
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
     registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
 ) -> list[PeptideEntry]:
     """List the entries (peptide range, sequence, charge) in a pooled SpecExport folder.
@@ -77,7 +78,8 @@ def scan_specexport_pooled(
                     charge=charge,
                 )
             )
-    return sort_entries(filter_entries(entries, peptide_ranges=peptide_ranges))
+    return sort_entries(filter_entries(entries, peptide_ranges=peptide_ranges,
+                                       peptide_region=peptide_region))
 
 
 @dataclass(frozen=True)

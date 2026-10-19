@@ -2,13 +2,13 @@
 
 *hxex* reads five kinds of input, chosen by `[input] format` in the project file:
 
-| Format | What it reads | Where the peptides come from | Where the times and controls come from |
-|---|---|---|---|
-| `hxexpress` | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names | the column labels of each sheet |
-| `specexport` | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA | the spectrum file names |
-| `pooled` | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them) | the spectrum file names |
-| `mzml` | mzML files from the instrument | a peptide table (CSV) | `[[input.runs]]` in the project file, or each scan's own time |
-| `thermo` | Thermo `.raw` files, read directly | a peptide table (CSV) | as `mzml` |
+| Format | Kind | What it reads | Where the peptides come from | Where the times and controls come from |
+|---|---|---|---|---|
+| `hxexpress` | folder | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names | the column labels of each sheet |
+| `specexport` | folder | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA | the spectrum file names |
+| `pooled` | folder | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them) | the spectrum file names |
+| `mzml` | scan | mzML files from the instrument | a peptide table (CSV) | `[[input.runs]]` in the project file, or each scan's own time |
+| `thermo` | scan | Thermo `.raw` files, read directly | a peptide table (CSV) | as `mzml` |
 
 The first three are **folder formats**: the spectra have already been extracted (by HX-Express
 or HDExaminer), one spectrum per file or per column pair. The last two are **scan formats**:
@@ -43,9 +43,14 @@ residue letter (`acK`, `pS`, `pT`, `pY`), and a sequence is read residue by resi
 modifications are defined in `[[run.registry.residues]]` (a label, its base residue and the
 composition it adds). `hxex check` reports any peptide it cannot read, with the reason.
 
-**Filters.** The folder formats take `samples` and `peptide_ranges` to read only some of the
-data. Ranges are compared as text, as written in the folder or file names: `"0001-0010"` does not
-match `"1-10"`.
+**Filters.** The folder formats can read only some of the data:
+
+- `samples = ["WT", "mutant"]`: only these samples.
+- `peptide_ranges = ["1-10", "45-60"]`: only these peptides, by their residues. `"1-10"` and
+  `"0001-0010"` mean the same peptide, from residue 1 to residue 10.
+- `peptide_region = [1, 50]`: only the peptides that lie wholly within residues 1 to 50.
+
+With both `peptide_ranges` and `peptide_region`, a peptide that matches either is read.
 
 **Retention times** (minutes) can be given for any format in a separate table,
 `[input] retention_times = "rt.csv"`: a column `rt` and any of `sample`, `start_seq` and `end_seq`
@@ -93,15 +98,15 @@ WT_0001-0011-LKDVEHFKVSS-z2-run1.xlsx
   not hyphens.
 - `START` and `END` are the residue numbers (leading zeros are kept in the range,
   `0001-0011`).
-- `PEPTIDE` is the sequence, in modX if it carries modifications. Terminal groups (`Ac-`,
-  `-NH2`) cannot be written here, because `-` separates the fields.
+- `PEPTIDE` is the sequence, in modX if it carries modified residues (`PEPacKTIDE`). Terminal
+  groups (`Ac-`, `-NH2`) cannot be written here, because `-` separates the fields: for a
+  peptide with a terminal group, [list the files in a table](#listing-the-files-in-a-table)
+  instead, whose `peptide` column takes the full sequence, `Ac-PEPacKTIDE-NH2`.
 - `zCHARGE` is the charge, with its `z`.
 - The last field is free text but cannot contain a hyphen.
 
 A file whose name does not fit this pattern is skipped with a warning naming it. To use other
-names, list the files in a table instead (`[input] peptides = "files.csv"`, the columns of the
-[peptide table](#the-peptide-table), with `file` the spreadsheet's name and `sample` its
-sample).
+names, [list the files in a table](#listing-the-files-in-a-table).
 
 ### Contents
 
@@ -159,6 +164,10 @@ SpecExport/
   the range; the sequence in the folder name is not used. Other folders (for example an
   `analysis` folder) are ignored. A range outside the FASTA sequence is an error that names the
   folder.
+- **Modifications.** A sequence cut from the FASTA has no modified residues or terminal groups.
+  For modified peptides, [list the peptide folders in a table](#listing-the-files-in-a-table):
+  its `peptide` column takes the full sequence, for example `Ac-PEPacKTIDE-NH2`, in place of
+  the FASTA's.
 - **A spectrum** is a file named `TIME-REP-zCHARGE.csv`. Extra fields between the time and the
   replicate are allowed (`Non-D-1-z3.csv`). Other files are ignored. The name is case-sensitive:
   `.CSV` or `Z2` is not read.
@@ -214,6 +223,58 @@ such step (programmers can use `match_candidates`, [Using *hxex* from Python](py
 
 ---
 
+## Listing the files in a table
+
+For HX-Express and SpecExport data, *hxex* normally finds the files by their names. A table of
+the files can replace that search. Use one when:
+
+- the file names do not follow the pattern *hxex* expects;
+- a sequence needs something the names or the FASTA cannot hold: a terminal group (`Ac-`,
+  `-NH2`) for HX-Express, any modification for SpecExport.
+
+Name the table in the project file:
+
+```toml
+[input]
+format = "hxexpress"            # or "specexport"
+data_dir = "data"
+peptides = "files.csv"          # the table of the files
+```
+
+The table is a CSV file, with one row per peptide and charge. Excel can save one (**File > Save
+As**, then **CSV**); check that the columns are separated by commas, as in the example below,
+since in some countries Excel uses semicolons instead.
+
+```
+file,sample,peptide,start_seq,end_seq,charge
+my_peptide.xlsx,WT,Ac-PEPacKTIDE-NH2,1,8,2
+```
+
+| Column | Meaning |
+|---|---|
+| `file` | HX-Express: the spreadsheet's name, in `data_dir`. SpecExport: the peptide folder's name, inside the sample's folder (`0001-0008-PEPKTIDE`) |
+| `sample` | the sample |
+| `peptide` | the full sequence: modified residues in modX (`acK`, `pS`) and terminal groups (`Ac-`, `-NH2`) |
+| `start_seq`, `end_seq` | the first and last residue numbers |
+| `charge` | the charge state |
+
+These six columns are required; a table without one is refused, naming it. Three more are
+optional:
+
+| Column | Meaning |
+|---|---|
+| `peptide_range` | the range's label in tables and figures; left out, it is made from `start_seq` and `end_seq` (`0001-0008`). A label that names other residues gets a warning: the residues are always `start_seq` to `end_seq` |
+| `rt` | the retention time, minutes, kept with the spectra |
+| `modification` | extra composition, in pyHXExpress's syntax |
+
+Other columns are kept but not used.
+
+The table replaces the search of the folder: only the files it lists are read, so list every
+peptide, modified or not. `samples` and `peptide_ranges` still select from it. `hxex check`
+reports any sequence it cannot read.
+
+---
+
 ## mzML and Thermo raw files (`mzml`, `thermo`)
 
 ```toml
@@ -248,7 +309,6 @@ A CSV file (UTF-8). Required columns:
 | Column | Meaning |
 |---|---|
 | `peptide` | the sequence, in modX |
-| `peptide_range` | the range as text, `"12-20"` |
 | `start_seq`, `end_seq` | the first and last residue numbers |
 | `charge` | the charge state |
 
@@ -258,6 +318,7 @@ Optional columns:
 |---|---|
 | `sample` | the runs the peptide is read from: those of this sample; empty (or no column), every run |
 | `file` | for your reference (the file the peptide was identified in); not used |
+| `peptide_range` | the range's label in tables and figures; left out, it is made from `start_seq` and `end_seq` (`0012-0020`) |
 | `rt` | the retention time, minutes (stored with the spectra) |
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
 | `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`) |
@@ -403,7 +464,7 @@ retention window that misses the peptides, or a charge state the file records di
 ## Choosing between them
 
 - Spectra already extracted in HDExaminer: `specexport` (one protein or sample per folder) or
-  `pooled` (many proteins, no samples).
+  `pooled` (many proteins, no designated samples).
 - Spectra extracted in HX-Express: `hxexpress`.
 - Raw data, or anything the extraction tools do not handle (fragment ions, kinetics runs where
-  every scan is a time point, MS3): `mzml`, or `thermo` to skip the conversion to mzML.
+  every scan is a time point, MS3): `mzml`, or `thermo` to skip the conversion to mzML and retain instrument resolution information.

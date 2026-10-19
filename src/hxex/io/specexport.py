@@ -42,6 +42,7 @@ def scan_specexport(
     *,
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
 ) -> list[PeptideEntry]:
     """List the entries (sample, peptide range, charge) found under ``data_dir``.
 
@@ -86,7 +87,8 @@ def scan_specexport(
                         charge=charge,
                     )
                 )
-    return sort_entries(filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges))
+    return sort_entries(filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
+                                       peptide_region=peptide_region))
 
 
 def _read_two_columns(path: Path) -> tuple[list[float | None], list[float | None]]:

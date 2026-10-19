@@ -173,6 +173,36 @@ Later goals:
   under this heading. Writing the fitted results in pyHXExpress's CSV layouts (`data_fits`,
   `fitparamsAll`) is a separate item that goes with the loader above.
 
+## Excluding spectra
+
+Requirement (owner, 2026-10-19): a user can leave out spectra they know or suspect to be bad,
+without deleting anything and without Python, both before fitting and after it. Design
+(owner's choices, 2026-10-19; HISTORY item 116):
+
+- **One rule format** for both levels: repeatable tables of the project file, `[[input.exclude]]`
+  and `[[analysis.exclude]]`. A rule names any of `sample`, `peptide_range` (by residues, as the
+  `peptide_ranges` selection), `charge`, `time` (a time point; with a unit), `role` (`undeut`,
+  `fulldeut`), `rep`, `file` (the data file: a run's mzML or raw file, an HX-Express
+  spreadsheet, a SpecExport spectrum file; by name) and `spectrum_id`, and a `note`. A spectrum
+  is excluded when it matches every key of one rule; a rule must name at least one key; a rule
+  that matches nothing is a warning (a typo excludes nothing silently otherwise).
+- **Run level** (`[[input.exclude]]`): the matched spectra are read and stored with the other
+  raw spectra, but not picked or fitted, and count for nothing (controls, noise references,
+  envelopes). The bundle's manifest records the rules, the count per rule and the excluded ids
+  (`excluded`); `hxex info` shows them. Removing a rule and rerunning (`--spectra`) fits them.
+  Every format; it applies to stored spectra too.
+- **Analysis level** (`[[analysis.exclude]]`): the fits stay in the bundle; `hxex analyse`, and
+  `hxex run` and `hxex report` for their tables and figures, treat the matched spectra as
+  rejected. They are applied in memory as rejections added to the review layer (note
+  "excluded by [[analysis.exclude]]: ..."), never written into the bundle, so every consumer of
+  the review honours them and changing the rules needs only a rerun of the command.
+  `hxex report` reads the project file for them (`hxex report hxex.toml`, the bundle from
+  `[output] bundle`).
+- **The review layer stays**: per-spectrum decisions stored in the bundle (Python today). Both
+  apply; a spectrum the review accepts but a rule excludes is excluded.
+- `hxex check` lists the rules (it reads no spectra, so it cannot count them for the folder
+  formats); the run logs the count of each rule.
+
 ## Sequence syntax and PTMs
 
 Sequences may contain modified residues written in pyteomics modX style (lowercase prefix

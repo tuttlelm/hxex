@@ -828,3 +828,47 @@ def test_specexport_times_say_what_they_accept():
     for bad in ("5min", "250ms", "non", "1.5"):
         with pytest.raises(hio.ReadError, match="one letter, s, m or h"):
             hio.parse_specexport_token(bad)
+
+
+def test_peptide_range_is_optional_and_checked(tmp_path, caplog):
+    """peptide_range is the range's label: left out (or empty) it is made from start_seq and
+    end_seq, zero-padded as in the file names; one that names other residues is a warning
+    naming the line (the residues come from start_seq and end_seq)."""
+    p = tmp_path / "t.csv"
+    p.write_text("file,sample,peptide,start_seq,end_seq,charge\nf,WT,PEPTIDE,1,7,2\n")
+    assert hio.read_peptide_table(p)[0].peptide_range == "0001-0007"
+    p.write_text("file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
+                 "f,WT,PEPTIDE,,1,7,2\nf,WT,PEPTIDE,1-7,1,7,3\nf,WT,PEPTIDE,0001-0009,1,7,1\n")
+    with caplog.at_level(logging.WARNING):
+        entries = hio.read_peptide_table(p)
+    assert [e.peptide_range for e in entries] == ["0001-0007", "1-7", "0001-0009"]
+    assert "line 4" in caplog.text and "line 3" not in caplog.text
+    assert entries[2].start_seq == 1 and entries[2].end_seq == 7
+
+
+def test_peptides_are_selected_by_their_residues(tmp_path):
+    """peptide_ranges compares residues, not text ("1-10" selects 0001-0010); peptide_region
+    selects every peptide wholly within it; with both, a peptide that matches either."""
+    import tomllib
+
+    from hxex.config import ProjectError, project_from
+
+    entries = [PeptideEntry("f", "WT", "P" * (e - s + 1), f"{s:04d}-{e:04d}", s, e, 2)
+               for s, e in ((1, 10), (5, 20), (30, 40), (45, 60))]
+    pick = lambda **kw: [(e.start_seq, e.end_seq) for e in hio.filter_entries(entries, **kw)]  # noqa: E731
+    assert pick(peptide_ranges=["1-10"]) == pick(peptide_ranges=["0001-0010"]) == [(1, 10)]
+    assert pick(peptide_region=[1, 40]) == [(1, 10), (5, 20), (30, 40)]
+    assert pick(peptide_ranges=["45-60"], peptide_region=[1, 12]) == [(1, 10), (45, 60)]
+    assert len(pick()) == 4
+    def project(extra):
+        return project_from(tomllib.loads(
+            'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n' + extra), tmp_path)
+    assert project('peptide_region = [1, 50]\n').input.peptide_region == (1, 50)
+    for bad in ('peptide_ranges = ["one-ten"]', "peptide_region = [50, 1]",
+                "peptide_region = [1]"):
+        with pytest.raises(ProjectError, match="peptide_r"):
+            project(bad + "\n")
+    with pytest.raises(ProjectError, match="not used by mzml"):
+        project_from(tomllib.loads('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n'
+                                   'peptide_region = [1, 5]\n[[input.runs]]\npath = "a"\n'
+                                   'sample = "S"\n'), tmp_path)

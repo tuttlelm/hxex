@@ -92,6 +92,13 @@ data_dir = "C:/Users/me/Data/SpecExport"   # where your exported spectra are
 bundle = "results"              # name of the folder (or .zip archive) hxex creates for the results
 ```
 
+**What a bundle is.** *hxex* calls its results folder a *bundle*: one folder that holds
+everything a run produced (every fit, its uncertainties when the bootstrap is on, the settings
+used, and a copy of the raw spectra) in *hxex*'s own file format. You do not open the files in
+it yourself; the other commands (`hxex report`, `hxex analyse`, `hxex info`) read it, and the
+spreadsheets and figures you look at are written beside it. Keep it: it is the record of the
+analysis, and a later run can start again from the spectra stored in it.
+
 **Writing folder names.** Always put a folder name between quotes.
 
 - **Works on every system:** double quotes, with forward slashes `/` between the folders.
@@ -147,7 +154,8 @@ earlier, the run starts again from the beginning.)
 
 When it has finished, the project folder holds:
 
-- `results`: the results themselves, in *hxex*'s own format (keep it; every later step reads it);
+- `results`: the bundle, the results themselves in *hxex*'s own format (keep it; every later
+  step reads it);
 - `results_tables`: the results as spreadsheets (`.csv` files, which Excel opens).
 
 ## Step 7: look at the figures
@@ -205,5 +213,6 @@ Run `hxex check hxex.toml` first whenever you have changed the file.
   much longer, but gives the error bars the comparisons need.
 - Back-exchange correction from your controls: switch on `[run.controls]`. See
   [Controls and times](controls.md).
+- Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding.md).
 - What every table and figure holds: [Outputs](outputs.md).
 - Every setting: [Settings reference](settings.md).
