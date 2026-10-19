@@ -158,46 +158,12 @@ def test_unknown_errors_take_the_median_of_the_known_ones():
     assert np.isnan(table.misfit[0]) and np.isfinite(table.log10_protection_se[0])
 
 
-def test_empty_peptides_leave_the_residue_fit(caplog):
-    """A peptide with no finite fD is not a member of the design (its residues were reported
-    resolved with a regulariser-only value); the peptide table keeps it with n_times 0."""
-    from hxex.analysis import residue_protection
-
-    up = residue_uptake("A", TRUE, [(2, 9), (3, 10), (2, 20)], times=TIMES_WIDE)
-    gone = np.isin(up.start, [2]) & np.isin(up.end, [20])
-    up = dataclasses.replace(up, fD=np.where(gone, np.nan, up.fD))
-    with caplog.at_level(logging.INFO):
-        out = residue_protection(up, LABELLING, sequences=PROTEIN)
-    assert "1 peptide(s) without a finite fD" in caplog.text
-    assert out.residue.max() == 10 and not np.isin(out.residue, range(11, 21)).any()
+def test_a_peptide_without_a_finite_fd_has_no_times():
+    k = rates_in_protein(2, 9)
+    up = uptake([("A", 2, 9, model(k, 10.0)), ("A", 10, 20, [np.nan] * 4)])
     table, _ = peptide_protection(up, LABELLING, sequences=PROTEIN)
-    assert table.n_times[table.where(start=2, end=20)].tolist() == [0]
-
-
-def test_modified_forms_are_states_of_their_own_in_the_residue_fit():
-    """modified_peptides = 'separate': a phosphorylated form is fitted from its own peptides,
-    with its sample's sequence and conditions; 'combined' pools it with the sample."""
-    from hxex.analysis import residue_protection
-
-    plain = residue_uptake("WT", TRUE, PEPTIDES, times=TIMES_WIDE)
-    more = {r: v + 2.0 for r, v in TRUE.items()}
-    mod = residue_uptake("WT", more, [(2, 9), (3, 11), (5, 13)], times=TIMES_WIDE)
-    mod = dataclasses.replace(mod, peptide=np.array([p.replace("S", "pS", 1) for p in
-                                                     mod.peptide]))
-    both = SpeciesUptake(**{name: np.concatenate([x, y]) for (name, x), y in zip(
-        plain.columns().items(), mod.columns().values(), strict=True)}, nterm_subtract=1)
-    out = residue_protection(both, {"WT": LABELLING}, sequences={"WT": PROTEIN})
-    states = list(dict.fromkeys(out.sample.tolist()))
-    assert states == ["WT", "WT pS7"]
-    own = out.where(sample="WT pS7") & np.isfinite(out.log10_protection)
-    base = out.where(sample="WT") & out.resolved & np.isfinite(out.log10_protection)
-    assert own.any() and np.median(out.log10_protection[own]) > np.median(
-        out.log10_protection[base]) + 1.0  # the form's own factors, not the pooled ones
-    pooled = residue_protection(both, {"WT": LABELLING}, sequences={"WT": PROTEIN},
-                                modified="combined")
-    assert set(pooled.sample) == {"WT"}
-    with pytest.raises(ValueError, match="modified"):
-        residue_protection(both, LABELLING, modified="together")
+    assert table.n_times[table.where(start=10)].tolist() == [0]
+    assert np.isnan(table.log10_protection[table.where(start=10)]).all()
 
 
 def test_two_reference_forms_over_one_range_do_not_collapse():
@@ -321,16 +287,6 @@ def test_back_exchange_bounds_and_too_few_times(caplog):
     assert np.isnan(table.log10_protection[0]) and "fewer than 3 times" in caplog.text
 
 
-def test_residue_fit_leaves_back_exchange_out(caplog):
-    from hxex.analysis.protection import residue_protection
-
-    fd, _ = back_model(10, 20, 100.0, 1.0)
-    up = uptake([("A", 10, 20, fd)], times=BACK_TIMES)
-    with caplog.at_level(logging.WARNING):
-        res = residue_protection(up, DILUTION, sequences=PROTEIN)
-    assert len(res) == 0 and "not built for back-exchange" in caplog.text
-
-
 def test_modified_residue_counts_as_approximate():
     peptide = "AKLVGpSTVE"  # residues 2-11 with S7 phosphorylated
     k, approx = peptide_rates(peptide, 2, LABELLING, before="M")
@@ -366,9 +322,8 @@ def test_protection_figures_and_settings(tmp_path):
     assert cfg.labelling == LABELLING
     again = AnalysisConfig.from_dict(cfg.to_dict())
     assert again.labelling == LABELLING and again.protection
-    # the residue level is opt-in on its own, and needs the peptide level
-    assert not cfg.protection_residues and cfg.protection_max_se == 5.0
-    with pytest.raises(ValueError, match="needs protection"):
+    # the residue level from peptides was removed: its settings are refused with the reason
+    with pytest.raises(TypeError):
         AnalysisConfig(protection_residues=True)
     project = tmp_path / "hxex.toml"
     project.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
@@ -386,85 +341,12 @@ def test_protection_figures_and_settings(tmp_path):
     _rewrite(project, '[analysis.runs]\nA = "a.zip"', '[analysis.runs]\nB = "a.zip"')
     with pytest.raises(ProjectError, match="'A' is not a run"):
         load_project(project)
+    _rewrite(project, "protection = true\n", "protection = true\nprotection_residues = true\n")
+    with pytest.raises(ProjectError, match="protection_residues: residue-level protection "
+                       "factors from peptides were removed.*fragment ladders"):
+        load_project(project)
 
 
 def _rewrite(path, old, new):
     path.write_text(path.read_text().replace(old, new))
     return path
-
-
-def residue_uptake(sample, true, peptides, *, noise=0.0, seed=0, times=TIMES):
-    """A species table of ``peptides`` ((start, end) of PROTEIN) made from per-residue log10
-    protection factors ``true`` (residue -> value; others 0)."""
-    rng = np.random.default_rng(seed)
-    full = intrinsic_rates(PROTEIN, LABELLING)
-    entries = []
-    for start, end in peptides:
-        am = np.arange(start + 1, end + 1)
-        x = np.array([true.get(int(r), 0.0) for r in am])
-        fd = np.mean(1 - np.exp(-np.outer(times, full.rate[full.at(am)] / 10**x)), axis=1)
-        entries.append((sample, start, end, fd + rng.normal(0, noise, len(times))))
-    return uptake(entries, times=times)
-
-
-# overlapping peptides that resolve residues 6-15 one by one
-PEPTIDES = [(2, 9), (2, 10), (3, 11), (4, 12), (5, 13), (5, 14), (6, 15), (6, 16), (7, 16),
-            (9, 17), (10, 18), (2, 5), (2, 6), (2, 7), (2, 8), (11, 20), (12, 20)]
-TRUE = {r: (3.0 if 8 <= r <= 13 else 1.5) for r in range(1, 21)}
-TIMES_WIDE = (1.0, 10.0, 100.0, 1000.0, 1e4, 1e5)
-
-
-def test_residue_protection_recovers_each_residue():
-    from hxex.analysis import residue_protection
-
-    up = residue_uptake("A", TRUE, PEPTIDES, noise=0.003, times=TIMES_WIDE)
-    out = residue_protection(up, LABELLING, sequences=PROTEIN, r1=0.1)
-    assert out.r1 == 0.1 and set(out.K) == {1}
-    good = out.resolved & np.isfinite(out.log10_protection)
-    assert good.sum() >= 8
-    err = out.log10_protection[good] - np.array([TRUE[r] for r in out.residue[good]])
-    assert np.sqrt(np.mean(err**2)) < 0.15
-    assert np.all(np.abs(err) <= 4 * out.log10_protection_se[good])
-    assert out.misfit[0] < 3
-    assert np.all(out.n_peptides >= 1) and set(out.aa) <= set(PROTEIN)
-    # the same data, run again: the same answer (the search is seeded)
-    again = residue_protection(up, LABELLING, sequences=PROTEIN, r1=0.1)
-    assert np.array_equal(again.log10_protection, out.log10_protection, equal_nan=True)
-
-
-def test_residue_protection_compared_and_drawn():
-    from hxex.analysis import compare_residue_protection, residue_protection
-    from hxex.hooks import Cancelled
-    from hxex.report import residue_protection_comparison_figure, residue_protection_figure
-
-    more = {r: v + (1.0 if 8 <= r <= 13 else 0.0) for r, v in TRUE.items()}
-    a = residue_uptake("WT", TRUE, PEPTIDES, times=TIMES_WIDE)
-    b = residue_uptake("M", more, PEPTIDES, times=TIMES_WIDE)
-    both = SpeciesUptake(**{name: np.concatenate([x, y]) for (name, x), y in zip(
-        a.columns().items(), b.columns().values(), strict=True)}, nterm_subtract=1)
-    seen = []
-    out = residue_protection(both, LABELLING, sequences=PROTEIN,
-                             progress=lambda d, t: seen.append((d, t)))
-    assert seen[-1] == (2, 2)
-    cmp = compare_residue_protection(out, "WT")
-    core = cmp.resolved & np.isin(cmp.residue, range(9, 13))
-    assert core.any() and np.allclose(cmp.delta[core], 1.0, atol=0.2)
-    assert cmp.significant[core].all() and not cmp.significant[~cmp.resolved].any()
-    fig = residue_protection_figure(out, length=20)
-    legend = fig.axes[0].get_legend()
-    names = [t.get_text() for t in legend.texts]
-    assert names[:2] == ["WT", "M"] and "upper bound" not in names  # only what is drawn
-    assert [h.get_marker() for h in legend.legend_handles[:2]] == ["s", "o"]
-    assert "misfit" not in fig.axes[0].get_title()
-    # residues with a larger error than max_se are left out, and the panel says how many
-    tight = residue_protection_figure(out, length=20, max_se=1e-6)
-    notes = [t.get_text() for t in tight.axes[0].texts]
-    assert any("not shown" in n for n in notes)
-    assert not any(c.get_offsets().size for c in tight.axes[0].collections
-                   if (c.get_gid() or "").startswith("protection:"))
-    fig = residue_protection_comparison_figure(out, cmp, "M")
-    assert any((p.get_gid() or "").startswith("significant:") for p in fig.axes[0].patches)
-    with pytest.raises(Cancelled):
-        residue_protection(a, LABELLING, sequences=PROTEIN, cancel=lambda: True)
-    with pytest.raises(ValueError, match="r1"):
-        residue_protection(a, LABELLING, r1=-1)

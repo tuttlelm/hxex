@@ -327,8 +327,11 @@ equilibrium at the first time point gets only an upper limit (`bound = upper`); 
 not exchange gets a lower limit. A fitted start is trustworthy when the loss of deuterium is
 visible within your time points. When most of it happened before the first point, the start
 is poorly known and its error is too small. Peptides with fewer than three time points get
-no value when the start is fitted. Residue-level protection factors are not yet available for
-back-exchange.
+no value when the start is fitted.
+
+**Per residue.** Protection factors from peptides are per peptide only. Overlapping peptides
+do not determine single residues reliably, so hxex does not offer that. Residue-level rates
+and protection factors come from fragment ladders (next section).
 
 ## Residue-level rates and protection factors from fragment ladders
 

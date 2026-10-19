@@ -19,10 +19,7 @@ those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates
 ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``. With ``protection`` (opt-in,
 :mod:`hxex.analysis.protection`): ``protection.csv``, ``protection_by_time.csv`` and the
 figures ``protection_<sample>``, and with a reference ``compare_protection.csv`` and
-``protection_difference_<sample>``; with ``protection_residues`` (opt-in) the residue level:
-``protection_residues.csv``, the
-figure ``protection_residues`` and with a reference ``compare_protection_residues.csv`` and
-``protection_residue_comparison_<sample>``. The ``<sample>`` of a figure is its display label
+``protection_difference_<sample>``. The ``<sample>`` of a figure is its display label
 (:func:`hxex.analysis.display_labels`: ``run:sample`` where the sample's name is in several
 runs of a :class:`hxex.analysis.RunSet`); characters a file name cannot hold (that ``:``)
 become ``_``. The tables name the run in a ``run`` column instead.
@@ -71,8 +68,6 @@ from .fragments import fragment_outputs
 from .protection import (
     protection_difference_figure,
     protection_figure,
-    residue_protection_comparison_figure,
-    residue_protection_figure,
 )
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
@@ -261,40 +256,26 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             tables["compare_choices"] = compare_choices(choice, ref).columns()
             pop_cmp = _display(pop_cmp, labels, reference)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
-    protection = prot_cmp = res_prot = res_cmp = None
+    protection = prot_cmp = None
     if config.protection:
         if scale == "order":
             raise ValueError("[analysis] protection needs real labelling times, and [input] "
                              "time_scale = \"order\" says the times only order the points")
         from ..analysis.protection import (
             compare_protection,
-            compare_residue_protection,
             peptide_protection,
-            residue_protection,
         )
 
         protection, by_time = peptide_protection(up, config.labelling, sequences=sequences,
                                                  exclude_times=(), alpha=config.alpha)
         tables["protection"] = protection.columns()
         tables["protection_by_time"] = by_time.columns()
-        if config.protection_residues:
-            res_prot = residue_protection(up, config.labelling, sequences=sequences,
-                                          exclude_times=(), r1=config.protection_r1,
-                                          peptides=protection,
-                                          modified=config.modified_peptides, cancel=cancel)
-            tables["protection_residues"] = res_prot.columns()
         if config.reference:
             prot_cmp = compare_protection(protection, ref_name, alpha=config.alpha,
                                           match=config.peptide_match)
             tables["compare_protection"] = prot_cmp.columns()
             prot_cmp = _display(prot_cmp, labels, reference)
-            if res_prot is not None:
-                res_cmp = compare_residue_protection(res_prot, ref_name, alpha=config.alpha)
-                tables["compare_protection_residues"] = res_cmp.columns()
-                res_cmp = _display(res_cmp, labels, reference)
         protection = _display(protection, labels)
-        if res_prot is not None:
-            res_prot = _display(res_prot, labels)
     regions = None
     if ann.regions:
         regions = region_summary(residues, ann)
@@ -360,18 +341,6 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             if prot_cmp.where(sample=s).any():
                 jobs.append((f"protection_difference_{s}", lambda s=s:
                              protection_difference_figure(prot_cmp, s, length=length)))
-    if res_prot is not None and len(res_prot):
-        shown = [s for s in samples if res_prot.where(sample=s).any()]
-        jobs.append(("protection_residues", lambda: residue_protection_figure(
-            res_prot, shown, annotations=ann, length=length,
-            max_se=config.protection_max_se)))
-    if res_cmp is not None:
-        for n, s in enumerate(samples):
-            if res_cmp.where(sample=s).any():
-                jobs.append((f"protection_residue_comparison_{s}", lambda s=s, n=n:
-                             residue_protection_comparison_figure(
-                                 res_prot, res_cmp, s, style_index=n, annotations=ann,
-                                 length=length, max_se=config.protection_max_se)))
     if regions is not None:
         for t in times:
             if (regions.time == t).any():

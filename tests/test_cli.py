@@ -132,7 +132,8 @@ def test_template_lines_carry_their_meaning_and_unit():
     assert "TYPE:LENGTHS:CHARGES" in text and "composition decides" in text
     analysis = text.split("# [analysis]", 1)[1].split("# Run settings", 1)[0]
     first_table = analysis.index("# [analysis.")
-    assert analysis.index("# protection_max_se") < first_table
+    assert analysis.index("# protection = true") < first_table
+    assert "protection_residues" not in text
     assert "exchange-clock min_time" in text  # the two clocks cross-refer
 
 

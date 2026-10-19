@@ -82,11 +82,8 @@ class AnalysisConfig:
       peptide analysis).
     - ``protection``: the peptides' protection factors (:mod:`hxex.analysis.protection`; opt-in;
       needs ``labelling``, the labelling conditions, :class:`hxex.kint.ExchangeConditions`, one
-      set for every sample or sample -> set); ``protection_residues``: also one factor per
-      residue (:func:`residue_protection`; opt-in, needs ``protection``); ``protection_r1``: the
-      weight of that fit's regulariser; ``protection_max_se`` (log10 units): residues with a
-      larger fitted standard error are left out of the residue-level figures (kept in the
-      table).
+      set for every sample or sample -> set). There are no residue-level factors from
+      peptides (removed: unreliable); fragment ladders give them (``fragments``).
     """
 
     reference: str = ""
@@ -115,9 +112,6 @@ class AnalysisConfig:
     fragments: FragmentAnalysis | None = FragmentAnalysis()  # noqa: RUF009
     protection: bool = False
     labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
-    protection_residues: bool = False
-    protection_r1: float = 0.1
-    protection_max_se: float = 5.0
 
     def __post_init__(self):
         from ..kint import read_conditions
@@ -125,16 +119,6 @@ class AnalysisConfig:
         object.__setattr__(self, "labelling", read_conditions(self.labelling))
         if not isinstance(self.protection, bool):
             raise ValueError("protection must be true or false")
-        if not isinstance(self.protection_residues, bool):
-            raise ValueError("protection_residues must be true or false")
-        if self.protection_residues and not self.protection:
-            raise ValueError("protection_residues needs protection = true")
-        object.__setattr__(self, "protection_r1", float(self.protection_r1))
-        if not self.protection_r1 >= 0:
-            raise ValueError("protection_r1 must be >= 0")
-        object.__setattr__(self, "protection_max_se", float(self.protection_max_se))
-        if not self.protection_max_se > 0:
-            raise ValueError("protection_max_se must be > 0")
         if self.protection and not self.labelling:
             raise ValueError("protection needs the labelling conditions (labelling: ph_read, "
                              "temperature, d2o_fraction)")

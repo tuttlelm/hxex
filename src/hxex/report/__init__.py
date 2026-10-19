@@ -50,8 +50,6 @@ from .overview import (
 from .protection import (
     protection_difference_figure,
     protection_figure,
-    residue_protection_comparison_figure,
-    residue_protection_figure,
 )
 from .residues import PROFILE_STYLES, plot_population_choice, plot_residue_profile
 from .results import Results, Settings
@@ -81,8 +79,6 @@ __all__ = [
     "closure_figure",
     "protection_difference_figure",
     "protection_figure",
-    "residue_protection_comparison_figure",
-    "residue_protection_figure",
     "ladder_kinetics_figure",
     "residue_rates_figure",
     "write_analysis",

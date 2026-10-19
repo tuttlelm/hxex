@@ -2853,7 +2853,7 @@ CSVs or mzML if wanted.
 105. **Residue-level protection factors from fragment ladders (owner, 2026-10-19).** The
     owner judged the peptide-derived residue factors poor (B5) and chose fragment ladders,
     where they resolve single residues with low error, for residue-level factors; the
-    peptide-derived residue fit is not extended to back-exchange. Built on `ladder_rates`
+    peptide-derived residue fit is not extended to back-exchange (then removed, item 106). Built on `ladder_rates`
     (whose free `A exp(-k t) + C` already fits either direction): `log10_protection` and its
     se (`rate_se / (rate ln 10)`), `precise` (resolved and `rate_se / rate <= max_rate_error`,
     new `[analysis.fragments] max_rate_error`, default 0.5), and `ladder_residues`
@@ -2884,3 +2884,21 @@ CSVs or mzML if wanted.
       the true curve inside the band 62 to 70 % of the time at 10, 50, 200 and 800 s. On the
       private fragment example (about 150 points per trace) the band is about as wide as the
       line except near the ends of the range: the curves are well determined.
+
+106. **Residue-level protection factors from peptides removed (owner, 2026-10-19).** The
+    regularised residue fit of item 82 (`residue_protection`, `compare_residue_protection`,
+    `ResidueProtection`, `ResidueProtectionComparison`, the figures
+    `residue_protection_figure` and `residue_protection_comparison_figure`, the outputs
+    `protection_residues.csv`, `compare_protection_residues.csv`, `protection_residues_*` and
+    `protection_residue_comparison_*`, the settings `protection_residues`, `protection_r1`,
+    `protection_max_se`) is gone. Owner: the factors were unreliable (item 82's B5
+    assessment), and an option invites users to take them for reliable; residue-level rates
+    and protection factors come from fragment ladders (item 105). Never released (the only
+    tag, v0.0.1.dev0, predates it); the code is in a6cb28f and later commits up to 4c3a293. A
+    project file with any of the three settings is refused, saying why and where
+    residue-level values come from. The peptide-level factors' `_prepare` lost the
+    modified-forms split, used only by the residue fit (modified forms stay peptides of their
+    sample, as the peptide level always did). The residue-level fD map is unaffected. The
+    owner's private protection example script no longer asks for the residue level.
+    Comparing fragment-ladder residues between samples (`compare_ladder_residues`) is a
+    separate item, for when a dataset with two samples of one parent arrives.

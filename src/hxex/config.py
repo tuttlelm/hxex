@@ -681,8 +681,9 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta"
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
                  "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge",
-                 "fragments", "protection", "labelling", "protection_residues", "protection_r1",
-                 "protection_max_se")
+                 "fragments", "protection", "labelling")
+# removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
+_REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
 
 
 def _analysis_from(data: Mapping, base: Path):
@@ -690,6 +691,14 @@ def _analysis_from(data: Mapping, base: Path):
     ``base``)."""
     from .analysis import AnalysisConfig
 
+    removed = [k for k in _REMOVED_ANALYSIS_KEYS if k in data]
+    if removed:
+        raise ProjectError(
+            f"[analysis] {', '.join(removed)}: residue-level protection factors from peptides "
+            "were removed, because the factors that overlapping peptides give for single "
+            "residues are unreliable. Peptide-level protection factors stay (protection = "
+            "true); residue-level rates and protection factors come from fragment ladders "
+            "([analysis.fragments], ladder_residues.csv). Delete the setting")
     _check_keys(data, ANALYSIS_KEYS, "[analysis]")
     data = _times_in(data, ("times", "exclude_times"), "analysis")
     if isinstance(data.get("coverage_times"), list):
@@ -1358,9 +1367,6 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# format = "pdf"                  # or "png", "svg"',
         "# protection = true               # opt in to the peptides' protection factors",
         "#                                 # (hxex.analysis.protection); needs the labelling table",
-        "# protection_residues = true      # also one factor per residue (opt-in)",
-        "# protection_r1 = 0.1             # smoothing of the residue-level fit",
-        "# protection_max_se = 5.0         # residues with a larger error left out of figures",
         "# [analysis.controls]             # control settings to change for the analysis (the",
         "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
         "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
