@@ -42,7 +42,7 @@ def mzml_project(tmp_path, *, output="", extra_input=""):
     write_mzml(tmp_path / "run1.mzML", time_course(n=6))
     (tmp_path / "peptides.csv").write_text(
         "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
-        f"x,S,{PEPTIDE},0001-0010,1,10,2\n")
+        f"x,,{PEPTIDE},0001-0010,1,10,2\n")
     text = f"""
 project = "cli"
 
@@ -235,8 +235,8 @@ def test_a_peptides_own_retention_window(tmp_path):
                                               '[input.fragments]\nions = "c:2-3:1"\n')
     table = tmp_path / "peptides.csv"
     head = "file,sample,peptide,peptide_range,start_seq,end_seq,charge,rt_start,rt_end\n"
-    table.write_text(head + f"x,S,{PEPTIDE},0001-0010,1,10,2,5.5,6.75\n"
-                     f"x,S,{PEPTIDE},0001-0010,1,10,3,,\n")
+    table.write_text(head + f"x,,{PEPTIDE},0001-0010,1,10,2,5.5,6.75\n"
+                     f"x,,{PEPTIDE},0001-0010,1,10,3,,\n")
     got = scan_targets(load_project(path))
     first, second = got[:len(got) // 2], got[len(got) // 2:]  # each peptide, then its fragments
     assert first[0].ms_level == 1 and second[0].entry.charge == 3 and len(first) > 1
@@ -246,7 +246,7 @@ def test_a_peptides_own_retention_window(tmp_path):
     assert {t.rt_window for t in second[1:]} == {None}
     for row, match in ((",6.0", "both or neither"), ("7.0,6.0", "after the start"),
                        ("a,6.0", "not numbers")):
-        table.write_text(head + f"x,S,{PEPTIDE},0001-0010,1,10,2,{row}\n")
+        table.write_text(head + f"x,,{PEPTIDE},0001-0010,1,10,2,{row}\n")
         with pytest.raises(ReadError, match="line 2") as err:
             scan_targets(load_project(path))
         assert match in str(err.value.__cause__)
@@ -277,7 +277,7 @@ def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
     assert "peptides.csv: no such file" in err and "1 problem(s)" in err
     (tmp_path / "peptides.csv").write_text(
         "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
-        f"x,S,{PEPTIDE},0001-0010,1,10,2\nx,S,AC(ox)DE,0001-0005,1,5,2\n")
+        f"x,,{PEPTIDE},0001-0010,1,10,2\nx,,AC(ox)DE,0001-0005,1,5,2\n")
     assert cli.main(["check", str(path)]) == 1
     err = capsys.readouterr().err
     assert "peptides.csv line 3: peptide 'AC(ox)DE'" in err and "modX" in err
@@ -704,3 +704,48 @@ def test_check_counts_the_control_files_of_a_specexport_folder(tmp_path, capsys)
     out = capsys.readouterr().out
     assert "entries        2 in" in out
     assert "  WT: 2 entries, 2 undeuterated and 1 fully deuterated control files" in out
+
+
+def test_record_paths_are_checked_for_the_format(tmp_path):
+    """record_paths = "relative" is for the scan formats; a folder format refused it only when
+    the run began, after hxex check had passed."""
+    def project(text):
+        return project_from(tomllib.loads('project = "p"\n[input]\n' + text), tmp_path)
+
+    with pytest.raises(ProjectError, match="'path', 'name' for specexport.*mzml and thermo"):
+        project('format = "specexport"\ndata_dir = "d"\nrecord_paths = "relative"\n')
+    assert project('format = "specexport"\ndata_dir = "d"\nrecord_paths = "name"\n')
+    runs = '[[input.runs]]\npath = "a.mzML"\nsample = "S"\n'
+    assert project(f'format = "mzml"\npeptides = "p.csv"\nrecord_paths = "relative"\n{runs}')
+    with pytest.raises(ProjectError, match="'path', 'relative', 'name' for mzml"):
+        project(f'format = "mzml"\npeptides = "p.csv"\nrecord_paths = "full"\n{runs}')
+
+
+def test_a_peptide_is_read_from_the_runs_of_its_sample(tmp_path, capsys):
+    """The peptide table's sample ties a row to the runs of that sample (empty: every run);
+    file and sample may be left out; a sample no run has, or a row listed twice for one run,
+    is refused, naming the line."""
+    from hxex.config import scan_targets
+
+    path = mzml_project(tmp_path)
+    table = tmp_path / "peptides.csv"
+    head = "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
+    row = f"{PEPTIDE},0001-0010,1,10,2\n"
+    table.write_text("peptide,peptide_range,start_seq,end_seq,charge\n" + row)
+    assert [t.entry.sample for t in scan_targets(load_project(path))] == [""]
+    table.write_text(head + "x,WT," + row)
+    assert [t.entry.sample for t in scan_targets(load_project(path))] == ["WT"]
+    for rows, match in ((["x,M,"], "line 2.*sample 'M' is not the sample of any.*WT"),
+                        (["x,WT,", "x,WT,"], "line 3.*listed again for sample WT"),
+                        (["x,WT,", "x,,"], "line 3.*listed again for every run"),
+                        (["x,,", "x,WT,"], "line 3.*listed again")):
+        table.write_text(head + "".join(r + row for r in rows))
+        with pytest.raises(ProjectError, match=match):
+            scan_targets(load_project(path))
+    # a run of another sample reads none of WT's peptides, and hxex check says so
+    text = path.read_text().replace('[output]', '[[input.runs]]\npath = "run1.mzML"\n'
+                                    'sample = "M"\n\n[output]')
+    path.write_text(text)
+    table.write_text(head + "x,WT," + row)
+    assert cli.main(["check", str(path)]) == 1
+    assert "no peptide of the table is for sample M" in capsys.readouterr().err

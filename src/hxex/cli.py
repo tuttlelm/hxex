@@ -345,14 +345,22 @@ def _check_scan_files(project) -> list[str]:
     """List each run's scans per target; the problems found."""
     from .config import scan_targets
     from .io import read_peptide_table
-    from .io.mzml import MzmlFile, _target_label, instrument_record, target_scans
+    from .io.entries import SCAN_REQUIRED
+    from .io.mzml import (
+        MzmlFile,
+        _target_label,
+        instrument_record,
+        target_applies,
+        target_scans,
+    )
 
     inp = project.input
     if not inp.peptides.is_file():
         return [f"input.peptides {inp.peptides}: no such file"]
     if inp.format == "thermo" and inp.thermo_dir is not None and not inp.thermo_dir.is_dir():
         return [f"input.thermo_dir {inp.thermo_dir}: no such directory"]
-    problems = _check_peptides(project, read_peptide_table(inp.peptides))
+    problems = _check_peptides(project, read_peptide_table(inp.peptides,
+                                                           required=SCAN_REQUIRED))
     if problems:
         return problems
     targets = scan_targets(project)
@@ -371,11 +379,12 @@ def _check_scan_files(project) -> list[str]:
             opened = MzmlFile(path)
         with opened as f:
             table = f.scans()
-            counts = [len(target_scans(table, run, t, inp.scans)) for t in targets]
+            mine = [t for t in targets if target_applies(t, run)]  # its sample's, and blank
+            counts = [len(target_scans(table, run, t, inp.scans)) for t in mine]
             instrument = instrument_record(f)
-        none = [_target_label(t) for t, n in zip(targets, counts, strict=True) if n == 0]
+        none = [_target_label(t) for t, n in zip(mine, counts, strict=True) if n == 0]
         _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {_run_time_text(run)}, "
-             f"{len(table)} scans; {len(targets) - len(none)} of {len(targets)} targets have "
+             f"{len(table)} scans; {len(mine) - len(none)} of {len(mine)} targets have "
              "scans")
         if instrument is not None:
             _say("  " + _instrument_text(instrument, project.run.picker))
@@ -383,7 +392,11 @@ def _check_scan_files(project) -> list[str]:
             _say(f"  no scans: {label}")
         if len(none) > 10:
             _say(f"  ... and {len(none) - 10} more")
-        if len(none) == len(targets):
+        if not mine:
+            problems.append(f"run {path.name}: no peptide of the table is for sample "
+                            f"{run.sample} (a peptide is read from the runs of its sample, or "
+                            "from every run when its sample is empty)")
+        elif len(none) == len(mine):
             problems.append(f"run {path.name}: no target has scans")
     return problems
 

@@ -18,6 +18,9 @@ command line work; nothing is released yet. The project plan is in
 [pyHXExpress](https://github.com/tuttlelm/pyHXExpress). It is standalone and does not depend
 on it.
 
+**Documentation:** the [user guide](docs/guide/README.md) (input formats, experiment types,
+outputs, and every setting in the [settings reference](docs/guide/settings.md)).
+
 ## Quick start
 
 ```bash
@@ -38,7 +41,8 @@ the table and key.
 
 ## Inputs
 
-Five formats, chosen by `[input] format`:
+Five formats, chosen by `[input] format` (in detail in
+[docs/guide/inputs.md](docs/guide/inputs.md)):
 
 - `specexport`: an HDExaminer SpecExport folder, `SAMPLE/START-END-SEQUENCE/TIME-REP-zCHARGE.csv`
   (`TIME` is `Non`, `Full` or a number with `s`, `m` or `h`).
@@ -51,9 +55,11 @@ Five formats, chosen by `[input] format`:
 - `thermo`: Thermo `.raw` files read directly (see below); the same settings as `mzml`.
 
 The scan formats need a **peptide table** (CSV; a folder format may give one instead of
-finding files by name). Required columns: `file`, `sample`, `peptide`, `peptide_range`,
-`start_seq`, `end_seq`, `charge`. Optional: `modification`, `rt` (retention time, minutes),
-`rt_start` and `rt_end` (the peptide's retention window, minutes). Sequences are written in
+finding files by name). Required columns: `peptide`, `peptide_range`, `start_seq`, `end_seq`,
+`charge`. Optional: `sample` (the peptide is read from the runs of that sample; empty or left
+out, from every run), `file` (for reference), `modification`, `rt` (retention time, minutes),
+`rt_start` and `rt_end` (the peptide's retention window, minutes). A folder format's table
+needs `file` and `sample` as well. Sequences are written in
 modX: a modified residue is a lowercase prefix plus its letter (`acK`, `pS`, `pT`, `pY`, or any
 label defined in `[run.registry]`), and a sequence is read residue by residue.
 

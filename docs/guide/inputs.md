@@ -1,0 +1,408 @@
+# Input formats
+
+hxex reads five kinds of input, chosen by `[input] format` in the project file:
+
+| Format | What it reads | Where the peptides come from | Where the times and controls come from |
+|---|---|---|---|
+| `hxexpress` | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names | the column labels of each sheet |
+| `specexport` | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA | the spectrum file names |
+| `pooled` | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them) | the spectrum file names |
+| `mzml` | mzML files from the instrument | a peptide table (CSV) | `[[input.runs]]` in the project file, or each scan's own time |
+| `thermo` | Thermo `.raw` files, read directly | a peptide table (CSV) | as `mzml` |
+
+The first three are **folder formats**: the spectra have already been extracted (by HX-Express
+or HDExaminer), one spectrum per file or per column pair. The last two are **scan formats**:
+hxex finds each peptide's scans in the raw data itself, by m/z, MS level, activation and
+retention time, and sums them into spectra.
+
+Every format ends in the same place: a set of raw spectra, each with a sample, a peptide (its
+sequence, residue range and charge), a time or a control role, and a replicate number. The rest
+of hxex (picking, fitting, reports, analysis) does not depend on the format.
+
+`hxex init --format FORMAT -o hxex.toml` writes a project file with the `[input]` table of that
+format and every other setting at its default. Edit the paths, then run `hxex check hxex.toml`:
+it lists what would be read and stops at the problems it can see without fitting anything. The
+full list of `[input]` keys is in the [settings reference](settings.md#input).
+
+## Things every format shares
+
+**Times** are stored in seconds. The way they are written depends on where they come from, and
+the formats differ (see each format below). In the project file, a time can be a number of
+seconds or text with a unit: `60`, `"60 s"`, `"5 min"`, `"20 h"` (`s`, `sec`, `m`, `min`, `h`,
+`hr`, `ms` and their long forms).
+
+**Controls** are identified by a *role*, not by a time: `undeut` (the undeuterated control) or
+`fulldeut` (the fully deuterated control). The folder formats take the role from a label
+(`Non` and `Full` in SpecExport, `undeut` and `TD` in HX-Express); the scan formats take it from
+`role` in `[[input.runs]]`. A control has no time in the tables and figures. Replicate controls
+are averaged. See [Controls and times](controls.md) for what the controls are used for and how
+to use a time point as a control.
+
+**Sequences** are written in modX: a modified residue is a lowercase prefix followed by its
+residue letter (`acK`, `pS`, `pT`, `pY`), and a sequence is read residue by residue. Other
+modifications are defined in `[[run.registry.residues]]` (a label, its base residue and the
+composition it adds). `hxex check` reports any peptide it cannot read, with the reason.
+
+**Filters.** The folder formats take `samples` and `peptide_ranges` to read only some of the
+data. Ranges are compared as text, as written in the folder or file names: `"0001-0010"` does not
+match `"1-10"`.
+
+**Retention times** (minutes) can be given for any format in a separate table,
+`[input] retention_times = "rt.csv"`: a column `rt` and any of `sample`, `start_seq` and `end_seq`
+(or `peptide_range`), `peptide`, `charge`. An empty cell matches anything, and each spectrum takes
+the row that names the most columns. The scan formats also have their own sources (see below).
+
+**Recorded paths.** `record_paths` says how the files read are recorded in the bundle:
+`"path"` (as given, the default), `"name"` (file names only, for results to be shared), or, for
+the scan formats, `"relative"` (relative to `data_root`).
+
+**Rerunning from stored spectra.** A bundle keeps the raw spectra it was made from (unless
+`[output] keep_spectra = false`). `hxex run hxex.toml --spectra old_results`, or
+`[input] spectra = "old_results"`, fits them again without reading the files: useful after
+changing the picker or fit settings, or when the original files are not at hand. The format then
+comes from the stored record. `retention_times` and `time_scale` still apply.
+
+**Times that only order the points.** If the times are labels rather than labelling times (1, 2,
+3 for three conditions), set `[input] time_scale = "order"`. The uptake is then drawn by index,
+and the kinetic and protection analyses refuse to run.
+
+---
+
+## HX-Express spreadsheets (`hxexpress`)
+
+```toml
+[input]
+format = "hxexpress"
+data_dir = "data"           # the folder of spreadsheets
+```
+
+### Files
+
+One spreadsheet per sample, peptide and charge, all directly in `data_dir` (sub-folders are not
+searched). Files ending in `.xlsx` or `.csv` are read; other files and Excel's `~$` lock files are
+ignored.
+
+The file name gives the sample, the peptide and the charge:
+
+```
+SAMPLE_START-END-PEPTIDE-zCHARGE-anything.xlsx
+WT_0001-0011-LKDVEHFKVSS-z2-run1.xlsx
+```
+
+- `SAMPLE` is everything before the last `_` of the first field. It may contain underscores but
+  not hyphens.
+- `START` and `END` are the residue numbers (leading zeros are kept in the range,
+  `0001-0011`).
+- `PEPTIDE` is the sequence, in modX if it carries modifications. Terminal groups (`Ac-`,
+  `-NH2`) cannot be written here, because `-` separates the fields.
+- `zCHARGE` is the charge, with its `z`.
+- The last field is free text but cannot contain a hyphen.
+
+A file whose name does not fit this pattern is skipped with a warning naming it. To use other
+names, list the files in a table instead (`[input] peptides = "files.csv"`, the columns of the
+[peptide table](#the-peptide-table), with `file` the spreadsheet's name and `sample` its
+sample).
+
+### Contents
+
+Only the first worksheet is read, with formulas read as their saved values. Row 1 holds a label
+above each spectrum. The spectrum is the label's column (m/z) and the next column (intensity),
+from row 2 down. Empty cells are skipped.
+
+| Label | Meaning |
+|---|---|
+| `undeut`, `Undeut_1`, `undeuterated` | undeuterated control (any label starting with `undeut`) |
+| `TD`, `td` | fully deuterated control (any label starting with `TD`) |
+| `60 s`, `5 min`, `2 h` | a time point: a number, a space, a unit |
+| `1 min`, `1.2 min` | two replicates of 1 min (see below) |
+
+Units are `ms`, `s`, `sec`, `m`, `min`, `h`, `hr` and their long forms. The space is needed:
+`60s` is refused. `FD` and `Full` are not control labels here.
+
+**Replicates.** Spectra with the same label are numbered as replicates in column order. As in
+HX-Express, digits after the decimal point of a time of 1 or more mark a replicate, not a
+fraction: `1.2 min` is a second replicate at 1 min, and `10.3 s` is 10 s. Below 1 the fraction is
+kept: `0.5 min` is 30 s.
+
+---
+
+## HDExaminer SpecExport (`specexport`)
+
+```toml
+[input]
+format = "specexport"
+data_dir = "SpecExport"
+# samples = ["WT", "mutant"]  # only these
+```
+
+### Files
+
+```
+SpecExport/
+  WT.fasta
+  WT/
+    0001-0011-LKDVEHFKVSS/
+      Non-1-z2.csv
+      Non-2-z2.csv
+      30s-1-z2.csv
+      5m-1-z2.csv
+      Full-1-z2.csv
+  mutant.fasta
+  mutant/
+    ...
+```
+
+- **A sample** is a folder with a FASTA file of the same name beside it (`WT/` and `WT.fasta`).
+  A folder without its FASTA, or a FASTA without its folder, is ignored. Only `.fasta` is looked
+  for. If the FASTA has several records, the last is used (with a warning).
+- **A peptide** is a folder named `START-END-...`. Its sequence is cut from the sample's FASTA by
+  the range; the sequence in the folder name is not used. Other folders (for example an
+  `analysis` folder) are ignored. A range outside the FASTA sequence is an error that names the
+  folder.
+- **A spectrum** is a file named `TIME-REP-zCHARGE.csv`. Extra fields between the time and the
+  replicate are allowed (`Non-D-1-z3.csv`). Other files are ignored. The name is case-sensitive:
+  `.CSV` or `Z2` is not read.
+
+### Contents
+
+Two columns, m/z and intensity, without a header row. Further columns are ignored.
+
+### Times and controls
+
+| Token | Meaning |
+|---|---|
+| `Non` | undeuterated control |
+| `Full` | fully deuterated control |
+| `30s`, `5m`, `1.5m`, `4h` | a time point: a number and one letter, `s`, `m` or `h` |
+
+The control words are case-sensitive (`non` is refused). The unit is a single letter: `5min`
+and `250ms` are refused here, although the project file accepts them. Fractions are kept
+(`1.5m` is 90 s). The replicate is the `REP` field; two files for the same time, replicate and
+charge are refused, naming both.
+
+---
+
+## Pooled SpecExport (`pooled`)
+
+For a SpecExport folder that holds the peptides of several proteins (a digest of a mixture,
+for example), without the sample level.
+
+```toml
+[input]
+format = "pooled"
+data_dir = "pooled"
+sample = "pool"             # the sample name given to every peptide
+```
+
+```
+pooled/
+  0012-0020-ACacKDEFG/
+    Non-1-z2.csv
+    60s-1-z2.csv
+    ...
+```
+
+- There is no sample folder and no FASTA. Every peptide gets the sample name `sample`.
+- The sequence is the one in the folder name, `START-END-SEQUENCE`. It may carry modX labels
+  (`acK`, or any label of `[[run.registry.residues]]`) and terminal groups (`Ac-...`,
+  `...-NH2`). A folder whose sequence cannot be read is
+  skipped with a warning; one whose residue count differs from its range is kept, with a warning.
+- The spectrum files, the time tokens and the controls are as in SpecExport.
+
+To find which protein of a FASTA file each peptide could come from, use
+`hxex.io.match_candidates` from Python (it lists every matching record, so ambiguous peptides
+show up). The command line does not do this matching.
+
+---
+
+## mzML and Thermo raw files (`mzml`, `thermo`)
+
+```toml
+[input]
+format = "mzml"             # or "thermo"
+peptides = "peptides.csv"   # the peptide table
+data_root = "."             # run paths are taken from here
+
+[input.target]              # how the peptides' scans are chosen
+ms_level = 1
+
+[[input.runs]]
+path = "UN_01.mzML"
+sample = "WT"
+role = "undeut"
+
+[[input.runs]]
+path = "D_60s_01.mzML"
+sample = "WT"
+time = "60 s"
+```
+
+hxex predicts the m/z of every peptide's isotope peaks, from undeuterated to fully deuterated,
+and reads only those stretches of the matching scans. It needs two things: a **peptide table**
+that says what to look for, and one **`[[input.runs]]`** table per file that says what the file
+is.
+
+### The peptide table
+
+A CSV file (UTF-8). Required columns:
+
+| Column | Meaning |
+|---|---|
+| `peptide` | the sequence, in modX |
+| `peptide_range` | the range as text, `"12-20"` |
+| `start_seq`, `end_seq` | the first and last residue numbers |
+| `charge` | the charge state |
+
+Optional columns:
+
+| Column | Meaning |
+|---|---|
+| `sample` | the runs the peptide is read from: those of this sample; empty (or no column), every run |
+| `file` | for your reference (the file the peptide was identified in); not used |
+| `rt` | the retention time, minutes (stored with the spectra) |
+| `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
+| `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`) |
+
+Other columns are kept with the entry but not used.
+
+**A peptide is read from the runs of its sample**, so a mutant's peptides are not looked for
+in the wild type's files. Leave `sample` empty for a peptide every run has; its spectra then
+take each run's sample. A sample that no `[[input.runs]]` has is refused (a misspelt name would
+otherwise read nothing), as is a peptide listed twice for the same runs (twice for one sample,
+or once for a sample and once for every run); the message names the line. `hxex check` says
+when a run has no peptide of its sample at all.
+
+### `[[input.runs]]`: what each file is
+
+| Key | Meaning |
+|---|---|
+| `path` | the file (relative paths start at `data_root`) |
+| `sample` | its sample |
+| `rep` | replicate number (default 1) |
+| `time` | the labelling time of the whole file (`"60 s"`, `"5 min"`) |
+| `role` | `"undeut"` or `"fulldeut"`: a control file |
+| `time_offset`, `usable_from` | for kinetics runs (below) |
+| `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes` | replace one scan condition of every target for this file only (`false` removes it) |
+
+What the file is depends on `time` and `role`:
+
+- **A time point** (`time` given): an LC-MS run of one labelled sample. Each peptide's scans
+  inside its retention window are summed into one spectrum at that time.
+- **A control** (`role` given): the same, but the spectrum is a control, without a time. With
+  `time` as well, the file is a time point that also serves as the control (a long time point
+  that has reached full deuteration, for example).
+- **A kinetics run** (neither given): every scan has its own time, the scan time. Used for
+  continuous infusion, where exchange runs while the instrument acquires. See
+  [Experiment types](experiments.md#kinetics).
+
+The scan-condition keys are for files acquired differently from the rest. For example, a control
+file acquired with in-source activation throughout takes `filter_excludes = false` while the
+other files exclude `"sid"`, and a file whose scans record a wrong precursor charge takes
+`precursor_charge = false`.
+
+### `[input.target]`: which scans hold the peptides
+
+| Key | Meaning |
+|---|---|
+| `ms_level` | MS level of the peptides' scans (default 1) |
+| `rt_window` | `[start, end]` in seconds: the scans summed in time-point and control files (a peptide's `rt_start`, `rt_end` take its place) |
+| `activation`, `preactivation` | the activation of the scans (MS2 and MS3 targets) |
+| `precursor_mz`, `precursor_charge`, `parent_mz` | conditions on the scan's precursor |
+| `filter_contains`, `filter_excludes` | text the scan's filter string must, or must not, contain (Thermo filters mark in-source activation with `sid=`) |
+
+Activation names `ETD`, `ECD`, `CID`, `HCD`, `EThcD`, `ETciD` and `UVPD` match exactly (case is
+ignored; `ETD` does not match EThcD); any other text matches part of the activation name.
+
+Without a retention window, every matching scan in the file is summed. That suits direct
+infusion, but in LC-MS runs it sums every co-eluting species with the same m/z, so give each
+peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
+
+### `[input.scans]`: how scans become spectra
+
+| Key | Default | Meaning |
+|---|---|---|
+| `group` | `"each"` | kinetics runs: one spectrum per scan (`"each"`), per `every` scans (`"every"`), or per time window (`"windows"`) |
+| `every`, `windows` | | the size of the groups |
+| `min_time` | | kinetics runs: leave out scans before this scan time (s) |
+| `max_spectra` | | kinetics runs: at most this many spectra per peptide, spread over log time |
+| `mz_margin` | 2.0 | m/z read on either side of a peptide's predicted peaks |
+| `sum_ppm` | 10.0 | centroided peaks closer than this are merged when scans are summed |
+| `gap_factor` | 3.0 | profile scans: gaps the instrument left out are not bridged when summing |
+| `precursor_tol` | 1.0 | m/z tolerance when matching a scan's precursor |
+
+Profile and centroided scans are both read. Summed profile scans are put on a common m/z grid;
+centroided scans are merged peak by peak. Profile data is recommended: when converting Thermo
+files to mzML with ThermoRawFileParser, keep profile data (`-p`) and use zlib rather than
+numpress compression (numpress is refused).
+
+### Fragment ions
+
+Each `[[input.fragments]]` table adds fragment-ion targets made from every peptide of the table:
+for example c and z ions from ETD scans of each precursor.
+
+```toml
+[[input.fragments]]
+ions = "c-1:ALL z-dot:ALL"   # TYPE:LENGTHS:CHARGES, space-separated
+label = "gentle"             # names the condition
+ms_level = 2
+activation = "ETD"
+filter_excludes = "sid"
+```
+
+- `ions` lists the ion types with their lengths and charges, each `ALL` (the default) or numbers
+  and ranges: `"c:2-6,9 z-dot:3-"`. The types are those of pyteomics: `a`, `b`, `c`, `x`, `y`,
+  `z` with their variants (`c-1`, `c+1`, `z-dot`, `z+1`, `y-NH3`, `b-H2O`, ...), and `M`, the
+  peptide itself as seen in the fragment scans.
+- Each fragment is tied to its parent: by default only scans whose precursor isolation overlaps
+  the parent's m/z range (`parent_mz = "parent"`) and that record the parent's charge
+  (`precursor_charge = "parent"`) are used.
+- With `ALL`, fragment charges run from 1 to the parent's charge minus 1 (`limit_charge = false`
+  allows the parent's charge too); charges written out are used as given. Fragments as long as
+  the parent are skipped, as are c ions before a proline and z ions that start with one.
+- MS3: `ms_level = 3` with `preactivation`, the activation of the stage before the last
+  (`"none"` for none). The earlier stages are read from the scan's precursor list, or from the
+  Thermo filter string when the mzML gives only the last stage.
+- Repeat the table for other conditions of the same ions (with and without in-source
+  activation, say); `label` keeps them apart.
+- `[input] parents = false` reads only the fragments.
+
+The fragments' own analysis is described in [Experiment types](experiments.md#fragments).
+
+### Retention times
+
+A spectrum's retention time (minutes) comes from, in order: the `[input] retention_times` table;
+the peptide table's `rt` column; for a fragment, its parent's; in a time-point or control file,
+the signal-weighted time of the summed scans. Kinetics spectra have none.
+
+### Thermo raw files
+
+`format = "thermo"` reads `.raw` files directly, with the same settings as mzML. It needs:
+
+- `pip install "hxex[thermo]"` (pythonnet);
+- a .NET runtime: Mono on Linux and macOS, the .NET Framework on Windows (built in), or .NET 8 or
+  newer with `PYTHONNET_RUNTIME=coreclr`;
+- Thermo's `ThermoFisher.CommonCore.Data.dll` and `ThermoFisher.CommonCore.RawFileReader.dll`
+  (they come with [ThermoRawFileParser](https://github.com/compomics/ThermoRawFileParser)), in
+  a folder named by `[input] thermo_dir` or the `HXEX_THERMO_DIR` environment variable.
+  RawFileReader is under Thermo's own license.
+
+The raw files also record each scan's resolving power and the instrument model. `hxex check`
+prints them, and `[run.picker] resolving_power = "recorded"` sizes the picking window from them
+(see [The picking window](picking-window.md)). mzML files carry no resolving power.
+
+### What `hxex check` shows for scan formats
+
+One line per run: its sample, replicate, time or role, the number of scans, and how many targets
+have scans in it, followed by up to ten targets with none. A run where no target has scans is a
+problem; the usual causes are a wrong MS level, activation or filter in `[input.target]`, a
+retention window that misses the peptides, or a charge state the file records differently.
+
+---
+
+## Choosing between them
+
+- Spectra already extracted in HDExaminer: `specexport` (one protein or sample per folder) or
+  `pooled` (many proteins, no samples).
+- Spectra extracted in HX-Express: `hxexpress`.
+- Raw data, or anything the extraction tools do not handle (fragment ions, kinetics runs where
+  every scan is a time point, MS3): `mzml`, or `thermo` to skip the conversion to mzML.

@@ -86,7 +86,9 @@ picker settings, modification registry, `series` (each `data_id` with its sample
 position, which ties a result to its precursor and activation), `record_paths` (`path` as
 given, `relative` to a data root, or `name` only, for results to be shared) and `files` (each
 run's file `name`, `size`, `checksum` and `algorithm`: the indexed mzML file's own SHA-1 when
-it has one, else SHA-256); `read_thermo` records the same with `reader` `thermo`, the
+it has one, else SHA-256), and `samples_tie_targets` (true: each target was read from the runs
+of its entry's sample, or from every run when the entry has none; a record without it, from
+before 2026-10-19, read every target from every run and is repeated so); `read_thermo` records the same with `reader` `thermo`, the
 RawFileReader version as `thermo_reader`, and each `.raw` file's SHA-256.
 `hxex.io.read_mzml_source` (or `read_thermo_source`) reads it again, finding the files by
 path, relative to a data root, or by name in a directory; a file whose size or checksum

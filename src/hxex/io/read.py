@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
+from ..chem import DEFAULT_MODIFICATIONS, ModificationRegistry
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
 from .entries import filter_entries
@@ -32,18 +33,21 @@ def scan(
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
     sample: str = "",
+    registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
 ) -> list[PeptideEntry]:
     """List the entries in a data directory of the given format.
 
     ``fmt='pooled'`` is a SpecExport folder with peptides from several proteins; ``sample`` is
-    the label given to its entries (the other formats take sample names from the data).
+    the label given to its entries (the other formats take sample names from the data), and
+    ``registry`` the modified residues its folder names may hold.
     """
     if fmt == "hxexpress":
         return scan_hxexpress(data_dir, samples=samples, peptide_ranges=peptide_ranges)
     if fmt == "specexport":
         return scan_specexport(data_dir, samples=samples, peptide_ranges=peptide_ranges)
     if fmt == "pooled":
-        return scan_specexport_pooled(data_dir, sample=sample, peptide_ranges=peptide_ranges)
+        return scan_specexport_pooled(data_dir, sample=sample, peptide_ranges=peptide_ranges,
+                                      registry=registry)
     raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
 
 

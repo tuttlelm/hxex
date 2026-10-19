@@ -2902,3 +2902,49 @@ CSVs or mzML if wanted.
     owner's private protection example script no longer asks for the residue level.
     Comparing fragment-ladder residues between samples (`compare_ladder_residues`) is a
     separate item, for when a dataset with two samples of one parent arrives.
+
+107. **The user guide begun (owner, 2026-10-19; audit design item 5, PLAN Next steps 7).**
+    Owner's choices: plain Markdown in `docs/guide/` (no site generator, no new dependency);
+    a settings reference generated from the code with a test; the guide starts from the
+    input formats (HX-Express, SpecExport separate or pooled, mzML, Thermo raw) and the
+    experiment types (bottom-up, top-down, kinetics, each with optional fragments). Pages:
+    README (index), project-file, inputs, experiments, outputs, settings (generated), and the
+    five sections of the former `USER_GUIDE_DRAFT.md` as pages of their own (controls,
+    picking-window, comparing-runs, back-exchange-protection, fragment-residues; the draft is
+    removed). `hxex._reference` walks the config classes the parser checks keys against
+    (InputSettings, MzmlRun, FragmentSettings, MzmlConfig, `_TARGET_KEYS`, OutputSettings,
+    RunConfig's sections, `ANALYSIS_KEYS` with the analysis classes, ExchangeConditions);
+    descriptions from `config._COMMENTS` and, for the tables the template writes by hand,
+    `_reference._DESCRIPTIONS` (these duplicate the template's hand-written comments; making
+    the template read them is possible later). Tests: every key described, the page current,
+    every `[analysis]` key listed. Not yet: a worked tutorial on a publishable dataset.
+    Behaviours found while documenting (documented as they are; for the owner): (a)
+    `record_paths = "relative"` passes `hxex check` for folder formats but `hxex run` refuses
+    it; (b) a SpecExport time token such as `5min` is refused with a message that lists `min`
+    and `ms` as units (the token takes one letter, s, m or h); (c) the pooled scan uses the
+    default modification registry, so a folder whose sequence uses a `[run.registry]` label is
+    skipped (inferred from the call chain, not tested); (d) for the scan formats the peptide
+    table's `file` and `sample` columns are required but unused (every target is searched in
+    every run, and a peptide and charge listed under two samples clash); (e) the
+    `FragmentSettings.limit_charge` docstring says charges stay at or below the parent's,
+    while `ALL` stops at the parent's charge - 1 and charges written out are not capped.
+    All five fixed in item 108.
+
+108. **Five input behaviours found while writing the guide, fixed (owner, 2026-10-19; item
+    107).** (a) `record_paths` is checked when the project file is read: `path` or `name` for
+    the folder formats (`relative` refused, saying it is for the scan formats), `path`,
+    `relative` or `name` for mzml and thermo. (b) A SpecExport time token that is not `Non`,
+    `Full` or a number with one letter (`s`, `m`, `h`; `0.8s` as in the published B5 export)
+    gets a message saying so, instead of one listing `min` and `ms`. The tokens accepted are
+    unchanged. (c) The pooled scan takes the project's `[run.registry]` (`scan(...,
+    registry=)`, from `folder_entries`). (d) Owner's decision: for the scan formats the peptide
+    table's `sample` ties a row to the runs of that sample (empty or no column: every run);
+    `file` and `sample` are optional there (`SCAN_REQUIRED`). `scan_peptides` refuses a
+    table sample that no run has and a peptide (sequence, range, charge, modification) listed
+    twice for the same runs, naming the line. `read_mzml`/`read_thermo` apply the tie
+    (`target_applies`) and record `samples_tie_targets`; a record without it (older bundles)
+    is repeated as it was read, every target from every run. `hxex check` counts each run's
+    own targets and names a run with no peptide of its sample. The four private scan-format
+    projects have one sample, the same in table and runs: their targets are unchanged. Test
+    fixtures that labelled rows `S` with runs `WT` now leave the sample empty. (e) The
+    `FragmentSettings.limit_charge` docstring and the reference say what the code does.

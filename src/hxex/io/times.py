@@ -25,6 +25,7 @@ _UNIT_SECONDS: dict[str, Decimal] = {
     **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), Decimal(3600)),
 }
 UNITS_TEXT = "s, sec, m, min, h, hr or ms (or their long forms)"
+_SPECEXPORT_TIME = re.compile(r"[0-9]*\.?[0-9]+[smhSMH]")
 _PART = re.compile(r"\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-zA-Z]+)\s*")
 
 
@@ -155,4 +156,7 @@ def parse_specexport_token(token: str) -> tuple[float, str]:
         return math.nan, UNDEUT
     if token == "Full":
         return math.nan, FULLDEUT
+    if _SPECEXPORT_TIME.fullmatch(token) is None:
+        raise ReadError(f"SpecExport time {token!r}: expected Non, Full, or a number and one "
+                        "letter, s, m or h (30s, 0.8s, 5m, 20h)")
     return _to_seconds(token[:-1], token[-1:], f"label {token!r}"), ""

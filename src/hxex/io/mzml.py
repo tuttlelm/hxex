@@ -985,7 +985,9 @@ def read_mzml(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> SpectrumSet:
-    """Raw spectra of every target in every run (see the module docstring for the two layouts).
+    """Raw spectra of every target in its runs (see the module docstring for the two layouts):
+    a target whose entry names a sample is read from the runs of that sample only, one with an
+    empty sample from every run (:func:`target_applies`); its spectra take the run's sample.
 
     Each run is read once, keeping only the points inside the targets' m/z windows (the
     predicted bins of ``picker`` plus ``config.mz_margin``). A series (``data_id``) is a sample and
@@ -1010,6 +1012,17 @@ def read_mzml(
     return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
                       progress=progress, cancel=cancel)
+
+
+# the record's mark that targets are tied to runs by their entry's sample (reads recorded
+# without it read every target from every run, and are repeated so)
+SAMPLES_TIE = "samples_tie_targets"
+
+
+def target_applies(target: MzmlTarget, run: MzmlRun, tie: bool = True) -> bool:
+    """Whether ``target`` is read from ``run``: its entry names no sample, or the run's (always,
+    when ``tie`` is False: a read recorded before targets were tied to samples)."""
+    return not tie or not target.entry.sample or target.entry.sample == run.sample
 
 
 def _run_paths(runs: Sequence[MzmlRun], data_root, record_paths: str):
@@ -1058,10 +1071,11 @@ def _read_runs(
     registry: chem.ModificationRegistry,
     progress: ProgressHook | None,
     cancel: CancelHook | None,
+    tie: bool = True,
 ) -> SpectrumSet:
     """:func:`read_mzml` (or another format's read) with the files to open (``opened``), the
     paths to record, and the file identities when they are already known (else they are
-    computed)."""
+    computed). ``tie``: targets are read from their sample's runs only (:func:`target_applies`)."""
     qualify_spectrum_id(project, "")
     if not runs or not targets:
         raise ValueError(f"read_{fmt.reader} needs at least one run and one target")
@@ -1078,7 +1092,7 @@ def _read_runs(
                 extra = fmt.extra(f)
             instruments.append(instrument_record(f))
             _read_run(f, run, targets, windows, series, spectra, project=project,
-                      config=config)
+                      config=config, tie=tie)
         origin.extend([n_run] * (len(spectra) - len(origin)))
         report(progress, n_run + 1, len(runs))
     if not spectra:
@@ -1099,6 +1113,7 @@ def _read_runs(
         "series": [{"data_id": d, "sample": sample, "target": t_i}
                    for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
         "instruments": instruments,
+        **({SAMPLES_TIE: True} if tie else {}),
         **extra,
     }
     # as stored (tuples become lists), so a record read back from a file compares equal
@@ -1184,15 +1199,19 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     return rows
 
 
-def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config) -> None:
-    """Add the spectra of every target in the open file ``f`` (one run) to ``spectra``."""
+def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
+              tie: bool = True) -> None:
+    """Add the spectra of every target of this run (:func:`target_applies`) in the open file
+    ``f`` to ``spectra``."""
     table = f.scans()
-    chosen = [target_scans(table, run, t, config) for t in targets]
+    applies = [target_applies(t, run, tie) for t in targets]
+    chosen = [target_scans(table, run, t, config) if a else None
+              for t, a in zip(targets, applies, strict=True)]
     # the scans of every spectrum, per target, before anything is read (so that sampling a
     # large file reads only the scans it keeps)
     plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
     for rows in chosen:
-        if not len(rows):
+        if rows is None or not len(rows):
             plans.append(None)
             continue
         order = rows[np.argsort(table.time[rows], kind="stable")]
@@ -1206,11 +1225,12 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     if not needed:
         log.warning("%s: no scan matches any target", f.path.name)
         return
-    missing = [_target_label(t) for t, p in zip(targets, plans, strict=True) if p is None]
+    missing = [_target_label(t) for t, p, a in zip(targets, plans, applies, strict=True)
+               if a and p is None]
     if missing:
         # one line per file: in a targeted method each target has scans in some files only
         log.warning("%s: no scan for %d of %d targets, for example %s", f.path.name,
-                    len(missing), len(targets), missing[0])
+                    len(missing), sum(applies), missing[0])
         for label in missing:
             log.debug("%s: no scan for target %s", f.path.name, label)
     by_index = f.read_scans(sorted(needed), windows)
@@ -1396,5 +1416,5 @@ def _repeat_read(
         project=source["project"], config=MzmlConfig.from_dict(source["config"]),
         picker=PickerConfig.from_dict(source["picker"]),
         registry=chem.ModificationRegistry.from_dict(source["registry"]),
-        progress=progress, cancel=cancel,
+        progress=progress, cancel=cancel, tie=bool(source.get(SAMPLES_TIE, False)),
     )

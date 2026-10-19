@@ -556,7 +556,9 @@ Planned, not built:
 7. **User guide and tutorials** (owner, 2026-10-17). The documents in `docs/` are written for
    the developer; a complete pass to create user-friendly documentation and tutorials (inputs,
    a worked project from `hxex init` to `hxex analyse`, what every table and figure holds) is
-   an open TODO.
+   an open TODO. Begun 2026-10-19 (HISTORY item 107): `docs/guide/` with the inputs, the
+   experiment types, the outputs and a generated settings reference; a worked tutorial on a
+   publishable dataset remains.
 
 ## Risks and open decisions
 

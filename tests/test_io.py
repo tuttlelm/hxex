@@ -802,3 +802,29 @@ def test_time_index_and_time_point_put_the_controls_at_the_ends():
         check_role("control")
     with pytest.raises(ValueError, match="where"):
         check_role("TD", "where")
+
+
+def test_a_pooled_folder_takes_the_projects_modified_residues(pooldir):
+    """A pooled folder's sequences may use a [run.registry] label (they were read with the
+    default registry only, and such a folder was skipped)."""
+    import tomllib
+
+    from hxex.config import folder_entries, project_from
+
+    (pooldir / "0050-0052-AmeKA").mkdir()
+    write_spec(pooldir / "0050-0052-AmeKA" / "60s-1-z2.csv", [(100.0, 1.0)])
+    project = project_from(tomllib.loads(
+        f'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "{pooldir.as_posix()}"\n'
+        '[[run.registry.residues]]\nlabel = "meK"\nbase = "K"\ndelta = { C = 1, H = 2 }\n'),
+        pooldir)
+    assert "AmeKA" in {e.peptide for e in folder_entries(project)}
+    assert "AmeKA" not in {e.peptide for e in hio.scan(pooldir, "pooled")}
+
+
+def test_specexport_times_say_what_they_accept():
+    """A SpecExport time is Non, Full or a number with one letter; the message said min and ms
+    were units, which file names do not take."""
+    assert hio.parse_specexport_token("0.8s") == (0.8, "")
+    for bad in ("5min", "250ms", "non", "1.5"):
+        with pytest.raises(hio.ReadError, match="one letter, s, m or h"):
+            hio.parse_specexport_token(bad)

@@ -17,12 +17,18 @@ from .errors import ReadError
 log = logging.getLogger(__name__)
 
 _REQUIRED = ("file", "sample", "peptide", "peptide_range", "start_seq", "end_seq", "charge")
+# the peptide table of the scan formats: file is for reference only, and an empty or missing
+# sample means every run
+SCAN_REQUIRED = ("peptide", "peptide_range", "start_seq", "end_seq", "charge")
 
 
-def read_peptide_table(path: str | Path) -> list[PeptideEntry]:
+def read_peptide_table(path: str | Path, *,
+                       required: Sequence[str] = _REQUIRED) -> list[PeptideEntry]:
     """Read a metadata CSV (columns as in pyHXExpress's ``metadf``).
 
-    Required: file, sample, peptide, peptide_range, start_seq, end_seq, charge. Optional:
+    Required (``required``, by default): file, sample, peptide, peptide_range, start_seq,
+    end_seq, charge; the scan formats need :data:`SCAN_REQUIRED` only (a missing file or
+    sample column reads as empty). Optional:
     modification, ``rt`` (the retention time in minutes, kept with the spectra), ``rt_start``
     and ``rt_end`` (the peptide's retention window in minutes: for mzML and Thermo runs with a
     fixed time, the scans summed for it and its fragments). The ``Index``
@@ -33,7 +39,7 @@ def read_peptide_table(path: str | Path) -> list[PeptideEntry]:
     try:
         with path.open(newline="", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
-            missing = [c for c in _REQUIRED if c not in (reader.fieldnames or [])]
+            missing = [c for c in required if c not in (reader.fieldnames or [])]
             if missing:
                 raise ReadError(f"{path}: missing column(s) {', '.join(missing)}")
             entries = []
@@ -58,8 +64,8 @@ def _whole(value: str, name: str) -> int:
 def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
     known = set(_REQUIRED) | {"modification", "Index"}
     entry = PeptideEntry(
-        file=row["file"],
-        sample=row["sample"],
+        file=row.get("file") or "",
+        sample=row.get("sample") or "",
         peptide=row["peptide"],
         peptide_range=row["peptide_range"],
         start_seq=_whole(row["start_seq"], "start_seq"),

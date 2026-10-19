@@ -262,7 +262,8 @@ class FragmentSettings:
     - ``filter_contains``, ``filter_excludes``: text the scan filter must or must not contain.
     - ``rt_window`` (s): ``[start, end]`` of the scans used, for runs with a fixed time (a
       peptide's own ``rt_start``, ``rt_end`` columns, in minutes, take its place).
-    - ``limit_charge``: fragment charges stay at or below the parent's.
+    - ``limit_charge``: ``ALL`` fragment charges run from 1 to the parent's charge minus one
+      (False: to the parent's charge); charges written out are used as given.
     """
 
     ions: str
@@ -512,6 +513,15 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
     return replace(inp, spectra=stored, **record)
 
 
+def _record_paths(data: Mapping, allowed: tuple[str, ...], fmt: str) -> None:
+    value = data.get("record_paths", "path")
+    if value not in allowed:
+        extra = ' ("relative" is for mzml and thermo, whose run paths it records relative to '\
+                'data_root)' if value == "relative" else ""
+        raise ProjectError(f"input.record_paths = {value!r}: expected "
+                           f"{', '.join(repr(a) for a in allowed)} for {fmt}{extra}")
+
+
 def _read_settings(data: Mapping, base: Path) -> InputSettings:
     fmt = data.get("format")
     if fmt not in FORMATS:
@@ -524,6 +534,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
                                f"thermo, not {fmt}")
         if "data_dir" not in data:
             raise ProjectError(f"input.data_dir is needed for {fmt}")
+        _record_paths(data, ("path", "name"), fmt)
         return InputSettings(
             format=fmt, data_dir=_path(base, data["data_dir"], "input.data_dir"),
             samples=_strings(data.get("samples"), "input.samples"),
@@ -540,6 +551,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
                            "(the runs give the samples and times)")
     if "peptides" not in data:
         raise ProjectError("input.peptides (a peptide table, CSV) is needed for mzml and thermo")
+    _record_paths(data, ("path", "relative", "name"), fmt)
     runs = data.get("runs") or []
     if not isinstance(runs, list) or not runs:
         raise ProjectError("give at least one [[input.runs]] (path and sample)")
@@ -770,17 +782,46 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
 
 # --- reading the input --------------------------------------------------------------------------
 
+def scan_peptides(project: Project):
+    """The peptide table of an mzML or Thermo project, checked against its runs: a row's
+    ``sample`` (empty: every run) must be the sample of a run, and a peptide (with its charge and
+    modification) may be listed once per sample, or once with an empty sample."""
+    from .io.entries import SCAN_REQUIRED, read_peptide_table
+
+    inp = project.input
+    entries = read_peptide_table(inp.peptides, required=SCAN_REQUIRED)
+    samples = sorted({r.sample for r in inp.runs})
+    seen: dict[tuple, list[str]] = {}
+    for line, entry in enumerate(entries, start=2):
+        name = f"{inp.peptides} line {line}: {entry.peptide} (charge {entry.charge})"
+        if entry.sample and entry.sample not in samples:
+            raise ProjectError(f"{name}: sample {entry.sample!r} is not the sample of any "
+                               f"[[input.runs]] ({', '.join(samples)}); a peptide is read from "
+                               "the runs of its sample, or from every run when its sample is "
+                               "empty")
+        key = (entry.peptide, entry.start_seq, entry.end_seq, entry.charge, entry.modification)
+        before = seen.setdefault(key, [])
+        if entry.sample in before or (before and "" in (entry.sample, *before)):
+            raise ProjectError(f"{name}: listed again for "
+                               f"{'every run' if not entry.sample else 'sample ' + entry.sample}"
+                               "; list a peptide once per sample (or once with an empty "
+                               "sample for every run)")
+        before.append(entry.sample)
+    return entries
+
+
 def scan_targets(project: Project) -> list[MzmlTarget]:
     """The targets of an mzML or Thermo project: each peptide of the table (if ``parents``),
-    and its fragments (one set per ``[input.fragments]`` table). A peptide's ``rt_start`` and
-    ``rt_end`` columns set the retention window of its targets, in place of ``rt_window``."""
+    and its fragments (one set per ``[input.fragments]`` table), each read from the runs of its
+    sample (every run when the table gives none; :func:`scan_peptides`). A peptide's
+    ``rt_start`` and ``rt_end`` columns set the retention window of its targets, in place of
+    ``rt_window``."""
     from .fragments import fragment_targets
-    from .io.entries import read_peptide_table
     from .spectra import entry_rt_window
 
     inp = project.input
     targets = []
-    for entry in read_peptide_table(inp.peptides):
+    for entry in scan_peptides(project):
         # the peptide's own retention window (rt_start, rt_end) overrides the project's
         window = entry_rt_window(entry)
         if inp.parents:
@@ -811,7 +852,8 @@ def folder_entries(project: Project):
     if inp.peptides is not None:
         return read_peptide_table(inp.peptides)
     return scan(inp.data_dir, inp.format, samples=inp.samples,
-                peptide_ranges=inp.peptide_ranges, sample=inp.sample)
+                peptide_ranges=inp.peptide_ranges, sample=inp.sample,
+                registry=project.run.registry)
 
 
 def _is_spectra_file(path: Path) -> bool:

@@ -924,3 +924,22 @@ def test_a_control_run_has_a_role_and_no_time(tmp_path):
     assert MzmlRun.from_dict(runs[1].to_dict()).to_dict() == runs[1].to_dict()
     with pytest.raises(ValueError, match="role must be"):
         MzmlRun(un, "WT", role="TD")
+
+
+def test_targets_are_read_from_the_runs_of_their_sample(tmp_path):
+    """A target whose entry names a sample is read from that sample's runs only; one without a
+    sample from every run. A read recorded before targets were tied to samples is repeated as
+    it was: every target from every run."""
+    from hxex.io import read_mzml_source
+    from hxex.io.mzml import SAMPLES_TIE
+
+    a = write_mzml(tmp_path / "a.mzML", time_course(n=3))
+    b = write_mzml(tmp_path / "b.mzML", time_course(n=3))
+    runs = [MzmlRun(a, "WT"), MzmlRun(b, "M")]
+    every = read_mzml(runs, [MzmlTarget(ENTRY)], project="p")
+    assert set(every.sample) == {"WT", "M"} and every.source[SAMPLES_TIE] is True
+    tied = read_mzml(runs, [MzmlTarget(dataclasses.replace(ENTRY, sample="WT"))], project="p")
+    assert set(tied.sample) == {"WT"} and len(tied) == 3
+    old = {k: v for k, v in tied.source.items() if k != SAMPLES_TIE}
+    assert set(read_mzml_source(old).sample) == {"WT", "M"}
+    assert len(read_mzml_source(tied.source)) == 3
