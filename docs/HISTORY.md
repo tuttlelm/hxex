@@ -2948,3 +2948,10 @@ CSVs or mzML if wanted.
     projects have one sample, the same in table and runs: their targets are unchanged. Test
     fixtures that labelled rows `S` with runs `WT` now leave the sample empty. (e) The
     `FragmentSettings.limit_charge` docstring and the reference say what the code does.
+
+109. **A generated command-line reference (owner, 2026-10-19).** `docs/guide/commands.md` is
+    written from `hxex.cli.build_parser` by the same generator as the settings page
+    (`python -m hxex._reference docs/guide` now writes both). Every positional argument got a
+    help text (`PROJECT`, `BUNDLE`; also shown by `--help`), and `init --force` says that
+    without it an existing file is refused. Tests: the page is current, and every argument of
+    every command has a help text.

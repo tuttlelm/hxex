@@ -75,6 +75,9 @@ reference = "WT"
 
 ## Commands
 
+The main commands and options; every option is in the
+[command-line reference](commands.md).
+
 | Command | Does |
 |---|---|
 | `hxex init [--format F] [--project NAME] [-o FILE] [--force]` | write a project file with every default (`-o -` prints it) |
@@ -84,6 +87,9 @@ reference = "WT"
 | `hxex report BUNDLE [--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--format F]` | tables and figures from a bundle |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`) |
 | `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, times, review, what it replaced, earlier generations |
+
+`hxex init` refuses to write over an existing project file, so your edits are not lost by
+accident; `--force` replaces it with a fresh template.
 
 Options of `hxex run`:
 

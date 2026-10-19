@@ -59,14 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", default="my_project", help="the project name")
     p.add_argument("-o", "--output", default="hxex.toml",
                    help="the file to write (default hxex.toml; '-' for stdout)")
-    p.add_argument("--force", action="store_true", help="replace an existing file")
+    p.add_argument("--force", action="store_true",
+                   help="replace an existing file (without it, init refuses to write over one)")
 
     p = sub.add_parser("check", help="check a project file and show what would be read")
-    p.add_argument("project_file", metavar="PROJECT")
+    p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
     _spectra_option(p)
 
     p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write")
-    p.add_argument("project_file", metavar="PROJECT")
+    p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle (and its tables and figures), carrying "
@@ -79,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     _threads_option(p)
 
     p = sub.add_parser("resume", help="add the bootstrap to a bundle that is waiting for it")
-    p.add_argument("bundle")
+    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -88,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also write the figures (default: beside the bundle)")
 
     p = sub.add_parser("report", help="write tables and figures from a saved bundle")
-    p.add_argument("bundle")
+    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the tables (default: beside the bundle)")
@@ -117,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     _threads_option(p)
 
     p = sub.add_parser("info", help="what a results bundle holds")
-    p.add_argument("bundle")
+    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
     return parser
 

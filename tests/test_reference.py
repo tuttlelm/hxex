@@ -5,7 +5,8 @@ from pathlib import Path
 
 from hxex import _reference
 
-PAGE = Path(__file__).resolve().parents[1] / "docs" / "guide" / "settings.md"
+GUIDE = Path(__file__).resolve().parents[1] / "docs" / "guide"
+PAGE = GUIDE / "settings.md"
 
 
 def test_every_setting_has_a_description():
@@ -16,7 +17,17 @@ def test_every_setting_has_a_description():
 
 def test_the_settings_page_is_up_to_date():
     assert PAGE.read_text(encoding="utf-8") == _reference.markdown(), (
-        "regenerate it: python -m hxex._reference docs/guide/settings.md")
+        "regenerate it: python -m hxex._reference docs/guide")
+
+
+def test_the_commands_page_is_up_to_date_and_every_argument_described():
+    assert _reference.undescribed_arguments() == [], "give these arguments a help text"
+    page = (GUIDE / "commands.md").read_text(encoding="utf-8")
+    assert page == _reference.commands_markdown(), (
+        "regenerate it: python -m hxex._reference docs/guide")
+    for command in ("init", "check", "run", "resume", "report", "analyse", "info"):
+        assert f"## hxex {command}\n" in page
+    assert "`--keep-previous`" in page and "Also spelt `hxex analyze`" in page
 
 
 def test_the_reference_lists_the_tables_a_project_file_accepts():

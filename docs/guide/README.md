@@ -32,5 +32,6 @@ This guide is for people running hxex on their data. The documents one level up
 
 - [Settings reference](settings.md): every key of the project file, with its type, default and
   meaning (generated from the code).
+- [Command-line reference](commands.md): every command and option (generated from the code).
 - [The results bundle](../BUNDLE.md): the bundle's files and their columns.
 - [Analysis methods](../ANALYSIS.md): how the post-fitting analysis computes its values.
