@@ -789,7 +789,15 @@ def test_a_bundle_zipped_by_the_operating_system_is_read(tmp_path, capsys):
     assert cli.main(["info", by_os]) == 0 and "measurements   6" in capsys.readouterr().out
     assert cli.main(["-q", "report", by_os, "--tables", str(tmp_path / "t")]) == 0
     assert (tmp_path / "t" / "spectra.csv").is_file()
-    two = shutil.make_archive(str(tmp_path / "two"), "zip", root_dir=tmp_path)  # every folder
+    # a zip of two folders (one a bundle) is not a bundle; made from a folder of its own and
+    # written outside it (a zip written into the folder it archives reads itself while it
+    # grows: on Windows it filled the disk)
+    pair = tmp_path / "pair"
+    shutil.copytree(folder, pair / "out")
+    (pair / "other").mkdir()
+    (pair / "other" / "notes.txt").write_text("not a bundle")
+    two = shutil.make_archive(str(tmp_path / "two"), "zip", root_dir=pair)
+    assert {n.split("/")[0] for n in zipfile.ZipFile(two).namelist()} == {"out", "other"}
     with pytest.raises(Exception, match="manifest"):
         open_bundle(two)
 

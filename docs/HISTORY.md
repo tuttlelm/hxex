@@ -2978,7 +2978,11 @@ CSVs or mzML if wanted.
     unreadable file. `_zip_root` finds the bundle at the top or in the zip's one folder
     (ignoring `__MACOSX/` and `.DS_Store`); the zip store, `bundle_manifest`, and the
     replaceable-bundle check use it. A zip with several folders is still not a bundle. The
-    guide's outputs page has a "Sharing results" section.
+    guide's outputs page has a "Sharing results" section. Fixed after CI (2026-10-19): the test zipped its whole
+    temporary folder into a zip inside that folder, so the zip read itself as it grew; on
+    Windows (Python 3.12) it grew to the zip size limit and filled the runner's disk, and the
+    later tests failed with "No space left on device". The two-folder zip is now made from a
+    folder of its own and written outside it.
 
 112. **Lists of tables forgive single brackets (owner, 2026-10-19).** A list of tables with one
     item written with single brackets, as most headings are (`[input.runs]`,
