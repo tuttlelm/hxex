@@ -859,3 +859,32 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
     assert (tmp_path / "out.1_analysis" / "species_uptake.csv").is_file()
     assert (tmp_path / "out.1_tables").is_dir() and not folder.exists()
+
+
+def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsys):
+    """hxex resume PROJECT adds a bootstrap with the project's [run.bootstrap] to a complete
+    bundle that has none, or replaces the one there; the fits are kept. Given the bundle alone,
+    a complete bundle is refused with the way to do it."""
+    path = mzml_project(tmp_path)
+    with_boot = path.read_text()
+    start = with_boot.index("[run.bootstrap]")
+    path.write_text(with_boot[:start])  # the same project without its bootstrap
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.bootstrap() is None
+        ids, ks = list(b.fit().spectrum_id), list(b.fit().selected_K)
+    assert cli.main(["resume", str(tmp_path / "out")]) == 1
+    assert "hxex resume hxex.toml" in capsys.readouterr().err
+    assert cli.main(["resume", str(path)]) == 1  # the project has no [run.bootstrap]
+    assert "no [run.bootstrap]" in capsys.readouterr().err
+    path.write_text(with_boot)
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.bootstrap() is not None and b.manifest["configs"]["bootstrap"]["n_boot"] == 3
+        assert list(b.fit().spectrum_id) == ids and list(b.fit().selected_K) == ks
+    assert (tmp_path / "out_tables" / "spectra.csv").is_file()
+    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4"))
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
+        assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4

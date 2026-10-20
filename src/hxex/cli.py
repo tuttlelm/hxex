@@ -79,8 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
     _spectra_option(p)
     _threads_option(p)
 
-    p = sub.add_parser("resume", help="add the bootstrap to a bundle that is waiting for it")
-    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
+    p = sub.add_parser("resume", help="finish a bundle's stopped bootstrap, or add one")
+    p.add_argument("bundle", metavar="BUNDLE|PROJECT",
+                   help="a results bundle (a folder, or .zip) waiting for its bootstrap, or a "
+                        "project file: a bootstrap with its [run.bootstrap] settings is added "
+                        "to its [output] bundle (or replaces the one there), the fits kept")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -545,17 +548,37 @@ def cmd_resume(args) -> int:
     from .hooks import ProgressLog
     from .run import resume_bootstrap
 
-    bundle = Path(args.bundle)
+    bundle, extra = Path(args.bundle), {}
+    tables_arg, figures_arg, threads = args.tables, args.figures, args.threads
+    rules: tuple = ()
+    if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
+        from .config import load_project
+
+        project = load_project(bundle, analysis_only=True)
+        if project.output.bundle is None:
+            log.error("%s names no [output] bundle", bundle)
+            return EXIT_ERROR
+        if project.run.bootstrap is None:
+            log.error("%s has no [run.bootstrap] table: add one with the bootstrap's settings",
+                      bundle)
+            return EXIT_ERROR
+        bundle, rules = project.output.bundle, _view_exclude(project)
+        extra = {"bootstrap": project.run.bootstrap, "add": True, "view_exclude": rules}
+        out = project.output
+        tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
+        figures_arg = figures_arg if figures_arg is not None else (out.figures or None)
+        threads = threads if threads is not None else project.threads
     stop = _Stop()
-    with stop.installed(), _threads(args.threads):
+    with stop.installed(), _threads(threads):
         result = resume_bootstrap(
-            bundle, device=args.device, figures_dir=_beside(bundle, args.figures, "_figures"),
-            progress=ProgressLog(interval=args.progress_every), cancel=stop)
-    tables = _beside(bundle, args.tables, "_tables")
+            bundle, device=args.device, figures_dir=_beside(bundle, figures_arg, "_figures"),
+            progress=ProgressLog(interval=args.progress_every), cancel=stop, **extra)
+    tables = _beside(bundle, tables_arg, "_tables")
     if tables is not None:
+        from .exclusions import exclude_from_results
         from .report import Results, write_tables
 
-        write_tables(Results.from_run(result), tables)
+        write_tables(exclude_from_results(Results.from_run(result), rules), tables)
         log.info("tables in %s", tables)
     _summary(result.fit, bundle)
     return 0

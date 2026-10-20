@@ -85,6 +85,7 @@ The main commands and options; every option is in the
 | `hxex check PROJECT [--spectra PATH]` | check the file and show what would be read |
 | `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle, tables and figures |
 | `hxex resume BUNDLE` | finish a run that stopped during its bootstrap |
+| `hxex resume PROJECT` | add a bootstrap (the project's `[run.bootstrap]`) to its bundle, or replace the one there; the fits are kept |
 | `hxex report BUNDLE [--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--format F]` | tables and figures from a bundle |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`) |
 | `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, times, review, what it replaced, earlier generations |

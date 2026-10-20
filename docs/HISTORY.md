@@ -3068,3 +3068,14 @@ CSVs or mzML if wanted.
     comparison with NaN is false, and made the series' corrected means NaN). `fit_controls`
     now refuses spectra serving as controls without a K = 1 fit, saying to promote them in
     `[run.controls]` or run with `k_min = 1`.
+
+118. **A bootstrap added to, or redone on, a complete bundle (owner, 2026-10-19).** `hxex
+    resume` finished only a bootstrap that a run had begun (the bundle's `pending`), so a run
+    made without `[run.bootstrap]` could take one only by refitting from its stored spectra.
+    `resume_bootstrap(add=True, bootstrap=...)` now bootstraps a complete bundle: one without
+    a bootstrap gets one, one with a bootstrap has it replaced (the bundle's run settings
+    record the new one; the fits, the review, the exclusions and the provenance are kept).
+    `hxex resume PROJECT` does it with the project's `[run.bootstrap]` (refused without the
+    table) on its `[output] bundle`, writes the tables (and figures) as `[output]` asks, with
+    `[[analysis.exclude]]` applied. `hxex resume BUNDLE` of a complete bundle is refused,
+    naming the project-file form.

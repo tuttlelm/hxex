@@ -750,6 +750,8 @@ def resume_bootstrap(
     device: str | None = None,
     figures_dir: str | Path | None = None,
     reference: Reference | None = None,
+    add: bool = False,
+    view_exclude: Sequence = (),
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -760,13 +762,27 @@ def resume_bootstrap(
     ``bootstrap`` is given; ``device`` (``'cpu'``, ``'cuda'``, ...) replaces the run's, so a
     bundle fitted on a GPU can be resumed where there is none. The stored spectra, notes and
     review are kept; figures are written as by :func:`run` when the run's settings ask for
-    them, or (with the default plot settings) when ``figures_dir`` is given."""
+    them, or (with the default plot settings) when ``figures_dir`` is given, with
+    ``view_exclude`` (``[[analysis.exclude]]`` rules) treated as rejected in them.
+
+    With ``add`` (and ``bootstrap``, its settings) a complete bundle takes a bootstrap too: one
+    run without a bootstrap gets one, and a bundle that has one has it replaced (more
+    resamples, a fixed-K bootstrap for the analysis); the fits are kept and the bundle's run
+    settings record the new bootstrap."""
     from .io.bundle import open_bundle
 
     path = Path(path)
     with open_bundle(path) as b:
-        if "bootstrap" not in b.pending:
-            raise ValueError(f"{path}: no bootstrap is pending (the bundle is complete)")
+        if "bootstrap" not in b.pending and not add:
+            raise ValueError(f"{path}: no bootstrap is pending (the bundle is complete); to add "
+                             "or redo one, give the project file with its [run.bootstrap] "
+                             "(hxex resume hxex.toml)")
+        if add and bootstrap is None:
+            raise ValueError("adding a bootstrap needs its settings (bootstrap=)")
+        if add and "bootstrap" not in b.pending:
+            had = b.bootstrap() is not None
+            log.info("%s: %s the bootstrap (%d resamples); the fits are kept", path,
+                     "replacing" if had else "adding", bootstrap.n_boot)
         if b.manifest["configs"].get("run") is None:
             raise ValueError(f"{path}: the bundle does not record its run settings")
         config = RunConfig.from_dict(b.manifest["configs"]["run"])
@@ -806,7 +822,7 @@ def resume_bootstrap(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
-        excluded=excluded,
+        excluded=excluded, view_exclude=tuple(view_exclude),
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,

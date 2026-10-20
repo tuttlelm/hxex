@@ -144,6 +144,7 @@ hxex run hxex.toml --spectra old_results     # the same from the raw spectra a b
 hxex info results                            # what the results bundle holds
 hxex report results --figures                # figures (and --tables) from the bundle
 hxex resume results                          # finish a run stopped during its bootstrap
+hxex resume hxex.toml                        # add (or redo) a bootstrap, [run.bootstrap]
 hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,
                                              # populations, comparisons ([analysis])
 hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs (a run column;

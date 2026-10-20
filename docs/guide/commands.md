@@ -59,13 +59,13 @@ Run a project: read, pick, fit, bootstrap, write.
 
 ## hxex resume
 
-Add the bootstrap to a bundle that is waiting for it.
+Finish a bundle's stopped bootstrap, or add one.
 
-`hxex resume BUNDLE [options]`
+`hxex resume BUNDLE|PROJECT [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE` | a results bundle (a folder, or .zip) |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: a bootstrap with its [run.bootstrap] settings is added to its [output] bundle (or replaces the one there), the fits kept |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | also write the tables (default: beside the bundle) |

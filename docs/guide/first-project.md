@@ -209,8 +209,10 @@ Run `hxex check hxex.toml` first whenever you have changed the file.
 
 ## What next
 
-- Better uncertainties: switch on `[run.bootstrap]` in the project file and run again. It takes
-  much longer, but gives the error bars the comparisons need.
+- Better uncertainties: switch on `[run.bootstrap]` in the project file, then run
+  `hxex resume hxex.toml`. It adds the bootstrap to your results without fitting again. It
+  takes much longer than the fit, but gives the error bars the comparisons need. Run it again
+  after changing the bootstrap settings (more resamples, say) to replace the earlier one.
 - Back-exchange correction from your controls: switch on `[run.controls]`. See
   [Controls and times](controls.md).
 - Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding.md).
