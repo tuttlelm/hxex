@@ -37,7 +37,8 @@ FORMATS = ("pdf", "svg", "png")
 
 @dataclass(frozen=True)
 class PlotConfig:
-    """Which figures :func:`write_figures` writes (the ``[run.plots]`` table).
+    """Which figures :func:`write_figures` writes (the ``[figures]`` table of a project file,
+    read by ``hxex report``; a run draws no figures).
 
     - ``series``: ``'flagged'`` (series with a flagged or rejected spectrum, or a control that
       fell back; the default, because a large run has too many series to draw), ``'all'`` or a
@@ -57,6 +58,10 @@ class PlotConfig:
       SVG files.
     - ``overview``: also write the run's overviews (K selection, controls, quality) as
       ``overview``.
+    - ``k``: draw every series at this number of populations (its spectra, populations and
+      uptake pages); None, the default: each spectrum at its own K (the fit's choice, or the
+      review's). A spectrum for which that K was not fitted (the screen skipped it) is left
+      out of the populations and uptake pages, and its panel on the spectra page says so.
     """
 
     series: str | tuple[int, ...] = "flagged"
@@ -69,6 +74,7 @@ class PlotConfig:
     dpi: int = 300
     overview: bool = True
     residual: bool = False
+    k: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.series, str):
@@ -87,6 +93,9 @@ class PlotConfig:
             raise ValueError(f"format must be one of {FORMATS}")
         if self.dpi < 1:
             raise ValueError("dpi must be positive")
+        if self.k is not None and (isinstance(self.k, bool) or int(self.k) != self.k
+                                   or self.k < 1):
+            raise ValueError("k must be a whole number of at least 1 (or unset)")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -132,17 +141,17 @@ def series_figures(
     out: dict[str, Figure] = {}
     for kind in series_kinds(results, data_id, config):
         if kind == "spectra":
-            out[kind] = plot_series_spectra(results, data_id, show=config.show,
+            out[kind] = plot_series_spectra(results, data_id, show=config.show, k=config.k,
                                             corrected=config.corrected,
                                             residual=config.residual and "fit" in config.show
                                             and "picked" in config.show)
         elif kind == "populations":
-            out[kind] = plot_populations(results, data_id, corrected=config.corrected,
-                                         reference=reference)
+            out[kind] = plot_populations(results, data_id, k=config.k,
+                                         corrected=config.corrected, reference=reference)
         else:
             out[kind] = plot_uptake(results, data_id, x=uptake_axis(results, config),
                                     scale=config.scale, corrected=config.corrected,
-                                    reference=reference)
+                                    reference=reference, k=config.k)
     return out
 
 
@@ -156,12 +165,13 @@ def uptake_axis(results: Results, config: PlotConfig) -> str | None:
 
 def series_kinds(results: Results, data_id: int, config: PlotConfig) -> tuple[str, ...]:
     """The kinds of ``config`` drawn for a series: all of them, except the ``populations`` page
-    when every spectrum of the series has one population at the K in effect (a map of one
-    population shows nothing)."""
+    when every spectrum of the series has one population at the K in effect (``config.k``, else
+    each spectrum's own; a map of one population shows nothing)."""
     kinds = config.kinds
     if "populations" in kinds:
         rows = series_rows(results, data_id)
-        if not (results.effective_K[rows] > 1).any():
+        if (config.k == 1 if config.k is not None
+                else not (results.effective_K[rows] > 1).any()):
             kinds = tuple(k for k in kinds if k != "populations")
     return kinds
 
@@ -190,6 +200,9 @@ def write_figures(
     wrote there before are replaced (its listing, :func:`hxex.io.replace_outputs`), never a
     file of your own."""
     directory = Path(directory)
+    if config.k is not None and config.k not in results.fit.k_values:
+        raise ValueError(f"K = {config.k} was not fitted (the run tried K = "
+                         f"{', '.join(str(k) for k in results.fit.k_values)})")
     chosen = select_series(results, config.series)
     stems = figure_stems(results, chosen)
     if chosen and "uptake" in config.kinds and config.x == "time" and \

@@ -3150,3 +3150,27 @@ CSVs or mzML if wanted.
     resolution: two bundles written in the same second would look alike, which a run cannot
     do. Analyses of several runs (`runs_analysis...`) are not checked: they belong to no one
     bundle.
+
+123. **Figures out of the run; `[figures]` and a fixed K for drawing (owner, 2026-10-20).**
+    Asked how a user would choose K without Python, the owner first asked what exists:
+    verified that the run chooses K spectrum by spectrum (criterion over k_min to k_max, no
+    peptide- or residue-level K) and that the analysis ignores that choice (fixed K = 1 and
+    K = 2 fits, one-or-two chosen per residue and time, which in practice needs the fixed-K
+    bootstrap for the K = 2 errors); and that the plot functions already took `k=`, from
+    Python only. The plot settings were `[run.plots]`, honoured only by `hxex run` (and
+    `resume`): `hxex report hxex.toml --figures` read the bundle's recorded plot settings, so an
+    edited `[run.plots]` did nothing until a full refit. Owner: pull figure generation out of
+    the run, for clarity (`hxex run` never draws figures; one more command rather than two ways
+    in). Built: top-level `[figures]` (`PlotConfig`; `Project.figures`), read by `hxex report`
+    given the project file (given a bundle: defaults and options); `RunConfig.plots`,
+    `run(figures_dir=, reference=)`, `resume_bootstrap(figures_dir=, reference=)`,
+    `[output] figures` and `hxex resume --figures` removed; `[run.plots]` and `[output] figures
+    = true`/a folder refused with where things went; `[output] figures = false` (written by
+    every template until now) accepted with an info line; old bundles' `configs.run.plots`
+    ignored when read. `PlotConfig.k` / `hxex report --k`: every series drawn at one K (a K
+    the run did not fit is refused; a spectrum the screen skipped is left out of the
+    populations and uptake pages and labelled on the spectra page); tables and the analysis are
+    unchanged. `RunResult.write_figures` stays for Python. The guide's "Running it all again"
+    is three commands now (run, report, analyse). Choosing K for the run's tables or for the
+    analysis's residue-level choice was discussed and not built (owner to decide after trying
+    `k`). No private project file used `[run.plots]` or asked the run for figures (checked).

@@ -30,7 +30,7 @@ hxex init --format specexport -o hxex.toml   # a project file with every default
 #   edit hxex.toml: the project name, [input] data_dir, [output] bundle
 hxex check hxex.toml                         # what would be read, and any problem
 hxex run hxex.toml                           # read, pick, fit, bootstrap; bundle and tables
-hxex report results --figures                # figures from the bundle
+hxex report hxex.toml --figures              # figures ([figures] in the file)
 hxex analyse hxex.toml                       # post-fitting analysis ([analysis] in the file)
 ```
 
@@ -142,7 +142,7 @@ hxex run hxex.toml                           # read, pick, fit, bootstrap; bundl
 hxex run hxex.toml --keep-previous           # again, keeping the earlier results as results.1
 hxex run hxex.toml --spectra old_results     # the same from the raw spectra a bundle stored
 hxex info results                            # what the results bundle holds
-hxex report results --figures                # figures (and --tables) from the bundle
+hxex report hxex.toml --figures              # figures ([figures]; and --tables)
 hxex resume results                          # finish a run stopped during its bootstrap
 hxex resume hxex.toml                        # add (or redo) a bootstrap, [run.bootstrap]
 hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,

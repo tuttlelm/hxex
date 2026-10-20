@@ -1,8 +1,8 @@
 # Outputs: tables and figures
 
 `hxex run` writes a results **bundle** (`[output] bundle`, such as `results`: a folder, or a `.zip`,
-of Parquet tables with a `manifest.json`), CSV tables beside it (`results_tables`) and, when asked,
-figures (`results_figures`). `hxex report` writes the tables and figures again from a bundle;
+of Parquet tables with a `manifest.json`) and CSV tables beside it (`results_tables`).
+`hxex report` draws the figures (`results_figures`) from the bundle, and writes the tables again;
 `hxex analyse` writes the post-fitting analysis to a folder named after the bundle and the
 reference: `results_analysis_WT` for comparisons with WT (`results_analysis` without a
 reference), so analyses with different references never replace each other.
@@ -27,7 +27,7 @@ my_protein/
 │   ├── uptake.csv
 │   ├── review.csv               (once there are review decisions)
 │   └── hxex_listing.json        the files hxex wrote here
-├── results_figures/             the figures (hxex report --figures, or figures = true)
+├── results_figures/             the figures (hxex report --figures)
 │   ├── overview.pdf
 │   ├── WT_0012_0025_LVPRGS_z_2.pdf    one file per series, named by its label
 │   ├── ...
@@ -79,7 +79,12 @@ elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
 | `uptake.csv` | series, time (or control) and rank | the replicates averaged: `n_replicates`, `mean` (corrected when there are controls), `replicate_sd`, population. Rejected spectra are left out |
 | `review.csv` | reviewed spectrum (only when there are any) | status, the number of populations chosen (`review_K`), note, date, stale, and source: an `exclusion rule` of the project file, or a `review` decision stored in the bundle |
 
-## Figures from `hxex run` and `hxex report --figures`
+## Figures from `hxex report --figures`
+
+`hxex run` draws no figures. `hxex report hxex.toml --figures` draws them from the results,
+with the settings of the `[figures]` part of the project file; changing those settings needs
+no new run, only `hxex report` again. (Given the bundle instead, `hxex report results
+--figures` uses the usual settings and its own options.)
 
 - `overview.pdf`: which K was selected and how often (per time, before and after review); the
   controls (retention against its limits, measured against fallback); the quality flags.
@@ -92,8 +97,22 @@ elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
     default when there are controls. A rejected or excluded spectrum is drawn hollow and grey.
 
 By default only the flagged series get figures (a quality flag, a rejection or a control
-fallback); `[run.plots] series = "all"` or `hxex report --figures --series all` draws them all.
-`format` is `pdf` (pages in one file), `png` or `svg` (one file per page).
+fallback); `series = "all"` in `[figures]`, or `hxex report hxex.toml --figures --series all`,
+draws them all. `format` is `pdf` (pages in one file), `png` or `svg` (one file per page).
+
+Each spectrum is drawn with its own number of populations: the one the fit chose, or the one
+chosen in the review. To see every series at one number of populations instead, for example to
+compare one and two populations side by side, set `k` in `[figures]` (or give `--k`):
+
+```bash
+hxex report hxex.toml --figures --k 1              # every series at one population
+hxex report hxex.toml --figures results_k2 --k 2   # at two, into a folder of its own
+```
+
+`k` must be one of the numbers the run fitted (`k_min` to `k_max`). It changes only the
+figures: the tables and the analysis keep each spectrum's own choice. A spectrum for which that
+number was not fitted (the fit's screen skipped it) is left out of the populations and uptake
+pages, and its panel on the spectra page says so.
 
 ## Quality flags
 

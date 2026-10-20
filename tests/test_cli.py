@@ -91,7 +91,8 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
         ("[run]\nn_max_factor = true\n", "[run] n_max_factor = true: expected a number"),
         ("[run.controls]\nd2o_fraction = false\n",
          "[run.controls] d2o_fraction = false: expected a number (false stands for unset"),
-        ("[run.plots]\nseries = 3\n", "[run.plots] series = 3: expected text or a list"),
+        ("[figures]\nseries = 3\n", "[figures] series = 3: expected text or a list"),
+        ("[figures]\nk = 0\n", "[figures]: k must be a whole number"),
         ("[run]\nbootstrap = 3\n", "[run] bootstrap = 3: expected a table, true or false"),
         ("[run.fit]\nk_min = 0\n", "[run.fit]: need 1 <= k_min"),
         ("[run.bootstrap]\nci = 0.95\n", "[run.bootstrap]: ci is a percentage"),
@@ -143,12 +144,18 @@ def test_project_files_are_checked(tmp_path):
 
     p = project('[input]\nformat = "specexport"\ndata_dir = "d"\n'
                 "[run.bootstrap]\nn_boot = 7\n[run]\nquality = false\nmax_chunk = 5\n"
-                '[run.fit.noise]\nmodel = "poisson"\n[output]\nbundle = "res"\nfigures = "figs"\n')
+                '[run.fit.noise]\nmodel = "poisson"\n[output]\nbundle = "res"\nfigures = false\n'
+                '[figures]\nseries = "all"\nk = 2\n')
     assert p.input.data_dir == tmp_path / "d"
     assert p.run.bootstrap.n_boot == 7 and p.run.bootstrap.n_restarts == 3  # the rest default
     assert p.run.quality is None and p.run.max_chunk == 5
     assert p.run.fit.noise.model == "poisson" and p.run.fit.k_max == 3
-    assert p.output.figures_dir() == tmp_path / "figs" and p.run.plots is not None
+    assert p.figures.series == "all" and p.figures.k == 2  # the old figures = false is fine
+    # the run draws no figures: the settings that asked it to are refused with the way now
+    for moved in ('[output]\nfigures = true\n', '[output]\nfigures = "figs"\n',
+                  '[run.plots]\nseries = "all"\n'):
+        with pytest.raises(ProjectError, match=r"\[figures\] table now.*hxex report"):
+            project('[input]\nformat = "specexport"\ndata_dir = "d"\n' + moved)
     assert p.output.tables_dir() == tmp_path / "res_tables"
     table = project('[input]\nformat = "hxexpress"\ndata_dir = "d"\npeptides = "metadf.csv"\n')
     assert table.input.peptides == tmp_path / "metadf.csv"  # files listed instead of found
@@ -320,7 +327,16 @@ def test_run_info_and_report(tmp_path, capsys):
     assert cli.main(["report", str(tmp_path / "out"), "--tables",
                      str(tmp_path / "out_tables_again")]) == 0
     assert (tmp_path / "out_tables_again" / "series.csv").is_file()
+    # given the project file, hxex report draws with its [figures] settings (no new run)
+    assert not (tmp_path / "out_figures").exists()  # hxex run drew none
+    path.write_text(path.read_text() + '\n[figures]\nseries = "all"\nformat = "svg"\n'
+                    'kinds = ["uptake"]\n')
+    assert cli.main(["-q", "report", str(path), "--figures", "--k", "1"]) == 0
+    assert {p.suffix for p in (tmp_path / "out_figures").iterdir()} == {".svg", ".json"}
+    assert cli.main(["-q", "report", str(path), "--figures", "--k", "4"]) == 1  # not fitted
+    assert "K = 4 was not fitted" in capsys.readouterr().err
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
+    assert "still holds the figures of the results just replaced" in capsys.readouterr().err
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     assert "replaced       " + str(tmp_path / "out") in info and "changed        nothing" in info
@@ -451,12 +467,11 @@ def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
             cancel=lambda: stages[-1:] == ["bootstrap"])
     assert cli.main(["info", str(tmp_path / "b")]) == 0
     assert "pending        bootstrap" in capsys.readouterr().out
-    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables", "--figures"]) == 0
+    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 0
     with open_bundle(tmp_path / "b") as b:
         assert b.pending == [] and b.bootstrap() is not None
-        assert b.manifest["configs"]["run"]["plots"] is None  # the run's record is unchanged
     assert (tmp_path / "b_tables" / "uptake.csv").is_file()
-    assert any((tmp_path / "b_figures").iterdir())  # --figures honoured without run.plots
+    assert not (tmp_path / "b_figures").exists()  # figures come from hxex report
     assert cli.main(["resume", str(tmp_path / "b")]) == 1  # nothing pending any more
 
 
@@ -542,10 +557,10 @@ def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
         assert value is None, path
     # the switches keep an explicit false
     p = project("[run]\ndrop_no_signal = false\nquality = false\n[run.fit]\nnested_init = false\n"
-                "[run.plots]\ncorrected = false\noverview = false\n")
+                "[figures]\ncorrected = false\noverview = false\n")
     assert p.run.drop_no_signal is False and p.run.quality is None
     assert p.run.fit.nested_init is False
-    assert p.run.plots.corrected is False and p.run.plots.overview is False
+    assert p.figures.corrected is False and p.figures.overview is False
     # a fixed noise level: sd set, the default percent removed
     p = project("[run.fit.noise]\nsd = 50.0\npercent = false\n")
     assert p.run.fit.noise.sd == 50.0 and p.run.fit.noise.percent is None
@@ -622,7 +637,7 @@ def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
         run = re.sub(r"^# (\[|[a-z_]+ = )", r"\1", run, flags=re.M)  # every setting on
         assert "(not set)" not in run
         p = project_from(tomllib.loads(head + "# Run settings" + run), tmp_path)
-        assert p.run.bootstrap == BootstrapConfig() and p.run.plots is not None
+        assert p.run.bootstrap == BootstrapConfig() and p.figures.k == 2
         assert p.run.max_chunk is None and p.run.fit.noise.sd is None
         assert p.run.controls.quench is not None and p.run.controls.fd_mode == "kint"
         assert p.run.controls.retention_min is None
@@ -1019,7 +1034,6 @@ time = "60 s"
 precursor_charge = false
 [output]
 bundle = "results"
-figures = true
 [run]
 drop_no_signal = false
 [run.fit.noise]
@@ -1051,7 +1065,7 @@ d2o_fraction = 0.85
 """)
     project = load_project(tmp_path / "rich.toml")
     text, back, manifest = written(project)
-    assert back.run == project.run and back.output.figures == project.output.figures
+    assert back.run == project.run and back.output == project.output
     assert back.input.runs == project.input.runs and back.input.exclude == project.input.exclude
     assert back.input.fragments == project.input.fragments
     assert back.input.scans == project.input.scans and back.input.target == project.input.target

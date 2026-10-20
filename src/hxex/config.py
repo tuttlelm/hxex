@@ -61,7 +61,10 @@ FORMATS = ("specexport", "hxexpress", "pooled", "mzml", "thermo")
 FOLDER_FORMATS = ("specexport", "hxexpress", "pooled")
 SCAN_FORMATS = ("mzml", "thermo")
 # run settings that are None unless the file gives them, and their classes
-_OPTIONAL_SECTIONS = ("bootstrap", "controls", "plots", "quality")
+_OPTIONAL_SECTIONS = ("bootstrap", "controls", "quality")
+# the figures moved out of the run (owner, 2026-10-20): hxex report draws them
+FIGURES_MOVED = ("the figure settings are the [figures] table now, and hxex run draws no "
+                 "figures: hxex report hxex.toml --figures draws them with those settings")
 
 
 class ProjectError(ValueError):
@@ -211,6 +214,8 @@ def run_config_from(data: Mapping) -> RunConfig:
     """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table (``false`` as None
     where a setting admits it; see the module docstring)."""
     merged = RunConfig().to_dict()
+    if "plots" in data:
+        raise ProjectError(f"[run.plots]: {FIGURES_MOVED}. Rename [run.plots] to [figures]")
     if "undeut_time" in data:
         raise ProjectError("[run] undeut_time: the controls are no longer identified by a time; "
                            "the undeuterated controls (the noise references) are the spectra "
@@ -352,25 +357,22 @@ class InputSettings:
 
 @dataclass(frozen=True)
 class OutputSettings:
-    """Where results go (the ``[output]`` table): the bundle, the tables (a directory, or True
-    for the bundle's name plus ``_tables``) and the figures (likewise, ``_figures``). The
-    bundle and these two folders (and their earlier generations, ``name.N``) are hxex's: a
+    """Where results go (the ``[output]`` table): the bundle and the tables (a directory, or
+    True for the bundle's name plus ``_tables``). The bundle and the folders named after it
+    (its tables, figures and analyses, and their earlier generations, ``name.N``) are hxex's: a
     later run replaces them (``overwrite``) or moves them to the next generation first
-    (``keep_previous``); see :func:`hxex.run.run`."""
+    (``keep_previous``); see :func:`hxex.run.run`. A run draws no figures (``hxex report``
+    does, into ``name_figures``)."""
 
     bundle: Path | None = None
     overwrite: bool = False
     keep_previous: bool = False
     keep_spectra: bool = True
     tables: Path | bool = True
-    figures: Path | bool = False
     notes: str = ""
 
     def tables_dir(self) -> Path | None:
         return _beside(self.bundle, self.tables, "_tables")
-
-    def figures_dir(self) -> Path | None:
-        return _beside(self.bundle, self.figures, "_figures")
 
 
 def _beside(bundle: Path | None, value: Path | bool, suffix: str) -> Path | None:
@@ -397,6 +399,7 @@ class Project:
     path: Path | None = None
     threads: int | None = None
     analysis: object = None  # hxex.analysis.AnalysisConfig, or None without an [analysis]
+    figures: object = None  # hxex.report.PlotConfig of the [figures] table (None: defaults)
 
 
 def _path(base: Path, value, where: str) -> Path | None:
@@ -684,6 +687,12 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
 
 
 def _output_from(data: Mapping, base: Path) -> OutputSettings:
+    if "figures" in data:  # every template before the move wrote figures = false
+        if data["figures"] is not False:
+            raise ProjectError(f"[output] figures: {FIGURES_MOVED}. Delete the line")
+        log.info("[output] figures = false is no longer needed (hxex run draws no figures): "
+                 "the line can go")
+        data = {k: v for k, v in data.items() if k != "figures"}
     _check_keys(data, {f.name for f in fields(OutputSettings)}, "[output]")
 
     def where(key, default):
@@ -695,8 +704,7 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
         overwrite=bool(data.get("overwrite", False)),
         keep_previous=bool(data.get("keep_previous", False)),
         keep_spectra=bool(data.get("keep_spectra", True)),
-        tables=where("tables", True), figures=where("figures", False),
-        notes=str(data.get("notes", "")),
+        tables=where("tables", True), notes=str(data.get("notes", "")),
     )
 
 
@@ -711,7 +719,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if spectra is not None:
         data = {**data, "input": {**data.get("input", {}),
                                   "spectra": str(Path(spectra).resolve())}}
-    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis"},
+    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis", "figures"},
                 "the project file")
     only_analysis = analysis_only and "input" not in data and "analysis" in data
     name = data.get("project", "" if only_analysis else None)
@@ -731,10 +739,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if "input" in data:
         inp = _input_from(data["input"], base)
     output = _output_from(data.get("output", {}), base)
-    if output.figures is not False and run.plots is None:  # figures asked for: default plots
-        from .report.figures import PlotConfig
-
-        run = replace(run, plots=PlotConfig())
+    figures = _figures_from(data["figures"]) if "figures" in data else None
     threads = data.get("threads")
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
                                 or threads < 1):
@@ -745,7 +750,21 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
             "with another reference too, run hxex analyse --reference NAME: each reference "
             "gets a folder of its own (results_analysis_NAME)")
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
-    return Project(name, inp, run, output, path, threads, analysis)
+    return Project(name, inp, run, output, path, threads, analysis, figures)
+
+
+def _figures_from(data) -> Any:
+    """The :class:`hxex.report.PlotConfig` of the ``[figures]`` table."""
+    from .report.figures import PlotConfig
+
+    if not isinstance(data, Mapping):
+        raise ProjectError("[figures] must be a table")
+    values = _false_to_none(data, PlotConfig)
+    _check_types(values, PlotConfig, "figures")
+    try:
+        return PlotConfig.from_dict(_merge(PlotConfig().to_dict(), values, "figures"))
+    except (TypeError, ValueError) as exc:
+        raise ProjectError(f"[figures]: {exc}") from exc
 
 
 ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "exclude", "ks", "fasta",
@@ -1237,20 +1256,22 @@ _COMMENTS: dict[str, str] = {
                                  "replicates' mean",
     "run.quality.max_mz_offset_ppm": "mz_shift: a series' m/z offset (ppm) beyond this (false: "
                                      "screen off)",
-    "run.plots.series": '"flagged" (series with a flag, a rejection or a control fallback), '
-                        '"all" or a list of data_id',
-    "run.plots.kinds": "pages of a series' figure: spectra, populations, uptake",
-    "run.plots.show": "layers of the spectra page: raw, picked, fit",
-    "run.plots.x": 'uptake axis: "time" or "index" (unset: "time", or "index" when the '
-                   'times only order the points, input.time_scale = "order")',
-    "run.plots.scale": 'uptake axis: "linear" or "log"',
-    "run.plots.corrected": "draw back-exchange corrected values (unset: when there are "
-                           "controls)",
-    "run.plots.format": '"pdf" (one file per series, a page per kind), "png" or "svg" (one '
-                        "file per kind)",
-    "run.plots.dpi": "resolution of PNG files and of raster images in PDF or SVG",
-    "run.plots.overview": "also the run's overview (K selection, controls, quality flags)",
-    "run.plots.residual": "a residual panel under every spectrum",
+    "figures.series": '"flagged" (series with a flag, a rejection or a control fallback), '
+                      '"all" or a list of data_id',
+    "figures.kinds": "pages of a series' figure: spectra, populations, uptake",
+    "figures.show": "layers of the spectra page: raw, picked, fit",
+    "figures.x": 'uptake axis: "time" or "index" (unset: "time", or "index" when the '
+                 'times only order the points, input.time_scale = "order")',
+    "figures.scale": 'uptake axis: "linear" or "log"',
+    "figures.corrected": "draw back-exchange corrected values (unset: when there are "
+                         "controls)",
+    "figures.format": '"pdf" (one file per series, a page per kind), "png" or "svg" (one '
+                      "file per kind)",
+    "figures.dpi": "resolution of PNG files and of raster images in PDF or SVG",
+    "figures.overview": "also the run's overview (K selection, controls, quality flags)",
+    "figures.residual": "a residual panel under every spectrum",
+    "figures.k": "draw every series at this number of populations (unset: each spectrum at "
+               "its own K, the fit's or the review's choice)",
     "run.envelope.mode": '"theory" (the ion type\'s isotope clusters), "mixed" (ion types a '
                          'hydrogen apart, weights fitted to the undeuterated spectra) or '
                          '"infer" (the undeuterated envelope itself)',
@@ -1265,9 +1286,9 @@ _COMMENTS: dict[str, str] = {
 # comment lines written before a table's header
 _SECTION_COMMENTS: dict[str, str] = {
     "run": "Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The "
-           "bootstrap, the controls and the plots are stages that their table turns on: "
-           "uncomment the commented-out run.bootstrap, run.controls or run.plots table below to "
-           "use it; a stage's \"name = false\" turns it off.",
+           "bootstrap and the controls are stages that their table turns on: uncomment the "
+           "commented-out run.bootstrap or run.controls table below to use it; a stage's "
+           "\"name = false\" turns it off.",
     "run.picker": "Peak picking: the spectra become sticks at the predicted isotope positions "
                   "(hxex.picking.PickerConfig; docs/PEAK_PICKING.md).",
     "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
@@ -1287,7 +1308,8 @@ _SECTION_COMMENTS: dict[str, str] = {
     "run.quality": "Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, "
                    "low_intensity, noise_outlier, mz_shift, poor_envelope. Nothing is dropped; "
                    "the review layer of the bundle takes the decisions.",
-    "run.plots": "Figures written by hxex run and hxex report (hxex.report.PlotConfig).",
+    "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
+               "draws none; hxex.report.PlotConfig). Changing these needs no new run.",
     "run.registry": "Modified residues, written in sequences as modX labels (a lowercase "
                     "prefix plus the residue letter, e.g. acK, pS; a sequence is read residue "
                     "by residue). Each [[run.registry.residues]] adds delta to the base "
@@ -1495,12 +1517,11 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         'bundle = "results"               # name of the folder (or .zip archive) hxex creates',
         "#                                 # for the results: it must not exist yet",
         "overwrite = false                # replace an existing bundle (its review is carried",
-        "#                                 # over) and its tables and figures",
+        "#                                 # over) and its tables",
         "keep_previous = false            # move the existing bundle, tables and figures to",
         "#                                 # the next generation (results.1, ...) first",
         "keep_spectra = true              # store the raw spectra in the bundle",
         "tables = true                    # CSV tables beside the bundle, or a directory",
-        "figures = false                  # figures beside the bundle, or a directory",
         'notes = ""',
         "",
         "# The post-fitting analysis (hxex analyse): uncomment to use. Regions and sites are",
@@ -1599,15 +1620,18 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
                    "pH read, degrees Celsius and D fraction of the quench and LC, for "
                    'fd_fallback "kint" (false: none)'),
     }
-    plot_axis = {"x": ('"time"', _COMMENTS["run.plots.x"])}
     for key, value in run.items():
         if key in _OPTIONAL_SECTIONS and value is None:
             lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
                                         cls=_section_class(key),
-                                        notes={"controls": control_times,
-                                               "plots": plot_axis}.get(key))
+                                        notes={"controls": control_times}.get(key))
         elif isinstance(value, Mapping):
             lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
+    from .report.figures import PlotConfig
+
+    lines += [""] + _toml_table("figures", PlotConfig().to_dict(), cls=PlotConfig,
+                                notes={"x": ('"time"', _COMMENTS["figures.x"]),
+                                       "k": ("2", _COMMENTS["figures.k"])})
     return "\n".join(lines) + "\n"
 
 
@@ -1694,8 +1718,7 @@ def project_record(project: Project) -> dict[str, Any]:
         "input": None if inp is None else _input_record(inp, mode),
         "output": {"bundle": _recorded(out.bundle, mode), "overwrite": out.overwrite,
                    "keep_previous": out.keep_previous, "keep_spectra": out.keep_spectra,
-                   "tables": folder(out.tables), "figures": folder(out.figures),
-                   "notes": out.notes},
+                   "tables": folder(out.tables), "notes": out.notes},
     }
 
 
@@ -1768,7 +1791,7 @@ def run_settings_text(manifest: Mapping) -> str:
         table = _toml_table("run", _falsified(data, defaults), cls=RunConfig)
         intro = textwrap.wrap(  # the template's says how to turn the stages on
             "Run settings (hxex.run.RunConfig); times are in s. A stage written \"name = "
-            "false\" (bootstrap, controls, plots, quality) was off.", _LINE_WIDTH,
+            "false\" (bootstrap, controls, quality) was off.", _LINE_WIDTH,
             initial_indent="# ", subsequent_indent="# ")
         lines += [""] + intro + table[len(_section_comment("run")):]
     return "\n".join(lines) + "\n"

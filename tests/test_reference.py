@@ -34,7 +34,7 @@ def test_the_reference_lists_the_tables_a_project_file_accepts():
     names = {t.name for t in _reference.tables()}
     assert {"", "input", "input.runs", "input.fragments", "input.scans", "input.target",
             "output", "run", "run.picker", "run.fit", "run.fit.noise", "run.bootstrap",
-            "run.controls", "run.quality", "run.plots", "run.envelope", "analysis",
+            "run.controls", "run.quality", "figures", "run.envelope", "analysis",
             "analysis.fragments", "analysis.labelling"} <= names
     keys = {s.key for t in _reference.tables() if t.name == "run.controls" for s in t.settings}
     assert {"d2o_fraction", "undeut_at", "fulldeut_at", "quench"} <= keys

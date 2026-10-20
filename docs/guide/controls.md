@@ -111,7 +111,7 @@ time_scale = "order"
 ```
 
 The numbers are still read and stored as given, but *hxex* never treats them as seconds: the
-uptake is drawn by index whatever `[run.plots] x` says (with a warning when it says
+uptake is drawn by index whatever `[figures] x` says (with a warning when it says
 `"time"`), figures and file names label the points by their number (`point 2`,
 `profile_WT_2.png`), and the analyses that need real times, the fragment ladder kinetics and
 the protection factors, refuse with a message that names the setting. The scale is recorded

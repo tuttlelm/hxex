@@ -149,6 +149,11 @@ Design decisions:
   plots from those objects only**, so a fresh fit and a loaded bundle give identical plots.
   Round-trip tests: fit, save, load and plot must reproduce the direct plot's data exactly.
 - Only bundles written by the new package need to be readable at first.
+- **Figures are drawn from the bundle only (owner, 2026-10-20):** `hxex run` writes the bundle
+  and tables and draws no figures; `hxex report` draws them, with the project file's
+  `[figures]` table (`PlotConfig`, top level, not part of the run settings), so changing a
+  figure setting never needs a new run. `[figures] k` (or `--k`) draws every series at one
+  number of populations; it changes no table or decision (HISTORY item 123).
 - **Raw spectrum storage (confirmed):** in memory, a lightweight spectrum set of flat NumPy
   arrays (m/z, intensity) with an offsets array and a small typed index, and no pandas
   DataFrames in the core. On disk, Parquet (zstd) with **one row per spectrum and list
@@ -192,7 +197,7 @@ without deleting anything and without Python, both before fitting and after it. 
   (`excluded`); `hxex info` shows them. Removing a rule and rerunning (`--spectra`) fits them.
   Every format; it applies to stored spectra too.
 - **Analysis level** (`[[analysis.exclude]]`): the fits stay in the bundle; `hxex analyse`, and
-  `hxex run` and `hxex report` for their tables and figures, treat the matched spectra as
+  `hxex run` (its tables) and `hxex report` (tables and figures), treat the matched spectra as
   rejected. They are applied in memory as rejections added to the review layer (note
   "excluded by [[analysis.exclude]]: ..."), never written into the bundle, so every consumer of
   the review honours them and changing the rules needs only a rerun of the command.

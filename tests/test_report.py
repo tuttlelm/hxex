@@ -3,6 +3,7 @@
 and a loaded bundle plots exactly like the run that wrote it."""
 
 import csv
+import dataclasses
 import logging
 
 import numpy as np
@@ -395,24 +396,29 @@ def test_plot_config_checks_and_round_trips():
         PlotConfig.from_dict({"bogus": 1})
 
 
-def test_a_run_writes_figures_when_asked(tmp_path):
-    raw = raw_spectra(n_series=2)
-    plots = PlotConfig(series="all", kinds=("uptake", "populations"))
-    cfg = config(bootstrap=None, plots=plots)
-    run(raw, cfg, out=tmp_path / "bundle")
-    series_pdfs = [p for p in (tmp_path / "bundle_figures").glob("*.pdf") if p.stem != "overview"]
-    assert len(series_pdfs) == 2
-    assert (tmp_path / "bundle_figures" / "overview.pdf").exists()
-    run(raw, cfg, figures_dir=tmp_path / "elsewhere")
-    assert len([p for p in (tmp_path / "elsewhere").glob("*.pdf") if p.stem != "overview"]) == 2
-    with pytest.raises(ValueError, match="figures_dir or out"):
-        run(raw, cfg)  # nowhere to write: refused before any work
-    none = run(raw, config(bootstrap=None), out=tmp_path / "plain")
-    assert not (tmp_path / "plain_figures").exists() and none.config.plots is None
+def test_a_run_draws_no_figures_and_its_results_draw_them(tmp_path):
+    """A run writes the bundle only; its figures come from RunResult.write_figures (hxex
+    report), at each spectrum's own K or, with k, at one K for every series."""
     from hxex.run import RunConfig
-    assert RunConfig.from_dict(cfg.to_dict()) == cfg
+
+    raw = raw_spectra(n_series=2)
+    cfg = config(bootstrap=None)
+    result = run(raw, cfg, out=tmp_path / "bundle")
+    assert not (tmp_path / "bundle_figures").exists()
+    plots = PlotConfig(series="all", kinds=("uptake", "populations"))
+    result.write_figures(tmp_path / "f", plots=plots)
+    assert len([p for p in (tmp_path / "f").glob("*.pdf") if p.stem != "overview"]) == 2
+    assert (tmp_path / "f" / "overview.pdf").exists()
+    at_one = dataclasses.replace(plots, k=1)
+    assert result.write_figures(tmp_path / "k1", plots=at_one)
+    with pytest.raises(ValueError, match="K = 9 was not fitted"):
+        result.write_figures(tmp_path / "k9", plots=dataclasses.replace(plots, k=9))
+    with pytest.raises(ValueError, match="k must be a whole number"):
+        PlotConfig(k=0)
+    # the plot settings a bundle recorded before the run stopped drawing figures are ignored
+    assert RunConfig.from_dict({**cfg.to_dict(), "plots": {"series": "all"}}) == cfg
     with open_bundle(tmp_path / "bundle") as b:
-        assert b.manifest["configs"]["run"]["plots"]["kinds"] == ["uptake", "populations"]
+        assert "plots" not in b.manifest["configs"]["run"]
 
 
 def test_grid_layout_wraps_a_single_replicate_time_course():

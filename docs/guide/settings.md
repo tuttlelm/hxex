@@ -25,7 +25,6 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[run.bootstrap]`](#runbootstrap)
 - [`[run.controls]`](#runcontrols)
 - [`[run.quality]`](#runquality)
-- [`[run.plots]`](#runplots)
 - [`[run.registry]`](#runregistry)
 - [`[[run.registry.residues]]`](#runregistryresidues)
 - [`[run.envelope]`](#runenvelope)
@@ -42,6 +41,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[[analysis.exclude]]`](#analysisexclude)
 - [`[analysis.fragments.exchange]`](#analysisfragmentsexchange)
 - [`[analysis.labelling]`](#analysislabelling)
+- [`[figures]`](#figures)
 
 ## Top level
 
@@ -171,16 +171,15 @@ Where results go. The bundle and the folders named after it (<bundle>_tables, <b
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `bundle` | path | unset | name of the folder (or .zip archive, a name ending in .zip) that `hxex run` creates for the results (the bundle); it must not exist yet unless overwrite or keep_previous is set |
-| `overwrite` | true/false | `false` | replace an existing bundle (its review is carried over) and its tables and figures |
+| `overwrite` | true/false | `false` | replace an existing bundle (its review is carried over) and its tables (its figures and analyses stay until redrawn) |
 | `keep_previous` | true/false | `false` | move the existing bundle, tables and figures to the next generation (results.1, ...) first |
 | `keep_spectra` | true/false | `true` | store the raw spectra in the bundle (needed to rerun from it) |
 | `tables` | path or true/false | `true` | CSV tables: true beside the bundle (<bundle>_tables), a directory, or false |
-| `figures` | path or true/false | `false` | figures: true beside the bundle (<bundle>_figures), a directory, or false |
 | `notes` | text | `""` | free text kept in the bundle's manifest |
 
 ## `[run]`
 
-Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The bootstrap, the controls and the plots are stages that their table turns on: uncomment the commented-out run.bootstrap, run.controls or run.plots table below to use it; a stage's "name = false" turns it off.
+Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The bootstrap and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap or run.controls table below to use it; a stage's "name = false" turns it off.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -314,23 +313,6 @@ Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_inte
 | `min_series_fits` | integer | `5` | poor_fit: fewest fitted spectra in a series to judge |
 | `min_intensity` | number | `0.3` | low_intensity: total intensity below this share of the other replicates' mean |
 | `max_mz_offset_ppm` | number | `15.0` | mz_shift: a series' m/z offset (ppm) beyond this (false: screen off) |
-
-## `[run.plots]`
-
-Figures written by hxex run and hxex report (hxex.report.PlotConfig).
-
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `series` | text or list | `"flagged"` | "flagged" (series with a flag, a rejection or a control fallback), "all" or a list of data_id |
-| `kinds` | list | `["spectra", "populations", "uptake"]` | pages of a series' figure: spectra, populations, uptake |
-| `show` | list | `["raw", "picked", "fit"]` | layers of the spectra page: raw, picked, fit |
-| `x` | text | unset | uptake axis: "time" or "index" (unset: "time", or "index" when the times only order the points, input.time_scale = "order") |
-| `scale` | text | `"linear"` | uptake axis: "linear" or "log" |
-| `corrected` | true/false | unset | draw back-exchange corrected values (unset: when there are controls) |
-| `format` | text | `"pdf"` | "pdf" (one file per series, a page per kind), "png" or "svg" (one file per kind) |
-| `dpi` | integer | `300` | resolution of PNG files and of raster images in PDF or SVG |
-| `overview` | true/false | `true` | also the run's overview (K selection, controls, quality flags) |
-| `residual` | true/false | `false` | a residual panel under every spectrum |
 
 ## `[run.registry]`
 
@@ -500,3 +482,21 @@ The labelling solvent of the peptide protection factors, for every sample, or on
 | `reference` | text | `"PDLA"` | intrinsic-rate set: "PDLA" (poly-DL-alanine) or "3Ala" |
 | `factors` | table | {} | log10 Bai factors [AL, AR, BL, BR] for modified residues (label = list), replacing those of their standard residue |
 | `initial_fraction` | number | unset | back-exchange only: the D fraction the amides began with (above d2o_fraction: fD falls with time); leave it out for labelling |
+
+## `[figures]`
+
+Figures, drawn by hxex report hxex.toml --figures from the results (hxex run draws none; hxex.report.PlotConfig). Changing these needs no new run. See [Outputs](outputs.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `series` | text or list | `"flagged"` | "flagged" (series with a flag, a rejection or a control fallback), "all" or a list of data_id |
+| `kinds` | list | `["spectra", "populations", "uptake"]` | pages of a series' figure: spectra, populations, uptake |
+| `show` | list | `["raw", "picked", "fit"]` | layers of the spectra page: raw, picked, fit |
+| `x` | text | unset | uptake axis: "time" or "index" (unset: "time", or "index" when the times only order the points, input.time_scale = "order") |
+| `scale` | text | `"linear"` | uptake axis: "linear" or "log" |
+| `corrected` | true/false | unset | draw back-exchange corrected values (unset: when there are controls) |
+| `format` | text | `"pdf"` | "pdf" (one file per series, a page per kind), "png" or "svg" (one file per kind) |
+| `dpi` | integer | `300` | resolution of PNG files and of raster images in PDF or SVG |
+| `overview` | true/false | `true` | also the run's overview (K selection, controls, quality flags) |
+| `residual` | true/false | `false` | a residual panel under every spectrum |
+| `k` | integer | unset | draw every series at this number of populations (unset: each spectrum at its own K, the fit's or the review's choice) |

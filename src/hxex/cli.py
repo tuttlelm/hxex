@@ -66,12 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
     _spectra_option(p)
 
-    p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write")
+    p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write the "
+                                   "bundle and tables (figures: hxex report)")
     p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true",
-                   help="replace an existing bundle (and its tables and figures), carrying "
-                        "its review over")
+                   help="replace an existing bundle (and its tables), carrying its review "
+                        "over")
     p.add_argument("--keep-previous", action="store_true",
                    help="move an existing bundle (with its tables and figures) to the next "
                         "generation, NAME.N, before writing")
@@ -88,20 +89,23 @@ def build_parser() -> argparse.ArgumentParser:
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="also write the tables (default: beside the bundle)")
-    p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
-                   help="also write the figures (default: beside the bundle)")
 
-    p = sub.add_parser("report", help="write tables and figures from a saved bundle")
+    p = sub.add_parser("report", help="draw the figures, and write the tables again, from a "
+                                      "bundle; fits nothing")
     p.add_argument("bundle", metavar="BUNDLE|PROJECT",
                    help="a results bundle (a folder, or .zip), or a project file: its [output] "
-                        "bundle, with its [[analysis.exclude]] rules applied")
+                        "bundle, with its [[analysis.exclude]] rules applied and its [figures] "
+                        "settings")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the tables (default: beside the bundle)")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the figures (default: beside the bundle)")
     p.add_argument("--series", choices=("flagged", "all"),
-                   help="which series to draw (default: the run's plot setting, else flagged)")
+                   help="which series to draw (default: [figures] series, else flagged)")
+    p.add_argument("--k", type=int, metavar="K",
+                   help="draw every series at this number of populations (default: [figures] "
+                        "k, else each spectrum's own)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
 
@@ -484,11 +488,9 @@ def cmd_run(args) -> int:
                   "(%s.N), or write to another output.bundle (the bundle and the folders "
                   "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
-    if keep_previous and bundle.exists():
-        for key, value in (("tables", out.tables), ("figures", out.figures)):
-            if isinstance(value, Path):
-                log.info("output.%s %s is a directory of its own: not moved with the previous "
-                         "bundle (its hxex files are replaced)", key, value)
+    if keep_previous and bundle.exists() and isinstance(out.tables, Path):
+        log.info("output.tables %s is a directory of its own: not moved with the previous "
+                 "bundle (its hxex files are replaced)", out.tables)
     config = project.run
     if args.device:
         b = config.fit.backend
@@ -506,8 +508,6 @@ def cmd_run(args) -> int:
         result = run(
             spectra, config, out=bundle, project=project.project, notes=out.notes,
             overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
-            figures_dir=_beside(bundle, out.figures, "_figures")
-            if out.figures is not False else None,
             exclude=project.input.exclude, view_exclude=_view_exclude(project),
             project_file=project_record(dataclasses.replace(
                 project, threads=threads, output=dataclasses.replace(
@@ -521,11 +521,13 @@ def cmd_run(args) -> int:
 
         write_tables(exclude_from_results(Results.from_run(result), _view_exclude(project)),
                      tables)
-    _summary(result.fit, bundle, tables=tables,
-             figures=_beside(bundle, out.figures, "_figures") if out.figures is not False
-             else None)
+    _summary(result.fit, bundle, tables=tables)
     from .io.bundle import analysis_folders
 
+    figures = bundle.with_name(bundle.name + "_figures")
+    if overwrite and figures.is_dir():
+        log.warning("%s still holds the figures of the results just replaced: run 'hxex "
+                    "report %s --figures' to draw them again", figures, args.project_file)
     for analysis in analysis_folders(bundle) if overwrite else ():
         log.warning("%s still holds the analysis of the results just replaced: run "
                     "'hxex analyse' again to bring it up to date", analysis)
@@ -537,16 +539,13 @@ def _view_exclude(project) -> tuple:
     return tuple(project.analysis.exclude) if project.analysis is not None else ()
 
 
-def _summary(fit, bundle: Path, *, tables: Path | None = None,
-             figures: Path | None = None) -> None:
+def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
     ks = Counter(int(k) for k in fit.selected_K)
     _say(f"{len(fit)} measurements; selected K: "
          + ", ".join(f"{k}: {n}" for k, n in sorted(ks.items())))
     _say(f"bundle: {bundle}")
     if tables is not None:
         _say(f"tables: {tables}")
-    if figures is not None:
-        _say(f"figures: {figures}")
 
 
 def cmd_resume(args) -> int:
@@ -554,7 +553,7 @@ def cmd_resume(args) -> int:
     from .run import resume_bootstrap
 
     bundle, extra = Path(args.bundle), {}
-    tables_arg, figures_arg, threads = args.tables, args.figures, args.threads
+    tables_arg, threads = args.tables, args.threads
     rules: tuple = ()
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
         from .config import load_project
@@ -571,13 +570,12 @@ def cmd_resume(args) -> int:
         extra = {"bootstrap": project.run.bootstrap, "add": True, "view_exclude": rules}
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
-        figures_arg = figures_arg if figures_arg is not None else (out.figures or None)
         threads = threads if threads is not None else project.threads
     stop = _Stop()
     with stop.installed(), _threads(threads):
         result = resume_bootstrap(
-            bundle, device=args.device, figures_dir=_beside(bundle, figures_arg, "_figures"),
-            progress=ProgressLog(interval=args.progress_every), cancel=stop, **extra)
+            bundle, device=args.device, progress=ProgressLog(interval=args.progress_every),
+            cancel=stop, **extra)
     tables = _beside(bundle, tables_arg, "_tables")
     if tables is not None:
         from .exclusions import exclude_from_results
@@ -597,8 +595,8 @@ def cmd_report(args) -> int:
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
 
-    bundle, rules = Path(args.bundle), ()
-    if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle and rules
+    bundle, rules, plots = Path(args.bundle), (), PlotConfig()
+    if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle, rules, figures
         from .config import load_project
 
         project = load_project(bundle, analysis_only=True)
@@ -606,6 +604,7 @@ def cmd_report(args) -> int:
             log.error("%s names no [output] bundle to report on", bundle)
             return EXIT_ERROR
         bundle, rules = project.output.bundle, _view_exclude(project)
+        plots = project.figures or plots
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
     if tables is None and figures is None:
@@ -622,8 +621,8 @@ def cmd_report(args) -> int:
             written = write_tables(results, tables)
             _say(f"{len(written)} table(s) in {tables}")
         if figures is not None:
-            run = b.manifest["configs"].get("run") or {}
-            plots = PlotConfig.from_dict(run["plots"]) if run.get("plots") else PlotConfig()
+            if args.k is not None:
+                plots = dataclasses.replace(plots, k=args.k)
             if args.series:
                 plots = dataclasses.replace(plots, series=args.series)
             if args.fig_format:

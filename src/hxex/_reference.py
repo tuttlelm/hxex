@@ -152,13 +152,12 @@ _DESCRIPTIONS: dict[str, str] = {
                      "creates for the results (the bundle); it must not exist yet unless "
                      "overwrite or keep_previous is set",
     "output.overwrite": "replace an existing bundle (its review is carried over) and its tables "
-                        "and figures",
+                        "(its figures and analyses stay until redrawn)",
     "output.keep_previous": "move the existing bundle, tables and figures to the next "
                             "generation (results.1, ...) first",
     "output.keep_spectra": "store the raw spectra in the bundle (needed to rerun from it)",
     "output.tables": "CSV tables: true beside the bundle (<bundle>_tables), a directory, or "
                      "false",
-    "output.figures": "figures: true beside the bundle (<bundle>_figures), a directory, or false",
     "output.notes": "free text kept in the bundle's manifest",
     "analysis.reference": "the sample the others are compared with (empty: no comparisons); "
                           '`"run:sample"` names one run\'s sample',
@@ -498,6 +497,10 @@ def tables() -> list[Table]:
     out.append(Table("analysis.exclude", True, _RULE, _INTROS["analysis.exclude"]))
     for name in ("analysis.fragments.exchange", "analysis.labelling"):
         out.append(Table(name, False, _settings(ExchangeConditions, name), _INTROS[name]))
+    from .report.figures import PlotConfig
+
+    out.append(Table("figures", False, _settings(PlotConfig, "figures"),
+                     _SECTION_COMMENTS["figures"] + " See [Outputs](outputs.md)."))
     return out
 
 

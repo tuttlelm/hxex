@@ -161,12 +161,14 @@ When it has finished, the project folder holds:
 ## Step 7: look at the figures
 
 ```bash
-hxex report results --figures
+hxex report hxex.toml --figures
 ```
 
 This draws the figures into `results_figures`: an overview, and for each peptide that needs a
 look (a poor fit, a missing control) its spectra and uptake. To draw every peptide, add
-`--series all`. Open the `.pdf` files as usual.
+`--series all`, or set `series = "all"` in the `[figures]` part near the end of `hxex.toml`.
+Open the `.pdf` files as usual. `hxex run` never draws figures, so changing how they look needs
+only this command again, not a new run.
 
 ## Step 8: compare samples
 
@@ -207,16 +209,20 @@ below), so keep files of your own elsewhere. [Outputs](outputs.md) lists what is
 ## Running it all again
 
 Once `hxex.toml` holds everything (the input, the `[analysis]` settings, and any other changes),
-the whole analysis takes two commands, not one per step:
+the whole analysis takes three commands, one for each kind of result:
 
 ```bash
 hxex run hxex.toml --overwrite
+hxex report hxex.toml --figures
 hxex analyse hxex.toml
 ```
 
-- `hxex run` does steps 6 and 7 together if you set `figures = true` under `[output]` in
-  `hxex.toml`: it then draws the figures as well. Left at `false`, run step 7 separately.
-- `hxex run` never does step 8: the analysis always needs `hxex analyse` afterwards.
+- `hxex run` fits and writes the results and their tables (step 6), `hxex report` draws the
+  figures (step 7), and `hxex analyse` makes the analysis (step 8). Each reads `hxex.toml`.
+  [What each one does](project-file.md#run-report-and-analyse-what-each-one-does) sets the
+  three side by side.
+- After changing only the `[figures]` settings, run only `hxex report`; after changing only
+  the `[analysis]` settings, only `hxex analyse`. Neither fits anything again.
 - `--overwrite` replaces the earlier results. Without it, `hxex run` stops because `results`
   already exists; use `--keep-previous` instead to keep the earlier results as `results.1`.
 - `hxex analyse` replaces the files of the earlier analysis with the same reference, in

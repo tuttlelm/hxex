@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 UNITS = 1000  # the ``total`` of the progress hook
-_FINISH = 10  # the last units: controls, quality flags, writing, figures
+_FINISH = 10  # the last units: controls, quality flags, writing
 CPU_BUDGET = 4 * 2**30  # bytes per chunk on the CPU unless set
 GPU_SHARE = 0.5  # share of the free GPU memory used by one chunk unless set
 # memory of the fit (the bootstrap needs less) in units of one pmf array (shape points x bins x
@@ -96,7 +96,6 @@ class RunConfig:
       measured deuterons. The controls are the K=1 fits, made for the control spectra whatever
       ``fit.k_min`` is (:func:`hxex.fit.fit_models`).
     - ``quality``: the quality flags (:class:`~hxex.quality.QualityConfig`); None: none.
-    - ``plots``: the figures the run writes (:class:`~hxex.report.PlotConfig`); None: none.
     - ``registry``: the modified residues a sequence may name, as modX labels
       (:class:`~hxex.chem.ModificationRegistry`).
     - ``envelope``: the isotope envelope that places the bins and shapes the fit
@@ -117,7 +116,6 @@ class RunConfig:
     bootstrap: BootstrapConfig | None = None
     controls: ControlConfig | None = None
     quality: QualityConfig | None = QualityConfig()  # noqa: RUF009
-    plots: PlotConfig | None = None
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
     envelope: EnvelopeConfig = EnvelopeConfig()  # noqa: RUF009
     envelope_fallback_time: float | None = None
@@ -153,18 +151,17 @@ class RunConfig:
                              "controls (the noise references) are the spectra with the role "
                              "undeut, set by the formats' control labels or role in "
                              "[[input.runs]]")
+        unknown.discard("plots")  # bundles from before the run stopped drawing figures
         if unknown:
             raise ValueError(f"unknown run setting(s): {', '.join(sorted(unknown))}")
-        from .report.figures import PlotConfig
-
         parts = {
-            "plots": PlotConfig, "picker": PickerConfig, "fit": FitConfig,
+            "picker": PickerConfig, "fit": FitConfig,
             "bootstrap": BootstrapConfig, "controls": ControlConfig, "quality": QualityConfig,
             "registry": chem.ModificationRegistry, "envelope": EnvelopeConfig,
         }
         kwargs = {
             k: (parts[k].from_dict(v) if k in parts and v is not None else v)
-            for k, v in data.items()
+            for k, v in data.items() if k != "plots"
         }
         return cls(**kwargs)
 
@@ -210,9 +207,9 @@ class RunResult:
         cancel: CancelHook | None = None,
         plots: PlotConfig | None = None,
     ) -> list[Path]:
-        """Write the series figures described by ``plots`` (default: ``config.plots``, or the
-        default settings if that is None) with the run's review applied; ``spectra`` adds the
-        raw layer. Returns the files."""
+        """Write the series figures described by ``plots`` (default: the default settings) with
+        the run's review applied; ``spectra`` adds the raw layer. Returns the files. (A run
+        draws no figures itself; this is the run's equivalent of ``hxex report --figures``.)"""
         from .exclusions import exclude_from_results
         from .report import Results
         from .report.figures import PlotConfig, write_figures
@@ -220,7 +217,7 @@ class RunResult:
         return write_figures(
             exclude_from_results(Results.from_run(self, spectra=spectra), self.view_exclude),
             directory,
-            plots or self.config.plots or PlotConfig(),
+            plots or PlotConfig(),
             reference=reference, progress=progress, cancel=cancel,
         )
 
@@ -507,8 +504,6 @@ def run(
     overwrite: bool = False,
     keep_previous: bool = False,
     keep_spectra: bool = True,
-    figures_dir: str | Path | None = None,
-    reference: Reference | None = None,
     exclude: Sequence = (),
     view_exclude: Sequence = (),
     project_file: Mapping | None = None,
@@ -520,8 +515,8 @@ def run(
     ``exclude`` (:class:`hxex.exclusions.Exclusion` rules, ``[[input.exclude]]``) leaves the
     spectra it matches out before anything else: they are stored with the raw spectra but not
     picked or fitted, and the bundle records the rules and the spectra they left out.
-    ``view_exclude`` (``[[analysis.exclude]]``) treats its spectra as rejected in the run's
-    figures (in memory; the fits are kept).
+    ``view_exclude`` (``[[analysis.exclude]]``) treats its spectra as rejected in the figures
+    of :meth:`RunResult.write_figures` (in memory; the fits are kept). A run draws no figures.
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
     recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
@@ -533,18 +528,12 @@ def run(
     generation (``name.N``, with its ``name_tables`` and ``name_figures`` folders; see
     :func:`hxex.io.keep_previous`) just before the new bundle is written. Either way the new
     manifest records what was replaced, what changed and the review carried (its
-    ``provenance``). With ``config.plots`` the series figures are written to ``figures_dir``
-    (default: ``out`` with ``_figures`` added to its name); ``reference`` adds known
-    populations to them. ``project_file`` (:func:`hxex.config.project_record`) records the
+    ``provenance``). ``project_file`` (:func:`hxex.config.project_record`) records the
     project file's other settings in the bundle, beside the run settings. Raises ValueError if
     nothing is left.
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
-    if config.plots is not None and figures_dir is None:
-        if out is None:
-            raise ValueError("config.plots needs figures_dir or out to say where to write")
-        figures_dir = Path(out).with_name(Path(out).name + "_figures")
     data = with_control_roles(data, config)
     stored = data if isinstance(data, SpectrumSet) else None  # every spectrum, for the bundle
     excluded = None
@@ -674,8 +663,8 @@ def run(
         raise
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
-                   overwrite=overwrite, figures_dir=figures_dir, raw=raw, reference=reference,
-                   progress=progress, cancel=cancel, review=review, provenance=provenance)
+                   overwrite=overwrite, progress=progress, cancel=cancel, review=review,
+                   provenance=provenance)
 
 
 def _previous(out, replace: bool):
@@ -728,22 +717,16 @@ def _check_stored_windows(source: Mapping, config: RunConfig) -> None:
                     len(outside), outside[0])
 
 
-def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, figures_dir, raw,
-            reference, progress, cancel, review=None, plots=None, provenance=None) -> RunResult:
-    """Write the bundle (if ``out``) and the figures (if the run asks for them, or ``plots``
-    is given), both with the carried-over ``review`` (kept on the result); ``provenance`` is
-    recorded in the bundle."""
+def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, progress, cancel,
+            review=None, provenance=None) -> RunResult:
+    """Write the bundle (if ``out``) with the carried-over ``review`` (kept on the result);
+    ``provenance`` is recorded in the bundle."""
     result = dataclasses.replace(result, review=review)
     if out is not None:
         check_cancel(cancel)
         start_stage(progress, "write", UNITS - _FINISH, UNITS)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
                      review=review, provenance=provenance)
-    if result.config.plots is not None or plots is not None:
-        check_cancel(cancel)
-        start_stage(progress, "figures", UNITS - _FINISH, UNITS)
-        result.write_figures(figures_dir, spectra=raw, reference=reference, cancel=cancel,
-                             plots=plots)
     report(progress, UNITS, UNITS)
     return result
 
@@ -753,8 +736,6 @@ def resume_bootstrap(
     *,
     bootstrap: BootstrapConfig | None = None,
     device: str | None = None,
-    figures_dir: str | Path | None = None,
-    reference: Reference | None = None,
     add: bool = False,
     view_exclude: Sequence = (),
     progress: ProgressHook | None = None,
@@ -766,9 +747,8 @@ def resume_bootstrap(
     (each measurement is seeded from its own id). The bootstrap settings are the run's unless
     ``bootstrap`` is given; ``device`` (``'cpu'``, ``'cuda'``, ...) replaces the run's, so a
     bundle fitted on a GPU can be resumed where there is none. The stored spectra, notes and
-    review are kept; figures are written as by :func:`run` when the run's settings ask for
-    them, or (with the default plot settings) when ``figures_dir`` is given, with
-    ``view_exclude`` (``[[analysis.exclude]]`` rules) treated as rejected in them.
+    review are kept. No figures are drawn; ``view_exclude`` (``[[analysis.exclude]]`` rules) is
+    kept on the result for :meth:`RunResult.write_figures`.
 
     With ``add`` (and ``bootstrap``, its settings) a complete bundle takes a bootstrap too: one
     run without a bootstrap gets one, and a bundle that has one has it replaced (more
@@ -810,13 +790,6 @@ def resume_bootstrap(
         provenance = b.manifest.get("provenance")
         excluded = b.manifest.get("excluded")
         project_file = b.manifest["configs"].get("project_file")
-    plots = None
-    if config.plots is not None and figures_dir is None:
-        figures_dir = path.with_name(path.name + "_figures")
-    elif config.plots is None and figures_dir is not None:
-        from .report.figures import PlotConfig
-
-        plots = PlotConfig()  # asked for figures the run did not: the defaults
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
                       np.where(~kept, "no_signal", "")).astype(str)
@@ -831,5 +804,4 @@ def resume_bootstrap(
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_file,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
-                   figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,
-                   cancel=cancel, review=review, plots=plots, provenance=provenance)
+                   progress=progress, cancel=cancel, review=review, provenance=provenance)

@@ -43,7 +43,7 @@ Check a project file and show what would be read.
 
 ## hxex run
 
-Run a project: read, pick, fit, bootstrap, write.
+Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures: hxex report).
 
 `hxex run PROJECT [options]`
 
@@ -51,7 +51,7 @@ Run a project: read, pick, fit, bootstrap, write.
 |---|---|
 | `PROJECT` | the project file (TOML) |
 | `--bundle` `BUNDLE` | the results bundle (instead of output.bundle) |
-| `--overwrite` | replace an existing bundle (and its tables and figures), carrying its review over |
+| `--overwrite` | replace an existing bundle (and its tables), carrying its review over |
 | `--keep-previous` | move an existing bundle (with its tables and figures) to the next generation, NAME.N, before writing |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of run.fit.backend) |
 | `--spectra` `PATH` | take the raw spectra stored in this bundle (or spectra file) instead of reading the input (as input.spectra) |
@@ -69,21 +69,21 @@ Finish a bundle's stopped bootstrap, or add one.
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | also write the tables (default: beside the bundle) |
-| `--figures` `[DIR]` | also write the figures (default: beside the bundle) |
 
 ## hxex report
 
-Write tables and figures from a saved bundle.
+Draw the figures, and write the tables again, from a bundle; fits nothing.
 
 `hxex report BUNDLE|PROJECT [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [[analysis.exclude]] rules applied |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [[analysis.exclude]] rules applied and its [figures] settings |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | write the tables (default: beside the bundle) |
 | `--figures` `[DIR]` | write the figures (default: beside the bundle) |
-| `--series` `{flagged,all}` | which series to draw (default: the run's plot setting, else flagged) |
+| `--series` `{flagged,all}` | which series to draw (default: [figures] series, else flagged) |
+| `--k` `K` | draw every series at this number of populations (default: [figures] k, else each spectrum's own) |
 | `--format` `{pdf,png,svg}` | figure file format |
 
 ## hxex analyse

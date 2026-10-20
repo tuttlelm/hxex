@@ -492,10 +492,12 @@ def test_keep_previous_moves_the_bundle_and_its_folders(tmp_path, caplog):
     from hxex.report import Results, write_tables
     from hxex.report.figures import PlotConfig
 
-    cfg = config(bootstrap=None, plots=PlotConfig(series="all", kinds=("uptake",)))
+    cfg = config(bootstrap=None)
     path = tmp_path / "res"
     first = run(raw_spectra(n_series=1), cfg, out=path)
     write_tables(Results.from_run(first), tmp_path / "res_tables")
+    first.write_figures(tmp_path / "res_figures", plots=PlotConfig(series="all",
+                                                                   kinds=("uptake",)))
     (tmp_path / "res_tables" / "mine.txt").write_text("keep me")
     (tmp_path / "res.3_tables").mkdir()  # a number used before is never reused
     with pytest.raises(BundleError, match="exists"):
@@ -504,9 +506,10 @@ def test_keep_previous_moves_the_bundle_and_its_folders(tmp_path, caplog):
         second = run(raw_spectra(n_series=1), cfg, out=path, keep_previous=True)
     assert "kept the previous results: moved res (" in caplog.text
     assert "to res.4" in caplog.text and "res_figures" in caplog.text
-    for name in ("res.4", "res.4_tables", "res.4_figures", "res", "res_figures"):
+    for name in ("res.4", "res.4_tables", "res.4_figures", "res"):
         assert (tmp_path / name).is_dir(), name
-    assert not (tmp_path / "res_tables").exists()  # moved with the bundle; not written here
+    # moved with the bundle; a run writes neither the tables nor the figures itself
+    assert not (tmp_path / "res_tables").exists() and not (tmp_path / "res_figures").exists()
     assert (tmp_path / "res.4_tables" / "mine.txt").read_text() == "keep me"
     with open_bundle(tmp_path / "res.4") as old, open_bundle(path) as new:
         assert old.manifest["provenance"] is None
