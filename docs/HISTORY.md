@@ -3210,3 +3210,21 @@ CSVs or mzML if wanted.
     (`review_table.ReviewSettings`); `write_analysis(review=)`; the analysis record writes
     every rule under `[review]` (none under `[analysis]`). The template's `[review]` block
     replaces a `review_table` line that had sat under `[analysis.choice]` by mistake.
+
+125. **`best_set_K`: one number of populations per peptide and time from all its spectra (owner,
+    2026-10-20).** Discussed while settling how users choose K: the run chooses per spectrum
+    (replicates can disagree), the analysis's species table reports K = 1 and K = 2 without
+    choosing, and only the residues are chosen (per residue and time, from the bootstrap
+    errors). Owner asked whether a peptide-level K could be supported statistically where
+    spectra conflict; per time point only (owner: never one K for the whole time course, as
+    populations appear and merge). Of two methods (the residue tests on combined values,
+    needing the bootstrap; or pooled evidence) the owner agreed to pooled evidence plus the
+    population check, and to the column names. Built (`analysis.species.best_set`,
+    `_set_evidence`): the fits' raw criterion summed per K over the set's spectra (those the
+    tables use, fitted at every K analysed; not the selection score, whose infinity for a K
+    that failed the run's population rule would veto the set); the smallest sum wins; a K the
+    filters left out, or with a combined population outside `[analysis.choice]`
+    `min_population`, is passed over for the next. Columns in `species_uptake.csv`:
+    `best_set_K`, `best_set`, `best_set_reason`, `set_delta_criterion`. Nothing else uses it
+    yet (the comparisons stay at K = 1; open, to decide on real data). docs/ANALYSIS.md has
+    the design.

@@ -101,7 +101,10 @@ class SpeciesUptake:
     or rejected control, :mod:`hxex.controls`). From a :class:`hxex.analysis.RunSet`: ``runs``
     (the runs its spectra come from, e.g. ``'A,B'`` for a merged sample; '' for one run),
     ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
-    systematically; see :func:`species_uptake`); ``rt``: the median retention time of its
+    systematically; see :func:`species_uptake`); ``best_set_K``, ``best_set``,
+    ``best_set_reason`` and ``set_delta_criterion``: the number of populations chosen for the
+    species at that time from its whole set of spectra (:func:`best_set`); ``rt``: the median
+    retention time of its
     spectra (minutes; NaN: unknown); ``role``: ``'undeut'`` or ``'fulldeut'`` for a control
     (whose ``time`` is NaN unless it was also a time point), ``''`` for a time point: coverage,
     redundancy and resolution refer to the undeuterated controls. ``nterm_subtract`` (the
@@ -135,6 +138,10 @@ class SpeciesUptake:
     rt: np.ndarray | None = None
     role: np.ndarray | None = None
     run: np.ndarray | None = None
+    best_set_K: np.ndarray | None = None
+    best_set: np.ndarray | None = None
+    best_set_reason: np.ndarray | None = None
+    set_delta_criterion: np.ndarray | None = None
     nterm_subtract: int = 1
 
     def __post_init__(self):  # built without them: no fallback, one run, no controls
@@ -151,7 +158,11 @@ class SpeciesUptake:
                             ("runs", np.full(n, "", dtype=object)),
                             ("n_spectra_by_run", np.full(n, "", dtype=object)),
                             ("run_offset", np.zeros(n, dtype=bool)),
-                            ("rt", np.full(n, np.nan))):
+                            ("rt", np.full(n, np.nan)),
+                            ("best_set_K", np.zeros(n, dtype=np.int64)),
+                            ("best_set", np.zeros(n, dtype=bool)),
+                            ("best_set_reason", np.full(n, "", dtype=object)),
+                            ("set_delta_criterion", np.full(n, np.nan))):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, empty)
 
@@ -456,6 +467,7 @@ def species_uptake(
     exclude_flagged: bool = False,
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
     controls: Mapping[str, Any] | None = None,
+    min_population: float = 0.05,
 ) -> SpeciesUptake:
     """The species uptake table of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` of several runs) at each fixed K in ``ks`` (K values the run
@@ -475,6 +487,11 @@ def species_uptake(
     first by more than ``TREND_Z`` combined standard errors in the same direction at more than
     ``TREND_SHARE`` of the times both were measured, and at two times at least (the charge-trend
     rule): a difference between runs (a batch effect) that pooling would otherwise hide.
+
+    ``best_set_K`` (with ``best_set``, ``best_set_reason`` and ``set_delta_criterion``) is the
+    number of populations chosen for each species and time from all of its spectra together
+    (:func:`best_set`; ``min_population``: the population limit of that choice, the
+    ``[analysis.choice]`` one).
     """
     groups, corrected, nterm = _records(results, ks, exclude_flagged, filters,
                                                 controls_changes=controls)
@@ -555,7 +572,105 @@ def species_uptake(
     out["rt"] = np.array([rts.get((str(a), str(b), str(c), str(d)), np.nan) for a, b, c, d in
                           zip(out["run"], out["sample"], out["peptide"], out["modification"],
                               strict=True)], dtype=np.float64)
+    out.update(best_set(out, _set_evidence(results, ks, exclude_flagged), ks, min_population))
     return SpeciesUptake(**out, nterm_subtract=nterm)
+
+
+def _set_key(run, sample, peptide, mod, start, end, time, role) -> tuple:
+    t = float(time)
+    return (str(run), str(sample), str(peptide), str(mod), int(start), int(end),
+            Point((None if not np.isfinite(t) else t, str(role))))
+
+
+def _set_evidence(results, ks, exclude_flagged: bool = False) -> dict[tuple, dict]:
+    """(run, sample, peptide, modification, start, end, point) -> the criterion of each K of
+    ``ks`` summed over the set's spectra (those the tables use, :func:`_kept`, fitted at every K
+    of ``ks``), with ``n``, the number of spectra summed. The fits' own criterion (BIC or AIC,
+    ``[run.fit] criterion``) is used, not the run's selection score, which the run's population
+    rule sets to infinity: one such spectrum would otherwise decide the whole set."""
+    from .runs import RunSet
+
+    runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
+    out: dict[tuple, dict] = {}
+    for name, r in runs:
+        fit, b = r.fit, r.binned
+        if b is None or any(k not in fit.fits for k in ks):
+            continue
+        criterion = fit.config.criterion
+        values = {k: np.asarray(getattr(fit.fits[k], criterion), dtype=float) for k in ks}
+        usable = _kept(r, exclude_flagged)
+        for k in ks:
+            usable &= fit.fitted(k) & np.isfinite(values[k])
+        index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+        points = _points(fit)
+        for i in np.flatnonzero(usable):
+            j = index[str(fit.spectrum_id[i])]
+            run, sample = results.state(name, str(b.sample[j])) if name else ("", str(b.sample[j]))
+            key = (run, sample, str(b.peptide[j]), str(b.modification[j]), int(b.start_seq[j]),
+                   int(b.end_seq[j]), points[i])
+            entry = out.setdefault(key, {"n": 0, **{k: 0.0 for k in ks}})
+            entry["n"] += 1
+            for k in ks:
+                entry[k] += float(values[k][i])
+    return out
+
+
+def best_set(cols: Mapping[str, np.ndarray], evidence: Mapping[tuple, dict], ks,
+             min_population: float = 0.05) -> dict[str, np.ndarray]:
+    """The columns ``best_set_K``, ``best_set``, ``best_set_reason`` and
+    ``set_delta_criterion`` of a species table (``cols``): for each species and time, the
+    number of populations its whole set of spectra supports. Replicates and charge states are
+    spectra of the same molecules, so their evidence adds up: the criterion of each K summed
+    over the set (``evidence``, :func:`_set_evidence`) chooses K, the smallest sum winning. A K
+    is passed over when the table has no description at it (the filters left it out) or one
+    of its combined populations lies outside ``[min_population, 1 - min_population]``; the
+    next best K is taken. ``set_delta_criterion`` is the summed criterion at K = 2 minus K = 1
+    (negative: the set favours two populations). ``best_set`` marks the rows of the chosen K."""
+    n = len(cols["K"])
+    out = {"best_set_K": np.zeros(n, dtype=np.int64), "best_set": np.zeros(n, dtype=bool),
+           "best_set_reason": np.full(n, "", dtype=object),
+           "set_delta_criterion": np.full(n, np.nan)}
+    rows: dict[tuple, list[int]] = {}
+    for i in range(n):
+        key = _set_key(cols["run"][i], cols["sample"][i], cols["peptide"][i],
+                       cols["modification"][i], cols["start"][i], cols["end"][i],
+                       cols["time"][i], cols["role"][i])
+        rows.setdefault(key, []).append(i)
+    lo = float(min_population)
+    for key, idx in rows.items():
+        by_k: dict[int, list[int]] = {}
+        for i in idx:
+            by_k.setdefault(int(cols["K"][i]), []).append(i)
+        ev = evidence.get(key)
+        if ev is not None and 1 in ev and 2 in ev:
+            out["set_delta_criterion"][idx] = ev[2] - ev[1]
+        if len([k for k in ks if k >= 1]) < 2 or max(ks) < 2:
+            chosen, reason = (1 if 1 in by_k else min(by_k)), "only one K analysed"
+        elif ev is None:
+            chosen, reason = (1 if 1 in by_k else min(by_k)), "no spectrum fitted at every K"
+        else:
+            order = sorted((k for k in ks if k in ev), key=lambda k: (ev[k], k))
+            chosen, reason, passed = None, "", []
+            for k in order:
+                if k not in by_k:
+                    passed.append(f"K = {k} not kept by the filters")
+                    continue
+                pops = [float(cols["population"][i]) for i in by_k[k]]
+                if k >= 2 and any(p < lo or p > 1 - lo for p in pops):
+                    passed.append(f"K = {k} has a population below {lo:g}")
+                    continue
+                chosen = k
+                break
+            if chosen is None:
+                chosen, reason = min(by_k), "; ".join(passed)
+            else:
+                word = {1: "one", 2: "two", 3: "three"}.get(chosen, str(chosen))
+                reason = (f"set evidence for {word}" + (f" ({'; '.join(passed)})"
+                                                         if passed else ""))
+        out["best_set_K"][idx] = chosen
+        out["best_set_reason"][idx] = reason
+        out["best_set"][by_k.get(chosen, [])] = True
+    return out
 
 
 def _species_rt(results, exclude_flagged: bool = False

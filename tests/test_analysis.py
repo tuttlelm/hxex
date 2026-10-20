@@ -158,6 +158,48 @@ def test_species_uptake_combines_replicates_at_each_fixed_k(results):
         species_uptake(results, ks=(4,))
 
 
+def test_best_set_k_pools_the_evidence_of_a_set(results):
+    """best_set_K: one choice per species and time from all its spectra (their criterion summed
+    per K), passing over a K the filters left out or with a population below min_population;
+    best_set marks the rows of the chosen K."""
+    from hxex.analysis.species import Point, best_set
+
+    up = species_uptake(results, ks=(1, 2))
+    for key in set(zip(up.sample, up.peptide, up.time.tolist(), up.role, strict=True)):
+        rows = ((up.sample == key[0]) & (up.peptide == key[1]) & (up.role == key[3])
+                & ((up.time == key[2]) | (np.isnan(up.time) & np.isnan(key[2]))))
+        k = set(up.best_set_K[rows].tolist())
+        assert len(k) == 1 and set(up.K[rows & up.best_set].tolist()) == k  # one description
+        assert (up.best_set[rows] == (up.K[rows] == k.pop())).all()
+    timed = np.isfinite(up.set_delta_criterion)
+    assert timed.any() and set(up.best_set_reason[timed]) <= {
+        "set evidence for one", "set evidence for two"} | {
+        r for r in up.best_set_reason if "population below" in r or "not kept" in r}
+    assert set(up.best_set_K[(up.set_delta_criterion > 0)].tolist()) <= {1}
+
+    def table(pops):  # one species at one time: K = 1, and K = 2 with these populations
+        k = [1] + [2] * len(pops)
+        return {"run": [""] * len(k), "sample": ["S"] * len(k), "peptide": ["P"] * len(k),
+                "modification": [""] * len(k), "start": [1] * len(k), "end": [9] * len(k),
+                "time": [60.0] * len(k), "role": [""] * len(k), "K": np.array(k),
+                "population": [1.0, *pops]}
+
+    key = ("", "S", "P", "", 1, 9, Point((60.0, "")))
+    two = {key: {"n": 3, 1: 100.0, 2: 80.0}}  # summed: two populations explain the set better
+    out = best_set(table([0.4, 0.6]), two, (1, 2))
+    assert out["best_set_K"].tolist() == [2, 2, 2] and out["best_set"].tolist() == [0, 1, 1]
+    assert out["best_set_reason"][0] == "set evidence for two"
+    assert out["set_delta_criterion"][0] == -20.0
+    small = best_set(table([0.02, 0.98]), two, (1, 2))
+    assert small["best_set_K"][0] == 1 and "population below 0.05" in small["best_set_reason"][0]
+    filtered = best_set(table([]), two, (1, 2))  # the filters left K = 2 out
+    assert filtered["best_set_K"][0] == 1 and "not kept" in filtered["best_set_reason"][0]
+    one = best_set(table([0.4, 0.6]), {key: {"n": 3, 1: 80.0, 2: 100.0}}, (1, 2))
+    assert one["best_set_K"].tolist() == [1, 1, 1] and one["best_set"].tolist() == [1, 0, 0]
+    none = best_set(table([0.4, 0.6]), {}, (1, 2))
+    assert none["best_set_K"][0] == 1 and none["best_set_reason"][0].startswith("no spectrum")
+
+
 def test_series_left_out_of_the_analysis(results):
     """without_series: a series leaves the species table; the fragment series of a run that read
     its peptides from MS1 too are found by series, not by sequence."""

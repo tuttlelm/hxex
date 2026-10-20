@@ -221,7 +221,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         # the identity check compares the runs, so merged samples are looked at run by run
         unmerged = up if not results.merge else species_uptake(
             results.unmerged(), ks=config.ks, exclude_flagged=config.exclude_flagged,
-            filters=config.filters, controls=config.controls)
+            filters=config.filters, controls=config.controls,
+            min_population=config.choice.min_population)
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = None
@@ -419,7 +420,8 @@ def write_analysis(
             results = (RunSet(peptides, merge=results.merge) if isinstance(results, RunSet)
                        else peptides[""])
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
-                            filters=config.filters, controls=config.controls)
+                            filters=config.filters, controls=config.controls,
+                            min_population=config.choice.min_population)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
     tables.update(frag_tables)

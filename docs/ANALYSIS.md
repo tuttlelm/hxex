@@ -64,6 +64,24 @@ and rank (1 = lowest deuteration, the fit's own ranking), not slow and fast: whi
 protected one (the low one in forward labelling, the high one in reverse exchange) is for the
 reader.
 
+**The set's number of populations (`best_set_K`; owner, 2026-10-20; HISTORY item 125).** The run
+chooses K spectrum by spectrum, so the replicates and charge states of one species at one time
+can disagree, and the table above reports every fixed K without choosing. `best_set_K` is one
+choice per species and time from the whole set: replicates and charge states are spectra of the
+same molecules, so the evidence adds up, and the fits' criterion (BIC or AIC, `[run.fit]
+criterion`; the raw criterion, not the run's selection score, which the run's population rule
+sets to infinity and which would let one spectrum veto the set) is summed per K over the set's
+spectra (those the tables use, fitted at every K analysed); the smallest sum wins. A K is
+passed over when the table has no description at it (the filters left it out) or one of its
+combined populations lies outside `[min_population, 1 - min_population]` (`[analysis.choice]`),
+and the next best K is taken. Columns: `best_set_K`, `best_set` (the rows of the chosen K),
+`best_set_reason`, `set_delta_criterion` (the summed criterion at K = 2 minus K = 1; negative
+favours two). Per time point, never one K for the whole time course: populations appear and
+merge with time (EX1, conformers that separate and converge). It needs no bootstrap. First
+version: only these columns; whether the peptide comparisons (Woods, `compare_peptides.csv`,
+K = 1 now) should use it is open. The per-residue choice (`populations.csv`) is separate and
+can disagree (a bimodal peptide whose residues other peptides cover).
+
 ### Nomenclature
 
 Owner, 2026-10-13, following published precedent; used throughout hxex (fit results, bootstrap,
