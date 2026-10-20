@@ -3048,3 +3048,23 @@ CSVs or mzML if wanted.
     any other (review rejections too); owner's choice: visible, but hollow and grey
     (`uptake_data` gives `rejected`; the legend says "rejected / excluded"), and the population
     figure labels the panel "(rejected)" and draws its overlay point hollow and grey.
+
+117. **The controls always fitted at K = 1 (owner, 2026-10-19).** The back-exchange correction
+    reads the controls' K = 1 fits, and `RunConfig` refused `[run.controls]` unless
+    `fit.k_min = 1`. Owner: the controls are fitted from `k_min` to `k_max` like the data (which
+    shows up problems with them), and at K = 1 as well, always, since that fit is the one the
+    correction uses. `fit_models` now adds K = 1 for the measurements with a role when `k_min`
+    is above 1 (the others get NaN for it, as for a K the screen skipped), and chooses every
+    measurement's K within `k_min` to `k_max` only (an extra K = 1 is never chosen; with every
+    K rejected, `k_min` as before). It is added whether or not the run corrects, so
+    `[analysis.controls]` can correct later. The bootstrap's `ks = "all"` is the K chosen from,
+    not the extra K = 1. `hxex info` says when the controls' K = 1 was added. The refusal is
+    gone; the screen keeps its `k_min = 1` rule. Test: a `k_min = k_max = 2` run fits K = 1 for
+    the controls only, chooses K = 2 everywhere, and gives the controls of a `k_min = 1` run.
+    Checked on the owner's question: a time point promoted only afterwards
+    (`[analysis.controls]` `undeut_at` or `fulldeut_at`, after a `k_min` above 1 run) has no
+    K = 1 fit, and its missing mean slipped through `fit_controls` (an undeuterated one fell
+    back without a flag; a fully deuterated one passed the retention limits, as every
+    comparison with NaN is false, and made the series' corrected means NaN). `fit_controls`
+    now refuses spectra serving as controls without a K = 1 fit, saying to promote them in
+    `[run.controls]` or run with `k_min = 1`.

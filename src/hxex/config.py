@@ -1145,8 +1145,9 @@ _COMMENTS: dict[str, str] = {
                               "m/R(m); never below mass_accuracy_ppm, never above half the "
                               "isotope spacing",
     "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
-    "run.fit.k_min": "fewest populations tried",
-    "run.fit.k_max": "most populations tried (one K: no model selection)",
+    "run.fit.k_min": "fewest populations tried (must be 1 with screen; the controls are also "
+                     "fitted at K = 1 for the back-exchange correction, whatever k_min)",
+    "run.fit.k_max": "most populations tried (equal to k_min: that number only, no choice)",
     "run.fit.criterion": '"bic" or "aic": chooses K among those tried',
     "run.fit.min_population": "a K whose smallest population is below this is rejected (0: "
                               "off); [analysis.filters] and [analysis.choice] have their own",
@@ -1265,7 +1266,9 @@ _SECTION_COMMENTS: dict[str, str] = {
     "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
                               'cleavage site, e.g. "y-NH3" = false. Empty: the ion type\'s '
                               "composition decides (c, x, y keep it; a, b, z do not).",
-    "run.fit": "The fit of 1 to k_max populations to every spectrum (hxex.fit.FitConfig).",
+    "run.fit": "The fit of k_min to k_max populations to every spectrum, the number chosen by "
+               "the criterion; with k_min and k_max equal, that number only "
+               "(hxex.fit.FitConfig).",
     "run.fit.noise": "Noise model and level of the fit (hxex.noise.NoiseConfig). The level "
                      "sets the loss scale and the model selection.",
     "run.fit.backend": "Where the fit runs (hxex.model.Backend); nothing is set globally.",

@@ -11,8 +11,12 @@ analyses apply. Fragment ions can be added to any of them that comes from raw sc
 | [Kinetics](#kinetics) | one scan, or a group of scans, of a run where exchange continues during acquisition | `mzml`, `thermo` | uptake or decay curves, protection factors, fragment ladders |
 | [Fragments](#fragments) | a fragment ion of a peptide, in MS2 or MS3 scans | `mzml`, `thermo` | ladders, per-residue rates, closure |
 
-Whatever the experiment, every spectrum is fitted with one to `k_max` binomial populations
-(`[run.fit]`, default 1 to 3), and the number is chosen by BIC. A run without `[run.controls]`
+Whatever the experiment, every spectrum is fitted with each number of binomial populations from
+`k_min` to `k_max` (`[run.fit]`, default 1 to 3), and the number is chosen by BIC (or AIC, with
+`criterion = "aic"`). Setting `k_min` and `k_max` to the same value fits that number only, with
+no choice to make. The controls are fitted over the same range, which shows up any problems
+with them, and always at K = 1 as well: the back-exchange correction uses their one-population
+fit, whatever `k_min` is. (The `screen` option needs `k_min = 1`.) A run without `[run.controls]`
 reports deuterons as measured; with it, means are corrected for back-exchange from the
 undeuterated and fully deuterated controls (see [Controls and times](controls.md)).
 

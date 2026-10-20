@@ -10,7 +10,7 @@ same results; the bundle records the settings it was made with.
 ```bash
 hxex init --format specexport -o hxex.toml   # a project file with every default, commented
 #   edit hxex.toml: the project name, [input] data_dir, [output] bundle
-hxex check hxex.toml                         # what would be read, and any problem
+hxex check hxex.toml                         # what would be read, and any problems
 hxex run hxex.toml                           # read, pick, fit (and bootstrap); bundle and tables
 hxex report results --figures                # figures from the bundle
 hxex analyse hxex.toml                       # post-fitting analysis ([analysis] in the file)
@@ -23,8 +23,9 @@ hxex analyse hxex.toml                       # post-fitting analysis ([analysis]
    read: entries and control files per sample for the folder formats, each run's role, time and
    matching scans for the scan formats, and the resolving power recorded in Thermo files. It
    exits with an error if it finds a problem, and fits nothing.
-3. **`hxex run`** reads the spectra, picks them, fits one to `k_max` populations to each, runs the
-   bootstrap and the controls if they are on, and writes the bundle and the CSV tables. Progress
+3. **`hxex run`** reads the spectra, picks them, fits each number of populations from `k_min` to
+   `k_max` (`[run.fit]`, default 1 to 3) to each and chooses the best, runs the bootstrap and the
+   controls if they are on, and writes the bundle and the CSV tables. Progress
    goes to the terminal; Ctrl-C stops cleanly and keeps the fits if the bootstrap had started
    (`hxex resume` finishes it).
 4. **`hxex report`** writes tables and figures again from a bundle, for example with other plot

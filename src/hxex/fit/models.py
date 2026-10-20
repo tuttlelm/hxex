@@ -30,6 +30,12 @@ def fit_models(
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
 
+    The controls (measurements with a role, ``data.role``) are always fitted at K = 1 as well,
+    the fit the back-exchange correction uses (:mod:`hxex.controls`): with ``k_min`` above 1,
+    K = 1 is added for them only (the other measurements get NaN for it, as for a K the screen
+    skipped) and is never selected, so every measurement's K is chosen within ``k_min`` to
+    ``k_max``.
+
     Each spectrum is divided by its noise scale (:func:`hxex.noise.noise_scale`) before fitting,
     and the fitted amplitudes are returned in the original intensity units. A K is rejected for a
     measurement if one of its components has a population below ``config.min_population``; if
@@ -75,6 +81,12 @@ def fit_models(
     )
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
+    role = (np.full(m, "", dtype=object) if data.role is None
+            else np.asarray(data.role, dtype=object))
+    controls = (role != "") & (role != None)  # noqa: E711 - an object array
+    control_k1 = 1 not in k_values and bool(controls.any())
+    if control_k1:  # the controls' K = 1, for the back-exchange correction only
+        k_values = (1, *k_values)
     extra = len(k_values) - 1 if config.nested_init and config.kmeans_after_warm else 0
     total = config.n_restarts * len(k_values) + extra  # the k-means start of a nested K
     done = 0
@@ -91,11 +103,15 @@ def fit_models(
     fits: dict[int, KFit] = {}
     for k in k_values:
         rows = np.arange(m)
-        if floor is not None and k > 1:
+        if control_k1 and k == 1:
+            rows = np.flatnonzero(controls)
+            log.info("fitting K=1 for the %d control spectra (the back-exchange correction "
+                     "uses it; it is not one of the K chosen from)", len(rows))
+        elif floor is not None and k > 1:
             rows = np.flatnonzero(can_win(config.criterion, k, sizes, floor, best))
             log.info("screen: K=%d can be selected for %d of %d measurements", k, len(rows), m)
         warm = None
-        if config.nested_init and (k - 1) in fits:
+        if config.nested_init and (k - 1) in fits and (k - 1) in config.k_values:
             prev = fits[k - 1]
             warm = split_start(prev.log_A[rows], prev.n_raw[rows], prev.p[rows],
                                config.split_delta)
@@ -127,18 +143,24 @@ def fit_models(
         fit.aic[rows] = aic(k, nll)
         fit.passes_min_pop[rows] = np.all(fractions >= config.min_population, axis=1)
         fits[k] = fit
+        if k not in config.k_values:
+            continue  # the controls' K = 1: fitted, not chosen from
         score_k = getattr(fit, config.criterion)
         best = np.where(fit.passes_min_pop & (score_k < best), score_k, best)
 
     raw = np.column_stack(
         [getattr(fits[k], config.criterion) for k in k_values]
     )
-    if len(k_values) == 1:
-        score = raw
+    if len(config.k_values) == 1:  # no selection (the controls' extra K = 1 never chosen)
+        score = np.where([k in config.k_values for k in k_values], raw, np.inf)
     else:
-        passes = np.column_stack([fits[k].passes_min_pop for k in k_values])
+        passes = np.column_stack([fits[k].passes_min_pop if k in config.k_values
+                                  else np.zeros(m, dtype=bool) for k in k_values])
         score = np.where(passes, raw, np.inf)
-    selected = np.array(k_values)[np.argmin(score, axis=1)]
+    # chosen from k_min to k_max only (an extra K = 1 of the controls never), the smallest of
+    # them when every one is rejected
+    chosen = [k_values.index(k) for k in config.k_values]
+    selected = np.array(config.k_values)[np.argmin(score[:, chosen], axis=1)]
     return FitResult(
         config=config, spectrum_id=data.spectrum_id, data_id=data.data_id, time=data.time,
         role=data.role,

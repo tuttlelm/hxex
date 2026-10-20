@@ -226,8 +226,8 @@ def test_a_picked_set_can_be_run_directly():
 
 
 def test_config_checks_and_round_trip():
-    with pytest.raises(ValueError, match="k_min"):
-        RunConfig(fit=FitConfig(k_min=2), controls=ControlConfig())
+    # the controls are fitted at K = 1 whatever k_min is (fit_models adds it for them)
+    assert RunConfig(fit=FitConfig(k_min=2), controls=ControlConfig()).fit.k_min == 2
     with pytest.raises(ValueError):
         RunConfig(max_chunk=0)
     with pytest.raises(ValueError, match="unknown"):
@@ -550,3 +550,38 @@ def test_a_late_time_point_serves_as_the_fully_deuterated_control(whole):
     assert (res.controls.n_fd == 5).all()  # the two marked files plus the three at 60 s
     with pytest.raises(ValueError, match="fulldeut_at = 61 s: no spectrum"):
         run(raw, config(controls=ControlConfig(fulldeut_at=61.0), bootstrap=None))
+
+
+def test_the_controls_are_fitted_at_k1_whatever_k_min(tmp_path):
+    """With k_min above 1 the controls still get the K = 1 fit the back-exchange correction
+    uses (and are fitted from k_min to k_max like the rest); the other spectra are not fitted
+    at K = 1, and no spectrum is chosen at it. The controls equal those of a k_min = 1 run."""
+    raw = raw_spectra()
+    one = run(raw, config(controls=ControlConfig()))
+    two = run(raw, config(controls=ControlConfig(),
+                          fit=dataclasses.replace(config().fit, k_min=2, k_max=2)))
+    fit = two.fit
+    role = np.asarray(fit.role, dtype=object)
+    is_control = (role != "") & (role != None)  # noqa: E711
+    assert is_control.any() and (~is_control).any()
+    assert 1 in fit.k_values and fit.config.k_values == (2,)
+    assert (fit.fitted(1) == is_control).all() and fit.fitted(2).all()
+    assert (fit.selected_K == 2).all()
+    np.testing.assert_allclose(two.controls.m0, one.controls.m0, rtol=1e-6, equal_nan=True)
+    np.testing.assert_allclose(two.controls.mfd, one.controls.mfd, rtol=1e-6, equal_nan=True)
+
+
+def test_a_control_promoted_after_a_run_without_its_k1_fit_is_refused(tmp_path):
+    """A time point promoted to a control only in the analysis ([analysis.controls]
+    fulldeut_at) after a run with k_min above 1 has no K = 1 fit: refused with the reason
+    (its missing mean made the series' means NaN), not used."""
+    from hxex.analysis.species import analysis_controls
+    from hxex.report import Results
+
+    raw = raw_spectra()
+    two = run(raw, config(fit=dataclasses.replace(config().fit, k_min=2, k_max=2)))
+    results = Results.from_run(two)
+    t = float(np.nanmax(np.asarray(results.fit.time, dtype=float)))
+    with pytest.raises(ValueError, match="no K=1 fit.*k_min = 1"):
+        analysis_controls(results, {"fulldeut_at": t, "fulldeut_marked": False})
+    assert analysis_controls(results, {"d2o_fraction": 0.85}) is not None  # the marked ones

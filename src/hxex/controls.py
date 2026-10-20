@@ -401,6 +401,18 @@ def fit_controls(
         if not marked:  # only the spectra at the given time serve (apply_control_roles)
             serves[label] &= time_point(fit.time) == time_point([at])[0]
 
+    # every spectrum serving as a control needs its K = 1 fit: the run makes one for the
+    # spectra with a role, but not for a time point promoted only afterwards (an
+    # [analysis.controls] undeut_at or fulldeut_at, after a run with k_min above 1); its
+    # missing mean would otherwise pass the limits and make the series' means NaN
+    unfitted = (serves[UNDEUT] | serves[FULLDEUT]) & usable & ~np.isfinite(means)
+    if unfitted.any() and not fit.fitted(1)[unfitted].all():
+        raise ValueError(
+            f"{int((unfitted & ~fit.fitted(1)).sum())} spectra serving as controls have no K=1 "
+            "fit: the run fitted K from k_min above 1, and they were not controls then (a time "
+            "point promoted by undeut_at or fulldeut_at after the run). Promote them in "
+            "[run.controls] and run again, or run with k_min = 1")
+
     def pick(rows: np.ndarray, label: str) -> np.ndarray:
         return means[rows[usable[rows] & serves[label][rows]]]
 

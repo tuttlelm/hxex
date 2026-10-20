@@ -217,12 +217,12 @@ Per fragment ion type, whether it keeps the amide N-H at its cleavage site, e.g.
 
 ## `[run.fit]`
 
-The fit of 1 to k_max populations to every spectrum (hxex.fit.FitConfig).
+The fit of k_min to k_max populations to every spectrum, the number chosen by the criterion; with k_min and k_max equal, that number only (hxex.fit.FitConfig).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `k_min` | integer | `1` | fewest populations tried |
-| `k_max` | integer | `3` | most populations tried (one K: no model selection) |
+| `k_min` | integer | `1` | fewest populations tried (must be 1 with screen; the controls are also fitted at K = 1 for the back-exchange correction, whatever k_min) |
+| `k_max` | integer | `3` | most populations tried (equal to k_min: that number only, no choice) |
 | `criterion` | text | `"bic"` | "bic" or "aic": chooses K among those tried |
 | `min_population` | number | `0.05` | a K whose smallest population is below this is rejected (0: off); [analysis.filters] and [analysis.choice] have their own |
 | `n_restarts` | integer | `6` | starting points per K |

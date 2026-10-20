@@ -659,7 +659,9 @@ def cmd_info(args) -> int:
             ("input", source.get("reader", source.get("format", "(not recorded)"))),
             ("measurements", str(len(fit))),
             ("series", str(len(set(fit.data_id.tolist())))),
-            ("K tried", ", ".join(str(k) for k in fit.k_values)),
+            ("K tried", ", ".join(str(k) for k in fit.config.k_values)
+             + (" (and K = 1 for the controls, for the back-exchange correction)"
+                if 1 in fit.k_values and 1 not in fit.config.k_values else "")),
             ("selected K", ", ".join(f"{k}: {n}" for k, n in sorted(ks.items()))),
             ("bootstrap", "yes" if b.bootstrap() is not None else "no"),
             ("controls", ("yes" if b.has("controls") else "no")

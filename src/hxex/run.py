@@ -93,7 +93,8 @@ class RunConfig:
       None: no bootstrap.
     - ``controls``: the back-exchange correction from the undeuterated and fully deuterated
       controls (:class:`~hxex.controls.ControlConfig`); None: no correction, the means stay in
-      measured deuterons. The controls are the K=1 fits, so ``fit.k_min`` must be 1.
+      measured deuterons. The controls are the K=1 fits, made for the control spectra whatever
+      ``fit.k_min`` is (:func:`hxex.fit.fit_models`).
     - ``quality``: the quality flags (:class:`~hxex.quality.QualityConfig`); None: none.
     - ``plots``: the figures the run writes (:class:`~hxex.report.PlotConfig`); None: none.
     - ``registry``: the modified residues a sequence may name, as modX labels
@@ -136,8 +137,6 @@ class RunConfig:
             missing = [k for k in self.bootstrap.ks if k not in self.fit.k_values]
             if missing:
                 raise ValueError(f"bootstrap.ks {missing} are outside the fitted K values")
-        if self.controls is not None and self.fit.k_min > 1:
-            raise ValueError("the controls come from the K=1 fits: set fit.k_min to 1")
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -332,7 +331,9 @@ def _bootstrap_ks(config: RunConfig, fit: FitResult) -> list[int]:
     """The Ks of the fixed-K bootstrap the run was asked for (none for ``'selected'``)."""
     if config.bootstrap is None or config.bootstrap.ks == "selected":
         return []
-    return list(fit.k_values) if config.bootstrap.ks == "all" else list(config.bootstrap.ks)
+    # "all": the Ks chosen from, not the controls' extra K = 1 (fit.k_values may hold it)
+    return (list(config.fit.k_values) if config.bootstrap.ks == "all"
+            else list(config.bootstrap.ks))
 
 
 @dataclass

@@ -1,8 +1,8 @@
 # hxex user guide
 
 *hxex* fits HDX-MS spectra with mixtures of binomial populations: it reads spectra (exported or
-raw), turns each into deuterium sticks, fits one to several populations with uncertainties, and
-reports the populations per peptide, per residue and between samples.
+raw), peak picks the data, fits each spectrum to several populations with uncertainties, and
+reports the populations per peptide, per residue, and allows comparison between samples.
 
 This guide is for people running *hxex* on their data. The documents one level up
 (`docs/PLAN.md`, `docs/HISTORY.md`, ...) are written for its developers.
