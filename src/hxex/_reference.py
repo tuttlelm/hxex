@@ -181,7 +181,8 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.sites": "single residues to mark: [[analysis.sites]] (below)",
     "analysis.exclude_flagged": "leave out spectra with a quality flag",
     "analysis.format": 'of the figure files: "pdf", "png" or "svg"',
-    "analysis.out": "the output directory (unset: beside the bundle)",
+    "analysis.out": "the output directory (unset: beside the bundle, named after it and the "
+                    "reference: results_analysis_WT, or results_analysis without a reference)",
     "analysis.runs": "separate runs to compare: [analysis.runs] (below)",
     "analysis.overlay": 'the values of the by-residue comparisons: "low" and "high" (the K=2 '
                         'populations) and/or "avg" (K=1)',
@@ -270,9 +271,8 @@ _INTROS: dict[str, str] = {
                        "activation).",
     "input.scans": "Scan formats: how scans become spectra (hxex.io.MzmlConfig).",
     "output": "Where results go. The bundle and the folders named after it (<bundle>_tables, "
-              "<bundle>_figures, <bundle>_analysis, and the generations <bundle>.1, ...) "
-              "belong to *hxex*: a later "
-              "run replaces or renames them.",
+              "<bundle>_figures, <bundle>_analysis_<reference>, and the generations "
+              "<bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.",
     "analysis": "The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See "
                 "docs/ANALYSIS.md for the methods.",
     "analysis.filters": "Which K=2 descriptions the analysis trusts. Per spectrum: "

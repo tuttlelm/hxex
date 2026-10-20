@@ -888,3 +888,29 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     with open_bundle(tmp_path / "out") as b:
         assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
         assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4
+
+
+def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path):
+    """The default analysis folder is named after the reference (results_analysis_WT), so an
+    analysis against another reference never replaces it; --keep-previous moves every analysis
+    folder with its bundle; [[analysis]] (several tables) is refused with the way to do it."""
+    from hxex.io.bundle import analysis_folder_name
+
+    assert analysis_folder_name("results") == "results_analysis"
+    assert analysis_folder_name("results", "WT") == "results_analysis_WT"
+    assert analysis_folder_name("results", "A:WT") == "results_analysis_A_WT"
+    assert analysis_folder_name("runs", "pS 59/x") == "runs_analysis_pS_59_x"
+    path = mzml_project(tmp_path)
+    path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
+    assert cli.main(["-q", "run", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path), "--reference", "WT"]) == 0
+    plain, wt = tmp_path / "out_analysis", tmp_path / "out_analysis_WT"
+    assert (plain / "species_uptake.csv").is_file() and (wt / "species_uptake.csv").is_file()
+    assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
+    assert (tmp_path / "out.1_analysis").is_dir() and (tmp_path / "out.1_analysis_WT").is_dir()
+    assert not plain.exists() and not wt.exists()
+    with pytest.raises(ProjectError, match=r"one \[analysis\] table.*--reference"):
+        project_from(tomllib.loads('project = "p"\n[input]\nformat = "specexport"\n'
+                                   'data_dir = "d"\n[[analysis]]\nreference = "WT"\n'
+                                   '[[analysis]]\nreference = "Mut"\n'), tmp_path)

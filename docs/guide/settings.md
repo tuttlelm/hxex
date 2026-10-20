@@ -166,7 +166,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 
 ## `[output]`
 
-Where results go. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures, <bundle>_analysis, and the generations <bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.
+Where results go. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures, <bundle>_analysis_<reference>, and the generations <bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -378,7 +378,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `alpha` | number | `0.05` | significance level of the comparisons |
 | `exclude_flagged` | true/false | `false` | leave out spectra with a quality flag |
 | `format` | text | `"pdf"` | of the figure files: "pdf", "png" or "svg" |
-| `out` | text | unset | the output directory (unset: beside the bundle) |
+| `out` | text | unset | the output directory (unset: beside the bundle, named after it and the reference: results_analysis_WT, or results_analysis without a reference) |
 | `overlay` | list | `["low", "high"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations) and/or "avg" (K=1) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |

@@ -152,7 +152,8 @@ hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs (a
 ```
 
 The output bundle (`[output] bundle`, say `results`) and the folders named after it
-(`results_tables`, `results_figures`, `results_analysis`, and the generations `results.1`,
+(`results_tables`, `results_figures`, `results_analysis_<reference>`, and the generations
+`results.1`,
 `results.1_tables`, ...)
 are hxex's: a later `hxex run` refuses to write over them unless told to, and then either
 replaces them (`--overwrite`; the review layer is carried over) or moves them to the next

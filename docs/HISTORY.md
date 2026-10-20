@@ -3079,3 +3079,18 @@ CSVs or mzML if wanted.
     table) on its `[output] bundle`, writes the tables (and figures) as `[output]` asks, with
     `[[analysis.exclude]]` applied. `hxex resume BUNDLE` of a complete bundle is refused,
     naming the project-file form.
+
+119. **One analysis folder per reference (owner, 2026-10-19).** Asked whether several
+    `[[analysis]]` tables (references) are supported: they were not, and the double-bracket
+    form crashed with a Python error; and `hxex analyse --reference Mut` without `--out` wrote
+    into the same `results_analysis` as the analysis with WT, replacing it. Owner's choice
+    (of: a reference recorded in the folder's listing and a guard; dated or numbered kept
+    analyses; the reference in the name): the default folder is named after the bundle and
+    the reference, `analysis_folder_name` (`results_analysis_WT`, `results_analysis` without a
+    reference, characters a folder name should not hold made `_`), so analyses against
+    different references never meet; the same reference replaces its folder (the listing).
+    `--keep-previous` moves every analysis folder of the bundle (`analysis_folders`) to its
+    generation (`results.1_analysis_WT`); `run --overwrite` warns about each. `[[analysis]]`
+    is refused, saying to run `hxex analyse --reference NAME`. An `[analysis] out` or `--out`
+    is used as given. Existing `results_analysis` folders of analyses made with a reference
+    stay where they are: a new analysis writes beside them, in the new name.

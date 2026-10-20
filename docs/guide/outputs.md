@@ -3,13 +3,15 @@
 `hxex run` writes a results **bundle** (`[output] bundle`, say `results`: a folder, or a `.zip`,
 of Parquet tables with a `manifest.json`), CSV tables beside it (`results_tables`) and, when asked,
 figures (`results_figures`). `hxex report` writes the tables and figures again from a bundle;
-`hxex analyse` writes the post-fitting analysis to `results_analysis`.
+`hxex analyse` writes the post-fitting analysis to a folder named after the bundle and the
+reference: `results_analysis_WT` for comparisons with WT (`results_analysis` without a
+reference), so analyses with different references never replace each other.
 
 These folders, and their earlier generations (`results.1`, `results.1_tables`,
-`results.1_analysis`, ...), belong to *hxex*: a later run refuses to write over them unless given
+`results.1_analysis_WT`, ...), belong to *hxex*: a later run refuses to write over them unless given
 `--overwrite` (replace them; the review is carried over) or `--keep-previous` (move them to the
-next generation first). Running `hxex analyse` again replaces the earlier analysis in
-`results_analysis`. In all of them, *hxex* removes only the files it wrote itself. Keep your own files
+next generation first). Running `hxex analyse` again with the same reference replaces the
+earlier analysis in its folder. In all of them, *hxex* removes only the files it wrote itself. Keep your own files
 elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
 
 ## Words used in the tables
@@ -125,7 +127,8 @@ To send your results to someone, zip the results folder (`results`) in the usual
 Windows, right-click it and choose **Send to > Compressed (zipped) folder**; on macOS,
 right-click it and choose **Compress**. The person receiving it does not need to unpack it:
 every *hxex* command reads the zip as it is, for example `hxex report results.zip --figures`.
-Include `results_tables`, `results_figures`, and `results_analysis` as well if they should see
+Include `results_tables`, `results_figures`, and the analysis folders (`results_analysis_WT`)
+as well if they should see
 those without running *hxex*.
 
 *hxex* can also write the results as a zip from the start: give the bundle a name ending in

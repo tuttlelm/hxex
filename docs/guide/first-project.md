@@ -184,7 +184,10 @@ Then run:
 hxex analyse hxex.toml
 ```
 
-The comparisons, residue maps and their figures go to `results_analysis`.
+The comparisons, residue maps and their figures go to `results_analysis_WT`: the folder is
+named after the reference. To compare with another reference as well, run
+`hxex analyse hxex.toml --reference Mut`; it writes to `results_analysis_Mut`, beside the first,
+without touching it. (Without a reference, the folder is `results_analysis`.)
 
 ## Running it all again
 
@@ -201,9 +204,9 @@ hxex analyse hxex.toml
 - `hxex run` never does step 8: the analysis always needs `hxex analyse` afterwards.
 - `--overwrite` replaces the earlier results. Without it, `hxex run` stops because `results`
   already exists; use `--keep-previous` instead to keep the earlier results as `results.1`.
-- `hxex analyse` replaces the files of the earlier analysis in `results_analysis` (files of
-  your own there are kept). With `--keep-previous`, the earlier analysis moves along with the
-  earlier results, to `results.1_analysis`.
+- `hxex analyse` replaces the files of the earlier analysis with the same reference, in
+  `results_analysis_WT` (files of your own there are kept). With `--keep-previous`, the earlier
+  analyses move along with the earlier results, to `results.1_analysis_WT`.
 
 Run `hxex check hxex.toml` first whenever you have changed the file.
 

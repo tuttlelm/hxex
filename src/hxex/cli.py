@@ -115,7 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "run column)")
     p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
-                                 "bundle's name + _analysis)")
+                                 "bundle's name + _analysis + _REFERENCE when there is a "
+                                 "reference, e.g. results_analysis_WT)")
     p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
                                        "RUN:sample when the sample is in several runs)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
@@ -235,7 +236,7 @@ def cmd_init(args) -> int:
         return EXIT_ERROR
     out.write_text(text, encoding="utf-8")
     log.info("wrote %s (format %s): edit the input paths, then 'hxex check %s'. The output "
-             "bundle and the folders named after it (NAME_tables, NAME_figures, NAME_analysis, "
+             "bundle and the folders named after it (NAME_tables, NAME_figures, NAME_analysis_..., "
              "NAME.N) are "
              "hxex's: later runs replace or rename them", out, args.format, out)
     return 0
@@ -520,8 +521,9 @@ def cmd_run(args) -> int:
     _summary(result.fit, bundle, tables=tables,
              figures=_beside(bundle, out.figures, "_figures") if out.figures is not False
              else None)
-    analysis = bundle.with_name(bundle.name + "_analysis")
-    if overwrite and analysis.is_dir():
+    from .io.bundle import analysis_folders
+
+    for analysis in analysis_folders(bundle) if overwrite else ():
         log.warning("%s still holds the analysis of the results just replaced: run "
                     "'hxex analyse' again to bring it up to date", analysis)
     return 0
@@ -803,8 +805,12 @@ def cmd_analyse(args) -> int:
         config = dataclasses.replace(config, **changes)
     several = len(runs) > 1 or "" not in runs
     lead = next(iter(runs.values()))
+    from .io.bundle import analysis_folder_name
+
+    # the default folder is named after the reference, so analyses against different
+    # references never write into one folder
     out = Path(args.out) if args.out else Path(config.out) if config.out else lead.with_name(
-        "runs_analysis" if several else lead.name + "_analysis")
+        analysis_folder_name("runs" if several else lead.name, config.reference))
     stop = _Stop()
     with contextlib.ExitStack() as stack:
         stack.enter_context(stop.installed())

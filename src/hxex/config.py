@@ -738,6 +738,11 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
                                 or threads < 1):
         raise ProjectError("threads must be a whole number of at least 1")
+    if isinstance(data.get("analysis"), list):
+        raise ProjectError(
+            "[[analysis]]: a project has one [analysis] table (single brackets). To compare "
+            "with another reference too, run hxex analyse --reference NAME: each reference "
+            "gets a folder of its own (results_analysis_NAME)")
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
     return Project(name, inp, run, output, path, threads, analysis)
 
@@ -1482,7 +1487,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "",
         "[output]",
         "# The bundle and the folders named after it (results_tables, results_figures,",
-        "# results_analysis, and the generations results.1, results.1_tables, ...) belong to",
+        "# results_analysis_..., and the generations results.1, results.1_tables, ...) belong to",
         "# hxex: a later run replaces or renames them. Keep your own files elsewhere (files",
         "# of yours inside them are kept, but one named like an hxex file stops the run).",
         'bundle = "results"               # name of the folder (or .zip archive) hxex creates',

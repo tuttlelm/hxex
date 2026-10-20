@@ -21,8 +21,10 @@ manifest: the directory does not open until the bundle is written again.
 ## What a results folder holds, and what a later run does with it
 
 The bundle and the folders named after it (`results_tables`, `results_figures`,
-`results_analysis`, and the earlier generations `results.1`, `results.1_tables`,
-`results.1_figures`, `results.1_analysis`, or `results.1.zip` for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
+the analysis folders `results_analysis` and `results_analysis_<reference>` (named after the
+reference the analysis compares with), and the earlier generations `results.1`,
+`results.1_tables`, `results.1_figures`, `results.1_analysis_<reference>`, or `results.1.zip`
+for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
 live there and are treated differently:
 
 - **Computed results** (the bundle's tables, the CSV tables, the figures) are replaced. A
@@ -42,12 +44,12 @@ live there and are treated differently:
 
 `hxex run --overwrite` (or `[output] overwrite = true`) replaces in place; `--keep-previous`
 (`keep_previous = true`) first moves the bundle, with its `_tables`, `_figures`, and
-`_analysis` folders, to the next generation (`results.N`, `results.N_tables`,
-`results.N_figures`, `results.N_analysis`; N is one more than
+analysis folders, to the next generation (`results.N`, `results.N_tables`,
+`results.N_figures`, `results.N_analysis_<reference>`; N is one more than
 any number ever used beside the bundle, so a name is never reused; `hxex.io.keep_previous`).
 A tables or figures directory named explicitly in `[output]`, or an analysis directory named
 by `[analysis] out` or `--out`, is not moved (its hxex files are replaced). `hxex run` does not
-write the analysis: after `--overwrite`, `results_analysis` describes the replaced results until
+write the analysis: after `--overwrite`, the analysis folders describe the replaced results until
 `hxex analyse` runs again (the run warns). `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
 
 ## Keys and conventions

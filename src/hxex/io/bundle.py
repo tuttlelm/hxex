@@ -546,6 +546,26 @@ def provenance_of(
 SIBLINGS = ("_tables", "_figures", "_analysis")  # the output folders named after a bundle
 
 
+def analysis_folder_name(name: str, reference: str = "") -> str:
+    """The default analysis folder of the bundle ``name``: ``name_analysis``, with the reference
+    the samples are compared with when there is one (``name_analysis_WT``), so analyses against
+    different references never write into one folder. Characters a folder name should not hold
+    become ``_`` (``A:WT`` gives ``name_analysis_A_WT``)."""
+    if not reference:
+        return f"{name}_analysis"
+    return f"{name}_analysis_{re.sub(r'[^A-Za-z0-9._-]+', '_', reference).strip('_') or 'ref'}"
+
+
+def analysis_folders(path: Path) -> list[Path]:
+    """The analysis folders named after the bundle at ``path``: ``name_analysis`` and every
+    ``name_analysis_REFERENCE``."""
+    path = Path(path)
+    if not path.parent.is_dir():
+        return []
+    return sorted(p for p in path.parent.iterdir() if p.is_dir() and (
+        p.name == f"{path.name}_analysis" or p.name.startswith(f"{path.name}_analysis_")))
+
+
 def _generation_stem(path: Path) -> tuple[str, str]:
     """``(stem, ext)`` so that generation N of the bundle is ``stem.N`` + ``ext``."""
     return (path.stem, ".zip") if path.suffix == ".zip" else (path.name, "")
@@ -585,8 +605,9 @@ def _size_of(path: Path) -> int:
 
 def keep_previous(path: str | Path) -> Path | None:
     """Move the bundle at ``path`` to its next generation, ``name.N`` (``name.N.zip`` for a
-    zip), with its ``name_tables``, ``name_figures``, and ``name_analysis`` folders moved to
-    ``name.N_tables``, ``name.N_figures``, and ``name.N_analysis``, and return the generation's
+    zip), with its ``name_tables``, ``name_figures``, and analysis folders (``name_analysis``,
+    ``name_analysis_REFERENCE``) moved to ``name.N_tables``, ``name.N_figures``, and
+    ``name.N_analysis...``, and return the generation's
     path (None when there is nothing at ``path``). N is one more than any number used beside the
     bundle before, so a generation's name is never reused. A path that holds something other
     than a bundle is refused. Sizes are logged."""
@@ -599,10 +620,12 @@ def keep_previous(path: str | Path) -> Path | None:
     n = _next_generation(path)
     target = path.with_name(f"{stem}.{n}{ext}")
     moves = [(path, target)]
-    for suffix in SIBLINGS:
+    for suffix in SIBLINGS[:-1]:
         sibling = path.with_name(path.name + suffix)
         if sibling.exists():
             moves.append((sibling, target.with_name(target.name + suffix)))
+    for folder in analysis_folders(path):  # name_analysis and name_analysis_REFERENCE
+        moves.append((folder, target.with_name(target.name + folder.name[len(path.name):])))
     for src, dst in moves:
         if dst.exists():  # cannot happen (N is new); never replace anything
             raise BundleError(f"{dst} exists; not moving {src} over it")
