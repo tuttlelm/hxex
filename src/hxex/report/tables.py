@@ -49,6 +49,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         cols["rt"] = np.full(m, np.nan)
     cols.update(_target_columns(results))
     cols["review_status"] = np.asarray(results.review_status).astype(str)
+    cols["review_K"] = _review_k(results)
     if results.quality is not None:
         q = results.quality
         cols["flags"] = np.array([
@@ -56,6 +57,53 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
                      if getattr(q, n)[i]) for i in range(m)
         ])
     return cols
+
+
+def _review_k(results: Results) -> np.ndarray:
+    """The K the review chose for each spectrum (empty where it chose none or the entry is
+    stale): the ``K`` of the tables is then this one, not the fit's choice."""
+    out = np.full(len(results.fit), "", dtype=object)  # a whole number, or empty
+    review = results.review
+    if review is None or not len(review):
+        return out
+    index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    for sid, k, stale in zip(review.spectrum_id, review.k_override, review.stale, strict=True):
+        if k and not stale and str(sid) in index:
+            out[index[str(sid)]] = int(k)
+    return out
+
+
+# the note exclusion rules give their entries (hxex.exclusions.exclude_from_results)
+_RULE_NOTE = "excluded by [[analysis.exclude]]"
+
+
+def review_table(results: Results) -> dict[str, np.ndarray]:
+    """One row per entry of the review layer, with the spectrum's sample, peptide, charge,
+    time, role and replicate (empty for a stale entry whose spectrum the run no longer has):
+    ``status``, ``review_K`` (the chosen K, empty for none), ``note``, ``updated``, ``stale``,
+    and ``source``: ``review`` (stored in the bundle) or ``exclusion rule`` (an
+    ``[[analysis.exclude]]`` rule, applied for this table only)."""
+    review = results.review
+    index = _index_columns(results)
+    rows = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    names = ("sample", "peptide_range", "peptide", "charge", "time", "role", "rep")
+    cols: dict[str, list] = {n: [] for n in ("spectrum_id", *names, "status", "review_K",
+                                             "note", "updated", "stale", "source")}
+    for j, sid in enumerate(map(str, review.spectrum_id)):
+        i = rows.get(sid)
+        cols["spectrum_id"].append(sid)
+        for name in names:
+            value = index[name][i] if i is not None else ""
+            cols[name].append(np.nan if name == "time" and i is None else value)
+        k = int(review.k_override[j])
+        note = str(review.note[j])
+        cols["status"].append(str(review.status[j]))
+        cols["review_K"].append(k if k else "")
+        cols["note"].append(note)
+        cols["updated"].append(str(review.updated[j]))
+        cols["stale"].append(bool(review.stale[j]))
+        cols["source"].append("exclusion rule" if note.startswith(_RULE_NOTE) else "review")
+    return {name: np.array(values, dtype=object) for name, values in cols.items()}
 
 
 TARGET_COLUMNS = ("fragment", "ms_level", "preactivation", "activation", "precursor_mz",
@@ -331,11 +379,14 @@ def _cell(value) -> str:
 
 def write_tables(results: Results, directory: str | Path) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
-    ``directory``, replacing the tables hxex wrote there before (its listing,
-    :func:`hxex.io.replace_outputs`) and never a file of your own."""
+    ``directory``, and ``review.csv`` when the review layer (or an exclusion rule) has entries,
+    replacing the tables hxex wrote there before (its listing, :func:`hxex.io.replace_outputs`:
+    a ``review.csv`` with nothing left to list goes) and never a file of your own."""
     directory = Path(directory)
     tables = {"series.csv": series_table, "spectra.csv": spectra_table,
               "components.csv": components_table, "uptake.csv": uptake_table}
+    if results.review is not None and len(results.review):
+        tables["review.csv"] = review_table
     with replace_outputs(directory, tables) as written:
         for name, make in tables.items():
             written.append(write_csv(make(results), directory / name))

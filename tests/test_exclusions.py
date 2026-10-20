@@ -117,3 +117,33 @@ def test_exclusion_tables_take_single_brackets(tmp_path):
         project_from(tomllib.loads('project = "p"\n[input]\nformat = "specexport"\n'
                                    'data_dir = "d"\n[[input.exclude]]\nsampel = "WT"\n'),
                      tmp_path)
+
+
+def test_review_csv_lists_the_review_and_the_rules(tmp_path):
+    """review.csv shows every review decision (stored in the bundle) and every spectrum an
+    [[analysis.exclude]] rule leaves out, with its source and note; spectra.csv's review_K
+    shows a K the review chose. With nothing to list, the file goes."""
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        ids = list(map(str, b.fit().spectrum_id))
+        b.set_review(b.review().update(ids[0], status="accepted", k_override=1,
+                                       note="checked by eye"))
+    path.write_text(path.read_text() + f'\n[analysis]\nks = [1]\noverlay = ["avg"]\n\n'
+                    f'[[analysis.exclude]]\nspectrum_id = "{ids[3]}"\nnote = "co-elution"\n')
+    tables = tmp_path / "t"
+    assert cli.main(["-q", "report", str(path), "--tables", str(tables)]) == 0
+    rows = {r["spectrum_id"]: r for r in _rows(tables / "review.csv")}
+    assert rows[ids[0]]["source"] == "review" and rows[ids[0]]["note"] == "checked by eye"
+    assert rows[ids[0]]["review_K"] == "1" and rows[ids[0]]["sample"] == "WT"
+    assert rows[ids[3]]["source"] == "exclusion rule" and "co-elution" in rows[ids[3]]["note"]
+    assert rows[ids[3]]["status"] == "rejected" and rows[ids[3]]["stale"] == "False"
+    spectra = {r["spectrum_id"]: r for r in _rows(tables / "spectra.csv")}
+    assert spectra[ids[0]]["review_K"] == "1" and spectra[ids[1]]["review_K"] == ""
+    # no review and no rule: no review.csv
+    from hxex.io import ReviewTable
+
+    with open_bundle(tmp_path / "out") as b:
+        b.set_review(ReviewTable.empty())
+    assert cli.main(["-q", "report", str(tmp_path / "out"), "--tables", str(tables)]) == 0
+    assert not (tables / "review.csv").exists()

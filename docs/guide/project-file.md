@@ -125,12 +125,27 @@ To save time:
 
 ## Reviewing results
 
-The bundle has a **review layer**: per spectrum, a status (rejected or not), an optional K
-override and a note. Rejected spectra are left out of the uptake, the reports and the analysis;
-an override replaces the selected K. The review is kept when the bundle is overwritten by a new
-run; entries the new run cannot hold are kept but marked stale. To leave spectra out without
-Python, write rules in the project file ([Excluding spectra](excluding.md)); single review
-decisions are entered from Python ([Using *hxex* from Python](python.md#reviewing-spectra)).
+After a run, you will want to look at the fits and decide which spectra to trust. *hxex* keeps
+those decisions without changing the fits:
+
+- **To leave spectra out**, write rules in the project file: before fitting with
+  `[[input.exclude]]`, or after it with `[[analysis.exclude]]`. See
+  [Excluding spectra](excluding.md).
+- **To see every decision**, open `review.csv` in the tables folder (`results_tables`). It has
+  one row per reviewed spectrum: its sample, peptide, charge, time, and replicate, its status
+  (`rejected` or `accepted`), the number of populations chosen for it (`review_K`, empty when
+  none was), the note, when it was made, and where it came from (`exclusion rule`, or
+  `review` for a decision stored in the bundle). The file is there only when there is something
+  to list.
+- In `spectra.csv`, `review_status` says whether a spectrum is rejected, and `review_K` shows a
+  number of populations chosen in the review: the `K` column then uses it instead of the fit's
+  choice.
+
+The bundle can also store decisions of its own, its *review layer*: a status, a chosen number
+of populations, and a note per spectrum. These are kept when the run is repeated with
+`--overwrite` (decisions the new run cannot apply are kept but marked stale). For now they are
+entered from Python ([Using *hxex* from Python](python.md#reviewing-spectra)); choosing the
+number of populations for a spectrum without Python is planned.
 
 ## From Python
 

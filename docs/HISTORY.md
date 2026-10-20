@@ -3104,3 +3104,16 @@ CSVs or mzML if wanted.
     intervals at 20 are near the range of the draws, so the comments and the guide say to raise
     it when the intervals matter. Of the private project files only one has a bootstrap, and it
     sets its own `n_boot`.
+
+121. **The review shown to users: `review.csv` and `review_K` (owner, 2026-10-19).** Owner:
+    users cannot read Parquet, and the guide described the review layer as if they could see
+    it. Only `review_status` (spectra.csv), the figures' "rejected", and a count in `hxex info`
+    reached them; notes, chosen K, dates, and stale entries were only in the bundle.
+    `write_tables` now writes `review.csv` when the review layer (stored, or with
+    `[[analysis.exclude]]` rules applied) has entries: one row per entry with the spectrum's
+    sample, peptide, charge, time, role, replicate, the status, `review_K`, note, date, stale,
+    and `source` (`review` or `exclusion rule`, from the rules' note). Without entries the
+    file is not written (and a listed old one goes). The index columns gain `review_K` (the
+    K the review chose; the `K` column already used it), a whole number or empty. The guide's
+    "Reviewing results" is rewritten around what a user can do. Choosing K without Python (an
+    `[[analysis.choose_k]]` rule) is the next item if the owner wants it.

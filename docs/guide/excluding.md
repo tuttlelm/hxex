@@ -90,6 +90,7 @@ Use this when the figures or tables show you a spectrum is bad. The rule goes un
   its spectrum and population panels are labelled `rejected`, and the uptake figure draws its
   point hollow and grey ("rejected / excluded" in the legend). Spectra rejected in the review
   are drawn the same way.
+- `review.csv` in the tables folder lists every excluded spectrum, with the rule's note.
 - Changing your mind costs only a rerun of `hxex analyse` or `hxex report`.
 
 ## Checking your rules
