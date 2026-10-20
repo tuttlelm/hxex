@@ -7,6 +7,49 @@ figures (`results_figures`). `hxex report` writes the tables and figures again f
 reference: `results_analysis_WT` for comparisons with WT (`results_analysis` without a
 reference), so analyses with different references never replace each other.
 
+With the bundle at its usual name, `results`, and analyses with WT and Mut as the reference, a
+project folder looks like this:
+
+```text
+my_protein/
+├── hxex.toml                    your project file (never written by hxex)
+├── results/                     the bundle (hxex run)
+│   ├── manifest.json            what the bundle holds, and the settings of the run
+│   ├── run_settings_used.toml   every setting of the run, written out (see below)
+│   ├── spectra.parquet          the raw spectra
+│   ├── binned.parquet           the picked deuterium sticks
+│   ├── fit.parquet, ...         the fits, controls, quality flags, bootstrap
+│   └── review.parquet           the review decisions (once there are any)
+├── results_tables/              the tables (hxex run, hxex report)
+│   ├── series.csv
+│   ├── spectra.csv
+│   ├── components.csv
+│   ├── uptake.csv
+│   ├── review.csv               (once there are review decisions)
+│   └── hxex_listing.json        the files hxex wrote here
+├── results_figures/             the figures (hxex report --figures, or figures = true)
+│   ├── overview.pdf
+│   ├── WT_0012_0025_LVPRGS_z_2.pdf    one file per series, named by its label
+│   ├── ...
+│   └── hxex_listing.json
+├── results_analysis_WT/         the analysis with WT as the reference (hxex analyse)
+│   ├── species_uptake.csv, compare_peptides.csv, ...
+│   ├── woods_Mut_60s.pdf, ...
+│   ├── analysis_settings_used.toml    every setting of the analysis, written out
+│   ├── run_settings_used.toml         the run settings of the results it read
+│   └── hxex_listing.json
+├── results_analysis_Mut/        the analysis with Mut as the reference
+├── results.1/                   an earlier generation (--keep-previous),
+├── results.1_tables/            with its tables, figures, and analyses
+├── results.1_figures/
+└── results.1_analysis_WT/
+```
+
+Which tables and figures appear depends on the settings and the data; they are listed below.
+`hxex_listing.json` is how *hxex* knows which files in a folder it wrote, so it can replace
+them later and leave the rest alone. The bundle's tables are described in
+[BUNDLE.md](../BUNDLE.md); the CSV tables hold the same results for spreadsheets.
+
 These folders, and their earlier generations (`results.1`, `results.1_tables`,
 `results.1_analysis_WT`, ...), belong to *hxex*: a later run refuses to write over them unless given
 `--overwrite` (replace them; the review is carried over) or `--keep-previous` (move them to the
@@ -121,6 +164,32 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `residue_rates_<sample>_<range>` | per-residue rates, amplitudes and, with `kint`, protection |
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
+
+## The settings used
+
+Two files record every setting that was used, including the ones you left at their usual
+values, so you can see later exactly how a result was made (for the methods section of a
+paper, say) without keeping the project file in step:
+
+- `run_settings_used.toml`, in the bundle: the settings of `hxex run` (what was read, the
+  fit, the bootstrap, the controls, ...). A setting you did not write in `hxex.toml` shows its
+  usual value; a step that was switched off shows as, for example, `bootstrap = false`.
+- `analysis_settings_used.toml`, in each analysis folder: the settings of `hxex analyse`.
+  Beside it is a copy of the run's `run_settings_used.toml` (with an analysis of several runs,
+  one per run: `run_settings_used_A.toml`, ...). The analysis folder therefore still says how
+  its results were made after `hxex run --overwrite` has replaced the bundle.
+
+`hxex run --overwrite` leaves the analysis folders as they were, so for a while they describe
+the earlier results. `hxex info results` lists each analysis folder as `up to date` or `made
+from earlier results`, and `hxex analyse` warns about the other analysis folders of the same
+results that are out of date. Run `hxex analyse` again (with that folder's `--reference`) to
+bring one up to date.
+
+Both are ordinary project files: open them in a text editor to read them, or copy one out of
+its folder and use it as a project file to repeat the run. *hxex* writes them with the
+results and replaces them with the results, and never reads them back; editing them changes
+nothing. File paths are written as `record_paths` in `[input]` says: with `record_paths =
+"name"`, only file names appear, which is useful when you send results to someone.
 
 ## Sharing results
 

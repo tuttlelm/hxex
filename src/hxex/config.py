@@ -38,6 +38,7 @@ and :func:`template` writes a project file with every default.
 from __future__ import annotations
 
 import logging
+import re
 import textwrap
 import tomllib
 import types
@@ -1608,6 +1609,247 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         elif isinstance(value, Mapping):
             lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
     return "\n".join(lines) + "\n"
+
+
+# --- the settings used: run_settings_used.toml and analysis_settings_used.toml --------------
+
+RUN_SETTINGS_FILE = "run_settings_used.toml"  # in a bundle (and copied into its analyses)
+ANALYSIS_SETTINGS_FILE = "analysis_settings_used.toml"  # in an analysis folder
+
+
+def _recorded(path, mode: str) -> str | None:
+    """``path`` as ``[input] record_paths`` records it: whole (``"path"``) or its name only."""
+    if path is None:
+        return None
+    return str(path) if mode == "path" else Path(path).name
+
+
+def _toml_ready(value):
+    """``value`` for a TOML table: tuples as lists, None as ``false`` (the loader's None)."""
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple)):
+        return [_toml_ready(v) for v in value]
+    if isinstance(value, Mapping):
+        return {str(k): _toml_ready(v) for k, v in value.items()}
+    return value
+
+
+def _input_record(inp: InputSettings, mode: str) -> dict[str, Any]:
+    """The ``[input]`` table of ``inp`` with every setting written out (None where unset)."""
+    data: dict[str, Any] = {"format": inp.format}
+    if inp.spectra is not None:  # stored spectra: the read settings do not apply to them
+        return {"spectra": _recorded(inp.spectra, mode), "time_scale": inp.time_scale,
+                "retention_times": _recorded(inp.retention_times, mode),
+                **({"exclude": [r.to_dict() for r in inp.exclude]} if inp.exclude else {})}
+    if inp.format in FOLDER_FORMATS:
+        data.update(
+            data_dir=_recorded(inp.data_dir, mode),
+            samples=None if inp.samples is None else list(inp.samples),
+            peptide_ranges=None if inp.peptide_ranges is None else list(inp.peptide_ranges),
+            peptide_region=None if inp.peptide_region is None else list(inp.peptide_region),
+            sample=inp.sample, peptides=_recorded(inp.peptides, mode))
+    else:
+        from .io.mzml import _recorded_path
+
+        root = inp.data_root
+        runs = []
+        for r in inp.runs:
+            item = r.to_dict()
+            path = Path(r.path) if root is None else root / r.path
+            item["path"] = (str(r.path) if mode == "path"
+                            else _recorded_path(path, root, mode))
+            if item.get("time") is None:
+                item.pop("time", None)  # each scan has its own time
+            runs.append(_toml_ready(item))
+        data.update(
+            peptides=_recorded(inp.peptides, mode), data_root=_recorded(root, mode),
+            thermo_dir=_recorded(inp.thermo_dir, mode), parents=inp.parents,
+            target=_toml_ready(inp.target), scans=inp.scans.to_dict(), runs=runs,
+            fragments=[_toml_ready({f.name: getattr(frag, f.name) for f in fields(frag)})
+                       for frag in inp.fragments])
+    data.update(record_paths=inp.record_paths, time_scale=inp.time_scale,
+                retention_times=_recorded(inp.retention_times, mode))
+    if inp.exclude:
+        data["exclude"] = [r.to_dict() for r in inp.exclude]
+    return data
+
+
+def project_record(project: Project) -> dict[str, Any]:
+    """The settings of ``project`` beside its run settings, as used: the project's name and
+    threads, its ``[input]`` table (every setting written out) and its ``[output]`` table. Paths
+    are recorded as ``[input] record_paths`` says (``"name"`` and ``"relative"``: file names,
+    and the run paths relative to ``data_root``), as the bundle records the files it read. A run
+    keeps it in its bundle (the manifest's ``configs.project_file``), and the bundle's
+    ``run_settings_used.toml`` is written from it (:func:`run_settings_text`)."""
+    inp = project.input
+    mode = "path" if inp is None else inp.record_paths
+    out = project.output
+
+    def folder(value):
+        return value if isinstance(value, bool) else _recorded(value, mode)
+
+    return {
+        "project": project.project, "threads": project.threads,
+        "input": None if inp is None else _input_record(inp, mode),
+        "output": {"bundle": _recorded(out.bundle, mode), "overwrite": out.overwrite,
+                   "keep_previous": out.keep_previous, "keep_spectra": out.keep_spectra,
+                   "tables": folder(out.tables), "figures": folder(out.figures),
+                   "notes": out.notes},
+    }
+
+
+def _falsified(data: Mapping, defaults: Mapping | None) -> dict:
+    """``data`` with ``false`` for a None whose default is not None (a table written out
+    leaves a None default as a commented line; a setting turned off must be written)."""
+    defaults = defaults or {}
+    out = {}
+    for key, value in data.items():
+        default = defaults.get(key)
+        if value is None and default is not None:
+            value = False
+        elif isinstance(value, Mapping) and isinstance(default, Mapping):
+            value = _falsified(value, default)
+        out[key] = value
+    return out
+
+
+def _record_header(title: str, lines: list[str]) -> list[str]:
+    return [f"# {title}"] + textwrap.wrap(" ".join(lines), _LINE_WIDTH - 2, initial_indent="# ",
+                                          subsequent_indent="# ") + [""]
+
+
+def _made(manifest: Mapping) -> str:
+    """When and with which hxex a bundle was written (for a header)."""
+    hxex_version = (manifest.get("versions") or {}).get("hxex", "unknown")
+    return f"created {manifest.get('created') or 'at an unknown time'} by hxex {hxex_version}"
+
+
+def run_settings_text(manifest: Mapping) -> str:
+    """``run_settings_used.toml`` of the bundle whose manifest (or :class:`hxex.report.Settings`
+    as a mapping) is ``manifest``: every setting of the run written out, defaults included, as
+    a project file. The ``[input]`` and ``[output]`` tables are those recorded with the bundle
+    (``configs.project_file``); a bundle written from Python, or before they were recorded, has
+    the run settings only."""
+    configs = manifest.get("configs") or {}
+    record = configs.get("project_file") or {}
+    run = configs.get("run")
+    name = record.get("project") or manifest.get("project") or ""
+    lines = _record_header(f"{RUN_SETTINGS_FILE}: the settings of the run that wrote these "
+                           "results", [
+        f"Results {_made(manifest)}.",
+        "Every setting is written out: one you did not set shows its default. hxex writes",
+        "this file with the results and replaces it with them; it is a record, not read back",
+        "(the bundle's manifest.json holds the same settings for hxex). Copied elsewhere, it",
+        "is a project file that repeats the run. Paths are recorded as [input] record_paths",
+        "says (\"name\": file names only).",
+    ])
+    if name:
+        lines.append(f"project = {_toml_value(name)}")
+    if record.get("threads") is not None:
+        lines.append(f"threads = {record['threads']}")
+    if record.get("input"):
+        lines += [""] + _toml_table("input", record["input"], cls=InputSettings)
+    elif record:
+        lines += ["", "# [input]: none (the run took its spectra from Python)"]
+    else:
+        lines += ["", "# [input] and [output] were not recorded (results written from Python,",
+                  "# or before hxex recorded them); manifest.json says how the spectra were "
+                  "read",
+                  "# (configs.spectra_source)."]
+    if record.get("output"):
+        lines += [""] + _toml_table("output", record["output"], cls=OutputSettings)
+    if run is None:
+        lines += ["", "# [run]: the results do not record their run settings."]
+    else:
+        defaults = RunConfig().to_dict()
+        data = {k: (False if v is None and k in _OPTIONAL_SECTIONS else v)
+                for k, v in run.items()}
+        table = _toml_table("run", _falsified(data, defaults), cls=RunConfig)
+        intro = textwrap.wrap(  # the template's says how to turn the stages on
+            "Run settings (hxex.run.RunConfig); times are in s. A stage written \"name = "
+            "false\" (bootstrap, controls, plots, quality) was off.", _LINE_WIDTH,
+            initial_indent="# ", subsequent_indent="# ")
+        lines += [""] + intro + table[len(_section_comment("run")):]
+    return "\n".join(lines) + "\n"
+
+
+def _analysis_record(config, mode: str) -> dict[str, Any]:
+    """The ``[analysis]`` table of ``config`` with every setting written out."""
+    data = config.to_dict()
+    annotations = data.pop("annotations")
+    data["regions"], data["sites"] = annotations["regions"], annotations["sites"]
+    fasta = data.get("fasta")
+    if isinstance(fasta, str):
+        data["fasta"] = _recorded(fasta, mode)
+    elif isinstance(fasta, Mapping):
+        data["fasta"] = {k: ({s: _recorded(p, mode) for s, p in v.items()}
+                             if isinstance(v, Mapping) else _recorded(v, mode))
+                         for k, v in fasta.items()}
+    data["out"] = _recorded(data.get("out"), mode)
+    if data.get("runs"):
+        data["runs"] = {k: _recorded(v, mode) for k, v in data["runs"].items()}
+    return data
+
+
+def analysis_settings_text(config, results: Mapping[str, Mapping], *,
+                           record_paths: str = "path") -> str:
+    """``analysis_settings_used.toml``: every setting of the analysis ``config``
+    (:class:`hxex.analysis.AnalysisConfig`) written out, defaults included, as the
+    ``[analysis]`` table of a project file. ``results`` names the results it read (run name,
+    empty for a single bundle -> their manifest, or :class:`hxex.report.Settings` as a
+    mapping), for the header. ``record_paths`` records its paths as ``[input] record_paths``
+    does."""
+    from .analysis import AnalysisConfig
+
+    read = [f"{'the results' if not run else f'run {run}'} ("
+            + (_made(m) if m.get("configs") else "its settings not recorded") + ")"
+            for run, m in results.items()]
+    copies = (f"{RUN_SETTINGS_FILE}" if list(results) == [""] else
+              "run_settings_used_RUN.toml, one per run")
+    lines = _record_header(f"{ANALYSIS_SETTINGS_FILE}: the settings of this analysis", [
+        f"It read {', '.join(read) or 'no results'}.",
+        "Every setting is written out: one you did not set shows its default. The run",
+        f"settings of the results it read are beside this file ({copies}). hxex writes this",
+        "file with the analysis and replaces it with it; it is a record, not read back. To",
+        "repeat the analysis, put the [analysis] table in a project file, or run",
+        f"hxex analyse {ANALYSIS_SETTINGS_FILE} --bundle BUNDLE. Paths are recorded as",
+        "[input] record_paths says (\"name\": file names only).",
+    ])
+    defaults = _analysis_record(AnalysisConfig(), "path")
+    data = _falsified(_analysis_record(config, record_paths), defaults)
+    lines += _toml_table("analysis", data, cls=AnalysisConfig)
+    return "\n".join(lines) + "\n"
+
+
+def run_settings_name(run: str = "") -> str:
+    """The name of a run's settings file in an analysis folder: ``run_settings_used.toml`` for
+    the one bundle read, ``run_settings_used_RUN.toml`` for each run of several."""
+    if not run:
+        return RUN_SETTINGS_FILE
+    return f"run_settings_used_{re.sub(r'[^A-Za-z0-9._-]+', '_', run).strip('_') or 'run'}.toml"
+
+
+def settings_records(results, config, record_paths: str = "path") -> dict[str, str]:
+    """The settings files of an analysis (file name -> text): ``analysis_settings_used.toml``
+    for ``config`` and the run settings of each results read (``results``: a
+    :class:`hxex.report.Results`, or run name -> Results), from what their bundles recorded."""
+    import dataclasses
+
+    def manifest(r) -> dict:
+        settings = getattr(r, "settings", None)
+        if dataclasses.is_dataclass(settings):
+            return dataclasses.asdict(settings)
+        return dict(settings) if isinstance(settings, Mapping) else {}
+
+    runs = results if isinstance(results, Mapping) else {"": results}
+    manifests = {name: manifest(r) for name, r in runs.items()}
+    out = {ANALYSIS_SETTINGS_FILE: analysis_settings_text(config, manifests,
+                                                          record_paths=record_paths)}
+    for name, m in manifests.items():
+        if m.get("configs"):
+            out[run_settings_name(name)] = run_settings_text(m)
+    return out
 
 
 def describe(project: Project) -> dict[str, Any]:

@@ -845,6 +845,12 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     assert cli.main(["-q", "analyse", str(path)]) == 0
     listed = output_listing(folder)
     assert listed and "species_uptake.csv" in listed
+    # the settings used go with the analysis: its own, and a copy of the run's
+    assert {"analysis_settings_used.toml", "run_settings_used.toml"} <= set(listed)
+    used = load_project(folder / "analysis_settings_used.toml", analysis_only=True)
+    assert used.analysis == load_project(path).analysis
+    run_copy = (folder / "run_settings_used.toml").read_text()
+    assert run_copy == (tmp_path / "out" / "run_settings_used.toml").read_text()
     # a figure an earlier analysis wrote and this one does not, and a file of the user's
     (folder / "woods_old.pdf").write_text("stale")
     (folder / "my_notes.txt").write_text("mine")
@@ -856,6 +862,11 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     capsys.readouterr()
     assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
     assert "still holds the analysis" in capsys.readouterr().err  # until analyse runs again
+    # the analysis keeps the settings of the results it was made from
+    assert (folder / "run_settings_used.toml").read_text() == run_copy
+    with open_bundle(tmp_path / "out") as b:
+        assert f"created {b.manifest['created']}" in (
+            tmp_path / "out" / "run_settings_used.toml").read_text()
     assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
     assert (tmp_path / "out.1_analysis" / "species_uptake.csv").is_file()
     assert (tmp_path / "out.1_tables").is_dir() and not folder.exists()
@@ -888,12 +899,19 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     with open_bundle(tmp_path / "out") as b:
         assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
         assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4
+    # the bundle's settings file follows: the new bootstrap, the project file's input kept
+    used = load_project(tmp_path / "out" / "run_settings_used.toml")
+    assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input
 
 
-def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path):
+def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path, capsys):
     """The default analysis folder is named after the reference (results_analysis_WT), so an
-    analysis against another reference never replaces it; --keep-previous moves every analysis
-    folder with its bundle; [[analysis]] (several tables) is refused with the way to do it."""
+    analysis against another reference never replaces it; hxex info says whether each was made
+    from the results there now, and hxex analyse warns about the others that were not;
+    --keep-previous moves every analysis folder with its bundle; [[analysis]] (several tables)
+    is refused with the way to do it."""
+    import json
+
     from hxex.io.bundle import analysis_folder_name
 
     assert analysis_folder_name("results") == "results_analysis"
@@ -907,6 +925,28 @@ def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path):
     assert cli.main(["-q", "analyse", str(path), "--reference", "WT"]) == 0
     plain, wt = tmp_path / "out_analysis", tmp_path / "out_analysis_WT"
     assert (plain / "species_uptake.csv").is_file() and (wt / "species_uptake.csv").is_file()
+    capsys.readouterr()
+
+    def info():
+        assert cli.main(["info", str(tmp_path / "out")]) == 0
+        return capsys.readouterr().out
+
+    out = info()
+    assert "analyses       out_analysis: up to date" in out and "out_analysis_WT: up to date" in out
+    with open_bundle(tmp_path / "out") as b:
+        first = b.manifest["created"]
+    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    out = info()
+    assert f"out_analysis: made from earlier results (created {first})" in out
+    assert cli.main(["-q", "analyse", str(path)]) == 0  # the WT folder is still the old one
+    assert f"out_analysis_WT was made from earlier results (created {first})" in \
+        capsys.readouterr().err
+    out = info()
+    assert "out_analysis: up to date" in out and "out_analysis_WT: made from earlier" in out
+    listing = json.loads((wt / "hxex_listing.json").read_text())
+    del listing["made_from"]  # as a folder written before hxex recorded it
+    (wt / "hxex_listing.json").write_text(json.dumps(listing))
+    assert "out_analysis_WT: not known" in info()
     assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
     assert (tmp_path / "out.1_analysis").is_dir() and (tmp_path / "out.1_analysis_WT").is_dir()
     assert not plain.exists() and not wt.exists()
@@ -914,3 +954,122 @@ def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path):
         project_from(tomllib.loads('project = "p"\n[input]\nformat = "specexport"\n'
                                    'data_dir = "d"\n[[analysis]]\nreference = "WT"\n'
                                    '[[analysis]]\nreference = "Mut"\n'), tmp_path)
+
+
+def test_the_settings_used_read_back_as_the_project(tmp_path):
+    """run_settings_used.toml and analysis_settings_used.toml write out every setting
+    (defaults included, a stage that is off as "name = false", a None whose default is not
+    None as false) and read back as the same project; with record_paths = "name" no directory
+    is recorded; an analysis of several runs gets one run settings file per run."""
+    import types
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.config import (
+        analysis_settings_text,
+        project_record,
+        run_settings_text,
+        settings_records,
+    )
+    from hxex.report import Settings
+
+    def written(project, name="used.toml"):
+        manifest = {"project": project.project, "created": "2026-10-20T00:00:00+00:00",
+                    "versions": {"hxex": "0"},
+                    "configs": {"run": project.run.to_dict(),
+                                "project_file": project_record(project)}}
+        text = run_settings_text(manifest)
+        (tmp_path / name).write_text(text)
+        return text, load_project(tmp_path / name), manifest
+
+    for fmt in FORMATS:
+        (tmp_path / "t.toml").write_text(template(fmt))
+        project = load_project(tmp_path / "t.toml")
+        text, back, _ = written(project)
+        assert (back.run, back.input, back.output) == (project.run, project.input,
+                                                         project.output), fmt
+        assert "bootstrap = false" in text and "uncomment" not in text
+    (tmp_path / "rich.toml").write_text("""
+project = "demo"
+threads = 4
+[input]
+format = "mzml"
+peptides = "lists/peptides.csv"
+data_root = "data"
+record_paths = "relative"
+[input.target]
+rt_window = [60.0, 180.0]
+[input.scans]
+min_time = "1 min"
+[[input.fragments]]
+ions = "c-1:ALL z-dot:ALL"
+label = "gentle"
+parent_mz = false
+[[input.exclude]]
+sample = "WT"
+peptide_range = "45-60"
+time = "30 s"
+[[input.runs]]
+path = "sub/UN_01.mzML"
+sample = "WT"
+role = "undeut"
+[[input.runs]]
+path = "D_60s_01.mzML"
+sample = "WT"
+time = "60 s"
+precursor_charge = false
+[output]
+bundle = "results"
+figures = true
+[run]
+drop_no_signal = false
+[run.fit.noise]
+sd = 0.5
+percent = false
+[run.bootstrap]
+n_boot = 30
+[run.controls]
+fulldeut_at = "20 h"
+[analysis]
+reference = "WT"
+protection = true
+fragments = false
+filters = false
+times = ["1 min", 600]
+[analysis.labelling]
+ph_read = 7.0
+temperature = 20.0
+d2o_fraction = 0.9
+[[analysis.regions]]
+name = "N"
+start = 1
+end = 20
+[[analysis.exclude]]
+sample = "WT"
+rep = 2
+[analysis.controls]
+d2o_fraction = 0.85
+""")
+    project = load_project(tmp_path / "rich.toml")
+    text, back, manifest = written(project)
+    assert back.run == project.run and back.output.figures == project.output.figures
+    assert back.input.runs == project.input.runs and back.input.exclude == project.input.exclude
+    assert back.input.fragments == project.input.fragments
+    assert back.input.scans == project.input.scans and back.input.target == project.input.target
+    # "relative" records the run paths from data_root and only the names of the other paths
+    assert 'path = "sub/UN_01.mzML"' in text and 'peptides = "peptides.csv"' in text
+    assert str(tmp_path) not in text
+    analysis = analysis_settings_text(project.analysis, {"": manifest})
+    (tmp_path / "analysis.toml").write_text(analysis)
+    assert load_project(tmp_path / "analysis.toml", analysis_only=True).analysis == \
+        project.analysis
+    (tmp_path / "analysis.toml").write_text(analysis_settings_text(AnalysisConfig(), {}))
+    assert load_project(tmp_path / "analysis.toml", analysis_only=True).analysis == \
+        AnalysisConfig()
+    # an analysis of several runs: one run settings file per run; a run without settings
+    # recorded (results from Python) gets none
+    runs = {"A": types.SimpleNamespace(settings=Settings.from_manifest(manifest)),
+            "B b": types.SimpleNamespace(settings=None)}
+    files = settings_records(runs, project.analysis)
+    assert set(files) == {"analysis_settings_used.toml", "run_settings_used_A.toml"}
+    assert "run A (created 2026-10-20T00:00:00+00:00 by hxex 0)" in \
+        files["analysis_settings_used.toml"].replace("\n# ", " ")

@@ -1,6 +1,6 @@
 # Residue-level rates and protection factors from fragment ladders
 
-With fragment ions (ETD, ECD and other low-scrambling activations), consecutive fragments of
+With fragment ions (ETD, ECD, and other low-scrambling activations), consecutive fragments of
 a ladder differ by one residue, so the difference of their deuterium follows that residue
 alone. `hxex analyse` fits an exponential decay (or rise) to every such single-residue step
 and writes the rate to `ladder_rates.csv`. With `[analysis.fragments] kint = true` and the

@@ -456,7 +456,7 @@ def _control_file_text(roles: dict | None, sample: str) -> str:
 def cmd_run(args) -> int:
     import dataclasses
 
-    from .config import read_input
+    from .config import project_record, read_input
     from .hooks import ProgressLog
     from .model import Backend
     from .run import run
@@ -509,6 +509,9 @@ def cmd_run(args) -> int:
             figures_dir=_beside(bundle, out.figures, "_figures")
             if out.figures is not False else None,
             exclude=project.input.exclude, view_exclude=_view_exclude(project),
+            project_file=project_record(dataclasses.replace(
+                project, threads=threads, output=dataclasses.replace(
+                    out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
             progress=ProgressLog(interval=args.progress_every), cancel=stop,
         )
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
@@ -717,12 +720,39 @@ def cmd_info(args) -> int:
         earlier = generations(b.path)
         if earlier:
             rows.append(("generations", ", ".join(p.name for _, p in earlier)))
+        rows += _analysis_rows(b.path)
         for key, value in rows:
             _say(f"{key:14s} {value}")
         if args.verify:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _analysis_rows(bundle: Path) -> list[tuple[str, str]]:
+    """The ``hxex info`` lines of the bundle's analysis folders: whether each was made from the
+    results there now (none without analysis folders)."""
+    from .io.bundle import analysis_states
+
+    rows = []
+    for folder, state in analysis_states(bundle):
+        text = (f"{folder.name}: up to date" if state is None else
+                f"{folder.name}: not known (written before hxex recorded it)" if not state else
+                f"{folder.name}: made from earlier results (created {state}); run hxex "
+                "analyse again")
+        rows.append(("" if rows else "analyses", text))
+    return rows
+
+
+def _stale_analyses(bundle: Path, written: Path) -> None:
+    """Warn about the bundle's other analysis folders made from earlier results (``hxex
+    analyse`` has just brought ``written`` up to date)."""
+    from .io.bundle import analysis_states
+
+    for folder, state in analysis_states(bundle):
+        if state and folder.resolve() != written.resolve():
+            log.warning("%s was made from earlier results (created %s): run hxex analyse for "
+                        "it again", folder, state)
 
 
 def _provenance_rows(prov) -> list[tuple[str, str]]:
@@ -767,6 +797,7 @@ def cmd_analyse(args) -> int:
     from .report import Results, write_analysis
 
     threads = args.threads
+    record_paths = "path"  # the analysis settings file records its paths as the input does
     first = Path(_run_source(args.source[0])[1])
     if len(args.source) > 1 or _is_bundle(first):
         runs = dict(_run_source(s) for s in args.source)
@@ -788,6 +819,8 @@ def cmd_analyse(args) -> int:
         config = project.analysis if project.analysis is not None else AnalysisConfig()
         base = first.resolve().parent
         threads = threads if threads is not None else project.threads
+        if project.input is not None:
+            record_paths = project.input.record_paths
         if config.runs and not args.bundle:
             runs = {name: Path(path) for name, path in config.runs.items()}
         else:
@@ -823,12 +856,15 @@ def cmd_analyse(args) -> int:
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
         results = RunSet(opened, merge=config.merge) if several else opened[""]
-        written = write_analysis(results, config, out, base=base,
+        written = write_analysis(results, config, out, base=base, record_paths=record_paths,
                                  progress=ProgressLog(name="analysis",
                                                       interval=args.progress_every),
                                  cancel=stop)
+    if not several:
+        _stale_analyses(lead, out)
     tables = sum(1 for p in written if p.suffix == ".csv")
-    _say(f"{tables} table(s) and {len(written) - tables} figure(s) in {out}")
+    figures = sum(1 for p in written if p.suffix == f".{config.format}")
+    _say(f"{tables} table(s) and {figures} figure(s) in {out}, with the settings used")
     return 0
 
 

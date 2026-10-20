@@ -3117,3 +3117,36 @@ CSVs or mzML if wanted.
     K the review chose; the `K` column already used it), a whole number or empty. The guide's
     "Reviewing results" is rewritten around what a user can do. Choosing K without Python (an
     `[[analysis.choose_k]]` rule) is the next item if the owner wants it.
+
+122. **The settings used, written out (owner, 2026-10-20).** Owner asked whether the settings
+    left at their defaults are saved with a bundle. They were, for the run: the manifest's
+    `configs.run` is the whole `RunConfig` and `spectra_source` the reader's full settings;
+    but not the `[input]`/`[output]` tables as given, nor any `[analysis]` setting (an analysis
+    folder held only results), and only as JSON for the program. Owner chose TOML (a format
+    users already write and can reuse) over JSON, the names `run_settings_used.toml` (in the
+    bundle) and `analysis_settings_used.toml` (in each analysis folder), and, for analyses of
+    several runs, a copy of each run's file (`run_settings_used_RUN.toml`) beside the
+    analysis's own, so every file covers one thing. Built: the manifest gains
+    `configs.project_file` (`config.project_record`: name, threads, `[input]` with every
+    setting, `[output]`, with the command line's `--bundle`, `--overwrite`, `--keep-previous`
+    applied; paths as `[input] record_paths` records them: `name` and `relative` leave no
+    directory); `write_bundle` writes `run_settings_used.toml` from the manifest
+    (`config.run_settings_text`), so it cannot disagree with it, and owns the name like
+    `manifest.json` (not in `files`, not checksummed, never read back); a resumed bundle
+    keeps `project_file`. `write_analysis` writes `analysis_settings_used.toml`
+    (`config.analysis_settings_text`) and the run file(s) from the results' manifests, so old
+    bundles' analyses get one too, and the analysis folder keeps the settings of the results
+    it was made from after `run --overwrite` (which leaves the analysis folders in place).
+    Written as a project file: a None whose default is not None as `false`, a stage that was
+    off as `name = false`, a None default as the template's commented line; a test reads each
+    template, a project with every kind of table, and an analysis back as the same settings.
+    `[analysis]` paths follow the project's `record_paths` too. The guide's outputs page has
+    the files in its folder tree and a section on them. Then (owner: "add the check") an
+    analysis folder's listing records the results it read (`made_from`: run -> the bundle's
+    `created` stamp; in the listing, not parsed from the settings file's comments);
+    `hxex info` lists each analysis folder of the bundle as up to date, made from earlier
+    results (with their stamp), or not known (older folders); `hxex analyse` warns about the
+    bundle's other analysis folders made from earlier results. The stamp has one-second
+    resolution: two bundles written in the same second would look alike, which a run cannot
+    do. Analyses of several runs (`runs_analysis...`) are not checked: they belong to no one
+    bundle.

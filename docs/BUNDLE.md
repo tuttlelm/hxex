@@ -27,7 +27,8 @@ reference the analysis compares with), and the earlier generations `results.1`,
 for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
 live there and are treated differently:
 
-- **Computed results** (the bundle's tables, the CSV tables, the figures) are replaced. A
+- **Computed results** (the bundle's tables, the CSV tables, the figures, and the settings
+  files `run_settings_used.toml` and `analysis_settings_used.toml`) are replaced. A
   bundle directory is replaced file by file as above. A tables, figures, or analysis folder
   keeps a listing of the files hxex wrote, `hxex_listing.json`; writing again (`hxex run`,
   `resume`, `report`, `analyse`, `write_tables`, `write_figures`, `write_analysis`) removes the listed files and writes the new ones,
@@ -111,8 +112,39 @@ it unless the project file sets it. A scan-file
 record also holds `windows`, the m/z range each target's scans were cut to (the picker's
 predicted bins plus `mz_margin`; a rerun from stored spectra whose picker reaches beyond it
 warns). Spectra taken from an earlier bundle or spectra file (`[input] spectra`) keep that
-read's record with `stored_in`, the path they were taken from. Then
+read's record with `stored_in`, the path they were taken from;
+`project_file`: the project file's other settings as the run used them (`project`, `threads`,
+`input` and `output`, each table with every setting written out and the command line's
+`--bundle`, `--overwrite`, and `--keep-previous` applied; paths recorded as `[input]
+record_paths` says), or null for a run from Python; `hxex.config.project_record` builds it,
+and a resumed bundle keeps it). Then
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
+
+## run_settings_used.toml
+
+Beside the manifest, every bundle written since 2026-10-20 holds `run_settings_used.toml`: the
+settings of the run for people to read, as a project file (`project`, `[input]`, `[output]`
+and `[run]` with every table; a setting not given in the project file shows its default, a
+stage that was off is written `name = false`). It is written from the manifest
+(`configs.project_file` and `configs.run`; `hxex.config.run_settings_text`), so it always
+agrees with it; a bundle written from Python has the `[run]` settings only. It is not listed
+in `files` and never read back: hxex replaces it with the bundle (it is the bundle's, like
+`manifest.json`), and copied out of the bundle it repeats the run. Its paths are recorded as
+the input's `record_paths` says (`name` and `relative` leave no directory but the run paths
+relative to `data_root`).
+
+`hxex analyse` (`hxex.report.write_analysis`) writes the settings it used into the analysis
+folder: `analysis_settings_used.toml` (the `[analysis]` table with every setting written out;
+`hxex.config.analysis_settings_text`) and the run settings of the results it read, written
+from their manifests (also for bundles from before the file existed): `run_settings_used.toml`
+for one bundle, `run_settings_used_RUN.toml` for each run of an analysis of several. An
+analysis folder therefore keeps the settings of the results it was made from after `hxex run
+--overwrite` replaces the bundle. The analysis folder's listing covers these files, and
+records the results read: `made_from` (run name, empty for a single bundle, to the bundle's
+`created` stamp; `hxex.io.made_from`). `hxex info` compares it with the bundle and lists each
+analysis folder as up to date, made from earlier results, or not known (a folder written
+before the record); `hxex analyse` warns about the bundle's other analysis folders made from
+earlier results (`hxex.io.bundle.analysis_states`).
 
 ## Tables
 

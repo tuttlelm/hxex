@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
 
@@ -357,14 +358,27 @@ def write_analysis(
     directory: str | Path,
     *,
     base: str | Path = ".",
+    record_paths: str = "path",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> list[Path]:
     """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
     ``directory``; returns the files. Relative FASTA paths are taken from
-    ``base``. ``progress(done, total)`` counts the files."""
+    ``base``. ``progress(done, total)`` counts the files.
+
+    With them go the settings used, for people (not read back): ``analysis_settings_used.toml``
+    (every setting of ``config`` written out; its paths recorded as ``record_paths`` says, as
+    ``[input] record_paths``) and the run settings of the results read
+    (``run_settings_used.toml``, or ``run_settings_used_RUN.toml`` per run of a
+    :class:`~hxex.analysis.RunSet`), written from their bundles' records, so the folder keeps
+    them when a bundle is replaced. Nothing is written when there is no table or figure. The
+    folder's listing records the results read (:func:`hxex.io.made_from`), so ``hxex info``
+    can tell when the folder no longer matches its bundle."""
+    from ..config import settings_records
+
     directory = Path(directory)
+    read = results.runs if isinstance(results, RunSet) else results  # as read, for the records
     if config.exclude:  # [[analysis.exclude]]: rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
 
@@ -405,8 +419,13 @@ def write_analysis(
     total = len(tables) + len(jobs)
     names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"
                                                    for stem, _ in jobs]
+    records = settings_records(read, config, record_paths) if total else {}
+    names += list(records)
+    total += len(records)
     # as the tables and figures folders: the files of the earlier analysis go, yours stay
-    with replace_outputs(directory, names) as written:
+    made = {name: str(getattr(getattr(r, "settings", None), "created", "") or "")
+            for name, r in (read.items() if isinstance(read, Mapping) else [("", read)])}
+    with replace_outputs(directory, names, made=made) as written:
         for n, (name, cols) in enumerate(tables.items()):
             check_cancel(cancel)
             written.append(write_csv(cols, directory / f"{name}.csv"))
@@ -417,5 +436,9 @@ def write_analysis(
             draw().savefig(path, dpi=150, bbox_inches="tight")
             written.append(path)
             report(progress, len(tables) + n + 1, total)
+        for n, (name, text) in enumerate(records.items()):
+            (directory / name).write_text(text, encoding="utf-8")
+            written.append(directory / name)
+            report(progress, len(tables) + len(jobs) + n + 1, total)
     log.info("analysis: %d tables and %d figures in %s", len(tables), len(jobs), directory)
     return written

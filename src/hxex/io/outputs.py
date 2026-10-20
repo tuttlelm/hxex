@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,33 +29,51 @@ class OutputError(Exception):
     """An output folder cannot be written without replacing a file that is not hxex's."""
 
 
-def output_listing(directory: str | Path) -> list[str] | None:
-    """The files hxex wrote into ``directory`` (its listing), or None when it has none."""
+def _listing(directory: str | Path) -> dict | None:
     try:
         data = json.loads((Path(directory) / LISTING).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or data.get("kind") != KIND:
+    return data if isinstance(data, dict) and data.get("kind") == KIND else None
+
+
+def output_listing(directory: str | Path) -> list[str] | None:
+    """The files hxex wrote into ``directory`` (its listing), or None when it has none."""
+    data = _listing(directory)
+    return None if data is None else [str(f) for f in data.get("files", [])]
+
+
+def made_from(directory: str | Path) -> dict[str, str] | None:
+    """The results an analysis folder was made from, as its listing records them (run name,
+    empty for a single bundle -> the bundle's ``created`` stamp; empty when not recorded), or
+    None for a folder whose listing does not say (written before hxex recorded it)."""
+    data = _listing(directory)
+    if data is None or not isinstance(data.get("made_from"), dict):
         return None
-    return [str(f) for f in data.get("files", [])]
+    return {str(k): str(v) for k, v in data["made_from"].items()}
 
 
-def _write_listing(directory: Path, files: Iterable[str]) -> None:
+def _write_listing(directory: Path, files: Iterable[str],
+                   made: Mapping[str, str] | None = None) -> None:
     data = {"kind": KIND, "written": datetime.now(UTC).isoformat(timespec="seconds"),
-            "files": sorted(set(files))}
+            "files": sorted(set(files)),
+            **({} if made is None else {"made_from": dict(made)})}
     tmp = directory / (LISTING + ".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     tmp.replace(directory / LISTING)
 
 
 @contextmanager
-def replace_outputs(directory: str | Path, names: Iterable[str]) -> Iterator[list[Path]]:
+def replace_outputs(directory: str | Path, names: Iterable[str], *,
+                    made: Mapping[str, str] | None = None) -> Iterator[list[Path]]:
     """Prepare ``directory`` for the files ``names`` (relative to it) and yield the list the
     caller appends every written path to; the listing is written from that list when the
     block ends, also when it fails part-way, so the next write knows what is hxex's. Before
     anything changes: a file in ``directory`` named like one of ``names`` that the listing
     does not cover is refused (:class:`OutputError`); then the listed files are removed, so
-    the folder holds only what this write produces (and your own files)."""
+    the folder holds only what this write produces (and your own files). ``made`` (run name
+    -> the ``created`` stamp of the bundle read; :func:`made_from`) is recorded in the listing
+    of an analysis folder, so a later command can tell whether it is out of date."""
     directory = Path(directory)
     names = sorted(set(names))
     listed = output_listing(directory)
@@ -77,4 +95,4 @@ def replace_outputs(directory: str | Path, names: Iterable[str]) -> Iterator[lis
     try:
         yield written
     finally:
-        _write_listing(directory, (str(p.relative_to(directory)) for p in written))
+        _write_listing(directory, (str(p.relative_to(directory)) for p in written), made)

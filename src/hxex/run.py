@@ -194,6 +194,7 @@ class RunResult:
     review: Any = None  # the hxex.io.bundle.ReviewTable carried over to the bundle, if any
     excluded: dict | None = None  # the run-level exclusions (hxex.exclusions.exclusion_record)
     view_exclude: tuple = ()  # [[analysis.exclude]] rules applied to the run's figures
+    project_file: dict | None = None  # the project file's other settings (config.project_record)
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -248,7 +249,7 @@ class RunResult:
             spectra_source=self.spectra_source if spectra is None or spectra.source is None
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
-            provenance=provenance, excluded=self.excluded,
+            provenance=provenance, excluded=self.excluded, project_file=self.project_file,
         )
 
 
@@ -510,6 +511,7 @@ def run(
     reference: Reference | None = None,
     exclude: Sequence = (),
     view_exclude: Sequence = (),
+    project_file: Mapping | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -533,7 +535,9 @@ def run(
     manifest records what was replaced, what changed and the review carried (its
     ``provenance``). With ``config.plots`` the series figures are written to ``figures_dir``
     (default: ``out`` with ``_figures`` added to its name); ``reference`` adds known
-    populations to them. Raises ValueError if nothing is left.
+    populations to them. ``project_file`` (:func:`hxex.config.project_record`) records the
+    project file's other settings in the bundle, beside the run settings. Raises ValueError if
+    nothing is left.
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
@@ -640,6 +644,7 @@ def run(
         controls=controls, quality=quality, envelopes=envelopes,
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
         excluded=excluded, view_exclude=tuple(view_exclude),
+        project_file=None if project_file is None else dict(project_file),
     )
     spectra = stored if keep_spectra else None
     review = _review_for(review, fit)
@@ -804,6 +809,7 @@ def resume_bootstrap(
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
         provenance = b.manifest.get("provenance")
         excluded = b.manifest.get("excluded")
+        project_file = b.manifest["configs"].get("project_file")
     plots = None
     if config.plots is not None and figures_dir is None:
         figures_dir = path.with_name(path.name + "_figures")
@@ -822,7 +828,7 @@ def resume_bootstrap(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
-        excluded=excluded, view_exclude=tuple(view_exclude),
+        excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_file,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    figures_dir=figures_dir, raw=spectra, reference=reference, progress=progress,

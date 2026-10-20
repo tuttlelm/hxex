@@ -63,8 +63,11 @@ summed. See [Input formats](inputs.md).
   not offered (they are unreliable); residue values come from fragment ladders.
 
 **Practical notes.** `exclude_times` leaves unreliable time points out of the whole analysis
-while keeping their fits. Modified peptides are their own states (`"WT pS59"`) unless
-`modified_peptides = "combined"`.
+while keeping their fits. Peptides with a modification written in the sequence (such as `pS`
+or `acK`) are states of their own (`"WT pS59"`) unless `modified_peptides = "combined"`. A
+point mutation is not a modification: the mutant is a sample of its own, and `peptide_match`
+decides whether its peptides are compared with the reference's over the same residues
+(`"range"`, the default) or only where the sequences are identical (`"sequence"`).
 
 ---
 

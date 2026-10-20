@@ -189,6 +189,21 @@ named after the reference. To compare with another reference as well, run
 `hxex analyse hxex.toml --reference Mut`; it writes to `results_analysis_Mut`, beside the first,
 without touching it. (Without a reference, the folder is `results_analysis`.)
 
+After these steps, the project folder holds:
+
+```text
+my_protein/
+├── hxex.toml               your project file
+├── results/                the bundle: the results in hxex's own format (keep it)
+├── results_tables/         the results as spreadsheets (.csv files)
+├── results_figures/        the figures (step 7)
+├── results_analysis_WT/    the comparisons with WT (step 8)
+└── results_analysis_Mut/   the comparisons with Mut, if you ran that too
+```
+
+The folders whose names start with `results` belong to *hxex*: later runs replace them (see
+below), so keep files of your own elsewhere. [Outputs](outputs.md) lists what is in each.
+
 ## Running it all again
 
 Once `hxex.toml` holds everything (the input, the `[analysis]` settings, and any other changes),

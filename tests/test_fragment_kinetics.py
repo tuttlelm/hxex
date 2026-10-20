@@ -393,7 +393,8 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     assert names == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
-        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
+        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
+        "analysis_settings_used.toml"])  # the stub has no run settings to copy
     assert all(p.stat().st_size > 0 for p in written)
     # without the fragment outputs a fragment-only run has nothing else to write
     assert write_analysis(run, AnalysisConfig(fragments=None), tmp_path / "none") == []
@@ -429,7 +430,7 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
     assert header.endswith("kint,protection,log10_protection,log10_protection_se,merged")
-    assert len(written) == 8
+    assert len(written) == 9  # 4 tables, 4 figures, the settings used
     # without the opt-in the same conditions change nothing
     off = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
                                                                   exchange={"S": cond}))
@@ -560,7 +561,8 @@ def test_fragment_outputs_of_several_runs(tmp_path):
     assert sorted(p.name for p in written) == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
-        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png"])
+        "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
+        "analysis_settings_used.toml"])  # the stub has no run settings to copy
     for name in ("fragment_uptake", "ladder_rates", "ladder_residues", "closure"):
         head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
         assert head.startswith("run,sample,"), head

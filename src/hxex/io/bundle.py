@@ -566,6 +566,24 @@ def analysis_folders(path: Path) -> list[Path]:
         p.name == f"{path.name}_analysis" or p.name.startswith(f"{path.name}_analysis_")))
 
 
+def analysis_states(path: str | Path) -> list[tuple[Path, str | None]]:
+    """Whether each analysis folder of the bundle at ``path`` (:func:`analysis_folders`) was
+    made from the results there now: ``(folder, state)`` with state None (it was), the
+    ``created`` stamp of the results it was made from (earlier ones: ``hxex analyse`` brings
+    it up to date), or ``""`` (not known: written before hxex recorded it)."""
+    from .outputs import made_from
+
+    path = Path(path)
+    created = (bundle_manifest(path) or {}).get("created", "")
+    out = []
+    for folder in analysis_folders(path):
+        made = made_from(folder)
+        stamp = None if made is None else made.get("")
+        out.append((folder, "" if stamp is None or not stamp
+                    else None if stamp == created else stamp))
+    return out
+
+
 def _generation_stem(path: Path) -> tuple[str, str]:
     """``(stem, ext)`` so that generation N of the bundle is ``stem.N`` + ``ext``."""
     return (path.stem, ".zip") if path.suffix == ".zip" else (path.name, "")
@@ -660,6 +678,7 @@ def write_bundle(
     overwrite: bool = False,
     provenance: Mapping | None = None,
     excluded: Mapping | None = None,
+    project_file: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
@@ -679,6 +698,10 @@ def write_bundle(
     :func:`hxex.run.resume_bootstrap`). ``provenance`` is recorded as given (see
     :func:`provenance_of`: the bundle this one replaces, what changed, the review carried), and
     ``excluded`` too (the run-level exclusions: :func:`hxex.exclusions.exclusion_record`).
+    ``project_file`` is the project file's other settings, as used
+    (:func:`hxex.config.project_record`; None for a run from Python). Beside the manifest, the
+    bundle holds ``run_settings_used.toml``, every setting of the run written out for people
+    (:func:`hxex.config.run_settings_text`); it is replaced with the bundle and not read back.
     """
     path = Path(path)
     unknown = set(pending) - set(PENDING_STAGES)
@@ -766,9 +789,13 @@ def write_bundle(
                 "envelope": None if envelopes is None else envelopes.config.to_dict(),
                 "run": run_config,
                 "spectra_source": None if spectra_source is None else dict(spectra_source),
+                "project_file": None if project_file is None else dict(project_file),
             },
             "files": files,
         }
+        from ..config import RUN_SETTINGS_FILE, run_settings_text
+
+        (tmp / RUN_SETTINGS_FILE).write_text(run_settings_text(manifest), encoding="utf-8")
         (tmp / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
         _publish(tmp, path, overwrite)
     except BaseException:
@@ -808,7 +835,9 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     old = _old_manifest(path)
     if old is None:  # checked by write_bundle; never remove what is not a bundle
         raise BundleError(f"{path} is a directory but not a results bundle; not removing it")
-    owned = set(old.get("files", {})) | {MANIFEST, REPLACING}
+    from ..config import RUN_SETTINGS_FILE
+
+    owned = set(old.get("files", {})) | {MANIFEST, REPLACING, RUN_SETTINGS_FILE}
     new = [item.name for item in tmp.iterdir() if item.name != MANIFEST]
     clash = sorted(n for n in new if n not in owned and (path / n).exists())
     if clash:
