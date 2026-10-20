@@ -208,11 +208,12 @@ class Results:
     def bootstrap_for(self, i: int, k: int) -> BootstrapResult | None:
         """The bootstrap that covers measurement ``i`` at K = ``k`` (the fixed-K one, else the
         selected-K one if ``k`` is that measurement's selected K), or None."""
-        if k in self.bootstrap_by_k:
-            return self.bootstrap_by_k[k]
+        fixed = self.bootstrap_by_k.get(k)
+        if fixed is not None and fixed.covers(i):
+            return fixed
         if self.bootstrap is not None and self.bootstrap.selected_K[i] == k:
             return self.bootstrap
-        return None
+        return fixed  # a fixed-K bootstrap whose resamples all failed for this measurement
 
     def mz(self, i: int) -> np.ndarray | None:
         """The predicted m/z of the bins of measurement ``i`` if the picked table is present."""

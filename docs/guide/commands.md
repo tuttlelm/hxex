@@ -59,13 +59,13 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 
 ## hxex resume
 
-Finish a bundle's stopped bootstrap, or add one.
+Complete a bundle's bootstrap: finish a stopped one, add or redo one, or bootstrap the review's chosen k.
 
 `hxex resume BUNDLE|PROJECT [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: a bootstrap with its [run.bootstrap] settings is added to its [output] bundle (or replaces the one there), the fits kept |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed) and one at the K its [review] table chooses where that is missing; the fits kept |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | also write the tables (default: beside the bundle) |
@@ -78,7 +78,7 @@ Draw the figures, and write the tables again, from a bundle; fits nothing.
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [[analysis.exclude]] rules applied and its [figures] settings |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [review] decisions applied and its [figures] settings |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | write the tables (default: beside the bundle) |
 | `--figures` `[DIR]` | write the figures (default: beside the bundle) |

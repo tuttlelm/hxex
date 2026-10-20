@@ -101,10 +101,36 @@ reference = "WT"
 - **Times** are seconds, or text with a unit: `time = "5 min"`, `times = ["1 min", "20 h"]`.
   Retention times (`rt`, `rt_start`, `rt_end`) are minutes. The bootstrap's `ci` is a
   percentage (95.0); the analysis' `confidence` is a fraction (0.5).
-- **Paths** are relative to the project file.
+- **Paths**: see [File and folder locations](#file-and-folder-locations) below.
 - **Unknown keys are refused**, with the table and key named, so a misspelt setting does not pass
   silently. Settings that were renamed or removed are refused with a message saying what replaces
   them.
+
+## File and folder locations
+
+Wherever a setting names a file or a folder (`data_dir`, `peptides`, `bundle`, `fasta`, the
+review `table`, ...), you can write either its full location or a short form:
+
+| Where it is written | The short form is counted from |
+|---|---|
+| any file or folder setting in `hxex.toml` | the folder that holds `hxex.toml` |
+| `path` in `[[input.runs]]` | `data_root` (by default, the folder that holds `hxex.toml`) |
+| the file names inside an HX-Express file table (`[input] peptides`) | `data_dir` |
+| the command line (`--bundle`, `--spectra`, `--out`, a bundle named directly, ...) | the folder the terminal is in |
+
+- **The short form** is a name such as `"SpecExport"` or `"reviews/run1.csv"` (a folder inside
+  the one it is counted from), or one that starts with `../` for the folder above.
+- **A full location** works everywhere, in `hxex.toml` and on the command line: for example
+  `"C:/Users/me/Data/SpecExport"` on Windows or `"/Users/me/Data/SpecExport"` on macOS. `~`
+  stands for your home folder (`"~/Data/SpecExport"`).
+- **Windows backslashes:** a location copied from File Explorer has backslashes `\`. In
+  `hxex.toml`, put it between single quotes (`'C:\Users\me\Data'`), or change each `\` to `/`;
+  between double quotes, backslashes give an error. See
+  [Writing folder names](first-project.md#step-4-edit-the-project-file).
+- The folder that holds `hxex.toml` and the folder the terminal is in are usually the same,
+  because you open the terminal in the project folder. They differ only when you name a
+  project file in another folder (`hxex run ../other/hxex.toml`): its settings are still found
+  from its own folder, but the command line's paths are found from where you are.
 
 ## Commands
 
@@ -117,7 +143,7 @@ The main commands and options; every option is in the
 | `hxex check PROJECT [--spectra PATH]` | check the file and show what would be read |
 | `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle and tables, no figures. Slow: minutes to hours, most of it the bootstrap |
 | `hxex resume BUNDLE` | finish a run that stopped during its bootstrap. Slow: the rest of the bootstrap |
-| `hxex resume PROJECT` | add a bootstrap (the project's `[run.bootstrap]`) to its bundle, or replace the one there; the fits are kept. Slow: a whole bootstrap |
+| `hxex resume PROJECT` | complete the bootstrap of the project's bundle, the fits kept: add one (the project's `[run.bootstrap]`) when there is none, redo it when its settings changed, and bootstrap the spectra whose number of populations the review table chose (only those). Slow: a whole bootstrap; only the chosen spectra when that is all that is missing |
 | `hxex report PROJECT` or `hxex report BUNDLE` `[--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--k K] [--format F]` | figures and tables from a bundle (given the project file: its bundle, `[figures]` settings and exclusion rules); fits nothing. The tables take seconds; the figures about a second per peptide drawn, so an hour or more with `--series all` on a large run |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`); fits nothing. Seconds to minutes |
 | `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, times, review, what it replaced, earlier generations |
@@ -157,27 +183,90 @@ To save time:
 
 ## Reviewing results
 
-After a run, you will want to look at the fits and decide which spectra to trust. *hxex* keeps
-those decisions without changing the fits:
+After a run, you will want to look at the fits and decide which spectra to trust, and for some
+spectra how many populations to use. *hxex* keeps those decisions without changing the fits,
+and you can make them in a spreadsheet.
 
-- **To leave spectra out**, write rules in the project file: before fitting with
-  `[[input.exclude]]`, or after it with `[[analysis.exclude]]`. See
-  [Excluding spectra](excluding.md).
-- **To see every decision**, open `review.csv` in the tables folder (`results_tables`). It has
-  one row per reviewed spectrum: its sample, peptide, charge, time, and replicate, its status
-  (`rejected` or `accepted`), the number of populations chosen for it (`review_K`, empty when
-  none was), the note, when it was made, and where it came from (`exclusion rule`, or
-  `review` for a decision stored in the bundle). The file is there only when there is something
-  to list.
-- In `spectra.csv`, `review_status` says whether a spectrum is rejected, and `review_K` shows a
-  number of populations chosen in the review: the `K` column then uses it instead of the fit's
-  choice.
+### The user review table
 
-The bundle can also store decisions of its own, its *review layer*: a status, a chosen number
-of populations, and a note per spectrum. These are kept when the run is repeated with
-`--overwrite` (decisions the new run cannot apply are kept but marked stale). For now they are
-entered from Python ([Using *hxex* from Python](python.md#reviewing-spectra)); choosing the
-number of populations for a spectrum without Python is planned.
+1. Copy `spectra.csv` from the tables folder (`results_tables`) to a place of your own, and give
+   the copy a name of your own. We suggest `user_review_table.csv`, in the project folder beside
+   `hxex.toml`; any name and folder work, as long as step 4 names the same file. Keep it out of
+   the folders whose names start with `results`, and do not edit `spectra.csv` itself: *hxex*
+   replaces those whenever it writes the results.
+2. Open the copy in Excel (or any spreadsheet program). It has one row per spectrum. Fill in, for
+   the spectra you have a view on:
+   - `review_status`: `rejected` to leave the spectrum out, or `accepted`. `unreviewed` or an
+     empty cell means no decision.
+   - `review_K`: the number of populations to use for that spectrum, instead of the one the fit
+     chose (`K`). Leave it empty to keep the fit's choice.
+   - `note`: why (optional, but it is kept with the decision and listed in `review.csv`).
+3. Save it as CSV (in Excel, **File > Save As**, type **CSV UTF-8**, and keep the name).
+4. Tell *hxex* about it, once, in the `[review]` part of `hxex.toml`, with the file's name:
+
+   ```toml
+   [review]
+   table = "user_review_table.csv"
+   ```
+
+   A name on its own means a file in the folder holding `hxex.toml`. For a file elsewhere, give
+   its full location, written as described in [Writing folder names](first-project.md#step-4-edit-the-project-file),
+   for example `table = "C:/Users/me/reviews/run1_review.csv"`.
+
+   `[review]` holds the decisions you make after looking at the results: this table and the
+   exclusion rules (`[[review.exclude]]`). `hxex run` (for its tables), `hxex report`, and
+   `hxex analyse` all apply them.
+
+5. Run `hxex report hxex.toml --figures`. The tables and figures now use your decisions.
+
+**Which columns to touch.** *hxex* reads only four columns: `spectrum_id`, `review_status`,
+`review_K`, and `note`.
+
+- Edit only `review_status`, `review_K`, and `note`.
+- Do not change `spectrum_id`: it is how *hxex* finds each spectrum. If a cell in it is changed,
+  that row no longer matches a spectrum and is skipped (with a warning).
+- Every other column (sample, peptide, time, `K`, flags, the means, ...) is there for you to sort
+  and filter by. *hxex* ignores it, so changing it has no effect. You can delete columns and rows
+  you do not need, as long as `spectrum_id` and the columns you filled in stay.
+- A copy made after a `[[review.exclude]]` rule has `rejected` in the rows that rule left out.
+  Clear those cells if the rule should stay the only reason: otherwise the spectra stay rejected
+  even when you delete the rule.
+
+**What the decisions change.** A rejected spectrum is left out of everything that uses the
+results: `uptake.csv`, the figures (where it is drawn hollow and grey), and `hxex analyse`. A
+chosen number of populations changes the run's tables and figures (`spectra.csv`,
+`components.csv`, `uptake.csv`, and the spectrum, population, and uptake figures). It does not
+change `hxex analyse`, which works from fits with one and with two populations for every
+spectrum and decides residue by residue
+([What each one does](#run-report-and-analyse-what-each-one-does)).
+
+**Error bars for a chosen number of populations.** When the run had a bootstrap, every
+spectrum's error bars come from it. A spectrum given another number of populations needs a
+bootstrap at that number too, so that its errors compare with the others'. `hxex report` says
+when one is missing, and
+
+```bash
+hxex resume hxex.toml
+```
+
+bootstraps exactly those spectra (nothing else is redone), after which `hxex report` works.
+When the table is in place before a run, `hxex run` does this itself.
+
+**Checking it.** `hxex check hxex.toml` reads the table and says how many spectra it rejects,
+accepts, and gives a number of populations, or which row has a value it cannot read. `review.csv`
+in the tables folder lists every decision in effect, with `source` saying where it came from
+(`review table`, `exclusion rule`, or `review`).
+
+### Other ways to record decisions
+
+- **Rules in the project file** leave out whole groups of spectra at once (every spectrum of a
+  data file, a peptide in one sample): `[[input.exclude]]` before fitting, `[[review.exclude]]`
+  after it. See [Excluding spectra](excluding-spectra.md). A spectrum a rule excludes stays excluded,
+  whatever the review table says.
+- **The bundle's own review layer** stores decisions inside the results, entered from Python
+  ([Using *hxex* from Python](python.md#reviewing-spectra)). They are kept when the run is
+  repeated with `--overwrite` (decisions the new run cannot apply are kept but marked stale).
+  The review table's decisions take the place of the stored ones for the same spectrum.
 
 ## From Python
 

@@ -13,6 +13,7 @@ project folder looks like this:
 ```text
 my_protein/
 ├── hxex.toml                    your project file (never written by hxex)
+├── user_review_table.csv        your review decisions, if you make some (see Reviewing results)
 ├── results/                     the bundle (hxex run)
 │   ├── manifest.json            what the bundle holds, and the settings of the run
 │   ├── run_settings_used.toml   every setting of the run, written out (see below)
@@ -74,10 +75,10 @@ elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
 | File | One row per | Holds |
 |---|---|---|
 | `series.csv` | series | sample, peptide, range, charge; spectra counted (flagged, rejected, multimodal); `controls` (measured, or why a fallback was used), `retention` (deuterium kept), `control_fallback`, `rt` |
-| `spectra.csv` | spectrum | the spectrum's identity (time, role, replicate, scan target for scan formats), `review_status`, `review_K` (a number of populations chosen in the review), quality `flags`; selected K, `centroid` (and corrected), and each rank's mean and population |
+| `spectra.csv` | spectrum | the spectrum's identity (time, role, replicate, scan target for scan formats), `review_status`, `review_K` (a number of populations chosen in the review), quality `flags`; selected K, `centroid` (and corrected), and each rank's mean and population. A copy of it is the starting point of the [user review table](project-file.md#the-user-review-table) |
 | `components.csv` | spectrum and population | K, rank, mean, mean_se, corrected mean, population and their errors |
 | `uptake.csv` | series, time (or control) and rank | the replicates averaged: `n_replicates`, `mean` (corrected when there are controls), `replicate_sd`, population. Rejected spectra are left out |
-| `review.csv` | reviewed spectrum (only when there are any) | status, the number of populations chosen (`review_K`), note, date, stale, and source: an `exclusion rule` of the project file, or a `review` decision stored in the bundle |
+| `review.csv` | reviewed spectrum (only when there are any) | status, the number of populations chosen (`review_K`), note, date, stale, and source: the `review table` (`user_review_table.csv`), an `exclusion rule` of the project file, or a `review` decision stored in the bundle |
 
 ## Figures from `hxex report --figures`
 

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Spectra left out by rules of the project file, before fitting ([[input.exclude]]) and after
-it ([[analysis.exclude]]); nothing is deleted (docs/PLAN.md, "Excluding spectra")."""
+it ([[review.exclude]]); nothing is deleted (docs/PLAN.md, "Excluding spectra")."""
 
 import csv
+import logging
 import tomllib
 
 import numpy as np
@@ -91,7 +92,7 @@ def test_analysis_exclusions_reject_in_memory_only(tmp_path, capsys):
     ids = list(map(str, read_input(load_project(path)).spectrum_id))
     gone = ids[2]
     path.write_text(path.read_text() + f'\n[analysis]\nks = [1]\noverlay = ["avg"]\n\n'
-                    f'[[analysis.exclude]]\nspectrum_id = "{gone}"\nnote = "suspect"\n')
+                    f'[[review.exclude]]\nspectrum_id = "{gone}"\nnote = "suspect"\n')
     capsys.readouterr()
     assert cli.main(["check", str(path)]) == 0
     assert "treated as rejected" in capsys.readouterr().out
@@ -108,11 +109,21 @@ def test_analysis_exclusions_reject_in_memory_only(tmp_path, capsys):
         assert len(b.review()) == 0 and len(b.fit()) == len(ids)  # the bundle is unchanged
 
 
-def test_exclusion_tables_take_single_brackets(tmp_path):
+def test_exclusion_tables_take_single_brackets(tmp_path, caplog):
+    """One rule may be written with single brackets; [[analysis.exclude]], the rules' name
+    before [review] held them, still works, with a message, but not beside [[review.exclude]]."""
+    head = 'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
     p = project_from(tomllib.loads(
-        'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
-        '[input.exclude]\nsample = "WT"\n[analysis.exclude]\ncharge = 3\n'), tmp_path)
-    assert p.input.exclude[0].sample == "WT" and p.analysis.exclude[0].charge == 3
+        head + '[input.exclude]\nsample = "WT"\n[review.exclude]\ncharge = 3\n'), tmp_path)
+    assert p.input.exclude[0].sample == "WT" and p.review.exclude[0].charge == 3
+    with caplog.at_level(logging.WARNING, logger="hxex.config"):
+        old = project_from(tomllib.loads(
+            head + '[analysis]\nreference = "WT"\n[analysis.exclude]\ncharge = 3\n'), tmp_path)
+    assert old.review.exclude[0].charge == 3 and old.analysis.reference == "WT"
+    assert "is called [[review.exclude]] now" in caplog.text
+    with pytest.raises(ProjectError, match=r"move the \[\[analysis.exclude\]\] ones there"):
+        project_from(tomllib.loads(head + '[[analysis.exclude]]\ncharge = 3\n'
+                                   '[[review.exclude]]\ncharge = 2\n'), tmp_path)
     with pytest.raises(ProjectError, match=r"input.exclude\]\] #1: unknown key"):
         project_from(tomllib.loads('project = "p"\n[input]\nformat = "specexport"\n'
                                    'data_dir = "d"\n[[input.exclude]]\nsampel = "WT"\n'),
@@ -121,7 +132,7 @@ def test_exclusion_tables_take_single_brackets(tmp_path):
 
 def test_review_csv_lists_the_review_and_the_rules(tmp_path):
     """review.csv shows every review decision (stored in the bundle) and every spectrum an
-    [[analysis.exclude]] rule leaves out, with its source and note; spectra.csv's review_K
+    [[review.exclude]] rule leaves out, with its source and note; spectra.csv's review_K
     shows a K the review chose. With nothing to list, the file goes."""
     path = mzml_project(tmp_path)
     assert cli.main(["-q", "run", str(path)]) == 0
@@ -130,7 +141,7 @@ def test_review_csv_lists_the_review_and_the_rules(tmp_path):
         b.set_review(b.review().update(ids[0], status="accepted", k_override=1,
                                        note="checked by eye"))
     path.write_text(path.read_text() + f'\n[analysis]\nks = [1]\noverlay = ["avg"]\n\n'
-                    f'[[analysis.exclude]]\nspectrum_id = "{ids[3]}"\nnote = "co-elution"\n')
+                    f'[[review.exclude]]\nspectrum_id = "{ids[3]}"\nnote = "co-elution"\n')
     tables = tmp_path / "t"
     assert cli.main(["-q", "report", str(path), "--tables", str(tables)]) == 0
     rows = {r["spectrum_id"]: r for r in _rows(tables / "review.csv")}

@@ -28,6 +28,8 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[run.registry]`](#runregistry)
 - [`[[run.registry.residues]]`](#runregistryresidues)
 - [`[run.envelope]`](#runenvelope)
+- [`[review]`](#review)
+- [`[[review.exclude]]`](#reviewexclude)
 - [`[analysis]`](#analysis)
 - [`[analysis.filters]`](#analysisfilters)
 - [`[analysis.choice]`](#analysischoice)
@@ -38,7 +40,6 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[[analysis.sites]]`](#analysissites)
 - [`[analysis.fragments]`](#analysisfragments)
 - [`[analysis.fragments.labels]`](#analysisfragmentslabels)
-- [`[[analysis.exclude]]`](#analysisexclude)
 - [`[analysis.fragments.exchange]`](#analysisfragmentsexchange)
 - [`[analysis.labelling]`](#analysislabelling)
 - [`[figures]`](#figures)
@@ -134,7 +135,7 @@ Scan formats: fragment ions made from every peptide of the table. Repeat the tab
 
 ## `[[input.exclude]]`
 
-Spectra left out before fitting: they are stored with the raw spectra but not picked or fitted, and the bundle records them. A spectrum is excluded when it matches every key one rule names; repeat the heading for each rule. See [Excluding spectra](excluding.md).
+Spectra left out before fitting: they are stored with the raw spectra but not picked or fitted, and the bundle records them. A spectrum is excluded when it matches every key one rule names; repeat the heading for each rule. See [Excluding spectra](excluding-spectra.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -341,6 +342,30 @@ The isotope envelope that places the bins and shapes the fit (hxex.picking.Envel
 | `iterations` | integer | `3` | rounds of picking and fitting the weights |
 | `share` | true/false | `false` | conditions of one ion that differ only in scan filters or label share an envelope |
 
+## `[review]`
+
+Decisions made after looking at the results: the user review table and the exclusion rules below. hxex run (its tables), hxex report and hxex analyse, given the project file, all apply them; the fits stay in the bundle. See [Reviewing results](project-file.md#reviewing-results).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `table` | path | unset | the user review table: a copy of spectra.csv with review_status (rejected or accepted), review_K (the number of populations to use), and note filled in; other columns are ignored. Any name (the guide suggests "user_review_table.csv"); a name alone is a file beside the project file |
+
+## `[[review.exclude]]`
+
+Spectra treated as rejected, in the tables, figures, and analysis; their fits stay in the bundle. The same keys as [[input.exclude]]. (Called [[analysis.exclude]] before; that name still works.) See [Excluding spectra](excluding-spectra.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `sample` | text | unset | the sample |
+| `peptide_range` | text | unset | the peptide, by its residues ("45-60" is "0045-0060") |
+| `charge` | integer | unset | the charge state |
+| `time` | number or text | unset | a time point (s, or text with a unit: "30 s"); a control has no time |
+| `role` | text | unset | "undeut" or "fulldeut": the controls |
+| `rep` | integer | unset | the replicate |
+| `file` | text | unset | the data file's name: a run's mzML or raw file, an HX-Express spreadsheet, or a SpecExport spectrum file |
+| `spectrum_id` | text | unset | one spectrum, by its id (spectra.csv) |
+| `note` | text | `""` | why: kept with the record, and shown by hxex check and hxex info |
+
 ## `[analysis]`
 
 The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs/ANALYSIS.md for the methods.
@@ -351,7 +376,6 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
-| `exclude` | list | `[]` | spectra treated as rejected in the tables, figures, and analysis: [[analysis.exclude]] rules (below) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed) |
 | `fasta` | text or table | unset | one sequence file for every sample, or a table of sample = file (a run's own under its name); unset: the sequence comes from the peptides |
 | `coverage_times` | text or list | `"undeuterated"` | "undeuterated" (judged on the undeuterated controls), "all", or a list of times |
@@ -440,22 +464,6 @@ The fragment outputs of a run with fragment series (ladders, rates, closure, per
 
 Short condition names: condition = name ("gentle" = "G"), or a run's own under its name ([analysis.fragments.labels.RUN]).
 
-
-## `[[analysis.exclude]]`
-
-Spectra treated as rejected by hxex analyse, and by hxex run and hxex report (given the project file) in their tables and figures; their fits stay in the bundle. The same keys as [[input.exclude]]. See [Excluding spectra](excluding.md).
-
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `sample` | text | unset | the sample |
-| `peptide_range` | text | unset | the peptide, by its residues ("45-60" is "0045-0060") |
-| `charge` | integer | unset | the charge state |
-| `time` | number or text | unset | a time point (s, or text with a unit: "30 s"); a control has no time |
-| `role` | text | unset | "undeut" or "fulldeut": the controls |
-| `rep` | integer | unset | the replicate |
-| `file` | text | unset | the data file's name: a run's mzML or raw file, an HX-Express spreadsheet, or a SpecExport spectrum file |
-| `spectrum_id` | text | unset | one spectrum, by its id (spectra.csv) |
-| `note` | text | `""` | why: kept with the record, and shown by hxex check and hxex info |
 
 ## `[analysis.fragments.exchange]`
 

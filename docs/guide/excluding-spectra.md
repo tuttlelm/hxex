@@ -6,7 +6,7 @@ project file that says which spectra to leave out, and why. To bring them back, 
 
 There are two places to put a rule, depending on when you know the spectra are bad:
 
-| | `[[input.exclude]]` | `[[analysis.exclude]]` |
+| | `[[input.exclude]]` | `[[review.exclude]]` |
 |---|---|---|
 | When to use it | you know before fitting (a failed run, a known bad file) | you found out after looking at the results |
 | What happens | the spectra are not fitted at all | the spectra are fitted, but left out of the results |
@@ -20,7 +20,7 @@ A rule is a table in the project file. It names one or more details of the spect
 out, and a spectrum is left out when it matches **every** detail the rule names. For example:
 
 ```toml
-[[analysis.exclude]]
+[[review.exclude]]
 sample = "WT"
 peptide_range = "45-60"
 charge = 3
@@ -32,13 +32,13 @@ but nothing else. To leave out more than one thing, write one rule for each, eac
 heading:
 
 ```toml
-[[analysis.exclude]]
+[[review.exclude]]
 sample = "WT"
 time = "30 s"
 rep = 2
 note = "bad injection"
 
-[[analysis.exclude]]
+[[review.exclude]]
 peptide_range = "112-120"
 note = "not this protein"
 ```
@@ -73,10 +73,12 @@ Use this when you know a spectrum is bad before you fit, for example a run that 
 - `hxex info results` shows how many spectra each rule left out, with its note.
 - Fitting fewer spectra also saves time.
 
-## After fitting: `[[analysis.exclude]]`
+## After fitting: `[[review.exclude]]`
 
-Use this when the figures or tables show you a spectrum is bad. The rule goes under the
-`[analysis]` part of the project file.
+Use this when the figures or tables show you a spectrum is bad. The rule goes in the `[review]`
+part of the project file, which holds the decisions you make after looking at the results.
+(Project files written before `[review]` existed call it `[[analysis.exclude]]`; that name
+still works, with a message suggesting the new one.)
 
 - The fits stay in the bundle; nothing is refitted.
 - `hxex analyse hxex.toml` leaves the spectra out of the analysis: the uptake, residue maps,
@@ -100,8 +102,11 @@ run or the analysis applies them, *hxex* reports how many spectra each rule left
 that matches no spectrum at all gets a warning: usually a misspelt sample name, or a time or
 range written differently from the data.
 
-## Reviewing single spectra from Python
+## Reviewing single spectra
 
-The bundle also has a *review layer*, where single spectra can be marked as rejected, or given
-a chosen number of populations, from Python (see [Using *hxex* from Python](python.md)). Both
-apply: a spectrum is left out if the review rejects it or a rule excludes it.
+To reject single spectra, or choose their number of populations, a spreadsheet is easier than
+rules: copy `spectra.csv`, fill in `review_status` and `review_K`, and name the copy in
+`[review] table` (see [the user review table](project-file.md#the-user-review-table)).
+The bundle's own *review layer* records the same kind of decision from Python (see
+[Using *hxex* from Python](python.md)). All of them apply together: a spectrum is left out if a
+rule excludes it or the review rejects it.

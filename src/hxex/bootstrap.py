@@ -248,6 +248,11 @@ class BootstrapResult:
             curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
         )
 
+    def covers(self, i: int) -> bool:
+        """Whether measurement ``i`` has a bootstrap here (a partial fixed-K bootstrap,
+        :func:`scatter`, leaves the measurements it did not bootstrap empty)."""
+        return bool(self.n_success[i] > 0)
+
     def table(self, fit: FitResult, selected_only: bool = True) -> dict[str, np.ndarray]:
         """``fit.table()`` with the interval columns added for the rows at this result's K (NaN
         for the other rows; the selected K, or the K of a fixed-K result): ``<name>_se``,
@@ -287,7 +292,7 @@ def interval_table(
     for r in range(rows):
         m, c = int(base["measurement"][r]), int(base["component"][r]) - 1
         for res in results:
-            if res.selected_K[m] != base["fit_K"][r]:
+            if res.selected_K[m] != base["fit_K"][r] or not res.covers(m):
                 continue
             sources = {
                 "amplitude": (res.A_se, res.A_ci), "n": (res.n_se, res.n_ci),
@@ -545,6 +550,45 @@ def bootstrap_by_k(
 
         out[k] = bootstrap(data, fixed, config, progress=inner, cancel=cancel)
     return out
+
+
+def _empty_like(part: BootstrapResult, n: int, k: int) -> BootstrapResult:
+    """``n`` measurements at K = ``k`` without a bootstrap (no successful resample, NaN values,
+    no curve band), shaped like ``part``."""
+    def nan(a: np.ndarray) -> np.ndarray:
+        return np.full((n, *a.shape[1:]), np.nan)
+
+    draws = None
+    if part.draws is not None:
+        draws = BootstrapDraws(nan(part.draws.A), nan(part.draws.n), nan(part.draws.p),
+                               np.zeros((n, *part.draws.ok.shape[1:]), dtype=bool))
+    comp = {}
+    if part.component_lo is not None:
+        comp = {"component_lo": np.empty(0), "component_hi": np.empty(0),
+                "component_offsets": np.zeros(n + 1, dtype=np.int64)}
+    return BootstrapResult(
+        config=part.config, selected_K=np.full(n, k, dtype=np.int64),
+        n_success=np.zeros(n, dtype=np.int64),
+        **{name: nan(getattr(part, name)) for name in (
+            "A_se", "n_se", "p_se", "mean_se", "population_se",
+            "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")},
+        curve_lo=np.empty(0), curve_hi=np.empty(0),
+        curve_offsets=np.zeros(n + 1, dtype=np.int64), draws=draws, **comp,
+    )
+
+
+def scatter(part: BootstrapResult, rows, n: int, k: int,
+            base: BootstrapResult | None = None) -> BootstrapResult:
+    """A fixed-K (``k``) bootstrap of ``n`` measurements with ``part`` (a bootstrap of the
+    measurements at ``rows``) in place, and the others taken from ``base`` (an earlier fixed-K
+    bootstrap at ``k``; it must have the same settings) or left without a bootstrap: a partial
+    fixed-K bootstrap, for the measurements shown at a K other than their selected one."""
+    rows = np.asarray(rows, dtype=np.int64)
+    others = np.setdiff1d(np.arange(n), rows)
+    if base is not None and base.config != part.config:
+        raise ValueError("the bootstrap there was made with other settings: redo it first")
+    rest = base.select(others) if base is not None else _empty_like(part, len(others), k)
+    return BootstrapResult.merge([part, rest], [rows, others])
 
 
 def selected_from(fit: FitResult, by_k: Mapping[int, BootstrapResult]) -> BootstrapResult:

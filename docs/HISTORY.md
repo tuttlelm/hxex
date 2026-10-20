@@ -3174,3 +3174,39 @@ CSVs or mzML if wanted.
     is three commands now (run, report, analyse). Choosing K for the run's tables or for the
     analysis's residue-level choice was discussed and not built (owner to decide after trying
     `k`). No private project file used `[run.plots]` or asked the run for figures (checked).
+
+124. **The user review table: K and rejections from a spreadsheet (owner, 2026-10-20).** Owner:
+    users work in Excel, so choosing K should be a column they fill in, per spectrum, in a file
+    named `user_review_table.csv`, documenting which columns not to touch. Concern raised by
+    the owner: a K forced without a bootstrap at it has errors not comparable with the other
+    spectra's (without `ks`, K = 2 errors exist only where K = 2 was selected; the rest are
+    replicate scatter or none). Owner asked for an easy "fit the missing bootstraps". Built:
+    `hxex.review_table` reads a copy of `spectra.csv` (BOM, `;` or tab separators, capitals,
+    `2.0`, and `unreviewed` = no decision accepted; a bad value names its row; other columns
+    ignored), named in `[review] table`, and lays it over the review layer in memory
+    before the exclusion rules (`apply_view`; `hxex run` tables, `report`,
+    `resume` tables, `analyse`). Its entries replace the stored review's for the same spectrum;
+    `review.csv` says `review table` (an in-memory `ReviewTable.source`, not stored). A chosen
+    K the run did not fit for the spectrum is refused. Errors: when the results have a
+    bootstrap, `hxex report` refuses a chosen K without one at it, naming `hxex resume`;
+    `resume_bootstrap(chosen_k=)` (and `run(chosen_k=)`, with the carried review's choices)
+    bootstraps exactly those spectra at their K (`_chosen_part`) and stores them as a partial
+    fixed-K bootstrap (`bootstrap.scatter`: the other rows empty, `n_success` 0;
+    `BootstrapResult.covers`; `Results.bootstrap_for` and `interval_table` fall back to the
+    selected-K bootstrap for empty rows). The bootstrap does not use the noise references, so
+    a subset is taken with `Measurements.select(drop_references=True)`; each spectrum is
+    seeded from its own id, so the values equal a full fixed-K bootstrap's. `hxex resume
+    hxex.toml` now keeps a bootstrap that has the project's settings (it used to redo it
+    every time) and adds only what the chosen K lack; nothing to add is said, not an error.
+    `hxex check` summarises the table and refuses one it cannot read. The analysis honours
+    the table's rejections; a chosen K does not change it (it uses the fixed K = 1 and K = 2
+    fits). Guide: "Reviewing results" rewritten around the table, with which columns to edit
+    and which to leave; `hxex run`'s refusal and the overwrite description no longer mention
+    figures. Then (owner: "top-level review will be more transparent") the after-fitting
+    decisions got a top-level `[review]` table, as the figures got `[figures]`: `table` (the
+    review table; any name, the guide suggests `user_review_table.csv`) and
+    `[[review.exclude]]` (the rules, formerly `[[analysis.exclude]]`, still accepted with a
+    warning, refused beside `[[review.exclude]]`). `Project.review`
+    (`review_table.ReviewSettings`); `write_analysis(review=)`; the analysis record writes
+    every rule under `[review]` (none under `[analysis]`). The template's `[review]` block
+    replaces a `review_table` line that had sat under `[analysis.choice]` by mistake.

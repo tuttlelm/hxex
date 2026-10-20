@@ -476,7 +476,7 @@ def uptake_data(
     ``population_se``, plus ``corrected``, ``n_amides``, ``m0`` and ``mfd`` (None without
     controls) and ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
     control, by its role; a control's ``time`` is NaN unless it was also a time point), and
-    ``rejected`` (the review rejected the spectrum, or an [[analysis.exclude]] rule excluded
+    ``rejected`` (the review rejected the spectrum, or an [[review.exclude]] rule excluded
     it: drawn hollow and grey)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (

@@ -74,15 +74,16 @@ def _review_k(results: Results) -> np.ndarray:
 
 
 # the note exclusion rules give their entries (hxex.exclusions.exclude_from_results)
-_RULE_NOTE = "excluded by [[analysis.exclude]]"
+_RULE_NOTE = "excluded by [[review.exclude]]"
 
 
 def review_table(results: Results) -> dict[str, np.ndarray]:
     """One row per entry of the review layer, with the spectrum's sample, peptide, charge,
     time, role and replicate (empty for a stale entry whose spectrum the run no longer has):
     ``status``, ``review_K`` (the chosen K, empty for none), ``note``, ``updated``, ``stale``,
-    and ``source``: ``review`` (stored in the bundle) or ``exclusion rule`` (an
-    ``[[analysis.exclude]]`` rule, applied for this table only)."""
+    and ``source``: ``review`` (stored in the bundle), ``review table`` (the user review table,
+    :mod:`hxex.review_table`) or ``exclusion rule`` (an ``[[review.exclude]]`` rule; both
+    applied for this table only)."""
     review = results.review
     index = _index_columns(results)
     rows = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
@@ -102,7 +103,8 @@ def review_table(results: Results) -> dict[str, np.ndarray]:
         cols["note"].append(note)
         cols["updated"].append(str(review.updated[j]))
         cols["stale"].append(bool(review.stale[j]))
-        cols["source"].append("exclusion rule" if note.startswith(_RULE_NOTE) else "review")
+        source = "review" if review.source is None else str(review.source[j])
+        cols["source"].append("exclusion rule" if note.startswith(_RULE_NOTE) else source)
     return {name: np.array(values, dtype=object) for name, values in cols.items()}
 
 

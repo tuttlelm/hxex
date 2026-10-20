@@ -400,6 +400,7 @@ class Project:
     threads: int | None = None
     analysis: object = None  # hxex.analysis.AnalysisConfig, or None without an [analysis]
     figures: object = None  # hxex.report.PlotConfig of the [figures] table (None: defaults)
+    review: object = None  # hxex.review_table.ReviewSettings of the [review] table (None: none)
 
 
 def _path(base: Path, value, where: str) -> Path | None:
@@ -719,8 +720,9 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if spectra is not None:
         data = {**data, "input": {**data.get("input", {}),
                                   "spectra": str(Path(spectra).resolve())}}
-    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis", "figures"},
-                "the project file")
+    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis", "figures",
+                       "review"}, "the project file")
+    data, review_data = _review_moved(data)
     only_analysis = analysis_only and "input" not in data and "analysis" in data
     name = data.get("project", "" if only_analysis else None)
     if not isinstance(name, str) or (not name and not only_analysis) or ":" in name:
@@ -740,6 +742,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         inp = _input_from(data["input"], base)
     output = _output_from(data.get("output", {}), base)
     figures = _figures_from(data["figures"]) if "figures" in data else None
+    review = _review_from(review_data, base) if review_data is not None else None
     threads = data.get("threads")
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
                                 or threads < 1):
@@ -750,7 +753,44 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
             "with another reference too, run hxex analyse --reference NAME: each reference "
             "gets a folder of its own (results_analysis_NAME)")
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
-    return Project(name, inp, run, output, path, threads, analysis, figures)
+    return Project(name, inp, run, output, path, threads, analysis, figures, review)
+
+
+def _review_moved(data: Mapping) -> tuple[Mapping, Mapping | None]:
+    """``data`` without ``[[analysis.exclude]]``, and the ``[review]`` table with those rules in
+    it: they were the after-fitting rules before ``[review]`` held them (owner, 2026-10-20)."""
+    review = data.get("review")
+    if review is not None and not isinstance(review, Mapping):
+        raise ProjectError("[review] must be a table")
+    analysis = data.get("analysis")
+    if not isinstance(analysis, Mapping) or "exclude" not in analysis:
+        return data, review
+    if review is not None and "exclude" in review:
+        raise ProjectError("[[analysis.exclude]] and [[review.exclude]]: the rules are "
+                           "[[review.exclude]] now; move the [[analysis.exclude]] ones there")
+    log.warning("[[analysis.exclude]] is called [[review.exclude]] now (the decisions made "
+                "after looking at the results have a [review] table of their own); the old "
+                "name still works: rename it to stop this message")
+    data = {**data, "analysis": {k: v for k, v in analysis.items() if k != "exclude"}}
+    return data, {**(review or {}), "exclude": analysis["exclude"]}
+
+
+def _review_from(data: Mapping, base: Path):
+    """The :class:`hxex.review_table.ReviewSettings` of the ``[review]`` table (its ``table``
+    taken relative to ``base``)."""
+    from .exclusions import read_exclusions
+    from .review_table import ReviewSettings
+
+    _check_keys(data, {"table", "exclude"}, "[review]")
+    table = data.get("table")
+    if table is not None and table is not False and not isinstance(table, str):
+        raise ProjectError("[review] table must be the review table's file name (text)")
+    try:
+        rules = read_exclusions(data.get("exclude"), "review.exclude")
+    except ValueError as exc:
+        raise ProjectError(str(exc)) from None
+    path = _path(base, table, "review.table")
+    return ReviewSettings(table=None if path is None else str(path), exclude=rules)
 
 
 def _figures_from(data) -> Any:
@@ -767,7 +807,7 @@ def _figures_from(data) -> Any:
         raise ProjectError(f"[figures]: {exc}") from exc
 
 
-ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "exclude", "ks", "fasta",
+ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta",
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
@@ -791,8 +831,6 @@ def _analysis_from(data: Mapping, base: Path):
             "true); residue-level rates and protection factors come from fragment ladders "
             "([analysis.fragments], ladder_residues.csv). Delete the setting")
     _check_keys(data, ANALYSIS_KEYS, "[analysis]")
-    if isinstance(data.get("exclude"), Mapping):  # one rule written [analysis.exclude]
-        data = {**data, "exclude": [data["exclude"]]}
     data = _times_in(data, ("times", "exclude_times"), "analysis")
     if isinstance(data.get("coverage_times"), list):
         data = _times_in(data, ("coverage_times",), "analysis")
@@ -829,13 +867,6 @@ def _analysis_from(data: Mapping, base: Path):
                           for k, v in values["runs"].items()}
     values["annotations"] = {"regions": list(_items(data.get("regions"))),
                              "sites": list(_items(data.get("sites")))}
-    if "exclude" in data:
-        from .exclusions import read_exclusions
-
-        try:
-            values["exclude"] = read_exclusions(data["exclude"], "analysis.exclude")
-        except ValueError as exc:
-            raise ProjectError(str(exc)) from None
     try:
         if isinstance(values.get("filters"), Mapping):
             from .analysis import SpeciesFilters
@@ -854,7 +885,7 @@ def _analysis_from(data: Mapping, base: Path):
 
 # the tables that hold a list of items (``[[name]]``; a single ``[name]`` is read as one item)
 LIST_TABLES = ("input.runs", "input.fragments", "input.exclude", "analysis.regions",
-               "analysis.sites", "analysis.exclude", "run.registry.residues")
+               "analysis.sites", "analysis.exclude", "review.exclude", "run.registry.residues")
 
 
 def _toml_hint(text: str, exc: Exception) -> str:
@@ -1524,6 +1555,18 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "tables = true                    # CSV tables beside the bundle, or a directory",
         'notes = ""',
         "",
+        "# Decisions made after looking at the results, used by hxex run (its tables), hxex",
+        "# report, and hxex analyse; the fits are kept. Uncomment to use.",
+        "# [review]",
+        '# table = "user_review_table.csv"  # a copy of spectra.csv with review_status,',
+        "#                                 # review_K and note filled in (other columns are",
+        "#                                 # ignored); a chosen review_K needs a bootstrap at",
+        "#                                 # it: hxex resume hxex.toml adds the missing ones",
+        "# [[review.exclude]]              # spectra treated as rejected (their fits are kept);",
+        '# sample = "WT"                   # the keys of [[input.exclude]]',
+        '# time = "30 s"',
+        "# rep = 2",
+        "",
         "# The post-fitting analysis (hxex analyse): uncomment to use. Regions and sites are",
         "# yours to define for the protein; nothing is derived.",
         "# [analysis]",
@@ -1559,10 +1602,6 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# confidence = 0.5",
         "# max_fD_se = 0.25",
         "# min_population = 0.05",
-        "# [[analysis.exclude]]            # spectra treated as rejected in the tables, figures",
-        '# sample = "WT"                   # and analysis (their fits are kept); the keys of',
-        '# time = "30 s"                   # [[input.exclude]]',
-        "# rep = 2",
         "# [[analysis.regions]]",
         '# name = "N-terminal region"',
         "# start = 1",
@@ -1800,6 +1839,7 @@ def run_settings_text(manifest: Mapping) -> str:
 def _analysis_record(config, mode: str) -> dict[str, Any]:
     """The ``[analysis]`` table of ``config`` with every setting written out."""
     data = config.to_dict()
+    data.pop("exclude")  # a project file gives the rules in [review] (analysis_settings_text)
     annotations = data.pop("annotations")
     data["regions"], data["sites"] = annotations["regions"], annotations["sites"]
     fasta = data.get("fasta")
@@ -1816,13 +1856,14 @@ def _analysis_record(config, mode: str) -> dict[str, Any]:
 
 
 def analysis_settings_text(config, results: Mapping[str, Mapping], *,
-                           record_paths: str = "path") -> str:
+                           record_paths: str = "path", review=None) -> str:
     """``analysis_settings_used.toml``: every setting of the analysis ``config``
     (:class:`hxex.analysis.AnalysisConfig`) written out, defaults included, as the
     ``[analysis]`` table of a project file. ``results`` names the results it read (run name,
     empty for a single bundle -> their manifest, or :class:`hxex.report.Settings` as a
     mapping), for the header. ``record_paths`` records its paths as ``[input] record_paths``
-    does."""
+    does. ``review`` (:class:`hxex.review_table.ReviewSettings`) adds the ``[review]`` table the
+    analysis applied."""
     from .analysis import AnalysisConfig
 
     read = [f"{'the results' if not run else f'run {run}'} ("
@@ -1842,6 +1883,12 @@ def analysis_settings_text(config, results: Mapping[str, Mapping], *,
     defaults = _analysis_record(AnalysisConfig(), "path")
     data = _falsified(_analysis_record(config, record_paths), defaults)
     lines += _toml_table("analysis", data, cls=AnalysisConfig)
+    rules = [*(review.exclude if review else ()), *config.exclude]
+    if rules or (review and review.table):
+        table = {"table": _recorded(review.table if review else None, record_paths),
+                 "exclude": [r.to_dict() for r in rules]}
+        lines += ["", "# The review decisions the analysis applied (its rejections)."]
+        lines += _toml_table("review", {k: v for k, v in table.items() if v})
     return "\n".join(lines) + "\n"
 
 
@@ -1853,7 +1900,8 @@ def run_settings_name(run: str = "") -> str:
     return f"run_settings_used_{re.sub(r'[^A-Za-z0-9._-]+', '_', run).strip('_') or 'run'}.toml"
 
 
-def settings_records(results, config, record_paths: str = "path") -> dict[str, str]:
+def settings_records(results, config, record_paths: str = "path",
+                     review=None) -> dict[str, str]:
     """The settings files of an analysis (file name -> text): ``analysis_settings_used.toml``
     for ``config`` and the run settings of each results read (``results``: a
     :class:`hxex.report.Results`, or run name -> Results), from what their bundles recorded."""
@@ -1868,7 +1916,8 @@ def settings_records(results, config, record_paths: str = "path") -> dict[str, s
     runs = results if isinstance(results, Mapping) else {"": results}
     manifests = {name: manifest(r) for name, r in runs.items()}
     out = {ANALYSIS_SETTINGS_FILE: analysis_settings_text(config, manifests,
-                                                          record_paths=record_paths)}
+                                                          record_paths=record_paths,
+                                                          review=review)}
     for name, m in manifests.items():
         if m.get("configs"):
             out[run_settings_name(name)] = run_settings_text(m)
@@ -1898,10 +1947,25 @@ def describe(project: Project) -> dict[str, Any]:
         "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
         **_exclusion_lines("excluded", () if inp is None else inp.exclude,
                            "left out before fitting (stored, not fitted)"),
-        **_exclusion_lines("excluded later", () if project.analysis is None
-                           else project.analysis.exclude,
+        **_exclusion_lines("excluded later", () if project.review is None
+                           else project.review.exclude,
                            "treated as rejected in the tables, figures and analysis"),
+        **_review_table_line(project.review),
     }
+
+
+def _review_table_line(review) -> dict[str, str]:
+    """The summary line of the review table (none without one); a table that cannot be read is
+    a problem of the project (ProjectError)."""
+    if review is None or not review.table:
+        return {}
+    from .review_table import read_review_table
+
+    try:
+        sheet = read_review_table(review.table)
+    except ValueError as exc:
+        raise ProjectError(f"[review] table: {exc}") from None
+    return {"review table": f"{review.table}: {sheet.describe()}"}
 
 
 def _exclusion_lines(key: str, rules, what: str) -> dict[str, str]:

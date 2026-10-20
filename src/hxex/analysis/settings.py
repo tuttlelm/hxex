@@ -80,8 +80,10 @@ class AnalysisConfig:
       (:class:`FragmentAnalysis`; ladder figures and rates, closure, per-residue rates; written
       whenever the run has fragments; None turns them off; fragment series are left out of the
       peptide analysis).
-    - ``exclude``: rules (:class:`hxex.exclusions.Exclusion`, ``[[analysis.exclude]]``) whose
-      spectra are treated as rejected, in memory (the bundle's fits are kept).
+    - ``exclude``: rules (:class:`hxex.exclusions.Exclusion`) whose spectra are treated as
+      rejected, in memory (the bundle's fits are kept). A project file gives them in
+      ``[[review.exclude]]`` instead, with the review table (:mod:`hxex.review_table`), which
+      every command applies; :func:`hxex.report.write_analysis` takes those as ``review``.
     - ``protection``: the peptides' protection factors (:mod:`hxex.analysis.protection`; opt-in;
       needs ``labelling``, the labelling conditions, :class:`hxex.kint.ExchangeConditions`, one
       set for every sample or sample -> set). There are no residue-level factors from

@@ -872,6 +872,9 @@ class ReviewTable:
     note: np.ndarray
     updated: np.ndarray
     stale: np.ndarray | None = None
+    # where an entry came from, in memory only (not stored): "review" (the bundle's), or
+    # "review table" (hxex.review_table); None: every entry is the bundle's
+    source: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         stale = (np.zeros(len(self.spectrum_id), dtype=bool) if self.stale is None
@@ -879,6 +882,8 @@ class ReviewTable:
         if stale.shape != (len(self.spectrum_id),):
             raise ValueError("stale must have one value per entry")
         object.__setattr__(self, "stale", stale)
+        if self.source is not None and len(self.source) != len(self.spectrum_id):
+            raise ValueError("source must have one value per entry")
 
     @classmethod
     def empty(cls) -> ReviewTable:

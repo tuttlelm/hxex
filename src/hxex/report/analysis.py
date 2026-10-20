@@ -359,6 +359,7 @@ def write_analysis(
     *,
     base: str | Path = ".",
     record_paths: str = "path",
+    review=None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> list[Path]:
@@ -366,6 +367,10 @@ def write_analysis(
     :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
     ``directory``; returns the files. Relative FASTA paths are taken from
     ``base``. ``progress(done, total)`` counts the files.
+
+    ``review`` (:class:`hxex.review_table.ReviewSettings`, a project's ``[review]`` table: the
+    user review table and its exclusion rules) and ``config.exclude`` are applied first, in
+    memory: their rejected spectra are left out.
 
     With them go the settings used, for people (not read back): ``analysis_settings_used.toml``
     (every setting of ``config`` written out; its paths recorded as ``record_paths`` says, as
@@ -379,14 +384,18 @@ def write_analysis(
 
     directory = Path(directory)
     read = results.runs if isinstance(results, RunSet) else results  # as read, for the records
-    if config.exclude:  # [[analysis.exclude]]: rejected in memory, the bundle's fits kept
+    if config.exclude or review:  # rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
+        from ..review_table import apply_view
+
+        def view(r):
+            return exclude_from_results(apply_view(r, review), config.exclude)
 
         if isinstance(results, RunSet):
-            results = RunSet({name: exclude_from_results(r, config.exclude)
-                              for name, r in results.runs.items()}, merge=results.merge)
+            results = RunSet({name: view(r) for name, r in results.runs.items()},
+                             merge=results.merge)
         else:
-            results = exclude_from_results(results, config.exclude)
+            results = view(results)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
     frag_tables, frag_jobs = {}, []
@@ -419,7 +428,7 @@ def write_analysis(
     total = len(tables) + len(jobs)
     names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"
                                                    for stem, _ in jobs]
-    records = settings_records(read, config, record_paths) if total else {}
+    records = settings_records(read, config, record_paths, review) if total else {}
     names += list(records)
     total += len(records)
     # as the tables and figures folders: the files of the earlier analysis go, yours stay

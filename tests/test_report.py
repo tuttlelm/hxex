@@ -1040,7 +1040,7 @@ def test_times_that_only_order_the_points_are_drawn_by_index(results, tmp_path, 
 
 
 def test_rejected_spectra_are_drawn_hollow_and_grey(results):
-    """A spectrum the review rejects (or an [[analysis.exclude]] rule excludes) stays visible in
+    """A spectrum the review rejects (or a [[review.exclude]] rule excludes) stays visible in
     the uptake and population figures, hollow and grey, and out of its replicate's points."""
     from hxex.exclusions import Exclusion, exclude_from_results
 

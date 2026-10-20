@@ -1057,7 +1057,7 @@ d2o_fraction = 0.9
 name = "N"
 start = 1
 end = 20
-[[analysis.exclude]]
+[[review.exclude]]
 sample = "WT"
 rep = 2
 [analysis.controls]
@@ -1072,10 +1072,10 @@ d2o_fraction = 0.85
     # "relative" records the run paths from data_root and only the names of the other paths
     assert 'path = "sub/UN_01.mzML"' in text and 'peptides = "peptides.csv"' in text
     assert str(tmp_path) not in text
-    analysis = analysis_settings_text(project.analysis, {"": manifest})
+    analysis = analysis_settings_text(project.analysis, {"": manifest}, review=project.review)
     (tmp_path / "analysis.toml").write_text(analysis)
-    assert load_project(tmp_path / "analysis.toml", analysis_only=True).analysis == \
-        project.analysis
+    back = load_project(tmp_path / "analysis.toml", analysis_only=True)
+    assert back.analysis == project.analysis and back.review == project.review
     (tmp_path / "analysis.toml").write_text(analysis_settings_text(AnalysisConfig(), {}))
     assert load_project(tmp_path / "analysis.toml", analysis_only=True).analysis == \
         AnalysisConfig()

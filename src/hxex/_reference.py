@@ -92,8 +92,10 @@ _DESCRIPTIONS: dict[str, str] = {
     "input.retention_times": "a table of retention times in minutes (columns rt and sample, "
                              "start_seq, end_seq, peptide, charge)",
     "input.exclude": "spectra left out before fitting: [[input.exclude]] rules (below)",
-    "analysis.exclude": "spectra treated as rejected in the tables, figures, and analysis: "
-                        "[[analysis.exclude]] rules (below)",
+    "review.table": "the user review table: a copy of spectra.csv with review_status "
+                    "(rejected or accepted), review_K (the number of populations to use), and "
+                    "note filled in; other columns are ignored. Any name (the guide suggests "
+                    "\"user_review_table.csv\"); a name alone is a file beside the project file",
     "input.spectra": "take the raw spectra stored by an earlier run (a bundle or a spectra "
                      "file) instead of reading the input",
     "input.target.ms_level": "MS level of the peptides' scans",
@@ -251,11 +253,15 @@ _INTROS: dict[str, str] = {
     "input.exclude": "Spectra left out before fitting: they are stored with the raw spectra "
                      "but not picked or fitted, and the bundle records them. A spectrum is "
                      "excluded when it matches every key one rule names; repeat the heading "
-                     "for each rule. See [Excluding spectra](excluding.md).",
-    "analysis.exclude": "Spectra treated as rejected by hxex analyse, and by hxex run and hxex "
-                        "report (given the project file) in their tables and figures; their "
-                        "fits stay in the bundle. The same keys as [[input.exclude]]. See "
-                        "[Excluding spectra](excluding.md).",
+                     "for each rule. See [Excluding spectra](excluding-spectra.md).",
+    "review": "Decisions made after looking at the results: the user review table and the "
+              "exclusion rules below. hxex run (its tables), hxex report and hxex analyse, given "
+              "the project file, all apply them; the fits stay in the bundle. See "
+              "[Reviewing results](project-file.md#reviewing-results).",
+    "review.exclude": "Spectra treated as rejected, in the tables, figures, and analysis; their "
+                      "fits stay in the bundle. The same keys as [[input.exclude]]. (Called "
+                      "[[analysis.exclude]] before; that name still works.) See "
+                      "[Excluding spectra](excluding-spectra.md).",
     "": "Top-level keys, before the first table.",
     "input": "What to read. Which keys apply depends on the format (the Formats column): "
              "folder = the folder formats (specexport, hxexpress, pooled), scan = the scan "
@@ -429,7 +435,7 @@ def _run_tables(name: str, cls, values: Mapping) -> list[Table]:
     return tables
 
 
-# the keys of an exclusion rule ([[input.exclude]], [[analysis.exclude]]; hxex.exclusions)
+# the keys of an exclusion rule ([[input.exclude]], [[review.exclude]]; hxex.exclusions)
 _RULE = (
     Setting("sample", "text", UNSET, "the sample"),
     Setting("peptide_range", "text", UNSET, 'the peptide, by its residues ("45-60" is '
@@ -475,6 +481,9 @@ def tables() -> list[Table]:
             continue
         values = value if isinstance(value, Mapping) else config._section_defaults(key)
         out += _run_tables(f"run.{key}", _section_class(key), values)
+    out.append(Table("review", False, (
+        Setting("table", "path", UNSET, _DESCRIPTIONS["review.table"]),), _INTROS["review"]))
+    out.append(Table("review.exclude", True, _RULE, _INTROS["review.exclude"]))
     nested = ("filters", "choice", "regions", "sites", "runs", "merge", "controls", "fragments",
               "labelling")
     out.append(Table("analysis", False, _settings(
@@ -494,7 +503,6 @@ def tables() -> list[Table]:
         FragmentAnalysis, "analysis.fragments", skip=("labels", "exchange")),
         _INTROS["analysis.fragments"]))
     out.append(Table("analysis.fragments.labels", False, (), _INTROS["analysis.fragments.labels"]))
-    out.append(Table("analysis.exclude", True, _RULE, _INTROS["analysis.exclude"]))
     for name in ("analysis.fragments.exchange", "analysis.labelling"):
         out.append(Table(name, False, _settings(ExchangeConditions, name), _INTROS[name]))
     from .report.figures import PlotConfig

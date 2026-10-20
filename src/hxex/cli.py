@@ -80,11 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     _spectra_option(p)
     _threads_option(p)
 
-    p = sub.add_parser("resume", help="finish a bundle's stopped bootstrap, or add one")
+    p = sub.add_parser("resume", help="complete a bundle's bootstrap: finish a stopped one, add "
+                                      "or redo one, or bootstrap the review's chosen K")
     p.add_argument("bundle", metavar="BUNDLE|PROJECT",
                    help="a results bundle (a folder, or .zip) waiting for its bootstrap, or a "
-                        "project file: a bootstrap with its [run.bootstrap] settings is added "
-                        "to its [output] bundle (or replaces the one there), the fits kept")
+                        "project file: its [output] bundle gets a bootstrap with its "
+                        "[run.bootstrap] settings (redone only if they changed) and one at the "
+                        "K its [review] table chooses where that is missing; the fits kept")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -94,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
                                       "bundle; fits nothing")
     p.add_argument("bundle", metavar="BUNDLE|PROJECT",
                    help="a results bundle (a folder, or .zip), or a project file: its [output] "
-                        "bundle, with its [[analysis.exclude]] rules applied and its [figures] "
+                        "bundle, with its [review] decisions applied and its [figures] "
                         "settings")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -463,6 +465,7 @@ def cmd_run(args) -> int:
     from .config import project_record, read_input
     from .hooks import ProgressLog
     from .model import Backend
+    from .review_table import table_choices
     from .run import run
 
     project = _project(args)
@@ -483,8 +486,8 @@ def cmd_run(args) -> int:
     overwrite = args.overwrite or out.overwrite
     keep_previous = args.keep_previous or out.keep_previous
     if bundle.exists() and not (overwrite or keep_previous):
-        log.error("%s exists: --overwrite replaces it (and its tables and figures, carrying "
-                  "its review over), --keep-previous moves it to the next generation first "
+        log.error("%s exists: --overwrite replaces it (and its tables, carrying its review "
+                  "over), --keep-previous moves it to the next generation first "
                   "(%s.N), or write to another output.bundle (the bundle and the folders "
                   "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
@@ -509,6 +512,7 @@ def cmd_run(args) -> int:
             spectra, config, out=bundle, project=project.project, notes=out.notes,
             overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
             exclude=project.input.exclude, view_exclude=_view_exclude(project),
+            chosen_k=table_choices(project.review),
             project_file=project_record(dataclasses.replace(
                 project, threads=threads, output=dataclasses.replace(
                     out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
@@ -516,11 +520,10 @@ def cmd_run(args) -> int:
         )
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
     if tables is not None:
-        from .exclusions import exclude_from_results
         from .report import Results, write_tables
+        from .review_table import apply_view
 
-        write_tables(exclude_from_results(Results.from_run(result), _view_exclude(project)),
-                     tables)
+        write_tables(apply_view(Results.from_run(result), project.review), tables)
     _summary(result.fit, bundle, tables=tables)
     from .io.bundle import analysis_folders
 
@@ -535,8 +538,8 @@ def cmd_run(args) -> int:
 
 
 def _view_exclude(project) -> tuple:
-    """The project's [[analysis.exclude]] rules (none without an [analysis] table)."""
-    return tuple(project.analysis.exclude) if project.analysis is not None else ()
+    """The project's [[review.exclude]] rules (none without a [review] table)."""
+    return tuple(project.review.exclude) if project.review is not None else ()
 
 
 def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
@@ -550,13 +553,15 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
 
 def cmd_resume(args) -> int:
     from .hooks import ProgressLog
-    from .run import resume_bootstrap
+    from .run import NothingToResume, resume_bootstrap
 
     bundle, extra = Path(args.bundle), {}
     tables_arg, threads = args.tables, args.threads
-    rules: tuple = ()
+    review = None
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
         from .config import load_project
+        from .io.bundle import bundle_manifest
+        from .review_table import table_choices
 
         project = load_project(bundle, analysis_only=True)
         if project.output.bundle is None:
@@ -566,22 +571,35 @@ def cmd_resume(args) -> int:
             log.error("%s has no [run.bootstrap] table: add one with the bootstrap's settings",
                       bundle)
             return EXIT_ERROR
-        bundle, rules = project.output.bundle, _view_exclude(project)
-        extra = {"bootstrap": project.run.bootstrap, "add": True, "view_exclude": rules}
+        bundle, review = project.output.bundle, project.review
+        held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
+        # the bootstrap there is kept when it has the project's settings: only what the
+        # review's chosen K lacks is added
+        redo = held != project.run.bootstrap.to_dict()
+        extra = {"bootstrap": project.run.bootstrap, "add": redo,
+                 "view_exclude": _view_exclude(project),
+                 "chosen_k": table_choices(project.review)}
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
         threads = threads if threads is not None else project.threads
     stop = _Stop()
     with stop.installed(), _threads(threads):
-        result = resume_bootstrap(
-            bundle, device=args.device, progress=ProgressLog(interval=args.progress_every),
-            cancel=stop, **extra)
+        try:
+            result = resume_bootstrap(
+                bundle, device=args.device, progress=ProgressLog(interval=args.progress_every),
+                cancel=stop, **extra)
+        except NothingToResume:
+            if not extra:  # the bundle alone: say how to add or redo a bootstrap
+                raise
+            _say(f"{bundle}: the bootstrap has the project's settings and every K chosen in "
+                 "the review has a bootstrap: nothing to add")
+            return 0
     tables = _beside(bundle, tables_arg, "_tables")
     if tables is not None:
-        from .exclusions import exclude_from_results
         from .report import Results, write_tables
+        from .review_table import apply_view
 
-        write_tables(exclude_from_results(Results.from_run(result), rules), tables)
+        write_tables(apply_view(Results.from_run(result), review), tables)
         log.info("tables in %s", tables)
     _summary(result.fit, bundle)
     return 0
@@ -595,7 +613,7 @@ def cmd_report(args) -> int:
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
 
-    bundle, rules, plots = Path(args.bundle), (), PlotConfig()
+    bundle, review, plots = Path(args.bundle), None, PlotConfig()
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle, rules, figures
         from .config import load_project
 
@@ -603,7 +621,7 @@ def cmd_report(args) -> int:
         if project.output.bundle is None:
             log.error("%s names no [output] bundle to report on", bundle)
             return EXIT_ERROR
-        bundle, rules = project.output.bundle, _view_exclude(project)
+        bundle, review = project.output.bundle, project.review
         plots = project.figures or plots
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
@@ -614,9 +632,18 @@ def cmd_report(args) -> int:
         if b.pending:
             log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
                         ", ".join(b.pending))
-        from .exclusions import exclude_from_results
+        from .review_table import apply_view, missing_bootstraps
 
-        results = exclude_from_results(Results.from_bundle(b), rules)
+        results = apply_view(Results.from_bundle(b), review)
+        missing = missing_bootstraps(results)
+        if missing:
+            log.error("%d spectra are shown at a K chosen in the review that has no bootstrap "
+                      "(for example %s), so their errors would not compare with the others': "
+                      "hxex resume %s bootstraps them (only those), then report again",
+                      len(missing), ", ".join(f"{s} at K = {k}"
+                                              for s, k in list(missing.items())[:2]),
+                      args.bundle)
+            return EXIT_ERROR
         if tables is not None:
             written = write_tables(results, tables)
             _say(f"{len(written)} table(s) in {tables}")
@@ -797,6 +824,7 @@ def cmd_analyse(args) -> int:
 
     threads = args.threads
     record_paths = "path"  # the analysis settings file records its paths as the input does
+    review = None  # the project's [review] decisions
     first = Path(_run_source(args.source[0])[1])
     if len(args.source) > 1 or _is_bundle(first):
         runs = dict(_run_source(s) for s in args.source)
@@ -820,6 +848,7 @@ def cmd_analyse(args) -> int:
         threads = threads if threads is not None else project.threads
         if project.input is not None:
             record_paths = project.input.record_paths
+        review = project.review
         if config.runs and not args.bundle:
             runs = {name: Path(path) for name, path in config.runs.items()}
         else:
@@ -856,6 +885,7 @@ def cmd_analyse(args) -> int:
             opened[name] = Results.from_bundle(b)
         results = RunSet(opened, merge=config.merge) if several else opened[""]
         written = write_analysis(results, config, out, base=base, record_paths=record_paths,
+                                 review=review,
                                  progress=ProgressLog(name="analysis",
                                                       interval=args.progress_every),
                                  cancel=stop)

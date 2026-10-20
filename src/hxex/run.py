@@ -41,6 +41,7 @@ from .bootstrap import (
     BootstrapResult,
     bootstrap,
     bootstrap_by_k,
+    scatter,
     selected_from,
 )
 from .controls import (
@@ -190,7 +191,7 @@ class RunResult:
     spectra_source: dict | None = None
     review: Any = None  # the hxex.io.bundle.ReviewTable carried over to the bundle, if any
     excluded: dict | None = None  # the run-level exclusions (hxex.exclusions.exclusion_record)
-    view_exclude: tuple = ()  # [[analysis.exclude]] rules applied to the run's figures
+    view_exclude: tuple = ()  # [[review.exclude]] rules applied to the run's figures
     project_file: dict | None = None  # the project file's other settings (config.project_record)
 
     @property
@@ -429,6 +430,57 @@ def _bootstrap_part(
     return boot, by_k
 
 
+def _chosen_part(config: RunConfig, data: Measurements, fit: FitResult,
+                 by_k: dict[int, BootstrapResult] | None, chosen: Mapping[str, int],
+                 progress, cancel) -> dict[int, BootstrapResult] | None:
+    """``by_k`` with a bootstrap added, at their chosen K, for the spectra of ``chosen``
+    (spectrum id -> K: a review's chosen K) that have none there: a partial fixed-K bootstrap
+    (:func:`hxex.bootstrap.scatter`), so a K chosen in the review is shown with errors made
+    like every other spectrum's. Spectra the fit does not have, at their selected K, or at a K
+    not fitted for them are passed over."""
+    if config.bootstrap is None or not chosen:
+        return by_k
+    wanted = _missing_choices(fit, by_k, chosen)
+    if not wanted:
+        return by_k
+    by_k = dict(by_k or {})
+    total = sum(len(r) for r in wanted.values())
+    log.info("bootstrapping %d spectra at the K chosen for them in the review", total)
+    start_stage(progress, "bootstrap chosen K", UNITS - _FINISH, UNITS - _FINISH)
+    for k, rows in sorted(wanted.items()):
+        check_cancel(cancel)
+        rows = np.sort(np.asarray(rows, dtype=np.int64))
+        part = bootstrap_by_k(data.select(rows, drop_references=True), fit.select(rows), [k],
+                              config.bootstrap, cancel=cancel)[k]
+        by_k[k] = scatter(part, rows, len(fit), k, base=by_k.get(k))
+    return by_k
+
+
+def _missing_choices(fit: FitResult, by_k: Mapping[int, BootstrapResult] | None,
+                     chosen: Mapping[str, int]) -> dict[int, list[int]]:
+    """The rows of ``fit`` whose chosen K (``chosen``, spectrum id -> K) has no bootstrap in
+    ``by_k``, by K (see :func:`_chosen_part`)."""
+    by_k = by_k or {}
+    index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+    wanted: dict[int, list[int]] = {}
+    for sid, k in chosen.items():
+        i = index.get(str(sid))
+        if (i is None or not k or k == fit.selected_K[i] or k not in fit.k_values
+                or not fit.fitted(k)[i] or (k in by_k and by_k[k].covers(i))):
+            continue
+        wanted.setdefault(int(k), []).append(i)
+    return wanted
+
+
+def _review_choices(review) -> dict[str, int]:
+    """The K a (carried-over or stored) review layer chooses, by spectrum (current entries)."""
+    if review is None:
+        return {}
+    return {str(s): int(k) for s, k, stale in zip(review.spectrum_id, review.k_override,
+                                                  review.stale, strict=True)
+            if k and not stale}
+
+
 def analyse(
     data: Measurements,
     config: RunConfig,
@@ -507,6 +559,7 @@ def run(
     exclude: Sequence = (),
     view_exclude: Sequence = (),
     project_file: Mapping | None = None,
+    chosen_k: Mapping[str, int] | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -515,7 +568,7 @@ def run(
     ``exclude`` (:class:`hxex.exclusions.Exclusion` rules, ``[[input.exclude]]``) leaves the
     spectra it matches out before anything else: they are stored with the raw spectra but not
     picked or fitted, and the bundle records the rules and the spectra they left out.
-    ``view_exclude`` (``[[analysis.exclude]]``) treats its spectra as rejected in the figures
+    ``view_exclude`` (``[[review.exclude]]``) treats its spectra as rejected in the figures
     of :meth:`RunResult.write_figures` (in memory; the fits are kept). A run draws no figures.
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
@@ -529,8 +582,10 @@ def run(
     :func:`hxex.io.keep_previous`) just before the new bundle is written. Either way the new
     manifest records what was replaced, what changed and the review carried (its
     ``provenance``). ``project_file`` (:func:`hxex.config.project_record`) records the
-    project file's other settings in the bundle, beside the run settings. Raises ValueError if
-    nothing is left.
+    project file's other settings in the bundle, beside the run settings. With a bootstrap, the
+    spectra shown at a K other than the fit's choice (``chosen_k``, spectrum id -> K, from a
+    review table, and the carried-over review's chosen K) are bootstrapped at that K as well,
+    so their errors are made like every other's. Raises ValueError if nothing is left.
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
@@ -661,6 +716,8 @@ def run(
             log.warning("the bootstrap did not finish: the fits are in %s; 'hxex resume' (or "
                         "hxex.run.resume_bootstrap) adds the bootstrap to them", out)
         raise
+    by_k = _chosen_part(config, measurements, fit, by_k,
+                        {**_review_choices(review), **(chosen_k or {})}, progress, cancel)
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, progress=progress, cancel=cancel, review=review,
@@ -731,6 +788,11 @@ def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, progr
     return result
 
 
+class NothingToResume(ValueError):
+    """A complete bundle with every chosen K bootstrapped: :func:`resume_bootstrap` has nothing
+    to add."""
+
+
 def resume_bootstrap(
     path: str | Path,
     *,
@@ -738,6 +800,7 @@ def resume_bootstrap(
     device: str | None = None,
     add: bool = False,
     view_exclude: Sequence = (),
+    chosen_k: Mapping[str, int] | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -747,20 +810,31 @@ def resume_bootstrap(
     (each measurement is seeded from its own id). The bootstrap settings are the run's unless
     ``bootstrap`` is given; ``device`` (``'cpu'``, ``'cuda'``, ...) replaces the run's, so a
     bundle fitted on a GPU can be resumed where there is none. The stored spectra, notes and
-    review are kept. No figures are drawn; ``view_exclude`` (``[[analysis.exclude]]`` rules) is
+    review are kept. No figures are drawn; ``view_exclude`` (``[[review.exclude]]`` rules) is
     kept on the result for :meth:`RunResult.write_figures`.
 
     With ``add`` (and ``bootstrap``, its settings) a complete bundle takes a bootstrap too: one
     run without a bootstrap gets one, and a bundle that has one has it replaced (more
     resamples, a fixed-K bootstrap for the analysis); the fits are kept and the bundle's run
-    settings record the new bootstrap."""
+    settings record the new bootstrap.
+
+    Either way, and on its own for a complete bundle, the spectra shown at a K other than the
+    fit's choice (``chosen_k``, spectrum id -> K, from a review table, and the bundle's own
+    review) are bootstrapped at that K where they have no bootstrap there (:func:`run` does
+    the same); a complete bundle with nothing to add is refused (ValueError)."""
     from .io.bundle import open_bundle
 
     path = Path(path)
     with open_bundle(path) as b:
-        if "bootstrap" not in b.pending and not add:
-            raise ValueError(f"{path}: no bootstrap is pending (the bundle is complete); to add "
-                             "or redo one, give the project file with its [run.bootstrap] "
+        redo = "bootstrap" in b.pending or add
+        chosen = {**_review_choices(b.review() if b.has("review") else None),
+                  **(chosen_k or {})}
+        held = None if redo else {k: b.bootstrap(k) for k in b.bootstrap_ks()}
+        if not redo and (b.bootstrap() is None
+                         or not _missing_choices(b.fit(), held, chosen)):
+            raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
+                             "every K chosen in the review has one; to add or redo the "
+                             "bootstrap, give the project file with its [run.bootstrap] "
                              "(hxex resume hxex.toml)")
         if add and bootstrap is None:
             raise ValueError("adding a bootstrap needs its settings (bootstrap=)")
@@ -790,13 +864,18 @@ def resume_bootstrap(
         provenance = b.manifest.get("provenance")
         excluded = b.manifest.get("excluded")
         project_file = b.manifest["configs"].get("project_file")
+        stored_boot = None if redo else b.bootstrap()
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
                       np.where(~kept, "no_signal", "")).astype(str)
-    plan = dataclasses.replace(_plan(measurements, config, (0.0, float(UNITS - _FINISH))),
-                               fit_share=0.0)
-    boot, by_k = _bootstrap_part(config, plan, [fit.select(rows) for rows in plan.chunks],
-                                 progress, cancel)
+    if redo:
+        plan = dataclasses.replace(_plan(measurements, config, (0.0, float(UNITS - _FINISH))),
+                                   fit_share=0.0)
+        boot, by_k = _bootstrap_part(config, plan, [fit.select(rows) for rows in plan.chunks],
+                                     progress, cancel)
+    else:
+        boot, by_k = stored_boot, held or None
+    by_k = _chosen_part(config, measurements, fit, by_k, chosen, progress, cancel)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,

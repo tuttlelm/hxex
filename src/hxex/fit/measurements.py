@@ -60,16 +60,18 @@ class Measurements:
     def __len__(self) -> int:
         return len(self.bins)
 
-    def select(self, index) -> Measurements:
+    def select(self, index, *, drop_references: bool = False) -> Measurements:
         """The measurements at ``index`` (positions, in that order). The reference spectra of each
-        selected measurement must be selected too (select whole series); they are renumbered."""
+        selected measurement must be selected too (select whole series); they are renumbered.
+        With ``drop_references`` the selection has none (for the bootstrap, which resamples
+        each measurement from its own fit and does not use them)."""
         index = np.asarray(index, dtype=np.int64)
         if index.ndim != 1 or len(set(index.tolist())) != len(index):
             raise ValueError("index must be a one-dimensional list of distinct positions")
         new = {int(old): j for j, old in enumerate(index)}
         refs = []
         for i in index:
-            ref = self.references[int(i)]
+            ref = None if drop_references else self.references[int(i)]
             if ref is not None and any(r not in new for r in ref):
                 raise ValueError("a measurement was selected without its reference spectra")
             refs.append(None if ref is None else tuple(new[r] for r in ref))

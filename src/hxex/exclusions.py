@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Spectra left out by rules of the project file (docs/PLAN.md, "Excluding spectra").
 
-A rule (:class:`Exclusion`, one ``[[input.exclude]]`` or ``[[analysis.exclude]]`` table) names
+A rule (:class:`Exclusion`, one ``[[input.exclude]]`` or ``[[review.exclude]]`` table) names
 any of a spectrum's sample, peptide (by its residues), charge, time, control role, replicate,
 data file and id, and a note; a spectrum is excluded when it matches every key of one rule.
 Before fitting (``[[input.exclude]]``, :func:`hxex.run.run`) the matched spectra are stored but
-not fitted; after it (``[[analysis.exclude]]``, :func:`exclude_from_results`) they are treated
+not fitted; after it (``[[review.exclude]]``, :func:`exclude_from_results`) they are treated
 as rejected, in memory, by every consumer of the review layer. Nothing is deleted.
 """
 
@@ -199,7 +199,7 @@ def exclude_from_results(results, rules: Sequence[Exclusion]):
     if not rules:
         return results
     if results.binned is None:
-        raise ValueError("[[analysis.exclude]] needs the results' picked table (the bundle's "
+        raise ValueError("[[review.exclude]] needs the results' picked table (the bundle's "
                          "binned spectra) to match its rules")
     index = results.binned
     source = results.settings.spectra_source if results.settings is not None else None
@@ -210,12 +210,12 @@ def exclude_from_results(results, rules: Sequence[Exclusion]):
     for i, rule in enumerate(rules, start=1):
         hit = matches(rule, index, reader) & fitted
         if not hit.any():
-            log.warning("[[analysis.exclude]] #%d (%s) matches no fitted spectrum: check its "
+            log.warning("[[review.exclude]] #%d (%s) matches no fitted spectrum: check its "
                         "values", i, rule.describe())
             continue
-        log.info("[[analysis.exclude]] #%d (%s): %d spectra left out", i, rule.describe(),
+        log.info("[[review.exclude]] #%d (%s): %d spectra left out", i, rule.describe(),
                  int(hit.sum()))
-        text = "excluded by [[analysis.exclude]]" + (f": {rule.note}" if rule.note else "")
+        text = "excluded by [[review.exclude]]" + (f": {rule.note}" if rule.note else "")
         for sid in ids_all[hit]:
             notes.setdefault(str(sid), text)
     if not notes:
@@ -241,5 +241,7 @@ def exclude_from_results(results, rules: Sequence[Exclusion]):
         updated=np.concatenate([review.updated.astype(object),
                                 np.full(len(new), stamp, dtype=object)]),
         stale=np.concatenate([review.stale, np.zeros(len(new), dtype=bool)]),
+        source=None if review.source is None else np.concatenate(
+            [review.source, np.full(len(new), "exclusion rule", dtype=object)]),
     )
     return results.with_review(merged)

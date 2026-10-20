@@ -99,7 +99,10 @@ it yourself; the other commands (`hxex report`, `hxex analyse`, `hxex info`) rea
 spreadsheets and figures you look at are written beside it. Keep it: it is the record of the
 analysis, and a later run can start again from the spectra stored in it.
 
-**Writing folder names.** Always put a folder name between quotes.
+**Writing folder names.** Always put a folder name between quotes. A name on its own, such as
+`"SpecExport"`, means a folder inside the one that holds `hxex.toml`; anything else needs its
+full location ([File and folder locations](project-file.md#file-and-folder-locations) has the
+details).
 
 - **Works on every system:** double quotes, with forward slashes `/` between the folders.
   - Windows: `"C:/Users/me/Data/SpecExport"`
@@ -236,9 +239,12 @@ Run `hxex check hxex.toml` first whenever you have changed the file.
 - Better uncertainties: switch on `[run.bootstrap]` in the project file, then run
   `hxex resume hxex.toml`. It adds the bootstrap to your results without fitting again. It
   takes much longer than the fit, but gives the error bars the comparisons need. Run it again
-  after changing the bootstrap settings (more resamples, say) to replace the earlier one.
+  after changing the bootstrap settings (more resamples, say) to replace the earlier one; with
+  the settings unchanged it keeps the bootstrap and adds only what is missing, such as the
+  spectra you gave another number of populations in the
+  [review table](project-file.md#the-user-review-table).
 - Back-exchange correction from your controls: switch on `[run.controls]`. See
   [Controls and times](controls.md).
-- Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding.md).
+- Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding-spectra.md).
 - What every table and figure holds: [Outputs](outputs.md).
 - Every setting: [Settings reference](settings.md).

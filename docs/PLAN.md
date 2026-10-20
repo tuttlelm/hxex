@@ -185,7 +185,7 @@ without deleting anything and without Python, both before fitting and after it. 
 (owner's choices, 2026-10-19; HISTORY item 116):
 
 - **One rule format** for both levels: repeatable tables of the project file, `[[input.exclude]]`
-  and `[[analysis.exclude]]`. A rule names any of `sample`, `peptide_range` (by residues, as the
+  and `[[review.exclude]]` (named `[[analysis.exclude]]` until 2026-10-20; still accepted). A rule names any of `sample`, `peptide_range` (by residues, as the
   `peptide_ranges` selection), `charge`, `time` (a time point; with a unit), `role` (`undeut`,
   `fulldeut`), `rep`, `file` (the data file: a run's mzML or raw file, an HX-Express
   spreadsheet, a SpecExport spectrum file; by name) and `spectrum_id`, and a `note`. A spectrum
@@ -196,13 +196,22 @@ without deleting anything and without Python, both before fitting and after it. 
   envelopes). The bundle's manifest records the rules, the count per rule and the excluded ids
   (`excluded`); `hxex info` shows them. Removing a rule and rerunning (`--spectra`) fits them.
   Every format; it applies to stored spectra too.
-- **Analysis level** (`[[analysis.exclude]]`): the fits stay in the bundle; `hxex analyse`, and
+- **After fitting** (`[[review.exclude]]`): the fits stay in the bundle; `hxex analyse`, and
   `hxex run` (its tables) and `hxex report` (tables and figures), treat the matched spectra as
   rejected. They are applied in memory as rejections added to the review layer (note
-  "excluded by [[analysis.exclude]]: ..."), never written into the bundle, so every consumer of
+  "excluded by [[review.exclude]]: ..."), never written into the bundle, so every consumer of
   the review honours them and changing the rules needs only a rerun of the command.
   `hxex report` reads the project file for them (`hxex report hxex.toml`, the bundle from
   `[output] bundle`).
+- **The user review table** (owner, 2026-10-20; HISTORY item 124): per-spectrum decisions made
+  in a spreadsheet, a copy of `spectra.csv` named in `[review] table` (any name and
+  folder; the guide suggests `user_review_table.csv` beside the project file). Only `spectrum_id`, `review_status`,
+  `review_K` and `note` are read; applied in memory before the rules, like them. A chosen K
+  needs a bootstrap at that K when the run has one (comparable errors): `hxex report` refuses
+  until `hxex resume hxex.toml` bootstraps exactly those spectra (a partial fixed-K bootstrap);
+  `hxex run` does it itself. Per spectrum only (owner). The table and the after-fitting rules
+  are the top-level `[review]` table (owner: transparent, since run, report, and analyse all
+  apply it).
 - **The review layer stays**: per-spectrum decisions stored in the bundle (Python today). Both
   apply; a spectrum the review accepts but a rule excludes is excluded.
 - `hxex check` lists the rules (it reads no spectra, so it cannot count them for the folder
