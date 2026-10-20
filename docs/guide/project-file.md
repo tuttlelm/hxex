@@ -49,7 +49,7 @@ data_dir = "SpecExport"
 k_max = 3
 
 [run.bootstrap]                   # a table present turns its stage on
-n_boot = 200
+n_boot = 20
 
 [run.controls]
 d2o_fraction = 0.9
@@ -107,7 +107,14 @@ Exit codes: 0 done, 1 error, 2 usage error, 130 stopped.
 
 ## Speed
 
-The bootstrap takes most of a run's time. To save time:
+The bootstrap takes most of a run's time. Each resample refits every spectrum once, at its
+chosen number of populations and from the fitted values, so one resample costs about a sixth of
+the fit. With the default `n_boot = 20`, the bootstrap takes about 3 times as long as the fit; a
+fixed-K bootstrap at K = 1 and 2 (`ks = [1, 2]`, which the analysis' choice between one and two
+populations needs) about 7 times. Twenty resamples give usable standard errors; raise `n_boot`
+(to 100 or more) when the 95 % intervals themselves matter, for a published figure, say.
+
+To save time:
 
 - `[run.fit] screen = true` fits K=2 and K=3 only to spectra that could select them (the selected
   K does not change), in about a third of the time. The skipped fits are missing from fixed-K

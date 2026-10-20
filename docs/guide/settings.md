@@ -270,7 +270,7 @@ Standard errors and intervals from resampled refits of every measurement (hxex.b
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `n_boot` | integer | `200` | resamples of every measurement |
+| `n_boot` | integer | `20` | resamples of every measurement: 20 gives usable standard errors; raise it (100 or more) when the 95 % intervals matter |
 | `ci` | number | `95.0` | interval width in percent (95.0), not a fraction |
 | `n_restarts` | integer | `3` | starting points per refit (the first is the original fit) |
 | `adam_steps` | integer | `400` | Adam steps per refit |

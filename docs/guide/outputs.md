@@ -1,6 +1,6 @@
 # Outputs: tables and figures
 
-`hxex run` writes a results **bundle** (`[output] bundle`, say `results`: a folder, or a `.zip`,
+`hxex run` writes a results **bundle** (`[output] bundle`, such as `results`: a folder, or a `.zip`,
 of Parquet tables with a `manifest.json`), CSV tables beside it (`results_tables`) and, when asked,
 figures (`results_figures`). `hxex report` writes the tables and figures again from a bundle;
 `hxex analyse` writes the post-fitting analysis to a folder named after the bundle and the

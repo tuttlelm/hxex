@@ -3094,3 +3094,13 @@ CSVs or mzML if wanted.
     is refused, saying to run `hxex analyse --reference NAME`. An `[analysis] out` or `--out`
     is used as given. Existing `results_analysis` folders of analyses made with a reference
     stay where they are: a new analysis writes beside them, in the new name.
+
+120. **`n_boot` default 200 to 20 (owner, 2026-10-19).** Owner: 200 is far too many for
+    general use (20 is fine on its merits; pyHXExpress's procedure differed, so its value is no
+    argument). Measured cost (items 32, 46): one resample refits at the selected K from the fit,
+    with 3 starts against the fit's 6 over every K, so about 1/6 of the fit with K = 1 to 3; at
+    20 the bootstrap takes about 3 times the fit (7 times with `ks = [1, 2]`; the benchmark's
+    ratio was 8.5 with its K = 3 extras). Twenty give usable standard errors; the 95 % percentile
+    intervals at 20 are near the range of the draws, so the comments and the guide say to raise
+    it when the intervals matter. Of the private project files only one has a bootstrap, and it
+    sets its own `n_boot`.

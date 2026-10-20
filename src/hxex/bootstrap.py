@@ -44,7 +44,9 @@ class BootstrapConfig:
     """Settings of :func:`bootstrap` (the ``[run.bootstrap]`` table): standard errors and
     intervals from resampled refits of every measurement.
 
-    - ``n_boot``: resamples per measurement.
+    - ``n_boot``: resamples per measurement (20 by default: usable standard errors at about
+      three times the fit's time; the 95 % percentile intervals are rough at 20, so raise it,
+      to 100 or more, when the intervals themselves matter).
     - ``ci``: the interval width in percent (95.0), not a fraction.
     - ``n_restarts``: starting points per refit (the first is the original fit with
       ``warm_noise`` jitter); ``adam_steps`` Adam steps with a cosine learning rate from
@@ -61,7 +63,7 @@ class BootstrapConfig:
       wants 1 and 2). The cost grows with the number of Ks.
     """
 
-    n_boot: int = 200
+    n_boot: int = 20
     ci: float = 95.0
     n_restarts: int = 3
     adam_steps: int = 400

@@ -48,7 +48,7 @@ def test_config_roundtrip_and_validation():
         BootstrapConfig(ci=0.95)  # a fraction where a percentage is meant
     cfg = BootstrapConfig(n_boot=50, ci=90.0, keep_draws=True, seed=3)
     assert BootstrapConfig.from_dict(json.loads(json.dumps(cfg.to_dict()))) == cfg
-    assert BootstrapConfig().n_boot == 200 and BootstrapConfig().ci == 95.0
+    assert BootstrapConfig().n_boot == 20 and BootstrapConfig().ci == 95.0
     with pytest.raises(ValueError, match="unknown bootstrap setting"):
         BootstrapConfig.from_dict({"n": 5})
     for bad in ({"n_boot": 1}, {"ci": 100.0}, {"ci": 0.0}, {"n_restarts": 0}, {"adam_steps": -1},

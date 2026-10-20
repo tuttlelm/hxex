@@ -1187,7 +1187,8 @@ _COMMENTS: dict[str, str] = {
                                    "flagged noise_outlier",
     "run.fit.backend.device": '"auto" (CUDA if available, else CPU), "cpu", "cuda" or "cuda:N"',
     "run.fit.backend.dtype": '"auto" (float32), "float32" or "float64" (the last digits)',
-    "run.bootstrap.n_boot": "resamples of every measurement",
+    "run.bootstrap.n_boot": "resamples of every measurement: 20 gives usable standard errors; "
+                            "raise it (100 or more) when the 95 % intervals matter",
     "run.bootstrap.ci": "interval width in percent (95.0), not a fraction",
     "run.bootstrap.n_restarts": "starting points per refit (the first is the original fit)",
     "run.bootstrap.adam_steps": "Adam steps per refit",
