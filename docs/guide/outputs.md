@@ -92,6 +92,11 @@ hxex report hxex.toml --figures --overwrite
 hxex analyse hxex.toml --overwrite
 ```
 
+`hxex check hxex.toml` lists these folders under `outputs`: which exist, whether each was made
+from the results in the bundle now, and which command would need `--overwrite` or
+`--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
+command stops by itself, before doing any work.
+
 Deleting only the `results` folder does not start afresh: its tables, figures, and analysis
 folders stay beside it, and the next `hxex run` stops at the tables folder. To start afresh,
 delete every folder whose name starts with `results`, or use `--overwrite` or

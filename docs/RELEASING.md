@@ -46,9 +46,15 @@ publishes to PyPI only for tags starting with `v`.
    extra): `python docs/tutorial/make_tutorial.py SPECEXPORT_DIR OUT_DIR --run`, where
    `SPECEXPORT_DIR` holds the published B5 SpecExport data. This also redraws the page's
    figures in `docs/images/tutorial_*.png`; commit them if they changed.
-2. On GitHub, **Releases, Draft a new release**: create the tag `tutorial-data-N` (the next
-   number) on `main`, attach `OUT_DIR/hxex_b5_tutorial.zip`, mark it as a pre-release so it is
-   not shown as the latest *hxex* release, and publish.
-3. If N changed, update the download link in `docs/guide/tutorial.md`.
+2. Until the tutorial is announced (or cited), replace the zip on the current release: on
+   GitHub, **Releases**, edit `tutorial-data-N`, delete its `hxex_b5_tutorial.zip`, attach
+   the new `OUT_DIR/hxex_b5_tutorial.zip` under the same name, and save. The tag and the
+   page's link stay as they are.
+3. Once it has been announced, never change what a published link downloads: **Releases,
+   Draft a new release**, create the tag `tutorial-data-N` (the next number) on `main`,
+   attach the zip, mark it as a pre-release so it is not shown as the latest *hxex* release,
+   publish, and update the download link in `docs/guide/tutorial.md`.
+4. If the zip's size changed noticeably, update the size the page gives (`39 MB`).
 
 A new zip is needed only when the notebook, its README, or its licence change: the data do not.
+Status: `tutorial-data-1`, not yet announced (owner, 2026-10-21).

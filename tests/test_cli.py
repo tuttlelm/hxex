@@ -292,12 +292,23 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "targets        1 from" in out and "6 scans; 1 of 1 targets have scans" in out
     assert out.strip().endswith("ok")
-    (tmp_path / "out").mkdir()  # an existing bundle is reported
-    assert cli.main(["check", str(path)]) == 1
-    err = capsys.readouterr().err
-    assert "the bundle" in err and "--keep-previous" in err
+    assert "outputs        none yet: hxex run writes out" in out
+    # existing results are information, not problems: each command refuses by itself
+    path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
+    assert cli.main(["-q", "run", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "outputs        out exists: hxex run needs --overwrite or --keep-previous" in out
+    assert ("out_tables: up to date; hxex run and hxex report need --overwrite or "
+            "--keep-previous") in out
+    assert "out_analysis: up to date; hxex analyse needs --overwrite" in out
+    assert out.strip().endswith("ok")
     path = mzml_project(tmp_path, output="keep_previous = true")
     assert cli.main(["check", str(path)]) == 0
+    assert "out exists: [output] keep_previous moves it to NAME.N first" in \
+        capsys.readouterr().out
 
 
 def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
@@ -324,7 +335,7 @@ def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
     out, err = capsys.readouterr()
     assert "format         specexport" in out
     assert "nowhere: no such directory" in err and "rt.csv: no such file" in err
-    assert "the bundle" in err and "3 problem(s)" in err
+    assert "2 problem(s)" in err and "outputs        out exists" in out
 
 
 def test_run_info_and_report(tmp_path, capsys):

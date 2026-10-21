@@ -334,12 +334,8 @@ def cmd_check(args) -> int:
             problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
-    out = project.output
-    if (out.bundle is not None and out.bundle.exists() and not out.overwrite
-            and not out.keep_previous):
-        problems.append(f"the bundle {out.bundle} exists: 'hxex run' needs --overwrite or "
-                        "--keep-previous (output.overwrite or output.keep_previous), or "
-                        "another output.bundle")
+    for n, line in enumerate(_output_lines(project)):
+        _say(f"{'' if n else 'outputs':14s} {line}")
     if problems:
         for p in problems:
             log.error("%s", p)
@@ -347,6 +343,56 @@ def cmd_check(args) -> int:
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _output_lines(project) -> list[str]:
+    """What ``hxex check`` says of the project's output folders: which exist, which commands
+    would then need ``--overwrite`` or ``--keep-previous`` (or what ``[output] overwrite`` /
+    ``keep_previous`` will do), and whether each was made from the results in the bundle now.
+    Information only: each command refuses by itself, before doing any work."""
+    from .io import holds_output, made_from
+    from .io.bundle import analysis_folder_name, analysis_states, bundle_manifest
+
+    out = project.output
+    bundle = out.bundle
+    if bundle is None:
+        return ["no [output] bundle"]
+    flags = ("[output] overwrite replaces it" if out.overwrite else
+             "[output] keep_previous moves it to NAME.N first" if out.keep_previous else "")
+
+    def needs(command: str) -> str:
+        verb = "need" if " and " in command else "needs"
+        return flags or f"{command} {verb} --overwrite or --keep-previous"
+
+    created = (bundle_manifest(bundle) or {}).get("created", "") if bundle.exists() else ""
+    lines = []
+    if bundle.exists():
+        lines.append(f"{bundle.name} exists: {needs('hxex run')}")
+    tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
+    for folder, command in ((tables, "hxex run and hxex report"),
+                            (bundle.with_name(bundle.name + "_figures"),
+                             "hxex report --figures")):
+        if folder is None or not holds_output(folder):
+            continue
+        stamp = (made_from(folder) or {}).get("")
+        state = ("left from a bundle that is gone" if not bundle.exists()
+                 else "made from results not recorded" if not stamp
+                 else "up to date" if stamp == created else "made from earlier results")
+        lines.append(f"{folder.name}: {state}; {needs(command)}")
+    analysis = project.analysis  # none: hxex analyse uses the default settings
+    wanted = (Path(analysis.out) if analysis is not None and analysis.out else
+              bundle.with_name(analysis_folder_name(
+                  bundle.name, analysis.reference if analysis is not None else None)))
+    folders = dict(analysis_states(bundle))
+    if wanted is not None and wanted not in folders and holds_output(wanted):
+        folders[wanted] = ""
+    for folder, state in sorted(folders.items()):
+        text = ("up to date" if state is None else "made from earlier results" if state
+                else "made from results not recorded")
+        if wanted is not None and folder.resolve() == wanted.resolve():
+            text += f"; {needs('hxex analyse')}"
+        lines.append(f"{folder.name}: {text}")
+    return lines or [f"none yet: hxex run writes {bundle.name}"]
 
 
 def _has_rules(project) -> bool:

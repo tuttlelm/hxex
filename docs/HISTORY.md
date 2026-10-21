@@ -3493,8 +3493,9 @@ CSVs or mzML if wanted.
     writes and makes out of date, deleting only `results` is not a fresh start), first-project,
     project-file, tutorial (`--overwrite` on the second and third `report --figures`, and how to
     start the tutorial again); README; BUNDLE.md; template comments. The tutorial notebook
-    changed (two commands): the download needs a new zip (tag tutorial-data-2) and the page's
-    link updated (owner publishes).
+    changed (two commands): the download needs a new zip. Owner: replace the zip on
+    tutorial-data-1 (not yet announced, so no link has to stay as it was); a new tag only once
+    the tutorial is announced (docs/RELEASING.md, "The tutorial data").
 
 135. **The Woods plot draws a population scaled by its separation (owner, 2026-10-21).** Owner:
     on the tutorial data's K=2 population Woods panel the dashed lines moved from peptide to
@@ -3513,3 +3514,12 @@ CSVs or mzML if wanted.
     range and is labelled "Δpopulation × separation". Guide outputs.md "Reading the Woods
     plot" describes the method; tutorial text updated. The per-residue population figure is
     unchanged. `docs/images/tutorial_woods.png` needs redrawing (`make_tutorial.py --run`).
+
+136. **`hxex check` lists the output folders as information (owner, 2026-10-21).** In the
+    tutorial's step 9 (`check` after the run) the existing bundle was "1 problem(s) found",
+    though it only concerns a new `hxex run`. Owner chose (over a `check --for report` flag) an
+    `outputs` block of plain lines: the bundle, tables, figures, and analysis folders that
+    exist, whether each was made from the results in the bundle now (or is left from a bundle
+    that is gone), and which command would need `--overwrite` or `--keep-previous` (or what
+    `[output] overwrite` / `keep_previous` will do). Not problems: each command refuses by
+    itself before doing any work, and the check ends with `ok` unless something else is wrong.
