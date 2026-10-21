@@ -4,11 +4,11 @@
 
 | Format | Kind | What it reads | Where the peptides come from | Where the times and controls come from |
 |---|---|---|---|---|
-| `hxexpress` | folder | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names | the column labels of each sheet |
-| `specexport` | folder | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA | the spectrum file names |
-| `pooled` | folder | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them) | the spectrum file names |
-| `mzml` | scan | mzML files from the instrument | a peptide table (CSV) | `[[input.runs]]` in the project file, or each scan's own time |
-| `thermo` | scan | Thermo `.raw` files, read directly | a peptide table (CSV) | as `mzml` |
+| `hxexpress` | folder | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names, or [a peptide table (CSV)](#listing-the-files-in-a-table) | the column labels of each sheet |
+| `specexport` | folder | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA, or [a peptide table (CSV)](#listing-the-files-in-a-table) | the spectrum file names |
+| `pooled` | folder | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them), or [a peptide table (CSV)](#listing-the-files-in-a-table) | the spectrum file names |
+| `mzml` | scan | mzML files from the instrument | [a peptide table (CSV)](#the-peptide-table) | `[[input.runs]]` in the project file, or each scan's own time |
+| `thermo` | scan | Thermo `.raw` files, read directly | [a peptide table (CSV)](#the-peptide-table) | as `mzml` |
 
 The first three are **folder formats**: the spectra have already been extracted (by HX-Express
 or HDExaminer), one spectrum per file or per column pair. The last two are **scan formats**:
@@ -225,8 +225,8 @@ such step (programmers can use `match_candidates`, [Using *hxex* from Python](py
 
 ## Listing the files in a table
 
-For HX-Express and SpecExport data, *hxex* normally finds the files by their names. A table of
-the files can replace that search. Use one when:
+For the folder formats (HX-Express, SpecExport, and pooled SpecExport), *hxex* normally finds
+the files by their names. A table of the files can replace that search. Use one when:
 
 - the file names do not follow the pattern *hxex* expects;
 - a sequence needs something the names or the FASTA cannot hold: a terminal group (`Ac-`,
@@ -236,7 +236,7 @@ Name the table in the project file:
 
 ```toml
 [input]
-format = "hxexpress"            # or "specexport"
+format = "hxexpress"            # or "specexport", "pooled"
 data_dir = "data"
 peptides = "files.csv"          # the table of the files
 ```
@@ -252,8 +252,8 @@ my_peptide.xlsx,WT,Ac-PEPacKTIDE-NH2,1,8,2
 
 | Column | Meaning |
 |---|---|
-| `file` | HX-Express: the spreadsheet's name, in `data_dir`. SpecExport: the peptide folder's name, inside the sample's folder (`0001-0008-PEPKTIDE`) |
-| `sample` | the sample |
+| `file` | HX-Express: the spreadsheet's name, in `data_dir`. SpecExport: the peptide folder's name, inside the sample's folder (`0001-0008-PEPKTIDE`). Pooled: the peptide folder's name, in `data_dir` |
+| `sample` | the sample (pooled: used instead of `[input] sample`) |
 | `peptide` | the full sequence: modified residues in modX (`acK`, `pS`) and terminal groups (`Ac-`, `-NH2`) |
 | `start_seq`, `end_seq` | the first and last residue numbers |
 | `charge` | the charge state |

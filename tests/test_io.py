@@ -585,6 +585,20 @@ def test_read_spectra_pooled(pooldir):
     assert 246.0 in s.time  # 4.1m
 
 
+def test_a_pooled_project_reads_its_peptide_table(pooldir):
+    """[input] peptides replaces the search of a pooled folder: only its rows are read, with
+    the table's sample (not [input] sample); file is the peptide folder in data_dir."""
+    from hxex.config import load_project, read_input
+
+    (pooldir / "files.csv").write_text(
+        "file,sample,peptide,start_seq,end_seq,charge\n0010-0014-ACacKDE,mix,ACacKDE,10,14,3\n")
+    (pooldir / "hxex.toml").write_text(
+        'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "."\nsample = "pool"\n'
+        'peptides = "files.csv"\n')
+    s = read_input(load_project(pooldir / "hxex.toml"))
+    assert len(s) == 1 and set(s.sample) == {"mix"} and set(s.charge) == {3}
+
+
 def test_match_candidates(pooldir):
     entries = hio.scan_specexport_pooled(pooldir)
     m = hio.match_candidates(entries, pooldir / "pooled.fasta", classes=["ALPHA", "BETA", "OTHER"])

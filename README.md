@@ -196,3 +196,15 @@ declares GPL-3.0 without the "or later" option.
 Additional permission under GPL version 3 section 7: hxex may be linked or combined with Thermo
 Fisher Scientific's RawFileReader, which is not GPL, and the result conveyed (see
 [`LICENSE-EXCEPTION`](LICENSE-EXCEPTION)). RawFileReader itself stays under Thermo's license.
+
+## References
+
+1. Tuttle, L. M., Klevit, R. E., Guttman M. (2025). A framework for automated multimodal HDX-MS
+   analysis. bioRxiv 2025.03.13.643099;
+   [DOI: 10.1101/2025.03.13.643099](https://doi.org/10.1101/2025.03.13.643099).
+2. Guttman M., Weis, D.D., Engen, J.R. & Lee, K. K. (2013). Analysis of overlapped and noisy
+   Hydrogen/Deuterium exchange data. J. Amer. Soc. Mass Spectrom. 24(12), 1906-1912.
+   [DOI: 10.1007/s13361-013-0727-5](https://doi.org/10.1007/s13361-013-0727-5).
+3. Tuttle, L. M., E. I. James, F. Georgescauld, T. E. Wales, D. D. Weis, J. R. Engen, A. Nath,
+   R. E. Klevit and M. Guttman (2025). "Rigorous Analysis of Multimodal HDX-MS Spectra." J Am
+   Soc Mass Spectrom. [DOI: 10.1021/jasms.4c00471](https://doi.org/10.1021/jasms.4c00471).
