@@ -398,17 +398,22 @@ def _cell(value) -> str:
     return str(value)
 
 
-def write_tables(results: Results, directory: str | Path) -> list[Path]:
+def write_tables(results: Results, directory: str | Path, *, created: str | None = None
+                 ) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
     ``directory``, and ``review.csv`` when the review layer (or an exclusion rule) has entries,
     replacing the tables hxex wrote there before (its listing, :func:`hxex.io.replace_outputs`:
-    a ``review.csv`` with nothing left to list goes) and never a file of your own."""
+    a ``review.csv`` with nothing left to list goes) and never a file of your own. The listing
+    records the results they were made from (``created``, the bundle's stamp; default the
+    results' own), so ``hxex info`` can tell when they are out of date."""
     directory = Path(directory)
     tables = {"series.csv": series_table, "spectra.csv": spectra_table,
               "components.csv": components_table, "uptake.csv": uptake_table}
     if results.review is not None and len(results.review):
         tables["review.csv"] = review_table
-    with replace_outputs(directory, tables) as written:
+    made = {"": created if created is not None else results.settings.created
+            if results.settings is not None else ""}
+    with replace_outputs(directory, tables, made=made) as written:
         for name, make in tables.items():
             written.append(write_csv(make(results), directory / name))
     return list(written)

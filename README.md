@@ -156,10 +156,12 @@ The output bundle (`[output] bundle`, say `results`) and the folders named after
 (`results_tables`, `results_figures`, `results_analysis_<reference>`, and the generations
 `results.1`,
 `results.1_tables`, ...)
-are hxex's: a later `hxex run` refuses to write over them unless told to, and then either
-replaces them (`--overwrite`; the review layer is carried over) or moves them to the next
-generation first (`--keep-previous`). Files of your own inside them are kept, but one named
-like an hxex file stops the run; keep your own files elsewhere. `hxex info` shows what a
+are hxex's: `hxex run`, `report` and `analyse` refuse to write over them unless told to, and
+then either replace them (`--overwrite`; the review layer is carried over) or move them to the
+next free name first (`--keep-previous`: `results.1` with its folders for a run,
+`results_figures.1` or `results_analysis_WT.1` for the others); `[output] overwrite` or
+`keep_previous` does it for every command. Files of your own inside them are kept, but one named
+like an hxex file stops the command; keep your own files elsewhere. `hxex info` shows what a
 bundle replaced, what changed and its earlier generations (see `docs/BUNDLE.md`).
 
 Progress goes to stderr; Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had

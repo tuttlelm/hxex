@@ -156,6 +156,11 @@ Options of `hxex run`:
 - `--bundle PATH` writes to another bundle than `[output] bundle`.
 - `--overwrite` replaces an existing bundle and its tables (the review is carried over).
 - `--keep-previous` moves them to the next generation (`results.1`, ...) first.
+
+`hxex report` and `hxex analyse` take `--overwrite` and `--keep-previous` too, for their own
+folders (`results_tables`, `results_figures`, `results_analysis_...`): without one of them, a
+folder that already holds results stops the command. `overwrite = true` or `keep_previous =
+true` in `[output]` applies to every command. See [Running again](outputs.md#running-again).
 - `--spectra PATH` fits the raw spectra stored in an earlier bundle instead of reading the input.
 - `--device cpu|cuda|cuda:N` chooses where the fit runs.
 - `--threads N` sets the CPU threads (about half the physical cores was fastest).
@@ -217,7 +222,7 @@ and you can make them in a spreadsheet.
    exclusion rules (`[[review.exclude]]`). `hxex run` (for its tables), `hxex report`, and
    `hxex analyse` all apply them.
 
-5. Run `hxex report hxex.toml --figures`. The tables and figures now use your decisions.
+5. Run `hxex report hxex.toml --figures --overwrite`. The figures now use your decisions.
 
 **Which columns to touch.** *hxex* reads only four columns: `spectrum_id`, `review_status`,
 `review_K`, and `note`.

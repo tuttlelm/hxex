@@ -48,10 +48,18 @@ live there and are treated differently:
 analysis folders, to the next generation (`results.N`, `results.N_tables`,
 `results.N_figures`, `results.N_analysis_<reference>`; N is one more than
 any number ever used beside the bundle, so a name is never reused; `hxex.io.keep_previous`).
-A tables or figures directory named explicitly in `[output]`, or an analysis directory named
-by `[analysis] out` or `--out`, is not moved (its hxex files are replaced). `hxex run` does not
-write the analysis: after `--overwrite`, the analysis folders describe the replaced results until
-`hxex analyse` runs again (the run warns). `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
+A tables directory named explicitly in `[output]`, or an analysis directory named by
+`[analysis] out` or `--out`, is not moved with the bundle; it follows the rule of every output
+folder (owner, 2026-10-21): a folder whose listing (`hxex_listing.json`) names files is refused
+by the command about to write it (`hxex run` for its tables, before anything is fitted; `hxex
+report`; `hxex analyse`) unless `--overwrite` (its hxex files are replaced) or
+`--keep-previous` (it moves to `NAME.N` first, N never reused; `hxex.io.prepare_output`), or
+`[output] overwrite` / `keep_previous`. `hxex resume` rewrites the tables of the bundle it adds
+to without asking. Every listing records the bundle it was made from (`made_from`: the
+bundle's `created` stamp), so `hxex info` and the warnings after `hxex run` and `hxex resume`
+name the tables, figures, and analysis folders made from other results. `hxex run` does not
+write the analysis or the figures: after it they describe the replaced results until `hxex
+analyse` or `hxex report --figures` runs again. `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
 
 ## Keys and conventions
 

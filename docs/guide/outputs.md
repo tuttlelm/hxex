@@ -40,10 +40,11 @@ my_protein/
 │   ├── run_settings_used.toml         the run settings of the results it read
 │   └── hxex_listing.json
 ├── results_analysis_Mut/        the analysis with Mut as the reference
-├── results.1/                   an earlier generation (--keep-previous),
+├── results.1/                   an earlier generation (hxex run --keep-previous),
 ├── results.1_tables/            with its tables, figures, and analyses
 ├── results.1_figures/
-└── results.1_analysis_WT/
+├── results.1_analysis_WT/
+└── results_figures.1/           earlier figures (hxex report --figures --keep-previous)
 ```
 
 Which tables and figures appear depends on the settings and the data; they are listed below.
@@ -52,11 +53,49 @@ them later and leave the rest alone. The bundle's tables are described in
 [BUNDLE.md](../BUNDLE.md); the CSV tables hold the same results for spreadsheets.
 
 These folders, and their earlier generations (`results.1`, `results.1_tables`,
-`results.1_analysis_WT`, ...), belong to *hxex*: a later run refuses to write over them unless given
-`--overwrite` (replace them; the review is carried over) or `--keep-previous` (move them to the
-next generation first). Running `hxex analyse` again with the same reference replaces the
-earlier analysis in its folder. In all of them, *hxex* removes only the files it wrote itself. Keep your own files
-elsewhere. The bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
+`results_figures.1`, ...), belong to *hxex*: every command refuses to write over one unless
+given `--overwrite` or `--keep-previous` (see [Running again](#running-again) below). In all of
+them, *hxex* removes only the files it wrote itself. Keep your own files elsewhere. The
+bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
+
+## Running again
+
+A command that would write into a folder that already holds results stops before it writes
+anything, and says what to do. There are three ways on:
+
+- `--overwrite`: replace the earlier results in that folder (for the bundle, your review
+  decisions are carried over);
+- `--keep-previous`: first move the folder to the next free name (`results_figures.1`,
+  `results_analysis_WT.1`, ...; the bundle moves to `results.1` together with its tables,
+  figures, and analyses);
+- another folder: `[output] bundle` (or `--bundle`) for `hxex run`, `--tables DIR` or
+  `--figures DIR` for `hxex report`, `--out DIR` for `hxex analyse`.
+
+`overwrite = true` or `keep_previous = true` in the `[output]` part of the project file does
+the same for every command, so you need not type the option each time.
+
+| Command | Writes | Afterwards out of date |
+|---|---|---|
+| `hxex run` | `results`, `results_tables` | `results_figures`, `results_analysis_...` |
+| `hxex resume` | `results` (adds to it), `results_tables` | `results_figures`, `results_analysis_...` |
+| `hxex report` | `results_tables` | |
+| `hxex report --figures` | `results_figures` | |
+| `hxex analyse` | `results_analysis_...` | |
+
+`hxex resume` adds to the bundle and writes its tables again without asking: they belong to the
+same results. After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
+folder made from other results, and `hxex info results` lists each folder as `up to date` or
+`made from earlier results`. To bring them up to date:
+
+```bash
+hxex report hxex.toml --figures --overwrite
+hxex analyse hxex.toml --overwrite
+```
+
+Deleting only the `results` folder does not start afresh: its tables, figures, and analysis
+folders stay beside it, and the next `hxex run` stops at the tables folder. To start afresh,
+delete every folder whose name starts with `results`, or use `--overwrite` or
+`--keep-previous`.
 
 ## Words used in the tables
 
@@ -146,7 +185,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 
 | File | Holds |
 |---|---|
-| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; for the population, `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart) |
+| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart) |
 | `compare_residues.csv` | per residue and time: difference, error, z, `significant` |
 | `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` |
 | `compare_choices.csv` | per residue: whether each side keeps two populations, and whether they agree |
@@ -175,7 +214,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `redundancy_resolution` | redundancy and resolution per residue |
 | `choice_<sample>_<time>` | the residue profile: K=1, the K=2 ranks, the chosen description and the population (`profile_...` when there is no K=2) |
 | `compare_residues_<time>`, `compare_populations_<time>` | each sample against the reference, by residue |
-| `woods_<sample>_<time>` | peptide differences from the reference |
+| `woods_<sample>_<time>` | peptide differences from the reference (see *Reading the Woods plot* below) |
 | `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath |
 | `regions_<time>` | the regions' fD |
 | `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
@@ -184,6 +223,25 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `residue_rates_<sample>_<range>` | per-residue rates, amplitudes and, with `kint`, protection |
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
+
+**Reading the Woods plot.** Each panel shows, for every peptide, a bar over the residues it
+covers at its difference from the reference (sample minus reference), with its standard error as
+a vertical line. A bar is coloured where the difference is significant (red: the sample is
+higher; blue: lower): Welch's t-test on the replicate spectra gives p below `alpha`, and the
+difference is larger than the critical difference, drawn as the dashed lines. The top panel is
+the average deuteration (fD, one population); with two populations, the next two are the fD of
+each population, and the bottom one their populations.
+
+The population panel does not show the change in the share of the low-D population directly,
+but that change multiplied by the peptide's separation: the difference in fD between its two
+populations (the mean of the two samples'). The product is the deuterium, as a fraction of the
+amides, that moved from one state to the other, so the panel is in the same units as the fD
+panels and has one critical difference, the K=1 one. This is the same test as comparing the
+change in share with the critical difference divided by the separation: a small change of share
+matters in a peptide whose two states are far apart, and little where they are close.
+`compare_peptides.csv` keeps the change in share itself (`delta`), with the `separation` and the
+threshold it was judged by (`delta_crit`, the K=1 critical difference divided by the
+separation).
 
 ## The settings used
 
@@ -199,10 +257,10 @@ paper, say) without keeping the project file in step:
   one per run: `run_settings_used_A.toml`, ...). The analysis folder therefore still says how
   its results were made after `hxex run --overwrite` has replaced the bundle.
 
-`hxex run --overwrite` leaves the analysis folders as they were, so for a while they describe
-the earlier results. `hxex info results` lists each analysis folder as `up to date` or `made
-from earlier results`, and `hxex analyse` warns about the other analysis folders of the same
-results that are out of date. Run `hxex analyse` again (with that folder's `--reference`) to
+`hxex run` leaves the analysis folders as they were, so for a while they describe the earlier
+results. `hxex info results` lists each analysis folder as `up to date` or `made from earlier
+results`, and `hxex analyse` warns about the other analysis folders of the same results that
+are out of date. Run `hxex analyse --overwrite` again (with that folder's `--reference`) to
 bring one up to date.
 
 Both are ordinary project files: open them in a text editor to read them, or copy one out of

@@ -171,7 +171,8 @@ This draws the figures into `results_figures`: an overview, and for each peptide
 look (a poor fit, a missing control) its spectra and uptake. To draw every peptide, add
 `--series all`, or set `series = "all"` in the `[figures]` part near the end of `hxex.toml`.
 Open the `.pdf` files as usual. `hxex run` never draws figures, so changing how they look needs
-only this command again, not a new run.
+only this command again, not a new run: then add `--overwrite`, which replaces the figures
+drawn before (without it, *hxex* stops rather than write over them).
 
 ## Step 8: compare samples
 
@@ -216,8 +217,8 @@ the whole analysis takes three commands, one for each kind of result:
 
 ```bash
 hxex run hxex.toml --overwrite
-hxex report hxex.toml --figures
-hxex analyse hxex.toml
+hxex report hxex.toml --figures --overwrite
+hxex analyse hxex.toml --overwrite
 ```
 
 - `hxex run` fits and writes the results and their tables (step 6), `hxex report` draws the
@@ -226,11 +227,12 @@ hxex analyse hxex.toml
   three side by side.
 - After changing only the `[figures]` settings, run only `hxex report`; after changing only
   the `[analysis]` settings, only `hxex analyse`. Neither fits anything again.
-- `--overwrite` replaces the earlier results. Without it, `hxex run` stops because `results`
-  already exists; use `--keep-previous` instead to keep the earlier results as `results.1`.
-- `hxex analyse` replaces the files of the earlier analysis with the same reference, in
-  `results_analysis_WT` (files of your own there are kept). With `--keep-previous`, the earlier
-  analyses move along with the earlier results, to `results.1_analysis_WT`.
+- `--overwrite` replaces the earlier results. Without it, each command stops because its
+  folder already holds results; use `--keep-previous` instead to keep the earlier ones
+  (`results.1` with its tables, figures, and analyses for `hxex run`; `results_figures.1` or
+  `results_analysis_WT.1` for the other two). Files of your own in these folders are kept.
+- To stop typing `--overwrite`, set `overwrite = true` in the `[output]` part of `hxex.toml`.
+  [Running again](outputs.md#running-again) has the details.
 
 Run `hxex check hxex.toml` first whenever you have changed the file.
 

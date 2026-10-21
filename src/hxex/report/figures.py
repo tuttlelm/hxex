@@ -216,7 +216,8 @@ def write_figures(
         else:
             names += [f"{stem}_{kind}.{config.format}"
                       for kind in series_kinds(results, data_id, config)]
-    with replace_outputs(directory, names) as written:
+    made = {"": results.settings.created if results.settings is not None else ""}
+    with replace_outputs(directory, names, made=made) as written:
         if config.overview:
             from .overview import write_overview
 

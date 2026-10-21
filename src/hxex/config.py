@@ -360,8 +360,10 @@ class OutputSettings:
     """Where results go (the ``[output]`` table): the bundle and the tables (a directory, or
     True for the bundle's name plus ``_tables``). The bundle and the folders named after it
     (its tables, figures and analyses, and their earlier generations, ``name.N``) are hxex's: a
-    later run replaces them (``overwrite``) or moves them to the next generation first
-    (``keep_previous``); see :func:`hxex.run.run`. A run draws no figures (``hxex report``
+    later command replaces them (``overwrite``) or moves them first (``keep_previous``: the
+    bundle with its folders to ``name.N``, see :func:`hxex.run.run`; a figures, tables or
+    analysis folder written alone to its own ``NAME.N``, :func:`hxex.io.prepare_output`), for
+    ``hxex run``, ``report`` and ``analyse`` alike. A run draws no figures (``hxex report``
     does, into ``name_figures``)."""
 
     bundle: Path | None = None
@@ -1587,15 +1589,18 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "",
         "[output]",
         "# The bundle and the folders named after it (results_tables, results_figures,",
-        "# results_analysis_..., and the generations results.1, results.1_tables, ...) belong to",
-        "# hxex: a later run replaces or renames them. Keep your own files elsewhere (files",
-        "# of yours inside them are kept, but one named like an hxex file stops the run).",
+        "# results_analysis_..., and the earlier ones results.1, results_figures.1, ...) belong",
+        "# to hxex: run, report and analyse stop at a folder that holds results unless",
+        "# overwrite or keep_previous (here, or --overwrite / --keep-previous) says what to do.",
+        "# Keep your own files elsewhere (files of yours inside them are kept, but one named",
+        "# like an hxex file stops the command).",
         'bundle = "results"               # name of the folder (or .zip archive) hxex creates',
         "#                                 # for the results: it must not exist yet",
-        "overwrite = false                # replace an existing bundle (its review is carried",
-        "#                                 # over) and its tables",
-        "keep_previous = false            # move the existing bundle, tables and figures to",
-        "#                                 # the next generation (results.1, ...) first",
+        "overwrite = false                # replace earlier results in the bundle (its review",
+        "#                                 # is carried over), tables, figures and analysis",
+        "keep_previous = false            # move earlier results first: the bundle with its",
+        "#                                 # folders to results.1, a figures or analysis",
+        "#                                 # folder alone to NAME.1 (report, analyse)",
         "keep_spectra = true              # store the raw spectra in the bundle",
         "tables = true                    # CSV tables beside the bundle, or a directory",
         'notes = ""',

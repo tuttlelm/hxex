@@ -51,8 +51,8 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 |---|---|
 | `PROJECT` | the project file (TOML) |
 | `--bundle` `BUNDLE` | the results bundle (instead of output.bundle) |
-| `--overwrite` | replace an existing bundle (and its tables), carrying its review over |
-| `--keep-previous` | move an existing bundle (with its tables and figures) to the next generation, NAME.N, before writing |
+| `--overwrite` | replace an existing bundle (and its tables), carrying its review over; also a tables folder left from a bundle that is gone |
+| `--keep-previous` | move an existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, before writing |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of run.fit.backend) |
 | `--spectra` `PATH` | take the raw spectra stored in this bundle (or spectra file) instead of reading the input (as input.spectra) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
@@ -82,6 +82,8 @@ Draw the figures, and write the tables again, from a bundle; fits nothing.
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | write the tables (default: beside the bundle) |
 | `--figures` `[DIR]` | write the figures (default: beside the bundle) |
+| `--overwrite` | replace hxex's files in the tables or figures folder when it holds earlier output (or [output] overwrite = true) |
+| `--keep-previous` | move the tables or figures folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |
 | `--series` `{flagged,all}` | which series to draw (default: [figures] series, else flagged) |
 | `--k` `K` | draw every series at this number of populations (default: [figures] k, else each spectrum's own) |
 | `--format` `{pdf,png,svg}` | figure file format |
@@ -99,6 +101,8 @@ Also spelt `hxex analyze`.
 | `PROJECT\|BUNDLE ...` | a project file (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
 | `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle) |
 | `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT) |
+| `--overwrite` | replace hxex's files in the analysis folder when it holds earlier output (or [output] overwrite = true) |
+| `--keep-previous` | move the analysis folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |
 | `--reference` `REFERENCE` | the reference sample (instead of [analysis] reference; `RUN:sample` when the sample is in several runs) |
 | `--format` `{pdf,png,svg}` | figure file format |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |

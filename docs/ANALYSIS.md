@@ -186,7 +186,12 @@ in the published work; where it matters, a component is named by its rank.
   fD difference over the separation, so the K=1 standard carries over, where a pooled threshold
   was dominated by poorly separated peptides (0.49 on the tutorial data). Per residue
   (`compare_populations`) the same threshold with the residue's separation. The tables'
-  `delta_crit` column is each row's threshold. Open: the Welch test treats the averaged
+  `delta_crit` column is each row's threshold, and `compare_peptides` has the `separation`.
+  The Woods plot draws a population scaled by its separation (`delta` and `delta_se` times
+  `separation`, in fD units: the deuterium that moved between the states) against one dashed
+  line, the K=1 `delta_crit` (owner, 2026-10-21, HISTORY 135;
+  `PeptideComparison.scaled_by_separation`): the same test, one critical line, and the panel
+  shares the fD panels' y range. The per-residue population figure is unchanged. Open: the Welch test treats the averaged
   positions as exact; requiring `|delta| / delta_se` (which includes their error) above the
   normal quantile as well, or a joint bootstrap, would be stricter. The comparison tables carry
   their `quantity` (`value`, `value_reference` and their errors).

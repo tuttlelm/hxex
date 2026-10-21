@@ -11,7 +11,7 @@ There are two places to put a rule, depending on when you know the spectra are b
 | When to use it | you know before fitting (a failed run, a known bad file) | you found out after looking at the results |
 | What happens | the spectra are not fitted at all | the spectra are fitted, but left out of the results |
 | What is kept | the raw spectra, in the bundle | the raw spectra and their fits, in the bundle |
-| To undo it | delete the rule and run again (`hxex run --overwrite`) | delete the rule and rerun `hxex analyse` or `hxex report` |
+| To undo it | delete the rule and run again (`hxex run --overwrite`) | delete the rule and rerun `hxex analyse` or `hxex report` (with `--overwrite`) |
 | Refitting needed | yes, to bring them back | no |
 
 ## Writing a rule
@@ -84,7 +84,7 @@ still works, with a message suggesting the new one.)
 - `hxex analyse hxex.toml` leaves the spectra out of the analysis: the uptake, residue maps,
   comparisons, protection factors, and fragment ladders.
 - For the run's own tables and figures, give `hxex report` the project file instead of the
-  bundle: `hxex report hxex.toml --tables --figures` reads the bundle named in `[output]`,
+  bundle: `hxex report hxex.toml --tables --figures --overwrite` reads the bundle named in `[output]`,
   leaves the spectra out of `uptake.csv`, and marks them `rejected` in `spectra.csv` (its
   `review_status` column) and on their spectrum figures. `hxex run` does the same for the
   tables and figures it writes.

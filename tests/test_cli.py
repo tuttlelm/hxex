@@ -4,6 +4,7 @@ project, resuming a stopped bootstrap, reports from a bundle and bundle summarie
 
 import dataclasses
 import logging
+import shutil
 import tomllib
 
 import pytest
@@ -359,10 +360,14 @@ def test_run_info_and_report(tmp_path, capsys):
                     'kinds = ["uptake"]\n')
     assert cli.main(["-q", "report", str(path), "--figures", "--k", "1"]) == 0
     assert {p.suffix for p in (tmp_path / "out_figures").iterdir()} == {".svg", ".json"}
-    assert cli.main(["-q", "report", str(path), "--figures", "--k", "4"]) == 1  # not fitted
+    capsys.readouterr()
+    # drawing again into a folder with figures is refused, as a run into a bundle is
+    assert cli.main(["-q", "report", str(path), "--figures"]) == 1
+    assert "out_figures holds the figures written before: --overwrite" in capsys.readouterr().err
+    assert cli.main(["-q", "report", str(path), "--figures", "--overwrite", "--k", "4"]) == 1
     assert "K = 4 was not fitted" in capsys.readouterr().err
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
-    assert "still holds the figures of the results just replaced" in capsys.readouterr().err
+    assert "out_figures holds figures of other results" in capsys.readouterr().err
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     assert "replaced       " + str(tmp_path / "out") in info and "changed        nothing" in info
@@ -524,7 +529,7 @@ def test_threads_are_set_for_the_command_only(tmp_path, capsys):
     assert torch.get_num_threads() == before  # restored
     assert cli.main(["run", "--overwrite", "--threads", "2", str(path)]) == 0  # the flag wins
     assert "using 2 CPU thread(s)" in capsys.readouterr().err
-    assert cli.main(["report", "--threads", "1", str(tmp_path / "out")]) == 0
+    assert cli.main(["report", "--threads", "1", "--overwrite", str(tmp_path / "out")]) == 0
     assert torch.get_num_threads() == before
     with pytest.raises(SystemExit) as exc:
         cli.main(["run", "--threads", "0", str(path)])
@@ -898,11 +903,12 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     data = json.loads((folder / "hxex_listing.json").read_text())
     data["files"].append("woods_old.pdf")
     (folder / "hxex_listing.json").write_text(json.dumps(data))
-    assert cli.main(["-q", "analyse", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 1  # the folder holds an analysis
+    assert cli.main(["-q", "analyse", str(path), "--overwrite"]) == 0
     assert not (folder / "woods_old.pdf").exists() and (folder / "my_notes.txt").exists()
     capsys.readouterr()
     assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
-    assert "still holds the analysis" in capsys.readouterr().err  # until analyse runs again
+    assert "out_analysis holds an analysis of other results" in capsys.readouterr().err
     # the analysis keeps the settings of the results it was made from
     assert (folder / "run_settings_used.toml").read_text() == run_copy
     with open_bundle(tmp_path / "out") as b:
@@ -979,7 +985,7 @@ def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path, capsys):
     assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
     out = info()
     assert f"out_analysis: made from earlier results (created {first})" in out
-    assert cli.main(["-q", "analyse", str(path)]) == 0  # the WT folder is still the old one
+    assert cli.main(["-q", "analyse", str(path), "--overwrite"]) == 0  # WT is still the old one
     assert f"out_analysis_WT was made from earlier results (created {first})" in \
         capsys.readouterr().err
     out = info()
@@ -1162,3 +1168,45 @@ def test_check_counts_exclusions_of_scan_files(tmp_path, capsys):
     out, err = capsys.readouterr()
     assert "[[input.exclude]] #1 (sample WT, time 30 s): 1 of 6 spectra" in out
     assert "#2 (sample KO) matches no spectrum: no spectrum has sample 'KO' (samples: WT)" in err
+
+
+def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
+    """report and analyse refuse a folder that holds earlier output unless told to overwrite it
+    or keep it (moved to NAME.N); [output] overwrite or keep_previous says so for every
+    command; a run whose bundle was deleted by hand refuses its tables folder, and warns about
+    the figures and analysis folders made from the results that are gone (owner, 2026-10-21)."""
+    path = mzml_project(tmp_path)
+    path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
+    assert cli.main(["-q", "run", str(path)]) == 0
+    assert cli.main(["-q", "report", str(path), "--figures"]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    figures = tmp_path / "out_figures"
+    capsys.readouterr()
+    # --keep-previous: the folder moves to NAME.N, numbers never reused
+    assert cli.main(["-q", "report", str(path), "--figures", "--keep-previous"]) == 0
+    assert (tmp_path / "out_figures.1" / "overview.pdf").is_file()
+    assert (figures / "overview.pdf").is_file()
+    assert cli.main(["-q", "analyse", str(path), "--keep-previous"]) == 0
+    assert (tmp_path / "out_analysis.1" / "species_uptake.csv").is_file()
+    assert (tmp_path / "out_analysis" / "species_uptake.csv").is_file()
+    assert cli.main(["-q", "report", str(path), "--figures", "--keep-previous"]) == 0
+    assert (tmp_path / "out_figures.2").is_dir()
+    # the project's [output] overwrite covers every folder
+    text = path.read_text()
+    path.write_text(text.replace("[output]", "[output]\noverwrite = true", 1))
+    assert cli.main(["-q", "report", str(path), "--figures"]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    path.write_text(text)
+    # the bundle deleted by hand: its tables folder is refused before anything is fitted
+    shutil.rmtree(tmp_path / "out")
+    assert cli.main(["-q", "run", str(path)]) == 1
+    assert "out_tables holds the tables of earlier results" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+    assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
+    err = capsys.readouterr().err
+    assert (tmp_path / "out_tables.1" / "series.csv").is_file()
+    assert "out_figures holds figures of other results" in err
+    assert "out_analysis holds an analysis of other results" in err
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    info = capsys.readouterr().out
+    assert "out_tables: up to date" in info and "out_figures: made from earlier results" in info

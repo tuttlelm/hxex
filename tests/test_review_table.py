@@ -74,7 +74,7 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     cli.main(["check", str(path)])  # (a problem: the bundle exists, for hxex run)
     assert "2 spectra: 1 rejected, 0 accepted, 1 with a chosen K" in capsys.readouterr().out
     # the chosen K has no bootstrap yet: refused, with the way to add it
-    assert cli.main(["-q", "report", str(path)]) == 1
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 1
     assert "hxex resume" in capsys.readouterr().err
     with open_bundle(tmp_path / "out") as b:
         boot_before = b.bootstrap().mean_se.copy()
@@ -87,7 +87,7 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
         import numpy as np
 
         assert np.array_equal(b.bootstrap().mean_se, boot_before, equal_nan=True)  # kept
-    assert cli.main(["-q", "report", str(path)]) == 0
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
     with open(tables / "spectra.csv", newline="") as f:
         out = {r["spectrum_id"]: r for r in csv.DictReader(f)}
     assert out[chosen]["review_K"] == "2" and out[chosen]["K"] == "2"
@@ -106,14 +106,14 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.bootstrap(2).covers(list(map(str, b.fit().spectrum_id)).index(chosen))
-    assert cli.main(["-q", "report", str(path)]) == 0
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
     # the analysis leaves the rejected spectrum out (and has no use for a chosen K)
     capsys.readouterr()
     assert cli.main(["analyse", str(path)]) == 0
     assert "user_review_table.csv: 2 spectra: 1 rejected" in capsys.readouterr().err
     # a K the run did not fit is refused, naming the spectrum
     _edit(tables / "spectra.csv", tmp_path / "user_review_table.csv", {one: {"review_K": "5"}})
-    assert cli.main(["-q", "report", str(path)]) == 1
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 1
     assert "K that was not fitted" in capsys.readouterr().err
 
 

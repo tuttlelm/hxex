@@ -313,7 +313,8 @@ def plot_peptide_differences(
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
     grey otherwise, with the standard error as a vertical bar and the threshold dashed (one
-    line, ``+-delta_crit``, or for a population a short line over each peptide); a
+    line, ``+-delta_crit``; for a population as it is, a short line over each peptide, and one
+    line for :meth:`~hxex.analysis.PeptideComparison.scaled_by_separation`'s copy); a
     ``*`` at the top over the middle of each peptide whose two values were corrected differently
     (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``.
 
@@ -350,7 +351,8 @@ def plot_peptide_differences(
     span = float(finite.max()) if len(finite) else 0.2  # every delta NaN: a default range
     ax.set_ylim(-max(span, 0.2) * 1.1, max(span, 0.2) * 1.1)
     ax.set_xlabel("residue")
-    what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"
+    what = ("ΔfD" if comparison.quantity == "fD" else "Δpopulation × separation"
+            if comparison.scaled else "Δpopulation")
     ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
@@ -515,7 +517,8 @@ def woods_figure(
     time_scale: str = "seconds",
 ) -> Figure:
     """Woods plots of ``sample`` stacked, one per ``(title, comparison)`` (for example K=1, the
-    K=2 ranks and the population), sharing the residue axis; the fD panels share one y range.
+    K=2 ranks and the population), sharing the residue axis; the fD panels and a population
+    scaled by its separation (in fD units) share one y range.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -527,7 +530,8 @@ def woods_figure(
         ax.set_title(title, fontsize=10, loc="left")
         if n < len(comparisons) - 1:
             ax.set_xlabel("")
-    fd = [ax for ax, (_, c) in zip(axes, comparisons, strict=True) if c.quantity == "fD"]
+    fd = [ax for ax, (_, c) in zip(axes, comparisons, strict=True)
+          if c.quantity == "fD" or c.scaled]  # in fD units: one y range
     if fd:
         lim = max(abs(ax.get_ylim()[0]) for ax in fd)
         for ax in fd:

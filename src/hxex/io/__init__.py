@@ -39,7 +39,14 @@ from .mzml import (
     sum_centroid,
     sum_profile,
 )
-from .outputs import OutputError, made_from, output_listing, replace_outputs
+from .outputs import (
+    OutputError,
+    holds_output,
+    made_from,
+    output_listing,
+    prepare_output,
+    replace_outputs,
+)
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
 from .read import read_source, read_spectra, read_spectra_source, scan, spectrum_index
 from .specexport import (
@@ -91,8 +98,10 @@ __all__ = [
     "keep_previous",
     "provenance_of",
     "OutputError",
+    "holds_output",
     "made_from",
     "output_listing",
+    "prepare_output",
     "replace_outputs",
     "CandidateMatch",
     "ReadError",

@@ -302,7 +302,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     if config.reference:
         others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
-        stack = list(comparisons.items())
+        # the Woods plot draws the population in fD units: its difference times the
+        # separation, judged by the one K=1 delta_crit (the same test; HISTORY 135)
+        stack = [(f"{title} × separation" if c.quantity == "population" else title,
+                  c.scaled_by_separation()) for title, c in comparisons.items()]
         for t in times:
             when_ = _time_label(t, scale)
             only = choice if config.overlay_two_only else None

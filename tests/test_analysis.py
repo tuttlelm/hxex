@@ -1417,3 +1417,42 @@ def test_fragment_series_are_not_corrected(results):
             "mean": np.array([1.0, 2.0])}
     cols = _corrected_columns(data, None, raw)
     assert np.isnan(cols["mean_corrected"]).all()
+
+
+def test_a_population_comparison_scaled_by_its_separation():
+    """The Woods plot's population panel: the difference and its error times each peptide's
+    separation, judged by the one K=1 delta_crit; the same peptides are significant, and the
+    panel shares the fD panels' range (owner, 2026-10-21)."""
+    from hxex.analysis import PeptideComparison
+    from hxex.report import woods_figure
+
+    n = 3
+    base = dict(sample=np.array(["M"] * n), peptide=np.array(["AAAA", "CCCC", "DDDD"]),
+                modification=np.array([""] * n), start=np.array([1, 10, 20]),
+                end=np.array([8, 18, 30]), time=np.full(n, 60.0),
+                value_reference=np.full(n, 0.5), value_reference_se=np.full(n, 0.01),
+                value_se=np.full(n, 0.01), t=np.full(n, 5.0), p=np.full(n, 0.001),
+                n_reference=np.full(n, 3), n=np.full(n, 3), reference="WT")
+    sep = np.array([0.1, 0.5, 0.9])
+    delta = np.array([0.2, 0.2, -0.05])
+    pop = PeptideComparison(**base, value=0.5 + delta, delta=delta, delta_se=np.full(n, 0.02),
+                            significant=np.abs(delta) > 0.04 / sep, K=2, delta_crit=0.04,
+                            quantity="population", threshold=0.04 / sep, separation=sep)
+    scaled = pop.scaled_by_separation()
+    assert scaled.scaled and scaled.scaled_by_separation() is scaled
+    np.testing.assert_allclose(scaled.delta, delta * sep)
+    np.testing.assert_allclose(scaled.delta_se, 0.02 * sep)
+    assert (scaled.threshold == 0.04).all()
+    assert (np.abs(scaled.delta) > scaled.threshold).tolist() == pop.significant.tolist()
+    assert np.isnan(PeptideComparison(**base, value=0.5 + delta, delta=delta,
+                                      delta_se=np.full(n, 0.02),
+                                      significant=np.zeros(n, bool)).separation).all()
+    fd = PeptideComparison(**base, value=0.5 + delta, delta=delta, delta_se=np.full(n, 0.02),
+                           significant=np.zeros(n, bool), delta_crit=0.04)
+    assert fd.scaled_by_separation() is fd
+    fig = woods_figure([("K=1 fD", fd), ("population × separation", scaled)], "M", 60.0)
+    top, bottom = fig.axes
+    assert top.get_ylim() == bottom.get_ylim()
+    assert "Δpopulation × separation" in bottom.get_ylabel()
+    dashed = [ln for ln in bottom.get_lines() if ln.get_linestyle() == "--"]
+    assert len(dashed) == 2  # one line each side, across the panel

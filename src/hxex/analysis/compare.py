@@ -29,7 +29,7 @@ Regions and sites are protein-specific and user-defined (:class:`Annotations`), 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 from scipy import stats
@@ -92,7 +92,8 @@ def _columns(cls, rows: list[dict]) -> dict:
     return {name: np.array([r[name] for r in rows]) for name in names}
 
 
-_SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "reference_run", "K", "rank", "quantity")
+_SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "reference_run", "K", "rank", "quantity",
+                  "scaled")
 QUANTITIES = ("fD", "population")
 MATCHES = ("range", "sequence")
 
@@ -136,7 +137,9 @@ class PeptideComparison:
     e.g. by a mutation; see
     :func:`compare_peptides`). ``control_fallback_reference`` and ``control_fallback``: whether
     each side's back-exchange correction used a fallback control; where they differ the two
-    values were corrected differently."""
+    values were corrected differently. ``separation``: for a population, the fD between the
+    peptide's two K=2 positions (the mean of the two samples'; NaN for fD rows and populations
+    not compared); ``scaled``: True for :meth:`scaled_by_separation`'s copy."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -170,10 +173,14 @@ class PeptideComparison:
     reference_run: str = ""
     threshold: np.ndarray | None = None
     reason: np.ndarray | None = None
+    separation: np.ndarray | None = None
+    scaled: bool = False
 
     def __post_init__(self):  # built without the reference's sequences: the same as the sample's
         if self.threshold is None:
             object.__setattr__(self, "threshold", np.full(len(self.sample), self.delta_crit))
+        if self.separation is None:
+            object.__setattr__(self, "separation", np.full(len(self.sample), np.nan))
         if self.reason is None:
             object.__setattr__(self, "reason", np.full(len(self.sample), "", dtype=object))
         if self.run is None:
@@ -191,6 +198,20 @@ class PeptideComparison:
         for name in ("control_fallback_reference", "control_fallback"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.sample), dtype=bool))
+
+    def scaled_by_separation(self) -> PeptideComparison:
+        """A population comparison in fD units, as the Woods plot draws it (owner,
+        2026-10-21): ``delta`` and ``delta_se`` times each row's ``separation`` (the deuterium
+        that moved between the two states, as a fraction of the amides), judged by one
+        threshold, ``delta_crit``, as the fD comparisons are. ``significant`` is unchanged: the
+        test ``|delta| > delta_crit / separation`` is the same. The values themselves are not
+        scaled. An fD comparison is returned as it is."""
+        if self.quantity != "population" or self.scaled:
+            return self
+        sep = np.asarray(self.separation, dtype=float)
+        return replace(self, delta=np.asarray(self.delta, dtype=float) * sep,
+                       delta_se=np.asarray(self.delta_se, dtype=float) * sep,
+                       threshold=np.full(len(self), self.delta_crit), scaled=True)
 
     @property
     def corrected_differently(self) -> np.ndarray:
@@ -341,7 +362,7 @@ def compare_peptides(
                          "control_fallback": fell_back[(*state, *key)]})
     cols = _columns(PeptideComparison, rows) if rows else {
         f.name: np.array([]) for f in fields(PeptideComparison)
-        if f.name not in _SCALAR_FIELDS and f.name not in ("threshold", "reason")}
+        if f.name not in _SCALAR_FIELDS and f.name not in ("threshold", "reason", "separation")}
     if rows:
         cols["run"] = cols["run"].astype(object)
     return PeptideComparison(**cols, reference=reference[1], reference_run=reference[0], K=K,
@@ -449,14 +470,15 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
             reason = (f"{a['reason']} (reference)" if a["reason"]
                       else f"{b['reason']} (sample)" if b["reason"] else "")
             t = p = delta = np.nan
-            ma = mb = sa = sb = threshold = np.nan
+            ma = mb = sa = sb = threshold = sep = np.nan
             if not reason:
                 va, vb = flip(a["values"]), flip(b["values"])
                 ma, sa, mb, sb = flip(a["value"]), a["se"], flip(b["value"]), b["se"]
                 if len(va) >= 2 and len(vb) >= 2 and (np.var(va) > 0 or np.var(vb) > 0):
                     t, p = (float(x) for x in stats.ttest_ind(vb, va, equal_var=False))
                 delta = mb - ma
-                threshold = delta_crit / (0.5 * (a["sep"] + b["sep"]))
+                sep = 0.5 * (a["sep"] + b["sep"])
+                threshold = delta_crit / sep
             sig = bool(np.isfinite(p) and p < alpha and abs(delta) > threshold)
             rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
                          "modification": key[1], "start": key[2], "end": key[3], "time": key[4],
@@ -467,7 +489,7 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
                          "modification_reference": rkey[1], "same_sequence": rkey[:2] == key[:2],
                          "control_fallback_reference": a["fell_back"],
                          "control_fallback": b["fell_back"], "threshold": threshold,
-                         "reason": reason})
+                         "reason": reason, "separation": sep})
     names = [f.name for f in fields(PeptideComparison) if f.name not in _SCALAR_FIELDS]
     cols = ({name: np.array([r[name] for r in rows]) for name in names} if rows
             else {name: np.array([]) for name in names})

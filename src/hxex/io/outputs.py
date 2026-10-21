@@ -8,12 +8,19 @@ manifest lists go, see :mod:`hxex.io.bundle`), an output folder keeps a listing,
 to replace a file of yours named like one of the new files before anything changes, and leaves
 every other file alone. A folder with files but no listing (one written before the listing
 existed, or your own) is only written when no file of yours would be replaced.
+
+Every command that writes an output folder follows the bundle's rule (:func:`prepare_output`;
+owner, 2026-10-21): a folder that already holds hxex output is refused unless the command is
+told to overwrite it (its files are replaced) or to keep it (it is moved to ``name.N`` first);
+``[output] overwrite`` and ``keep_previous`` in a project file say so for every folder.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -61,6 +68,55 @@ def _write_listing(directory: Path, files: Iterable[str],
     tmp = directory / (LISTING + ".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     tmp.replace(directory / LISTING)
+
+
+def holds_output(directory: str | Path) -> bool:
+    """Whether ``directory`` holds files hxex wrote (its listing names at least one)."""
+    return Path(directory).is_dir() and bool(output_listing(directory))
+
+
+def _next_number(directory: Path) -> int:
+    """One more than every ``name.N`` used beside ``directory`` (never reused)."""
+    used = [0]
+    for item in directory.parent.iterdir():
+        m = re.match(re.escape(directory.name) + r"\.(\d+)(\.|_|$)", item.name)
+        if m:
+            used.append(int(m.group(1)))
+    return max(used) + 1
+
+
+def keep_previous_folder(directory: str | Path) -> Path:
+    """Move the output folder ``directory`` to ``name.N`` (N one more than any used beside it)
+    and return where it went."""
+    directory = Path(directory)
+    target = directory.with_name(f"{directory.name}.{_next_number(directory)}")
+    size = sum(p.stat().st_size for p in directory.rglob("*") if p.is_file())
+    os.replace(directory, target)
+    log.info("kept the previous %s as %s (%.1f MB)", directory.name, target.name, size / 1e6)
+    return target
+
+
+def prepare_output(directory: str | Path, *, overwrite: bool = False,
+                   keep_previous: bool = False, what: str = "files", move: bool = True,
+                   elsewhere: str = "another folder") -> Path | None:
+    """Apply the rule of an output folder that already holds hxex output (the bundle's rule):
+    refused (:class:`OutputError`, saying how to go on) unless ``overwrite`` (its hxex files are
+    replaced by the write that follows) or ``keep_previous`` (it is moved to ``name.N`` now, and
+    that path is returned; with ``move`` False only checked). A folder without hxex output
+    passes. ``what`` names its content and ``elsewhere`` the way to write somewhere else, for
+    the message."""
+    directory = Path(directory)
+    if not holds_output(directory):
+        return None
+    if keep_previous:
+        return keep_previous_folder(directory) if move else None
+    if overwrite:
+        return None
+    raise OutputError(
+        f"{directory} holds the {what} written before: --overwrite replaces them, "
+        f"--keep-previous moves the folder to {directory.name}.N first, or write to "
+        f"{elsewhere}. In a project file, [output] overwrite = true or keep_previous = true "
+        "does either for every command")
 
 
 @contextmanager

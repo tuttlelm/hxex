@@ -72,10 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle (and its tables), carrying its review "
-                        "over")
+                        "over; also a tables folder left from a bundle that is gone")
     p.add_argument("--keep-previous", action="store_true",
-                   help="move an existing bundle (with its tables and figures) to the next "
-                        "generation, NAME.N, before writing")
+                   help="move an existing bundle (with its tables, figures and analysis "
+                        "folders) to the next generation, NAME.N, before writing")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
     _spectra_option(p)
     _threads_option(p)
@@ -103,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write the tables (default: beside the bundle)")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the figures (default: beside the bundle)")
+    _output_options(p, "the tables or figures folder")
     p.add_argument("--series", choices=("flagged", "all"),
                    help="which series to draw (default: [figures] series, else flagged)")
     p.add_argument("--k", type=int, metavar="K",
@@ -123,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis + _REFERENCE when there is a "
                                  "reference, e.g. results_analysis_WT)")
+    _output_options(p, "the analysis folder")
     p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
                                        "RUN:sample when the sample is in several runs)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
@@ -139,6 +141,16 @@ def _spectra_option(p) -> None:
     p.add_argument("--spectra", metavar="PATH",
                    help="take the raw spectra stored in this bundle (or spectra file) instead "
                         "of reading the input (as input.spectra)")
+
+
+def _output_options(p, folder: str) -> None:
+    """--overwrite and --keep-previous for a command that writes an output folder."""
+    p.add_argument("--overwrite", action="store_true",
+                   help=f"replace hxex's files in {folder} when it holds earlier output "
+                        "(or [output] overwrite = true)")
+    p.add_argument("--keep-previous", action="store_true",
+                   help=f"move {folder} to NAME.N first when it holds earlier output (or "
+                        "[output] keep_previous = true)")
 
 
 def _threads_option(p) -> None:
@@ -563,9 +575,17 @@ def cmd_run(args) -> int:
                   "(%s.N), or write to another output.bundle (the bundle and the folders "
                   "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
-    if keep_previous and bundle.exists() and isinstance(out.tables, Path):
-        log.info("output.tables %s is a directory of its own: not moved with the previous "
-                 "bundle (its hxex files are replaced)", out.tables)
+    from .io import prepare_output
+
+    tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
+    # the tables folder follows the bundle's rule (refused before anything is fitted); a
+    # bundle kept as its previous generation takes its own tables folder along
+    moves_along = (keep_previous and bundle.exists() and tables is not None
+                   and tables == bundle.with_name(bundle.name + "_tables"))
+    if tables is not None and not moves_along:
+        prepare_output(tables, overwrite=overwrite, keep_previous=keep_previous, move=False,
+                       what="tables of earlier results",
+                       elsewhere="another output.bundle (or output.tables)")
     config = project.run
     if args.device:
         b = config.fit.backend
@@ -590,23 +610,37 @@ def cmd_run(args) -> int:
                     out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
             progress=ProgressLog(interval=args.progress_every), cancel=stop,
         )
-    tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
     if tables is not None:
+        from .io.bundle import bundle_manifest
         from .report import Results, write_tables
         from .review_table import apply_view
 
-        write_tables(apply_view(Results.from_run(result), project.review), tables)
+        if keep_previous:  # not moved along with a bundle: kept on its own
+            prepare_output(tables, keep_previous=True)
+        write_tables(apply_view(Results.from_run(result), project.review), tables,
+                     created=(bundle_manifest(bundle) or {}).get("created", ""))
     _summary(result.fit, bundle, tables=tables)
-    from .io.bundle import analysis_folders
-
-    figures = bundle.with_name(bundle.name + "_figures")
-    if overwrite and figures.is_dir():
-        log.warning("%s still holds the figures of the results just replaced: run 'hxex "
-                    "report %s --figures' to draw them again", figures, args.project_file)
-    for analysis in analysis_folders(bundle) if overwrite else ():
-        log.warning("%s still holds the analysis of the results just replaced: run "
-                    "'hxex analyse' again to bring it up to date", analysis)
+    _warn_stale_outputs(bundle, args.project_file)
     return 0
+
+
+def _warn_stale_outputs(bundle: Path, project_file) -> None:
+    """Warn about the bundle's figures and analysis folders made from other results than the
+    ones there now (after a run, however the earlier bundle went, or a resume), naming the
+    command that brings each up to date."""
+    from .io import holds_output, made_from
+    from .io.bundle import analysis_states, bundle_manifest
+
+    created = (bundle_manifest(bundle) or {}).get("created", "")
+    figures = bundle.with_name(bundle.name + "_figures")
+    if holds_output(figures) and (made_from(figures) or {}).get("") != created:
+        log.warning("%s holds figures of other results than the ones in %s now: 'hxex report "
+                    "%s --figures --overwrite' draws them again", figures, bundle, project_file)
+    for folder, state in analysis_states(bundle):
+        if state is not None:
+            log.warning("%s holds an analysis of other results than the ones in %s now: "
+                        "'hxex analyse %s --overwrite' brings it up to date", folder, bundle,
+                        project_file)
 
 
 def _view_exclude(project) -> tuple:
@@ -625,6 +659,7 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
 
 def cmd_resume(args) -> int:
     from .hooks import ProgressLog
+    from .io.bundle import bundle_manifest
     from .run import NothingToResume, resume_bootstrap
 
     bundle, extra = Path(args.bundle), {}
@@ -632,7 +667,6 @@ def cmd_resume(args) -> int:
     review = None
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
         from .config import load_project
-        from .io.bundle import bundle_manifest
         from .review_table import table_choices
 
         project = load_project(bundle, analysis_only=True)
@@ -671,9 +705,11 @@ def cmd_resume(args) -> int:
         from .report import Results, write_tables
         from .review_table import apply_view
 
-        write_tables(apply_view(Results.from_run(result), review), tables)
+        write_tables(apply_view(Results.from_run(result), review), tables,
+                     created=(bundle_manifest(bundle) or {}).get("created", ""))
         log.info("tables in %s", tables)
     _summary(result.fit, bundle)
+    _warn_stale_outputs(Path(bundle), args.bundle)
     return 0
 
 
@@ -681,11 +717,12 @@ def cmd_report(args) -> int:
     import dataclasses
 
     from .hooks import ProgressLog
-    from .io import open_bundle
+    from .io import open_bundle, prepare_output
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
+    overwrite, keep_previous = args.overwrite, args.keep_previous
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle, rules, figures
         from .config import load_project
 
@@ -695,10 +732,17 @@ def cmd_report(args) -> int:
             return EXIT_ERROR
         bundle, review = project.output.bundle, project.review
         plots = project.figures or plots
+        overwrite = overwrite or project.output.overwrite
+        keep_previous = keep_previous or project.output.keep_previous
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
     if tables is None and figures is None:
         tables = _beside(bundle, True, "_tables")
+    for folder, what, option in ((tables, "tables", "--tables DIR"),
+                                 (figures, "figures", "--figures DIR")):
+        if folder is not None:  # the bundle's rule, before anything is drawn
+            prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous,
+                           what=what, elsewhere=f"another folder with {option}")
     stop = _Stop()
     with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
         if b.pending:
@@ -717,7 +761,7 @@ def cmd_report(args) -> int:
                       args.bundle)
             return EXIT_ERROR
         if tables is not None:
-            written = write_tables(results, tables)
+            written = write_tables(results, tables, created=b.manifest.get("created", ""))
             _say(f"{len(written)} table(s) in {tables}")
         if figures is not None:
             if args.k is not None:
@@ -818,6 +862,7 @@ def cmd_info(args) -> int:
         earlier = generations(b.path)
         if earlier:
             rows.append(("generations", ", ".join(p.name for _, p in earlier)))
+        rows += _output_rows(b.path)
         rows += _analysis_rows(b.path)
         for key, value in rows:
             _say(f"{key:14s} {value}")
@@ -825,6 +870,27 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _output_rows(bundle: Path) -> list[tuple[str, str]]:
+    """The ``hxex info`` lines of the bundle's tables and figures folders: whether each was made
+    from the results there now (none without such folders)."""
+    from .io import holds_output, made_from
+    from .io.bundle import bundle_manifest
+
+    created = (bundle_manifest(bundle) or {}).get("created", "")
+    rows = []
+    for suffix, command in (("_tables", "report"), ("_figures", "report --figures")):
+        folder = bundle.with_name(bundle.name + suffix)
+        if not holds_output(folder):
+            continue
+        stamp = (made_from(folder) or {}).get("")
+        text = (f"{folder.name}: up to date" if stamp == created else
+                f"{folder.name}: not known (written before hxex recorded it)" if not stamp else
+                f"{folder.name}: made from earlier results (created {stamp}); hxex {command} "
+                "--overwrite writes it again")
+        rows.append(("" if rows else "outputs", text))
+    return rows
 
 
 def _analysis_rows(bundle: Path) -> list[tuple[str, str]]:
@@ -897,6 +963,7 @@ def cmd_analyse(args) -> int:
     threads = args.threads
     record_paths = "path"  # the analysis settings file records its paths as the input does
     review = None  # the project's [review] decisions
+    overwrite, keep_previous = args.overwrite, args.keep_previous
     first = Path(_run_source(args.source[0])[1])
     if len(args.source) > 1 or _is_bundle(first):
         runs = dict(_run_source(s) for s in args.source)
@@ -921,6 +988,8 @@ def cmd_analyse(args) -> int:
         if project.input is not None:
             record_paths = project.input.record_paths
         review = project.review
+        overwrite = overwrite or project.output.overwrite
+        keep_previous = keep_previous or project.output.keep_previous
         if config.runs and not args.bundle:
             runs = {name: Path(path) for name, path in config.runs.items()}
         else:
@@ -944,6 +1013,10 @@ def cmd_analyse(args) -> int:
     # references never write into one folder
     out = Path(args.out) if args.out else Path(config.out) if config.out else lead.with_name(
         analysis_folder_name("runs" if several else lead.name, config.reference))
+    from .io import prepare_output
+
+    prepare_output(out, overwrite=overwrite, keep_previous=keep_previous, what="analysis",
+                   elsewhere="another folder with --out DIR (or [analysis] out)")
     stop = _Stop()
     with contextlib.ExitStack() as stack:
         stack.enter_context(stop.installed())

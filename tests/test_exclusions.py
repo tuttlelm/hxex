@@ -160,5 +160,6 @@ def test_review_csv_lists_the_review_and_the_rules(tmp_path):
 
     with open_bundle(tmp_path / "out") as b:
         b.set_review(ReviewTable.empty())
-    assert cli.main(["-q", "report", str(tmp_path / "out"), "--tables", str(tables)]) == 0
+    assert cli.main(["-q", "report", str(tmp_path / "out"), "--tables", str(tables),
+                     "--overwrite"]) == 0
     assert not (tables / "review.csv").exists()

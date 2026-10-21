@@ -294,10 +294,11 @@ Check that *hxex* reads your three decisions, and draw the figures again:
 
 ```bash
 hxex check hxex.toml
-hxex report hxex.toml --figures
+hxex report hxex.toml --figures --overwrite
 ```
 
-`check` now has the line `review table ... 3 spectra: 1 rejected, 0 accepted, 2 with a chosen
+`--overwrite` replaces the figures drawn before; without it, *hxex* stops rather than write
+over them. `check` now has the line `review table ... 3 spectra: 1 rejected, 0 accepted, 2 with a chosen
 K`. In the new figures the rejected spectrum is drawn hollow and grey, and the two 30 min
 spectra of WT 42-54 have one population. The tables changed too. The fits themselves are not
 touched: delete a row's entries, or the `[review]` lines, and report again to undo.
@@ -331,7 +332,7 @@ it in a minute or two ([Installing *hxex*](install.md)). When it is done, draw t
 again; they now have error bars:
 
 ```bash
-hxex report hxex.toml --figures
+hxex report hxex.toml --figures --overwrite
 ```
 
 ## Step 11: compare the variants with WT
@@ -365,11 +366,18 @@ deuterium than WT over the first 80 residues, most at the early times:
 **The Woods plot** (`woods_R120G_1min.png`) shows the same difference at one time, one bar per
 peptide over the residues it covers, coloured where the difference is significant (red higher,
 blue lower than WT). The top panel is the average deuteration (one population). The next two
-are the positions of the two populations, and the bottom one is the share of the low-D
-population. Here the positions hardly differ, but R120G has clearly less of the low-D
-population over the first 80 residues: the same two states, populated differently.
+are the positions of the two populations, and the bottom one is the change in the share of the
+low-D population, multiplied by the distance between the two populations, so that it is in the
+same units as the panels above and judged against the same dashed line
+([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here the positions hardly
+differ, but R120G has clearly less of the low-D population over the first 80 residues: the same
+two states, populated differently.
 
 ![Woods plot of R120G against WT at 1 min](../images/tutorial_woods.png)
+
+Peptides that contain the mutation are compared too, with WT's peptide over the same residues
+(they are marked `same_sequence = false` in `compare_peptides.csv`); to compare only identical
+sequences, set `peptide_match = "sequence"` in `[analysis]`.
 
 **The residue comparison** (`compare_residues_1min.png`) goes residue by residue, and where a
 region has two populations it shows both:
@@ -389,12 +397,15 @@ supported by all of its spectra together (`best_set_K`). [Outputs](outputs.md) a
 | 3 | `hxex init --format specexport` | wrote the project file |
 | 5 | `hxex check hxex.toml` | checked the settings and the data |
 | 6 | `hxex run hxex.toml` | fitted every spectrum; wrote the bundle and the tables |
-| 8, 9 | `hxex report hxex.toml --figures` | drew the figures, with your review |
+| 8, 9 | `hxex report hxex.toml --figures` (`--overwrite` the second time) | drew the figures, with your review |
 | 10 | `hxex resume hxex.toml` | added the bootstrap (the error bars) |
 | 11 | `hxex analyse hxex.toml` | compared the variants with WT |
 
-Changing a setting only means running again the command it belongs to:
+Changing a setting only means running again the command it belongs to, with `--overwrite`:
 [`run`, `report`, and `analyse`: what each one does](project-file.md#run-report-and-analyse-what-each-one-does).
+To work through the tutorial again from the start, first delete every folder whose name starts
+with `results`, or the commands stop at the results already there
+([Running again](outputs.md#running-again)).
 For your own data, start from [Your first project](first-project.md).
 
 ## The notebook

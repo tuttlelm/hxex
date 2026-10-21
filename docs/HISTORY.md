@@ -3468,3 +3468,48 @@ CSVs or mzML if wanted.
     (`exclusions.why_nothing`), or saying that only the combination matches nothing. A
     project reading stored spectra is not counted. The published B5 folder (5,261 spectra):
     2.6 s.
+
+134. **Every output folder follows the bundle's rule (owner, 2026-10-21).** Owner, rerunning the
+    tutorial notebook, was confused by results figures and tables folders left from earlier
+    results. Found: `hxex run` refused only an existing bundle; a bundle deleted by hand left
+    its tables folder (silently rewritten), its figures and analysis folders (no warning:
+    the stale warnings came only with `--overwrite`); `hxex report` and `hxex analyse` always
+    replaced their folders, removing every figure they had drawn before (drawing three series
+    after all of them left three), with no way to keep an earlier set; tables and figures
+    folders did not record the bundle they came from. Owner's decisions: `report` and
+    `analyse` consistent with `run`; one switch, `[output] overwrite` / `keep_previous`,
+    covers every folder; a folder kept on its own goes to its own `NAME.N`
+    (`results_figures.1`, not `results.1_figures`); the tables follow the same rule. Built:
+    `io.prepare_output` (a folder whose listing names files is refused unless overwrite, or
+    moved to `NAME.N` with keep_previous, N never reused) used by `hxex run` for its tables
+    (before anything is fitted; a bundle kept as a generation still takes its tables along),
+    `hxex report` (`--overwrite`, `--keep-previous`; tables and figures) and `hxex analyse`
+    (the same options); `hxex resume` rewrites the tables of the bundle it adds to without
+    asking. The tables and figures listings record `made_from` (the bundle's `created`
+    stamp), so `hxex info` lists `outputs` (tables, figures) as up to date or not, and after
+    `hxex run` and `hxex resume` every figures or analysis folder made from other results is
+    a warning naming the command (`report --figures --overwrite`, `analyse --overwrite`).
+    Guide: outputs.md "Running again" (the three ways, the table of what each command
+    writes and makes out of date, deleting only `results` is not a fresh start), first-project,
+    project-file, tutorial (`--overwrite` on the second and third `report --figures`, and how to
+    start the tutorial again); README; BUNDLE.md; template comments. The tutorial notebook
+    changed (two commands): the download needs a new zip (tag tutorial-data-2) and the page's
+    link updated (owner publishes).
+
+135. **The Woods plot draws a population scaled by its separation (owner, 2026-10-21).** Owner:
+    on the tutorial data's K=2 population Woods panel the dashed lines moved from peptide to
+    peptide, unlike the fD panels'. By design (item 128): a population's threshold is the K=1
+    `delta_crit` divided by the peptide's separation (tutorial: separations 0.12 to 0.94,
+    median 0.40, so thresholds from about 0.04 to 0.3). The Woods plot is for judging
+    significance by region, so owner chose (from an example, scratch) to draw the population
+    difference times the separation, in fD units (the deuterium that moved between the
+    states), against one dashed line, the K=1 `delta_crit`: the same test (|delta| >
+    delta_crit / separation), the same peptides significant (R120G at 1 min: 18 of 38 in both),
+    and poorly separated peptides no longer look large. Built:
+    `PeptideComparison.separation` (population rows; NaN for fD), a `separation` column in
+    `compare_peptides.csv` (which keeps the unscaled `delta`), `scaled_by_separation()` (delta
+    and delta_se times the separation, threshold delta_crit, `scaled`), used for the Woods
+    stack (title "... population × separation"); the scaled panel shares the fD panels' y
+    range and is labelled "Δpopulation × separation". Guide outputs.md "Reading the Woods
+    plot" describes the method; tutorial text updated. The per-residue population figure is
+    unchanged. `docs/images/tutorial_woods.png` needs redrawing (`make_tutorial.py --run`).
