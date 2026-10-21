@@ -101,7 +101,10 @@ class Results:
     ``bootstrap_by_k`` at fixed K values. ``review`` is the reviewer's layer; replace it with
     :meth:`with_review` (a ``Results`` is never edited). ``excluded_times`` and
     ``excluded_series`` (``data_id``) are left out of the post-fitting analysis
-    (:meth:`without_times`, :meth:`without_series`; the fits are kept).
+    (:meth:`without_times`, :meth:`without_series`; the fits are kept). ``figures`` is the
+    ``[figures]`` table (:class:`hxex.report.PlotConfig`) of the project the results were
+    loaded from (:func:`hxex.load_results`), which :func:`hxex.show_series` draws with; None
+    otherwise.
     """
 
     measurements: Measurements
@@ -119,6 +122,7 @@ class Results:
     )
     excluded_times: tuple[float, ...] = ()
     excluded_series: tuple[int, ...] = ()
+    figures: Any = field(default=None, compare=False)  # a PlotConfig (import cycle)
 
     @classmethod
     def from_bundle(cls, bundle: Bundle) -> Results:

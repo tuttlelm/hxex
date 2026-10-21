@@ -115,3 +115,22 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     _edit(tables / "spectra.csv", tmp_path / "user_review_table.csv", {one: {"review_K": "5"}})
     assert cli.main(["-q", "report", str(path)]) == 1
     assert "K that was not fitted" in capsys.readouterr().err
+
+
+def test_spectra_csv_has_the_columns_the_review_table_reads(tmp_path):
+    """A copy of spectra.csv is the user review table: it carries every column read back,
+    and a note given in the review comes back in it."""
+    from hxex.io.bundle import ReviewTable
+    from hxex.report import Results, spectra_table
+    from hxex.run import run
+    from test_run import config, raw_spectra
+
+    res = run(raw_spectra(n_series=1), config())
+    results = Results.from_run(res)
+    cols = spectra_table(results)
+    assert {"spectrum_id", "review_status", "review_K", "note"} <= set(cols)
+    sid = str(results.fit.spectrum_id[3])
+    noted = results.with_review(ReviewTable.empty().update(sid, status="rejected",
+                                                           note="weak spectrum"))
+    note = spectra_table(noted)["note"]
+    assert note[3] == "weak spectrum" and set(note[:3]) == {""}

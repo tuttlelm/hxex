@@ -35,6 +35,7 @@ from .figures import (
     write_figures,
 )
 from .fragments import closure_figure, ladder_kinetics_figure, residue_rates_figure
+from .notebook import load_results, show_series
 from .overview import (
     controls_overview_data,
     k_comparison_data,
@@ -106,6 +107,8 @@ __all__ = [
     "components_table",
     "controls_overview_data",
     "find_series",
+    "load_results",
+    "show_series",
     "format_table",
     "k_comparison_data",
     "k_selection_data",

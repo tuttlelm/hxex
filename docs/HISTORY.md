@@ -3268,3 +3268,34 @@ CSVs or mzML if wanted.
     Noise estimated from the replicates (`estimate = "replicates"`) was also tried there: it
     doubled the spectra choosing K = 2, controls included, so the tutorial keeps the default
     noise. Open (PLAN Next steps 8): whether retention also depends on the charge state.
+
+127. **The tutorial: a guide page, a notebook, and a download (owner, 2026-10-20).** Owner's
+    plan: a Markdown walk-through for people who do not use Jupyter and a notebook of the same
+    steps, starting from the published B5 SpecExport data (the tutorial dataset), the
+    quench-flow points (0.1 s, 0.8 s) left out as a tutorial step (`[[input.exclude]]`). The
+    download is the zipped SpecExport folders (39 MB; a bundle's `spectra.parquet` is 49 MB
+    and tied to hxex's layout), with the notebook, a README (citation: Woods et al., PNAS
+    2025, e2425061122; the paper's labelling conditions) and the licence (CC BY 4.0 for the
+    data, owner); hosted as an asset of a GitHub release `tutorial-data-N` (owner), which
+    `publish.yml` now leaves alone (PyPI only for `v*` tags). Jupyter comes with the optional
+    `notebook` extra (`notebook>=7.2`, BSD; the lowest installs on 3.11); `uv tool install
+    "hxex[notebook] @ ..." --with-executables-from notebook,jupyter-core` puts `jupyter` on
+    the path. `docs/guide/tutorial.md`: init, the edits, check, run (no bootstrap: 1 min 14 s
+    here, about two on a laptop), the tables, the figures of three WT peptides (87-96 one
+    population, 42-54 two at 4 s and 1 min, 68-75 a weak 30 min spectrum), the review table
+    (K = 1 for two 30 min spectra of 42-54, one rejection), the bootstrap added by `hxex
+    resume` (`ks = [1, 2]` for the analysis: 12 min 53 s here; one full run with it took
+    14 min, too long for step 6), and `hxex analyse` (R120G takes up more deuterium than WT
+    over residues 1 to 80, most at early times, as in the paper). Not used: a peptide subset
+    (the full dataset is fast enough), `screen` (its skipped fits break `--k 2` and
+    `best_set_K`). `docs/tutorial/make_tutorial.py` builds the zip and, with `--run`,
+    executes the notebook on the data and draws the page's figures from its results
+    (`docs/images/tutorial_*.png`), so page, notebook and figures come from one run;
+    `tests/test_tutorial.py` checks that the page and the notebook give the same commands and
+    settings and that the zip holds what the page lists (working through it: opt-in,
+    `HXEX_TUTORIAL_DATA`). The notebook is committed without outputs. New for it:
+    `hxex.load_results(path)` (a project's results with its `[review]`, as `hxex report` sees
+    them) and `hxex.show_series(results, sample, residues, charge, k=, kinds=)` (shown as PNG,
+    because hxex draws without pyplot and no inline backend is set). Found on the way:
+    `spectra.csv` had no `note` column although the guide told users to fill it in a copy
+    (added, with the review's notes); the control limits (item 126).

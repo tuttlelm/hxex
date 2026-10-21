@@ -601,8 +601,8 @@ Planned, not built:
    the developer; a complete pass to create user-friendly documentation and tutorials (inputs,
    a worked project from `hxex init` to `hxex analyse`, what every table and figure holds) is
    an open TODO. Begun 2026-10-19 (HISTORY item 107): `docs/guide/` with the inputs, the
-   experiment types, the outputs and a generated settings reference; a worked tutorial on a
-   publishable dataset remains.
+   experiment types, the outputs and a generated settings reference. The worked tutorial on
+   the published B5 data, with a notebook and a download, was added 2026-10-20 (HISTORY 127).
 8. **Does retention depend on the charge state?** (owner, 2026-10-20; a future TODO, not part
    of the tutorial.) The fully deuterated retention is a property of the peptide (sequence,
    time on the column: HISTORY 126); check whether the charge states of one peptide also agree,

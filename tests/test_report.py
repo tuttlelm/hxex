@@ -1061,3 +1061,54 @@ def test_rejected_spectra_are_drawn_hollow_and_grey(results):
     pops = plot_populations(out, 0)
     assert any("(rejected)" in a.get_title() for a in pops.axes)
     assert any(str(g).endswith(":rejected") for g in gids(pops))
+
+
+def test_notebook_helpers_load_and_draw_a_series(written, tmp_path):
+    from hxex.report import find_series, load_results, series_table, show_series
+
+    _, _, path = written
+    loaded = load_results(path)
+    t = series_table(loaded)
+    sample, rng, charge = str(t["sample"][0]), str(t["peptide_range"][0]), int(t["charge"][0])
+    assert find_series(loaded, samples=[sample], peptide_ranges=[rng]) == [0, 1]
+    figures = show_series(loaded, sample, rng, charge, kinds=["spectra", "uptake"])
+    assert len(figures) == 4 and all(isinstance(f, Figure) for f in figures)  # two series
+    assert len(show_series(loaded, sample, rng, k=1)) == 4  # K = 1: no populations page
+    with pytest.raises(ValueError, match="no series"):
+        show_series(loaded, sample, rng, charge=9)
+    # a project file: its bundle, with its [review] rules applied
+    project = tmp_path / "hxex.toml"
+    project.write_text(f'project = "p"\n[analysis]\n[output]\nbundle = "{path.as_posix()}"\n'
+                       f'[[review.exclude]]\ncharge = {charge}\n')
+    reviewed = load_results(project)
+    assert series_table(reviewed)["n_rejected"].tolist() == [8, 8]
+    # its [figures] settings come along, and show_series draws with them
+    assert loaded.figures is None and reviewed.figures.scale == "linear"
+    project.write_text(project.read_text() + '[figures]\nscale = "log"\n')
+    logged = load_results(project)
+    assert logged.figures.scale == "log"
+    (uptake,) = show_series(logged, sample, rng, charge, kinds=["uptake"])[:1]
+    assert uptake.axes[0].get_xscale() == "log"
+    (linear,) = show_series(logged, sample, rng, charge, kinds=["uptake"], scale="linear")[:1]
+    assert linear.axes[0].get_xscale() == "linear"
+    project.write_text('project = "p"\n[analysis]\n')
+    with pytest.raises(ValueError, match="no \\[output\\] bundle"):
+        load_results(project)
+
+
+def test_notebook_images_are_sharp_png_or_svg(results):
+    pytest.importorskip("IPython")
+    from IPython.display import SVG, Image
+
+    from hxex.report import series_table, show_series
+    from hxex.report.notebook import notebook_image
+
+    t = series_table(results)
+    (fig,) = show_series(results, str(t["sample"][0]), str(t["peptide_range"][0]),
+                         int(t["charge"][0]), kinds=["uptake"])[:1]
+    png = notebook_image(fig, dpi=50)
+    assert isinstance(png, Image) and png.retina
+    assert png.width == fig.get_size_inches()[0] * 50  # shown at dpi, drawn at twice it
+    assert isinstance(notebook_image(fig, "svg"), SVG)
+    with pytest.raises(ValueError, match="format"):
+        show_series(results, "S", "1-2", format="pdf")

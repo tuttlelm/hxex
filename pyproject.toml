@@ -49,6 +49,11 @@ dev = [
 thermo = [
     "pythonnet>=3.0.3",
 ]
+# Jupyter Notebook, to work through the tutorial notebook (the tutorial itself is a separate
+# download, docs/guide/tutorial.md)
+notebook = [
+    "notebook>=7.2",
+]
 
 [project.scripts]
 hxex = "hxex.cli:main"

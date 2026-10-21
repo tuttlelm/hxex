@@ -35,3 +35,20 @@ the first publish from GitHub create the project.
   `twine check dist/*`.
 - PyPI releases cannot be replaced: a version number can be used only once, and deleting a
   release does not free it.
+
+## The tutorial data
+
+The tutorial (`docs/guide/tutorial.md`) downloads `hxex_b5_tutorial.zip` from a GitHub release
+of its own, tagged `tutorial-data-N`. Such a release carries only that file: `publish.yml`
+publishes to PyPI only for tags starting with `v`.
+
+1. Build the zip and check it end to end (about 20 minutes on a CPU; needs the `notebook`
+   extra): `python docs/tutorial/make_tutorial.py SPECEXPORT_DIR OUT_DIR --run`, where
+   `SPECEXPORT_DIR` holds the published B5 SpecExport data. This also redraws the page's
+   figures in `docs/images/tutorial_*.png`; commit them if they changed.
+2. On GitHub, **Releases, Draft a new release**: create the tag `tutorial-data-N` (the next
+   number) on `main`, attach `OUT_DIR/hxex_b5_tutorial.zip`, mark it as a pre-release so it is
+   not shown as the latest *hxex* release, and publish.
+3. If N changed, update the download link in `docs/guide/tutorial.md`.
+
+A new zip is needed only when the notebook, its README, or its licence change: the data do not.

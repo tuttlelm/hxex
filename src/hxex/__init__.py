@@ -41,6 +41,7 @@ _ENTRY_POINTS = {
     "scan": "hxex.io", "read_peptide_table": "hxex.io",
     "Results": "hxex.report", "write_tables": "hxex.report", "write_figures": "hxex.report",
     "write_analysis": "hxex.report", "PlotConfig": "hxex.report",
+    "load_results": "hxex.report", "show_series": "hxex.report",
     "AnalysisConfig": "hxex.analysis",
 }
 

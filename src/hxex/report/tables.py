@@ -50,6 +50,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     cols.update(_target_columns(results))
     cols["review_status"] = np.asarray(results.review_status).astype(str)
     cols["review_K"] = _review_k(results)
+    cols["note"] = _review_note(results)
     if results.quality is not None:
         q = results.quality
         cols["flags"] = np.array([
@@ -70,6 +71,20 @@ def _review_k(results: Results) -> np.ndarray:
     for sid, k, stale in zip(review.spectrum_id, review.k_override, review.stale, strict=True):
         if k and not stale and str(sid) in index:
             out[index[str(sid)]] = int(k)
+    return out
+
+
+def _review_note(results: Results) -> np.ndarray:
+    """The review's note on each spectrum (empty without one): the ``note`` column a user
+    fills in a copy of ``spectra.csv`` (the user review table) comes back here."""
+    out = np.full(len(results.fit), "", dtype=object)
+    review = results.review
+    if review is None or not len(review):
+        return out
+    index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    for sid, note in zip(review.spectrum_id, review.note, strict=True):
+        if note and str(sid) in index:
+            out[index[str(sid)]] = str(note)
     return out
 
 

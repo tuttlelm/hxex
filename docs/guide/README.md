@@ -13,14 +13,16 @@ a short text file.
 ## Start here
 
 1. [Installing *hxex*](install.md): step by step, on Windows, macOS or Linux.
-2. [Your first project](first-project.md): from your exported spectra to tables and figures.
-3. [The project file and the commands](project-file.md): how the file works, the commands and
+2. [Tutorial](tutorial.md): a complete analysis of published data (a protein and two disease
+   variants), from the exported spectra to the comparison, with a notebook of the same steps.
+3. [Your first project](first-project.md): from your exported spectra to tables and figures.
+4. [The project file and the commands](project-file.md): how the file works, the commands and
    their options.
-4. [Input formats](inputs.md): HX-Express, SpecExport (separate or pooled), mzML and Thermo raw
+5. [Input formats](inputs.md): HX-Express, SpecExport (separate or pooled), mzML and Thermo raw
    files; what each expects on disk and how samples, peptides, times and controls are read.
-5. [Experiment types](experiments.md): bottom-up peptides, top-down and intact proteins, kinetics
+6. [Experiment types](experiments.md): bottom-up peptides, top-down and intact proteins, kinetics
    where the scan time is the exchange time, and fragment ions added to any of them.
-6. [Outputs](outputs.md): every table and figure, and the quality flags.
+7. [Outputs](outputs.md): every table and figure, and the quality flags.
 
 ## Topics
 

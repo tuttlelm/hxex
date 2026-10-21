@@ -1,0 +1,15 @@
+The data in this folder (the SpecExport spectra and the sequence files) are licensed under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0):
+
+    https://creativecommons.org/licenses/by/4.0/
+    https://creativecommons.org/licenses/by/4.0/legalcode
+
+You may share and adapt them for any purpose, provided you give appropriate credit by citing:
+
+    Woods CN, Janowska MK, Ulmer LD, Kaur Sidhu J, Stone NL, James EI, Guttman M, Bush MF,
+    Klevit RE. Activation mechanism of small heat shock protein HSPB5 revealed by
+    disease-associated mutants. Proc Natl Acad Sci USA 122(20), e2425061122 (2025).
+    https://doi.org/10.1073/pnas.2425061122
+
+The notebook (hxex_b5_tutorial.ipynb) is part of hxex and is licensed under the GNU General
+Public License, version 3 or later.
