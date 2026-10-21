@@ -321,7 +321,7 @@ Optional columns:
 | `peptide_range` | the range's label in tables and figures; left out, it is made from `start_seq` and `end_seq` (`0012-0020`) |
 | `rt` | the retention time, minutes (stored with the spectra) |
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
-| `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`) |
+| `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`); not allowed in a project that reads fragment ions (see [Fragment ions](#fragment-ions)) |
 
 Other columns are kept with the entry but not used.
 
@@ -429,6 +429,37 @@ filter_excludes = "sid"
 - Repeat the table for other conditions of the same ions (with and without in-source
   activation, say); `label` keeps them apart.
 - `[input] parents = false` reads only the fragments.
+
+**With fragment ions, the peptide table has no `modification` entries.** In a project with
+`[[input.fragments]]`, every peptide of the table is fragmented, so this covers the whole table,
+the peptides' own MS1 spectra included: a project reads a peptide and its fragments from the
+same row. The same entries are fine in a project without fragments.
+
+The reason is that *hxex* has to know which fragments carry each modification, and a
+`modification` entry describes the peptide as a whole:
+
+| In `modification` | Example | Why the fragments cannot have it |
+|---|---|---|
+| a composition change | `H:1`, `O:-1` | which residue carries it is not known, so neither is which fragments have it |
+| extra exchangeable sites | `Hex:1` | the same |
+| an explicit m/z | `undeut_mz:523.1` | it is the m/z of the peptide's own ion; no fragment's m/z follows from it |
+| an ion type other than `M` | `ion_type:c` | a fragment is not fragmented again |
+
+A table with any of these is refused and nothing is read: `hxex check` and `hxex run` name each
+such peptide with its line in the table. An empty `modification`, or `ion_type:M`, is fine.
+Write modified residues into the `peptide` sequence as modX labels instead (`PEPacKTIDE`,
+`Ac-PEPpSIDE-NH2`; new ones in `[[run.registry.residues]]`): the sequence is read residue by
+residue, so each fragment carries exactly the modifications of its own residues.
+
+When a peptide's MS1 spectra need a `modification` (an `undeut_mz`, say), use two projects on
+the same runs: one without `[[input.fragments]]`, whose table keeps the `modification`, for the
+MS1 spectra; and one with `[[input.fragments]]` and `[input] parents = false`, whose table lists
+the peptide without it, for the fragments.
+
+**A fragment table made for pyHXExpress** (one row per fragment, with the ion type in
+`modification`) is not read this way. List each parent peptide once, with its charge, and name
+the ion types in `ions`: *hxex* makes the fragments itself, ties each one to its parent's scans,
+and counts its amides by its position in the parent.
 
 **Which ion type to name: the envelope.** In ETD and ECD spectra, one fragment often appears as
 several ion types a hydrogen apart (c-1 and c, or z-dot and z+2), whose isotope peaks overlap.

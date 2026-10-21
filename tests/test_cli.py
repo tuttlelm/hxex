@@ -259,6 +259,32 @@ def test_a_peptides_own_retention_window(tmp_path):
         assert match in str(err.value.__cause__)
 
 
+def test_peptides_with_a_modification_and_fragments_are_refused(tmp_path, capsys):
+    """A row is both a peptide and the parent of its fragments: with [[input.fragments]], a
+    modification is refused for its MS1 spectra too, every line named by check and run alike;
+    without fragments the same table is read."""
+    from hxex.config import scan_targets
+
+    head = "file,sample,peptide,peptide_range,start_seq,end_seq,charge,modification\n"
+    rows = (f"x,,{PEPTIDE},0001-0010,1,10,2,ion_type:M\n"
+            f"x,,{PEPTIDE},0001-0010,1,10,3,undeut_mz:400.2\n"
+            f"x,,{PEPTIDE},0001-0010,1,10,4,H:1\n")
+    path = mzml_project(tmp_path)
+    (tmp_path / "peptides.csv").write_text(head + rows)
+    assert len(scan_targets(load_project(path))) == 3
+    path = mzml_project(tmp_path, extra_input='[[input.fragments]]\nions = "c:2-3:1"\n')
+    (tmp_path / "peptides.csv").write_text(head + rows)
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "line 3: " in err and "(charge 3) has modification 'undeut_mz:400.2'" in err
+    assert "line 4: " in err and "line 2: " not in err
+    assert "at MS1 either" in err and "parents = false" in err and "2 problem(s)" in err
+    assert cli.main(["run", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "line 3: " in err and "line 4: " in err and "at MS1 either" in err
+    assert not (tmp_path / "out").exists()
+
+
 def test_check_shows_what_would_be_read(tmp_path, capsys):
     path = mzml_project(tmp_path, extra_input='[input.target]\nfilter_excludes = "sid"')
     assert cli.main(["check", str(path)]) == 0

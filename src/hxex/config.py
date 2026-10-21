@@ -958,7 +958,35 @@ def scan_peptides(project: Project):
                                "; list a peptide once per sample (or once with an empty "
                                "sample for every run)")
         before.append(entry.sample)
+    problems = fragment_parent_problems(project, entries)
+    if problems:
+        raise ProjectError("; ".join(problems))
     return entries
+
+
+def fragment_parent_problems(project: Project, entries) -> list[str]:
+    """With ``[[input.fragments]]``: one problem per peptide of the table whose
+    ``modification`` its fragments cannot take (:func:`hxex.fragments.passable_to_fragments`),
+    the last followed by why and what to do; none without fragments. A row is both the peptide
+    and the parent of its fragments, so the refusal covers its MS1 spectra too."""
+    from .fragments import passable_to_fragments
+
+    inp = project.input
+    if not inp.fragments:
+        return []
+    problems = [f"{inp.peptides} line {line}: {e.peptide} (charge {e.charge}) has "
+                f"modification {e.modification!r}"
+                for line, e in enumerate(entries, start=2)
+                if not passable_to_fragments(e.modification)]
+    if problems:
+        problems[-1] += (
+            "\n  a project with [[input.fragments]] cannot read peptides with a modification "
+            "(composition, Hex, undeut_mz or an ion type), at MS1 either: its fragments cannot "
+            "take it. Write modified residues into the sequence as modX labels, or use two "
+            "projects: one without [[input.fragments]] for the MS1 spectra with the "
+            "modification, and one with [[input.fragments]] and parents = false, listing the "
+            "peptide without it, for the fragments")
+    return problems
 
 
 def scan_targets(project: Project) -> list[MzmlTarget]:

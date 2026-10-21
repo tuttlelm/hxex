@@ -357,7 +357,7 @@ def _instrument_text(record: dict, picker) -> str:
 
 def _check_scan_files(project) -> list[str]:
     """List each run's scans per target; the problems found."""
-    from .config import scan_targets
+    from .config import fragment_parent_problems, scan_targets
     from .io import read_peptide_table
     from .io.entries import SCAN_REQUIRED
     from .io.mzml import (
@@ -373,8 +373,11 @@ def _check_scan_files(project) -> list[str]:
         return [f"input.peptides {inp.peptides}: no such file"]
     if inp.format == "thermo" and inp.thermo_dir is not None and not inp.thermo_dir.is_dir():
         return [f"input.thermo_dir {inp.thermo_dir}: no such directory"]
-    problems = _check_peptides(project, read_peptide_table(inp.peptides,
-                                                           required=SCAN_REQUIRED))
+    entries = read_peptide_table(inp.peptides, required=SCAN_REQUIRED)
+    problems = _check_peptides(project, entries)
+    if problems:
+        return problems
+    problems = fragment_parent_problems(project, entries)
     if problems:
         return problems
     targets = scan_targets(project)

@@ -120,8 +120,7 @@ def fragment_entries(
     parent (``parent_peptide``, ``parent_range``, ``parent_charge``) and the fragment
     (``fragment``, for example ``c-1:4``).
     """
-    mod = chem.parse_modification(parent.modification)
-    if (mod.composition or mod.hex or mod.undeut_mz is not None or mod.ion_type != "M"):
+    if not passable_to_fragments(parent.modification):
         raise ValueError(f"the parent's modification {parent.modification!r} cannot be passed "
                          "to fragments; give modified residues as modX labels instead")
     specs = parse_fragments(fragments) if isinstance(fragments, str) else tuple(fragments)
@@ -165,6 +164,14 @@ def fragment_entries(
                            "fragment": f"{spec.ion_type}:{length}"},
                 ))
     return out
+
+
+def passable_to_fragments(modification: str | None) -> bool:
+    """Whether a parent's ``modification`` can be passed to its fragments: empty or
+    ``ion_type:M`` only. A composition change, extra sites (``Hex``) or an explicit m/z describe
+    the parent as a whole, and cannot be assigned to its fragments."""
+    mod = chem.parse_modification(modification)
+    return not (mod.composition or mod.hex or mod.undeut_mz is not None or mod.ion_type != "M")
 
 
 def _at_proline(ion_type: str, residues: Sequence[str], length: int,
