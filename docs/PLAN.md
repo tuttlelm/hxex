@@ -609,8 +609,11 @@ Planned, not built:
    which would let `fd_disagrees` compare across charges and the kint model treat them as one.
    First step built (HISTORY 129): a missing or rejected fully deuterated control takes the
    same peptide's other charge states in the same sample (`fd_other_charge`); in the tutorial
-   data the measured charge states agree to within 0.006. Still open: `fd_disagrees` across
-   charges and the kint model.
+   data the measured charge states agree to within 0.006. In infusion kinetics, where all
+   charge states are in the same scans, they agree within about 1.5 % of the deuterium
+   present (HISTORY 130), so `fd_other_charge` now counts as a measured control for the
+   back-exchange start of the protection fit. Still open: `fd_disagrees` across charges and
+   the kint model.
 
 ## Risks and open decisions
 

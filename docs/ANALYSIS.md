@@ -358,8 +358,10 @@ measured exchange with that of unprotected amides: an amide with intrinsic rate 
   - Back-exchange, corrected: `e_i` is the amide's equilibrium over `initial_fraction` (the
     fully deuterated reference is taken to be made in the labelling solvent; owner,
     2026-10-19). `fD0` is fitted by default (owner, 2026-10-18), between the largest `e_i`
-    and 2, from three starting factors; it is fixed at 1 only when the series has a measured
-    fully deuterated control (corrected, no control fallback). The first usable point stays
+    and 2, from three starting factors; it is fixed at 1 only when the series has measured
+    controls (corrected, no control fallback; a fully deuterated control from the same
+    peptide's other charge states counts as measured, species column `fd_other_charge`:
+    the charge state does not change the deuterium level, HISTORY 130). The first usable point stays
     the user's choice (`exclude_times`), never chosen automatically.
   - Back-exchange, not corrected (no fully deuterated control, as in infusion kinetics with
     an undeuterated control and a low-D end point): fitted on the absolute scale, `fD =

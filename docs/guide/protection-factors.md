@@ -29,8 +29,10 @@ is), *hxex* stops and says which setting to change.
 (`fD0` in `protection.csv`) along with its protection factor, because the protein may not
 have been fully deuterated when the exchange began. If the run has a measured fully
 deuterated control (a run with `role = "fulldeut"`), each peptide is taken to start there
-(`fD0 = 1`). Early points of a kinetics run are often unreliable: leave them out with
-`[analysis] exclude_times`. *hxex* never drops them on its own.
+(`fD0 = 1`). A peptide without its own fully deuterated control but with one at another
+charge state also starts there, because the charge state does not change the deuterium level
+(`fd_other_charge`, see [Controls](controls.md)). Early points of a kinetics run are often
+unreliable: leave them out with `[analysis] exclude_times`. *hxex* never drops them on its own.
 
 **Without a fully deuterated control.** Back-exchange samples without one are fitted on the
 absolute scale (deuterons per amide), relaxing to the solvent's equilibrium deuteration;

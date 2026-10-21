@@ -251,6 +251,13 @@ def test_back_exchange_start_is_fitted_without_a_measured_control():
     t2, _ = peptide_protection(noisy, DILUTION, sequences=PROTEIN)
     assert abs(t2.log10_protection[0] - 2.0) < 3 * t2.log10_protection_se[0]
     assert abs(t2.fD0[0] - 0.8) < 3 * t2.fD0_se[0]
+    # a fully deuterated control from the other charge states counts as measured (HISTORY 130)
+    fd1, _ = back_model(10, 20, 100.0, 1.0)
+    up = uptake([("A", 10, 20, fd1)], times=BACK_TIMES, fallback=True)
+    borrowed = dataclasses.replace(up, fd_other_charge=np.ones(len(up), dtype=bool))
+    table, _ = peptide_protection(borrowed, DILUTION, sequences=PROTEIN)
+    assert table.fD0.tolist() == [1.0] and np.isnan(table.fD0_se[0])
+    assert table.log10_protection[0] == pytest.approx(2.0, abs=1e-3)
 
 
 def test_uncorrected_back_exchange_is_fitted_on_the_absolute_scale(caplog):

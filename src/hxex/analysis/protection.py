@@ -488,11 +488,14 @@ def _progress(y, se, f0, equilibrium):
 
 def _start(pep, rows, state, start_of) -> tuple[float, bool, float]:
     """(fD0, whether it is fitted, the largest fD0 the data can have) of one peptide: 0 in
-    forward labelling; for back-exchange 1 from a measured fully deuterated control (the run's
-    corrected values, no control fallback), otherwise fitted."""
+    forward labelling; for back-exchange 1 from measured controls (the run's corrected values,
+    no control fallback; a fully deuterated control from the peptide's other charge states
+    counts as measured, HISTORY 130), otherwise fitted."""
     if state not in start_of:
         return 0.0, False, 0.0
-    if start_of[state] == 1.0 and not np.asarray(pep.control_fallback)[rows].any():
+    fell_back = (np.asarray(pep.control_fallback, dtype=bool)
+                 & ~np.asarray(pep.fd_other_charge, dtype=bool))
+    if start_of[state] == 1.0 and not fell_back[rows].any():
         return 1.0, False, 1.0
     return np.nan, True, start_of[state]
 

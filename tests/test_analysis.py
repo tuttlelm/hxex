@@ -1056,6 +1056,14 @@ def test_values_corrected_differently_are_marked(results):
     up = species_uptake(res)
     assert up.control_fallback[up.sample == "V"].all() and not up.control_fallback[
         up.sample == "S"].any()
+    assert not up.fd_other_charge.any()
+    # a fully deuterated control from the other charge states: still a fallback, but measured
+    borrowed = dataclasses.replace(one, flags=np.where(
+        np.asarray(c.data_id) == 1, "fd_missing;fd_other_charge", np.asarray(c.flags)))
+    up2 = species_uptake(dataclasses.replace(res, controls=borrowed))
+    assert up2.control_fallback[up2.sample == "V"].all()
+    assert up2.fd_other_charge[up2.sample == "V"].all()
+    assert not up2.fd_other_charge[up2.sample == "S"].any()
     pc = compare_peptides(res, "S")
     assert pc.control_fallback.all() and not pc.control_fallback_reference.any()
     assert pc.corrected_differently.all()

@@ -301,6 +301,17 @@ class ControlTable:
     def __len__(self) -> int:
         return len(self.data_id)
 
+    @property
+    def measured(self) -> np.ndarray:
+        """True where both controls are measured: the series' own, or for the fully deuterated
+        one the same peptide's at its other charge states (``fd_other_charge``; the charge
+        state does not change the deuterium level, HISTORY 130). Such a series keeps
+        ``fallback`` True."""
+        other = np.array(["fd_other_charge" in str(f).split(";") for f in self.flags], dtype=bool)
+        m0_ok = (np.asarray(self.n_undeut) > 0) & np.array(
+            ["m0_high" not in str(f).split(";") for f in self.flags], dtype=bool)
+        return ~np.asarray(self.fallback, dtype=bool) | (other & m0_ok)
+
     def rows(self, data_id) -> np.ndarray:
         """Row of each series id in ``data_id`` (KeyError for a series without a row)."""
         index = {int(d): i for i, d in enumerate(self.data_id)}

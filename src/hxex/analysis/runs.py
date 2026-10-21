@@ -136,7 +136,7 @@ class RunSet:
                 dropped[key] = dropped.get(key, 0) + n
             for key, recs in g.items():  # merged samples pool their spectra, each tagged by run
                 groups.setdefault((*self.state(name, key[1]), *key[2:]), []).extend(
-                    (*r[:8], name) for r in recs)
+                    (*r[:8], name, *r[9:]) for r in recs)
             for (_, s), v in c.items():
                 state = self.state(name, s)
                 if corrected.get(state, v) != v and not quiet:

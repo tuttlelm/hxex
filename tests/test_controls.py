@@ -490,11 +490,12 @@ def test_a_missing_or_rejected_control_takes_the_other_charge_states():
     assert c.retention[0] == pytest.approx(0.53) and c.mfd[0] == pytest.approx(5.3)
     assert c.mfd_se[0] == pytest.approx(10 * 0.01 / 2)  # 4+: se 0.1 D; 5+: unreplicated
     assert not c.fallback[1:].any()
+    assert c.measured.all()  # the other charges' control counts as measured (HISTORY 130)
     # without charges, or switched off: the run's median
     for off in (fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG),
                 fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
                              ControlConfig(fd_other_charge=False), charges=charges)):
-        assert off.flags[0] == "fd_missing;fd_median"
+        assert off.flags[0] == "fd_missing;fd_median" and not off.measured[0]
         assert off.retention[0] == pytest.approx(np.median([0.52, 0.54, 0.40, 0.70]))
     # a rejected control too, and its fallback flag is replaced
     low = [r if r[:2] != (1, 1e6) else (1, 1e6, 3.0) for r in rows]
@@ -502,7 +503,12 @@ def test_a_missing_or_rejected_control_takes_the_other_charge_states():
                      charges=charges)
     assert c.flags[1] == "m0_unreplicated;retention_low;fd_other_charge"
     assert c.retention[1] == pytest.approx(0.54)  # 5+ only: 3+ has none and 4+ is rejected
-    assert c.retention[0] == pytest.approx(0.54)
+    assert c.retention[0] == pytest.approx(0.54) and c.measured[1]
+    # without a measured undeuterated control the series is not measured
+    no_m0 = [(0, 100.0, 2.0)] + rows[2:]  # 3+: a time point, no controls
+    c = fit_controls(fake_fit(no_m0), np.full(len(no_m0), 10.0), CFG, charges=charges)
+    assert "fd_other_charge" in c.flags[0] and "m0_missing" in c.flags[0]
+    assert not c.measured[0]
     with pytest.raises(ValueError, match="fd_other_charge"):
         ControlConfig(fd_other_charge="yes")
 

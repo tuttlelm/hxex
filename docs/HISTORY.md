@@ -3360,3 +3360,49 @@ CSVs or mzML if wanted.
     series that changes: retention 0.504 -> 0.533, its uptake about 6 % lower, in line with
     its 4+ and 5+. Bundles keep their stored controls until rerun (or recomputed by an
     `[analysis.controls]` table).
+
+130. **Charge state does not change the deuterium level; the private fragment dataset has no
+    fully deuterated control (owner, 2026-10-21).** Owner asked whether the charge state affects
+    back-exchange, using the private fragment dataset (infusions of deuterated peptide diluted
+    into H2O, scan time = exchange time), and what deuteration level its files named "full"
+    have. Every file has MS1 full scans, so all charge states of a parent are recorded in the
+    same scans: a difference between them could only arise in the spray or the gas phase.
+    Measured without a fit or controls (scratch script, kept in the private examples): per MS1
+    scan and charge, the mean mass shift of the intensity at the isotope-peak positions over
+    the envelope's contiguous extent, minus the theoretical shift of the undeuterated ion,
+    / 1.00628. Paired per-scan medians from 20 s on, against each peptide's strongest charge
+    state: 8-mer 2+ - 3+ +0.024 D (levels 0.8 to 3.4 D), 11-mer 2+ - 3+ +0.032 (0.6 to 6.7),
+    12-mer 3+ and 5+ - 4+ +0.03 to +0.05 (0.6 to 3.3, two replicates), 24-mer 3+, 4+, 6+, 7+ -
+    5+ within +-0.03; the end-state runs agree within 0.04 D (the 14-mer is almost all 2+).
+    At most a few hundredths of a deuterium: no charge dependence that matters. In an LC
+    experiment the charge states form after the column, so this supports `fd_other_charge`
+    (item 129; owner: "evidence supporting" the other-charge fallback). Owner then agreed that
+    such a series counts as measured for the back-exchange start of the protection fit. Built:
+    `ControlTable.measured` (own controls measured, or the fully deuterated one from the other
+    charge states with a measured undeuterated one); species column `fd_other_charge` (every
+    fallback behind the species is that one); `_start` fixes fD0 = 1 when the peptide's
+    fallbacks are all of that kind. `control_fallback` stays true for them in every table.
+    A first attempt with a wide centroid window showed 0.4 to 0.6 D offsets between charges:
+    unrelated peaks up to ~37 Da above the monoisotopic peak, an artefact; the stick-based
+    measure removes it (envelope overlays confirmed it). The two "full" files are
+    undeuterated (24-mer 3+ to 6+ -0.04 D, 14-mer 2+ -0.01 D; envelopes match the
+    natural-abundance pattern): protiated MS1 references, never deuterated (owner), not
+    fully deuterated controls. The end-state runs are near 0 D, so an effect proportional to
+    the deuterium present would hardly show there; the kinetics runs (up to 3 to 7 D) bound
+    it at about 1.5 % of the deuterium for the 8- and 11-mers, a few % for the 12-mer. The
+    end-state runs keep 0.13 to 0.35 D, about 1 to 1.5 % of the labile hydrogens (a rough
+    estimate of the D fraction left after the dilution). So this kind of data has no fully
+    deuterated control and no LC back-exchange to correct; the owner suggested analysing the
+    fragments relative to the parent's deuterium content instead (open; ties to the PLAN risk
+    "Back-exchange correction of fragment ions"). Owner: test as close to full deuteration as the data allow,
+    after checking where each kinetics run becomes reliable. Start of a run = the first scan
+    whose strongest charge state has at least 25 % of its run-median signal and whose D does
+    not rise over the next three scans (the first scans are empty or carry ~0.3 D carryover;
+    in one 12-mer run D stays flat for ~20 s while the sample is still mixing). Over the 60 s
+    from the start (up to 86 % of the amides deuterated, the 11-mer): 8-mer 2+ - 3+ +0.034 D
+    (+1.0 %), 11-mer +0.091 D (+1.5 %, larger than over the whole run, so it scales with D),
+    24-mer within about +-1 % (per-scan scatter +-0.2 D). The 12-mer's 4+ is 3.5 to 4.5 %
+    below both its 3+ and 5+, which agree with each other, in both replicates and independent
+    of the 4+ intensity: peaks at half-integer positions under the 4+ envelope (2 to 3 % of its
+    signal) point to an interfering species, not a charge effect. So charge changes the
+    deuterium level by at most about 1.5 % of the deuterium present.

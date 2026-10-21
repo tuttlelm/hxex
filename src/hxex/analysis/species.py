@@ -101,8 +101,11 @@ class SpeciesUptake:
     amides),
     ``n_spectra``, ``n_charges``, ``corrected`` and ``charge_trend``; ``control_fallback``: the
     back-exchange correction of at least one of its spectra used a fallback control (a missing
-    or rejected control, :mod:`hxex.controls`). From a :class:`hxex.analysis.RunSet`: ``runs``
-    (the runs its spectra come from, e.g. ``'A,B'`` for a merged sample; '' for one run),
+    or rejected control, :mod:`hxex.controls`); ``fd_other_charge``: every such fallback was a
+    fully deuterated control taken from the same peptide's other charge states, which counts as
+    measured (:attr:`hxex.controls.ControlTable.measured`). From a
+    :class:`hxex.analysis.RunSet`: ``runs`` (the runs its spectra come from, e.g. ``'A,B'``
+    for a merged sample; '' for one run),
     ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
     systematically; see :func:`species_uptake`); ``best_set_K``, ``best_set``,
     ``best_set_reason`` and ``set_delta_criterion``: the number of populations chosen for the
@@ -138,6 +141,7 @@ class SpeciesUptake:
     runs: np.ndarray | None = None
     n_spectra_by_run: np.ndarray | None = None
     run_offset: np.ndarray | None = None
+    fd_other_charge: np.ndarray | None = None
     rt: np.ndarray | None = None
     role: np.ndarray | None = None
     run: np.ndarray | None = None
@@ -161,6 +165,7 @@ class SpeciesUptake:
                             ("runs", np.full(n, "", dtype=object)),
                             ("n_spectra_by_run", np.full(n, "", dtype=object)),
                             ("run_offset", np.zeros(n, dtype=bool)),
+                            ("fd_other_charge", np.zeros(n, dtype=bool)),
                             ("rt", np.full(n, np.nan)),
                             ("best_set_K", np.zeros(n, dtype=np.int64)),
                             ("best_set", np.zeros(n, dtype=bool)),
@@ -321,7 +326,7 @@ def _site_counts(results) -> np.ndarray:
 def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
-    n_amides, rep, control_fallback, run)`` (run: '' for one run, the run's name in a
+    n_amides, rep, control_fallback, run, not_measured)`` (run: '' for one run, the run's name in a
     :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
     point of a group is a :class:`Point` (``(time, role)``: a time, or a control role).
@@ -368,9 +373,12 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     controls = analysis_controls(results, controls_changes, quiet=quiet)
     n_amides = _site_counts(results)
     fell_back = np.zeros(len(fit), dtype=bool)
+    not_measured = np.zeros(len(fit), dtype=bool)
     if controls is not None:
-        n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
-        fell_back = np.asarray(controls.fallback, dtype=bool)[controls.rows(fit.data_id)]
+        at = controls.rows(fit.data_id)
+        n_amides = np.asarray(controls.n_amides, dtype=float)[at]
+        fell_back = np.asarray(controls.fallback, dtype=bool)[at]
+        not_measured = ~controls.measured[at]
 
     # one record per spectrum and rank, then grouped by species, point (a time, or a control
     # role), K and rank
@@ -419,7 +427,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                 groups.setdefault(key + (r + 1,), []).append((
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
-                    int(binned.rep[j]), bool(fell_back[i]), "",
+                    int(binned.rep[j]), bool(fell_back[i]), "", bool(not_measured[i]),
                 ))
 
     corrected = {("", str(s)): controls is not None for s in np.unique(binned.sample)}
@@ -554,6 +562,7 @@ def species_uptake(
             ("n_spectra_by_run", ",".join(str(sum(r[8] == x for r in recs)) for x in run_names)
              if any(run_names) else ""),
             ("run_offset", False),
+            ("fd_other_charge", any(r[7] for r in recs) and not any(r[9] for r in recs)),
         ):
             cols[name].append(value)
         if len(run_names) > 1:  # each run against the first, at this time
@@ -594,6 +603,7 @@ def species_uptake(
         out[name] = out[name].astype(np.float64)
     out["corrected"] = out["corrected"].astype(bool)
     out["control_fallback"] = out["control_fallback"].astype(bool)
+    out["fd_other_charge"] = out["fd_other_charge"].astype(bool)
     for name in ("runs", "n_spectra_by_run", "role"):
         out[name] = out[name].astype(str)
     out["run"] = out["run"].astype(object)

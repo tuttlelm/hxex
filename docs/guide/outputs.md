@@ -136,7 +136,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 
 | File | Holds |
 |---|---|
-| `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`; and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
+| `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`, `control_fallback` (corrected with a stand-in control), `fd_other_charge` (the only stand-in was a fully deuterated control from the peptide's other charge states, which the protection-factor fit treats as measured); and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution, coverage |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `populations.csv` | per residue and time: the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
