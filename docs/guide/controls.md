@@ -117,10 +117,15 @@ from 0.34 to 0.64 with an 85 % D₂O buffer. A fully deuterated control is rejec
   robust standard deviations below their median (`outlier_sd`). This adapts to your workflow:
   a run with much back-exchange has a low median, and its controls are judged against that.
 
-Its stand-in is the median retention of the run's accepted controls (`fd_median`). With the
-quench conditions given (`quench` in `[run.controls]`) *hxex* instead predicts each peptide's
-retention from its sequence and judges the controls against that prediction (see the
-settings reference, `fd_fallback`).
+Its stand-in is, first, the same peptide's retention at its other charge states in the same
+sample (`fd_other_charge`), when at least one of them has an accepted control: retention
+belongs to the peptide, not to its charge state, and in the B5 tutorial data a peptide's charge
+states agree to within 0.01. Otherwise it is the median retention of the run's accepted
+controls (`fd_median`). With the quench conditions given (`quench` in `[run.controls]`)
+*hxex* instead predicts each peptide's retention from its sequence and judges the controls
+against that prediction (see the settings reference, `fd_fallback`); the other charge states
+still come first. Fragment ions never borrow from other charge states. To turn the first
+step off, set `fd_other_charge = false` in `[run.controls]`.
 
 Two more checks only warn, and the control is still used. They are listed in the
 `control_notes` column of `series.csv`:

@@ -20,7 +20,10 @@ Each control falls back to its theoretical value, and the series is flagged, on 
   ``retention_min``, an outlier below the run's controls (``retention_outlier``,
   ``outlier_sd``; with ``fd_fallback='kint'`` only for the series the prediction cannot judge,
   those without rates: fragment ions and ``Hex`` series, or for every series when the
-  prediction could not be fitted), with ``m0`` as it is used. The fallback
+  prediction could not be fitted), with ``m0`` as it is used. When the same peptide
+  has accepted measured controls at other charge states in the same sample, ``r`` is their
+  mean retention (``fd_other_charge``; ``fd_other_charge = False`` turns it off; not for
+  fragment ions, whose conditions are never pooled). Otherwise the fallback
   retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium fraction of the
   labelling buffer, a user setting) or the median retention of the run's accepted controls
   (``fd_fallback='median'``, the default without ``quench`` conditions; flagged ``fd_median``;
@@ -115,6 +118,11 @@ class ControlConfig:
     - ``sample_tolerance`` (fraction): a measured fully deuterated control whose retention
       differs from the median of the same peptide's controls in the other samples (or
       conditions) by more than this is flagged ``fd_disagrees``, not rejected.
+    - ``fd_other_charge``: a series whose fully deuterated control is missing or rejected
+      takes the mean retention of the same peptide's accepted measured controls at its other
+      charge states in the same sample (flagged ``fd_other_charge``), before ``fd_fallback``:
+      retention is a property of the peptide, not of its charge. Peptides only (not fragment
+      ions), and only with :func:`charge_groups` given to :func:`fit_controls`.
     - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
       the analysis may change it for its own controls (``[analysis.controls]``).
     - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
@@ -143,6 +151,7 @@ class ControlConfig:
     outlier_sd: float = 4.0
     time_course_tolerance: float = 0.1
     sample_tolerance: float = 0.1
+    fd_other_charge: bool = True
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
     quench: ExchangeConditions | None = None
@@ -183,6 +192,8 @@ class ControlConfig:
                                  "serve as the control instead of the marked ones)")
         if not 0 < self.d2o_fraction <= 1:
             raise ValueError("d2o_fraction must be in (0, 1]")
+        if not isinstance(self.fd_other_charge, bool):
+            raise ValueError("fd_other_charge must be true or false")
 
     @property
     def fd_mode(self) -> str:
@@ -401,6 +412,7 @@ def fit_controls(
     rates: Mapping[int, np.ndarray] | None = None,
     rt: Mapping[int, float] | None = None,
     groups: Mapping[int, Any] | None = None,
+    charges: Mapping[int, tuple] | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -414,6 +426,9 @@ def fit_controls(
     that model when at least ``kint_min_series`` of its controls have one. ``groups``
     (``data_id`` -> the molecule a series measures, :func:`series_groups`) compares each fully
     deuterated control with the same molecule's in the other samples (``fd_disagrees``).
+    ``charges`` (``data_id`` -> (the peptide in its sample, charge), :func:`charge_groups`)
+    lets a series without a good fully deuterated control take its other charge states'
+    (``fd_other_charge``).
     """
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
@@ -567,6 +582,8 @@ def fit_controls(
             rated = [i for i in candidates if i not in pending_set
                      and int(series[i]) in rates]
             _reject_outliers(cols, rated, limits, config)
+    if config.fd_other_charge and charges:
+        _other_charge_fallback(cols, series, charges)
     _flag_disagreement(cols, series, groups, config)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
@@ -669,6 +686,70 @@ def series_groups(peptide, modification, charge, data_id) -> dict[int, tuple]:
                             np.asarray(data_id), strict=True):
         out.setdefault(int(d), (str(p), str(mod), int(z)))
     return out
+
+
+def charge_groups(sample, peptide, modification, charge, data_id,
+                  fragments=()) -> dict[int, tuple[tuple, int]]:
+    """``data_id`` -> ((sample, peptide, modification), charge), from per-spectrum arrays: the
+    series with the same first part are one peptide in one sample at different charges, whose
+    fully deuterated controls should agree (``fd_other_charge``). ``undeut_mz``, which differs
+    by charge, is left out of the modification. Fragment ions are left out: the series of
+    ``fragments`` (ids), and every series whose ion type is not ``M``."""
+    from .chem import parse_modification
+
+    skip = {int(d) for d in fragments}
+    out: dict[int, tuple[tuple, int]] = {}
+    for s, p, mod, z, d in zip(np.asarray(sample), np.asarray(peptide),
+                               np.asarray(modification), np.asarray(charge),
+                               np.asarray(data_id), strict=True):
+        d = int(d)
+        if d in skip or d in out or parse_modification(str(mod)).ion_type != "M":
+            continue
+        kept = " ".join(x for x in str(mod).split() if not x.startswith("undeut_mz:"))
+        out[d] = ((str(s), str(p), kept), int(z))
+    return out
+
+
+# the flags of a fully deuterated control that is not used (the series falls back)
+FD_REJECTED = ("fd_missing", "retention_low", "retention_high", "fd_below_data",
+               "retention_outlier", "fd_off_model")
+
+
+def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping) -> None:
+    """Give every series without a good fully deuterated control the mean retention of the
+    same peptide's accepted measured controls at its other charges, in place of the fallback
+    already filled in (``fd_median``, ``fd_kint``, or ``d2o_fraction``)."""
+    def used(i: int) -> bool:
+        return (cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
+                and not set(cols["flags"][i].split(";")) & set(FD_REJECTED))
+
+    members: dict[tuple, list[int]] = {}
+    for i, s in enumerate(series):
+        if int(s) in charges:
+            members.setdefault(charges[int(s)][0], []).append(i)
+    n = 0
+    for rows in members.values():
+        for i in rows:
+            if used(i) or cols["n_amides"][i] <= 0:
+                continue
+            z = charges[int(series[i])][1]
+            donors = [j for j in rows if used(j) and charges[int(series[j])][1] != z]
+            if not donors:
+                continue
+            r = float(np.mean([cols["retention"][j] for j in donors]))
+            se = np.array([cols["mfd_se"][j] / cols["n_amides"][j] for j in donors])
+            n_am, m0 = cols["n_amides"][i], cols["m0"][i]
+            cols["mfd"][i] = m0 + r * n_am
+            cols["mfd_se"][i] = (n_am * float(np.sqrt(np.sum(np.nan_to_num(se) ** 2)))
+                                 / len(donors) if np.isfinite(se).any() else float("nan"))
+            cols["retention"][i] = r
+            cols["flags"][i] = ";".join([*(f for f in cols["flags"][i].split(";")
+                                           if f and f not in ("fd_median", "fd_kint")),
+                                         "fd_other_charge"])
+            n += 1
+    if n:
+        log.info("%d series without a good fully deuterated control take the same peptide's "
+                 "at its other charge states (fd_other_charge)", n)
 
 
 def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,

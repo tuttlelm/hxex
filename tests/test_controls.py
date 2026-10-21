@@ -466,3 +466,52 @@ def test_flags_that_only_warn():
     assert pair.flags.tolist() == ["", ""]  # 0.50 and 0.52 agree
     rows2 = rows[:4] + [(1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 7.0), (1, 1e6, 7.0)]
     assert table(rows2, groups={0: 1, 1: 1}).flags.tolist() == ["fd_disagrees"] * 2
+
+
+def test_a_missing_or_rejected_control_takes_the_other_charge_states():
+    """Retention is the peptide's, not its charge's: a series without a good fully deuterated
+    control takes the mean retention of the same peptide's accepted controls at its other
+    charges in the same sample (fd_other_charge), before the run's median; another sample's
+    or another peptide's controls are not used."""
+    from hxex.controls import charge_groups
+
+    rows = [(0, 0, 0.0), (0, 0, 0.0),  # WT PEP 3+: no fully deuterated control
+            (1, 0, 0.0), (1, 1e6, 5.1), (1, 1e6, 5.3),  # WT PEP 4+: retention 0.52
+            (2, 0, 0.0), (2, 1e6, 5.4),  # WT PEP 5+: 0.54, one replicate
+            (3, 0, 0.0), (3, 1e6, 4.0), (3, 1e6, 4.0),  # D109H PEP 3+: 0.40
+            (4, 0, 0.0), (4, 1e6, 7.0), (4, 1e6, 7.0)]  # WT QQQ 2+: 0.70
+    who = {0: ("WT", "PEP", 3), 1: ("WT", "PEP", 4), 2: ("WT", "PEP", 5),
+           3: ("D109H", "PEP", 3), 4: ("WT", "QQQ", 2)}
+    ids = [r[0] for r in rows]
+    charges = charge_groups([who[d][0] for d in ids], [who[d][1] for d in ids],
+                            ["" for _ in ids], [who[d][2] for d in ids], ids)
+    c = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG, charges=charges)
+    assert c.flags[0] == "fd_missing;fd_other_charge" and c.fallback[0]
+    assert c.retention[0] == pytest.approx(0.53) and c.mfd[0] == pytest.approx(5.3)
+    assert c.mfd_se[0] == pytest.approx(10 * 0.01 / 2)  # 4+: se 0.1 D; 5+: unreplicated
+    assert not c.fallback[1:].any()
+    # without charges, or switched off: the run's median
+    for off in (fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG),
+                fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
+                             ControlConfig(fd_other_charge=False), charges=charges)):
+        assert off.flags[0] == "fd_missing;fd_median"
+        assert off.retention[0] == pytest.approx(np.median([0.52, 0.54, 0.40, 0.70]))
+    # a rejected control too, and its fallback flag is replaced
+    low = [r if r[:2] != (1, 1e6) else (1, 1e6, 3.0) for r in rows]
+    c = fit_controls(fake_fit(low), np.full(len(low), 10.0), ControlConfig(retention_min=0.45),
+                     charges=charges)
+    assert c.flags[1] == "m0_unreplicated;retention_low;fd_other_charge"
+    assert c.retention[1] == pytest.approx(0.54)  # 5+ only: 3+ has none and 4+ is rejected
+    assert c.retention[0] == pytest.approx(0.54)
+    with pytest.raises(ValueError, match="fd_other_charge"):
+        ControlConfig(fd_other_charge="yes")
+
+
+def test_charge_groups_leave_out_fragment_ions_and_the_explicit_mz():
+    from hxex.controls import charge_groups
+
+    got = charge_groups(["WT"] * 5, ["PEP"] * 5,
+                        ["undeut_mz:500.1", "Hex:1 undeut_mz:400.2", "ion_type:c", "",
+                         "undeut_mz:300.0"], [2, 3, 1, 4, 5], [0, 1, 2, 3, 4], fragments=[3])
+    assert got == {0: (("WT", "PEP", ""), 2), 1: (("WT", "PEP", "Hex:1"), 3),
+                   4: (("WT", "PEP", ""), 5)}

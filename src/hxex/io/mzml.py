@@ -1354,6 +1354,15 @@ def envelope_groups(source: Mapping | None) -> dict[int, tuple]:
     return out
 
 
+def fragment_series(source: Mapping | None) -> set[int]:
+    """The series (``data_id``) of a read by :func:`read_mzml` or :func:`hxex.io.read_thermo`
+    that are fragment ions (their target made by :func:`hxex.fragments.fragment_targets`,
+    including the parent-type ions seen in the fragment scans). Empty for other reads."""
+    if not source or source.get("reader") not in SCAN_READERS:
+        return set()
+    return {d for d, t in mzml_series_targets(source).items() if "fragment" in t.entry.extra}
+
+
 def read_mzml_source(
     source: Mapping,
     *,

@@ -3339,3 +3339,24 @@ CSVs or mzML if wanted.
     positions as exact; only 25 of the 121 also pass |delta| / delta_se > 1.96 with their error
     included (owner to revisit; a joint bootstrap of replicates and positions is the other
     option).
+
+129. **A missing fully deuterated control takes the other charge states (owner, 2026-10-21).**
+    Owner asked whether the controls are per peptide and charge (they are: one series is one
+    peptide at one charge in one sample) and whether the tutorial's one series without a fully
+    deuterated control has other charge states. It has: R120G 1-23 at 3+ has no `Full` file,
+    while its 4+ and 5+ have one each (retention 0.533 and 0.533, single replicates); it fell
+    back to the run median, 0.504. The measured charge states of that peptide agree within
+    each sample (WT 0.523/0.517/0.521, D109H 0.509/0.511/0.508). Owner: "let's try
+    fd_other_charge". Built: `[run.controls] fd_other_charge` (default true; also in
+    `[analysis.controls]`): a series whose fully deuterated control is missing or rejected
+    takes the mean retention of the same peptide's accepted measured controls at its other
+    charges in the same sample, with its own m0 (flag `fd_other_charge`, replacing
+    `fd_median` or `fd_kint`; `fallback` stays true; `mfd_se` from the donors' standard
+    errors, NaN when they are all single replicates). It runs after the median or kint
+    fill-in, so the kint fit and the run's limits never see the borrowed values. The peptide
+    is (sample, sequence, modification without `undeut_mz`); fragment ions are left out
+    (their ion type, or `"fragment"` in their scan target: gentle and harsh conditions are
+    never pooled). On the tutorial bundle (recomputed in memory) R120G 1-23 3+ is the only
+    series that changes: retention 0.504 -> 0.533, its uptake about 6 % lower, in line with
+    its 4+ and 5+. Bundles keep their stored controls until rerun (or recomputed by an
+    `[analysis.controls]` table).

@@ -48,6 +48,7 @@ from .controls import (
     ControlConfig,
     ControlTable,
     apply_control_roles,
+    charge_groups,
     fit_controls,
     series_groups,
     series_rates,
@@ -363,13 +364,14 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
-    rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None,
+    rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
     need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
     (:func:`site_counts`); without it they are read back from ``data.n_max`` (rounded; an ion
     without any site then counts one). ``poor_envelope``: the series whose envelope is poor;
-    ``groups``: the molecule of each series (:func:`hxex.controls.series_groups`)."""
+    ``groups``: the molecule of each series (:func:`hxex.controls.series_groups`);
+    ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     fits: list[FitResult] = []
     start_stage(progress, "fit", lo, lo + (hi - lo) * share)
@@ -387,7 +389,7 @@ def _fit_part(
         if n_sites is None:
             n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
-                                groups=groups)
+                                groups=groups, charges=charges)
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
@@ -681,11 +683,16 @@ def run(
     rates = control_rates(picked, config)
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None
     groups = series_groups(picked.peptide, picked.modification, picked.charge, picked.data_id)
+    from .io.mzml import fragment_series
+
+    charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
+                            picked.data_id, fragment_series(None if raw is None else raw.source))
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
-                                             poor_envelope=poor, groups=groups)
+                                             poor_envelope=poor, groups=groups,
+                                             charges=charges)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

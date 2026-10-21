@@ -1298,6 +1298,10 @@ _COMMENTS: dict[str, str] = {
     "run.controls.sample_tolerance": "a fully deuterated control whose retention differs "
                                      "this much from the same peptide's in the other "
                                      "samples is flagged fd_disagrees (still used)",
+    "run.controls.fd_other_charge": "a series without a good fully deuterated control takes "
+                                    "the retention of the same peptide's at its other charge "
+                                    "states in the same sample, before fd_fallback (peptides "
+                                    "only, not fragment ions)",
     "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
