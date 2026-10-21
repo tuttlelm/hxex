@@ -1199,16 +1199,14 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     return rows
 
 
-def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
-              tie: bool = True) -> None:
-    """Add the spectra of every target of this run (:func:`target_applies`) in the open file
-    ``f`` to ``spectra``."""
-    table = f.scans()
+def _plans(table: ScanTable, run: MzmlRun, targets, config: MzmlConfig, tie: bool = True):
+    """Whether each target applies to the run, and the scans of each of its spectra: per
+    target ``(order, groups)`` (positions in ``table`` by scan time, and the groups of them
+    that make one spectrum each) or None (not this run's, or no scans), from the scan table
+    alone."""
     applies = [target_applies(t, run, tie) for t in targets]
     chosen = [target_scans(table, run, t, config) if a else None
               for t, a in zip(targets, applies, strict=True)]
-    # the scans of every spectrum, per target, before anything is read (so that sampling a
-    # large file reads only the scans it keeps)
     plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
     for rows in chosen:
         if rows is None or not len(rows):
@@ -1220,6 +1218,48 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             centre = np.array([table.time[order][g].mean() for g in groups])
             groups = [groups[i] for i in _sample_log(centre, config.max_spectra)]
         plans.append((order, groups))
+    return applies, plans
+
+
+def _scan_text(table: ScanTable, order: np.ndarray, group: np.ndarray) -> str:
+    first, last = table.index[order[group[0]]], table.index[order[group[-1]]]
+    return f"scan{first}" if len(group) == 1 else f"scans{first}-{last}"
+
+
+def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
+                    project: str, config: MzmlConfig, tie: bool = True) -> list[dict]:
+    """The spectra :func:`read_mzml` would make of one run's file, without reading any scan:
+    one mapping per spectrum with the fields of :class:`hxex.exclusions.SpectrumIndex` (the
+    same ids, times and labels as the read)."""
+    _, plans = _plans(table, run, targets, config, tie)
+    rows = []
+    for target, plan in zip(targets, plans, strict=True):
+        if plan is None:
+            continue
+        order, groups = plan
+        entry = target.entry
+        for g in groups:
+            text = _scan_text(table, order, g)
+            time = (run.spectrum_time if run.fixed
+                    else float(np.mean(table.time[order[g]])) + run.time_offset)
+            local = f"{run.sample}/{file_name}/{_target_label(target)}/{text}"
+            rows.append({"spectrum_id": qualify_spectrum_id(project, local),
+                         "sample": run.sample, "start_seq": entry.start_seq,
+                         "end_seq": entry.end_seq, "charge": entry.charge,
+                         "time": float("nan") if time is None else float(time),
+                         "role": run.role, "rep": run.rep, "label": f"{file_name} {text}",
+                         "file": entry.file})
+    return rows
+
+
+def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
+              tie: bool = True) -> None:
+    """Add the spectra of every target of this run (:func:`target_applies`) in the open file
+    ``f`` to ``spectra``."""
+    table = f.scans()
+    # the scans of every spectrum, per target, before anything is read (so that sampling a
+    # large file reads only the scans it keeps)
+    applies, plans = _plans(table, run, targets, config, tie)
     needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
               for i in g}
     if not needed:
@@ -1258,8 +1298,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 mz, y = sum_profile(parts, config.gap_factor)
             order_mz = np.argsort(mz, kind="stable")
             mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
-            first, last = scans[0].index, scans[-1].index
-            scan_text = f"scan{first}" if len(scans) == 1 else f"scans{first}-{last}"
+            scan_text = _scan_text(table, order, g)
             time = (run.spectrum_time if run.fixed
                     else float(np.mean([s.time for s in scans])) + run.time_offset)
             local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"

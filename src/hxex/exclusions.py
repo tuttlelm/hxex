@@ -103,6 +103,79 @@ class Exclusion:
         return cls(**values)
 
 
+@dataclass(frozen=True)
+class SpectrumIndex:
+    """What a rule can match of each spectrum a read would make, without the spectra (for
+    ``hxex check``): ``spectrum_id``, ``sample``, ``start_seq``, ``end_seq``, ``charge``,
+    ``time`` (NaN for a control), ``role``, ``rep``, ``label`` and ``file`` (the entry's file),
+    as on a :class:`~hxex.spectra.SpectrumSet`; built by :func:`hxex.io.spectrum_index` and
+    :func:`hxex.io.mzml.scan_index_rows`."""
+
+    spectrum_id: np.ndarray
+    sample: np.ndarray
+    start_seq: np.ndarray
+    end_seq: np.ndarray
+    charge: np.ndarray
+    time: np.ndarray
+    role: np.ndarray
+    rep: np.ndarray
+    label: np.ndarray
+    file: np.ndarray
+
+    @classmethod
+    def from_rows(cls, rows: Sequence[Mapping]) -> SpectrumIndex:
+        """From one mapping per spectrum with every field."""
+        kinds = {"start_seq": np.int64, "end_seq": np.int64, "charge": np.int64,
+                 "rep": np.int64, "time": float}
+        return cls(**{f.name: np.array([r[f.name] for r in rows],
+                                       dtype=kinds.get(f.name, object))
+                      for f in fields(cls)})
+
+    def select(self, keep) -> SpectrumIndex:
+        keep = np.asarray(keep)
+        return SpectrumIndex(**{f.name: getattr(self, f.name)[keep] for f in fields(self)})
+
+    def __len__(self) -> int:
+        return len(self.spectrum_id)
+
+
+def why_nothing(rule: Exclusion, index, reader: str | None = None) -> str:
+    """For a rule that matches nothing: the keys that alone match nothing, with the values the
+    spectra have (``sample 'wt' (samples: D109H, R120G, WT)``); empty when only the
+    combination of its keys matches nothing."""
+    out = []
+    for key in Exclusion.KEYS:
+        value = getattr(rule, key)
+        if value is None or matches(Exclusion(**{key: value}), index, reader).any():
+            continue
+        if key == "peptide_range":
+            have = sorted({f"{a}-{b}" for a, b in zip(index.start_seq, index.end_seq,
+                                                         strict=True)},
+                          key=lambda t: tuple(int(x) for x in t.split("-")))
+            shown = f"{value[0]}-{value[1]}"
+        elif key == "time":
+            t = np.asarray(index.time, dtype=float)
+            have = [format_time(x) for x in sorted(set(t[np.isfinite(t)].tolist()))]
+            shown = format_time(value)
+        elif key == "file":
+            have = sorted(set(data_file_names(index, reader).tolist()))
+            shown = value
+        elif key == "spectrum_id":
+            out.append(f"no spectrum has the id {value!r}")
+            continue
+        elif key == "role":
+            have = sorted({str(r) for r in index.role if r})
+            shown = value
+        else:
+            have = sorted({v.item() if hasattr(v, "item") else v
+                           for v in np.asarray(getattr(index, key))})
+            shown = value
+        listed = ", ".join(str(h) for h in have[:12]) + (", ..." if len(have) > 12 else "")
+        out.append(f"no spectrum has {key.replace('_', ' ')} {shown!r} "
+                   f"({key.replace('_', ' ')}s: {listed or 'none'})")
+    return "; ".join(out)
+
+
 def read_exclusions(value, where: str) -> tuple[Exclusion, ...]:
     """The rules of ``[[where]]`` (a list of tables, or one table): ValueError naming the rule
     on a mistake."""

@@ -13,7 +13,7 @@ from typing import Literal
 
 from ..chem import DEFAULT_MODIFICATIONS, ModificationRegistry
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from ..spectra import PeptideEntry, Spectrum, SpectrumSet, qualify_spectrum_id
+from ..spectra import PeptideEntry, Spectrum, SpectrumSet, check_role, qualify_spectrum_id
 from .entries import filter_entries
 from .errors import ReadError
 from .hxexpress import read_hxexpress_file, scan_hxexpress
@@ -100,6 +100,54 @@ def read_spectra(
                  recorded_dir=str(root) if record_paths == "path" else root.name,
                  record_paths=record_paths, known=None, on_change="warn", progress=progress,
                  cancel=cancel)
+
+
+def spectrum_index(
+    entries: Sequence[PeptideEntry],
+    data_dir: str | Path,
+    fmt: Format,
+    *,
+    project: str,
+    samples: Sequence[str] | None = None,
+    peptide_ranges: Sequence[str] | None = None,
+    peptide_region: Sequence[int] | None = None,
+):
+    """The spectra :func:`read_spectra` would make, without reading them
+    (:class:`hxex.exclusions.SpectrumIndex`): SpecExport and pooled folders from their file
+    names, HX-Express files from their first row. The same entries, filters, ids and order as
+    the read; raises :class:`ReadError` where it would."""
+    from ..exclusions import SpectrumIndex
+    from .hxexpress import hxexpress_columns, read_hxexpress_header
+    from .specexport import specexport_points
+
+    root = Path(data_dir)
+    kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
+                          peptide_region=peptide_region)
+    rows = []
+    for entry in kept:
+        rel = _input_path(fmt, entry)
+        if not (root / rel).exists():
+            raise ReadError(f"{root / rel} not found (give the directory that holds the data)")
+        common = {"sample": entry.sample, "start_seq": entry.start_seq,
+                  "end_seq": entry.end_seq, "charge": entry.charge, "file": entry.file}
+        if fmt == "hxexpress":
+            for col, label, time, role, rep in hxexpress_columns(
+                    read_hxexpress_header(root / rel), root / rel):
+                rows.append({**common, "time": _time(time), "role": check_role(role),
+                             "rep": rep, "label": label,
+                             "spectrum_id": qualify_spectrum_id(project,
+                                                                f"{entry.file}#{col + 1}")})
+        else:
+            for time, role, rep, path in specexport_points(root / rel, entry):
+                rows.append({**common, "time": _time(time), "role": check_role(role),
+                             "rep": rep, "label": path.name,
+                             "spectrum_id": qualify_spectrum_id(project,
+                                                                f"{rel}/{path.name}")})
+    return SpectrumIndex.from_rows(rows)
+
+
+def _time(time) -> float:
+    return float("nan") if time is None else float(time)
 
 
 def _input_path(fmt: str, entry: PeptideEntry) -> str:

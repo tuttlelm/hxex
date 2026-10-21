@@ -943,3 +943,28 @@ def test_targets_are_read_from_the_runs_of_their_sample(tmp_path):
     old = {k: v for k, v in tied.source.items() if k != SAMPLES_TIE}
     assert set(read_mzml_source(old).sample) == {"WT", "M"}
     assert len(read_mzml_source(tied.source)) == 3
+
+
+def test_the_scan_index_is_what_the_read_makes(tmp_path):
+    """hxex check counts exclusion matches on the spectra the read would make, from the scan
+    table alone: the same ids, times, roles and labels, also when scans are grouped."""
+    from hxex.exclusions import SpectrumIndex
+    from hxex.io.mzml import MzmlFile, scan_index_rows
+
+    kin = write_mzml(tmp_path / "c.mzML", time_course(n=6, ms2_every=2))
+    un = write_mzml(tmp_path / "un.mzML", time_course(n=2, ms2_every=2))
+    runs = [MzmlRun(un, "WT", role="undeut"), MzmlRun(kin, "WT", rep=1, time_offset=5.0)]
+    target = MzmlTarget(ENTRY)
+    for config in (MzmlConfig(), MzmlConfig(group="every", every=4),
+                   MzmlConfig(min_time=50.0, max_spectra=3)):
+        read = read_mzml(runs, [target], project="p", config=config)
+        rows = []
+        for run in runs:
+            with MzmlFile(run.path) as f:
+                rows += scan_index_rows(f.scans(), run.path.name, run, [target], project="p",
+                                        config=config)
+        index = SpectrumIndex.from_rows(rows)
+        assert list(index.spectrum_id) == list(read.spectrum_id)
+        for name in ("sample", "charge", "role", "rep", "label"):
+            assert list(getattr(index, name)) == list(getattr(read, name)), name
+        np.testing.assert_allclose(index.time, read.time)

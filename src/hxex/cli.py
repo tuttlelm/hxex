@@ -301,8 +301,25 @@ def cmd_check(args) -> int:
             if not entries:
                 problems.append(f"no spectra of format {inp.format} in {inp.data_dir}")
             problems += _check_peptides(project, entries)
+            if not problems and _has_rules(project):
+                from .io import ReadError, spectrum_index
+
+                try:
+                    index = spectrum_index(
+                        entries, inp.data_dir, inp.format, project=project.project,
+                        samples=inp.samples, peptide_ranges=inp.peptide_ranges,
+                        peptide_region=inp.peptide_region)
+                except ReadError as exc:
+                    problems.append(str(exc))
+                else:
+                    problems += _check_exclusions(project, index, inp.format)
     else:
-        problems += _check_scan_files(project)
+        rows: list[dict] = []
+        problems += _check_scan_files(project, rows)
+        if not problems and _has_rules(project):
+            from .exclusions import SpectrumIndex
+
+            problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     out = project.output
@@ -318,6 +335,52 @@ def cmd_check(args) -> int:
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _has_rules(project) -> bool:
+    """Whether the project has exclusion rules for ``hxex check`` to count."""
+    return bool(project.input.exclude or _view_exclude(project))
+
+
+def _check_exclusions(project, index, reader: str) -> list[str]:
+    """Count the spectra each exclusion rule matches among those the read would make
+    (``index``, :class:`hxex.exclusions.SpectrumIndex`; the control roles of ``undeut_at`` and
+    ``fulldeut_at`` applied first, as the run does): one line per rule, and a problem for each
+    rule that matches nothing. ``[[review.exclude]]`` rules count among the spectra the
+    ``[[input.exclude]]`` rules leave."""
+    import dataclasses
+
+    from .controls import apply_control_roles
+    from .exclusions import matches, why_nothing
+
+    controls = project.run.controls
+    if controls is not None and (controls.undeut_at is not None
+                                 or controls.fulldeut_at is not None):
+        try:
+            role = apply_control_roles(index.role, index.time, controls,
+                                       where="[run.controls]")
+        except ValueError as exc:
+            return [str(exc)]
+        index = dataclasses.replace(index, role=role.astype(object))
+    problems = []
+    left = np.ones(len(index), dtype=bool)
+    for where, rules, within in (("input.exclude", project.input.exclude, None),
+                                 ("review.exclude", _view_exclude(project), left)):
+        for i, rule in enumerate(rules, start=1):
+            hit = matches(rule, index, reader)
+            if within is not None:
+                hit &= within
+            n = int(hit.sum())
+            if where == "input.exclude":
+                left &= ~hit
+            text = f"[[{where}]] #{i} ({rule.describe()})"
+            if n:
+                _say(f"{'matched':14s} {text}: {n} of {len(index)} spectra")
+                continue
+            why = why_nothing(rule, index, reader) or (
+                "each key matches some spectrum, but no spectrum matches them all")
+            problems.append(f"{text} matches no spectrum: {why}")
+    return problems
 
 
 def _check_peptides(project, entries) -> list[str]:
@@ -355,8 +418,10 @@ def _instrument_text(record: dict, picker) -> str:
     return "; ".join(parts)
 
 
-def _check_scan_files(project) -> list[str]:
-    """List each run's scans per target; the problems found."""
+def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
+    """List each run's scans per target; the problems found. ``index_rows`` (a list) receives
+    the spectra the read would make (:func:`hxex.io.mzml.scan_index_rows`), for the exclusion
+    counts."""
     from .config import fragment_parent_problems, scan_targets
     from .io import read_peptide_table
     from .io.entries import SCAN_REQUIRED
@@ -364,6 +429,7 @@ def _check_scan_files(project) -> list[str]:
         MzmlFile,
         _target_label,
         instrument_record,
+        scan_index_rows,
         target_applies,
         target_scans,
     )
@@ -399,6 +465,9 @@ def _check_scan_files(project) -> list[str]:
             mine = [t for t in targets if target_applies(t, run)]  # its sample's, and blank
             counts = [len(target_scans(table, run, t, inp.scans)) for t in mine]
             instrument = instrument_record(f)
+            if index_rows is not None and _has_rules(project):
+                index_rows += scan_index_rows(table, path.name, run, targets,
+                                              project=project.project, config=inp.scans)
         none = [_target_label(t) for t, n in zip(mine, counts, strict=True) if n == 0]
         _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {_run_time_text(run)}, "
              f"{len(table)} scans; {len(mine) - len(none)} of {len(mine)} targets have "

@@ -214,8 +214,10 @@ without deleting anything and without Python, both before fitting and after it. 
   apply it).
 - **The review layer stays**: per-spectrum decisions stored in the bundle (Python today). Both
   apply; a spectrum the review accepts but a rule excludes is excluded.
-- `hxex check` lists the rules (it reads no spectra, so it cannot count them for the folder
-  formats); the run logs the count of each rule.
+- `hxex check` lists the rules and counts what each matches among the spectra the read would
+  make, without reading them (file names, HX-Express header rows, scan tables); a rule that
+  matches nothing fails the check (owner, 2026-10-21, HISTORY 133). The run logs the counts
+  again.
 
 ## Sequence syntax and PTMs
 

@@ -97,10 +97,27 @@ still works, with a message suggesting the new one.)
 
 ## Checking your rules
 
-`hxex check hxex.toml` lists the rules, so you can see that they read as you meant. When the
-run or the analysis applies them, *hxex* reports how many spectra each rule left out. A rule
-that matches no spectrum at all gets a warning: usually a misspelt sample name, or a time or
-range written differently from the data.
+`hxex check hxex.toml` lists the rules, so you can see that they read as you meant, and counts
+the spectra each rule matches, from the file names and the scan tables (no spectrum is read):
+
+```
+matched        [[input.exclude]] #1 (sample WT, peptide range 1-23, time 100 ms): 10 of 5261 spectra
+matched        [[review.exclude]] #1 (sample R120G, rep 3): 319 of 5261 spectra
+```
+
+A rule that matches no spectrum at all is a problem: the check fails and says which value no
+spectrum has, with the values the data do have, as for a peptide range written differently
+from the data:
+
+```
+[[input.exclude]] #2 (sample WT, peptide range 1-24) matches no spectrum: no spectrum has
+peptide range '1-24' (peptide ranges: 1-9, 1-11, 1-13, 1-23, 2-23, ...)
+```
+
+`[[review.exclude]]` rules are counted among the spectra the `[[input.exclude]]` rules leave.
+When the run or the analysis applies the rules, *hxex* reports the counts again (a rule that
+matches nothing there is a warning). A project that reads stored spectra (`--spectra`) is not
+counted by `hxex check`.
 
 ## Reviewing single spectra
 

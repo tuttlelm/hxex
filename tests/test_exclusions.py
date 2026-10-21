@@ -58,8 +58,12 @@ def test_input_exclusions_are_stored_not_fitted_and_recorded(tmp_path, capsys):
                     '[[input.exclude]]\nsample = "nobody"\n\n[output]')
     path.write_text(text)
     capsys.readouterr()
-    assert cli.main(["check", str(path)]) == 0
-    assert "2 rule(s), left out before fitting" in capsys.readouterr().out
+    # hxex check counts each rule, and the one that matches nothing fails it (HISTORY 133)
+    assert cli.main(["check", str(path)]) == 1
+    out, err = capsys.readouterr()
+    assert "2 rule(s), left out before fitting" in out
+    assert "[[input.exclude]] #1 (spectrum id " in out and "(a bad scan)): 1 of 6 spectra" in out
+    assert "#2 (sample nobody) matches no spectrum: no spectrum has sample 'nobody'" in err
     assert cli.main(["run", str(path)]) == 0
     err = capsys.readouterr().err
     assert "matches no spectrum" in err  # the rule for sample "nobody"

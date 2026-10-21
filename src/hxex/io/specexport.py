@@ -109,23 +109,11 @@ def _read_two_columns(path: Path) -> tuple[list[float | None], list[float | None
     return mz, intensity
 
 
-def read_specexport_dir(
-    spec_dir: str | Path,
-    entry: PeptideEntry,
-    *,
-    data_id: int = 0,
-    id_prefix: str | None = None,
-) -> list[Spectrum]:
-    """Read every spectrum of ``entry``'s charge in one peptide directory.
-
-    ``Non`` files are the undeuterated controls and ``Full`` files the fully deuterated ones
-    (the role set, no time; :func:`parse_specexport_token`). Spectra are ordered by point
-    (the undeuterated control, the times, the fully deuterated control), then replicate, then
-    file name. ``spectrum_id`` is ``id_prefix/FILE``, with ``id_prefix`` defaulting to
-    ``SAMPLE/PEPTIDE_DIR``.
-    """
-    if id_prefix is None:
-        id_prefix = f"{entry.sample}/{entry.file}"
+def specexport_points(spec_dir: str | Path, entry: PeptideEntry) -> list[tuple]:
+    """The spectrum files of ``entry``'s charge in one peptide directory, as
+    ``(time, role, rep, path)`` in the order :func:`read_specexport_dir` reads them, from the
+    file names alone (no file is opened). Raises :class:`ReadError` as the read does: no file
+    for the charge, or two files for one point and replicate."""
     spec_dir = Path(spec_dir)
     found = []
     for path in spec_dir.glob("*.csv"):
@@ -145,8 +133,28 @@ def read_specexport_dir(
             raise ReadError(
                 f"{spec_dir}: {other.name} and {path.name} are both replicate {rep} at "
                 f"{role or format_time(time)} for charge {entry.charge}; rename or remove one")
+    return sorted(found, key=lambda t: _point_order(t))
+
+
+def read_specexport_dir(
+    spec_dir: str | Path,
+    entry: PeptideEntry,
+    *,
+    data_id: int = 0,
+    id_prefix: str | None = None,
+) -> list[Spectrum]:
+    """Read every spectrum of ``entry``'s charge in one peptide directory.
+
+    ``Non`` files are the undeuterated controls and ``Full`` files the fully deuterated ones
+    (the role set, no time; :func:`parse_specexport_token`). Spectra are ordered by point
+    (the undeuterated control, the times, the fully deuterated control), then replicate, then
+    file name. ``spectrum_id`` is ``id_prefix/FILE``, with ``id_prefix`` defaulting to
+    ``SAMPLE/PEPTIDE_DIR``.
+    """
+    if id_prefix is None:
+        id_prefix = f"{entry.sample}/{entry.file}"
     spectra = []
-    for time, role, rep, path in sorted(found, key=lambda t: _point_order(t)):
+    for time, role, rep, path in specexport_points(spec_dir, entry):
         mz, intensity = clean_spectrum(*_read_two_columns(path))
         spectra.append(
             Spectrum(

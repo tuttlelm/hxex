@@ -1113,3 +1113,52 @@ d2o_fraction = 0.85
     assert set(files) == {"analysis_settings_used.toml", "run_settings_used_A.toml"}
     assert "run A (created 2026-10-20T00:00:00+00:00 by hxex 0)" in \
         files["analysis_settings_used.toml"].replace("\n# ", " ")
+
+
+def test_check_counts_what_each_exclusion_rule_matches(tmp_path, capsys):
+    """hxex check counts each rule's spectra among those the read would make (from the file
+    names; nothing is read), and a rule that matches nothing fails the check, saying which of
+    its values no spectrum has."""
+    data = tmp_path / "d"
+    pep = data / "WT" / f"0001-0010-{PEPTIDE}"
+    pep.mkdir(parents=True)
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    for name in ("Non-D-1-z2.csv", "Non-D-2-z2.csv", "Full-D-1-z2.csv", "60s-1-z2.csv",
+                 "60s-2-z2.csv", "20h-1-z2.csv"):
+        (pep / name).write_text("")
+    head = 'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+    rules = ('[[input.exclude]]\nsample = "WT"\npeptide_range = "1-10"\ntime = "60 s"\nrep = 2\n'
+             '[[review.exclude]]\nrep = 2\n')
+    path = tmp_path / "hxex.toml"
+    path.write_text(head + rules + '[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert ("[[input.exclude]] #1 (sample WT, peptide range 1-10, time 1 min, rep 2): 1 of 6 "
+            "spectra") in out
+    # the review rule counts among the spectra the input rules leave: Non-D-2 only
+    assert "[[review.exclude]] #1 (rep 2): 1 of 6 spectra" in out
+    # a mistyped value: a problem naming the values the spectra have
+    path.write_text(head + '[[input.exclude]]\nsample = "wt"\ncharge = 2\n'
+                    '[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "matches no spectrum: no spectrum has sample 'wt' (samples: WT)" in err
+    # each key matches something, the combination nothing
+    path.write_text(head + '[[input.exclude]]\nrole = "fulldeut"\nrep = 2\n'
+                    '[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 1
+    assert "no spectrum matches them all" in capsys.readouterr().err
+    # a time point promoted to a control matches a role rule, as in the run
+    path.write_text(head + '[[input.exclude]]\nrole = "fulldeut"\nrep = 1\n'
+                    '[output]\nbundle = "out"\n[run.controls]\nfulldeut_at = "20 h"\n')
+    assert cli.main(["check", str(path)]) == 0
+    assert "(role fulldeut, rep 1): 2 of 6 spectra" in capsys.readouterr().out
+
+
+def test_check_counts_exclusions_of_scan_files(tmp_path, capsys):
+    path = mzml_project(tmp_path, extra_input='[[input.exclude]]\nsample = "WT"\ntime = 30\n'
+                                              '[[input.exclude]]\nsample = "KO"\n')
+    assert cli.main(["check", str(path)]) == 1
+    out, err = capsys.readouterr()
+    assert "[[input.exclude]] #1 (sample WT, time 30 s): 1 of 6 spectra" in out
+    assert "#2 (sample KO) matches no spectrum: no spectrum has sample 'KO' (samples: WT)" in err

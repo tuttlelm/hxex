@@ -886,3 +886,28 @@ def test_peptides_are_selected_by_their_residues(tmp_path):
         project_from(tomllib.loads('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n'
                                    'peptide_region = [1, 5]\n[[input.runs]]\npath = "a"\n'
                                    'sample = "S"\n'), tmp_path)
+
+
+# --- the spectra a read would make, without reading them (hxex check) -------------------------
+
+def same_index(index, spectra):
+    """``index`` (SpectrumIndex) lists the spectra of ``spectra`` (SpectrumSet), in order."""
+    assert list(index.spectrum_id) == list(spectra.spectrum_id)
+    for name in ("sample", "start_seq", "end_seq", "charge", "role", "rep", "label"):
+        assert list(getattr(index, name)) == list(getattr(spectra, name)), name
+    np.testing.assert_array_equal(index.time, spectra.time)
+
+
+def test_the_spectrum_index_is_what_the_read_makes(hxdir, specroot):
+    entries = hio.scan(hxdir, "hxexpress")
+    same_index(hio.spectrum_index(entries, hxdir, "hxexpress", project="proj"),
+               hio.read_spectra(entries, hxdir, "hxexpress", project="proj"))
+    same_index(hio.spectrum_index(entries, hxdir, "hxexpress", project="proj", samples=["B"]),
+               hio.read_spectra(entries, hxdir, "hxexpress", project="proj", samples=["B"]))
+    entries = hio.scan(specroot, "specexport")
+    same_index(hio.spectrum_index(entries, specroot, "specexport", project="proj"),
+               hio.read_spectra(entries, specroot, "specexport", project="proj"))
+    # the read's errors: two files for one point and replicate
+    write_spec(specroot / "S1" / "0002-0005-KVLA" / "1m-1-z2.csv", [(300.5, 7)])
+    with pytest.raises(hio.ReadError, match="both replicate 1"):
+        hio.spectrum_index(entries, specroot, "specexport", project="proj")

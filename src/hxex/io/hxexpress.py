@@ -100,6 +100,54 @@ def _read_rows(path: Path) -> list[tuple]:
     raise ReadError(f"{path}: unsupported file type {suffix!r} (use .xlsx or .csv)")
 
 
+def read_hxexpress_header(path: str | Path) -> tuple:
+    """The first row of an HX-Express file (its labels), without reading the spectra."""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".xlsx":
+            from openpyxl import load_workbook
+
+            wb = load_workbook(path, read_only=True, data_only=True)
+            try:
+                rows = wb.worksheets[0].iter_rows(max_row=1, values_only=True)
+                return tuple(next(rows, ()))
+            finally:
+                wb.close()
+        if suffix == ".csv":
+            with path.open(newline="", encoding="utf-8-sig") as fh:
+                return tuple(next(csv.reader(fh), ()))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReadError(f"cannot read {path}: {exc}") from exc
+    except Exception as exc:  # openpyxl raises many types for damaged files
+        raise ReadError(f"cannot read {path}: {exc}") from exc
+    raise ReadError(f"{path}: unsupported file type {suffix!r} (use .xlsx or .csv)")
+
+
+def hxexpress_columns(header: tuple, path: Path) -> list[tuple]:
+    """The spectra of an HX-Express file from its first row: ``(column, label, time, role,
+    rep)`` in column order, as :func:`read_hxexpress_file` reads them (``rep`` counts the
+    spectra at the same point so far)."""
+    labelled = [
+        (col, str(cell).strip())
+        for col, cell in enumerate(header)
+        if cell is not None and str(cell).strip() not in ("", "nan")
+    ]
+    if not labelled:
+        raise ReadError(f"{path}: first row has no time labels")
+    seen: Counter[str] = Counter()
+    out = []
+    for col, label in labelled:
+        try:
+            time, role = parse_hxexpress_label(label)
+        except ReadError as exc:
+            raise ReadError(f"{path}, column {col + 1}: {exc}") from exc
+        point = str(time_point([time], [role])[0])
+        seen[point] += 1
+        out.append((col, label, time, role, seen[point]))
+    return out
+
+
 def read_hxexpress_file(
     path: str | Path,
     entry: PeptideEntry,
@@ -116,23 +164,8 @@ def read_hxexpress_file(
     rows = _read_rows(path)
     if not rows:
         raise ReadError(f"{path}: file is empty")
-    header = rows[0]
-    labelled = [
-        (col, str(cell).strip())
-        for col, cell in enumerate(header)
-        if cell is not None and str(cell).strip() not in ("", "nan")
-    ]
-    if not labelled:
-        raise ReadError(f"{path}: first row has no time labels")
-    seen: Counter[str] = Counter()
     spectra = []
-    for col, label in labelled:
-        try:
-            time, role = parse_hxexpress_label(label)
-        except ReadError as exc:
-            raise ReadError(f"{path}, column {col + 1}: {exc}") from exc
-        point = str(time_point([time], [role])[0])
-        seen[point] += 1
+    for col, label, time, role, rep in hxexpress_columns(rows[0], path):
         mz_col = [r[col] if col < len(r) else None for r in rows[1:]]
         in_col = [r[col + 1] if col + 1 < len(r) else None for r in rows[1:]]
         where = f"{path.name}, label {label!r}"
@@ -141,7 +174,7 @@ def read_hxexpress_file(
         )
         spectra.append(
             Spectrum(
-                mz, intensity, entry, time, seen[point],
+                mz, intensity, entry, time, rep,
                 data_id=data_id, label=label, spectrum_id=f"{entry.file}#{col + 1}", role=role,
             )
         )

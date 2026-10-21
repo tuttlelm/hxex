@@ -3441,3 +3441,30 @@ CSVs or mzML if wanted.
     figures draw them uncorrected (a forced `corrected = true` skips them instead of failing).
     Bundles keep their stored controls until rerun or recomputed. The guide's controls page
     now lists the order of the values as numbered steps.
+
+132. **A modified peptide in a project with fragment ions stays refused (owner, 2026-10-21).**
+    Since b329373 a peptide-table row with a `modification` is refused in any project with
+    `[[input.fragments]]` (one row is both the peptide and the fragments' parent), and `hxex
+    check` lists every such row. The alternative, reading the peptide at MS1 and skipping only
+    its fragments, was left open; owner: keep the refusal, since its message says how to work
+    around it (modified residues as modX labels in the sequence, or two projects: one without
+    `[[input.fragments]]` for the MS1 spectra, one with the unmodified peptide for the
+    fragments; guide inputs.md says the same).
+
+133. **`hxex check` counts what each exclusion rule matches (owner, 2026-10-21).** Item 116
+    left the counts to the run (`hxex check` read no spectra), so a mistyped rule (a range or
+    sample written differently from the data) was found only after the fit. Owner: count them
+    in the check, and a rule that matches nothing fails it. Built without reading any spectrum:
+    `io.spectrum_index` gives the spectra a folder read would make (SpecExport and pooled from
+    the file names, `specexport_points`, now shared with `read_specexport_dir`; HX-Express
+    from each file's first row, `read_hxexpress_header` and `hxexpress_columns`, shared with
+    `read_hxexpress_file`), and `io.mzml.scan_index_rows` those of a scan file from its scan
+    table (`_plans`, the planning step of `_read_run`, so kinetics grouping, `min_time`,
+    `usable_from` and `max_spectra` are the read's). Tests compare both with the reads (ids,
+    times, roles, replicates, labels). `hxex check` applies the `undeut_at`/`fulldeut_at`
+    roles first, as the run does, then prints one `matched` line per rule (`N of M spectra`;
+    `[[review.exclude]]` rules among the spectra the input rules leave) and makes a rule that
+    matches nothing a problem, naming each value no spectrum has with the values present
+    (`exclusions.why_nothing`), or saying that only the combination matches nothing. A
+    project reading stored spectra is not counted. The published B5 folder (5,261 spectra):
+    2.6 s.
