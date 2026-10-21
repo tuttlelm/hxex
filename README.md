@@ -73,7 +73,8 @@ control). A control carries no time in the tables and figures. `[run.controls]` 
 back-exchange correction on; `undeut_at` and `fulldeut_at` there make the spectra at a time
 serve as a control too (a plateaued late point as the fully deuterated reference). Replicate
 controls are averaged, and a series whose control is missing or fails the limits falls back to
-a theoretical value and is flagged (`control_fallback` in the tables). `hxex check` counts the
+the median retention of the run's accepted controls and is flagged (`control_fallback` in the
+tables). `hxex check` counts the
 control files per sample and names each scan-format run's role; `hxex info` counts the control
 spectra of a bundle. `[input] time_scale = "order"` says the times only order the points
 (dummy labels such as 1, 2, 3): the uptake is then drawn by index, and the kinetics and

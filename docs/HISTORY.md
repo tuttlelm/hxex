@@ -3228,3 +3228,43 @@ CSVs or mzML if wanted.
     `best_set_K`, `best_set`, `best_set_reason`, `set_delta_criterion`. Nothing else uses it
     yet (the comparisons stay at K = 1; open, to decide on real data). docs/ANALYSIS.md has
     the design.
+
+126. **Judging the controls without a fixed floor; the median as the default fallback (owner,
+    2026-10-20).** Found while planning the tutorial (published B5 data, the 0.1 s and 0.8 s
+    points excluded, 3,874 spectra, 85 % D2O): 19 of 195 fully deuterated controls were
+    rejected (`retention_low`) at 0.34 to 0.42, just under the default floor (half of
+    `d2o_fraction`, 0.425), and replaced by `d2o_fraction` (0.85), about 1.7 times the
+    accepted median (0.51). They were real: the same peptide and charge agree across the three
+    samples to 0.015 in retention (median; 0.044 at most), while peptides range from 0.34 to
+    0.64, so retention belongs to the peptide (sequence, time on the column) and to the
+    workflow, not to noise; no fully deuterated control was below its 20 h point by more than
+    0.37 D (median 0.63 D above). Owner: the fallback default is the median retention of the
+    run's accepted controls (`fd_fallback` unset: `kint` with quench conditions, else
+    `median`; before, `d2o`), and the floor should change; on my recommendation, built:
+    without a set `retention_min` there is no fixed floor. A fully deuterated control is
+    rejected when its retention is 0 or less or above `retention_max`, when it is below the
+    highest time point of its series by more than `time_course_tolerance` (0.1 D per amide;
+    `fd_below_data`, the under-deuteration check, which needs no assumption and holds for
+    either labelling direction), or when it is more than `outlier_sd` (4) robust standard
+    deviations below the median of the run's controls (`retention_outlier`; from at least
+    five controls; with `kint` only for the series without rates, or for all when the model
+    could not be fitted, replacing the old `d2o_fraction / 2` floor there). Each time point
+    counts by the median of its replicates (one bad replicate does not decide). An
+    undeuterated control above the lowest time point is only flagged (`data_below_m0`): owner
+    pointed out that the fastest time points are the hardest to measure, so when they
+    disagree the time point is suspect, not the control, which `m0_max` already judges on an
+    absolute scale (a first version rejected the control, `m0_above_data`). Flags that only
+    warn: `fd_disagrees` (retention more than `sample_tolerance`, 0.1, from the group median
+    of the same peptide, modification and charge in the other samples or conditions; from
+    the other one in a pair; `series_groups`) and `fd_multimodal` / `m0_multimodal` (most of
+    the control's replicates chose K above 1), and `data_below_m0`. The run's limit is stored with the controls
+    (`ControlTable.limits`, JSON metadata `limits`; old bundles have none and the overview
+    then draws their old floor). `series.csv` gains `control_notes`; the overview shows only
+    the reasons that occurred and the warnings in grey. On the tutorial data: all 194
+    measured controls accepted, limit 0.25 (median 0.50, robust sd 0.065), one series without
+    a fully deuterated control at the median; no `fd_disagrees`; `fd_multimodal` and
+    `m0_multimodal` on 13 and 14 series (the broad-envelope peptides, where every replicate
+    chooses two populations; with "any replicate" it was 42 series, too many to be useful).
+    Noise estimated from the replicates (`estimate = "replicates"`) was also tried there: it
+    doubled the spectra choosing K = 2, controls included, so the tutorial keeps the default
+    noise. Open (PLAN Next steps 8): whether retention also depends on the charge state.

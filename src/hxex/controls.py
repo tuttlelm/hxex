@@ -13,16 +13,19 @@ spectrum has ``m0`` near 0, and the centre of the raw envelope must not be used 
 Each control falls back to its theoretical value, and the series is flagged, on its own:
 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
-- ``mFD`` falls back to ``m0 + r * n_amides`` when it is missing (``fd_missing``) or when the
-  retention ``(mFD - m0) / n_amides`` is below ``retention_min`` (``retention_low``; by default
-  half of ``d2o_fraction``, also with ``fd_fallback='kint'`` for the series the prediction
-  cannot judge, those without rates: fragment ions and ``Hex`` series; a retention of 0 or
-  less is always rejected, whatever the floor) or
-  above ``retention_max`` (``retention_high``), with ``m0`` as it is used. The fallback
+- ``mFD`` falls back to ``m0 + r * n_amides`` when it is missing (``fd_missing``), when the
+  retention ``(mFD - m0) / n_amides`` is 0 or less or below a set ``retention_min``
+  (``retention_low``), above ``retention_max`` (``retention_high``), below the highest time
+  point of its series (``fd_below_data``, beyond ``time_course_tolerance``), or, without a set
+  ``retention_min``, an outlier below the run's controls (``retention_outlier``,
+  ``outlier_sd``; with ``fd_fallback='kint'`` only for the series the prediction cannot judge,
+  those without rates: fragment ions and ``Hex`` series, or for every series when the
+  prediction could not be fitted), with ``m0`` as it is used. The fallback
   retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium fraction of the
   labelling buffer, a user setting) or the median retention of the run's accepted controls
-  (``fd_fallback='median'``; flagged ``fd_median``), which includes the back-exchange the
-  buffer's fraction does not.
+  (``fd_fallback='median'``, the default without ``quench`` conditions; flagged ``fd_median``;
+  ``d2o_fraction`` when no control is accepted), which includes the back-exchange the buffer's
+  fraction does not.
 
 With ``fd_fallback='kint'`` (the default when the ``quench`` conditions are given, which it
 needs) the fully deuterated value comes from theoretical back-exchange instead: every amide of
@@ -43,7 +46,13 @@ series without one is taken at the median RT of those that have one.
 The fitted model is :attr:`ControlTable.fd_model`.
 
 A measured control with a single replicate has no uncertainty (flagged ``m0_unreplicated`` or
-``fd_unreplicated``); a theoretical value is exact. The corrected mean of a population is
+``fd_unreplicated``); a theoretical value is exact. Two flags only warn and leave the control
+in use: ``fd_disagrees`` (its retention differs from the same peptide's in the other samples
+by more than ``sample_tolerance``; :func:`series_groups`) and ``fd_multimodal`` or
+``m0_multimodal`` (most of a control's replicate spectra chose more than one population: an
+incompletely deuterated or a mixed sample), and ``data_below_m0`` (a time point of the series
+reads below its undeuterated control by more than ``time_course_tolerance``: that time point
+is suspect). The corrected mean of a population is
 ``(mean - m0) / (mFD - m0) * n_amides``, not below 0 (:func:`correct_means`); the uncertainty of
 the controls is added to the uncertainty of the mean.
 """
@@ -66,6 +75,8 @@ from .spectra import FULLDEUT, UNDEUT, time_point
 log = logging.getLogger(__name__)
 
 FD_FALLBACKS = ("d2o", "median", "kint")
+# flags that only warn (the control stays in use)
+CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0")
 
 
 @dataclass(frozen=True)
@@ -86,15 +97,31 @@ class ControlConfig:
       course). Those spectra stay fitted and keep their role in the tables.
     - ``m0_max`` (deuterons): the largest mean of a good undeuterated control.
     - ``retention_min``, ``retention_max`` (fractions): the range of a good fully deuterated
-      control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) is half
-      of ``d2o_fraction``, or no floor with ``fd_fallback = 'kint'`` (:attr:`min_retention`).
+      control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) sets
+      no fixed floor: a control is then judged against the run (``outlier_sd``) or, with
+      ``fd_fallback = 'kint'``, against the prediction.
+    - ``outlier_sd``: with ``retention_min`` unset, a fully deuterated control whose retention
+      is more than this many robust standard deviations (1.4826 times the median absolute
+      deviation) below the median of the run's controls is rejected (``retention_outlier``);
+      judged only when at least five controls pass the other checks. Retention depends on the
+      workflow and on the peptide (its sequence, its time in the LC), so a fixed floor would
+      reject good controls of a workflow with much back-exchange.
+    - ``time_course_tolerance`` (deuterons per amide): a fully deuterated control below the
+      highest time point of its series (the median of its replicates' K=1 means, uncorrected)
+      by more than this times ``n_amides`` is rejected (``fd_below_data``: it did not fully
+      deuterate); an undeuterated control above the lowest time point by more than this is
+      only flagged (``data_below_m0``: the early, fast time points are the hard ones to
+      measure, so the time point is suspect, not the control).
+    - ``sample_tolerance`` (fraction): a measured fully deuterated control whose retention
+      differs from the median of the same peptide's controls in the other samples (or
+      conditions) by more than this is flagged ``fd_disagrees``, not rejected.
     - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
       the analysis may change it for its own controls (``[analysis.controls]``).
     - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
       rejected: ``'d2o'`` (``d2o_fraction``), ``'median'`` (the median of the run's accepted
       controls; ``d2o_fraction`` if there are none) or ``'kint'`` (theoretical back-exchange
       fitted to the run's controls, see the module docstring; needs ``quench``). None (the
-      default) means ``'kint'`` when ``quench`` is given and ``'d2o'`` otherwise
+      default) means ``'kint'`` when ``quench`` is given and ``'median'`` otherwise
       (:attr:`fd_mode`).
     - ``quench``: the conditions of the back-exchange (:class:`hxex.kint.ExchangeConditions`):
       pH read and temperature of the quench and LC, and the ``d2o_fraction`` of their solvent
@@ -103,8 +130,8 @@ class ControlConfig:
       from the prediction is rejected; ``kint_min_series``: the fewest usable controls to fit
       the prediction to.
     """
-    # the limits' defaults, the fallbacks and the kint model: docs/HISTORY.md items 27, 59, 61, 71
-    # and 73
+    # the limits' defaults, the fallbacks and the kint model: docs/HISTORY.md items 27, 59, 61, 71,
+    # 73 and 126
 
     undeut_at: float | None = None
     fulldeut_at: float | None = None
@@ -113,6 +140,9 @@ class ControlConfig:
     m0_max: float = 0.5
     retention_min: float | None = None
     retention_max: float = 1.1
+    outlier_sd: float = 4.0
+    time_course_tolerance: float = 0.1
+    sample_tolerance: float = 0.1
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
     quench: ExchangeConditions | None = None
@@ -131,6 +161,9 @@ class ControlConfig:
             raise ValueError("kint_min_series must be at least 3")
         if self.m0_max < 0:
             raise ValueError("m0_max must be >= 0")
+        for name in ("outlier_sd", "time_course_tolerance", "sample_tolerance"):
+            if not getattr(self, name) > 0:
+                raise ValueError(f"{name} must be positive")
         if not 0 <= self.min_retention < self.retention_max:
             raise ValueError("need 0 <= retention_min < retention_max")
         if self.fd_fallback is not None and self.fd_fallback not in FD_FALLBACKS:
@@ -154,19 +187,17 @@ class ControlConfig:
     @property
     def fd_mode(self) -> str:
         """The fallback in use: ``fd_fallback``, or when unset ``'kint'`` with quench conditions
-        and ``'d2o'`` without."""
+        and ``'median'`` without."""
         if self.fd_fallback is not None:
             return self.fd_fallback
-        return "kint" if self.quench is not None else "d2o"
+        return "kint" if self.quench is not None else "median"
 
     @property
     def min_retention(self) -> float:
-        """The lower retention limit in use (``retention_min``; unset: half of ``d2o_fraction``,
-        or none with ``fd_fallback='kint'``, which judges controls by the prediction; series
-        without rates keep the ``d2o_fraction`` floor there, see :func:`fit_controls`)."""
-        if self.retention_min is not None:
-            return self.retention_min
-        return 0.0 if self.fd_mode == "kint" else self.d2o_fraction / 2
+        """The fixed lower retention limit (``retention_min``; unset: 0, the controls being
+        judged against the run, ``outlier_sd``, or the prediction; the limit a run used is in
+        :attr:`ControlTable.limits`)."""
+        return 0.0 if self.retention_min is None else self.retention_min
 
     def to_dict(self) -> dict[str, Any]:
         out = {f.name: getattr(self, f.name) for f in fields(self)}
@@ -232,7 +263,11 @@ class ControlTable:
     the reasons, separated by ``;`` (see the module docstring). ``fd_model`` is the fitted
     theoretical back-exchange with ``fd_fallback='kint'`` (``a``, ``t0`` in s, ``n_series``
     fitted, ``n_rejected``, ``sd_per_amide`` and the ``quench`` conditions; None otherwise or
-    when too few controls could be fitted).
+    when too few controls could be fitted). ``limits`` is the run-relative retention limit
+    when ``retention_min`` was unset (``retention_floor``, with the ``median`` and ``robust_sd``
+    of the controls it came from, None with too few of them for a limit (the floor is then 0),
+    and their number ``n_series``); None with a set ``retention_min`` and in bundles written
+    before it (judged by half of ``d2o_fraction``).
     """
 
     config: ControlConfig
@@ -250,6 +285,7 @@ class ControlTable:
     fallback: np.ndarray
     flags: np.ndarray
     fd_model: Mapping[str, Any] | None = None
+    limits: Mapping[str, Any] | None = None
 
     def __len__(self) -> int:
         return len(self.data_id)
@@ -364,6 +400,7 @@ def fit_controls(
     usable: np.ndarray | None = None,
     rates: Mapping[int, np.ndarray] | None = None,
     rt: Mapping[int, float] | None = None,
+    groups: Mapping[int, Any] | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -374,7 +411,9 @@ def fit_controls(
     ``rates`` (``data_id`` -> the intrinsic rates at the quench conditions of the amides the
     series counts, :func:`series_rates`) is needed with ``fd_fallback='kint'``; ``rt``
     (``data_id`` -> retention time in minutes, :func:`series_rt`) adds the retention time to
-    that model when at least ``kint_min_series`` of its controls have one.
+    that model when at least ``kint_min_series`` of its controls have one. ``groups``
+    (``data_id`` -> the molecule a series measures, :func:`series_groups`) compares each fully
+    deuterated control with the same molecule's in the other samples (``fd_disagrees``).
     """
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
@@ -416,10 +455,25 @@ def fit_controls(
     def pick(rows: np.ndarray, label: str) -> np.ndarray:
         return means[rows[usable[rows] & serves[label][rows]]]
 
+    # the time course of each series (its spectra without a role, K=1 means, the median of
+    # each time point's replicates, so that one bad replicate does not decide): the fully
+    # deuterated control must not be below it, and an undeuterated control above it is noted
+    # (time_course_tolerance)
+    plain = (role == "") & ~serves[UNDEUT] & ~serves[FULLDEUT] & usable & np.isfinite(means)
+    points = time_point(fit.time)
+    multi = np.asarray(fit.selected_K) > 1
+
+    def course(rows: np.ndarray) -> tuple[float, float]:
+        rows = rows[plain[rows]]
+        if not len(rows):
+            return float("nan"), float("nan")
+        level = [np.median(means[rows[points[rows] == p]]) for p in np.unique(points[rows])]
+        return float(min(level)), float(max(level))
+
     cols: dict[str, list] = {name: [] for name in (
         "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd",
         "mfd_se", "retention", "fallback", "flags")}
-    accepted: list[float] = []  # the retention of every accepted control (for 'median')
+    candidates: list[int] = []  # rows whose measured mFD passed the checks so far
     pending: list[int] = []  # rows whose mFD falls back, filled in after the loop
     for s in series:
         rows = np.flatnonzero(fit.data_id == s)
@@ -427,6 +481,8 @@ def fit_controls(
         if len(n_am) != 1:
             raise ValueError(f"series {s} has more than one amide count: {n_am}")
         n_am = float(n_am[0])
+        low, high = course(rows)
+        tol = config.time_course_tolerance * n_am
         m0_meas, m0_se, n_u = _mean_se(pick(rows, UNDEUT))
         mfd_meas, mfd_se, n_f = _mean_se(pick(rows, FULLDEUT))
         flags: list[str] = []
@@ -434,37 +490,43 @@ def fit_controls(
             flags.append("m0_missing")
         elif m0_meas > config.m0_max:
             flags.append("m0_high")
-        m0_ok = n_u > 0 and m0_meas <= config.m0_max
+        m0_ok = n_u > 0 and "m0_high" not in flags
         m0, m0_err = (m0_meas, m0_se) if m0_ok else (0.0, 0.0)
         if n_u > 0 and m0_ok and n_u == 1:
             flags.append("m0_unreplicated")
         mfd_ok = False
-        floor = config.min_retention
-        if config.fd_mode == "kint" and config.retention_min is None and (
-                rates is None or int(s) not in rates):
-            floor = config.d2o_fraction / 2  # no rates: the prediction cannot judge the control
         if n_f == 0:
             flags.append("fd_missing")
         elif n_am > 0:
             ret = (mfd_meas - m0) / n_am
             # a fully deuterated level at or below the undeuterated one cannot scale anything,
-            # whatever the floor (none with fd_fallback='kint' for the series with rates)
-            if ret <= 0 or ret < floor:
+            # whatever the limits
+            if ret <= 0 or ret < config.min_retention:
                 flags.append("retention_low")
             elif ret > config.retention_max:
                 flags.append("retention_high")
+            elif np.isfinite(high) and mfd_meas < high - tol:
+                flags.append("fd_below_data")
             else:
                 mfd_ok = True
         else:
             flags.append("no_amides")
         if mfd_ok:
             mfd, mfd_err = mfd_meas, mfd_se
-            accepted.append((mfd - m0) / n_am)
+            candidates.append(len(cols["mfd"]))
         else:
             mfd, mfd_err = m0 + config.d2o_fraction * n_am, 0.0
             pending.append(len(cols["mfd"]))
         if mfd_ok and n_f == 1:
             flags.append("fd_unreplicated")
+        # a time point below the undeuterated control: the early, fast points are the hard
+        # ones to measure, so the time point is suspect, not the control (a note only)
+        if n_u > 0 and np.isfinite(low) and m0_meas > low + tol:
+            flags.append("data_below_m0")
+        for label, name in ((UNDEUT, "m0_multimodal"), (FULLDEUT, "fd_multimodal")):
+            used = rows[usable[rows] & serves[label][rows]]
+            if len(used) and 2 * multi[used].sum() > len(used):  # most replicates
+                flags.append(name)
         fallback = not (m0_ok and mfd_ok)
         values = {
             "n_amides": n_am, "n_undeut": n_u, "n_fd": n_f, "m0_measured": m0_meas,
@@ -474,6 +536,22 @@ def fit_controls(
         }
         for name, value in values.items():
             cols[name].append(value)
+
+    # without a fixed floor the controls are judged against the run: those the prediction
+    # judges (fd_fallback 'kint', series with rates) are left to it
+    limits = None
+    if config.retention_min is None:
+        limits = _run_limits(cols, candidates, config)
+        judged = (candidates if config.fd_mode != "kint" else
+                  [i for i in candidates if rates is None or int(series[i]) not in rates])
+        pending += _reject_outliers(cols, judged, limits, config)
+    pending.sort()
+    pending_set = set(pending)
+    accepted = [cols["retention"][i] for i in candidates if i not in pending_set]
+    if config.fd_mode == "median" and pending and not accepted:
+        log.warning("no fully deuterated control was accepted, so the %d series without one "
+                    "take d2o_fraction (%g) as their retention: no back-exchange correction",
+                    len(pending), config.d2o_fraction)
     if config.fd_mode == "median" and accepted and pending:
         r = float(np.median(accepted))
         for i in pending:
@@ -485,8 +563,11 @@ def fit_controls(
     if config.fd_mode == "kint":
         fd_model = _kint_fallback(cols, series, pending, rates, config, rt)
         if fd_model is None and config.retention_min is None:
-            # nothing judges the rated series' controls: they get the d2o floor as well
-            _apply_floor(cols, series, pending, rates, config)
+            # nothing judged the rated series' controls: the run's limit judges them as well
+            rated = [i for i in candidates if i not in pending_set
+                     and int(series[i]) in rates]
+            _reject_outliers(cols, rated, limits, config)
+    _flag_disagreement(cols, series, groups, config)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -501,29 +582,93 @@ def fit_controls(
         retention=np.array(cols["retention"], dtype=np.float64),
         fallback=np.array(cols["fallback"], dtype=bool),
         flags=np.array(cols["flags"], dtype=str),
-        fd_model=fd_model,
+        fd_model=fd_model, limits=limits,
     )
 
 
-def _apply_floor(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,
-                 config: ControlConfig) -> None:
-    """Reject the accepted fully deuterated controls of the series with rates whose retention
-    is below half of ``d2o_fraction`` (``retention_low``, the fallback ``d2o_fraction``), as
-    the series without rates were (in ``cols``). For ``fd_fallback='kint'`` when the
-    theoretical model was not fitted, so that no control is judged."""
-    floor = config.d2o_fraction / 2
-    low = [i for i, s in enumerate(series) if i not in set(pending) and int(s) in rates
-           and cols["n_amides"][i] > 0 and cols["retention"][i] < floor]
+OUTLIER_MIN_SERIES = 5  # the fewest controls the run-relative limit is computed from
+
+
+def _run_limits(cols: dict, candidates: list[int], config: ControlConfig) -> dict:
+    """The run-relative retention limit (``outlier_sd`` robust standard deviations below the
+    median of the controls that passed the other checks); 0, with ``median`` and
+    ``robust_sd`` None, with fewer than :data:`OUTLIER_MIN_SERIES` of them."""
+    ret = np.array([cols["retention"][i] for i in candidates], dtype=float)
+    if len(ret) < OUTLIER_MIN_SERIES:
+        if len(ret):
+            log.info("the run-relative retention limit needs %d controls, %d passed the other "
+                     "checks: no lower limit", OUTLIER_MIN_SERIES, len(ret))
+        return {"retention_floor": 0.0, "median": None, "robust_sd": None,
+                "n_series": len(ret)}
+    median = float(np.median(ret))
+    sd = float(1.4826 * np.median(np.abs(ret - median)))
+    return {"retention_floor": max(median - config.outlier_sd * sd, 0.0), "median": median,
+            "robust_sd": sd, "n_series": len(ret)}
+
+
+def _reject_outliers(cols: dict, rows: list[int], limits: dict | None,
+                     config: ControlConfig) -> list[int]:
+    """Reject the fully deuterated controls of ``rows`` below ``limits`` (``retention_outlier``,
+    retention ``d2o_fraction`` until a fallback fills it in) and return them."""
+    if limits is None or limits["median"] is None:
+        return []
+    floor = limits["retention_floor"]
+    low = [i for i in rows if cols["retention"][i] < floor]
     for i in low:
         n_am, m0 = cols["n_amides"][i], cols["m0"][i]
         cols["mfd"][i], cols["mfd_se"][i] = m0 + config.d2o_fraction * n_am, 0.0
         cols["retention"][i] = config.d2o_fraction
         cols["fallback"][i] = True
         cols["flags"][i] = ";".join([*(f for f in cols["flags"][i].split(";")
-                                       if f and f != "fd_unreplicated"), "retention_low"])
+                                       if f and f != "fd_unreplicated"), "retention_outlier"])
     if low:
-        log.warning("%d fully deuterated control(s) below the retention floor %.2f fall back to "
-                    "d2o_fraction (no theoretical model to judge them)", len(low), floor)
+        log.warning("%d fully deuterated control(s) below the run's retention limit %.2f "
+                    "(median %.2f - %g x %.3f) are rejected", len(low), floor,
+                    limits["median"], config.outlier_sd, limits["robust_sd"])
+    return low
+
+
+def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
+                       config: ControlConfig) -> None:
+    """Flag ``fd_disagrees`` on the measured fully deuterated controls whose retention differs
+    by more than ``sample_tolerance`` from the median of their group (the same peptide in the
+    other samples, :func:`series_groups`; with two controls, from the other one: both are
+    flagged)."""
+    if not groups:
+        return
+    members: dict[Any, list[int]] = {}
+    for i, s in enumerate(series):
+        if int(s) in groups and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0:
+            members.setdefault(groups[int(s)], []).append(i)
+    n = 0
+    for rows in members.values():
+        measured = {i: (cols["mfd_measured"][i] - cols["m0"][i]) / cols["n_amides"][i]
+                    for i in rows}
+        finite = [r for r in measured.values() if np.isfinite(r)]
+        for i in rows:
+            if len(finite) < 2 or not np.isfinite(measured[i]):
+                continue
+            # the group's median (robust from three on), or the other control of a pair
+            ref = (float(np.median(finite)) if len(finite) > 2
+                   else next(r for j, r in measured.items() if j != i))
+            if abs(measured[i] - ref) > config.sample_tolerance:
+                cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_disagrees") if f)
+                n += 1
+    if n:
+        log.warning("%d fully deuterated control(s) differ from the same peptide's in the other "
+                    "samples by more than %g in retention (flagged fd_disagrees)", n,
+                    config.sample_tolerance)
+
+
+def series_groups(peptide, modification, charge, data_id) -> dict[int, tuple]:
+    """``data_id`` -> the molecule a series measures (peptide, modification and charge), from
+    per-spectrum arrays (a picked set's): series with the same key in different samples or
+    conditions should have the same retention."""
+    out: dict[int, tuple] = {}
+    for p, mod, z, d in zip(np.asarray(peptide), np.asarray(modification), np.asarray(charge),
+                            np.asarray(data_id), strict=True):
+        out.setdefault(int(d), (str(p), str(mod), int(z)))
+    return out
 
 
 def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,

@@ -37,7 +37,8 @@ summed. See [Input formats](inputs.md).
 
 - `[run.controls]`: turns on the back-exchange correction. `d2o_fraction` (default 0.9) is the
   labelling buffer's D fraction. Series whose controls are missing or out of limits fall back
-  to a theoretical value and are flagged (`control_fallback`).
+  to the median retention of the run's accepted controls (or, with `quench` conditions, to a
+  theoretical value) and are flagged (`control_fallback`).
 - `[run.bootstrap]`: standard errors and intervals. The analysis' choice between one and two
   populations needs the fixed-K bootstraps, `ks = "all"` or `ks = [1, 2]`: without them nearly
   every residue passes the choice, and the analysis warns.
@@ -206,4 +207,4 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
 
 Fragment series are kept out of the peptide analysis (coverage, residue maps); MS1 parents read
 alongside them stay in it. Fragment back-exchange is corrected from the fragments' own controls
-or the D-fraction fallback.
+or the fallback (the median retention of the run's accepted controls).

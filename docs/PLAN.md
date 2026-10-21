@@ -603,11 +603,15 @@ Planned, not built:
    an open TODO. Begun 2026-10-19 (HISTORY item 107): `docs/guide/` with the inputs, the
    experiment types, the outputs and a generated settings reference; a worked tutorial on a
    publishable dataset remains.
+8. **Does retention depend on the charge state?** (owner, 2026-10-20; a future TODO, not part
+   of the tutorial.) The fully deuterated retention is a property of the peptide (sequence,
+   time on the column: HISTORY 126); check whether the charge states of one peptide also agree,
+   which would let `fd_disagrees` compare across charges and the kint model treat them as one.
 
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are corrected by their own
-  controls (or the d2o fallback; the kint prediction does not cover them, HISTORY 79). The
+  controls (or the median fallback; the kint prediction does not cover them, HISTORY 79). The
   correction may belong at the parent level, applied to the fragments in a way still to be
   decided (owner, 2026-10-15).
 - **Modifications in sequence files.** FASTA cannot carry the modX labels; modifications come

@@ -11,6 +11,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
+from ..controls import CONTROL_NOTES
 from ..io.times import format_time
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
@@ -19,7 +20,8 @@ from .series import _control_role
 from .spectrum import COLORS, FIT_COLOR, plot_spectrum
 from .tables import _index_columns
 
-FALLBACK_REASONS = ("m0_missing", "m0_high", "fd_missing", "retention_low", "retention_high",
+FALLBACK_REASONS = ("m0_missing", "m0_high", "fd_missing", "retention_low",
+                    "retention_outlier", "retention_high", "fd_below_data", "fd_off_model",
                     "no_amides")
 QUALITY_FLAGS = FLAG_NAMES
 GOOD = "#999999"  # unflagged points and measured controls
@@ -108,19 +110,33 @@ def controls_overview_data(results: Results) -> dict:
         retention = np.where(has_fd & (c.n_amides > 0),
                              (c.mfd_measured - c.m0) / c.n_amides, np.nan)
     reasons = {r: int(sum(r in str(f).split(";") for f in c.flags)) for r in FALLBACK_REASONS}
+    notes = {r: int(sum(r in str(f).split(";") for f in c.flags)) for r in CONTROL_NOTES}
     cfg = c.config
     return {
         "data_id": c.data_id, "retention": retention, "m0": c.m0_measured,
-        "fallback": c.fallback.copy(), "reasons": reasons, "measured": int((~c.fallback).sum()),
-        "retention_min": cfg.min_retention, "retention_max": cfg.retention_max,
+        "fallback": c.fallback.copy(), "reasons": reasons, "notes": notes,
+        "measured": int((~c.fallback).sum()),
+        "retention_min": retention_floor(c), "retention_max": cfg.retention_max,
         "m0_max": cfg.m0_max, "n_series": len(c),
     }
 
 
+def retention_floor(controls) -> float:
+    """The lower retention limit a run's controls were judged by: the set ``retention_min``,
+    the run-relative limit (:attr:`hxex.controls.ControlTable.limits`), or, in bundles written
+    before it, half of ``d2o_fraction`` (0 with the theoretical fallback)."""
+    cfg = controls.config
+    if cfg.retention_min is not None:
+        return cfg.retention_min
+    if controls.limits is not None:
+        return float(controls.limits["retention_floor"])
+    return 0.0 if cfg.fd_mode == "kint" else cfg.d2o_fraction / 2
+
+
 def plot_controls_overview(results: Results) -> Figure:
-    """The controls of a run: the distribution of the measured retention with the limits, the
-    distribution of the undeuterated control means with ``m0_max``, and why series fell back to
-    theoretical values."""
+    """The controls of a run: the distribution of the measured retention with the limits it
+    was judged by (:func:`retention_floor`), the distribution of the undeuterated control means
+    with ``m0_max``, why series fell back to theoretical values, and the flags that only warn."""
     d = controls_overview_data(results)
     fig = Figure(figsize=(14, 3.8))
     a1, a2, a3 = fig.subplots(1, 3)
@@ -139,9 +155,12 @@ def plot_controls_overview(results: Results) -> Figure:
     a2.axvline(d["m0_max"], color=FIT_COLOR, ls="--", lw=1, gid="limits")
     a2.set_title(f"undeuterated control means ({len(m0)} series)", fontsize=9)
     a2.set_xlabel("m0 (deuterons beyond natural abundance)")
-    names = ["both measured", *d["reasons"]]
-    counts = [d["measured"], *d["reasons"].values()]
-    colors = [GOOD] + [FIT_COLOR] * len(d["reasons"])
+    # the reasons that occurred (red), then the flags that only warn (grey, the control used)
+    reasons = {k: v for k, v in d["reasons"].items() if v}
+    notes = {f"{k} (flag only)": v for k, v in d["notes"].items() if v}
+    names = ["both measured", *reasons, *notes]
+    counts = [d["measured"], *reasons.values(), *notes.values()]
+    colors = [GOOD] + [FIT_COLOR] * len(reasons) + ["#9a9a9a"] * len(notes)
     a3.barh(names[::-1], counts[::-1], color=colors[::-1], gid="reasons")
     for y, n in enumerate(counts[::-1]):
         a3.text(n, y, f" {n}", va="center", fontsize=8)

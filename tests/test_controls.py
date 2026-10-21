@@ -16,7 +16,7 @@ CFG = ControlConfig()
 UN, FD = 0.0, 1e6  # the test rows name the controls by these times: fake_fit gives them roles
 
 
-def fake_fit(rows, outlier=None):
+def fake_fit(rows, outlier=None, selected_K=None):
     """rows: (data_id, time, K=1 mean). One component, n=mean, p=1. A row at time ``UN`` is an
     undeuterated control and one at ``FD`` a fully deuterated one (their role; a control's
     time is NaN, as the readers leave it)."""
@@ -38,14 +38,15 @@ def fake_fit(rows, outlier=None):
                             n_replicated=np.zeros(m, dtype=np.int64))
     return FitResult(
         config=FitConfig(), spectrum_id=np.array([f"p:{i}" for i in range(m)]), data_id=d,
-        time=t, role=role, k_values=(1,), fits={1: kf}, selected_K=np.ones(m, dtype=int),
+        time=t, role=role, k_values=(1,), fits={1: kf},
+        selected_K=np.ones(m, dtype=int) if selected_K is None else np.asarray(selected_K),
         score=np.zeros((m, 1)), obs_scale=np.ones(m), sample_size=np.ones(m),
         n_max=np.ones(m), noise_kind=np.array(["gaussian"] * m), noise_estimate=est)
 
 
-def table(rows, **kw):
+def table(rows, config=CFG, groups=None, **kw):
     fit = fake_fit(rows, **kw)
-    return fit_controls(fit, np.full(len(rows), 10.0), CFG)
+    return fit_controls(fit, np.full(len(rows), 10.0), config, groups=groups)
 
 
 def test_good_controls_are_averaged_and_used():
@@ -62,8 +63,10 @@ def test_each_control_falls_back_on_its_own():
     c = table([(0, 0, 2.0), (0, 0, 2.2), (0, 1e6, 8.0), (0, 1e6, 8.2)])
     assert c.m0[0] == 0.0 and c.m0_se[0] == 0.0 and c.mfd[0] == pytest.approx(8.1)
     assert c.flags[0] == "m0_high" and c.fallback[0]
-    # low retention only: mFD -> m0 + d2o_fraction * n_amides (default 0.9), m0 kept
-    c = table([(0, 0, 0.1), (0, 0, 0.1), (0, 1e6, 3.0), (0, 1e6, 3.0)])
+    # low retention only (below a set floor): mFD -> m0 + d2o_fraction * n_amides (default
+    # 0.9), m0 kept
+    c = table([(0, 0, 0.1), (0, 0, 0.1), (0, 1e6, 3.0), (0, 1e6, 3.0)],
+              ControlConfig(retention_min=0.45))
     assert c.m0[0] == pytest.approx(0.1) and c.mfd[0] == pytest.approx(9.1)
     assert c.mfd_se[0] == 0.0 and c.retention[0] == pytest.approx(0.9)
     assert c.flags[0] == "retention_low"
@@ -141,20 +144,25 @@ def test_theoretical_controls_add_no_uncertainty_and_nan_stays_nan():
     assert np.isnan(out.mean[1])
 
 
-def test_the_lower_limit_follows_the_buffer_and_the_fallback_can_be_the_median():
-    # retention_min defaults to half of d2o_fraction: 0.45 at 0.9, so a retention of 0.47 is kept
+def test_there_is_no_fixed_floor_unless_set_and_the_fallback_is_the_median():
+    # no fixed floor by default (too few controls for the run's limit), so a retention of 0.47
+    # is kept; a set retention_min is a fixed floor
     rows = [(0, 0, 0.0), (0, 1e6, 4.7), (1, 0, 0.0), (1, 1e6, 6.0), (2, 0, 0.0), (2, 1e6, 7.0),
             (3, 0, 0.0)]
     c = table(rows)
-    assert CFG.min_retention == pytest.approx(0.45) and not c.fallback[0]
+    assert CFG.min_retention == 0.0 and not c.fallback[0]
+    assert c.limits == {"retention_floor": 0.0, "median": None, "robust_sd": None,
+                        "n_series": 3}
+    assert "retention_low" in table(rows, ControlConfig(retention_min=0.5)).flags[0]
     assert c.retention[:3].tolist() == pytest.approx([0.47, 0.6, 0.7])
-    assert c.retention[3] == pytest.approx(0.9) and "fd_missing" in c.flags[3].split(";")
-    # with fd_fallback='median' the missing control takes the median accepted retention (0.6)
-    med = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
-                       ControlConfig(fd_fallback="median"))
-    assert med.retention[3] == pytest.approx(0.6) and med.mfd[3] == pytest.approx(6.0)
-    assert med.flags[3].split(";")[-2:] == ["fd_missing", "fd_median"] and med.fallback[3]
-    assert ControlConfig(d2o_fraction=0.8).min_retention == pytest.approx(0.4)
+    # by default (no quench conditions) the missing control takes the median accepted
+    # retention (0.6)
+    assert c.retention[3] == pytest.approx(0.6) and c.mfd[3] == pytest.approx(6.0)
+    assert c.flags[3].split(";")[-2:] == ["fd_missing", "fd_median"] and c.fallback[3]
+    # with fd_fallback='d2o' it takes d2o_fraction
+    d2o = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), ControlConfig(fd_fallback="d2o"))
+    assert d2o.retention[3] == pytest.approx(0.9) and d2o.flags[3].split(";")[-1] == "fd_missing"
+    assert ControlConfig(d2o_fraction=0.8).min_retention == 0.0
     assert ControlConfig(retention_min=0.3).min_retention == 0.3
     with pytest.raises(ValueError, match="fd_fallback"):
         ControlConfig(fd_fallback="mean")
@@ -176,10 +184,10 @@ PEPTIDES = ["LGEHNIDVLEGNEQF", "MDIAIHHPW", "FDQFFGEHLLE", "SPFYLRPPSF", "RLEKDR
 QUENCH = {"ph_read": 2.5, "temperature": 0.0, "d2o_fraction": 0.0}
 
 
-def kint_case(a=0.85, t0=2000.0, off=(), missing=(), extra=()):
+def kint_case(a=0.85, t0=2000.0, off=(), missing=(), extra=(), extra_fd=3.0):
     """Series 0..14 with FD controls following a * sum exp(-k t0) (plus a little scatter);
     ``off`` series hold half that, ``missing`` have no FD control; ``extra`` ids are series
-    without rates (a fragment ion), FD control at 0.3 per amide."""
+    without rates (a fragment ion), FD control at ``extra_fd`` (0.3 per amide)."""
     from hxex.controls import _kint_predict, series_rates
     from hxex.kint import ExchangeConditions
 
@@ -195,7 +203,7 @@ def kint_case(a=0.85, t0=2000.0, off=(), missing=(), extra=()):
             rows += [(d, 1e6, 0.05 + fd + rng.normal(0, 0.05)), (d, 1e6, 0.05 + fd)]
         n += [len(k)] * (2 if d in missing else 4)
     for d in extra:
-        rows += [(d, 0.0, 0.0), (d, 0.0, 0.0), (d, 1e6, 3.0), (d, 1e6, 3.0)]
+        rows += [(d, 0.0, 0.0), (d, 0.0, 0.0), (d, 1e6, extra_fd), (d, 1e6, extra_fd)]
         n += [10] * 4
     return fake_fit(rows), np.array(n, float), rates
 
@@ -203,7 +211,7 @@ def kint_case(a=0.85, t0=2000.0, off=(), missing=(), extra=()):
 def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls():
     from hxex.controls import _kint_predict
 
-    fit, n, rates = kint_case(off=(3,), missing=(5,), extra=(99,))
+    fit, n, rates = kint_case(off=(3,), missing=(5,), extra=(99,), extra_fd=0.5)
     cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     c = fit_controls(fit, n, cfg, rates=rates)
     m = c.fd_model
@@ -220,11 +228,12 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
     good = c.rows([0, 1, 2])
     assert not c.fallback[good].any() and (c.retention[good] < 0.9).all()
     assert cfg.min_retention == 0.0
-    # a series without rates (a fragment ion) is not judged by the prediction: it keeps the
-    # d2o floor (half of d2o_fraction) and falls back to d2o_fraction below it, never to kint
+    # a series without rates (a fragment ion) is not judged by the prediction: the run's limit
+    # judges it, and below it it falls back to d2o_fraction, never to kint
     i = c.rows([99])[0]
-    assert c.mfd_measured[i] == pytest.approx(3.0) and c.flags[i] == "retention_low"
+    assert c.mfd_measured[i] == pytest.approx(0.5) and c.flags[i] == "retention_outlier"
     assert c.mfd[i] == pytest.approx(0.0 + cfg.d2o_fraction * 10) and c.fallback[i]
+    assert c.limits["n_series"] == 15 and c.limits["retention_floor"] > 0.05
     rows = [(d, t, m) for d, t, m in [(98, 0.0, 0.0), (98, 0.0, 0.0), (98, 1e6, 6.0),
                                        (98, 1e6, 6.0)]]
     c2 = fit_controls(fake_fit(rows), np.array([10.0] * 4), cfg, rates=rates)
@@ -274,7 +283,7 @@ def test_series_rates_count_the_amides_of_parent_ions_only():
 
 
 def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
-    assert ControlConfig().fd_mode == "d2o" and ControlConfig().fd_fallback is None
+    assert ControlConfig().fd_mode == "median" and ControlConfig().fd_fallback is None
     auto = ControlConfig(quench=QUENCH)
     assert auto.fd_mode == "kint" and auto.min_retention == 0.0
     assert ControlConfig.from_dict(auto.to_dict()) == auto  # stays automatic when stored
@@ -308,28 +317,28 @@ def test_a_fully_deuterated_level_not_above_m0_is_rejected_whatever_the_floor(ca
     assert "data_id 0" in caplog.text and "at or below" in caplog.text
 
 
-def test_too_few_controls_for_the_kint_model_keep_the_retention_floor(caplog):
-    """When the theoretical model is not fitted nothing judges the rated series' controls:
-    they get the d2o floor like the series without rates (four peptides with a fully deuterated
-    level of 0.1 per amide gave a tenfold inflated correction)."""
+def test_too_few_controls_for_the_kint_model_are_still_judged_by_the_time_course(caplog):
+    """When the theoretical model is not fitted (and too few controls make a run limit) the
+    time course still judges the rated series' controls (four peptides with a fully deuterated
+    level of 0.1 per amide, below their own data, gave a tenfold inflated correction)."""
     _, _, rates = kint_case()
     n = {d: float(len(rates[d])) for d in (0, 1)}
-    rows = [(0, 0.0, 0.0), (0, 0.0, 0.0), (0, 1e6, 0.1 * n[0]),
-            (1, 0.0, 0.0), (1, 0.0, 0.0), (1, 1e6, 0.6 * n[1])]
-    amides = np.array([n[0]] * 3 + [n[1]] * 3)
+    rows = [(0, 0.0, 0.0), (0, 0.0, 0.0), (0, 1e6, 0.1 * n[0]), (0, 600.0, 0.4 * n[0]),
+            (1, 0.0, 0.0), (1, 0.0, 0.0), (1, 1e6, 0.6 * n[1]), (1, 600.0, 0.4 * n[1])]
+    amides = np.array([n[0]] * 4 + [n[1]] * 4)
     cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     with caplog.at_level(logging.WARNING):
         c = fit_controls(fake_fit(rows), amides, cfg, rates=rates)
-    assert c.fd_model is None and "below the retention floor" in caplog.text
+    assert c.fd_model is None and "not fitted" in caplog.text
     low, ok = c.rows([0])[0], c.rows([1])[0]
-    assert c.flags[low] == "retention_low" and c.fallback[low]
+    assert c.flags[low] == "fd_below_data" and c.fallback[low]
     assert c.mfd[low] == pytest.approx(cfg.d2o_fraction * n[0]) and c.mfd_se[low] == 0.0
     assert c.retention[low] == pytest.approx(cfg.d2o_fraction)
     assert c.flags[ok] == "fd_unreplicated" and not c.fallback[ok]
     assert c.retention[ok] == pytest.approx(0.6)
-    # an explicit retention_min is the floor as before, and a fitted model judges instead
-    c = fit_controls(fake_fit(rows), amides, dataclasses.replace(cfg, retention_min=0.05),
-                     rates=rates)
+    # a generous tolerance lets it through
+    c = fit_controls(fake_fit(rows), amides,
+                     dataclasses.replace(cfg, time_course_tolerance=0.5), rates=rates)
     assert not c.fallback.any()
 
 
@@ -380,3 +389,80 @@ def test_the_marked_controls_can_be_replaced_by_a_time_point():
         ControlConfig(fulldeut_marked=False)
     with pytest.raises(ValueError, match="undeut_marked = false needs undeut_at"):
         ControlConfig(undeut_marked=False)
+
+
+def test_the_median_fallback_without_an_accepted_control_is_the_buffer_fraction(caplog):
+    # a control below its own data (rejected) and none
+    rows = [(0, 0, 0.0), (0, 1e6, 1.0), (0, 5, 5.0), (1, 0, 0.0)]
+    with caplog.at_level("WARNING"):
+        c = table(rows)
+    assert c.retention.tolist() == pytest.approx([0.9, 0.9]) and c.fallback.all()
+    assert not any("fd_median" in f for f in c.flags)
+    assert "no fully deuterated control was accepted" in caplog.text
+
+
+def test_a_control_outside_its_time_course_is_rejected():
+    # fully deuterated below the highest time point (tolerance 0.1 per amide: 1 D here)
+    c = table([(0, 0, 0.0), (0, 1e6, 5.0), (0, 60, 3.0), (0, 600, 6.5), (0, 600, 6.3)])
+    assert c.flags[0] == "m0_unreplicated;fd_below_data" and c.fallback[0]
+    c = table([(0, 0, 0.0), (0, 1e6, 5.6), (0, 600, 6.5)])  # within the tolerance
+    assert not c.fallback[0]
+    # one bad replicate does not decide: the time point counts by its replicates' median
+    c = table([(0, 0, 0.0), (0, 1e6, 5.0), (0, 600, 4.5), (0, 600, 4.6), (0, 600, 9.0)])
+    assert not c.fallback[0]
+    # undeuterated above the lowest time point: the time point is suspect, the control is kept
+    c = table([(0, 0, 0.45), (0, 0, 0.45), (0, 5, -0.8), (0, 1e6, 8.0), (0, 1e6, 8.0)])
+    assert c.flags[0] == "data_below_m0" and not c.fallback[0]
+    assert c.m0[0] == pytest.approx(0.45)
+    # spectra serving as a control (fulldeut_at) are not part of the time course
+    from hxex.controls import apply_control_roles
+
+    cfg = ControlConfig(fulldeut_at=600.0)
+    fit = fake_fit([(0, 0, 0.0), (0, 0, 0.0), (0, 60, 3.0), (0, 600, 7.0), (0, 600, 7.0)])
+    fit = dataclasses.replace(fit, role=apply_control_roles(fit.role, fit.time, cfg))
+    c = fit_controls(fit, np.full(5, 10.0), cfg)
+    assert not c.fallback[0] and c.mfd[0] == pytest.approx(7.0)
+
+
+def test_the_run_limit_rejects_an_outlier_and_records_itself():
+    ret = [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.20]
+    rows = [r for d, x in enumerate(ret) for r in ((d, 0, 0.0), (d, 0, 0.0), (d, 1e6, 10 * x),
+                                                   (d, 1e6, 10 * x))]
+    c = table(rows)
+    assert c.flags[7] == "retention_outlier;fd_median" and c.fallback[7]
+    assert c.retention[7] == pytest.approx(0.50)
+    assert not c.fallback[:7].any()
+    assert c.limits["median"] == pytest.approx(0.50) and c.limits["n_series"] == 8
+    assert c.limits["retention_floor"] == pytest.approx(0.50 - 4 * c.limits["robust_sd"])
+    # a set retention_min replaces the run's limit; a wider outlier_sd lets it through
+    fixed = table(rows, ControlConfig(retention_min=0.1))
+    assert fixed.limits is None and not fixed.fallback.any()
+    assert not table(rows, ControlConfig(outlier_sd=20.0)).fallback.any()
+    # the limit is kept in the bundle (old bundles have none)
+    from hxex.io.bundle import _controls_table, _read_controls
+
+    assert _read_controls(_controls_table(c), CFG.to_dict()).limits == c.limits
+    for bad in ({"outlier_sd": 0}, {"time_course_tolerance": -1}, {"sample_tolerance": 0}):
+        with pytest.raises(ValueError):
+            ControlConfig(**bad)
+
+
+def test_flags_that_only_warn():
+    # two populations in a fully deuterated spectrum: flagged, the control still used
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 6.0), (0, 1e6, 6.0)]
+    c = table(rows, selected_K=[1, 1, 2, 2])  # most (here both) replicates
+    assert c.flags[0] == "fd_multimodal" and not c.fallback[0]
+    assert table(rows, selected_K=[2, 2, 1, 1]).flags[0] == "m0_multimodal"
+    assert table(rows, selected_K=[1, 1, 2, 1]).flags[0] == ""  # one replicate of two
+    # the same peptide in three samples: the one far from the other two is flagged
+    rows = [r for d, x in enumerate([0.50, 0.52, 0.70]) for r in ((d, 0, 0.0), (d, 0, 0.0),
+                                                                   (d, 1e6, 10 * x),
+                                                                   (d, 1e6, 10 * x))]
+    groups = {0: ("PEPTIDE", "", 2), 1: ("PEPTIDE", "", 2), 2: ("PEPTIDE", "", 2)}
+    c = table(rows, groups=groups)
+    assert [f for f in c.flags] == ["", "", "fd_disagrees"] and not c.fallback.any()
+    assert table(rows).flags.tolist() == ["", "", ""]  # without groups nothing is compared
+    pair = table(rows[:8], groups={0: 1, 1: 1})
+    assert pair.flags.tolist() == ["", ""]  # 0.50 and 0.52 agree
+    rows2 = rows[:4] + [(1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 7.0), (1, 1e6, 7.0)]
+    assert table(rows2, groups={0: 1, 1: 1}).flags.tolist() == ["fd_disagrees"] * 2

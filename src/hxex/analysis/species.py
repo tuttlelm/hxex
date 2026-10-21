@@ -248,7 +248,14 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         picked = results.binned.select(keep)
         rates = control_rates(picked, dataclasses.replace(run, controls=config))
         rt = series_rt(picked.data_id, picked.rt)
-    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt)
+    groups = None
+    if results.binned is not None:
+        from ..controls import series_groups
+
+        b = results.binned
+        groups = series_groups(b.peptide, b.modification, b.charge, b.data_id)
+    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
+                       groups=groups)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (

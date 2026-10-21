@@ -295,10 +295,13 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `undeut_marked` | true/false | `true` | the files marked undeut serve as the control (false: only the spectra at undeut_at do) |
 | `fulldeut_marked` | true/false | `true` | the files marked fulldeut serve as the control (false: only the spectra at fulldeut_at do, e.g. when the measured file reads low) |
 | `m0_max` | number | `0.5` | largest mean (D) of a good undeuterated control |
-| `retention_min` | number | unset | smallest deuterium retention of a good fully deuterated control, as a fraction (false: half of d2o_fraction; none with fd_fallback "kint"); not a retention time |
+| `retention_min` | number | unset | a fixed smallest deuterium retention of a good fully deuterated control, as a fraction (false: none; the controls are judged against the run, outlier_sd, or the kint prediction); not a retention time |
 | `retention_max` | number | `1.1` | largest deuterium retention of a good fully deuterated control, as a fraction |
+| `outlier_sd` | number | `4.0` | a fully deuterated control this many robust standard deviations below the median retention of the run's controls is rejected (without retention_min) |
+| `time_course_tolerance` | number | `0.1` | D per amide: a fully deuterated control below its series' highest time point by more than this is rejected (an undeuterated one above its lowest is flagged data_below_m0) |
+| `sample_tolerance` | number | `0.1` | a fully deuterated control whose retention differs this much from the same peptide's in the other samples is flagged fd_disagrees (still used) |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
-| `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench); false: "kint" with quench, else "d2o" |
+| `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench); false: "kint" with quench, else "median" |
 | `quench` | table | unset | pH read, degrees Celsius and D fraction of the quench and LC ({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for fd_fallback "kint" (unset: none) |
 | `kint_tolerance` | number | `0.15` | kint: a measured control this far (D per amide) from the prediction is rejected |
 | `kint_min_series` | integer | `10` | kint: fewest usable controls to fit the prediction to |

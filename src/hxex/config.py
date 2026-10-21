@@ -1254,17 +1254,28 @@ _COMMENTS: dict[str, str] = {
     "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
                         "list of K (fixed-K bootstraps for the analysis)",
     "run.controls.m0_max": "largest mean (D) of a good undeuterated control",
-    "run.controls.retention_min": "smallest deuterium retention of a good fully deuterated "
-                                  "control, as a fraction (false: half of d2o_fraction; none "
-                                  'with fd_fallback "kint"); not a retention time',
+    "run.controls.retention_min": "a fixed smallest deuterium retention of a good fully "
+                                  "deuterated control, as a fraction (false: none; the "
+                                  "controls are judged against the run, outlier_sd, or the "
+                                  'kint prediction); not a retention time',
     "run.controls.retention_max": "largest deuterium retention of a good fully deuterated "
                                   "control, as a fraction",
+    "run.controls.outlier_sd": "a fully deuterated control this many robust standard "
+                               "deviations below the median retention of the run's controls "
+                               "is rejected (without retention_min)",
+    "run.controls.time_course_tolerance": "D per amide: a fully deuterated control below its "
+                                          "series' highest time point by more than this is "
+                                          "rejected (an undeuterated one above its lowest "
+                                          "is flagged data_below_m0)",
+    "run.controls.sample_tolerance": "a fully deuterated control whose retention differs "
+                                     "this much from the same peptide's in the other "
+                                     "samples is flagged fd_disagrees (still used)",
     "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
                                 '"d2o" (d2o_fraction), "median" (of the run\'s accepted '
                                 'controls) or "kint" (predicted back-exchange; needs quench); '
-                                'false: "kint" with quench, else "d2o"',
+                                'false: "kint" with quench, else "median"',
     "run.controls.undeut_at": 's (or "5 min"): the spectra at this time also serve as the '
                               "undeuterated control (false: only the files marked undeut)",
     "run.controls.fulldeut_at": 's (or "20 h"): the spectra at this time also serve as the '

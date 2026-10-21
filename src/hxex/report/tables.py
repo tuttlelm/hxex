@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..controls import correct_means
+from ..controls import CONTROL_NOTES, correct_means
 from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
 from ..quality import FLAG_NAMES
@@ -258,7 +258,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
     (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
-    (``measured``, or the fallback reasons; empty without controls), ``retention`` (the
+    (``measured``, or the fallback reasons; empty without controls), ``control_notes`` (the
+    control flags that only warn, :data:`hxex.controls.CONTROL_NOTES`), ``retention`` (the
     deuterium retention used for the back-exchange correction, a fraction; NaN without
     controls), ``control_fallback`` (the correction used a fallback, not the series' own
     controls) and ``rt`` (the median chromatographic retention time of its spectra, minutes;
@@ -272,7 +273,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     multi = results.effective_K > 1
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
-        "n_rejected", "n_multi", "controls", "retention", "control_fallback", "rt")}
+        "n_rejected", "n_multi", "controls", "control_notes", "retention", "control_fallback",
+        "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     for d in ids:
@@ -289,6 +291,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
             "n_rejected": int(rejected[members].sum()), "n_multi": int(multi[members].sum()),
             "controls": "" if r is None else ("measured" if not ctrl.fallback[r]
                                               else str(ctrl.flags[r])),
+            "control_notes": "" if r is None else ";".join(
+                f for f in str(ctrl.flags[r]).split(";") if f in CONTROL_NOTES),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
             "control_fallback": False if r is None else bool(ctrl.fallback[r]),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),

@@ -91,6 +91,54 @@ same settings exist in `[analysis.controls]` for an analysis of an existing bund
 times it has. For a scan-format file, giving the run both `time` and `role` in `[[input.runs]]`
 does the same thing.
 
+## How *hxex* judges the controls
+
+The back-exchange correction scales each series between its two controls, so a bad control
+distorts every value of its series. *hxex* checks every control before using it. A control
+that fails is not used: the series takes a stand-in value instead and is marked in the tables
+(`control_fallback`, with the reason in the `controls` column of `series.csv`).
+
+**The undeuterated control** is rejected when its mean is above 0.5 deuterons beyond natural
+abundance (`m0_max`). Its stand-in is 0.
+
+**The fully deuterated control** is judged by its *retention*: the fraction of the label it
+still holds when it is measured, (mFD − m0) / number of amides. Retention is always below the
+D₂O fraction of the labelling buffer, because some deuterium exchanges back during the quench,
+digestion, and LC. How much depends on the workflow, and on the peptide (its sequence and how
+long it stays on the column), so there is no single right value: in the B5 tutorial data it runs
+from 0.34 to 0.64 with an 85 % D₂O buffer. A fully deuterated control is rejected when:
+
+- its retention is 0 or less, or above 1.1 (`retention_max`): it cannot be right;
+- it is below the highest time point of its own series (`fd_below_data`): the sample did not
+  fully deuterate. A little below is allowed (`time_course_tolerance`, 0.1 D per amide), and
+  each time point counts by the median of its replicates, so one bad replicate does not
+  decide;
+- its retention is far below the run's other controls (`retention_outlier`): more than four
+  robust standard deviations below their median (`outlier_sd`). This adapts to your workflow:
+  a run with much back-exchange has a low median, and its controls are judged against that.
+
+Its stand-in is the median retention of the run's accepted controls (`fd_median`). With the
+quench conditions given (`quench` in `[run.controls]`) *hxex* instead predicts each peptide's
+retention from its sequence and judges the controls against that prediction (see the
+settings reference, `fd_fallback`).
+
+Two more checks only warn, and the control is still used. They are listed in the
+`control_notes` column of `series.csv`:
+
+- `fd_disagrees`: the same peptide's fully deuterated controls in the other samples have a
+  clearly different retention (by more than 0.1, `sample_tolerance`). In one run they should
+  agree closely, since the peptide and the workflow are the same.
+- `fd_multimodal` or `m0_multimodal`: most of a control's replicate spectra were fitted best
+  with more than one population, which can mean an incompletely deuterated or a mixed sample.
+- `data_below_m0`: a time point of the series reads below its undeuterated control. The
+  fastest time points are the hardest to measure, so it is the time point that is suspect,
+  not the control: look at that time point's spectra.
+
+The overview figure (`hxex report hxex.toml --figures`, file `overview`) shows the retention of
+every measured control with the limits used, and counts the reasons. If you prefer a fixed
+lower limit, set it: `retention_min = 0.3` in `[run.controls]` replaces the comparison with the
+run.
+
 ## Writing times
 
 Every time in the project file is a number of seconds or text with a unit: `60`, `"60 s"`,
