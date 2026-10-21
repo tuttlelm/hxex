@@ -1396,3 +1396,24 @@ def test_charge_states_of_a_replicate_are_averaged_before_replicates_are_combine
     assert (pc.n_reference[0], pc.n[0]) == (3, 3)
     assert pc.value_reference[0] == pytest.approx(0.51)
     assert pc.value[0] == pytest.approx(np.mean([0.61, 0.59, 0.65]))
+
+
+def test_fragment_series_are_not_corrected(results):
+    """A series flagged uncorrected (a fragment ion) keeps its values in the species table and
+    has no corrected values in the components table (owner, 2026-10-21)."""
+    import dataclasses
+
+    c = results.controls
+    raw = dataclasses.replace(c, flags=np.full(len(c), "uncorrected"))
+    up = species_uptake(dataclasses.replace(results, controls=raw))
+    assert not up.corrected.any() and not up.control_fallback.any()
+    # as measured: the fully deuterated row is the controls' level, not n_amides
+    fd = (up.role == "fulldeut") & (up.K == 1)
+    assert up.mean[fd] == pytest.approx([np.mean(c.mfd_measured)], abs=0.05)
+    assert (up.mean[fd] < up.n_amides[fd] - 1).all()
+    from hxex.io.bundle import _corrected_columns
+
+    data = {"measurement": np.arange(2), "data_id": np.asarray(c.data_id[:2]),
+            "mean": np.array([1.0, 2.0])}
+    cols = _corrected_columns(data, None, raw)
+    assert np.isnan(cols["mean_corrected"]).all()

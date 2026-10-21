@@ -50,6 +50,7 @@ from .controls import (
     apply_control_roles,
     charge_groups,
     fit_controls,
+    fragment_ids,
     series_groups,
     series_rates,
     series_rt,
@@ -365,6 +366,7 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
+    fragments=(),
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
     need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
@@ -389,7 +391,7 @@ def _fit_part(
         if n_sites is None:
             n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
-                                groups=groups, charges=charges)
+                                groups=groups, charges=charges, uncorrected=fragments)
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
@@ -685,14 +687,16 @@ def run(
     groups = series_groups(picked.peptide, picked.modification, picked.charge, picked.data_id)
     from .io.mzml import fragment_series
 
+    scan_fragments = fragment_series(None if raw is None else raw.source)
     charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
-                            picked.data_id, fragment_series(None if raw is None else raw.source))
+                            picked.data_id, scan_fragments)
+    fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
-                                             charges=charges)
+                                             charges=charges, fragments=fragments)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

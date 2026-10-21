@@ -244,7 +244,7 @@ Run `hxex check hxex.toml` first whenever you have changed the file.
   spectra you gave another number of populations in the
   [review table](project-file.md#the-user-review-table).
 - Back-exchange correction from your controls: switch on `[run.controls]`. See
-  [Controls and times](controls.md).
+  [Back-exchange correction](back-exchange-correction.md).
 - Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding-spectra.md).
 - What every table and figure holds: [Outputs](outputs.md).
 - Every setting: [Settings reference](settings.md).

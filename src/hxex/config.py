@@ -1306,8 +1306,9 @@ _COMMENTS: dict[str, str] = {
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
                                 '"d2o" (d2o_fraction), "median" (of the run\'s accepted '
-                                'controls) or "kint" (predicted back-exchange; needs quench); '
-                                'false: "kint" with quench, else "median"',
+                                'controls) or "kint" (predicted back-exchange; needs quench; '
+                                'series it cannot predict take the median); false: "kint" with '
+                                'quench, else "median"',
     "run.controls.undeut_at": 's (or "5 min"): the spectra at this time also serve as the '
                               "undeuterated control (false: only the files marked undeut)",
     "run.controls.fulldeut_at": 's (or "20 h"): the spectra at this time also serve as the '
@@ -1322,7 +1323,8 @@ _COMMENTS: dict[str, str] = {
                         "uptake drawn by index, kinetics and protection analyses refuse)",
     "run.controls.kint_tolerance": "kint: a measured control this far (D per amide) from the "
                                    "prediction is rejected",
-    "run.controls.kint_min_series": "kint: fewest usable controls to fit the prediction to",
+    "run.controls.kint_min_series": "kint: fewest usable controls to fit the prediction to "
+                                    "(fewer: every series takes the median)",
     "run.quality.poor_fit_factor": "poor_fit: misfit this many times the series' median",
     "run.quality.min_deviance": "poor_fit: and a reduced deviance above this",
     "run.quality.min_series_fits": "poor_fit: fewest fitted spectra in a series to judge",

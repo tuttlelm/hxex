@@ -28,6 +28,8 @@ a short text file.
 
 - [Controls and times](controls.md): undeuterated and fully deuterated controls, a time point as
   a control, writing times, times that only order the points.
+- [Back-exchange correction](back-exchange-correction.md): how the controls are judged, and
+  what replaces a missing or rejected one, step by step.
 - [Excluding spectra](excluding-spectra.md): leaving out bad spectra, before or after fitting, without
   deleting anything.
 - [The peak-picking window](picking-window.md): the ppm window, or one from the instrument's

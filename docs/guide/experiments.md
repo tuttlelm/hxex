@@ -18,7 +18,8 @@ no choice to make. The controls are fitted over the same range, which shows up a
 with them, and always at K = 1 as well: the back-exchange correction uses their one-population
 fit, whatever `k_min` is. (The `screen` option needs `k_min = 1`.) A run without `[run.controls]`
 reports deuterons as measured; with it, means are corrected for back-exchange from the
-undeuterated and fully deuterated controls (see [Controls and times](controls.md)).
+undeuterated and fully deuterated controls (see
+[Back-exchange correction](back-exchange-correction.md)).
 
 ---
 
@@ -206,5 +207,6 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
   [Residue-level rates and protection factors from fragment ladders](fragment-residues.md).
 
 Fragment series are kept out of the peptide analysis (coverage, residue maps); MS1 parents read
-alongside them stay in it. Fragment back-exchange is corrected from the fragments' own controls
-or the fallback (the median retention of the run's accepted controls).
+alongside them stay in it. Fragment ions are not corrected for back-exchange, even when the
+project has a `[run.controls]` table: their values stay in deuterons, as measured. How to
+correct them, probably through their parent peptide, is still to be designed.

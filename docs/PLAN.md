@@ -617,10 +617,11 @@ Planned, not built:
 
 ## Risks and open decisions
 
-- **Back-exchange correction of fragment ions.** Fragment series are corrected by their own
-  controls (or the median fallback; the kint prediction does not cover them, HISTORY 79). The
-  correction may belong at the parent level, applied to the fragments in a way still to be
-  decided (owner, 2026-10-15).
+- **Back-exchange correction of fragment ions.** Fragment series are not corrected for now
+  (owner, 2026-10-21, HISTORY 131): values in deuterons, as measured. The correction may
+  belong at the parent level, applied to the fragments in a way still to be decided (owner,
+  2026-10-15); one candidate is measuring each fragment against the parent's deuterium in
+  the same scans (owner, 2026-10-21, HISTORY 130).
 - **Modifications in sequence files.** FASTA cannot carry the modX labels; modifications come
   from the peptide list. A sequence format with modifications is a future consideration
   (owner, 2026-10-15; HISTORY 79).

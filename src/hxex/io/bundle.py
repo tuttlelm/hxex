@@ -368,6 +368,9 @@ def _corrected_columns(
     if out.ci is not None:
         cols["mean_corrected_ci_lo"], cols["mean_corrected_ci_hi"] = out.ci[:, 0], out.ci[:, 1]
     rows_ctrl = controls.rows(data["data_id"])
+    raw = controls.uncorrected[rows_ctrl]  # fragment ions: not corrected
+    for name in cols:
+        cols[name] = np.where(raw, np.nan, cols[name])
     cols["control_fallback"] = controls.fallback[rows_ctrl]
     assert all(len(v) == rows for v in cols.values())
     return cols

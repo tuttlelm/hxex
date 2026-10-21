@@ -130,7 +130,7 @@ d2o_fraction = 0.85
 
 (The other lines of that part can stay switched off.) The correction uses the undeuterated
 and fully deuterated controls to put every peptide on the scale of its own exchangeable
-amides; [Controls and times](controls.md) explains how.
+amides; [Back-exchange correction](back-exchange-correction.md) explains how.
 
 ## Step 5: check
 

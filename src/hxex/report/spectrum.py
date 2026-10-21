@@ -229,8 +229,10 @@ def _fit_data(results: Results, spectrum_id: str, k: int | None, shown) -> dict:
         parts = boot.curve_components(i)
         if parts is not None and parts[0].shape == (k, len(bins)):
             component_band = np.stack([parts[0][order], parts[1][order]], axis=1)  # (K, 2, n)
+    from .series import _control_row
+
     corrected = None
-    if results.controls is not None:
+    if _control_row(results, int(results.fit.data_id[i])) is not None:
         corrected = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :]).mean[0]
     return {
         "index": i, "k": k, "bins": bins, "total": curves.sum(axis=0), "components": curves,

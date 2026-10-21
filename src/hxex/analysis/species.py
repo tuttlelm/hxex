@@ -10,8 +10,9 @@ fractional deuteration, 1 the lowest.
 
 Two measures of deuteration, as in the fit: ``mean``, the absolute deuterium (deuterons beyond
 natural abundance, from 0 to about ``n_amides``), back-exchange corrected when the run has
-controls (``corrected``), and ``fD``, the **fractional deuteration**, ``mean / n_amides`` (0 to
-1). Both mean the same for forward labelling and for reverse exchange (docs/ANALYSIS.md).
+controls (``corrected``; never for fragment ions, :mod:`hxex.controls`), and ``fD``, the
+**fractional deuteration**, ``mean / n_amides`` (0 to 1). Both mean the same for forward
+labelling and for reverse exchange (docs/ANALYSIS.md).
 
 Spectra the review rejected are left out; flagged ones are kept unless ``exclude_flagged``. The
 spectra of a species at one time are combined in two steps. The charge states of each replicate
@@ -280,16 +281,19 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         rates = control_rates(picked, dataclasses.replace(run, controls=config))
         rt = series_rt(picked.data_id, picked.rt)
     groups = charges = None
+    fragments: set[int] = set()
     if results.binned is not None:
-        from ..controls import charge_groups, series_groups
+        from ..controls import charge_groups, fragment_ids, series_groups
         from ..io.mzml import fragment_series
 
         b = results.binned
         groups = series_groups(b.peptide, b.modification, b.charge, b.data_id)
+        scan_fragments = fragment_series(getattr(results, "spectra_source", None))
         charges = charge_groups(b.sample, b.peptide, b.modification, b.charge, b.data_id,
-                                fragment_series(getattr(results, "spectra_source", None)))
+                                scan_fragments)
+        fragments = fragment_ids(b.modification, b.data_id, scan_fragments)
     out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
-                       groups=groups, charges=charges)
+                       groups=groups, charges=charges, uncorrected=fragments)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (
@@ -326,7 +330,8 @@ def _site_counts(results) -> np.ndarray:
 def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
-    n_amides, rep, control_fallback, run, not_measured)`` (run: '' for one run, the run's name in a
+    n_amides, rep, control_fallback, run, not_measured, uncorrected)`` (run: '' for one run, the
+    run's name in a
     :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
     point of a group is a :class:`Point` (``(time, role)``: a time, or a control role).
@@ -374,8 +379,10 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     n_amides = _site_counts(results)
     fell_back = np.zeros(len(fit), dtype=bool)
     not_measured = np.zeros(len(fit), dtype=bool)
+    raw = np.zeros(len(fit), dtype=bool)
     if controls is not None:
         at = controls.rows(fit.data_id)
+        raw = controls.uncorrected[at]
         n_amides = np.asarray(controls.n_amides, dtype=float)[at]
         fell_back = np.asarray(controls.fallback, dtype=bool)[at]
         not_measured = ~controls.measured[at]
@@ -428,6 +435,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
                     int(binned.rep[j]), bool(fell_back[i]), "", bool(not_measured[i]),
+                    bool(raw[i]),
                 ))
 
     corrected = {("", str(s)): controls is not None for s in np.unique(binned.sample)}
@@ -556,7 +564,8 @@ def species_uptake(
             ("mean_se", d_se * amides), ("fD", d), ("fD_se", d_se),
             ("population", fr), ("population_se", fr_se), ("n_amides", amides),
             ("n_spectra", len(recs)), ("n_charges", len(charges)),
-            ("corrected", corrected[(run, sample)]), ("charge_trend", False),
+            ("corrected", corrected[(run, sample)] and not any(r[10] for r in recs)),
+            ("charge_trend", False),
             ("control_fallback", any(r[7] for r in recs)),
             ("runs", ",".join(run_names)),
             ("n_spectra_by_run", ",".join(str(sum(r[8] == x for r in recs)) for x in run_names)

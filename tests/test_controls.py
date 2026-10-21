@@ -228,11 +228,12 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
     good = c.rows([0, 1, 2])
     assert not c.fallback[good].any() and (c.retention[good] < 0.9).all()
     assert cfg.min_retention == 0.0
-    # a series without rates (a fragment ion) is not judged by the prediction: the run's limit
-    # judges it, and below it it falls back to d2o_fraction, never to kint
+    # a series without rates (extra Hex sites) is not judged by the prediction: the run's limit
+    # judges it, and below it it takes the median of the accepted controls, never kint
     i = c.rows([99])[0]
-    assert c.mfd_measured[i] == pytest.approx(0.5) and c.flags[i] == "retention_outlier"
-    assert c.mfd[i] == pytest.approx(0.0 + cfg.d2o_fraction * 10) and c.fallback[i]
+    assert c.mfd_measured[i] == pytest.approx(0.5)
+    assert c.flags[i] == "retention_outlier;fd_median" and c.fallback[i]
+    assert c.mfd[i] == pytest.approx(0.0 + np.median(c.retention[~c.fallback]) * 10)
     assert c.limits["n_series"] == 15 and c.limits["retention_floor"] > 0.05
     rows = [(d, t, m) for d, t, m in [(98, 0.0, 0.0), (98, 0.0, 0.0), (98, 1e6, 6.0),
                                        (98, 1e6, 6.0)]]
@@ -245,8 +246,11 @@ def test_kint_fallback_needs_conditions_rates_and_enough_controls():
     cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
     c = fit_controls(fit, n, cfg, rates=rates)  # 7 controls < kint_min_series 10
     assert c.fd_model is None and "fd_kint" not in ";".join(c.flags)
+    # without the model, the missing ones take the median of the accepted controls (HISTORY 131)
     i = c.rows([0])[0]
-    assert c.mfd[i] == pytest.approx(c.m0[i] + 0.9 * c.n_amides[i])
+    assert c.flags[i].endswith("fd_median")
+    assert c.mfd[i] == pytest.approx(c.m0[i] + np.median(c.retention[~c.fallback])
+                                     * c.n_amides[i])
     c = fit_controls(fit, n, ControlConfig(fd_fallback="kint",
                                            quench=QUENCH, kint_min_series=5), rates=rates)
     assert c.fd_model["n_series"] == 7
@@ -331,9 +335,9 @@ def test_too_few_controls_for_the_kint_model_are_still_judged_by_the_time_course
         c = fit_controls(fake_fit(rows), amides, cfg, rates=rates)
     assert c.fd_model is None and "not fitted" in caplog.text
     low, ok = c.rows([0])[0], c.rows([1])[0]
-    assert c.flags[low] == "fd_below_data" and c.fallback[low]
-    assert c.mfd[low] == pytest.approx(cfg.d2o_fraction * n[0]) and c.mfd_se[low] == 0.0
-    assert c.retention[low] == pytest.approx(cfg.d2o_fraction)
+    assert c.flags[low] == "fd_below_data;fd_median" and c.fallback[low]
+    assert c.mfd[low] == pytest.approx(0.6 * n[0]) and c.mfd_se[low] == 0.0
+    assert c.retention[low] == pytest.approx(0.6)  # the accepted control's
     assert c.flags[ok] == "fd_unreplicated" and not c.fallback[ok]
     assert c.retention[ok] == pytest.approx(0.6)
     # a generous tolerance lets it through
@@ -511,6 +515,28 @@ def test_a_missing_or_rejected_control_takes_the_other_charge_states():
     assert not c.measured[0]
     with pytest.raises(ValueError, match="fd_other_charge"):
         ControlConfig(fd_other_charge="yes")
+
+
+def test_fragment_ions_are_not_corrected():
+    """Fragment series keep their values (owner, 2026-10-21): flagged uncorrected, no fallback,
+    left out of the run's median, and passed through the correction unchanged."""
+    from hxex.controls import correct_means, fragment_ids
+
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 5.0), (0, 1e6, 5.0),  # retention 0.5
+            (1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 6.0), (1, 1e6, 6.0),  # 0.6
+            (2, 0, 0.5), (2, 0, 0.5), (2, 1e6, 1.0), (2, 600.0, 3.0),  # fragment, retention 0.05
+            (3, 0, 0.0), (3, 0, 0.0)]  # no fully deuterated control
+    c = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG, uncorrected={2})
+    f = c.rows([2])[0]
+    assert c.flags[f] == "uncorrected" and not c.fallback[f] and c.uncorrected[f]
+    assert not c.measured[f] and np.isnan(c.retention[f])
+    assert c.m0_measured[f] == pytest.approx(0.5) and c.mfd_measured[f] == pytest.approx(1.0)
+    assert c.retention[c.rows([3])[0]] == pytest.approx(0.55)  # the fragment is not counted
+    out = correct_means(c, [2, 0], np.array([3.0, 2.5]), se=np.array([0.2, 0.2]))
+    assert out.mean.tolist() == pytest.approx([3.0, 5.0])  # as measured; 2.5 / 5 * 10
+    assert out.se[0] == pytest.approx(0.2) and out.control_se[0] == 0.0
+    # fragment series: a fragment scan target, or an ion type other than M
+    assert fragment_ids(["", "ion_type:c", ""], [1, 2, 3], fragments=[3]) == {2, 3}
 
 
 def test_charge_groups_leave_out_fragment_ions_and_the_explicit_mz():

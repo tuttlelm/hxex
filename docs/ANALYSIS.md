@@ -237,7 +237,10 @@ How fragment data differs, and what this branch does about it:
   measures (c_k minus c_(k-1) is residue k + 1; z_j minus z_(j-1) the residue after z_j's
   first) and refuses differences that are not a set of residues.
 - **Controls** are per fragment and per fragmentation type (an undeuterated run per type and a
-  final equilibrium run). Back-exchange may not be fully correctable (in back-exchange
+  final equilibrium run). Fragment series are not corrected (owner, 2026-10-21: flagged
+  `uncorrected` in the control table, values as measured, out of the run's median and
+  prediction; the correction may belong at the parent level, HISTORY 131). Back-exchange may
+  not be fully correctable (in back-exchange
   kinetics the final run is back-exchanged to about 0 D), so theoretical references may be
   needed instead (owner); some kinetics runs have spurious early time points from the setup.
   Theoretical references and protection factors come from intrinsic rates in the kinetics'

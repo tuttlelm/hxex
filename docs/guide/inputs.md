@@ -35,8 +35,9 @@ seconds or text with a unit: `60`, `"60 s"`, `"5 min"`, `"20 h"` (`s`, `sec`, `m
 `fulldeut` (the fully deuterated control). The folder formats take the role from a label
 (`Non` and `Full` in SpecExport, `undeut` and `TD` in HX-Express); the scan formats take it from
 `role` in `[[input.runs]]`. A control has no time in the tables and figures. Replicate controls
-are averaged. See [Controls and times](controls.md) for what the controls are used for and how
-to use a time point as a control.
+are averaged. See [Back-exchange correction](back-exchange-correction.md) for what the
+controls are used for, and [Controls and times](controls.md) for how to use a time point as a
+control.
 
 **Sequences** are written in modX: a modified residue is a lowercase prefix followed by its
 residue letter (`acK`, `pS`, `pT`, `pY`), and a sequence is read residue by residue. Other

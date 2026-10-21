@@ -3406,3 +3406,38 @@ CSVs or mzML if wanted.
     of the 4+ intensity: peaks at half-integer positions under the 4+ envelope (2 to 3 % of its
     signal) point to an interfering species, not a charge effect. So charge changes the
     deuterium level by at most about 1.5 % of the deuterium present.
+
+131. **The kint fallback's 10 controls, the median below them, and uncorrected fragments
+    (owner, 2026-10-21).** Owner asked how `kint_min_series` (10) was chosen: it had no
+    measurement behind it (set with item 73; the code refuses fewer than 3). Measured on the
+    B5 example (194 accepted fully deuterated controls, 149 with retention times; scratch
+    scripts with the private examples): 400 random subsets of n controls, the model fitted as
+    the code does (fit, reject beyond `kint_tolerance`, refit) and judged on the held-out
+    controls (rms retention error per amide), against the subset's median retention.
+    Clean subsets: kint 0.060 vs median 0.068 at n = 3 (kint better in 80 % of subsets), 0.048
+    vs 0.065 at 8 and 10 (96 %), 100 % from 15 (full model 0.045); with retention times the
+    same. With one control per subset reading low (retention x 0.6): kint better in 44 % at 3,
+    67 % at 5, 87 % at 8, 93 % at 10, 98 % at 15; the rejection catches the bad one 28 %, 61 %,
+    74 %, 80 %, 88 % of the time. The fitted scatter (the stand-ins' `mfd_se`) is too small at
+    small n (median 0.035 at 3, 5th percentile 0.004; 0.044 at 10). So 10 stands, now with a
+    reason: one bad control is the risk, and from 10 the prediction beats the median in more
+    than nine cases out of ten. The real defect was below it: the series kint could not fill
+    took `d2o_fraction` (rms error 0.35 per amide here, five to seven times the median's).
+    Owner: fall back to the median retention of the accepted controls. Built: in kint mode the
+    series without rates (extra `Hex` sites), and every series when the model is not fitted,
+    take `fd_median` (`d2o_fraction` only when no control is accepted, as in median mode;
+    `fd_fallback = "d2o"` unchanged). The rated controls the run's limit rejects when no
+    model is fitted now take it too (their rejection was not passed on before, so they kept
+    `d2o_fraction`).
+    Owner also asked whether fragments get any correction ("I think we decided that none of
+    the back-exchange corrections apply"): the record had only the open point of item 79
+    (the correction may belong at the parent level); the code corrected a fragment series by
+    its own controls or a fallback. Owner: fragments uncorrected for now. Built: the fragment
+    series (ion type other than `M`, or a fragment scan target, `controls.fragment_ids`) get a
+    control row flagged `uncorrected` (measured means kept, `m0` 0, `mfd` `n_amides`,
+    retention NaN, no fallback), take no part in the run's limits, median, prediction or
+    `fd_disagrees`; `correct_means` passes their values through; their species rows say
+    `corrected = false`; the components table leaves their corrected columns empty; series
+    figures draw them uncorrected (a forced `corrected = true` skips them instead of failing).
+    Bundles keep their stored controls until rerun or recomputed. The guide's controls page
+    now lists the order of the values as numbered steps.

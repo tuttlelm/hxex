@@ -10,6 +10,13 @@ controls are averaged. The control means ``m0`` and
 beyond natural abundance (the natural-abundance shape is convolved separately, so an undeuterated
 spectrum has ``m0`` near 0, and the centre of the raw envelope must not be used instead).
 
+Fragment ions (the series of ``uncorrected``: an ion type other than ``M``, or a fragment
+scan target) are not corrected: their row keeps the measured control means, uses ``m0 = 0``
+and ``mFD = n_amides`` (so the correction leaves their values as they are; :func:`correct_means`
+passes them through), is flagged ``uncorrected`` and takes no part in the run's limits,
+median or theoretical fit (owner, 2026-10-21: the fragments' correction may belong at the
+parent level, still to be designed).
+
 Each control falls back to its theoretical value, and the series is flagged, on its own:
 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
@@ -39,9 +46,11 @@ then again without the rejected ones). A measured control is rejected when it mi
 prediction by more than ``kint_tolerance`` deuterons per amide (``fd_off_model``), in place of
 the ``retention_min`` floor (which still applies when set); a missing or rejected control falls
 back to ``m0 + prediction`` (flagged ``fd_kint``) with the fit's scatter per amide times
-``n_amides`` as its standard error. Series without rates (fragment ions, extra ``Hex`` sites)
-keep the ``d2o_fraction`` fallback; with fewer than ``kint_min_series`` usable (or agreeing)
-controls nothing is fitted and every series keeps it, with its floor (logged). When every
+``n_amides`` as its standard error. Series without rates (extra ``Hex``
+sites) take the median retention of the run's accepted controls (``fd_median``) instead, and
+so does every series when fewer than ``kint_min_series`` controls are usable (or agree with
+the fit) and nothing is fitted (logged; owner, 2026-10-21: the median predicts held-out
+controls far better than ``d2o_fraction``, HISTORY 131). When every
 control in the fit has a retention
 time (``RT``, minutes; :func:`series_rt`) for at least ``kint_min_series`` of the controls, the
 effective time is ``t0 + b RT`` (``b`` fitted, not below 0), and a
@@ -63,7 +72,7 @@ the controls is added to the uncertainty of the mean.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -302,6 +311,12 @@ class ControlTable:
         return len(self.data_id)
 
     @property
+    def uncorrected(self) -> np.ndarray:
+        """True for the series that are not corrected (fragment ions, flagged
+        ``uncorrected``): their values pass through :func:`correct_means` unchanged."""
+        return np.array(["uncorrected" in str(f).split(";") for f in self.flags], dtype=bool)
+
+    @property
     def measured(self) -> np.ndarray:
         """True where both controls are measured: the series' own, or for the fully deuterated
         one the same peptide's at its other charge states (``fd_other_charge``; the charge
@@ -310,7 +325,7 @@ class ControlTable:
         other = np.array(["fd_other_charge" in str(f).split(";") for f in self.flags], dtype=bool)
         m0_ok = (np.asarray(self.n_undeut) > 0) & np.array(
             ["m0_high" not in str(f).split(";") for f in self.flags], dtype=bool)
-        return ~np.asarray(self.fallback, dtype=bool) | (other & m0_ok)
+        return (~np.asarray(self.fallback, dtype=bool) | (other & m0_ok)) & ~self.uncorrected
 
     def rows(self, data_id) -> np.ndarray:
         """Row of each series id in ``data_id`` (KeyError for a series without a row)."""
@@ -424,6 +439,7 @@ def fit_controls(
     rt: Mapping[int, float] | None = None,
     groups: Mapping[int, Any] | None = None,
     charges: Mapping[int, tuple] | None = None,
+    uncorrected: Collection[int] = (),
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -439,8 +455,10 @@ def fit_controls(
     deuterated control with the same molecule's in the other samples (``fd_disagrees``).
     ``charges`` (``data_id`` -> (the peptide in its sample, charge), :func:`charge_groups`)
     lets a series without a good fully deuterated control take its other charge states'
-    (``fd_other_charge``).
+    (``fd_other_charge``). The series of ``uncorrected`` (``data_id``; fragment ions,
+    :func:`fragment_ids`) are not corrected and take no part in the others' checks.
     """
+    uncorrected = {int(d) for d in uncorrected}
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
     if config.fd_mode == "kint" and rates is None:
@@ -511,6 +529,15 @@ def fit_controls(
         tol = config.time_course_tolerance * n_am
         m0_meas, m0_se, n_u = _mean_se(pick(rows, UNDEUT))
         mfd_meas, mfd_se, n_f = _mean_se(pick(rows, FULLDEUT))
+        if int(s) in uncorrected:  # values as measured: m0 0, mFD n_amides
+            values = {
+                "n_amides": n_am, "n_undeut": n_u, "n_fd": n_f, "m0_measured": m0_meas,
+                "mfd_measured": mfd_meas, "m0": 0.0, "m0_se": 0.0, "mfd": n_am, "mfd_se": 0.0,
+                "retention": float("nan"), "fallback": False, "flags": "uncorrected",
+            }
+            for name, value in values.items():
+                cols[name].append(value)
+            continue
         flags: list[str] = []
         if n_u == 0:
             flags.append("m0_missing")
@@ -571,28 +598,33 @@ def fit_controls(
         judged = (candidates if config.fd_mode != "kint" else
                   [i for i in candidates if rates is None or int(series[i]) not in rates])
         pending += _reject_outliers(cols, judged, limits, config)
-    pending.sort()
-    pending_set = set(pending)
-    accepted = [cols["retention"][i] for i in candidates if i not in pending_set]
-    if config.fd_mode == "median" and pending and not accepted:
+    fd_model = None
+    if config.fd_mode == "kint":
+        fd_model = _kint_fallback(cols, series, sorted(pending), rates, config, rt)
+        if fd_model is None and config.retention_min is None:
+            # nothing judged the rated series' controls: the run's limit judges them as well
+            pending_set = set(pending)
+            rated = [i for i in candidates if i not in pending_set
+                     and int(series[i]) in rates]
+            pending += _reject_outliers(cols, rated, limits, config)
+    # what the prediction did not fill (the median mode, series without rates, or no model)
+    # takes the median retention of the run's accepted controls; fd_fallback 'd2o' keeps
+    # d2o_fraction
+    pending = sorted(i for i in set(pending) if config.fd_mode != "d2o"
+                     and "fd_kint" not in cols["flags"][i].split(";"))
+    accepted = [cols["retention"][i] for i in candidates
+                if not set(cols["flags"][i].split(";")) & set(FD_REJECTED)]
+    if pending and not accepted:
         log.warning("no fully deuterated control was accepted, so the %d series without one "
                     "take d2o_fraction (%g) as their retention: no back-exchange correction",
                     len(pending), config.d2o_fraction)
-    if config.fd_mode == "median" and accepted and pending:
+    if pending and accepted:
         r = float(np.median(accepted))
         for i in pending:
             n_am, m0 = cols["n_amides"][i], cols["m0"][i]
             cols["mfd"][i] = m0 + r * n_am
             cols["retention"][i] = r if n_am > 0 else float("nan")
             cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
-    fd_model = None
-    if config.fd_mode == "kint":
-        fd_model = _kint_fallback(cols, series, pending, rates, config, rt)
-        if fd_model is None and config.retention_min is None:
-            # nothing judged the rated series' controls: the run's limit judges them as well
-            rated = [i for i in candidates if i not in pending_set
-                     and int(series[i]) in rates]
-            _reject_outliers(cols, rated, limits, config)
     if config.fd_other_charge and charges:
         _other_charge_fallback(cols, series, charges)
     _flag_disagreement(cols, series, groups, config)
@@ -666,7 +698,8 @@ def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
         return
     members: dict[Any, list[int]] = {}
     for i, s in enumerate(series):
-        if int(s) in groups and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0:
+        if (int(s) in groups and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
+                and "uncorrected" not in cols["flags"][i].split(";")):
             members.setdefault(groups[int(s)], []).append(i)
     n = 0
     for rows in members.values():
@@ -699,6 +732,19 @@ def series_groups(peptide, modification, charge, data_id) -> dict[int, tuple]:
     return out
 
 
+def fragment_ids(modification, data_id, fragments=()) -> set[int]:
+    """The series (``data_id``) of fragment ions, from per-spectrum arrays: those of
+    ``fragments`` (ids of fragment scan targets, :func:`hxex.io.mzml.fragment_series`) and every
+    series whose ion type is not ``M``."""
+    from .chem import parse_modification
+
+    out = {int(d) for d in fragments}
+    for mod, d in zip(np.asarray(modification), np.asarray(data_id), strict=True):
+        if int(d) not in out and parse_modification(str(mod)).ion_type != "M":
+            out.add(int(d))
+    return out
+
+
 def charge_groups(sample, peptide, modification, charge, data_id,
                   fragments=()) -> dict[int, tuple[tuple, int]]:
     """``data_id`` -> ((sample, peptide, modification), charge), from per-spectrum arrays: the
@@ -706,15 +752,13 @@ def charge_groups(sample, peptide, modification, charge, data_id,
     fully deuterated controls should agree (``fd_other_charge``). ``undeut_mz``, which differs
     by charge, is left out of the modification. Fragment ions are left out: the series of
     ``fragments`` (ids), and every series whose ion type is not ``M``."""
-    from .chem import parse_modification
-
-    skip = {int(d) for d in fragments}
+    skip = fragment_ids(modification, data_id, fragments)
     out: dict[int, tuple[tuple, int]] = {}
     for s, p, mod, z, d in zip(np.asarray(sample), np.asarray(peptide),
                                np.asarray(modification), np.asarray(charge),
                                np.asarray(data_id), strict=True):
         d = int(d)
-        if d in skip or d in out or parse_modification(str(mod)).ion_type != "M":
+        if d in skip or d in out:
             continue
         kept = " ".join(x for x in str(mod).split() if not x.startswith("undeut_mz:"))
         out[d] = ((str(s), str(p), kept), int(z))
@@ -775,7 +819,7 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
               if i not in pending_set and int(s) in rates and cols["n_amides"][i] > 0]
     if len(fitted) < config.kint_min_series:
         log.warning("theoretical back-exchange not fitted: %d usable fully deuterated controls "
-                    "(kint_min_series %d); missing ones fall back to d2o_fraction",
+                    "(kint_min_series %d); missing ones take the run's median retention",
                     len(fitted), config.kint_min_series)
         return None
 
@@ -809,7 +853,8 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
     kept = [i for i, o in zip(fitted, off, strict=True) if not o]
     if len(kept) < config.kint_min_series:
         log.warning("theoretical back-exchange not fitted: %d fully deuterated controls agree "
-                    "with it (kint_min_series %d)", len(kept), config.kint_min_series)
+                    "with it (kint_min_series %d); missing ones take the run's median "
+                    "retention", len(kept), config.kint_min_series)
         return None
     a, t0, b, sd = _fit_kint(measured(kept), [rates[int(series[i])] for i in kept],
                              amides(kept), times(kept))
@@ -858,7 +903,8 @@ def correct_means(
     ci: np.ndarray | None = None,
     ci_level: float = 0.95,
 ) -> CorrectedMeans:
-    """Correct means for back-exchange, ``(mean - m0) / (mFD - m0) * n_amides`` (not below 0).
+    """Correct means for back-exchange, ``(mean - m0) / (mFD - m0) * n_amides`` (not below 0);
+    the series that are not corrected (:attr:`ControlTable.uncorrected`) keep their values.
 
     ``mean`` is ``(M, ...)`` with the series of each row in ``data_id`` (``(M,)``); NaN stays NaN.
     A series whose ``mfd`` is not above its ``m0`` cannot be corrected: its values become NaN,
@@ -874,7 +920,8 @@ def correct_means(
         raise ValueError("data_id must have one value per row of mean")
     pad = (slice(None),) + (None,) * (mean.ndim - 1)
     m0, f, n = (getattr(controls, k)[rows][pad] for k in ("m0", "mfd", "n_amides"))
-    bad = (controls.mfd[rows] <= controls.m0[rows]) & (controls.n_amides[rows] > 0)
+    raw = controls.uncorrected[rows]  # fragment ions: passed through unchanged
+    bad = (controls.mfd[rows] <= controls.m0[rows]) & (controls.n_amides[rows] > 0) & ~raw
     if bad.any():
         ids = np.unique(np.asarray(data_id)[bad])
         log.warning("%d series (data_id %s) have a fully deuterated level at or below the "
@@ -905,4 +952,12 @@ def correct_means(
             np.maximum(corrected - np.hypot(corrected - lo, half), 0.0),
             corrected + np.hypot(hi - corrected, half),
         ], axis=-1)
+    if raw.any():
+        keep = np.broadcast_to(raw[pad], corrected.shape)
+        corrected = np.where(keep, mean, corrected)
+        control_se = np.where(keep, 0.0, control_se)
+        if out_se is not None:
+            out_se = np.where(keep, se, out_se)
+        if out_ci is not None:
+            out_ci = np.where(keep[..., None], ci, out_ci)
     return CorrectedMeans(mean=corrected, control_se=control_se, se=out_se, ci=out_ci)

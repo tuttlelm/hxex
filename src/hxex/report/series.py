@@ -295,10 +295,21 @@ def _time_text(t: float, role: str = "") -> str:
 
 
 def _control_row(results: Results, data_id: int) -> int | None:
+    """The series' row of the controls table; None without controls and for a series that is
+    not corrected (fragment ions)."""
     ctrl = results.controls
     if ctrl is None or data_id not in set(ctrl.data_id.tolist()):
         return None
-    return int(ctrl.rows([data_id])[0])
+    row = int(ctrl.rows([data_id])[0])
+    return None if ctrl.uncorrected[row] else row
+
+
+def _uncorrected(results: Results, data_id: int) -> bool:
+    """Whether the series has a controls row that leaves it uncorrected (fragment ions)."""
+    ctrl = results.controls
+    if ctrl is None or data_id not in set(ctrl.data_id.tolist()):
+        return False
+    return bool(ctrl.uncorrected[int(ctrl.rows([data_id])[0])])
 
 
 def population_data(
@@ -335,7 +346,7 @@ def population_data(
         draws = np.stack([dm, df], axis=-1)
     data_id = int(results.fit.data_id[i])
     row = _control_row(results, data_id)
-    if corrected and row is None:
+    if corrected and row is None and not _uncorrected(results, data_id):
         raise KeyError(f"no controls for series {data_id} (spectrum {spectrum_id})")
     use = row is not None if corrected is None else corrected
     n_amides = None

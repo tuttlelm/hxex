@@ -302,10 +302,10 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `sample_tolerance` | number | `0.1` | a fully deuterated control whose retention differs this much from the same peptide's in the other samples is flagged fd_disagrees (still used) |
 | `fd_other_charge` | true/false | `true` | a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states in the same sample, before fd_fallback (peptides only, not fragment ions) |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
-| `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench); false: "kint" with quench, else "median" |
+| `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |
 | `quench` | table | unset | pH read, degrees Celsius and D fraction of the quench and LC ({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for fd_fallback "kint" (unset: none) |
 | `kint_tolerance` | number | `0.15` | kint: a measured control this far (D per amide) from the prediction is rejected |
-| `kint_min_series` | integer | `10` | kint: fewest usable controls to fit the prediction to |
+| `kint_min_series` | integer | `10` | kint: fewest usable controls to fit the prediction to (fewer: every series takes the median) |
 
 ## `[run.quality]`
 
