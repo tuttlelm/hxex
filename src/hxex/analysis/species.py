@@ -14,10 +14,13 @@ controls (``corrected``), and ``fD``, the **fractional deuteration**, ``mean / n
 1). Both mean the same for forward labelling and for reverse exchange (docs/ANALYSIS.md).
 
 Spectra the review rejected are left out; flagged ones are kept unless ``exclude_flagged``. The
-replicates and charge states of a species at one time are combined: the value is their mean and
-its standard error ``sqrt(max(mean(se_i^2), s^2) / n)``, the larger of the measurements' own
-(bootstrap) variance and their observed scatter ``s^2``, so that neither is counted twice; with one
-measurement it is that measurement's standard error. ``charge_trend`` flags a species whose charge
+spectra of a species at one time are combined in two steps. The charge states of each replicate
+are averaged first (they share the replicate's sample, labelling, quench, and injection, so they
+are not independent replicates; the mean's error is ``sqrt(sum se_i^2) / c`` of their own
+errors); the replicates are then combined: the value is their mean and its standard error
+``sqrt(max(mean(se_i^2), s^2) / n)`` over the ``n`` replicates, the larger of their own
+(bootstrap) variance and their observed scatter ``s^2``, so that neither is counted twice; with
+one replicate it is that replicate's standard error. ``charge_trend`` flags a species whose charge
 states disagree systematically (see :func:`species_uptake`).
 """
 
@@ -194,6 +197,29 @@ class SpeciesUptake:
                 values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
                 keep &= np.isin(getattr(self, name), values)
         return keep
+
+
+def _by_replicate(recs, at: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """The values (record field ``at``: 0 fD, 2 population) and standard errors of a species'
+    spectra with the charge states of each replicate (its run and ``rep``) averaged: one value
+    per replicate, in the order the replicates first appear. A replicate's error is
+    ``sqrt(sum se_i^2) / c`` over its ``c`` charge states with a known error (NaN without
+    any)."""
+    reps: dict[tuple, list] = {}
+    for r in recs:
+        reps.setdefault((r[8], r[6]), []).append(r)
+    values, ses = [], []
+    for members in reps.values():
+        values.append(float(np.mean([m[at] for m in members])))
+        own = np.array([m[at + 1] for m in members], dtype=float)
+        own = own[np.isfinite(own)]
+        ses.append(float(np.sqrt(np.sum(own**2)) / len(own)) if len(own) else np.nan)
+    return np.array(values), np.array(ses)
+
+
+def _combine_replicates(recs, at: int = 0) -> tuple[float, float]:
+    """:func:`_combine` of :func:`_by_replicate`: a species' value and standard error."""
+    return _combine(*_by_replicate(recs, at))
 
 
 def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
@@ -432,15 +458,13 @@ def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = Fals
         worst: dict[tuple, float] = {}
         for key, recs in groups.items():
             if key[7] >= 2:
-                _, se = _combine(np.array([r[0] for r in recs]), np.array([r[1] for r in recs]))
+                _, se = _combine_replicates(recs)
                 worst[key[:8]] = max(worst.get(key[:8], 0.0), se if np.isfinite(se) else 0.0)
         too_wide = {key for key, se in worst.items() if se >= filters.max_fD_se}
         dropped["fD_se"] = len(too_wide)
         groups = {key: recs for key, recs in groups.items() if key[:8] not in too_wide}
         if filters.k1_between_ranks and 1 in ks:  # the K=1 value between the K >= 2 ranks
-            value = {key: _combine(np.array([r[0] for r in recs]),
-                                   np.array([r[1] for r in recs]))[0]
-                     for key, recs in groups.items()}
+            value = {key: _combine_replicates(recs)[0] for key, recs in groups.items()}
             unordered = set()
             for key in value:
                 base, k, rank = key[:7], key[7], key[8]
@@ -508,12 +532,8 @@ def species_uptake(
     for key, recs in sorted(groups.items()):
         run, sample, peptide, mod, start, end, point, k, rank = key
         time, role = point.time, point.role
-        v = np.array([r[0] for r in recs])
-        s = np.array([r[1] for r in recs])
-        f = np.array([r[2] for r in recs])
-        fs = np.array([r[3] for r in recs])
-        d, d_se = _combine(v, s)
-        fr, fr_se = _combine(f, fs)
+        d, d_se = _combine_replicates(recs, 0)
+        fr, fr_se = _combine_replicates(recs, 2)
         charges = sorted({r[4] for r in recs})
         amides = float(np.mean([r[5] for r in recs]))  # the same for every spectrum of a species
         run_names = [x for x in dict.fromkeys(r[8] for r in recs) if x] or [""]  # RunSet order
@@ -534,8 +554,7 @@ def species_uptake(
         ):
             cols[name].append(value)
         if len(run_names) > 1:  # each run against the first, at this time
-            per_run = {x: _combine(*map(np.array, zip(*[(r[0], r[1]) for r in recs
-                                                          if r[8] == x], strict=True)))
+            per_run = {x: _combine_replicates([r for r in recs if r[8] == x])
                        for x in run_names}
             by_run.setdefault((run, sample, peptide, mod, k, rank), []).append(per_run)
         if len(charges) > 1:

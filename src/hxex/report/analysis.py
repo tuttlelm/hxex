@@ -238,24 +238,21 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             comparisons["K=2 rank 2 (high D) fD"] = compare_peptides(results, ref, K=2, rank=2,
                                                                      **kw)
             comparisons["K=2 rank 1 (low D) population"] = compare_peptides(
-                results, ref, K=2, rank=1, quantity="population", **kw)
+                results, ref, K=2, rank=1, quantity="population", choice=config.choice, **kw)
         rows = {}
         for title, c in comparisons.items():
             cols = c.columns()
-            n = len(c)
-            cols = {"comparison": np.array([title] * n), **cols,
-                    "delta_crit": np.full(n, c.delta_crit)}
+            cols = {"comparison": np.array([title] * len(c)), **cols}
             for name, values in cols.items():
                 rows.setdefault(name, []).append(values)
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
                                    delta_crit=comparisons["K=1 fD"].delta_crit, choice=choice)
-        tables["compare_residues"] = _columns(res_cmp)
+        tables["compare_residues"] = res_cmp.columns()
         if choice is not None:
-            pop_cmp = compare_populations(
-                choice, ref, alpha=config.alpha,
-                delta_crit=comparisons["K=2 rank 1 (low D) population"].delta_crit)
-            tables["compare_populations"] = _columns(pop_cmp)
+            pop_cmp = compare_populations(  # the K=1 threshold, divided by each separation
+                choice, ref, alpha=config.alpha, delta_crit=comparisons["K=1 fD"].delta_crit)
+            tables["compare_populations"] = pop_cmp.columns()
             tables["compare_choices"] = compare_choices(choice, ref).columns()
             pop_cmp = _display(pop_cmp, labels, reference)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}

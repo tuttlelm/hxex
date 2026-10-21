@@ -146,9 +146,9 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 
 | File | Holds |
 |---|---|
-| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference and `significant` |
+| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; for the population, `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart) |
 | `compare_residues.csv` | per residue and time: difference, error, z, `significant` |
-| `compare_populations.csv` | per residue and time: the low-D population against the reference's |
+| `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` |
 | `compare_choices.csv` | per residue: whether each side keeps two populations, and whether they agree |
 
 **Runs** (several bundles): `run_settings.csv` (settings that differ between the runs, and

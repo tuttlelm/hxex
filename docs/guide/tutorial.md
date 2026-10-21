@@ -363,7 +363,11 @@ deuterium than WT over the first 80 residues, most at the early times:
 ![Butterfly plot of R120G against WT](../images/tutorial_butterfly.png)
 
 **The Woods plot** (`woods_R120G_1min.png`) shows the same difference at one time, one bar per
-peptide over the residues it covers, coloured where the difference is significant:
+peptide over the residues it covers, coloured where the difference is significant (red higher,
+blue lower than WT). The top panel is the average deuteration (one population). The next two
+are the positions of the two populations, and the bottom one is the share of the low-D
+population. Here the positions hardly differ, but R120G has clearly less of the low-D
+population over the first 80 residues: the same two states, populated differently.
 
 ![Woods plot of R120G against WT at 1 min](../images/tutorial_woods.png)
 

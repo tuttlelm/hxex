@@ -136,9 +136,13 @@ in the published work; where it matters, a component is named by its rank.
   loss of the replicate noise estimate puts a small component in the high-mass tail, least
   squares (the default, and pyHXExpress) a moderate split. Decided (owner, 2026-10-13): the
   Gaussian loss (HISTORY items 55 and 56).
-- **Combining** replicates and charge states: the mean, with the standard error
-  `sqrt(max(mean(se_i^2), s^2) / n)` (the larger of the bootstrap variance and the observed
-  scatter, so neither counts twice). **Charge trend** flag: the lowest and highest charge state
+- **Combining** replicates and charge states, in two steps (owner, 2026-10-20; HISTORY 128):
+  the charge states of each replicate are averaged first (error `sqrt(sum se_i^2) / c`), since
+  they share the replicate's sample, labelling, quench, and injection and are not independent
+  replicates; the replicates are then combined: the mean, with the standard error
+  `sqrt(max(mean(se_i^2), s^2) / n)` over the `n` replicates (the larger of the bootstrap
+  variance and the observed scatter, so neither counts twice). The same per-replicate values
+  feed the comparisons' Welch tests and pooled scatter. **Charge trend** flag: the lowest and highest charge state
   differ by more than 2 combined standard errors in the same direction at more than half of
   the times both were measured, and at two times at least.
 - **One or two populations** (pyHXExpress `choose_fits`): per residue (or peptide) and time,
@@ -162,14 +166,30 @@ in the published work; where it matters, a component is named by its rank.
   (Hageman and Weis 2019; owner, 2026-10-13): Welch's t-test on the replicate spectra with
   `p < 0.05` and `|delta|` above `delta_crit = t(1 - alpha/2, 2n - 2) s_pooled sqrt(2/n)` (the
   pooled standard deviation of replicate spectra over every peptide, time and sample, `n` the
-  typical replicate count); per residue, `|delta| / se` above the normal quantile and `|delta|`
-  above the peptides' `delta_crit`. A region's value is the mean of its residues and its error
+  typical replicate count; replicates, their charge states averaged); per residue,
+  `|delta| / se` above the normal quantile and `|delta|` above the peptides' `delta_crit`. A region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
-  region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13): a
-  K=2 rank's population per peptide (`compare_peptides(..., quantity='population')`, the same
-  hybrid rule) and the lever-rule population per residue (`compare_populations`), to see whether
-  a sample shifts the balance between the populations rather than their deuteration; the
-  comparison tables carry their `quantity` (`value`, `value_reference` and their errors).
+  region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to
+  see whether a sample shifts the balance between the populations rather than their
+  deuteration, by the lever rule at both levels (owner, 2026-10-20; HISTORY 128): the low-D
+  population is `(fD_high - fD_avg) / (fD_high - fD_low)`, the K=1 value standing for the
+  average (it is far more precise than the K=2 fit's own share, whose scatter comes from the
+  positions trading off against it). Per peptide (`compare_peptides(..., quantity='population')`)
+  each replicate's K=1 value sits between the sample's K=2 positions averaged over its
+  replicates; each sample keeps its own positions, so the K=2 fD comparisons say whether the
+  states differ and the population comparison whether they are populated differently. A pair
+  is compared only where, on both sides, the positions pass the choice's separation and error
+  tests, every replicate's K=1 value lies between them, and the population is within the
+  choice's limits; otherwise `reason` names the first failing test and side. The test is
+  Welch's on the replicates' populations, and the threshold the K=1 `delta_crit` divided by the
+  separation (the mean of both sides'): with fixed positions a population difference is the
+  fD difference over the separation, so the K=1 standard carries over, where a pooled threshold
+  was dominated by poorly separated peptides (0.49 on the tutorial data). Per residue
+  (`compare_populations`) the same threshold with the residue's separation. The tables'
+  `delta_crit` column is each row's threshold. Open: the Welch test treats the averaged
+  positions as exact; requiring `|delta| / delta_se` (which includes their error) above the
+  normal quantile as well, or a joint bootstrap, would be stricter. The comparison tables carry
+  their `quantity` (`value`, `value_reference` and their errors).
   Peptides are paired by residue range by default (owner, 2026-10-13: a peptide containing a
   mutation is compared with the reference's over the same residues; `same_sequence`,
   `peptide_reference` say so), or by identical sequence (`match='sequence'`, `[analysis]

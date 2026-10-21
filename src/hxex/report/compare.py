@@ -15,7 +15,6 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
 from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 
 from ..analysis import (
@@ -66,6 +65,25 @@ def _corrected_differently(ax: Axes, xs, *, y: float = 0.995, note: bool = True)
     return len(xs)
 
 
+def _threshold_lines(ax, comparison, rows, left, right) -> None:
+    """``+-threshold`` dashed: one line across the panel when every row shares it (the fD
+    comparisons' ``delta_crit``), else a short dashed line over each row's place (``left`` to
+    ``right``; a population's threshold depends on the separation of its K=2 positions)."""
+    style = {"color": "#555555", "linestyle": "--", "linewidth": 0.9, "zorder": 1}
+    th = np.asarray(comparison.threshold, dtype=float)[rows]
+    finite = np.isfinite(th)
+    if not finite.any():
+        return
+    if np.allclose(th[finite], th[finite][0]):
+        for y in (th[finite][0], -th[finite][0]):
+            ax.axhline(y, **style)
+        return
+    for x0, x1, y in zip(np.asarray(left)[finite], np.asarray(right)[finite], th[finite],
+                         strict=True):
+        ax.plot([x0, x1], [y, y], **style)
+        ax.plot([x0, x1], [-y, -y], **style)
+
+
 def _label(quantity: str) -> str:
     return "population (low D)" if quantity == "population" else "fD"
 
@@ -81,11 +99,13 @@ def plot_residue_comparison(
     ax: Axes | None = None,
     time_scale: str = "seconds",
 ) -> Figure:
-    """The reference (black) and ``sample`` residue by residue at ``time``, in the comparison's
-    quantity (``fD``, or the low-D population from :func:`hxex.analysis.compare_populations`),
-    with standard-error bars; residues with a significant difference get a band at the top of
-    the axes (red up, blue down), and residues whose two values were corrected differently (one
-    with a fallback control) a ``*`` below it.
+    """The reference (black) and ``sample`` (its colour) residue by residue at ``time``, in the
+    comparison's quantity (``fD``, or the low-D population from
+    :func:`hxex.analysis.compare_populations`), drawn as :func:`plot_residue_overlay` draws its
+    values (points with capped standard-error bars, no lines, the sample over the reference,
+    the legend above the axes); residues whose two values were corrected differently (one with
+    a fallback control) get a ``*``, named in the legend. Which differences are significant is
+    in the comparison table, not drawn.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -93,7 +113,7 @@ def plot_residue_comparison(
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
     if ax is None:
-        fig = Figure(figsize=(7.5, 2.8))
+        fig = Figure(figsize=(7.5, 3.0))
         ax = fig.add_subplot()
     else:
         fig = ax.figure
@@ -102,26 +122,31 @@ def plot_residue_comparison(
     for n, (name, value, se) in enumerate((
             (comparison.reference, comparison.value_reference, comparison.value_reference_se),
             (sample, comparison.value, comparison.value_se))):
-        colour, marker, size = _style(0 if n == 0 else style_index)
+        colour = _style(0 if n == 0 else style_index)[0]
         bars = ax.errorbar(x, value[rows][order], yerr=np.nan_to_num(se[rows][order]),
-                           color=colour, marker=marker, markersize=size * 0.8, linewidth=1.0,
-                           elinewidth=0.8, capsize=0, label=name, zorder=4 if n == 0 else 3,
-                           alpha=0.9)
+                           fmt="o", markersize=3.0 if n == 0 else 4.0, color=colour,
+                           markeredgewidth=0.8, ecolor=colour, elinewidth=0.9, capsize=2.0,
+                           capthick=0.9, alpha=0.85, zorder=3 + n)
         bars.lines[0].set_gid(f"{comparison.quantity}:{name}")
-    sig = rows & comparison.significant
-    for res, d in zip(comparison.residue[sig], comparison.delta[sig], strict=True):
-        ax.add_patch(Rectangle((res - 0.5, 0.96), 1.0, 0.04, transform=ax.get_xaxis_transform(),
-                               color=INCREASE if d > 0 else DECREASE, linewidth=0,
-                               gid=f"significant:{res}"))
-    _corrected_differently(ax, comparison.residue[rows & comparison.corrected_differently],
-                           y=0.955)
+    n_diff = _corrected_differently(
+        ax, comparison.residue[rows & comparison.corrected_differently], note=False)
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length if length is not None else int(comparison.residue.max()))
-    ax.set_ylim(0, 1.1)
+    ax.set_ylim(-0.05, 1.05)
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.xaxis.set_minor_locator(AutoMinorLocator(4))
+    ax.set_xlabel("Residue")
     ax.set_ylabel(_label(comparison.quantity))
     ax.grid(color="#e5e5e5", linewidth=0.8)
-    ax.legend(loc="upper left", ncol=2, frameon=False, fontsize=8)
-    ax.text(0.99, 0.04, _when(time, time_scale), transform=ax.transAxes, ha="right",
+    handles = [Line2D([], [], linestyle="none", marker="o", markersize=6,
+                      color=_style(i)[0], label=name)
+               for name, i in ((comparison.reference, 0), (sample, style_index))]
+    if n_diff:
+        handles.append(Line2D([], [], linestyle="none", marker="$*$", markersize=7,
+                              color="#4d4d4d", label="corrected differently"))
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
+              ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
+    ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     return fig
 
@@ -135,21 +160,19 @@ def residue_comparison_figure(
     length: int | None = None,
     time_scale: str = "seconds",
 ) -> Figure:
-    """One panel per sample of ``samples`` against the comparison's reference, sharing the
-    residue axis; each sample keeps its colour.
+    """One :func:`plot_residue_comparison` panel per sample of ``samples`` against the
+    comparison's reference (laid out as :func:`residue_overlay_figure`); each sample keeps its
+    colour.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
     samples = [s for s in samples if s != comparison.reference]
-    fig = Figure(figsize=(7.5, 2.3 * len(samples) + 0.4), layout="constrained")
-    axes = fig.subplots(len(samples), 1, sharex=True, squeeze=False)[:, 0]
+    fig = Figure(figsize=(6.5, 3.0 * len(samples)), layout="constrained")
+    axes = fig.subplots(len(samples), 1, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):
         plot_residue_comparison(comparison, sample, time, style_index=n + 1,
                                 annotations=annotations, length=length, ax=ax,
                                 time_scale=time_scale)
-        if n < len(samples) - 1:
-            ax.set_xlabel("")
-    axes[-1].set_xlabel("residue")
     return fig
 
 
@@ -289,7 +312,8 @@ def plot_peptide_differences(
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
-    grey otherwise, with the standard error as a vertical bar and ``+-delta_crit`` dashed; a
+    grey otherwise, with the standard error as a vertical bar and the threshold dashed (one
+    line, ``+-delta_crit``, or for a population a short line over each peptide); a
     ``*`` at the top over the middle of each peptide whose two values were corrected differently
     (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``.
 
@@ -313,9 +337,8 @@ def plot_peptide_differences(
         mid = (comparison.start[i] + comparison.end[i]) / 2
         ax.plot([mid, mid], [d - comparison.delta_se[i], d + comparison.delta_se[i]],
                 color=colour, linewidth=0.7, zorder=2)
-    if np.isfinite(comparison.delta_crit):
-        for y in (comparison.delta_crit, -comparison.delta_crit):
-            ax.axhline(y, color="#555555", linestyle="--", linewidth=0.9, zorder=1)
+    _threshold_lines(ax, comparison, rows, comparison.start[rows] - 0.5,
+                     comparison.end[rows] + 0.5)
     ax.axhline(0, color="#000000", linewidth=0.8, zorder=1)
     differ = rows[comparison.corrected_differently[rows]]
     _corrected_differently(ax, (comparison.start[differ] + comparison.end[differ]) / 2)
@@ -331,7 +354,8 @@ def plot_peptide_differences(
     ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
-    ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {len(rows)} significant",
+    n_compared = int(np.isfinite(comparison.delta[rows]).sum())  # a population may not be
+    ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {n_compared} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
     return fig
 
@@ -465,9 +489,9 @@ def plot_butterfly(
                               color="#4d4d4d", label="corrected differently"))
     top.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False,
                fontsize=7, ncol=len(handles))
-    if np.isfinite(comparison.delta_crit):
-        for y in (comparison.delta_crit, -comparison.delta_crit):
-            bottom.axhline(y, color="#555555", linestyle="--", linewidth=0.9, zorder=1)
+    drawn = np.flatnonzero(rows & np.isin(comparison.time, times))
+    x = np.array([position[key(i)] for i in drawn], dtype=float)
+    _threshold_lines(bottom, comparison, drawn, x - 0.4, x + 0.4)
     bottom.axhline(0, color="#000000", linewidth=0.8, zorder=1)
     what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"
     bottom.set_ylabel(what)

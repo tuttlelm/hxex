@@ -469,8 +469,11 @@ def test_compare_peptides_with_the_hybrid_rule(results):
     pop = compare_peptides(dataclasses.replace(results, binned=shifted), "S", K=2, rank=1,
                            quantity="population")
     assert pop.quantity == "population" and pop.K == 2
-    assert np.all((pop.value >= 0.05) & (pop.value <= 0.95))  # the filters still apply
-    with pytest.raises(ValueError, match="K >= 2"):
+    compared = pop.reason == ""  # the others say why (here the K=1 value outside the K=2 pair)
+    assert np.all((pop.value[compared] >= 0.05) & (pop.value[compared] <= 0.95))
+    assert np.isnan(pop.value[~compared]).all() and not pop.significant[~compared].any()
+    assert all(r.endswith(("(reference)", "(sample)")) for r in pop.reason[~compared])
+    with pytest.raises(ValueError, match="K = 2"):
         compare_peptides(results, "S", quantity="population")
     with pytest.raises(ValueError, match="quantity"):
         compare_peptides(results, "S", quantity="mean")
@@ -529,7 +532,8 @@ def test_comparison_plots():
     rc = compare_residues(rm, "R", delta_crit=0.1)
     ann = Annotations(regions=(Region("long region name", 1, 9),), sites=(Site(5, "P5"),))
     fig = residue_comparison_figure(rc, ["V"], 4.0, annotations=ann)
-    assert any(p.get_gid() == "significant:6" for p in fig.axes[0].patches)
+    assert rc.significant[rc.residue == 6].all()  # significance is in the table, not drawn
+    assert not any((p.get_gid() or "").startswith("significant:") for p in fig.axes[0].patches)
     pc = PeptideComparison(
         sample=np.array(["V", "V"]), peptide=np.array(["AKLPGSTV", "GSTVED"]),
         modification=np.array(["", ""]), start=np.array([2, 6]), end=np.array([9, 11]),
@@ -1312,3 +1316,75 @@ def test_times_that_only_order_the_points(two_sample_bundle, tmp_path):
     cfg = AnalysisConfig.from_dict({"protection": True, "labelling": labelling})
     with pytest.raises(ValueError, match="only order the points"):
         write_analysis(results, cfg, tmp_path / "protection")
+
+
+def test_peptide_populations_by_the_lever_rule(monkeypatch):
+    """Each replicate's K=1 value between the sample's mean K=2 positions; the threshold is the
+    K=1 one divided by the separation; pairs that fail the choice's tests say why."""
+    from hxex.analysis import compare, compare_peptides
+    from hxex.analysis.species import Point
+
+    def records(values):  # (fD, fD_se, population, population_se, charge, n_amides, rep, ...)
+        return [(v, 0.01, np.nan, np.nan, 2, 10, rep + 1, False, "") for rep, v in
+                enumerate(values)]
+
+    groups = {}
+
+    def species(sample, peptide, avg, low, high):
+        key = ("", sample, peptide, "", 1, 10, Point((60.0, "")))
+        groups[(*key, 1, 1)] = records(avg)
+        groups[(*key, 2, 1)] = records(low)
+        groups[(*key, 2, 2)] = records(high)
+
+    # the same states (0.2, 0.8); V's K=1 values are higher: less of the low-D population
+    species("S", "PEPTIDEA", [0.50, 0.52, 0.48], [0.20, 0.21, 0.19], [0.80, 0.79, 0.81])
+    species("V", "PEPTIDEA", [0.62, 0.64, 0.60], [0.20, 0.19, 0.21], [0.80, 0.81, 0.79])
+    # states too close to tell apart (on the reference)
+    species("S", "PEPTIDEB", [0.50, 0.50, 0.50], [0.45, 0.30, 0.60], [0.55, 0.70, 0.40])
+    species("V", "PEPTIDEB", [0.50, 0.51, 0.49], [0.20, 0.21, 0.19], [0.80, 0.79, 0.81])
+    monkeypatch.setattr(compare, "_records", lambda *a, **k: (groups, {}, 1))
+    pop = compare_peptides(None, "S", K=2, rank=1, quantity="population")
+    a = np.flatnonzero(pop.peptide == "PEPTIDEA")[0]
+    b = np.flatnonzero(pop.peptide == "PEPTIDEB")[0]
+    assert pop.value_reference[a] == pytest.approx(0.5, abs=1e-9)
+    assert pop.value[a] == pytest.approx(0.3, abs=1e-9)
+    # the K=1 threshold: t(0.975, 4) x pooled sd x sqrt(2/3), over both species' K=1 values
+    k1 = [[0.50, 0.52, 0.48], [0.62, 0.64, 0.60], [0.50, 0.50, 0.50], [0.50, 0.51, 0.49]]
+    sd = np.sqrt(sum(np.var(v, ddof=1) * 2 for v in k1) / 8)
+    from scipy import stats
+    assert pop.delta_crit == pytest.approx(stats.t.ppf(0.975, 4) * sd * np.sqrt(2 / 3))
+    assert pop.threshold[a] == pytest.approx(pop.delta_crit / 0.6)
+    assert pop.significant[a] and pop.reason[a] == ""
+    assert pop.reason[b] == "not separated (reference)" and np.isnan(pop.value[b])
+    assert not pop.significant[b] and np.isnan(pop.threshold[b])
+    assert pop.columns()["delta_crit"][a] == pop.threshold[a]
+    # rank 2: the high-D component's share
+    high = compare_peptides(None, "S", K=2, rank=2, quantity="population")
+    assert high.value[np.flatnonzero(high.peptide == "PEPTIDEA")[0]] == pytest.approx(0.7)
+
+
+def test_charge_states_of_a_replicate_are_averaged_before_replicates_are_combined(monkeypatch):
+    """Charge states of one replicate share its sample and injection: they are averaged first,
+    so a comparison sees the replicates (n = 3 here), not the spectra (6)."""
+    from hxex.analysis import compare, compare_peptides
+    from hxex.analysis.species import Point, _by_replicate, _combine_replicates
+
+    def recs(values):  # values[rep][charge]
+        return [(v, 0.02, np.nan, np.nan, z, 10, rep + 1, False, "")
+                for rep, by_z in enumerate(values) for z, v in zip((2, 3), by_z, strict=True)]
+
+    s = recs([[0.50, 0.52], [0.46, 0.48], [0.54, 0.56]])
+    values, ses = _by_replicate(s)
+    np.testing.assert_allclose(values, [0.51, 0.47, 0.55])
+    np.testing.assert_allclose(ses, np.sqrt(2 * 0.02**2) / 2)
+    mean, se = _combine_replicates(s)
+    assert mean == pytest.approx(0.51)
+    assert se == pytest.approx(np.sqrt(max(np.var(values, ddof=1), ses[0] ** 2) / 3))
+    groups = {("", "S", "PEPTIDE", "", 1, 10, Point((60.0, "")), 1, 1): s,
+              ("", "V", "PEPTIDE", "", 1, 10, Point((60.0, "")), 1, 1):
+                  recs([[0.60, 0.62], [0.58, 0.60], [0.64, 0.66]])}
+    monkeypatch.setattr(compare, "_records", lambda *a, **k: (groups, {}, 1))
+    pc = compare_peptides(None, "S")
+    assert (pc.n_reference[0], pc.n[0]) == (3, 3)
+    assert pc.value_reference[0] == pytest.approx(0.51)
+    assert pc.value[0] == pytest.approx(np.mean([0.61, 0.59, 0.65]))

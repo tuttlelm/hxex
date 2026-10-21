@@ -3299,3 +3299,43 @@ CSVs or mzML if wanted.
     because hxex draws without pyplot and no inline backend is set). Found on the way:
     `spectra.csv` had no `note` column although the guide told users to fill it in a copy
     (added, with the review's notes); the control limits (item 126).
+
+128. **Populations compared by the lever rule; charge states averaged within replicates (owner,
+    2026-10-20).** Owner, on the tutorial's Woods plot: K=1 is significant over residues 1 to
+    100 for R120G against WT, but no K=2 panel is, while a shift in the average has to show in
+    the K=2 positions or the population ("you may lose significance in fD or population but
+    not both"). Two causes. Each K=2 number was tested on its own although the three trade off
+    within a spectrum (about 15 % of K=2 comparisons reached p < 0.05, 69 % at K=1); and the
+    pooled thresholds were large (population 0.49, low fD 0.22, high fD 0.20, against 0.036 at
+    K=1), dominated by poorly separated descriptions: two thirds to three quarters of the K=2
+    differences with p < 0.05 failed them. Pooling only where `best_set_K` = 2 lowered them
+    only somewhat (population 0.43 -> 0.35). Owner proposed the residue level's rule at the
+    peptide level: K=1 as the proxy of the average deuteration (valid while the K=1 fit spans
+    the envelope). Measured (scratch, tutorial data, D109H and R120G against WT): the lever rule
+    with each spectrum's own K=2 positions barely helps (replicate sd 0.214 -> 0.210, 9 -> 12
+    significant: the scatter is in the positions); with the positions averaged over the
+    sample's replicates the population is as consistent as K=1 (p < 0.05 for 175 of 321 pairs)
+    but the pooled threshold (0.40) still blocks most (29 significant); with the K=1 threshold
+    divided by the separation, 151. Built (owner: replace the fitted share; keep the samples'
+    positions separate, "part of what we are looking for is whether underlying states are the
+    same with differently sampled populations, or whether the underlying states themselves
+    appear to be different"): `compare_peptides(quantity='population')` as in docs/ANALYSIS.md,
+    with the choice's tests (`reason` column) and per-row thresholds (`threshold`, written as
+    `delta_crit`); `compare_populations` per residue with the same threshold rule; the Woods
+    plot draws a population's thresholds as a short dashed line over each peptide and counts
+    only the compared pairs. Then (owner, asking whether the comparison pools charge states):
+    the charge states of one replicate are averaged before the replicates are combined
+    (`species._by_replicate`), in the species table (so the residue map, the choice and the
+    residue comparisons too) and in every peptide comparison and its pooled scatter; pooling
+    them had counted one sample's charge states as independent replicates. In the tutorial
+    data only peptide 1-23 has several charges (n 12/9 -> 4/3). Outputs compared (kept outside
+    the repository; the tutorial's bundle analysed three ways): fitted share 9
+    significant of 363; lever rule 121 of 245 compared; with charges averaged 120 (R120G
+    1-23 at 4 s lost significance, p 0.003 -> 0.074), residue level 6 -> 127; owner: "analysis
+    3 looks good, let's make it the standard". The residue comparison plot (`compare_populations_*`)
+    now looks like `compare_residues_*` (points with capped error bars, the legend above) and
+    draws no significance bands (owner: they reused the samples' colours and confused; the
+    tables hold the significance). Open: the population test treats each sample's averaged
+    positions as exact; only 25 of the 121 also pass |delta| / delta_se > 1.96 with their error
+    included (owner to revisit; a joint bootstrap of replicates and positions is the other
+    option).
