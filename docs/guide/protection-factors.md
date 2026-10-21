@@ -1,4 +1,4 @@
-# Protection factors from back-exchange kinetics
+# Protection factors
 
 Protection factors (`[analysis] protection = true`) compare how fast each peptide exchanges
 with how fast the same amides would exchange unprotected (their intrinsic rates). They work

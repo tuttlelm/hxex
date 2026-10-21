@@ -34,7 +34,7 @@ a short text file.
   resolving power.
 - [Comparing separate runs](comparing-runs.md): several bundles in one analysis, pooled or side
   by side.
-- [Protection factors from back-exchange kinetics](back-exchange-protection.md).
+- [Protection factors](protection-factors.md).
 - [Residue-level rates and protection factors from fragment ladders](fragment-residues.md).
 
 ## Reference

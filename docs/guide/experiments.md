@@ -138,7 +138,7 @@ model and the same settings; nothing names the direction. A back-exchange is des
 solvent conditions: `initial_fraction` (the D fraction the amides began with) above
 `d2o_fraction` (the solvent's). If the data go the other way from the conditions given, *hxex*
 refuses and says which setting to check. See
-[Protection factors from back-exchange kinetics](back-exchange-protection.md).
+[Protection factors](protection-factors.md).
 
 **Controls.** In a back-exchange the equilibrium end point is undeuterated-like, not a fully
 deuterated control. `[run.controls] undeut_at` or `fulldeut_at` make the spectra at one time
