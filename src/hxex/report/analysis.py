@@ -2,16 +2,20 @@
 """Write a whole post-fitting analysis (docs/ANALYSIS.md) from results: the tables as CSV files and
 the figures, as :class:`hxex.analysis.AnalysisConfig` says (what ``hxex analyse`` runs).
 
-Tables: ``species_uptake.csv``, ``residues.csv``, ``coverage.csv``, ``populations.csv`` (the
+Tables: ``species_uptake.csv``, ``residues.csv``, ``coverage.csv``, ``left_out_spectra.csv``
+(the spectra ``[analysis.filters]`` left out whole, with the reason), ``populations.csv`` (the
 choice between one and two populations; with K=2), and with a reference sample
 ``compare_peptides.csv`` (K=1 fD, and with K=2 each rank's fD and the rank-1 population),
-``compare_residues.csv``, ``compare_populations.csv`` and ``compare_choices.csv``, with
-regions ``regions.csv``, and for several runs (a :class:`hxex.analysis.RunSet`) ``run_settings.csv``
+``compare_residues.csv``, ``compare_populations.csv``, ``compare_choices.csv`` and
+``compare_population_counts.csv`` (each sample's number of populations against the
+reference's), with regions ``regions.csv``, and for several runs (a
+:class:`hxex.analysis.RunSet`) ``run_settings.csv``
 (where their settings differ) and ``run_identity.csv`` (species whose identity differs).
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
 ``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>`` (the
 values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
-``compare_populations_<time>``, ``woods_<sample>_<time>``, ``butterfly_<sample>`` and
+``compare_populations_<time>``, ``woods_<sample>_<time>`` (K=1, and where the number of
+populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
 ``ladder_residues.csv``, ``closure.csv`` and per parent
@@ -39,14 +43,17 @@ import numpy as np
 from ..analysis import (
     AnalysisConfig,
     RunSet,
+    best_sets,
     check_identity,
     choose_populations,
     compare_choices,
     compare_peptides,
+    compare_population_counts,
     compare_populations,
     compare_residues,
     compare_settings,
     coverage_table,
+    left_out_spectra,
     region_summary,
     residue_map,
     species_uptake,
@@ -61,9 +68,9 @@ from ..io.times import format_time
 from .compare import (
     plot_butterfly,
     plot_region_bars,
-    residue_comparison_figure,
     residue_overlay_figure,
     woods_figure,
+    woods_populations_figure,
 )
 from .coverage import coverage_figure, plot_redundancy_resolution
 from .fragments import fragment_outputs
@@ -115,8 +122,16 @@ def _stem(name: str) -> str:
 
 def _has_overlay(residues, sample: str, time: float, show, choice=None) -> bool:
     """Whether ``sample`` has a residue value at ``time`` among the overlay values ``show``
-    (the K=2 ones only where ``choice``, if given, keeps two populations)."""
-    for k, rank in (OVERLAY_VALUES[v] for v in show):
+    (the K=2 ones only where ``choice``, if given, keeps two populations; the populations
+    from ``choice``)."""
+    for value in show:
+        if value.startswith("pop_"):  # the populations come from the choice
+            if choice is not None and (choice.where(sample=sample, time=time)
+                                       & np.asarray(choice.two_populations, dtype=bool)
+                                       & np.isfinite(choice.population_low)).any():
+                return True
+            continue
+        k, rank = OVERLAY_VALUES[value]
         rows = residues.where(sample=sample, time=time, K=k, rank=rank) & np.isfinite(residues.fD)
         if choice is not None and k >= 2:
             two = choice.where(sample=sample, time=time) & np.asarray(choice.two_populations,
@@ -182,8 +197,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     pairs = list(zip(up.run.astype(str), up.sample.astype(str), strict=True))
     up = up.select(np.array([p in set(wanted) for p in pairs], dtype=bool))
     sequences = config.sequences(base)
+    # K=2 residue values from the peptides whose sets are best described by two populations,
+    # with the share of the weight they carry (HISTORY 137)
+    gate = config.populations == "best_set"  # else the bootstrap rule (HISTORY 139)
     residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent,
-                           modified=config.modified_peptides)
+                           modified=config.modified_peptides,
+                           two_population_peptides=gate and 2 in config.ks)
     # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
     state_pairs = [s for s in _states(residues) if s not in wanted]
     all_states = wanted + state_pairs
@@ -213,6 +232,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                "coverage": coverage.columns()}
     if choice is not None:
         tables["populations"] = choice.columns()
+    if config.filters is not None:  # the spectra [analysis.filters] left out whole, and why
+        tables["left_out_spectra"] = left_out_spectra(
+            results, config.filters, exclude_flagged=config.exclude_flagged,
+            controls=config.controls)
     # the figures take the tables with each state's display label as its sample
     up_d, residues_d, coverage_d = (_display(t, labels) for t in (up, residues, coverage))
     choice_d = _display(choice, labels) if choice is not None else None
@@ -225,12 +248,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             min_population=config.choice.min_population)
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
-    pop_cmp = None
+    pop_cmp = counts_d = None
     if config.reference:
         ref = ref_name
+        best = best_sets(up)  # each species' number of populations (best_set_K)
         kw = {"exclude_flagged": config.exclude_flagged, "filters": config.filters,
               "alpha": config.alpha, "samples": [label(*s) for s in wanted],
-              "match": config.peptide_match, "controls": config.controls}
+              "match": config.peptide_match, "controls": config.controls, "best_sets": best,
+              "two_population_sets": gate}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,
@@ -246,6 +271,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             for name, values in cols.items():
                 rows.setdefault(name, []).append(values)
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
+        if 2 in config.ks and gate:
+            counts = compare_population_counts(best, ref, samples=kw["samples"],
+                                               match=config.peptide_match)
+            tables["compare_population_counts"] = counts.columns()
+            counts_d = _display(counts, labels, reference)
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
                                    delta_crit=comparisons["K=1 fD"].delta_crit, choice=choice)
         tables["compare_residues"] = res_cmp.columns()
@@ -254,7 +284,6 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 choice, ref, alpha=config.alpha, delta_crit=comparisons["K=1 fD"].delta_crit)
             tables["compare_populations"] = pop_cmp.columns()
             tables["compare_choices"] = compare_choices(choice, ref).columns()
-            pop_cmp = _display(pop_cmp, labels, reference)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
     protection = prot_cmp = None
     if config.protection:
@@ -302,10 +331,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     if config.reference:
         others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
-        # the Woods plot draws the population in fD units: its difference times the
-        # separation, judged by the one K=1 delta_crit (the same test; HISTORY 135)
-        stack = [(f"{title} × separation" if c.quantity == "population" else title,
-                  c.scaled_by_separation()) for title, c in comparisons.items()]
+        # the Woods plot: page 1, K=1 and where the number of populations differs; page 2,
+        # the K=2 comparisons (made only where both have two populations), the population in
+        # fD units: its difference times the separation, judged by the K=1 delta_crit
+        # (HISTORY 135, 137)
+        short = {"K=2 rank 1 (low D) fD": "K=2 low-D fD", "K=2 rank 2 (high D) fD":
+                 "K=2 high-D fD", "K=2 rank 1 (low D) population": "K=2 low-D population"}
+        k2_stack = [(short.get(title, title), c.scaled_by_separation())
+                    for title, c in comparisons.items() if title != "K=1 fD"]
         for t in times:
             when_ = _time_label(t, scale)
             only = choice if config.overlay_two_only else None
@@ -316,17 +349,31 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                              residue_overlay_figure(
                                  residues, reference, shown, t, show=config.overlay,
                                  choice=only, annotations=ann, length=length, **when)))
-            with_pop = [s for s in residue_others
-                        if pop_cmp is not None and pop_cmp.where(sample=s, time=t).any()]
+            # the populations, drawn as the K=2 values are: each sample where it keeps two
+            ref_pop = choice is not None and _has_overlay(residues, reference, t, ("pop_low",),
+                                                          choice)
+            with_pop = [s for s in residue_others if choice is not None and (
+                ref_pop or _has_overlay(residues, s, t, ("pop_low",), choice))]
             if with_pop:
                 jobs.append((f"compare_populations_{when_}",
-                             lambda t=t, with_pop=with_pop: residue_comparison_figure(
-                                 pop_cmp, with_pop, t, annotations=ann, length=length,
-                                 **when)))
+                             lambda t=t, with_pop=with_pop: residue_overlay_figure(
+                                 residues, reference, with_pop, t, show=("pop_low",),
+                                 choice=choice, annotations=ann, length=length, **when)))
             for s in others:
-                if all(c.where(sample=s, time=t).any() for _, c in stack):
+                k1_rows = comparisons["K=1 fD"].where(sample=s, time=t).any()
+                if k1_rows and counts_d is not None:
+                    jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_populations_figure(
+                        comparisons["K=1 fD"], counts_d, s, t, annotations=ann,
+                        length=length, **when)))
+                elif k1_rows:
                     jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_figure(
-                        stack, s, t, annotations=ann, length=length, **when)))
+                        [("K=1 fD", comparisons["K=1 fD"])], s, t, annotations=ann,
+                        length=length, **when)))
+                if k2_stack and all(c.where(sample=s, time=t).any() for _, c in k2_stack):
+                    jobs.append((f"woods_K2_{s}_{when_}", lambda s=s, t=t: woods_figure(
+                        k2_stack, s, t, annotations=ann, length=length,
+                        note=("compared where both samples have two populations" if gate
+                              else "every K=2 description compared"), **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
         for s in others:

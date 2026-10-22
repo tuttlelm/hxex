@@ -19,11 +19,13 @@ a :class:`RunSet` of several runs is analysed like one run, the run a ``run`` co
 from .compare import (
     Annotations,
     PeptideComparison,
+    PopulationCountComparison,
     Region,
     RegionTable,
     ResidueComparison,
     Site,
     compare_peptides,
+    compare_population_counts,
     compare_populations,
     compare_residues,
     region_summary,
@@ -84,7 +86,14 @@ from .runs import (
     sample_setting,
 )
 from .settings import AnalysisConfig
-from .species import SpeciesFilters, SpeciesUptake, analysis_controls, species_uptake
+from .species import (
+    SpeciesFilters,
+    SpeciesUptake,
+    analysis_controls,
+    best_sets,
+    left_out_spectra,
+    species_uptake,
+)
 
 __all__ = [
     "ClosureTable",
@@ -126,11 +135,13 @@ __all__ = [
     "resolve_sample",
     "sample_setting",
     "PeptideComparison",
+    "PopulationCountComparison",
     "Region",
     "RegionTable",
     "ResidueComparison",
     "Site",
     "compare_peptides",
+    "compare_population_counts",
     "compare_populations",
     "compare_residues",
     "region_summary",
@@ -147,4 +158,6 @@ __all__ = [
     "lever_population",
     "residue_map",
     "species_uptake",
+    "best_sets",
+    "left_out_spectra",
 ]

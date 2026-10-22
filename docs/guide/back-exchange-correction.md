@@ -49,7 +49,14 @@ Two more checks only warn, and the control is still used. They are listed in the
   clearly different retention (by more than 0.1, `sample_tolerance`). In one run they should
   agree closely, since the peptide and the workflow are the same.
 - `fd_multimodal` or `m0_multimodal`: most of a control's replicate spectra were fitted best
-  with more than one population, which can mean an incompletely deuterated or a mixed sample.
+  with more than one population: the envelope is wider than one population fits, for example
+  because the molecules kept different amounts of deuterium. The correction uses the
+  control's average, its retention, which can still be right. For a fully deuterated control,
+  `series.csv` says whether that retention was checked against the same peptide's controls in
+  the other samples: `fd_multimodal (retention agrees)` means it matches theirs and the
+  correction is sound; `fd_multimodal (retention differs)` (with `fd_disagrees`) means it does not,
+  which can mean an incompletely deuterated sample; `fd_multimodal (retention unchecked)` means
+  there was nothing to compare it with (a run with one sample, say), so look at its spectra.
 - `data_below_m0`: a time point of the series reads below its undeuterated control. The
   fastest time points are the hardest to measure, so it is the time point that is suspect,
   not the control: look at that time point's spectra.
@@ -73,15 +80,19 @@ take no part in the run's median or prediction.
 
 **The fully deuterated value**
 
-1. The series' own fully deuterated control: the same peptide, at the same charge, in the same
-   sample (its replicates averaged), if it is accepted.
-2. The same peptide's accepted fully deuterated controls at its other charge states, in the
-   same sample: their mean retention (`fd_other_charge`). Retention belongs to the peptide,
-   not to its charge state. In the B5 tutorial data a peptide's charge states agree to within
-   0.01, and in a test where all charge states were measured in the same scans their
-   deuterium differed by at most about 1.5 %. To turn this step off, set
-   `fd_other_charge = false` in `[run.controls]`.
-3. A value for the whole run, chosen by `fd_fallback`:
+1. The peptide's accepted fully deuterated controls in the same sample, at all its charge
+   states: their mean retention. Retention belongs to the peptide, not to its charge state.
+   In the B5 tutorial data a peptide's charge states agree to within 0.01, in a larger
+   dataset 90 % agree to within 0.05, and in a test where all charge states were measured in
+   the same scans their deuterium differed by at most about 1.5 %. A charge state without a
+   good control of its own takes this value too (`fd_other_charge`) and counts as measured.
+   Charge states whose retentions differ by more than `sample_tolerance` (0.1) are still
+   combined, with the warning `fd_charges_disagree` in `control_notes`.
+
+   To correct each charge state with its own control instead, set `combine_charges = false`
+   in `[run.controls]`. A charge state without one then takes the mean of the peptide's other
+   charge states (`fd_other_charge`, a stand-in), unless `fd_other_charge = false` too.
+2. A value for the whole run, chosen by `fd_fallback`:
    - Without quench conditions (the default, `"median"`): the median retention of the run's
      accepted controls (`fd_median`). When no control is accepted: the D₂O fraction of the
      labelling buffer (`d2o_fraction`), which means no back-exchange correction.
@@ -95,7 +106,17 @@ take no part in the run's median or prediction.
      cases out of ten, even with one bad control among them.
    - `fd_fallback = "d2o"`: the D₂O fraction.
 
-Steps 2 and 3 are stand-ins, so the series is marked `control_fallback`. A stand-in from
-step 2 is the same peptide's own measurement, so the protection-factor fit treats it as a
-measured control (see [Protection factors](protection-factors.md)). The same settings in
-`[analysis.controls]` recompute the values for an analysis of an existing bundle.
+Step 2 is a stand-in, so the series is marked `control_fallback`. A value from another
+charge state of the same peptide (step 1) is the peptide's own measurement, so it is not a
+stand-in, and the protection-factor fit treats it as measured (see
+[Protection factors](protection-factors.md)).
+
+`hxex analyse` leaves the series with a stand-in out of its tables, figures, and comparisons
+(`stand_in_controls = "exclude"` in `[analysis.filters]`, the default): on a large dataset
+they were the series whose corrected values most often went above full deuteration. A sample
+with no measured fully deuterated control at all keeps them, since every one of its series
+uses one. Set `stand_in_controls = "include"` to keep them everywhere. The run's own tables
+and uptake plots always show every series.
+
+The same control settings in `[analysis.controls]` recompute the values for an analysis of an
+existing bundle.

@@ -825,7 +825,10 @@ def test_controls_overview(results):
 
     d = controls_overview_data(results)
     assert d["n_series"] == 2 and d["measured"] == 2 and sum(d["reasons"].values()) == 0
-    np.testing.assert_allclose(d["retention"], results.controls.retention)  # m0 and mFD measured
+    c = results.controls  # each series' own measured retention (the one used is combined
+    # over the peptide's charge states: combine_charges)
+    np.testing.assert_allclose(d["retention"], (c.mfd_measured - c.m0) / c.n_amides)
+    np.testing.assert_allclose(c.retention, np.mean(d["retention"]))
     fig = plot_controls_overview(results)
     assert {"retention", "m0", "reasons", "limits"} <= gids(fig)
     with pytest.raises(ValueError, match="no controls"):

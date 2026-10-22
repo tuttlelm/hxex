@@ -472,7 +472,7 @@ def test_compare_peptides_with_the_hybrid_rule(results):
     compared = pop.reason == ""  # the others say why (here the K=1 value outside the K=2 pair)
     assert np.all((pop.value[compared] >= 0.05) & (pop.value[compared] <= 0.95))
     assert np.isnan(pop.value[~compared]).all() and not pop.significant[~compared].any()
-    assert all(r.endswith(("(reference)", "(sample)")) for r in pop.reason[~compared])
+    assert all(r.endswith(("(reference)", "(sample)", "(both)")) for r in pop.reason[~compared])
     with pytest.raises(ValueError, match="K = 2"):
         compare_peptides(results, "S", quantity="population")
     with pytest.raises(ValueError, match="quantity"):
@@ -662,6 +662,8 @@ def test_sample_settings_resolve_by_run_then_sample():
 
 
 def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
+    import dataclasses
+
     from hxex.analysis import AnalysisConfig, Annotations, Region, Site
     from hxex.io import open_bundle
     from hxex.report import write_analysis
@@ -675,9 +677,13 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
                                  progress=lambda d, t: seen.append((d, t)))
     names = {p.name for p in written}
     for table in ("species_uptake", "residues", "coverage", "populations", "compare_peptides",
-                  "compare_residues", "compare_populations", "regions"):
+                  "compare_residues", "compare_populations", "compare_population_counts",
+                  "regions"):
         assert f"{table}.csv" in names
     assert "coverage_S.png" in names and "redundancy_resolution.png" in names
+    # the Woods plot in two figures: K=1 with the number of populations, and the K=2 page
+    assert any(n.startswith("woods_V_") for n in names)
+    assert any(n.startswith("woods_K2_V_") for n in names)
     header = (tmp_path / "a" / "compare_residues.csv").read_text().splitlines()[0].split(",")
     assert {"two_reference", "two"} <= set(header)
     assert any(n.startswith("choice_V_") for n in names)
@@ -686,6 +692,14 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     assert all(p.stat().st_size > 0 for p in written)
     with open_bundle(two_sample_bundle) as b, pytest.raises(ValueError, match="no reference"):
         write_analysis(Results.from_bundle(b), AnalysisConfig(reference="X"), tmp_path / "b")
+    # the bootstrap rule: no best_set_K gate, so no number-of-populations table
+    boot = dataclasses.replace(cfg, populations="bootstrap")
+    with open_bundle(two_sample_bundle) as b:
+        names = {p.name for p in write_analysis(Results.from_bundle(b), boot, tmp_path / "c")}
+    assert "compare_population_counts.csv" not in names
+    assert any(n.startswith("woods_K2_V_") for n in names)
+    with pytest.raises(ValueError, match="populations"):
+        AnalysisConfig(populations="loose")
 
 
 
@@ -982,7 +996,7 @@ def test_residue_overlay_shows_the_chosen_values():
     from hxex.report import plot_residue_overlay, residue_overlay_figure
 
     rows = []  # (sample, residue, K, rank, fD)
-    for sample, shift in (("WT", 0.0), ("D3", 0.1)):
+    for sample, shift in (("WT", 0.0), ("V", 0.1)):
         for r in (3, 4, 6):
             rows += [(sample, r, 1, 1, 0.4 + shift), (sample, r, 2, 1, 0.2 + shift),
                      (sample, r, 2, 2, 0.6 + shift)]
@@ -993,38 +1007,41 @@ def test_residue_overlay_shows_the_chosen_values():
                     fD=np.array([r[4] for r in rows]), fD_se=np.full(n, 0.02),
                     redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
                     proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool))
-    fig = plot_residue_overlay(rm, "WT", "D3", 4.0)
+    fig = plot_residue_overlay(rm, "WT", "V", 4.0)
     lines = {line.get_gid(): line for line in fig.axes[0].lines if line.get_gid()}
-    assert set(lines) == {"overlay:WT:low", "overlay:WT:high", "overlay:D3:low",
-                          "overlay:D3:high"}
-    np.testing.assert_allclose(lines["overlay:D3:high"].get_ydata(), 0.7)
+    assert set(lines) == {"overlay:WT:low", "overlay:WT:high", "overlay:V:low",
+                          "overlay:V:high"}
+    np.testing.assert_allclose(lines["overlay:V:high"].get_ydata(), 0.7)
     assert lines["overlay:WT:low"].get_linestyle() == "None"  # points, no lines
-    every = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("avg", "low", "high"))
-    avg = next(line for line in every.axes[0].lines if line.get_gid() == "overlay:D3:avg")
-    assert avg.get_markerfacecolor() == "white"
-    assert "avg (K=1)" in [t.get_text() for t in every.axes[0].get_legend().texts]
-    assert len(residue_overlay_figure(rm, "WT", ["WT", "D3"], 4.0).axes) == 1
+    every = plot_residue_overlay(rm, "WT", "V", 4.0, show=("avg", "low", "high"))
+    avg = next(line for line in every.axes[0].lines if line.get_gid() == "overlay:V:avg")
+    assert avg.get_marker() == "o" and avg.get_markerfacecolor()[3] == pytest.approx(0.65)
+    assert lines["overlay:V:low"].get_marker() == "^"
+    assert lines["overlay:V:high"].get_marker() == "v"
+    # the legend names the samples only (their colours)
+    assert [t.get_text() for t in every.axes[0].get_legend().texts] == ["WT", "V"]
+    assert len(residue_overlay_figure(rm, "WT", ["WT", "V"], 4.0).axes) == 1
     with pytest.raises(ValueError, match="show"):
-        plot_residue_overlay(rm, "WT", "D3", 4.0, show=("mean",))
+        plot_residue_overlay(rm, "WT", "V", 4.0, show=("mean",))
     with pytest.raises(ValueError, match="no residue values"):
-        plot_residue_overlay(rm, "WT", "D3", 60.0)
+        plot_residue_overlay(rm, "WT", "V", 60.0)
     assert AnalysisConfig(overlay=["avg"], ks=[1]).overlay == ("avg",)
     assert AnalysisConfig().overlay_two_only  # K=2 values only where two populations are chosen
     for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]}):
         with pytest.raises(ValueError, match="overlay"):
             AnalysisConfig(**bad)
-    # only where two populations are chosen: D3's residue 6 has its K=1 value outside its ranks
+    # only where two populations are chosen: V's residue 6 has its K=1 value outside its ranks
     import dataclasses
 
     from hxex.analysis import choose_populations
 
-    odd = (rm.sample == "D3") & (rm.residue == 6) & (rm.K == 1)
+    odd = (rm.sample == "V") & (rm.residue == 6) & (rm.K == 1)
     choice = choose_populations(dataclasses.replace(rm, fD=np.where(odd, 0.75, rm.fD)))
-    kept = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("low", "high", "avg"), choice=choice)
+    kept = plot_residue_overlay(rm, "WT", "V", 4.0, show=("low", "high", "avg"), choice=choice)
     lines = {line.get_gid(): line for line in kept.axes[0].lines if line.get_gid()}
-    assert list(lines["overlay:D3:high"].get_xdata()) == [3, 4]
+    assert list(lines["overlay:V:high"].get_xdata()) == [3, 4]
     assert list(lines["overlay:WT:high"].get_xdata()) == [3, 4, 6]
-    assert list(lines["overlay:D3:avg"].get_xdata()) == [3, 4, 6]  # the average is never filtered
+    assert list(lines["overlay:V:avg"].get_xdata()) == [3, 4, 6]  # the average is never filtered
 
 
 def test_range_matching_never_crosses_modified_forms():
@@ -1069,14 +1086,14 @@ def test_values_corrected_differently_are_marked(results):
     assert pc.corrected_differently.all()
     # residues: a star where only one side rests on a fallback control
     n = 6
-    rm = ResidueMap(sample=np.array(["WT"] * 3 + ["D3"] * 3), time=np.full(n, 4.0),
+    rm = ResidueMap(sample=np.array(["WT"] * 3 + ["V"] * 3), time=np.full(n, 4.0),
                     K=np.ones(n, dtype=int), rank=np.ones(n, dtype=int),
                     residue=np.array([3, 4, 6] * 2), aa=np.array(["A"] * n),
                     fD=np.full(n, 0.4), fD_se=np.full(n, 0.02),
                     redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
                     proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool),
                     control_fallback=np.array([False, False, True, False, True, True]))
-    fig = plot_residue_overlay(rm, "WT", "D3", 4.0, show=("avg",))
+    fig = plot_residue_overlay(rm, "WT", "V", 4.0, show=("avg",))
     stars = {t.get_gid() for t in fig.axes[0].texts if (t.get_gid() or "").startswith("corr")}
     assert stars == {"corrected_differently:4"}  # 6 falls back on both sides: the same
     assert "corrected differently" in [t.get_text() for t in fig.axes[0].get_legend().texts]
@@ -1351,15 +1368,19 @@ def test_peptide_populations_by_the_lever_rule(monkeypatch):
     species("S", "PEPTIDEB", [0.50, 0.50, 0.50], [0.45, 0.30, 0.60], [0.55, 0.70, 0.40])
     species("V", "PEPTIDEB", [0.50, 0.51, 0.49], [0.20, 0.21, 0.19], [0.80, 0.79, 0.81])
     monkeypatch.setattr(compare, "_records", lambda *a, **k: (groups, {}, 1))
-    pop = compare_peptides(None, "S", K=2, rank=1, quantity="population")
+    every_two = {("", s, p, "", 1, 10, 60.0): (2, -50.0) for s in ("S", "V")
+                 for p in ("PEPTIDEA", "PEPTIDEB")}  # every set two populations
+    pop = compare_peptides(None, "S", K=2, rank=1, quantity="population", best_sets=every_two)
     a = np.flatnonzero(pop.peptide == "PEPTIDEA")[0]
     b = np.flatnonzero(pop.peptide == "PEPTIDEB")[0]
     assert pop.value_reference[a] == pytest.approx(0.5, abs=1e-9)
     assert pop.value[a] == pytest.approx(0.3, abs=1e-9)
-    # the K=1 threshold: t(0.975, 4) x pooled sd x sqrt(2/3), over both species' K=1 values
-    k1 = [[0.50, 0.52, 0.48], [0.62, 0.64, 0.60], [0.50, 0.50, 0.50], [0.50, 0.51, 0.49]]
-    sd = np.sqrt(sum(np.var(v, ddof=1) * 2 for v in k1) / 8)
+    # the K=1 threshold: t(0.975, 4) x typical sd x sqrt(2/3), over both species' K=1 values;
+    # the typical sd is robust: the median of the variances scaled by the chi-square median
     from scipy import stats
+
+    k1 = [[0.50, 0.52, 0.48], [0.62, 0.64, 0.60], [0.50, 0.50, 0.50], [0.50, 0.51, 0.49]]
+    sd = np.sqrt(np.median([np.var(v, ddof=1) * 2 / stats.chi2.median(2) for v in k1]))
     assert pop.delta_crit == pytest.approx(stats.t.ppf(0.975, 4) * sd * np.sqrt(2 / 3))
     assert pop.threshold[a] == pytest.approx(pop.delta_crit / 0.6)
     assert pop.significant[a] and pop.reason[a] == ""
@@ -1367,7 +1388,7 @@ def test_peptide_populations_by_the_lever_rule(monkeypatch):
     assert not pop.significant[b] and np.isnan(pop.threshold[b])
     assert pop.columns()["delta_crit"][a] == pop.threshold[a]
     # rank 2: the high-D component's share
-    high = compare_peptides(None, "S", K=2, rank=2, quantity="population")
+    high = compare_peptides(None, "S", K=2, rank=2, quantity="population", best_sets=every_two)
     assert high.value[np.flatnonzero(high.peptide == "PEPTIDEA")[0]] == pytest.approx(0.7)
 
 
@@ -1453,6 +1474,79 @@ def test_a_population_comparison_scaled_by_its_separation():
     fig = woods_figure([("K=1 fD", fd), ("population × separation", scaled)], "M", 60.0)
     top, bottom = fig.axes
     assert top.get_ylim() == bottom.get_ylim()
-    assert "Δpopulation × separation" in bottom.get_ylabel()
+    assert "Δpop × sep" in bottom.get_ylabel()
     dashed = [ln for ln in bottom.get_lines() if ln.get_linestyle() == "--"]
     assert len(dashed) == 2  # one line each side, across the panel
+
+
+def test_delta_crit_is_robust_to_a_few_broken_replicates():
+    """The hybrid rule's threshold comes from the typical replicate scatter (the median of the
+    chi-square-scaled variances): one series whose replicates read a different envelope barely
+    moves it, where it dominates the plain pool (owner, 2026-10-22, HISTORY 140)."""
+    from scipy import stats
+
+    from hxex.analysis.compare import _delta_crit
+
+    rng = np.random.default_rng(3)
+    good = [0.5 + 0.02 * rng.standard_normal(3) for _ in range(200)]
+    clean = _delta_crit(good, 0.05)
+    assert clean == pytest.approx(stats.t.ppf(0.975, 4) * 0.02 * np.sqrt(2 / 3), rel=0.15)
+    broken = good + [np.array([0.4, 0.4, 2.0])] * 3
+    assert _delta_crit(broken, 0.05) == pytest.approx(clean, rel=0.05)
+    assert np.isnan(_delta_crit([np.array([0.5])], 0.05))
+
+
+def test_spectra_left_out_whole_and_why():
+    """[analysis.filters] leaves out whole spectra (owner, 2026-10-22, HISTORY 140): a replicate
+    far from its other replicates (same series; the run's typical replicate sd), a K=1 mean
+    above the amide count, and series with a stand-in fully deuterated control (unless the
+    sample has no measured one); a spectrum the review accepted is kept."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from hxex.analysis import left_out_spectra
+    from hxex.analysis.species import SpeciesFilters, _left_out, analysis_controls
+
+    results = Results.from_run(run(raw_spectra(n_series=5), config()))  # enough series for
+    # a typical replicate scatter that one outlier cannot set
+
+    assert len(left_out_spectra(results)["spectrum_id"]) == 0  # clean synthetic data
+    fit = results.fit
+    controls = analysis_controls(results, None, quiet=True)
+    at = controls.rows(fit.data_id)
+    n_am = np.asarray(controls.n_amides, dtype=float)[at]
+    means = fit.fits[1].means[:, 0].copy()
+    timed = np.flatnonzero((np.asarray(fit.role) == "") & np.isfinite(fit.time))
+    far, above = timed[0], timed[-1]
+    means[far] = means[far] + 0.3 * n_am[far]  # 0.3 fD off its replicates, still possible
+    means[above] = n_am[above] + 0.5
+    k1 = SimpleNamespace(means=means[:, None])
+    fake = SimpleNamespace(fit=SimpleNamespace(**{**{f.name: getattr(fit, f.name)
+                                                     for f in dataclasses.fields(fit)},
+                                                  "fits": {1: k1}}),
+                           binned=results.binned,
+                           review_status=np.asarray(results.review_status).copy())
+    keep = np.ones(len(fit), dtype=bool)
+    out, why = _left_out(fake, SpeciesFilters(), controls, n_am, keep)
+    assert why[far] == "replicate outlier" and why[above] == "above the amide count"
+    assert out.sum() == 2
+    off = SpeciesFilters(replicate_outlier=None, above_amides=False)
+    assert not _left_out(fake, off, controls, n_am, keep)[0].any()
+    fake.review_status[far] = "accepted"  # the review's decision wins
+    assert _left_out(fake, SpeciesFilters(), controls, n_am, keep)[0].sum() == 1
+    # a stand-in fully deuterated control: its series is left out while the sample has a
+    # measured one, kept when every series uses a stand-in
+    flags = np.asarray(controls.flags).astype(object)
+    flags[0] = "fd_missing;fd_median"
+    one = dataclasses.replace(controls, flags=flags.astype(str))
+    out, why = _left_out(results, SpeciesFilters(), one, n_am, keep)
+    first = np.asarray(fit.data_id) == controls.data_id[0]
+    assert (why[first] == "stand-in control").all() and not out[~first].any()
+    assert not _left_out(results, SpeciesFilters(stand_in_controls="include"), one, n_am,
+                         keep)[0].any()
+    every = dataclasses.replace(controls, flags=np.full(len(controls), "fd_missing;fd_median"))
+    assert not _left_out(results, SpeciesFilters(), every, n_am, keep)[0].any()
+    with pytest.raises(ValueError, match="stand_in_controls"):
+        SpeciesFilters(stand_in_controls="drop")
+    with pytest.raises(ValueError, match="replicate_outlier"):
+        SpeciesFilters(replicate_outlier=0)

@@ -81,6 +81,7 @@ SERIES_IMAGES = {
 ANALYSIS_IMAGES = {
     "tutorial_butterfly": "butterfly_R120G.png",
     "tutorial_woods": "woods_R120G_1min.png",
+    "tutorial_woods_k2": "woods_K2_R120G_1min.png",
     "tutorial_residues": "compare_residues_1min.png",
 }
 

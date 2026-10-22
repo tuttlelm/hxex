@@ -300,7 +300,8 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `outlier_sd` | number | `4.0` | a fully deuterated control this many robust standard deviations below the median retention of the run's controls is rejected (without retention_min) |
 | `time_course_tolerance` | number | `0.1` | D per amide: a fully deuterated control below its series' highest time point by more than this is rejected (an undeuterated one above its lowest is flagged data_below_m0) |
 | `sample_tolerance` | number | `0.1` | a fully deuterated control whose retention differs this much from the same peptide's in the other samples is flagged fd_disagrees (still used) |
-| `fd_other_charge` | true/false | `true` | a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states in the same sample, before fd_fallback (peptides only, not fragment ions) |
+| `combine_charges` | true/false | `true` | every charge state of a peptide (in one sample) takes the mean retention of its measured fully deuterated controls over all charge states; fd_fallback only when none is good (peptides only, not fragment ions) |
+| `fd_other_charge` | true/false | `true` | with combine_charges = false: a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states, before fd_fallback |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
 | `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |
 | `quench` | table | unset | pH read, degrees Celsius and D fraction of the quench and LC ({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for fd_fallback "kint" (unset: none) |
@@ -389,15 +390,16 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `exclude_flagged` | true/false | `false` | leave out spectra with a quality flag |
 | `format` | text | `"pdf"` | of the figure files: "pdf", "png" or "svg" |
 | `out` | text | unset | the output directory (unset: beside the bundle, named after it and the reference: results_analysis_WT, or results_analysis without a reference) |
-| `overlay` | list | `["low", "high"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations) and/or "avg" (K=1) |
+| `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |
+| `populations` | text | `"best_set"` | how one or two populations are decided: "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
 
 ## `[analysis.filters]`
 
-Which K=2 descriptions the analysis trusts. Per spectrum: min_population, max_fD; per species and time: max_fD_se, k1_between_ranks. K=1 is never filtered.
+Which spectra and K=2 descriptions the analysis trusts. Whole spectra: replicate_outlier, above_amides, stand_in_controls (the spectra left out are listed in left_out_spectra.csv; one you accept in the review is kept). K=2 descriptions per spectrum: min_population, max_fD; per species and time: max_fD_se, k1_between_ranks.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -405,6 +407,9 @@ Which K=2 descriptions the analysis trusts. Per spectrum: min_population, max_fD
 | `max_fD_se` | number | `0.25` | every population's fD standard error below this |
 | `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides |
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
+| `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
+| `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
+| `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) |
 
 ## `[analysis.choice]`
 

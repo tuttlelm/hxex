@@ -48,7 +48,11 @@ class ResidueMap:
     residue has no exchanging amide: a proline, or the first residue(s) of the protein, which
     no peptide can measure; its row is empty whatever the coverage). ``role`` is the point's
     (``'undeut'``, ``'fulldeut'`` or ``''``; a control's ``time`` is NaN unless it was also a
-    time point)."""
+    time point). ``linked_next``: one peptide measures both this residue and the next (a
+    proline or another residue without an amide between them included), so a line may join
+    them. ``two_population_weight`` (K=1 rows, with ``two_population_peptides``): the share of
+    the residue's weight carried by peptides whose set is best described by two populations
+    (``best_set_K = 2``); NaN otherwise."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -66,8 +70,15 @@ class ResidueMap:
     no_amide: np.ndarray | None = None
     role: np.ndarray | None = None
     run: np.ndarray | None = None
+    linked_next: np.ndarray | None = None
+    two_population_weight: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback; prolines only; time points
+        if self.linked_next is None:
+            object.__setattr__(self, "linked_next", np.zeros(len(self.sample), dtype=bool))
+        if self.two_population_weight is None:
+            object.__setattr__(self, "two_population_weight",
+                               np.full(len(self.sample), np.nan))
         if self.run is None:
             object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
         else:
@@ -211,8 +222,18 @@ def residue_map(
     weight_exponent: float = 1.0,
     modified: str = "separate",
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    two_population_peptides: bool = False,
 ) -> ResidueMap:
     """The residue-level values of every sample, time, K and rank of ``uptake`` (peptides only).
+
+    With ``two_population_peptides`` (owner, 2026-10-21 and 2026-10-22; HISTORY 137 and 141)
+    the K=1 rows carry ``two_population_weight``, the share of the residue's weight that the
+    peptides whose set at that time is best described by two populations (``best_set_K = 2``,
+    :func:`hxex.analysis.species_uptake`) carry (every covering peptide votes, by the residue's
+    weights), which :func:`hxex.analysis.choose_populations` requires to be at least half. The
+    K=2 values use every covering peptide, as K=1 does, so the three describe the same peptides
+    (averaging the K=2 values over the two-population peptides alone gave curves that did not
+    bracket K=1); the vote decides which residues have two populations.
 
     ``modified`` says what happens to modified peptides (a modified residue in the modX
     sequence, or a composition change): ``'separate'`` (the default) gives
@@ -248,6 +269,7 @@ def residue_map(
                                        point_order_key(float(pep.time[first[c[2]]]),
                                                        str(pep.role[first[c[2]]])),
                                        c[3], c[4]))
+    best_k = np.asarray(pep.best_set_K) if two_population_peptides else None
     for run, sample, key, k, rank in conditions:
         rows = np.flatnonzero(pep.where(run=run, sample=sample, K=k, rank=rank)
                               & (points == key))
@@ -257,6 +279,14 @@ def residue_map(
         z, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
                                               registry)
         values, ses = _weighted(z, pep.fD[rows], pep.fD_se[rows], weight_exponent)
+        linked = _linked(peptides, len(known), uptake.nterm_subtract, registry)
+        support = np.full(len(known), np.nan)
+        if best_k is not None and k == 1:  # every covering peptide votes, by its weight
+            w = np.where(z > 0, z**weight_exponent, 0.0)
+            total = w.sum(axis=0)
+            two = (best_k[rows] == 2).astype(float)
+            support = np.where(total > 0, (w * two[:, None]).sum(axis=0)
+                               / np.where(total > 0, total, 1.0), np.nan)
         fell_back = ((z > 0) & np.asarray(pep.control_fallback[rows], dtype=bool)[:, None]).any(
             axis=0)
         for res in range(len(known)):
@@ -267,14 +297,16 @@ def residue_map(
                 ("resolution", resolution[res]), ("proline", known[res] == "P"),
                 ("covered", redundancy[res] > 0), ("control_fallback", bool(fell_back[res])),
                 ("no_amide", known[res] == "P" or res + 1 <= uptake.nterm_subtract),
+                ("linked_next", bool(linked[res])),
+                ("two_population_weight", float(support[res])),
             ):
                 cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
     for name in ("K", "rank", "residue", "redundancy"):
         out[name] = out[name].astype(np.int64)
-    for name in ("time", "fD", "fD_se", "resolution"):
+    for name in ("time", "fD", "fD_se", "resolution", "two_population_weight"):
         out[name] = out[name].astype(np.float64)
-    for name in ("proline", "covered", "control_fallback", "no_amide"):
+    for name in ("proline", "covered", "control_fallback", "no_amide", "linked_next"):
         out[name] = out[name].astype(bool)
     out["run"] = out["run"].astype(object)
     return ResidueMap(**out)
@@ -409,6 +441,18 @@ def _coverage(peptides, n_res: int, nterm: int, registry, weights=None):
         inside = inside[redundancy[inside - 1] > 0]
         resolution[inside - 1] = len(block)
     return z, redundancy, resolution
+
+
+def _linked(peptides, n_res: int, nterm: int, registry) -> np.ndarray:
+    """Per residue 1..n_res: whether one of ``peptides`` measures both it and the next residue
+    (both within the stretch of its exchanging amides, residues without an amide included)."""
+    linked = np.zeros(n_res, dtype=bool)
+    for seq, start, _ in peptides:
+        ex = exchanging_residues(seq, start, nterm, registry)
+        ex = ex[(ex >= 1) & (ex <= n_res)]
+        if len(ex) > 1:
+            linked[int(ex.min()) - 1:int(ex.max()) - 1] = True  # residue r links to r + 1
+    return linked
 
 
 def _weighted(z: np.ndarray, values: np.ndarray, ses: np.ndarray, exponent: float):

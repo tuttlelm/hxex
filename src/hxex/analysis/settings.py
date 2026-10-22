@@ -17,10 +17,14 @@ from .residues import COUNTS, MODIFIED
 from .runs import SEPARATOR
 from .species import SpeciesFilters
 
+POPULATION_RULES = ("best_set", "bootstrap")  # how one or two populations are decided
+
 FORMATS = ("pdf", "png", "svg")
 UNDEUTERATED = "undeuterated"
 # the values a by-residue comparison can show: name -> (K, rank)
-OVERLAY_VALUES = {"low": (2, 1), "high": (2, 2), "avg": (1, 1)}
+# the values the by-residue comparison can draw: K and rank (the populations from the choice)
+OVERLAY_VALUES = {"low": (2, 1), "high": (2, 2), "avg": (1, 1), "pop_low": (2, 1),
+                  "pop_high": (2, 2)}
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,12 @@ class AnalysisConfig:
       ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw the K=2 values
       only where the choice keeps two populations (the default; False draws every K=2 value
       the filters keep).
+    - ``populations``: how one or two populations are decided (HISTORY 137, 139):
+      ``'best_set'`` (the default: a peptide has two where its set of spectra is best described by
+      two, ``best_set_K``; a residue where such peptides carry at least half of its weight; the
+      K=2 comparisons need both samples to have two) or ``'bootstrap'`` (the residue's K=2
+      positions tested with their bootstrap errors, ``choice``'s confidence and population
+      limits, every peptide's K=2 values used, no ``best_set_K`` gate).
     - ``peptide_match``: which peptides the peptide comparisons pair, ``'range'`` (the same
       residues, mutated or not) or ``'sequence'`` (identical sequences only;
       :func:`compare_peptides`).
@@ -107,9 +117,10 @@ class AnalysisConfig:
     format: str = "pdf"
     out: str | None = None
     runs: Mapping[str, str] | None = None
-    overlay: tuple[str, ...] = ("low", "high")
+    overlay: tuple[str, ...] = ("low", "high", "avg")
     overlay_two_only: bool = True
     peptide_match: str = "range"
+    populations: str = "best_set"
     modified_peptides: str = "separate"
     controls: Mapping[str, Any] | None = None
     merge: Mapping[str, str] | None = None
@@ -181,6 +192,8 @@ class AnalysisConfig:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
         if self.peptide_match not in MATCHES:
             raise ValueError(f"peptide_match must be one of {', '.join(MATCHES)}")
+        if self.populations not in POPULATION_RULES:
+            raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
         if self.reference and self.samples and self.reference not in self.samples:
             raise ValueError(f"the reference {self.reference!r} is not among the samples")
 

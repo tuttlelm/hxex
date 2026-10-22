@@ -363,24 +363,32 @@ deuterium than WT over the first 80 residues, most at the early times:
 
 ![Butterfly plot of R120G against WT](../images/tutorial_butterfly.png)
 
-**The Woods plot** (`woods_R120G_1min.png`) shows the same difference at one time, one bar per
-peptide over the residues it covers, coloured where the difference is significant (red higher,
-blue lower than WT). The top panel is the average deuteration (one population). The next two
-are the positions of the two populations, and the bottom one is the change in the share of the
-low-D population, multiplied by the distance between the two populations, so that it is in the
-same units as the panels above and judged against the same dashed line
-([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here the positions hardly
-differ, but R120G has clearly less of the low-D population over the first 80 residues: the same
-two states, populated differently.
+**The Woods plot** comes as two figures. The first (`woods_R120G_1min.png`) shows the same
+difference at one time, one bar per peptide over the residues it covers, coloured where the
+difference is significant (red higher, blue lower than WT). Below it, *Two Populations
+Selected* shows the peptides whose spectra are best described by two populations in R120G only,
+in WT only, or in both. Many peptides of the first 90 residues have two populations in WT but
+only one in R120G:
 
 ![Woods plot of R120G against WT at 1 min](../images/tutorial_woods.png)
+
+The second figure (`woods_K2_R120G_1min.png`) compares the two populations, only for the
+peptides that have two in both samples: the positions of the two populations, and the change in
+the share of the low-D population, multiplied by the distance between the two populations, so
+that it is in the same units as the panels above and judged against the same kind of dashed line
+([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here the positions hardly
+differ, but R120G has less of the low-D population: the same two states, populated differently.
+
+![The two populations of R120G against WT at 1 min](../images/tutorial_woods_k2.png)
 
 Peptides that contain the mutation are compared too, with WT's peptide over the same residues
 (they are marked `same_sequence = false` in `compare_peptides.csv`); to compare only identical
 sequences, set `peptide_match = "sequence"` in `[analysis]`.
 
-**The residue comparison** (`compare_residues_1min.png`) goes residue by residue, and where a
-region has two populations it shows both:
+**The residue comparison** (`compare_residues_1min.png`) goes residue by residue: the average
+deuteration as small circles on a line with its error band, and, where a sample has two
+populations, the low-D and high-D populations as up and down triangles
+([Reading the residue comparison](outputs.md#figures-from-hxex-analyse)):
 
 ![Residue-level comparison at 1 min](../images/tutorial_residues.png)
 

@@ -118,7 +118,7 @@ delete every folder whose name starts with `results`, or use `--overwrite` or
 
 | File | One row per | Holds |
 |---|---|---|
-| `series.csv` | series | sample, peptide, range, charge; spectra counted (flagged, rejected, multimodal); `controls` (measured, or why a fallback was used), `control_notes` (control warnings that leave it in use: `fd_disagrees`, `fd_multimodal`, `m0_multimodal`, `data_below_m0`), `retention` (deuterium kept), `control_fallback`, `rt` |
+| `series.csv` | series | sample, peptide, range, charge; spectra counted (flagged, rejected, multimodal); `controls` (measured, or why a fallback was used), `control_notes` (control warnings that leave it in use: `fd_disagrees`, `fd_multimodal` with whether its retention agrees with the other samples' (`retention agrees`, `retention differs`, `retention unchecked`), `m0_multimodal`, `data_below_m0`, `fd_charges_disagree` (the peptide's charge states, whose fully deuterated controls are combined, differ by more than 0.1)), `retention` (deuterium kept), `control_fallback`, `rt` |
 | `spectra.csv` | spectrum | the spectrum's identity (time, role, replicate, scan target for scan formats), `review_status`, `review_K` (a number of populations chosen in the review), `note` (the review's note), quality `flags`; selected K, `centroid` (and corrected), and each rank's mean and population. A copy of it is the starting point of the [user review table](project-file.md#the-user-review-table) |
 | `components.csv` | spectrum and population | K, rank, mean, mean_se, corrected mean, population and their errors |
 | `uptake.csv` | series, time (or control) and rank | the replicates averaged: `n_replicates`, `mean` (corrected when there are controls), `replicate_sd`, population. Rejected spectra are left out |
@@ -180,7 +180,8 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 
 | File | Holds |
 |---|---|
-| `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`, `control_fallback` (corrected with a stand-in control), `fd_other_charge` (the only stand-in was a fully deuterated control from the peptide's other charge states, which the protection-factor fit treats as measured); and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
+| `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`, `control_fallback` (corrected with a stand-in control: such series are left out unless `stand_in_controls = "include"` or the sample has no measured control), `fd_other_charge` (with `combine_charges = false` only: the only stand-in was a fully deuterated control from the peptide's other charge states, which the protection-factor fit treats as measured); and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
+| `left_out_spectra.csv` | the spectra the analysis left out whole (`[analysis.filters]`), with `reason`: `replicate outlier` (far from its other replicates), `above the amide count` (more deuterium than the peptide can hold, before the back-exchange correction), or `stand-in control` (its series has no measured fully deuterated control). To keep one, mark it `accepted` in the [user review table](project-file.md#the-user-review-table) |
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution, coverage |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `populations.csv` | per residue and time: the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
@@ -191,7 +192,8 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 | File | Holds |
 |---|---|
 | `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart) |
-| `compare_residues.csv` | per residue and time: difference, error, z, `significant` |
+| `compare_residues.csv` | per residue and time: difference, error, z, `significant` (at K=2, only where both samples keep two populations), and whether each side keeps two (`two_reference`, `two`) |
+| `compare_population_counts.csv` | per peptide and time: whether each side is best described by one or two populations (`K_reference`, `K`), the evidence (`delta_criterion`: negative favours two), `differs`, and `borderline` (a difference with weak evidence) |
 | `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` |
 | `compare_choices.csv` | per residue: whether each side keeps two populations, and whether they agree |
 
@@ -218,8 +220,9 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `coverage_<sample>` | one bar per peptide, coloured by fD, for every time and rank |
 | `redundancy_resolution` | redundancy and resolution per residue |
 | `choice_<sample>_<time>` | the residue profile: K=1, the K=2 ranks, the chosen description and the population (`profile_...` when there is no K=2) |
-| `compare_residues_<time>`, `compare_populations_<time>` | each sample against the reference, by residue |
-| `woods_<sample>_<time>` | peptide differences from the reference (see *Reading the Woods plot* below) |
+| `compare_residues_<time>`, `compare_populations_<time>` | each sample against the reference, by residue (see *Reading the residue comparison* below) |
+| `woods_<sample>_<time>` | peptide differences from the reference at K=1, and where the number of populations differs (see *Reading the Woods plot* below) |
+| `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
 | `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath |
 | `regions_<time>` | the regions' fD |
 | `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
@@ -233,9 +236,21 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 covers at its difference from the reference (sample minus reference), with its standard error as
 a vertical line. A bar is coloured where the difference is significant (red: the sample is
 higher; blue: lower): Welch's t-test on the replicate spectra gives p below `alpha`, and the
-difference is larger than the critical difference, drawn as the dashed lines. The top panel is
-the average deuteration (fD, one population); with two populations, the next two are the fD of
-each population, and the bottom one their populations.
+difference is larger than the critical difference, drawn as the dashed lines.
+
+The plot comes in two figures. The first, `woods_<sample>_<time>`, has the average deuteration
+(K=1 fD, one population) and, below it, **Two Populations Selected**: a grey bar over each
+peptide whose spectra are best described by two populations in one sample but not the other
+(`<sample> only` above the line, `<reference> only` below), and the peptides where both have
+two (`both`). A bar is outlined, not filled, where the evidence for the difference is weak
+(borderline). A change in the number of populations is a finding in itself: one sample has
+two states where the other has one.
+
+The second figure, `woods_K2_<sample>_<time>`, compares the two populations: the fD of the
+low-D population, of the high-D one, and their populations. It compares only peptides that
+have two populations in both samples: elsewhere one sample's second "population" is a small
+tail of a single one, and comparing it with the other's second state would compare different
+things.
 
 The population panel does not show the change in the share of the low-D population directly,
 but that change multiplied by the peptide's separation: the difference in fD between its two
@@ -247,6 +262,22 @@ matters in a peptide whose two states are far apart, and little where they are c
 `compare_peptides.csv` keeps the change in share itself (`delta`), with the `separation` and the
 threshold it was judged by (`delta_crit`, the K=1 critical difference divided by the
 separation).
+
+**Reading the residue comparison.** `compare_residues_<time>` draws each sample against the
+reference residue by residue, the reference in black and the sample in its colour. The average
+deuteration (K=1, fDavg) is small circles on a line with a shaded ±1 standard-error band; the
+line joins two residues only where one peptide measures both, so a gap means the peptides do not
+connect them. Where a sample has two populations, fDlow is an up triangle and fDhigh a down
+triangle, with their error bars. A residue has two populations for a sample when the peptides
+whose spectra are best described by two populations carry at least half of its weight (and the
+two values are separated, precise, and on either side of the average). Its fDlow and fDhigh, like
+its average, come from every peptide covering it, so the three always describe the same
+peptides. Residue values change only where a peptide starts or ends, so the
+average runs in steps: the width of a step is the resolution the peptides allow.
+`compare_populations_<time>` is drawn the same way, with the share of the low-D population
+(`pop_low`) as up triangles: each sample where it has two populations, whether or not the other
+sample has. The by-residue figure can show any of these values (`overlay` in `[analysis]`:
+`low`, `high`, `avg`, `pop_low`, `pop_high`).
 
 ## The settings used
 

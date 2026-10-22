@@ -174,8 +174,8 @@ _DESCRIPTIONS: dict[str, str] = {
                                "or a list of times",
     "analysis.redundancy": 'what the redundancy counts: "peptides" or "spectra"',
     "analysis.weight_exponent": "exponent of the residue averaging's weights",
-    "analysis.filters": "which K=2 descriptions are kept: [analysis.filters] (below), or false "
-                        "for all",
+    "analysis.filters": "which spectra and K=2 descriptions are kept: [analysis.filters] "
+                        "(below), or false for all",
     "analysis.choice": "the choice between one and two populations: [analysis.choice] (below)",
     "analysis.alpha": "significance level of the comparisons",
     "analysis.regions": "named stretches of the protein to mark: [[analysis.regions]] (below)",
@@ -186,8 +186,14 @@ _DESCRIPTIONS: dict[str, str] = {
                     "reference: results_analysis_WT, or results_analysis without a reference)",
     "analysis.runs": "separate runs to compare: [analysis.runs] (below)",
     "analysis.overlay": 'the values of the by-residue comparisons: "low" and "high" (the K=2 '
-                        'populations) and/or "avg" (K=1)',
+                        'populations\' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the '
+                        'populations\' shares)',
     "analysis.overlay_two_only": "draw K=2 values only where the choice keeps two populations",
+    "analysis.populations": 'how one or two populations are decided: "best_set" (where a '
+                            'peptide\'s spectra together are best described by two; a residue '
+                            'where such peptides carry half its weight; K=2 compared where both '
+                            'samples have two) or "bootstrap" (the residue\'s K=2 positions '
+                            'and their bootstrap errors, with [analysis.choice]\'s limits)',
     "analysis.peptide_match": 'which peptides are compared: "range" (the same residues, mutated '
                               'or not) or "sequence" (identical sequences)',
     "analysis.modified_peptides": '"separate" (modified forms as states of their own) or '
@@ -205,6 +211,15 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.filters.max_fD": "no population deuterated beyond this fraction of the amides",
     "analysis.filters.max_fD_se": "every population's fD standard error below this",
     "analysis.filters.k1_between_ranks": "the K=1 value lies between the two populations' values",
+    "analysis.filters.replicate_outlier": "leave out a spectrum whose K=1 fD lies more than "
+                                          "this many typical replicate standard deviations "
+                                          "from the median of its replicates (same charge "
+                                          "state, three or more); unset: off",
+    "analysis.filters.above_amides": "leave out a spectrum whose K=1 mean exceeds the amide "
+                                     "count before the back-exchange correction",
+    "analysis.filters.stand_in_controls": '"exclude" or "include" the series whose fully '
+                                          "deuterated control is a stand-in (a sample with "
+                                          "no measured control keeps them)",
     "analysis.choice.confidence": "a fraction (0.5: 50 %): the interval that must separate the "
                                   "two K=2 values",
     "analysis.choice.max_fD_se": "both K=2 standard errors below this",
@@ -280,9 +295,12 @@ _INTROS: dict[str, str] = {
               "<bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.",
     "analysis": "The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See "
                 "docs/ANALYSIS.md for the methods.",
-    "analysis.filters": "Which K=2 descriptions the analysis trusts. Per spectrum: "
+    "analysis.filters": "Which spectra and K=2 descriptions the analysis trusts. Whole "
+                        "spectra: replicate_outlier, above_amides, stand_in_controls (the "
+                        "spectra left out are listed in left_out_spectra.csv; one you accept "
+                        "in the review is kept). K=2 descriptions per spectrum: "
                         "min_population, max_fD; per species and time: max_fD_se, "
-                        "k1_between_ranks. K=1 is never filtered.",
+                        "k1_between_ranks.",
     "analysis.choice": "The limits of the choice between one and two populations. A residue "
                        "whose K=2 standard errors are unknown keeps the one-population "
                        "description.",

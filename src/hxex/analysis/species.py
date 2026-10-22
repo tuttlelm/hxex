@@ -34,6 +34,7 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 import numpy as np
+from scipy import stats
 
 from .. import chem
 from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
@@ -44,10 +45,31 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SpeciesFilters:
-    """Which K >= 2 descriptions the analysis trusts (the ``[analysis.filters]`` table; K = 1 is
-    never filtered; docs/ANALYSIS.md).
+    """Which spectra and which K >= 2 descriptions the analysis trusts (the
+    ``[analysis.filters]`` table; docs/ANALYSIS.md). None (``[analysis.filters] = false``)
+    keeps everything.
 
-    Per spectrum, before replicates and charge states are combined:
+    Whole spectra, at every K (:func:`left_out_spectra`; a spectrum the review accepted is
+    always kept; owner, 2026-10-22, HISTORY 140):
+
+    - ``replicate_outlier``: at an exposure time, a spectrum whose K=1 fD lies more than this
+      many typical replicate standard deviations from the median of its series' replicates at
+      that time (the same peptide and charge state; at least three replicates) is left out
+      (``replicate outlier``). The typical deviation is the run's own: the median of the
+      replicate variances of all its time points (each scaled by its chi-square median),
+      robust to the outliers it looks for. None turns it off. Charge states are not compared
+      with each other here (``charge_trend`` does that).
+    - ``above_amides``: a spectrum whose K=1 mean exceeds the peptide's exchangeable amides
+      before the back-exchange correction is left out (``above the amide count``): no
+      correction makes it uptake.
+    - ``stand_in_controls``: ``'exclude'`` (the default) leaves out the series whose fully
+      deuterated control is a stand-in (the run's median retention, the kint prediction or
+      ``d2o_fraction``; not one measured at the peptide's other charge states), except in a
+      sample with no measured fully deuterated control at all, whose series all use one
+      (``stand-in control``); ``'include'`` keeps them.
+
+    Two-population descriptions, per spectrum, before replicates and charge states are
+    combined:
 
     - ``min_population``: every population within ``[min_population, 1 - min_population]`` (the
       fit has a limit of the same name on the fitted K, and the choice on the lever-rule
@@ -69,12 +91,26 @@ class SpeciesFilters:
     max_fD_se: float = 0.25
     max_fD: float = 1.1
     k1_between_ranks: bool = True
+    replicate_outlier: float | None = 6.0
+    above_amides: bool = True
+    stand_in_controls: str = "exclude"
 
     def __post_init__(self):
         if not 0 <= self.min_population < 0.5:
             raise ValueError("min_population must be in [0, 0.5)")
         if self.max_fD_se <= 0 or self.max_fD <= 0:
             raise ValueError("max_fD_se and max_fD must be positive")
+        if self.replicate_outlier is not None and (isinstance(self.replicate_outlier, bool)
+                                                   or not self.replicate_outlier > 0):
+            raise ValueError("replicate_outlier must be a positive number of standard "
+                             "deviations (or unset)")
+        if not isinstance(self.above_amides, bool):
+            raise ValueError("above_amides must be true or false")
+        if self.stand_in_controls not in STAND_IN_CONTROLS:
+            raise ValueError(f"stand_in_controls must be one of {', '.join(STAND_IN_CONTROLS)}")
+
+
+STAND_IN_CONTROLS = ("exclude", "include")
 
 
 # a charge trend: the lowest and highest charge differ by more than this many combined standard
@@ -359,6 +395,116 @@ def _kept(results, exclude_flagged: bool) -> np.ndarray:
     return keep
 
 
+def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+                     *, exclude_flagged: bool = False,
+                     controls: Mapping[str, Any] | None = None) -> dict[str, np.ndarray]:
+    """The spectra the analysis leaves out whole (:class:`SpeciesFilters`:
+    ``replicate_outlier``, ``above_amides``, ``stand_in_controls``), with the reason:
+    columns ``run`` ('' for one run), ``spectrum_id``, ``sample``, ``peptide_range``,
+    ``charge``, ``rep``, ``time``, ``role``, ``fD`` (K=1, corrected as the analysis corrects
+    it) and ``reason``. Spectra the review rejected are not listed (they are out already)."""
+    from .runs import RunSet
+
+    if isinstance(results, RunSet):
+        parts = []
+        for name, r in results.runs.items():
+            part = left_out_spectra(r, filters, exclude_flagged=exclude_flagged,
+                                    controls=controls)
+            part["run"] = np.full(len(part["spectrum_id"]), name, dtype=object).astype(str)
+            parts.append(part)
+        return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    fit, binned = results.fit, results.binned
+    keep = _kept(results, exclude_flagged)
+    ctl = analysis_controls(results, controls, quiet=True)
+    n_amides = _site_counts(results)
+    if filters is None:
+        out, why, fd = np.zeros(len(fit), dtype=bool), np.full(len(fit), "", dtype=object), None
+    else:
+        out, why, fd = _left_out(results, filters, ctl, n_amides, keep, values=True)
+    index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
+    rows = np.array([index[str(s)] for s in fit.spectrum_id], dtype=np.int64)
+    i = np.flatnonzero(out)
+    b = rows[i]
+    return {
+        "run": np.full(len(i), "", dtype=object).astype(str),
+        "spectrum_id": np.asarray(fit.spectrum_id)[i].astype(str),
+        "sample": np.asarray(binned.sample)[b].astype(str),
+        "peptide_range": np.asarray(binned.peptide_range)[b].astype(str),
+        "charge": np.asarray(binned.charge)[b].astype(np.int64),
+        "rep": np.asarray(binned.rep)[b],
+        "time": np.asarray(fit.time, dtype=float)[i],
+        "role": np.asarray(fit.role).astype(str)[i],
+        "fD": (fd[i] if fd is not None else np.full(len(i), np.nan)),
+        "reason": why[i].astype(str),
+    }
+
+
+def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
+              keep: np.ndarray, values: bool = False):
+    """Which rows of the fit :class:`SpeciesFilters` leaves out whole, and why (the first
+    reason that applies: the stand-in control, then the amide count, then the replicate
+    outlier); with ``values`` also each row's K=1 fD."""
+    fit, binned = results.fit, results.binned
+    n = len(fit.spectrum_id)
+    out = np.zeros(n, dtype=bool)
+    why = np.full(n, "", dtype=object)
+    accepted = np.asarray(results.review_status) == "accepted"
+    index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
+    rows = np.array([index[str(s)] for s in fit.spectrum_id], dtype=np.int64)
+    sample = np.asarray(binned.sample)[rows].astype(str)
+
+    def mark(mask: np.ndarray, reason: str) -> None:
+        new = mask & keep & ~out & ~accepted
+        out[new] = True
+        why[new] = reason
+
+    raw = np.zeros(n, dtype=bool)
+    if controls is not None:
+        at = controls.rows(fit.data_id)
+        raw = np.asarray(controls.uncorrected, dtype=bool)[at]
+        n_amides = np.asarray(controls.n_amides, dtype=float)[at]
+        if filters.stand_in_controls == "exclude":
+            measured = np.asarray(controls.fd_measured, dtype=bool)[at]
+            stand_in = ~measured & ~raw
+            # a sample without any measured fully deuterated control keeps its stand-ins
+            has = {s for s in np.unique(sample) if (measured & ~raw & (sample == s)).any()}
+            mark(stand_in & np.isin(sample, list(has)), "stand-in control")
+    k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
+    if filters.above_amides:
+        mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, "above the amide count")
+    fd = k1.copy()
+    if controls is not None:
+        fd = correct_means(controls, fit.data_id, k1[:, None]).mean[:, 0]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        fd = fd / n_amides
+    if filters.replicate_outlier is not None:
+        role = np.asarray(fit.role).astype(str)
+        time = np.asarray(fit.time, dtype=float)
+        at_time = (role != "undeut") & (role != "fulldeut") & np.isfinite(time)
+        usable = at_time & keep & np.isfinite(fd)
+        groups: dict[tuple, list[int]] = {}
+        data_id = np.asarray(fit.data_id)
+        for i in np.flatnonzero(usable):  # the replicates of one series (peptide and charge)
+            groups.setdefault((int(data_id[i]), float(time[i])), []).append(i)
+        scaled = [float(np.var(fd[g], ddof=1)) * (len(g) - 1) / stats.chi2.median(len(g) - 1)
+                  for g in groups.values() if len(g) >= 2]
+        if scaled:
+            limit = filters.replicate_outlier * float(np.sqrt(np.median(scaled)))
+            far = np.zeros(n, dtype=bool)
+            for g in groups.values():
+                if len(g) < 3:
+                    continue  # two replicates that disagree: the data cannot say which is off
+                # from the median of all of them: with three or more, one outlier cannot move
+                # it far (the median of the others would be pulled halfway to it)
+                centre = float(np.median(fd[g]))
+                for i in g:
+                    far[i] = abs(fd[i] - centre) > limit
+            mark(far, "replicate outlier")
+    if values:
+        return out, why, fd
+    return out, why
+
+
 def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                       controls_changes=None):
     """:func:`_records` of one run with only the per-spectrum filters applied, and the counts
@@ -377,6 +523,15 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     keep = _kept(results, exclude_flagged)
     controls = analysis_controls(results, controls_changes, quiet=quiet)
     n_amides = _site_counts(results)
+    if filters is not None:
+        out, why = _left_out(results, filters, controls, n_amides, keep)
+        keep &= ~out
+        if out.any() and not quiet:
+            counts: dict[str, int] = {}
+            for w in why[out]:
+                counts[str(w)] = counts.get(str(w), 0) + 1
+            log.info("spectra left out by [analysis.filters]: %s",
+                     "; ".join(f"{n} {w}" for w, n in sorted(counts.items())))
     fell_back = np.zeros(len(fit), dtype=bool)
     not_measured = np.zeros(len(fit), dtype=bool)
     raw = np.zeros(len(fit), dtype=bool)
@@ -663,6 +818,21 @@ def _set_evidence(results, ks, exclude_flagged: bool = False) -> dict[tuple, dic
     return out
 
 
+def best_sets(uptake: SpeciesUptake) -> dict[tuple, tuple[int, float]]:
+    """``(run, sample, peptide, modification, start, end, time) -> (best_set_K,
+    set_delta_criterion)`` for every species and time point of a species table (the controls
+    left out): the number of populations each set of spectra supports, and the evidence
+    (summed criterion at K = 2 minus K = 1; negative favours two)."""
+    out: dict[tuple, tuple[int, float]] = {}
+    role = np.asarray(uptake.role, dtype=str)
+    for i in np.flatnonzero(role == ""):
+        key = (str(uptake.run[i]), str(uptake.sample[i]), str(uptake.peptide[i]),
+               str(uptake.modification[i]), int(uptake.start[i]), int(uptake.end[i]),
+               float(uptake.time[i]))
+        out.setdefault(key, (int(uptake.best_set_K[i]), float(uptake.set_delta_criterion[i])))
+    return out
+
+
 def best_set(cols: Mapping[str, np.ndarray], evidence: Mapping[tuple, dict], ks,
              min_population: float = 0.05) -> dict[str, np.ndarray]:
     """The columns ``best_set_K``, ``best_set``, ``best_set_reason`` and
@@ -709,12 +879,15 @@ def best_set(cols: Mapping[str, np.ndarray], evidence: Mapping[tuple, dict], ks,
                     continue
                 chosen = k
                 break
+            words = {1: "one", 2: "two", 3: "three"}
             if chosen is None:
                 chosen, reason = min(by_k), "; ".join(passed)
+            elif passed:  # the set favoured a K that could not be used
+                best = words.get(order[0], str(order[0]))
+                reason = (f"set evidence for {best}, but {'; '.join(passed)}: "
+                          f"{words.get(chosen, str(chosen))} used")
             else:
-                word = {1: "one", 2: "two", 3: "three"}.get(chosen, str(chosen))
-                reason = (f"set evidence for {word}" + (f" ({'; '.join(passed)})"
-                                                         if passed else ""))
+                reason = f"set evidence for {words.get(chosen, str(chosen))}"
         out["best_set_K"][idx] = chosen
         out["best_set_reason"][idx] = reason
         out["best_set"][by_k.get(chosen, [])] = True

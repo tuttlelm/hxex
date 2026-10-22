@@ -3523,3 +3523,149 @@ CSVs or mzML if wanted.
     that is gone), and which command would need `--overwrite` or `--keep-previous` (or what
     `[output] overwrite` / `keep_previous` will do). Not problems: each command refuses by
     itself before doing any work, and the check ends with `ok` unless something else is wrong.
+
+137. **K=2 comparisons only where both samples have two populations; the number of populations
+    compared; the Woods plot in two figures; the residue figure restyled (owner, 2026-10-21).**
+    Owner asked how to read regions with significant and non-significant peptides, and why
+    fDlow/fDhigh looked different where K=1 did not. A Fable-model agent found (tutorial data):
+    the K=2 rank and population comparisons paired one sample's second state with the other's
+    small tail of a single population (D109H 113-134: WT two states, D109H one plus a tail;
+    FDQFFGEHLLE 24-34: the rank-2 difference opposite to K=1); 36 of the 43 significant rank
+    rows had `best_set_K = 1` on a side; the per-residue choice (confidence 0.5) kept two
+    populations at 88 % of residues. A scratch test of gating on `best_set_K = 2` (peptide
+    level) and a weighted vote (residue level; "any" 1,361, "half" 436, "all" 61 of 1,872
+    residue-sample-times) led to the owner's choices: (1) peptide K=2 comparisons (positions
+    and population) only where both sides have `best_set_K = 2`, else NaN with `reason`
+    `one population (sample|reference|both)` (`compare_peptides(best_sets=)`,
+    `analysis.best_sets`); (2) residue K=2 values from the two-population peptides only, every
+    covering peptide voting with the residue weights, two populations only where they carry at
+    least half (`residue_map(two_population_peptides=True)`, `two_population_weight`,
+    `choose_populations` reason `one-population peptides`), and residue K=2 differences
+    significant only where both sides keep two; (3) where the number of populations differs is
+    shown, not hidden: `compare_population_counts` (`compare_population_counts.csv`;
+    `borderline` unless the two-population side's summed criterion is at least 10 below 0 and
+    the other's above 0); (4) the Woods plot as two figures: `woods_<sample>_<time>` (K=1 fD
+    and "Two Populations Selected": sample only, reference only, both; grey bars, outlined when
+    borderline, stacked in lanes, a "K=2" column header) and `woods_K2_<sample>_<time>` (the
+    gated K=2 panels, short titles, "Δpop × sep", one note line); (5) the residue figure: K=1
+    as small circles on a line with a ±1 se band, joined only between residues one peptide
+    measures together (`ResidueMap.linked_next`; prolines bridged inside a peptide), fDlow and
+    fDhigh as up and down triangles, fills and K=2 error bars 65 % opaque with solid outlines,
+    the legend naming the samples only, `overlay` default now includes `avg`. Also: dashed
+    thresholds and zero lines drawn above the grid (a threshold on a gridline looked faint), the
+    Woods zero line grey. Tutorial data: rank comparisons 363 -> 92 (significant 23 -> 3 and
+    20 -> 4), population 245 -> 85 (120 -> 36); 122 peptide-times differ in the number of
+    populations, 31 borderline. Tutorial page, notebook (one cell: the second Woods figure) and
+    images updated; the download zip changed again (replace it on tutorial-data-1). Then
+    (owner): the population figure (`compare_populations_<time>`) had its own plotter and kept
+    the old look; it is now the residue figure with the overlay values `pop_low` and
+    `pop_high` (the populations from the choice, each sample where it keeps two, not requiring
+    both; up and down triangles by rank, the high-D one the complement), sharing the markers,
+    fills, legend of sample colours, axes and time label (`_rank_points`, `_residue_axes`,
+    also used by `plot_residue_comparison`); the corrected-differently mark stays on by
+    default, `mark_corrected_differently=False` in Python turns it off. Open: the
+    K=2 ranks' `delta_crit` is pooled over every K=2 description; the threshold of the
+    borderline evidence (10) is fixed, not a setting.
+
+138. **A multimodal fully deuterated control says whether its retention agrees (owner, 2026-10-22).**
+    On the intact-peptide benchmark one sample's fully deuterated controls are called two
+    populations in 36 % of spectra (the others 4-14 %), yet their K=1 retention matches the most
+    similar sample's within 0.005 (r 0.90), also for the bimodal series: the molecules kept
+    different amounts of deuterium around the same average, and the correction, which uses the
+    average, is sound. The guide's wording ("can mean an incompletely deuterated or a mixed
+    sample") suggested the control was unusable. Built: `_flag_disagreement` adds the warning
+    token `fd_retention_agrees` to an `fd_multimodal` fully deuterated control whose retention agrees
+    with the same peptide's in the other samples (`CONTROL_NOTES`); `series.csv`
+    `control_notes` writes `fd_multimodal (retention agrees)`, `(retention differs)` (with
+    `fd_disagrees`) or `(retention unchecked)` (nothing to compare with). Guide reworded. Not built:
+    comparing with the same peptide's other charge states when a run has one sample (owner's
+    point 2, to design), and marking these on the overview figure. Bundles show the new note once
+    their controls are recomputed or the run is repeated.
+
+139. **`[analysis] populations`: best_set_K or the bootstrap rule, and what decides it (owner,
+    2026-10-22).** The owner is not settled on how one or two populations are chosen, so both
+    stay available: `populations = "best_set"` (the default: the HISTORY 137 gate, K=2 values
+    and comparisons where the set is best described by two populations, the half-weight vote
+    per residue) or `"bootstrap"` (the per-residue choice of `[analysis.choice]` alone, every
+    peptide's K=2 fit used). Evidence gathered on the intact-peptide benchmark (rerun with the
+    current hxex; private notes): (1) calibration against known answers (simulated spectra
+    with hxex's noise, the pyHXExpress bimodal test set): the confidence-0.5 residue rule calls
+    two populations in 44-91 % of true single populations, best_set_K in 0-2 % (real
+    undeuterated controls 4-7 %), a parametric-bootstrap likelihood-ratio test about 1 %; small
+    or close second populations are missed by every rule (a 10 % population 0.3 fD away found
+    21-33 % of the time with three replicates); best_set_K's power does not grow with
+    replicates (one penalty per spectrum), the test's does. (2) Envelope width against one
+    binomial, independent of the fit: wider at 4 s and 1 min in the N-terminal region, not in
+    the central or C-terminal regions, not at late times; agrees with best_set_K at 91 % of
+    residues and with the bootstrap rule (confidence 0.95, 10 %) at 27 %; blind to close
+    components (each narrower than a binomial). (3) Why the bootstrap rule and the owner's
+    earlier notebook differ: the same tests, the same positions (within 0.04 fD); the
+    notebook's residue errors were in deuterons where its values were fractions (larger by the
+    peptide's amide count, so its z = 1 test was strict for long peptides), and the errors of a
+    forced split shrink with averaging (replicates, charges, overlapping peptides) because the
+    split lands reproducibly: overlapping peptides agree on the forced K=2 positions as well
+    where the set says one population as where it says two (leave-one-out residuals 0.06 and
+    0.05 fD), so precision and consistency do not show a second state. (4) `nterm_subtract` 1
+    against 2 changes 2.2 % of spectra's K (mostly through the K=1 n cap); the residue weighting
+    (exponent 0, 1, 2) moves the residue-level decision within the regions best_set_K marks,
+    not between regions. (5) In best_set mode the K=2 curves came from the two-population
+    peptides and K=1 from all, so 357 residue-times showed rank curves that do not bracket K=1:
+    a construction artefact (owner's observation); not yet changed (proposed: K=2 curves from
+    every peptide, the gate deciding only which residues are labelled two). Proposed, not
+    built: a three-level per-peptide verdict from the calibrated test's p-value (two,
+    undecided, no sign of two), carried to residues by the vote.
+
+140. **Controls combined over charge states; spectra left out whole; stand-in controls out of
+    the analysis; a robust `delta_crit` (owner, 2026-10-22).** On the intact-peptide benchmark
+    the hybrid rule's `delta_crit` (0.136 fD) was set by a few series whose replicates read a
+    different envelope (a 5-amide peptide at 5.5-5.7 D in two of four replicates beside 1 D;
+    the fit's n at its cap, fD near 2 after the correction): the top 1 % of series carried
+    71-74 % of the pooled variance, the typical replicate sd was 0.017 (same at every exposure
+    time; replicates are separately prepared samples), and series with a stand-in fully
+    deuterated control carried 38 % (116 of the 133 series-times whose corrected fD is
+    consistently above 1.1 used one). The owner's pyHXExpress practice (drop fD < 0.1 or > 1.1
+    at the exposure times, per component too) was tried: the upper limit halves `delta_crit`,
+    but of the values below 0.1, 176 of 187 agree with their replicates (real low uptake at
+    4 s and 1 min), and of those above 1.1, 133 agree with their replicates (a stand-in control
+    too low for the peptide); a floor on components removes protected low-D populations.
+    Owner: an empirical rule that needs justifying. Built instead: (1) `[run.controls]
+    combine_charges` (default true): every charge state of a peptide in one sample takes the
+    plain mean retention of its accepted measured fully deuterated controls (charge states
+    agree: median spread 0.015, 90 % within 0.05 on the benchmark; HISTORY 130); a charge state
+    without its own counts as measured (`fd_other_charge`, not `fallback`, so never "corrected
+    differently"); disagreeing charges (span above `sample_tolerance`) are combined and warned
+    (`fd_charges_disagree`); the undeuterated control stays per charge (owner: FD only, plain
+    mean); `fd_other_charge` keeps its old meaning only with `combine_charges = false`.
+    (2) `[analysis.filters]` leaves out whole spectra (listed with the reason in
+    `left_out_spectra.csv`; a spectrum accepted in the review is kept): `replicate_outlier = 6`
+    (more than 6 typical replicate sd from the median of its series' replicates at that time,
+    three or more replicates; the typical sd is the run's own, the median of the
+    chi-square-scaled replicate variances; measured from the group median because the median
+    of the others is pulled halfway to an outlier when there are three), `above_amides = true`
+    (a K=1 mean above the amide count before correction), and `stand_in_controls = "exclude"`
+    (series whose fully deuterated control is the median, kint or `d2o_fraction` stand-in,
+    `ControlTable.fd_measured`; kept in a sample with no measured control at all). Charge states
+    are not compared here (`charge_trend` does that: about half the spectra a cross-charge
+    check flagged agreed with their own charge's replicates). (3) `delta_crit` from the median
+    of the chi-square-scaled replicate variances instead of their plain pool (a deliberate
+    difference from Hageman and Weis; PLAN). (4) `best_set_reason` says when the set favoured a
+    K the filters had removed ("set evidence for two, but K = 2 not kept by the filters: one
+    used"). The `min_fD` component floor tried during the session was removed. Benchmark, with
+    the controls recomputed: 148 replicate outliers, 19 above the amide count, 2,742 spectra of
+    191 stand-in series left out (no residue loses coverage); `delta_crit` 0.136 -> 0.027;
+    significant one-population peptide differences 185 of 2,951 -> 795 of 2,467; residue
+    differences 90 -> 746. Bundles keep their stored controls until rerun or until
+    `[analysis.controls]` changes a setting (then they are recomputed).
+
+141. **Residue K=2 values from every covering peptide in best_set_K mode (owner, 2026-10-22).**
+    With the HISTORY 137 gate the residue K=2 values came from the two-population peptides and
+    K=1 from all, so the rank curves of the choice figures did not bracket K=1 at 290 of 3,500
+    residue-times on the intact-peptide benchmark (the owner's observation: "non-physical on
+    aggregation"). Now every covering peptide's K=2 description enters the residue values, as
+    in bootstrap mode, and the two-population peptides' vote only decides which residues have
+    two populations (owner's option 1: one set of K=2 numbers per residue, not the
+    two-population peptides' values at the residues decided as two). Benchmark: K=1 outside
+    the ranks 290 -> 48 residue-times; residue-times with two populations unchanged (465);
+    where both constructions decide two, the positions differed by a median of 0.02 fD. A
+    residue covered only by one-population peptides now has K=2 values and the reason
+    `one-population peptides` instead of `no K=2`. Peptide comparisons stay gated.

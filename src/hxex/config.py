@@ -813,7 +813,8 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta"
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
-                 "overlay_two_only", "peptide_match", "modified_peptides", "controls", "merge",
+                 "overlay_two_only", "peptide_match", "populations", "modified_peptides",
+                 "controls", "merge",
                  "fragments", "protection", "labelling")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
 _REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
@@ -1300,10 +1301,13 @@ _COMMENTS: dict[str, str] = {
     "run.controls.sample_tolerance": "a fully deuterated control whose retention differs "
                                      "this much from the same peptide's in the other "
                                      "samples is flagged fd_disagrees (still used)",
-    "run.controls.fd_other_charge": "a series without a good fully deuterated control takes "
-                                    "the retention of the same peptide's at its other charge "
-                                    "states in the same sample, before fd_fallback (peptides "
-                                    "only, not fragment ions)",
+    "run.controls.combine_charges": "every charge state of a peptide (in one sample) takes the "
+                                    "mean retention of its measured fully deuterated controls "
+                                    "over all charge states; fd_fallback only when none is "
+                                    "good (peptides only, not fragment ions)",
+    "run.controls.fd_other_charge": "with combine_charges = false: a series without a good "
+                                    "fully deuterated control takes the retention of the same "
+                                    "peptide's at its other charge states, before fd_fallback",
     "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
@@ -1632,10 +1636,13 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# coverage_times = "undeuterated" # or "all", or a list of times',
         '# redundancy = "peptides"         # or "spectra"',
         "# alpha = 0.05                    # significance of the comparisons",
-        '# overlay = ["low", "high"]       # by-residue comparisons: K=2 low/high and/or "avg"',
+        '# overlay = ["low", "high", "avg"]  # by-residue comparisons: K=2 low, high; K=1 avg',
         "# overlay_two_only = true         # K=2 values only where two populations are chosen",
         '# peptide_match = "range"         # compare peptides over the same residues ("range",',
         '#                                 # mutated or not) or identical sequences ("sequence")',
+        '# populations = "best_set"        # one or two populations: "best_set" (each peptide\'s',
+        '#                                 # spectra together) or "bootstrap" (the residue\'s',
+        '#                                 # K=2 values and their errors, [analysis.choice])',
         '# modified_peptides = "separate"  # modified forms as their own states ("WT pS59") or',
         '#                                 # averaged with the sample ("combined")',
         '# format = "pdf"                  # or "png", "svg"',
@@ -1643,7 +1650,10 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "#                                 # (hxex.analysis.protection); needs the labelling table",
         "# [analysis.controls]             # control settings to change for the analysis (the",
         "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
-        "# [analysis.filters]              # which K=2 descriptions are kept (false: none)",
+        "# [analysis.filters]              # which spectra and K=2 descriptions are kept",
+        "# replicate_outlier = 6           # typical replicate sd from the other replicates",
+        "# above_amides = true             # leave out a K=1 mean above the amide count",
+        '# stand_in_controls = "exclude"   # series without a measured fully deuterated control',
         "# min_population = 0.05",
         "# max_fD_se = 0.25",
         "# max_fD = 1.1",

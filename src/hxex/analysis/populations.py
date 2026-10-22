@@ -20,6 +20,12 @@ value describes it (``reason`` ``'not separated'``).
 
 Otherwise the K=1 value describes the residue. The standard error of the population is propagated
 from all three values.
+
+When the residue map was made from the two-population peptides
+(``residue_map(two_population_peptides=True)``; owner, 2026-10-21, HISTORY 137), one more test
+comes first: the peptides whose set is best described by two populations carry at least half of
+the residue's weight (``two_population_weight >= 0.5``); otherwise ``reason`` is
+``'one-population peptides'``.
 """
 # the method follows pyHXExpress's choose_fits, per residue instead of per spectrum; its
 # population error left a derivative unsquared
@@ -33,7 +39,9 @@ from scipy.stats import norm
 
 from .residues import ResidueMap
 
-REASONS = ("", "no K=2", "not separated", "error", "K=1 outside", "population")
+REASONS = ("", "no K=2", "one-population peptides", "not separated", "error", "K=1 outside",
+           "population")
+TWO_POPULATION_SHARE = 0.5  # the weight two-population peptides must carry (HISTORY 137)
 
 
 @dataclass(frozen=True)
@@ -148,6 +156,9 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
     K=2 values (see the module docstring)."""
     table: dict[tuple, dict] = {}
     fell_back: dict[tuple, bool] = {}
+    share: dict[tuple, float] = {}
+    weights = np.asarray(residues.two_population_weight, dtype=float)
+    voted = bool(np.isfinite(weights).any())  # made from the two-population peptides
     for i in range(len(residues)):
         k, rank = int(residues.K[i]), int(residues.rank[i])
         if (k, rank) not in ((1, 1), (2, 1), (2, 2)):
@@ -156,6 +167,8 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
                int(residues.residue[i]))
         name = {(1, 1): "avg", (2, 1): "low", (2, 2): "high"}[(k, rank)]
         table.setdefault(key, {})[name] = (float(residues.fD[i]), float(residues.fD_se[i]))
+        if name == "avg":
+            share[key] = float(weights[i])
         fell_back[key] = fell_back.get(key, False) or bool(residues.control_fallback[i])
     keys = sorted(table)
     nan = (np.nan, np.nan)
@@ -175,11 +188,14 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         precise = known & (low_se < config.max_fD_se) & (high_se < config.max_fD_se)
         between = (low < avg) & (avg < high)
         in_range = (pop >= lo) & (pop <= 1 - lo)
+        support = np.array([share.get(key, np.nan) for key in keys], dtype=float)
+        enough = (support >= TWO_POPULATION_SHARE) if voted else np.ones(len(keys), dtype=bool)
     reason = np.full(len(keys), "", dtype=object)
     for test, why in ((in_range, "population"), (between, "K=1 outside"), (precise, "error"),
-                      (separated, "not separated"), (has_k2, "no K=2")):
+                      (separated, "not separated"), (enough, "one-population peptides"),
+                      (has_k2, "no K=2")):
         reason = np.where(~test, why, reason)  # the first failing test, in REASONS order
-    two = has_k2 & separated & precise & between & in_range
+    two = has_k2 & enough & separated & precise & between & in_range
     reason = np.where(two | ~np.isfinite(avg), "", reason)
     usable = has_k2 & between
     return PopulationChoice(

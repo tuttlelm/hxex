@@ -5,22 +5,23 @@ per peptide and per residue, and averages over user-defined regions.
 Differences are in fractional deuteration (``fD``) at a fixed K and rank (K=1, the average, by
 default), or in the lever-rule population of the K=2 low-D component (``quantity='population'``):
 whether a sample shifts the balance between the populations rather than their deuteration. The
-population is ``(fD_high - fD_avg) / (fD_high - fD_low)``: each replicate spectrum's K=1 value
-(a precise proxy of the average deuteration while the K=1 fit spans the envelope) between the
-sample's K=2 positions averaged over its replicates (each sample keeps its own positions: whether
-the states themselves differ is the K=2 ``fD`` comparison's question). Per residue,
+population is ``(fD_high - fD_avg) / (fD_high - fD_low)``: each replicate spectrum's K=1 value (a
+precise proxy of the average deuteration while the K=1 fit spans the envelope) between the sample's
+K=2 positions averaged over its replicates (each sample keeps its own positions: whether the states
+themselves differ is the K=2 ``fD`` comparison's question). Per residue,
 :func:`compare_populations` compares the lever-rule population of the choice between one and two
 populations. Per peptide and time a difference is significant by the hybrid rule (Hageman and Weis,
 Anal. Chem. 2019): Welch's t-test on the replicate spectra of the two samples gives ``p < alpha``,
-and the difference exceeds a threshold ``delta_crit = t(1 - alpha/2, 2n - 2) s_pooled
-sqrt(2/n)``, from the pooled standard deviation of replicate spectra over every peptide, time and
-sample (``n`` the typical number of replicate spectra). A population's threshold is the K=1
-``delta_crit`` divided by the separation of the K=2 positions (the mean of the two samples'):
-with fixed positions a population difference is the fD difference divided by the separation, so
-the K=1 standard carries over, where a pooled threshold would be dominated by poorly separated
-peptides. Per residue, where the replicates are already combined, a difference is significant
-when ``|delta| / se`` exceeds the normal quantile of the same ``alpha`` and ``|delta|`` exceeds
-the threshold (the peptides' K=1 ``delta_crit``, divided by the residue's separation for a
+and the difference exceeds a threshold ``delta_crit = t(1 - alpha/2, 2n - 2) s sqrt(2/n)``, with
+``s`` the typical standard deviation of replicate spectra over every peptide, time and sample,
+estimated robustly (the median of the replicate variances, not their plain pool as in the original
+rule: :func:`_delta_crit`), and ``n`` the typical number of replicate spectra. A population's
+threshold is the K=1 ``delta_crit`` divided by the separation of the K=2 positions (the mean of the
+two samples'): with fixed positions a population difference is the fD difference divided by the
+separation, so the K=1 standard carries over, where a pooled threshold would be dominated by poorly
+separated peptides. Per residue, where the replicates are already combined, a difference is
+significant when ``|delta| / se`` exceeds the normal quantile of the same ``alpha`` and ``|delta|``
+exceeds the threshold (the peptides' K=1 ``delta_crit``, divided by the residue's separation for a
 population).
 
 Regions and sites are protein-specific and user-defined (:class:`Annotations`), never derived.
@@ -240,20 +241,25 @@ class PeptideComparison:
 
 
 def _delta_crit(values, alpha: float) -> float:
-    """``t(1 - alpha/2, 2n - 2) s_pooled sqrt(2/n)`` from replicate value arrays (the hybrid
-    rule's threshold; NaN without any replicated value)."""
-    num = den = 0.0
-    counts = []
+    """``t(1 - alpha/2, 2n - 2) s sqrt(2/n)`` from replicate value arrays (the hybrid rule's
+    threshold; NaN without any replicated value). ``s`` is the typical replicate standard
+    deviation, robustly: each array's variance scaled by the median of the chi-square
+    distribution of its degrees of freedom, then the median over the arrays (a deliberate
+    difference from the plain pooled variance of Hageman and Weis: a few replicates that read
+    a different envelope dominate the plain pool; owner, 2026-10-22, HISTORY 140); ``n`` is the
+    typical replicate count."""
+    scaled, counts = [], []
     for v in values:
         if len(v) >= 2:
-            num += (len(v) - 1) * float(np.var(v, ddof=1))
-            den += len(v) - 1
+            df = len(v) - 1
+            scaled.append(float(np.var(v, ddof=1)) * df / stats.chi2.median(df))
             counts.append(len(v))
-    if den <= 0:
+    if not scaled:
         return np.nan
     n_typ = float(np.median(counts))
     df = max(2 * n_typ - 2, 1.0)
-    return float(stats.t.ppf(1 - alpha / 2, df) * np.sqrt(num / den) * np.sqrt(2 / n_typ))
+    return float(stats.t.ppf(1 - alpha / 2, df) * np.sqrt(np.median(scaled))
+                 * np.sqrt(2 / n_typ))
 
 
 def compare_peptides(
@@ -270,6 +276,8 @@ def compare_peptides(
     match: str = "range",
     controls: Mapping | None = None,
     choice: ChoiceConfig = ChoiceConfig(),  # noqa: B008
+    best_sets: Mapping[tuple, tuple[int, float]] | None = None,
+    two_population_sets: bool = True,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
@@ -294,7 +302,15 @@ def compare_peptides(
     every replicate's K=1 value lies between them, and the population is within
     ``[min_population, 1 - min_population]``; otherwise the row's values are NaN and ``reason``
     names the first failing test and the side (``'not separated (reference)'``; the reasons of
-    :func:`hxex.analysis.choose_populations`, plus ``'no K=2'``)."""
+    :func:`hxex.analysis.choose_populations`, plus ``'no K=2'``).
+
+    At K >= 2 (positions and populations) a peptide is compared only where both sides' sets are
+    best described by two populations (``best_set_K = 2``; owner, 2026-10-21, HISTORY 137):
+    elsewhere one side's K=2 fit is a small tail, not a second state. Such a row's difference
+    is NaN and ``reason`` says ``'one population (sample)'``, ``'(reference)'`` or ``'(both)'``.
+    ``best_sets`` (:func:`hxex.analysis.best_sets`) gives each species' choice; without it, it
+    is computed from the results with the same settings. ``two_population_sets=False`` turns
+    this off (``[analysis] populations = "bootstrap"``): every K=2 description is compared."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if match not in MATCHES:
@@ -303,9 +319,19 @@ def compare_peptides(
         raise ValueError(f"quantity must be one of {', '.join(QUANTITIES)}")
     if quantity == "population" and K != 2:
         raise ValueError("populations are compared at K = 2 (the lever rule)")
+    if not two_population_sets:
+        best_sets = None
+    elif K >= 2 and best_sets is None:
+        from .species import best_sets as _best_sets
+        from .species import species_uptake
+
+        best_sets = _best_sets(species_uptake(
+            results, (1, K), exclude_flagged=exclude_flagged, filters=filters,
+            controls=controls, min_population=choice.min_population))
     if quantity == "population":
         return _compare_populations_peptides(results, reference, samples, rank, alpha,
-                                             exclude_flagged, filters, match, controls, choice)
+                                             exclude_flagged, filters, match, controls, choice,
+                                             best_sets)
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
     ks = (1, K) if K != 1 else (1,)
     # quiet: species_uptake reports what the filters left out
@@ -330,7 +356,7 @@ def compare_peptides(
         reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
     except ValueError as exc:
         raise ValueError(f"{exc} at K={K} rank {rank}") from exc
-    # the pooled standard deviation of replicate spectra and the typical replicate count
+    # the typical standard deviation of replicate spectra and the typical replicate count
     delta_crit = _delta_crit((v for per in by_sample.values() for v in per.values()), alpha)
     wanted = ([resolve_sample(runs_present, samples_present, s) for s in samples]
               if samples is not None else present)
@@ -350,6 +376,11 @@ def compare_peptides(
             delta = mb - ma
             sig = bool(np.isfinite(p) and p < alpha and np.isfinite(delta_crit)
                        and abs(delta) > delta_crit)
+            why = (_one_population(best_sets, state, key, reference, rkey)
+                   if K >= 2 and best_sets is not None else "")
+            if why:  # not compared: one side is not two populations
+                delta = t = p = np.nan
+                sig = False
             rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
                          "modification": key[1], "start": key[2], "end": key[3], "time": key[4],
                          "value_reference": ma, "value_reference_se": sa, "value": mb,
@@ -359,12 +390,13 @@ def compare_peptides(
                          "modification_reference": rkey[1],
                          "same_sequence": rkey[:2] == key[:2],
                          "control_fallback_reference": fell_back[(*reference, *rkey)],
-                         "control_fallback": fell_back[(*state, *key)]})
+                         "control_fallback": fell_back[(*state, *key)], "reason": why})
     cols = _columns(PeptideComparison, rows) if rows else {
         f.name: np.array([]) for f in fields(PeptideComparison)
         if f.name not in _SCALAR_FIELDS and f.name not in ("threshold", "reason", "separation")}
     if rows:
         cols["run"] = cols["run"].astype(object)
+        cols["reason"] = cols["reason"].astype(object)
     return PeptideComparison(**cols, reference=reference[1], reference_run=reference[0], K=K,
                              rank=rank, alpha=alpha, delta_crit=delta_crit, quantity=quantity)
 
@@ -441,8 +473,18 @@ def _lever_sides(groups, choice: ChoiceConfig) -> dict:
     return out
 
 
+def _one_population(best_sets: Mapping, state, key, reference, rkey) -> str:
+    """Why a K=2 comparison of ``key`` (sample ``state``) with ``rkey`` (``reference``) is not
+    made: the side whose set is not best described by two populations; '' when both are."""
+    sample = (best_sets.get((*state, *key)) or (0, np.nan))[0] == 2
+    ref = (best_sets.get((*reference, *rkey)) or (0, np.nan))[0] == 2
+    return ("" if sample and ref else "one population (reference)" if sample
+            else "one population (sample)" if ref else "one population (both)")
+
+
 def _compare_populations_peptides(results, reference, samples, rank, alpha, exclude_flagged,
-                                  filters, match, controls, choice) -> PeptideComparison:
+                                  filters, match, controls, choice, best_sets
+                                  ) -> PeptideComparison:
     """:func:`compare_peptides` with ``quantity='population'``."""
     groups, *_ = _records(results, (1, 2), exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
@@ -467,8 +509,10 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
     for state in (s for s in wanted if s != reference):
         for rkey, key in _pairs(ref, sides.get(state, {}), match):
             a, b = ref[rkey], sides[state][key]
-            reason = (f"{a['reason']} (reference)" if a["reason"]
-                      else f"{b['reason']} (sample)" if b["reason"] else "")
+            reason = ((_one_population(best_sets, state, key, reference, rkey)
+                       if best_sets is not None else "")
+                      or (f"{a['reason']} (reference)" if a["reason"]
+                          else f"{b['reason']} (sample)" if b["reason"] else ""))
             t = p = delta = np.nan
             ma = mb = sa = sb = threshold = sep = np.nan
             if not reason:
@@ -596,9 +640,11 @@ def _choices(choice) -> dict | None:
 
 
 def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_crit: float,
-                  two: dict | None = None, separation: dict | None = None) -> list[dict]:
+                  two: dict | None = None, separation: dict | None = None,
+                  both_two: bool = False) -> list[dict]:
     """Rows of a residue comparison from ``(run, sample, time, residue) -> (value, se,
-    control_fallback)``, with each side's choice from ``two`` (:func:`_choices`) if given;
+    control_fallback)``, with each side's choice from ``two`` (:func:`_choices`) if given (with
+    ``both_two``, a difference is significant only where both sides keep two populations);
     with ``separation`` (the same keys -> the K=2 positions' separation) each row's threshold
     is ``delta_crit`` divided by the mean of the two sides' separations."""
     z_crit = float(stats.norm.ppf(1 - alpha / 2))
@@ -618,6 +664,9 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
                          + separation[(*reference, time, res)])
             threshold = delta_crit / sep if sep > 0 else np.nan
         sig = bool(np.isfinite(z) and abs(z) > z_crit and abs(delta) > threshold)
+        if two is not None and both_two and not (two.get((*reference, time, res), False)
+                                                 and two.get((run, sample, time, res), False)):
+            sig = False  # a K=2 value is compared only where both sides keep two populations
         rows.append({"run": run, "sample": sample, "time": time, "residue": res,
                      "value_reference": rv, "value_reference_se": re_, "value": v,
                      "value_se": e, "delta": delta, "delta_se": se, "z": z, "significant": sig,
@@ -654,7 +703,8 @@ def compare_residues(
     """Every sample against ``reference`` residue by residue at ``K`` and ``rank``;
     ``delta_crit`` is usually the peptides' (:func:`compare_peptides`). With a ``choice``
     (:func:`hxex.analysis.choose_populations`) each row records whether each side keeps two
-    populations (``two_reference``, ``two``); no row is left out because of it."""
+    populations (``two_reference``, ``two``); at K >= 2 a difference is significant only where
+    both do (HISTORY 137). No row is left out because of it."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     sel = (residues.K == K) & (residues.rank == rank)
@@ -669,7 +719,7 @@ def compare_residues(
     except ValueError as exc:
         raise ValueError(f"{exc} at K={K} rank {rank}") from exc
     return _residue_comparison(
-        _residue_rows(value, reference, alpha, delta_crit, _choices(choice)),
+        _residue_rows(value, reference, alpha, delta_crit, _choices(choice), both_two=K >= 2),
         choice is not None, reference=reference, K=K, rank=rank, alpha=alpha,
         delta_crit=delta_crit, quantity="fD")
 
@@ -682,7 +732,8 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
     (:func:`compare_peptides`); each row's threshold is it divided by the mean separation of
     the two sides' K=2 values at the residue (see the module docstring). Each row records
     whether each side's choice keeps two populations (``two_reference``, ``two``): the lever
-    rule can apply where the choice keeps one."""
+    rule can apply where the choice keeps one, but a difference is significant only where both
+    keep two (HISTORY 137)."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb))
@@ -695,9 +746,116 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
                                                 strict=True)}
     reference = resolve_sample(choice.run, choice.sample, reference, "reference sample")
     return _residue_comparison(
-        _residue_rows(value, reference, alpha, delta_crit, _choices(choice), separation), True,
+        _residue_rows(value, reference, alpha, delta_crit, _choices(choice), separation,
+                      both_two=True), True,
         reference=reference, K=2, rank=1, alpha=alpha, delta_crit=delta_crit,
         quantity="population")
+
+
+BORDERLINE_EVIDENCE = 10.0  # summed criterion: the two-population side at least this below 0
+
+
+@dataclass(frozen=True)
+class PopulationCountComparison:
+    """One row per run and sample (not the reference), peptide and time: whether each side's
+    set of spectra is best described by one or two populations (``K_reference``, ``K``: its
+    ``best_set_K``), with the evidence (``delta_criterion_reference``, ``delta_criterion``: the
+    summed criterion at K = 2 minus K = 1, negative favouring two), ``differs`` and
+    ``borderline``: a difference whose evidence is weak (the two-population side's criterion is
+    not at least ``evidence`` below 0, or the one-population side's not above 0). The peptides
+    are paired as in :func:`compare_peptides` (``peptide_reference``,
+    ``modification_reference``). ``reference`` and ``reference_run`` name the reference."""
+
+    sample: np.ndarray
+    peptide: np.ndarray
+    modification: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+    time: np.ndarray
+    peptide_reference: np.ndarray
+    modification_reference: np.ndarray
+    K_reference: np.ndarray
+    K: np.ndarray
+    delta_criterion_reference: np.ndarray
+    delta_criterion: np.ndarray
+    differs: np.ndarray
+    borderline: np.ndarray
+    run: np.ndarray | None = None
+    reference: str = ""
+    reference_run: str = ""
+    evidence: float = BORDERLINE_EVIDENCE
+
+    def __post_init__(self):
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+
+    def __len__(self) -> int:
+        return len(self.sample)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                    if f.name not in ("run", "reference", "reference_run",
+                                                      "evidence")}}
+
+    def where(self, *, sample=None, time=None, run=None) -> np.ndarray:
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in (("run", run), ("sample", sample), ("time", time)):
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
+                keep &= np.isin(getattr(self, name), values)
+        return keep
+
+
+def compare_population_counts(
+    best_sets: Mapping[tuple, tuple[int, float]],
+    reference: str,
+    *,
+    samples: Sequence[str] | None = None,
+    match: str = "range",
+    evidence: float = BORDERLINE_EVIDENCE,
+) -> PopulationCountComparison:
+    """Every sample against ``reference``: per peptide and time, whether each is best described
+    by one or two populations (``best_sets``, :func:`hxex.analysis.best_sets`), paired as in
+    :func:`compare_peptides`. A sample that has two populations where the reference has one (or
+    the other way round) is a finding of its own, beside the K=2 comparisons, which are made
+    only where both have two (owner, 2026-10-21; HISTORY 137)."""
+    if match not in MATCHES:
+        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
+    by_state: dict[tuple[str, str], dict[tuple, tuple[int, float]]] = {}
+    for (run, sample, peptide, mod, start, end, time), value in best_sets.items():
+        by_state.setdefault((run, sample), {})[(peptide, mod, start, end, time)] = value
+    present = sorted(by_state)
+    runs_present, samples_present = [p[0] for p in present], [p[1] for p in present]
+    reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
+    wanted = ([resolve_sample(runs_present, samples_present, s) for s in samples]
+              if samples is not None else present)
+    ref = by_state[reference]
+    rows = []
+    for state in (s for s in wanted if s != reference):
+        for rkey, key in _pairs(ref, by_state.get(state, {}), match):
+            (kr, dr), (k, d) = ref[rkey], by_state[state][key]
+            differs = kr != k and kr > 0 and k > 0
+            borderline = False
+            if differs:
+                two, one = (d, dr) if k > kr else (dr, d)
+                borderline = not (two <= -evidence and one > 0)
+            rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
+                         "modification": key[1], "start": key[2], "end": key[3],
+                         "time": key[4], "peptide_reference": rkey[0],
+                         "modification_reference": rkey[1], "K_reference": kr, "K": k,
+                         "delta_criterion_reference": dr, "delta_criterion": d,
+                         "differs": differs, "borderline": borderline})
+    names = [f.name for f in fields(PopulationCountComparison)
+             if f.name not in ("reference", "reference_run", "evidence")]
+    cols = {name: np.array([r[name] for r in rows]) for name in names} if rows else {
+        name: np.array([]) for name in names}
+    cols["run"] = np.asarray(cols["run"], dtype=object)
+    for name in ("differs", "borderline"):
+        cols[name] = np.asarray(cols[name], dtype=bool)
+    for name in ("K_reference", "K"):
+        cols[name] = np.asarray(cols[name], dtype=np.int64)
+    return PopulationCountComparison(**cols, reference=reference[1], reference_run=reference[0],
+                                     evidence=evidence)
 
 
 @dataclass(frozen=True)

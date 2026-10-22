@@ -202,7 +202,8 @@ and you can make them in a spreadsheet.
 2. Open the copy in Excel (or any spreadsheet program). It has one row per spectrum. Fill in, for
    the spectra you have a view on:
    - `review_status`: `rejected` to leave the spectrum out, or `accepted`. `unreviewed` or an
-     empty cell means no decision.
+     empty cell means no decision. An `accepted` spectrum is also kept when `hxex analyse`
+     would leave it out (it lists those in `left_out_spectra.csv`).
    - `review_K`: the number of populations to use for that spectrum, instead of the one the fit
      chose (`K`). Leave it empty to keep the fit's choice.
    - `note`: why (optional, but it is kept with the decision and listed in `review.csv`).

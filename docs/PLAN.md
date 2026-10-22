@@ -518,7 +518,16 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
   resample to `[0, 2y]`. Confirmed by the owner (HISTORY 78).
 - Back-exchange correction from the controls (control means from K = 1 fits, per-control
   fallbacks with flags); `hxex_updating.py` has no back-exchange correction (item 27). Uptake
-  plots are corrected by default (item 31).
+  plots are corrected by default (item 31). The fully deuterated retention is combined over a
+  peptide's charge states (`combine_charges`, item 140).
+- The post-fitting analysis (`hxex_utils.py` and the owner's notebooks): the hybrid rule's
+  `delta_crit` uses a robust typical replicate standard deviation (the median of the
+  chi-square-scaled variances), not the plain pool of Hageman and Weis, which a few broken
+  replicates dominate; spectra are left out by their disagreement with their own replicates
+  and by an impossible K=1 mean, not by a fixed fD range (the owner's earlier practice,
+  fD < 0.1 or > 1.1, removed mostly consistent low uptake and stand-in-control overshoots);
+  series with a stand-in fully deuterated control are left out of the analysis by default
+  (item 140).
 
 Fitting, differences from the prototype (the engine's regression source; HISTORY "Phase 2 plan"
 and "Phase 2 status"):
@@ -614,8 +623,9 @@ Planned, not built:
    data the measured charge states agree to within 0.006. In infusion kinetics, where all
    charge states are in the same scans, they agree within about 1.5 % of the deuterium
    present (HISTORY 130), so `fd_other_charge` now counts as a measured control for the
-   back-exchange start of the protection fit. Still open: `fd_disagrees` across charges and
-   the kint model.
+   back-exchange start of the protection fit. Since HISTORY 140 the retention is combined over
+   charge states by default (`combine_charges`; charges that disagree are flagged
+   `fd_charges_disagree`). Still open: the kint model treating charge states as one.
 
 ## Risks and open decisions
 

@@ -27,10 +27,14 @@ Each control falls back to its theoretical value, and the series is flagged, on 
   ``retention_min``, an outlier below the run's controls (``retention_outlier``,
   ``outlier_sd``; with ``fd_fallback='kint'`` only for the series the prediction cannot judge,
   those without rates: fragment ions and ``Hex`` series, or for every series when the
-  prediction could not be fitted), with ``m0`` as it is used. When the same peptide
-  has accepted measured controls at other charge states in the same sample, ``r`` is their
-  mean retention (``fd_other_charge``; ``fd_other_charge = False`` turns it off; not for
-  fragment ions, whose conditions are never pooled). Otherwise the fallback
+  prediction could not be fitted), with ``m0`` as it is used. With ``combine_charges`` (the
+  default) every charge state of a peptide in one sample takes the plain mean retention of
+  the peptide's accepted measured controls over its charge states, whether its own control
+  is good or not (``fd_charges_combined``, ``fd_other_charge``; a series without its own
+  then counts as measured); without it, a series whose control is missing or rejected
+  takes the mean of the other charge states' (``fd_other_charge``, still a fallback;
+  ``fd_other_charge = False`` turns it off). Never for fragment ions, whose conditions are
+  never pooled. Otherwise the fallback
   retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium fraction of the
   labelling buffer, a user setting) or the median retention of the run's accepted controls
   (``fd_fallback='median'``, the default without ``quench`` conditions; flagged ``fd_median``;
@@ -88,7 +92,8 @@ log = logging.getLogger(__name__)
 
 FD_FALLBACKS = ("d2o", "median", "kint")
 # flags that only warn (the control stays in use)
-CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0")
+CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0",
+                 "fd_retention_agrees", "fd_charges_disagree")
 
 
 @dataclass(frozen=True)
@@ -127,11 +132,22 @@ class ControlConfig:
     - ``sample_tolerance`` (fraction): a measured fully deuterated control whose retention
       differs from the median of the same peptide's controls in the other samples (or
       conditions) by more than this is flagged ``fd_disagrees``, not rejected.
-    - ``fd_other_charge``: a series whose fully deuterated control is missing or rejected
-      takes the mean retention of the same peptide's accepted measured controls at its other
-      charge states in the same sample (flagged ``fd_other_charge``), before ``fd_fallback``:
-      retention is a property of the peptide, not of its charge. Peptides only (not fragment
-      ions), and only with :func:`charge_groups` given to :func:`fit_controls`.
+    - ``combine_charges`` (the default): every charge state of a peptide in one sample takes
+      the plain mean retention of the peptide's accepted measured fully deuterated controls
+      over its charge states (flagged ``fd_charges_combined`` where two or more contribute):
+      retention is a property of the peptide, not of its charge (HISTORY 130 and 140). A
+      charge state without a good control of its own takes it too, flagged
+      ``fd_other_charge``, and counts as measured (not ``fallback``); ``fd_fallback`` applies
+      only to a peptide with no accepted measured control at any charge. Contributing controls
+      whose retentions span more than ``sample_tolerance`` are combined and flagged
+      ``fd_charges_disagree`` (a warning; owner, 2026-10-22). The undeuterated control stays
+      per charge state. Peptides only (not fragment ions), and only with
+      :func:`charge_groups` given to :func:`fit_controls`.
+    - ``fd_other_charge`` (with ``combine_charges = false``): a series whose fully deuterated
+      control is missing or rejected takes the mean retention of the same peptide's accepted
+      measured controls at its other charge states in the same sample (flagged
+      ``fd_other_charge``, still ``fallback``), before ``fd_fallback``; the others keep their
+      own.
     - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
       the analysis may change it for its own controls (``[analysis.controls]``).
     - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
@@ -160,6 +176,7 @@ class ControlConfig:
     outlier_sd: float = 4.0
     time_course_tolerance: float = 0.1
     sample_tolerance: float = 0.1
+    combine_charges: bool = True
     fd_other_charge: bool = True
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
@@ -203,6 +220,8 @@ class ControlConfig:
             raise ValueError("d2o_fraction must be in (0, 1]")
         if not isinstance(self.fd_other_charge, bool):
             raise ValueError("fd_other_charge must be true or false")
+        if not isinstance(self.combine_charges, bool):
+            raise ValueError("combine_charges must be true or false")
 
     @property
     def fd_mode(self) -> str:
@@ -320,12 +339,24 @@ class ControlTable:
     def measured(self) -> np.ndarray:
         """True where both controls are measured: the series' own, or for the fully deuterated
         one the same peptide's at its other charge states (``fd_other_charge``; the charge
-        state does not change the deuterium level, HISTORY 130). Such a series keeps
-        ``fallback`` True."""
+        state does not change the deuterium level, HISTORY 130). Such a series is not
+        ``fallback`` with ``combine_charges`` and keeps ``fallback`` True without it."""
         other = np.array(["fd_other_charge" in str(f).split(";") for f in self.flags], dtype=bool)
         m0_ok = (np.asarray(self.n_undeut) > 0) & np.array(
             ["m0_high" not in str(f).split(";") for f in self.flags], dtype=bool)
         return (~np.asarray(self.fallback, dtype=bool) | (other & m0_ok)) & ~self.uncorrected
+
+    @property
+    def fd_measured(self) -> np.ndarray:
+        """True where the fully deuterated control is measured: the series' own, accepted, or
+        the same peptide's at its other charge states (``fd_other_charge``); False for a
+        stand-in (the run's median retention, the kint prediction or ``d2o_fraction``) and for
+        fragment ions (not corrected)."""
+        def own_or_other(flags: str) -> bool:
+            tokens = set(str(flags).split(";"))
+            return "fd_other_charge" in tokens or not tokens & set(FD_REJECTED)
+        return (np.array([own_or_other(f) for f in self.flags], dtype=bool)
+                & (np.asarray(self.n_amides) > 0) & ~self.uncorrected)
 
     def rows(self, data_id) -> np.ndarray:
         """Row of each series id in ``data_id`` (KeyError for a series without a row)."""
@@ -625,7 +656,9 @@ def fit_controls(
             cols["mfd"][i] = m0 + r * n_am
             cols["retention"][i] = r if n_am > 0 else float("nan")
             cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
-    if config.fd_other_charge and charges:
+    if config.combine_charges and charges:
+        _combine_charges(cols, series, charges, config)
+    elif config.fd_other_charge and charges:
         _other_charge_fallback(cols, series, charges)
     _flag_disagreement(cols, series, groups, config)
     return ControlTable(
@@ -693,7 +726,9 @@ def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
     """Flag ``fd_disagrees`` on the measured fully deuterated controls whose retention differs
     by more than ``sample_tolerance`` from the median of their group (the same peptide in the
     other samples, :func:`series_groups`; with two controls, from the other one: both are
-    flagged)."""
+    flagged). A control flagged ``fd_multimodal`` whose retention agrees gets
+    ``fd_retention_agrees``: its envelope is wide or split, but its retention, which the
+    correction uses, matches the other samples' (owner, 2026-10-22)."""
     if not groups:
         return
     members: dict[Any, list[int]] = {}
@@ -715,6 +750,10 @@ def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
             if abs(measured[i] - ref) > config.sample_tolerance:
                 cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_disagrees") if f)
                 n += 1
+            elif "fd_multimodal" in cols["flags"][i].split(";"):
+                # a wide or split envelope whose retention agrees with the same peptide's in the
+                # other samples: the correction, which uses the retention, stays sound
+                cols["flags"][i] += ";fd_retention_agrees"
     if n:
         log.warning("%d fully deuterated control(s) differ from the same peptide's in the other "
                     "samples by more than %g in retention (flagged fd_disagrees)", n,
@@ -770,13 +809,73 @@ FD_REJECTED = ("fd_missing", "retention_low", "retention_high", "fd_below_data",
                "retention_outlier", "fd_off_model")
 
 
+def _fd_used(cols: dict, i: int) -> bool:
+    """Whether row ``i``'s own fully deuterated control is measured and accepted."""
+    return (cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
+            and not set(cols["flags"][i].split(";")) & set(FD_REJECTED))
+
+
+def _combine_charges(cols: dict, series: np.ndarray, charges: Mapping,
+                     config: ControlConfig) -> None:
+    """``combine_charges``: give every series of a peptide (one sample) with an accepted
+    measured fully deuterated control at any charge state the plain mean retention of those
+    controls (in ``cols``), replacing a fallback already filled in."""
+    members: dict[tuple, list[int]] = {}
+    for i, s in enumerate(series):
+        if int(s) in charges:
+            members.setdefault(charges[int(s)][0], []).append(i)
+    n_other = n_combined = n_disagree = 0
+    for rows in members.values():
+        donors = [j for j in rows if _fd_used(cols, j)]
+        if not donors:
+            continue
+        rets = [cols["retention"][j] for j in donors]
+        r = float(np.mean(rets))
+        se = np.array([cols["mfd_se"][j] / cols["n_amides"][j] for j in donors])
+        r_se = (float(np.sqrt(np.sum(np.nan_to_num(se) ** 2))) / len(donors)
+                if np.isfinite(se).any() else float("nan"))
+        disagree = len(donors) >= 2 and max(rets) - min(rets) > config.sample_tolerance
+        n_disagree += disagree
+        for i in rows:
+            n_am = cols["n_amides"][i]
+            if n_am <= 0:
+                continue
+            own = i in donors
+            if own and len(donors) == 1:
+                continue  # its own control alone: nothing changes
+            cols["mfd"][i] = cols["m0"][i] + r * n_am
+            cols["mfd_se"][i] = n_am * r_se
+            cols["retention"][i] = r
+            kept = [f for f in cols["flags"][i].split(";")
+                    if f and f not in ("fd_median", "fd_kint")]
+            if own:
+                kept.append("fd_charges_combined")
+                n_combined += 1
+            else:
+                kept.append("fd_other_charge")
+                # measured at the peptide's other charges: only the undeuterated control can
+                # still make the series a fallback
+                cols["fallback"][i] = bool({"m0_missing", "m0_high"} & set(kept))
+                n_other += 1
+            if disagree:
+                kept.append("fd_charges_disagree")
+            cols["flags"][i] = ";".join(kept)
+    if n_other or n_combined:
+        log.info("fully deuterated controls combined over charge states (combine_charges): %d "
+                 "series take the mean of two or more, %d without a good control of their own "
+                 "take the peptide's at its other charges", n_combined, n_other)
+    if n_disagree:
+        log.warning("%d peptides have fully deuterated controls at different charge states "
+                    "whose retentions differ by more than %g; combined anyway "
+                    "(fd_charges_disagree)", n_disagree, config.sample_tolerance)
+
+
 def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping) -> None:
     """Give every series without a good fully deuterated control the mean retention of the
     same peptide's accepted measured controls at its other charges, in place of the fallback
     already filled in (``fd_median``, ``fd_kint``, or ``d2o_fraction``)."""
     def used(i: int) -> bool:
-        return (cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
-                and not set(cols["flags"][i].split(";")) & set(FD_REJECTED))
+        return _fd_used(cols, i)
 
     members: dict[tuple, list[int]] = {}
     for i, s in enumerate(series):

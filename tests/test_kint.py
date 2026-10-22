@@ -115,8 +115,8 @@ def test_conditions_per_sample():
 
     one = {"ph_read": 2.8, "temperature": 20, "d2o_fraction": 0.05, "initial_fraction": 0.9}
     assert read_conditions(one) == ExchangeConditions(2.8, 20, 0.05, initial_fraction=0.9)
-    per = read_conditions({"WT": one, "S59D": {**one, "ph_read": 3.0}})
-    assert sample_conditions(per, "S59D").ph_read == 3.0 and sample_conditions(per, "X") is None
+    per = read_conditions({"WT": one, "V": {**one, "ph_read": 3.0}})
+    assert sample_conditions(per, "V").ph_read == 3.0 and sample_conditions(per, "X") is None
     assert read_conditions(conditions_dict(per)) == per
     # a run's own conditions under its name (a table of per-sample tables)
     nested = read_conditions({"WT": one, "A": {"WT": {**one, "ph_read": 3.5}}})

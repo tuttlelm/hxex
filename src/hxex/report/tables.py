@@ -306,8 +306,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
             "n_rejected": int(rejected[members].sum()), "n_multi": int(multi[members].sum()),
             "controls": "" if r is None else ("measured" if not ctrl.fallback[r]
                                               else str(ctrl.flags[r])),
-            "control_notes": "" if r is None else ";".join(
-                f for f in str(ctrl.flags[r]).split(";") if f in CONTROL_NOTES),
+            "control_notes": "" if r is None else _control_notes(str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
             "control_fallback": False if r is None else bool(ctrl.fallback[r]),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),
@@ -396,6 +395,24 @@ def _cell(value) -> str:
     if isinstance(value, (float, np.floating)):
         return "" if np.isnan(value) else repr(float(value))  # inf stays 'inf'
     return str(value)
+
+
+def _control_notes(flags: str) -> str:
+    """The control flags that only warn (:data:`hxex.controls.CONTROL_NOTES`), for
+    ``series.csv``; ``fd_multimodal`` says whether its retention was checked against the same
+    peptide's controls in the other samples: ``(retention agrees)``, ``(retention differs)`` (with
+    ``fd_disagrees``) or ``(retention unchecked)`` (nothing to compare with)."""
+    tokens = [f for f in flags.split(";") if f]
+    notes = []
+    for f in tokens:
+        if f == "fd_multimodal":
+            check = ("retention differs" if "fd_disagrees" in tokens
+                     else "retention agrees" if "fd_retention_agrees" in tokens
+                     else "retention unchecked")
+            notes.append(f"fd_multimodal ({check})")
+        elif f in CONTROL_NOTES and f != "fd_retention_agrees":
+            notes.append(f)
+    return ";".join(notes)
 
 
 def write_tables(results: Results, directory: str | Path, *, created: str | None = None

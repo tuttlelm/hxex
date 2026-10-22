@@ -130,7 +130,16 @@ in the published work; where it matters, a component is named by its rank.
   physical; the fit's own bound on `n` stays the run setting `n_max_factor`); per peptide and
   time after combining, every rank's fD error below 0.25 and the K=1 value between the lowest
   and highest rank (`k1_between_ranks`, owner 2026-10-13: the same condition the population choice applies
-  per residue, here also per peptide). K=1 is not filtered. On the
+  per residue, here also per peptide). K=1 values are not filtered, but whole spectra are left
+  out first (owner, 2026-10-22, HISTORY 140; listed with the reason in `left_out_spectra.csv`,
+  a spectrum accepted in the review kept): a replicate more than `replicate_outlier` (6)
+  typical replicate standard deviations from the median of its series' replicates at that
+  time (three or more; the typical sd is the run's own, robust), a K=1 mean above the amide
+  count before correction (`above_amides`), and, with `stand_in_controls = "exclude"` (the
+  default), every series whose fully deuterated control is a stand-in (median, kint or
+  `d2o_fraction`; kept in a sample with no measured control at all). A fixed fD range (the
+  owner's earlier practice, 0.1 to 1.1) was tried and not adopted: on the intact-peptide
+  benchmark most values it removed agreed with their replicates. On the
   intact-peptide benchmark they bring the K=2 residue values in line with the owner's
   pyHXExpress analysis (HISTORY item 49). The K=2 split depends on the noise model: the Poisson
   loss of the replicate noise estimate puts a small component in the high-mass tail, least
@@ -164,9 +173,13 @@ in the published work; where it matters, a component is named by its rank.
   averages over user-defined regions of the sequence (pyHXExpress `group_fits`). As built:
   differences in fD at a fixed K and rank (K=1 by default); per peptide and time the hybrid rule
   (Hageman and Weis 2019; owner, 2026-10-13): Welch's t-test on the replicate spectra with
-  `p < 0.05` and `|delta|` above `delta_crit = t(1 - alpha/2, 2n - 2) s_pooled sqrt(2/n)` (the
-  pooled standard deviation of replicate spectra over every peptide, time and sample, `n` the
-  typical replicate count; replicates, their charge states averaged); per residue,
+  `p < 0.05` and `|delta|` above `delta_crit = t(1 - alpha/2, 2n - 2) s sqrt(2/n)` (`s` the
+  typical standard deviation of replicate spectra over every peptide, time and sample: since
+  HISTORY 140 the median of the chi-square-scaled replicate variances, not their plain pool,
+  which a few replicates reading a different envelope dominated (0.136 against 0.027 fD on the
+  intact-peptide benchmark; the typical scatter is the same at every exposure time there, so
+  one threshold serves all times); `n` the typical replicate count; replicates, their charge
+  states averaged); per residue,
   `|delta| / se` above the normal quantile and `|delta|` above the peptides' `delta_crit`. A region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
   region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to
@@ -191,7 +204,30 @@ in the published work; where it matters, a component is named by its rank.
   `separation`, in fD units: the deuterium that moved between the states) against one dashed
   line, the K=1 `delta_crit` (owner, 2026-10-21, HISTORY 135;
   `PeptideComparison.scaled_by_separation`): the same test, one critical line, and the panel
-  shares the fD panels' y range. The per-residue population figure is unchanged. Open: the Welch test treats the averaged
+  shares the fD panels' y range. The per-residue population figure is unchanged.
+  **K=2 comparisons only where both sides have two populations** (owner, 2026-10-21, HISTORY
+  137): a sample's K=2 fit of a peptide whose set is best described by one population
+  (`best_set_K = 1`) is a small tail, not a second state, and comparing it with the
+  reference's second state compared different things (the tutorial's D109H 113-134, whose
+  "high state" shift was such a tail; a sign reversal in 24-34). Per peptide, the rank and
+  population comparisons are made only where both sides have `best_set_K = 2`; elsewhere the
+  difference is NaN and `reason` says `one population (sample)`, `(reference)` or `(both)`.
+  Per residue (`residue_map(two_population_peptides=True)`) the K=2 values come from every
+  covering peptide, as K=1 does (owner, 2026-10-22, HISTORY 141: from the two-population
+  peptides alone they formed curves that did not bracket K=1), every covering peptide votes
+  with the residue's weights, the residue keeps two populations only where the two-population peptides
+  carry at least half of the weight (`two_population_weight`; reason
+  `one-population peptides`; "any peptide" kept almost every residue, "all" almost none), and
+  the residue comparisons count a K=2 difference as significant only where both sides keep
+  two. Where the sides differ in the number of populations is a finding of its own:
+  `compare_population_counts` (each side's `best_set_K` and summed-criterion evidence;
+  `borderline` unless the two-population side's evidence is at least 10 below 0 and the other
+  side's above 0), drawn on the first page of the Woods plot ("Two Populations Selected": the
+  sample only, the reference only, both). The Woods plot is two figures, `woods_<sample>_<time>`
+  (K=1 and the number of populations) and `woods_K2_<sample>_<time>` (the gated K=2 panels).
+  On the tutorial data: rank comparisons 363 -> 92 (significant 23 -> 3, 20 -> 4), population
+  245 -> 85 (120 -> 36). Open: the K=2 ranks' `delta_crit` is still pooled over every K=2
+  description, including the one-population ones. Open: the Welch test treats the averaged
   positions as exact; requiring `|delta| / delta_se` (which includes their error) above the
   normal quantile as well, or a joint bootstrap, would be stricter. The comparison tables carry
   their `quantity` (`value`, `value_reference` and their errors).
