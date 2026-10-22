@@ -3730,3 +3730,22 @@ CSVs or mzML if wanted.
     Found while doing this: `[analysis.controls]` is a table of changes to `[run.controls]`,
     so its `false` (unset) was not converted; it now follows `[run.controls]`' false rule
     (`replicate_outlier = false` turns the check off there too).
+
+147. **The owner's manual screen against hxex, and contaminant shoulders in sparse profiles
+    (2026-10-22; not adopted).** The owner's earlier manual screen of the intact-peptide
+    benchmark (460 entries: missed or no peak, missed point in peak picking, contaminating
+    peptide, low intensity) maps onto hxex's spectra through pyHXExpress's series ids. The
+    "missed point" entries described the December 2024 picks (93 % had a hole inside the
+    envelope); the 2025 pyHXExpress picks and hxex's do not (1 %). Prototype cause detectors
+    caught about half of the "contaminating peptide" spectra (intensity outside the envelope,
+    with the picker's floor kept; a second species in the undeuterated control), and much of
+    what they flagged beyond the screen was real interference too, often outside the fitted
+    bins. Contaminant shoulders: on sparse profile data (a Q-TOF at R ~22,000, one point per
+    ~18 ppm) a +-50 ppm window holds 4-5 points, so the shoulder rule (10 points or more) never
+    applies and a neighbour's flank is picked. A test zeroing an edge maximum when the intensity
+    rises to a peak beyond 1.5 half-widths changed 3,546 spectra (5,043 bins, mostly small tail
+    bins); narrower windows and recentring by each spectrum's measured offset did harm. Owner:
+    not better enough to change the method; nothing built. Found on the way: m/z offsets are
+    mostly a property of the series (the undeuterated control's offset puts 92 % of spectra
+    within 10 ppm), and a peptide whose deuterated peaks sit 0.07 Da from the predicted
+    positions while its undeuterated control is on position is another species, not a shift.
