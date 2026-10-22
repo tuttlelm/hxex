@@ -3669,3 +3669,64 @@ CSVs or mzML if wanted.
     where both constructions decide two, the positions differed by a median of 0.02 fD. A
     residue covered only by one-population peptides now has K=2 values and the reason
     `one-population peptides` instead of `no K=2`. Peptide comparisons stay gated.
+
+142. **`[analysis.choice]` defaults follow the populations rule (owner, 2026-10-22).** Owner:
+    the bootstrap rule's defaults should be confidence 0.95 and a 10 % minimum population (the
+    calibration of HISTORY 139 found 0.5 / 5 % calling two populations in 44-91 % of single
+    ones), and linking them to the best_set_K mode, where the same numbers only check the fits'
+    comparison (and `min_population` also enters `best_set_K`'s own check), would be arbitrary.
+    Built: `choice_defaults(populations)` (`'bootstrap'`: 0.95, 0.10; `'best_set'`: 0.5, 0.05,
+    unchanged); `AnalysisConfig.choice` unset by default and resolved by `choice_limits`, so
+    changing `populations` changes the limits; keys set in `[analysis.choice]` apply in either
+    mode, the others take the mode's defaults. Bundles analysed in bootstrap mode before this
+    used 0.5 / 5 % unless the project set them (the private benchmark analyses set 0.95 / 10 %).
+
+143. **Control replicates checked before they are averaged (owner, 2026-10-22).** The checks of
+    HISTORY 140 left whole spectra out of the analysis but not out of the controls, so a
+    replicate reading another envelope still entered its control's mean (on the benchmark an
+    undeuterated replicate carried more deuterium than the peptide's amides). Built in
+    `fit_controls` (`_control_replicates_left_out`): a control replicate whose K=1 mean is
+    above the amide count is always left out, and one more than `[run.controls]
+    replicate_outlier` (6) typical replicate standard deviations from the median of the
+    series' replicates of that control (three or more) too; the typical sd is the run's own,
+    from its time-point replicates (deuterons per amide, the median of the chi-square-scaled
+    variances). Flags (warnings in `control_notes`): `m0_replicate_left_out`,
+    `fd_replicate_left_out`. A retention above `retention_max` (1.1) with an undeuterated value
+    near 0 is now caught by the amide check first (the control is then `fd_missing` with
+    `fd_replicate_left_out`). Benchmark (nterm_subtract 1, charges combined): 13 series had an
+    undeuterated replicate left out, none a fully deuterated one; 3 fewer series fall back
+    (190 -> 187); retentions change by at most 0.006.
+
+144. **The population test takes the positions' error; the K=2 threshold from two-population
+    sets; the borderline evidence a setting (owner, 2026-10-22).** Three items left open in
+    HISTORY 128 and 137. (1) The peptide population comparison tested the replicates'
+    lever-rule populations with Welch's test, holding the sample's averaged K=2 positions
+    fixed, which overstated significance (tutorial data: 25 of 121 significant differences
+    remained once the positions' error was counted). Now `t = delta / delta_se` with
+    `delta_se` from each side's whole error (`lever_population`: K=1, low and high), `p` its
+    two-sided normal value; the threshold is unchanged (K=1 `delta_crit` over the
+    separation). (2) With the best_set_K gate, the K=2 ranks' `delta_crit` pools only the sets
+    best described by two populations (the others' K=2 fits are splits of one population, and
+    those are no longer compared). (3) `[analysis] borderline_evidence` (default 10): the
+    margin `compare_population_counts` requires before a difference in the number of
+    populations is not `borderline`.
+
+145. **A multimodal fully deuterated control checked against its other charge states (owner,
+    2026-10-22; HISTORY 138 point 2).** When no other sample has the peptide (a run with one
+    sample), an `fd_multimodal` control was `retention unchecked`. Now `_flag_disagreement`
+    compares its own measured retention with the median of the same peptide's measured
+    controls at its other charge states in the same sample (`charges`): within
+    `sample_tolerance` it gets `fd_charges_agree`, and `control_notes` reads `fd_multimodal
+    (retention agrees with its other charge states)`. The comparison with the other samples
+    comes first; one that disagrees there stays `retention differs`.
+
+146. **The checks of HISTORY 140-145 on other data; `false` in `[analysis.controls]` (2026-10-22).**
+    On the published tutorial data the checks barely act: 2 replicate outliers (one peptide's
+    2+ series, fD 1.24 and 1.02 where its sample's combined values are 1.06 and 0.91), nothing
+    above the amide count, and no stand-in series once charges are combined; the robust
+    `delta_crit` is 0.028 against 0.035 from the plain pool, and the significant
+    one-population peptide differences go from 309 to 327 of 504. The known-answer test set
+    has one spectrum per peptide, charge and time, so the replicate check cannot apply there.
+    Found while doing this: `[analysis.controls]` is a table of changes to `[run.controls]`,
+    so its `false` (unset) was not converted; it now follows `[run.controls]`' false rule
+    (`replicate_outlier = false` turns the check off there too).

@@ -1384,6 +1384,9 @@ def test_peptide_populations_by_the_lever_rule(monkeypatch):
     assert pop.delta_crit == pytest.approx(stats.t.ppf(0.975, 4) * sd * np.sqrt(2 / 3))
     assert pop.threshold[a] == pytest.approx(pop.delta_crit / 0.6)
     assert pop.significant[a] and pop.reason[a] == ""
+    # the test takes each population's whole error, the positions' included (HISTORY 144)
+    z = pop.delta[a] / pop.delta_se[a]
+    assert pop.t[a] == pytest.approx(z) and pop.p[a] == pytest.approx(2 * stats.norm.sf(abs(z)))
     assert pop.reason[b] == "not separated (reference)" and np.isnan(pop.value[b])
     assert not pop.significant[b] and np.isnan(pop.threshold[b])
     assert pop.columns()["delta_crit"][a] == pop.threshold[a]
@@ -1550,3 +1553,41 @@ def test_spectra_left_out_whole_and_why():
         SpeciesFilters(stand_in_controls="drop")
     with pytest.raises(ValueError, match="replicate_outlier"):
         SpeciesFilters(replicate_outlier=0)
+
+
+def test_choice_defaults_follow_the_populations_rule(tmp_path):
+    """[analysis.choice]'s defaults depend on the rule (owner, 2026-10-22, HISTORY 142): the
+    bootstrap rule's tests are the rule itself (0.95, 10 %); with best_set_K they only check
+    the fits' comparison (0.5, 5 %). A key set in the project applies in either mode, and the
+    keys not set take the mode's defaults."""
+    import dataclasses
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.config import load_project
+
+    best = AnalysisConfig()
+    assert (best.choice_limits.confidence, best.choice_limits.min_population) == (0.5, 0.05)
+    boot = dataclasses.replace(best, populations="bootstrap")
+    assert (boot.choice_limits.confidence, boot.choice_limits.min_population) == (0.95, 0.10)
+    assert AnalysisConfig.from_dict(boot.to_dict()) == boot
+    (tmp_path / "hxex.toml").write_text(
+        'project = "p"\n[output]\nbundle = "results"\n[analysis]\npopulations = "bootstrap"\n'
+        "[analysis.choice]\nconfidence = 0.9\n")
+    limits = load_project(tmp_path / "hxex.toml", analysis_only=True).analysis.choice_limits
+    assert (limits.confidence, limits.min_population) == (0.9, 0.10)
+
+
+
+def test_k2_threshold_comes_from_the_two_population_sets(results):
+    """With the best_set_K gate, the K=2 comparisons' delta_crit pools only the sets best
+    described by two populations: the others' K=2 fits split one population (HISTORY 144)."""
+    from hxex.analysis import best_sets, compare_peptides, species_uptake
+
+    best = best_sets(species_uptake(results, ks=(1, 2)))
+    sample = sorted({k[1] for k in best})[0]
+    ungated = compare_peptides(results, sample, K=2, rank=1, two_population_sets=False)
+    every = {k: (2, v[1]) for k, v in best.items()}
+    none = {k: (1, v[1]) for k, v in best.items()}
+    assert compare_peptides(results, sample, K=2, rank=1, best_sets=every).delta_crit == (
+        pytest.approx(ungated.delta_crit))
+    assert np.isnan(compare_peptides(results, sample, K=2, rank=1, best_sets=none).delta_crit)

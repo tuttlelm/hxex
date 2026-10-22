@@ -55,8 +55,11 @@ Two more checks only warn, and the control is still used. They are listed in the
   `series.csv` says whether that retention was checked against the same peptide's controls in
   the other samples: `fd_multimodal (retention agrees)` means it matches theirs and the
   correction is sound; `fd_multimodal (retention differs)` (with `fd_disagrees`) means it does not,
-  which can mean an incompletely deuterated sample; `fd_multimodal (retention unchecked)` means
-  there was nothing to compare it with (a run with one sample, say), so look at its spectra.
+  which can mean an incompletely deuterated sample. With no other sample to compare (a run with
+  one sample, say), it is compared with the same peptide's controls at its other charge states:
+  `fd_multimodal (retention agrees with its other charge states)`. `fd_multimodal (retention
+  unchecked)` means there was nothing to compare it with, or its other charge states disagree,
+  so look at its spectra.
 - `data_below_m0`: a time point of the series reads below its undeuterated control. The
   fastest time points are the hardest to measure, so it is the time point that is suspect,
   not the control: look at that time point's spectra.
@@ -72,6 +75,11 @@ The correction needs two values for every series (one peptide at one charge in o
 its undeuterated value and its fully deuterated value. For each, *hxex* takes the first of
 these that it has. Fragment ions are left out: they are not corrected, and their controls
 take no part in the run's median or prediction.
+
+Before a control's replicates are averaged, a replicate is left out when its deuterium is
+above the peptide's amide count, or when it lies far from the series' other replicates of
+that control (`replicate_outlier`, 6 typical replicate standard deviations, with three or more
+replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_left_out`.
 
 **The undeuterated value**
 

@@ -189,6 +189,10 @@ _DESCRIPTIONS: dict[str, str] = {
                         'populations\' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the '
                         'populations\' shares)',
     "analysis.overlay_two_only": "draw K=2 values only where the choice keeps two populations",
+    "analysis.borderline_evidence": "where the number of populations differs between samples: "
+                                    "borderline unless the two-population side's summed "
+                                    "criterion is at least this far below 0 and the other's "
+                                    "above 0",
     "analysis.populations": 'how one or two populations are decided: "best_set" (where a '
                             'peptide\'s spectra together are best described by two; a residue '
                             'where such peptides carry half its weight; K=2 compared where both '
@@ -221,10 +225,12 @@ _DESCRIPTIONS: dict[str, str] = {
                                           "deuterated control is a stand-in (a sample with "
                                           "no measured control keeps them)",
     "analysis.choice.confidence": "a fraction (0.5: 50 %): the interval that must separate the "
-                                  "two K=2 values",
+                                  "two K=2 values; default 0.5 with populations = "
+                                  '"best_set", 0.95 with "bootstrap"',
     "analysis.choice.max_fD_se": "both K=2 standard errors below this",
     "analysis.choice.min_population": "the low-D population (lever rule) within "
-                                      "[min_population, 1 - min_population]",
+                                      "[min_population, 1 - min_population]; default 0.05 "
+                                      'with populations = "best_set", 0.10 with "bootstrap"',
     "analysis.regions.name": "the region's name",
     "analysis.regions.start": "first residue (1-based, inclusive)",
     "analysis.regions.end": "last residue (inclusive)",
@@ -301,9 +307,12 @@ _INTROS: dict[str, str] = {
                         "in the review is kept). K=2 descriptions per spectrum: "
                         "min_population, max_fD; per species and time: max_fD_se, "
                         "k1_between_ranks.",
-    "analysis.choice": "The limits of the choice between one and two populations. A residue "
-                       "whose K=2 standard errors are unknown keeps the one-population "
-                       "description.",
+    "analysis.choice": "The limits of the choice between one and two populations. With "
+                       'populations = "bootstrap" they are the rule itself, so their defaults '
+                       'are strict (0.95, 10 %); with "best_set" they only check the result '
+                       "of the fits' comparison (0.5, 5 %). A key you set applies in either "
+                       "mode. A residue whose K=2 standard errors are unknown keeps the "
+                       "one-population description.",
     "analysis.controls": "Any key of [run.controls]; the controls are then recomputed from the "
                          "run's K=1 fits.",
     "analysis.runs": "Separate runs to compare: run name = bundle path (default: this "

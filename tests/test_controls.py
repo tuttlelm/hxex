@@ -70,8 +70,13 @@ def test_each_control_falls_back_on_its_own():
     assert c.m0[0] == pytest.approx(0.1) and c.mfd[0] == pytest.approx(9.1)
     assert c.mfd_se[0] == 0.0 and c.retention[0] == pytest.approx(0.9)
     assert c.flags[0] == "retention_low"
+    # replicates above the amide count are left out before the mean (HISTORY 143), so with
+    # m0 near 0 a retention above retention_max (1.1) leaves no replicate: the control is gone
     c = table([(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 12.0), (0, 1e6, 12.0)])
-    assert c.flags[0] == "retention_high" and c.mfd[0] == pytest.approx(9.0)
+    assert c.flags[0] == "fd_replicate_left_out;fd_missing" and c.mfd[0] == pytest.approx(9.0)
+    # retention_high still applies below the amide count (an m0 below 0)
+    c = table([(0, 0, -1.5), (0, 0, -1.5), (0, 1e6, 9.8), (0, 1e6, 9.8)])
+    assert c.flags[0] == "retention_high"
 
 
 def test_missing_controls_use_theory_and_are_flagged():
@@ -605,3 +610,47 @@ def test_charge_groups_leave_out_fragment_ions_and_the_explicit_mz():
                          "undeut_mz:300.0"], [2, 3, 1, 4, 5], [0, 1, 2, 3, 4], fragments=[3])
     assert got == {0: (("WT", "PEP", ""), 2), 1: (("WT", "PEP", "Hex:1"), 3),
                    4: (("WT", "PEP", ""), 5)}
+
+
+def test_control_replicates_are_checked_before_their_mean():
+    """A control replicate far from its replicates' median (replicate_outlier typical sd of the
+    run's time-point replicates; three or more) or above the amide count is left out of the
+    control's mean, flagged as a warning (owner, 2026-10-22, HISTORY 143)."""
+    rows = []
+    for d in range(6):  # six series with tight time-point replicates (sd about 0.01 per amide)
+        rows += [(d, 100.0, 5.0), (d, 100.0, 5.1), (d, 100.0, 4.9), (d, 0, 0.0), (d, 0, 0.0)]
+    rows += [(0, 1e6, 8.0), (0, 1e6, 8.1), (0, 1e6, 3.0)]  # one replicate read something else
+    rows += [(1, 1e6, 8.0), (1, 1e6, 8.1), (1, 1e6, 7.9)]
+    c = table(rows)
+    assert c.flags[0] == "fd_replicate_left_out" and c.mfd[0] == pytest.approx(8.05)
+    assert c.flags[1] == "" and c.mfd[1] == pytest.approx(8.0)
+    off = table(rows, ControlConfig(replicate_outlier=None))
+    assert off.mfd[0] == pytest.approx((8.0 + 8.1 + 3.0) / 3)
+    from hxex.report.tables import _control_notes
+
+    assert _control_notes(c.flags[0]) == "fd_replicate_left_out"
+    with pytest.raises(ValueError, match="replicate_outlier"):
+        ControlConfig(replicate_outlier=-1)
+
+
+def test_a_multimodal_control_is_checked_against_its_other_charge_states():
+    """With no other sample to compare, a multimodal fully deuterated control's retention is
+    compared with the same peptide's at its other charge states (HISTORY 145)."""
+    from hxex.controls import charge_groups
+    from hxex.report.tables import _control_notes
+
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 6.0), (0, 1e6, 6.1),  # PEP 2+: 0.605, split
+            (1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 6.0), (1, 1e6, 6.2)]  # PEP 3+: 0.61
+    ids = [r[0] for r in rows]
+    charges = charge_groups(["S"] * len(rows), ["PEP"] * len(rows), [""] * len(rows),
+                            [2 if d == 0 else 3 for d in ids], ids)
+    k = [1, 1, 2, 2, 1, 1, 1, 1]  # 2+'s fully deuterated replicates choose two populations
+    c = fit_controls(fake_fit(rows, selected_K=k), np.full(len(rows), 10.0), CFG,
+                     charges=charges)
+    assert "fd_charges_agree" in c.flags[0].split(";")
+    assert _control_notes(c.flags[0]).startswith(
+        "fd_multimodal (retention agrees with its other charge states)")
+    far = rows[:2] + [(0, 1e6, 8.0), (0, 1e6, 8.1)] + rows[4:]  # 0.805 against 0.61
+    c = fit_controls(fake_fit(far, selected_K=k), np.full(len(far), 10.0), CFG, charges=charges)
+    assert "fd_charges_agree" not in c.flags[0]
+    assert "fd_multimodal (retention unchecked)" in _control_notes(c.flags[0])

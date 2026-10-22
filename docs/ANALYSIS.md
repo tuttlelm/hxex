@@ -163,7 +163,9 @@ in the published work; where it matters, a component is named by its rank.
   K=1 value is used. Output: fD at K=2 rank 1 and rank 2 and at K=1, and the K=2 rank-1
   population, with standard errors (the error of the lever-rule population propagated
   correctly, unlike `choose_fits`). Built on the fixed-K values, the filters above and the review
-  layer. As built (`ChoiceConfig`: confidence 0.5, error limit 0.25, population 5 to 95 %), the
+  layer. As built (`ChoiceConfig`: confidence 0.5, error limit 0.25, population 5 to 95 %; with
+  `populations = "bootstrap"` the defaults are 0.95 and 10 to 90 %, since the tests are then the
+  rule itself, owner 2026-10-22, HISTORY 142), the
   reason a residue keeps K=1 is recorded (no K=2, not separated, error, K=1 outside,
   population). The tests need bootstrap standard errors at K=1 and K=2
   (`BootstrapConfig.ks`): without them only the scatter of replicates is left, which is far too
@@ -194,7 +196,9 @@ in the published work; where it matters, a component is named by its rank.
   is compared only where, on both sides, the positions pass the choice's separation and error
   tests, every replicate's K=1 value lies between them, and the population is within the
   choice's limits; otherwise `reason` names the first failing test and side. The test is
-  Welch's on the replicates' populations, and the threshold the K=1 `delta_crit` divided by the
+  `|delta| / delta_se` against the normal distribution, `delta_se` from each side's whole
+  error (the replicates and the K=2 positions; HISTORY 144: a Welch test on the replicates'
+  populations, the positions held fixed, overstated it), and the threshold the K=1 `delta_crit` divided by the
   separation (the mean of both sides'): with fixed positions a population difference is the
   fD difference over the separation, so the K=1 standard carries over, where a pooled threshold
   was dominated by poorly separated peptides (0.49 on the tutorial data). Per residue
@@ -226,10 +230,9 @@ in the published work; where it matters, a component is named by its rank.
   sample only, the reference only, both). The Woods plot is two figures, `woods_<sample>_<time>`
   (K=1 and the number of populations) and `woods_K2_<sample>_<time>` (the gated K=2 panels).
   On the tutorial data: rank comparisons 363 -> 92 (significant 23 -> 3, 20 -> 4), population
-  245 -> 85 (120 -> 36). Open: the K=2 ranks' `delta_crit` is still pooled over every K=2
-  description, including the one-population ones. Open: the Welch test treats the averaged
-  positions as exact; requiring `|delta| / delta_se` (which includes their error) above the
-  normal quantile as well, or a joint bootstrap, would be stricter. The comparison tables carry
+  245 -> 85 (120 -> 36). Since HISTORY 144 the K=2 ranks' `delta_crit` pools only the sets
+  best described by two populations, and the population test includes the positions' error.
+  The comparison tables carry
   their `quantity` (`value`, `value_reference` and their errors).
   Peptides are paired by residue range by default (owner, 2026-10-13: a peptide containing a
   mutation is compared with the reference's over the same residues; `same_sequence`,

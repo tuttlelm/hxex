@@ -81,6 +81,7 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 import numpy as np
+from scipy import stats
 from scipy.stats import norm
 
 from .fit.result import FitResult
@@ -93,7 +94,8 @@ log = logging.getLogger(__name__)
 FD_FALLBACKS = ("d2o", "median", "kint")
 # flags that only warn (the control stays in use)
 CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0",
-                 "fd_retention_agrees", "fd_charges_disagree")
+                 "fd_retention_agrees", "fd_charges_disagree", "m0_replicate_left_out",
+                 "fd_replicate_left_out", "fd_charges_agree")
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,13 @@ class ControlConfig:
       ``fd_charges_disagree`` (a warning; owner, 2026-10-22). The undeuterated control stays
       per charge state. Peptides only (not fragment ions), and only with
       :func:`charge_groups` given to :func:`fit_controls`.
+    - ``replicate_outlier``: a control replicate whose K=1 mean lies more than this many
+      typical replicate standard deviations (in deuterons per amide, from the run's time-point
+      replicates: the median of their chi-square-scaled variances) from the median of the
+      series' replicates of that control (three or more) is left out of its mean, flagged
+      ``m0_replicate_left_out`` or ``fd_replicate_left_out`` (a warning); None turns it off. A
+      control replicate whose K=1 mean is above the amide count is always left out (the same
+      flags): no deuterium level explains it (owner, 2026-10-22, HISTORY 143).
     - ``fd_other_charge`` (with ``combine_charges = false``): a series whose fully deuterated
       control is missing or rejected takes the mean retention of the same peptide's accepted
       measured controls at its other charge states in the same sample (flagged
@@ -178,6 +187,7 @@ class ControlConfig:
     sample_tolerance: float = 0.1
     combine_charges: bool = True
     fd_other_charge: bool = True
+    replicate_outlier: float | None = 6.0
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
     quench: ExchangeConditions | None = None
@@ -222,6 +232,10 @@ class ControlConfig:
             raise ValueError("fd_other_charge must be true or false")
         if not isinstance(self.combine_charges, bool):
             raise ValueError("combine_charges must be true or false")
+        if self.replicate_outlier is not None and (isinstance(self.replicate_outlier, bool)
+                                                   or not self.replicate_outlier > 0):
+            raise ValueError("replicate_outlier must be a positive number of standard "
+                             "deviations (or unset)")
 
     @property
     def fd_mode(self) -> str:
@@ -527,8 +541,11 @@ def fit_controls(
             "point promoted by undeut_at or fulldeut_at after the run). Promote them in "
             "[run.controls] and run again, or run with k_min = 1")
 
+    left_out = _control_replicates_left_out(fit, means, n_amides, usable, serves, uncorrected,
+                                            config)
+
     def pick(rows: np.ndarray, label: str) -> np.ndarray:
-        return means[rows[usable[rows] & serves[label][rows]]]
+        return means[rows[usable[rows] & ~left_out[rows] & serves[label][rows]]]
 
     # the time course of each series (its spectra without a role, K=1 means, the median of
     # each time point's replicates, so that one bad replicate does not decide): the fully
@@ -570,6 +587,9 @@ def fit_controls(
                 cols[name].append(value)
             continue
         flags: list[str] = []
+        for label, name in ((UNDEUT, "m0_replicate_left_out"), (FULLDEUT, "fd_replicate_left_out")):
+            if (left_out[rows] & serves[label][rows]).any():
+                flags.append(name)
         if n_u == 0:
             flags.append("m0_missing")
         elif m0_meas > config.m0_max:
@@ -660,7 +680,7 @@ def fit_controls(
         _combine_charges(cols, series, charges, config)
     elif config.fd_other_charge and charges:
         _other_charge_fallback(cols, series, charges)
-    _flag_disagreement(cols, series, groups, config)
+    _flag_disagreement(cols, series, groups, config, charges)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -677,6 +697,45 @@ def fit_controls(
         flags=np.array(cols["flags"], dtype=str),
         fd_model=fd_model, limits=limits,
     )
+
+
+def _control_replicates_left_out(fit, means: np.ndarray, n_amides: np.ndarray,
+                                 usable: np.ndarray, serves: Mapping, uncorrected,
+                                 config: ControlConfig) -> np.ndarray:
+    """The control spectra left out of their control's mean (``replicate_outlier``): a K=1 mean
+    above the amide count, or a replicate far from the median of its series' replicates of
+    that control (three or more), measured in typical replicate standard deviations of the
+    run's time points (deuterons per amide, uncorrected)."""
+    role_rows = (serves[UNDEUT] | serves[FULLDEUT]) & usable & np.isfinite(means)
+    skip = np.isin(np.asarray(fit.data_id), list(uncorrected))
+    out = role_rows & ~skip & (means > n_amides + 1e-9)
+    if config.replicate_outlier is None:
+        return out
+    with np.errstate(invalid="ignore", divide="ignore"):
+        per_amide = np.where(n_amides > 0, means / n_amides, np.nan)
+    plain = (np.asarray(fit.role, dtype=str) == "") & usable & np.isfinite(per_amide)
+    points = time_point(fit.time)
+    groups: dict[tuple, list[int]] = {}
+    for i in np.flatnonzero(plain):
+        groups.setdefault((int(fit.data_id[i]), points[i]), []).append(i)
+    scaled = [float(np.var(per_amide[g], ddof=1)) * (len(g) - 1) / stats.chi2.median(len(g) - 1)
+              for g in groups.values() if len(g) >= 2]
+    if not scaled:
+        return out
+    limit = config.replicate_outlier * float(np.sqrt(np.median(scaled)))
+    ids = np.asarray(fit.data_id)
+    for label in (UNDEUT, FULLDEUT):
+        rows_of: dict[int, list[int]] = {}
+        for i in np.flatnonzero(role_rows & ~skip & ~out & serves[label]):
+            rows_of.setdefault(int(ids[i]), []).append(i)
+        for g in rows_of.values():
+            if len(g) < 3:
+                continue
+            centre = float(np.median(per_amide[g]))
+            for i in g:
+                if abs(per_amide[i] - centre) > limit:
+                    out[i] = True
+    return out
 
 
 OUTLIER_MIN_SERIES = 5  # the fewest controls the run-relative limit is computed from
@@ -722,15 +781,40 @@ def _reject_outliers(cols: dict, rows: list[int], limits: dict | None,
 
 
 def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
-                       config: ControlConfig) -> None:
+                       config: ControlConfig, charges: Mapping | None = None) -> None:
     """Flag ``fd_disagrees`` on the measured fully deuterated controls whose retention differs
     by more than ``sample_tolerance`` from the median of their group (the same peptide in the
     other samples, :func:`series_groups`; with two controls, from the other one: both are
     flagged). A control flagged ``fd_multimodal`` whose retention agrees gets
     ``fd_retention_agrees``: its envelope is wide or split, but its retention, which the
-    correction uses, matches the other samples' (owner, 2026-10-22)."""
-    if not groups:
+    correction uses, matches the other samples' (owner, 2026-10-22). One that no other sample
+    can check is compared with the same peptide's measured controls at its other charge
+    states in the same sample (``charges``): ``fd_charges_agree`` when its retention is within
+    ``sample_tolerance`` of their median (HISTORY 145)."""
+    if groups:
+        _flag_sample_disagreement(cols, series, groups, config)
+    if not charges:
         return
+    members: dict[tuple, list[int]] = {}
+    for i, s in enumerate(series):
+        if int(s) in charges and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0:
+            members.setdefault(charges[int(s)][0], []).append(i)
+    for rows in members.values():
+        measured = {i: (cols["mfd_measured"][i] - cols["m0"][i]) / cols["n_amides"][i]
+                    for i in rows}
+        for i in rows:
+            tokens = cols["flags"][i].split(";")
+            if ("fd_multimodal" not in tokens or "fd_retention_agrees" in tokens
+                    or "fd_disagrees" in tokens or not np.isfinite(measured[i])):
+                continue  # not multimodal, or already checked against the other samples
+            others = [r for j, r in measured.items() if j != i and np.isfinite(r)]
+            if others and abs(measured[i] - float(np.median(others))) <= config.sample_tolerance:
+                cols["flags"][i] += ";fd_charges_agree"
+
+
+def _flag_sample_disagreement(cols: dict, series: np.ndarray, groups: Mapping,
+                              config: ControlConfig) -> None:
+    """The other-samples part of :func:`_flag_disagreement`."""
     members: dict[Any, list[int]] = {}
     for i, s in enumerate(series):
         if (int(s) in groups and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0

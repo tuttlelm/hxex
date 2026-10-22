@@ -302,6 +302,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `sample_tolerance` | number | `0.1` | a fully deuterated control whose retention differs this much from the same peptide's in the other samples is flagged fd_disagrees (still used) |
 | `combine_charges` | true/false | `true` | every charge state of a peptide (in one sample) takes the mean retention of its measured fully deuterated controls over all charge states; fd_fallback only when none is good (peptides only, not fragment ions) |
 | `fd_other_charge` | true/false | `true` | with combine_charges = false: a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states, before fd_fallback |
+| `replicate_outlier` | number | `6.0` | a control replicate this many typical replicate sd from its replicates' median (three or more) is left out of the control's mean (one above the amide count always is); unset: off |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
 | `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |
 | `quench` | table | unset | pH read, degrees Celsius and D fraction of the quench and LC ({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for fd_fallback "kint" (unset: none) |
@@ -394,6 +395,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |
 | `populations` | text | `"best_set"` | how one or two populations are decided: "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
+| `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
 
@@ -413,13 +415,13 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: replicate
 
 ## `[analysis.choice]`
 
-The limits of the choice between one and two populations. A residue whose K=2 standard errors are unknown keeps the one-population description.
+The limits of the choice between one and two populations. With populations = "bootstrap" they are the rule itself, so their defaults are strict (0.95, 10 %); with "best_set" they only check the result of the fits' comparison (0.5, 5 %). A key you set applies in either mode. A residue whose K=2 standard errors are unknown keeps the one-population description.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `confidence` | number | `0.5` | a fraction (0.5: 50 %): the interval that must separate the two K=2 values |
+| `confidence` | number | `0.5` | a fraction (0.5: 50 %): the interval that must separate the two K=2 values; default 0.5 with populations = "best_set", 0.95 with "bootstrap" |
 | `max_fD_se` | number | `0.25` | both K=2 standard errors below this |
-| `min_population` | number | `0.05` | the low-D population (lever rule) within [min_population, 1 - min_population] |
+| `min_population` | number | `0.05` | the low-D population (lever rule) within [min_population, 1 - min_population]; default 0.05 with populations = "best_set", 0.10 with "bootstrap" |
 
 ## `[analysis.controls]`
 

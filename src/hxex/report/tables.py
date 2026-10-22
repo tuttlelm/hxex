@@ -401,16 +401,19 @@ def _control_notes(flags: str) -> str:
     """The control flags that only warn (:data:`hxex.controls.CONTROL_NOTES`), for
     ``series.csv``; ``fd_multimodal`` says whether its retention was checked against the same
     peptide's controls in the other samples: ``(retention agrees)``, ``(retention differs)`` (with
-    ``fd_disagrees``) or ``(retention unchecked)`` (nothing to compare with)."""
+    ``fd_disagrees``), or, with no other sample to compare, against its other charge states
+    (``(retention agrees with its other charge states)``), else ``(retention unchecked)``."""
     tokens = [f for f in flags.split(";") if f]
     notes = []
     for f in tokens:
         if f == "fd_multimodal":
             check = ("retention differs" if "fd_disagrees" in tokens
                      else "retention agrees" if "fd_retention_agrees" in tokens
+                     else "retention agrees with its other charge states"
+                     if "fd_charges_agree" in tokens
                      else "retention unchecked")
             notes.append(f"fd_multimodal ({check})")
-        elif f in CONTROL_NOTES and f != "fd_retention_agrees":
+        elif f in CONTROL_NOTES and f not in ("fd_retention_agrees", "fd_charges_agree"):
             notes.append(f)
     return ";".join(notes)
 

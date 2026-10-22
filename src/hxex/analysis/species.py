@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any
@@ -277,6 +278,10 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
     return mean, float(np.sqrt(var / n))
 
 
+# recomputed controls by results (weakly held) and changes: analysis_controls computes them once
+_RECOMPUTED: dict[tuple, tuple[weakref.ref, Any]] = {}
+
+
 def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quiet: bool = False):
     """The controls the analysis uses (:class:`hxex.controls.ControlTable`, or None without
     controls): those of the run, recomputed from its K=1 fits when the review rejected a control
@@ -301,6 +306,11 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     n_rejected = int((rejected & at_control).sum())
     if stored is not None and not changes and not n_rejected:
         return stored
+    # one analysis asks for the same recomputed controls once per table: compute them once
+    key = (id(results), tuple(sorted((str(k), repr(v)) for k, v in (changes or {}).items())))
+    hit = _RECOMPUTED.get(key)
+    if hit is not None and hit[0]() is results:
+        return hit[1]
     usable = ~rejected
     if fit.noise_estimate is not None:
         usable &= ~np.asarray(fit.noise_estimate.outlier, dtype=bool)
@@ -330,6 +340,9 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         fragments = fragment_ids(b.modification, b.data_id, scan_fragments)
     out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
                        groups=groups, charges=charges, uncorrected=fragments)
+    for k in [k for k, (ref, _) in _RECOMPUTED.items() if ref() is None]:
+        del _RECOMPUTED[k]
+    _RECOMPUTED[key] = (weakref.ref(results), out)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (

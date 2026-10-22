@@ -127,7 +127,8 @@ class PeptideComparison:
     ``start``, ``end``, ``time``, ``value_reference`` and ``value`` (the ``quantity``, ``fD`` or
     ``population``, combined over replicates and charge states) with their ``*_se``, ``delta``
     (``value - value_reference``) and ``delta_se``, ``t`` and ``p`` (Welch's test on the
-    replicate spectra; NaN with fewer than two on a side), ``n_reference`` and ``n`` (spectra) and
+    replicate spectra, NaN with fewer than two on a side; for a population ``delta / delta_se``
+    and its normal p, the K=2 positions' error included), ``n_reference`` and ``n`` (spectra) and
     ``significant``; with the ``reference`` sample, ``K``, ``rank``, ``alpha`` and the global
     ``delta_crit`` (for a population, the K=1 one). ``threshold``: the threshold each row was
     judged by (``delta_crit``, or for a population ``delta_crit`` divided by the separation);
@@ -356,8 +357,15 @@ def compare_peptides(
         reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
     except ValueError as exc:
         raise ValueError(f"{exc} at K={K} rank {rank}") from exc
-    # the typical standard deviation of replicate spectra and the typical replicate count
-    delta_crit = _delta_crit((v for per in by_sample.values() for v in per.values()), alpha)
+    # the typical standard deviation of replicate spectra and the typical replicate count; at
+    # K >= 2 with the gate, from the sets best described by two populations only (the others'
+    # K=2 fits are splits of one population, whose scatter is not that of a second state)
+    def counted(state, key) -> bool:
+        return (best_sets is None or K < 2
+                or (best_sets.get((*state, *key)) or (0, np.nan))[0] == 2)
+
+    delta_crit = _delta_crit((v for state, per in by_sample.items() for key, v in per.items()
+                              if counted(state, key)), alpha)
     wanted = ([resolve_sample(runs_present, samples_present, s) for s in samples]
               if samples is not None else present)
     others = [s for s in wanted if s != reference]
@@ -516,11 +524,15 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
             t = p = delta = np.nan
             ma = mb = sa = sb = threshold = sep = np.nan
             if not reason:
-                va, vb = flip(a["values"]), flip(b["values"])
                 ma, sa, mb, sb = flip(a["value"]), a["se"], flip(b["value"]), b["se"]
-                if len(va) >= 2 and len(vb) >= 2 and (np.var(va) > 0 or np.var(vb) > 0):
-                    t, p = (float(x) for x in stats.ttest_ind(vb, va, equal_var=False))
                 delta = mb - ma
+                # the test takes the whole error of each population, the K=2 positions' as
+                # well as the replicates' (a Welch test on the replicates alone, with the
+                # positions held fixed, overstated it: HISTORY 128, 144)
+                dse = float(np.hypot(sa, sb))
+                if np.isfinite(dse) and dse > 0:
+                    t = delta / dse
+                    p = float(2 * stats.norm.sf(abs(t)))
                 sep = 0.5 * (a["sep"] + b["sep"])
                 threshold = delta_crit / sep
             sig = bool(np.isfinite(p) and p < alpha and abs(delta) > threshold)

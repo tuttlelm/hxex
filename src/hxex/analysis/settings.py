@@ -19,6 +19,18 @@ from .species import SpeciesFilters
 
 POPULATION_RULES = ("best_set", "bootstrap")  # how one or two populations are decided
 
+
+def choice_defaults(populations: str = "best_set") -> ChoiceConfig:
+    """The ``[analysis.choice]`` defaults of a ``populations`` rule (owner, 2026-10-22, HISTORY
+    142): with ``'bootstrap'`` the separation and population tests are the rule itself, so
+    they are strict (confidence 0.95, populations of at least 10 %: the calibration found the
+    0.5 / 5 % limits calling two populations in most single ones); with ``'best_set'`` the
+    comparison of the fits decides and the tests only check its result (0.5 / 5 %, the
+    minimum population also that of ``best_set_K``'s own check)."""
+    if populations == "bootstrap":
+        return ChoiceConfig(confidence=0.95, min_population=0.10)
+    return ChoiceConfig()
+
 FORMATS = ("pdf", "png", "svg")
 UNDEUTERATED = "undeuterated"
 # the values a by-residue comparison can show: name -> (K, rank)
@@ -62,7 +74,8 @@ class AnalysisConfig:
       there are none, ``'all'`` with a warning), ``'all'`` or a list of times.
     - ``redundancy``: what it counts, ``'peptides'`` or ``'spectra'``.
     - ``weight_exponent``: of the residue averaging (:func:`residue_map`).
-    - ``choice``: the limits of the choice between one and two populations (:class:`ChoiceConfig`).
+    - ``choice``: the limits of the choice between one and two populations (:class:`ChoiceConfig`;
+      None, the default: :func:`choice_defaults` of ``populations``).
     - ``alpha``: the significance level of the comparisons.
     - ``annotations``: regions and sites to mark (``[[analysis.regions]]``, ``[[analysis.sites]]``).
     - ``overlay``: the values the by-residue comparison figures show, any of ``'low'`` and
@@ -75,6 +88,10 @@ class AnalysisConfig:
       K=2 comparisons need both samples to have two) or ``'bootstrap'`` (the residue's K=2
       positions tested with their bootstrap errors, ``choice``'s confidence and population
       limits, every peptide's K=2 values used, no ``best_set_K`` gate).
+    - ``borderline_evidence``: in the comparison of the number of populations
+      (:func:`compare_population_counts`), a difference is ``borderline`` unless the
+      two-population side's summed criterion is at least this far below 0 and the other side's
+      above 0 (HISTORY 137, 144).
     - ``peptide_match``: which peptides the peptide comparisons pair, ``'range'`` (the same
       residues, mutated or not) or ``'sequence'`` (identical sequences only;
       :func:`compare_peptides`).
@@ -110,7 +127,7 @@ class AnalysisConfig:
     redundancy: str = "peptides"
     weight_exponent: float = 1.0
     filters: SpeciesFilters | None = SpeciesFilters()  # noqa: RUF009
-    choice: ChoiceConfig = ChoiceConfig()  # noqa: RUF009
+    choice: ChoiceConfig | None = None
     alpha: float = 0.05
     annotations: Annotations = Annotations()  # noqa: RUF009
     exclude_flagged: bool = False
@@ -121,6 +138,7 @@ class AnalysisConfig:
     overlay_two_only: bool = True
     peptide_match: str = "range"
     populations: str = "best_set"
+    borderline_evidence: float = 10.0
     modified_peptides: str = "separate"
     controls: Mapping[str, Any] | None = None
     merge: Mapping[str, str] | None = None
@@ -194,6 +212,9 @@ class AnalysisConfig:
             raise ValueError(f"peptide_match must be one of {', '.join(MATCHES)}")
         if self.populations not in POPULATION_RULES:
             raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
+        if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
+            raise ValueError("borderline_evidence must be a number >= 0")
+
         if self.reference and self.samples and self.reference not in self.samples:
             raise ValueError(f"the reference {self.reference!r} is not among the samples")
 
@@ -223,6 +244,12 @@ class AnalysisConfig:
         return {str(key): ({str(s): read(p) for s, p in value.items()}
                            if isinstance(value, Mapping) else read(value))
                 for key, value in self.fasta.items()}
+
+    @property
+    def choice_limits(self) -> ChoiceConfig:
+        """The limits of the choice in use: ``choice``, or :func:`choice_defaults` of
+        ``populations`` when it is unset (so changing ``populations`` changes them)."""
+        return self.choice if self.choice is not None else choice_defaults(self.populations)
 
     def to_dict(self) -> dict:
         out = {}
@@ -257,7 +284,7 @@ class AnalysisConfig:
             f = values["filters"]
             values["filters"] = None if f is None or f is False else (
                 SpeciesFilters() if f is True else SpeciesFilters(**f))
-        if "choice" in values:
+        if values.get("choice") is not None:
             values["choice"] = ChoiceConfig.from_dict(values["choice"])
         if "annotations" in values:
             values["annotations"] = Annotations.from_dict(values["annotations"])

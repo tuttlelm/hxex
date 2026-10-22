@@ -813,7 +813,8 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta"
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "out", "runs", "overlay",
-                 "overlay_two_only", "peptide_match", "populations", "modified_peptides",
+                 "overlay_two_only", "peptide_match", "populations", "borderline_evidence",
+                 "modified_peptides",
                  "controls", "merge",
                  "fragments", "protection", "labelling")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
@@ -851,6 +852,10 @@ def _analysis_from(data: Mapping, base: Path):
                             AnalysisConfig)
     if values.get("labelling") is False:  # typed Any: the helper cannot tell
         values["labelling"] = None
+    if isinstance(values.get("controls"), Mapping):  # changes to [run.controls]: its false rule
+        from .controls import ControlConfig
+
+        values["controls"] = _false_to_none(values["controls"], ControlConfig)
     _check_types(values, AnalysisConfig, "analysis")
     fasta = values.get("fasta")
     if isinstance(fasta, str):
@@ -876,11 +881,13 @@ def _analysis_from(data: Mapping, base: Path):
 
             values["filters"] = {**SpeciesFilters().__dict__, **values["filters"]}
         if "choice" in values:
-            from .analysis import ChoiceConfig
+            from .analysis.settings import choice_defaults
 
             if not isinstance(values["choice"], Mapping):
                 raise TypeError("choice must be a table")
-            values["choice"] = {**ChoiceConfig().to_dict(), **values["choice"]}
+            # the keys not given take the defaults of the populations rule
+            base = choice_defaults(values.get("populations", "best_set")).to_dict()
+            values["choice"] = {**base, **values["choice"]}
         return AnalysisConfig.from_dict(values)
     except (TypeError, ValueError, AttributeError) as exc:
         raise ProjectError(f"[analysis]: {exc}") from exc
@@ -1305,6 +1312,10 @@ _COMMENTS: dict[str, str] = {
                                     "mean retention of its measured fully deuterated controls "
                                     "over all charge states; fd_fallback only when none is "
                                     "good (peptides only, not fragment ions)",
+    "run.controls.replicate_outlier": "a control replicate this many typical replicate sd from "
+                                      "its replicates' median (three or more) is left out of "
+                                      "the control's mean (one above the amide count always "
+                                      "is); unset: off",
     "run.controls.fd_other_charge": "with combine_charges = false: a series without a good "
                                     "fully deuterated control takes the retention of the same "
                                     "peptide's at its other charge states, before fd_fallback",
@@ -1659,9 +1670,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# max_fD = 1.1",
         "# k1_between_ranks = true",
         "# [analysis.choice]               # the choice between one and two populations",
-        "# confidence = 0.5",
+        '# confidence = 0.5                # 0.95 with populations = "bootstrap"',
         "# max_fD_se = 0.25",
-        "# min_population = 0.05",
+        '# min_population = 0.05           # 0.10 with populations = "bootstrap"',
         "# [[analysis.regions]]",
         '# name = "N-terminal region"',
         "# start = 1",

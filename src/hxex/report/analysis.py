@@ -219,7 +219,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         log.warning("%s: coverage_times = \"all\" is used instead (set [analysis] "
                     "coverage_times to choose the times coverage is judged on)", exc)
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy, time="all")
-    choice = choose_populations(residues, config.choice) if 2 in config.ks else None
+    choice = choose_populations(residues, config.choice_limits) if 2 in config.ks else None
     length = int(residues.residue.max())
     # the per-time figures: every time point (the controls are not times; a control that is
     # also a time point is one)
@@ -245,7 +245,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         unmerged = up if not results.merge else species_uptake(
             results.unmerged(), ks=config.ks, exclude_flagged=config.exclude_flagged,
             filters=config.filters, controls=config.controls,
-            min_population=config.choice.min_population)
+            min_population=config.choice_limits.min_population)
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = counts_d = None
@@ -263,7 +263,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             comparisons["K=2 rank 2 (high D) fD"] = compare_peptides(results, ref, K=2, rank=2,
                                                                      **kw)
             comparisons["K=2 rank 1 (low D) population"] = compare_peptides(
-                results, ref, K=2, rank=1, quantity="population", choice=config.choice, **kw)
+                results, ref, K=2, rank=1, quantity="population",
+                choice=config.choice_limits, **kw)
         rows = {}
         for title, c in comparisons.items():
             cols = c.columns()
@@ -273,7 +274,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
         if 2 in config.ks and gate:
             counts = compare_population_counts(best, ref, samples=kw["samples"],
-                                               match=config.peptide_match)
+                                               match=config.peptide_match,
+                                               evidence=config.borderline_evidence)
             tables["compare_population_counts"] = counts.columns()
             counts_d = _display(counts, labels, reference)
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
@@ -468,7 +470,7 @@ def write_analysis(
                        else peptides[""])
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
                             filters=config.filters, controls=config.controls,
-                            min_population=config.choice.min_population)
+                            min_population=config.choice_limits.min_population)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
     tables.update(frag_tables)
