@@ -12,6 +12,7 @@ early.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import SpectrumSet
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .screen import RAW_SCORES, off_position_scores, raw_scores
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ class PickedSpectrum:
     empty: bool
     no_signal: bool
     capped: bool
+    screen: tuple[float, float, float, float] = (float("nan"),) * 4  # screen.raw_scores
 
 
 def predicted_mz(undeut_mz: float, charge: int, n_bins: int) -> np.ndarray:
@@ -303,10 +306,16 @@ def pick_spectrum(
         left, right, left_int = envelope(picked_mz, picked_y, ymax * config.env_threshold)
         width = charge * (right - left)
         symm = 2.0 - (ymax - left_int) / ymax if ymax else float("nan")
+    n_deut = np.arange(end + 1, dtype=np.int64)
+    screen = PickedSpectrum.screen
+    if plan.clusters is not None and len(picked_y):
+        screen = raw_scores(mz, intensity, picked_mz, picked_y, n_deut, charge,
+                            plan.clusters[0], plan.n_sites,
+                            config.half_width(picked_mz, charge, **recorded))
     return PickedSpectrum(
         mz=picked_mz,
         intensity=picked_y,
-        n_deut=np.arange(end + 1, dtype=np.int64),
+        n_deut=n_deut,
         peak_mz=peak_mz,
         mz_offset_ppm=mz_offset_ppm(peak_mz, picked_mz, picked_y, threshold),
         env_width=width,
@@ -316,6 +325,7 @@ def pick_spectrum(
         empty=bool(picked_y.sum() == 0),
         no_signal=last < 0,
         capped=last >= 0 and last + config.zero_filling > n_last,
+        screen=screen,
     )
 
 
@@ -359,7 +369,9 @@ def pick_spectra(
             )
         )
         report(progress, i + 1, len(spectra))
-    return _assemble(spectra, picked)
+    binned = _assemble(spectra, picked)
+    return dataclasses.replace(binned, screen_off_position=off_position_scores(
+        binned, config, spectra.resolving_power, spectra.resolving_power_mz))
 
 
 def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
@@ -382,6 +394,8 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         empty=cat("empty", bool),
         no_signal=cat("no_signal", bool),
         capped=cat("capped", bool),
+        **{name: np.array([p.screen[j] for p in picked], dtype=np.float64)
+           for j, name in enumerate(RAW_SCORES)},
         sample=spectra.sample,
         peptide=spectra.peptide,
         peptide_range=spectra.peptide_range,

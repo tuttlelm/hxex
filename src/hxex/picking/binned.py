@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..spectra import _check_mask, ragged_mask, time_index
+from .screen import SCREEN_SCORES
 
 _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
 
@@ -27,7 +28,9 @@ class BinnedSet:
     ``env_width`` is in mass units, ``max_namides`` is the backbone amide count (without
     user-specified ``Hex`` sites). Per-spectrum flags: ``empty`` (all picked intensities zero,
     the usual reason to drop a SpecExport spectrum), ``no_signal`` (no bin
-    reaches the threshold) and ``capped`` (the bin limit cut the zero filling short).
+    reaches the threshold) and ``capped`` (the bin limit cut the zero filling short). The
+    ``screen_*`` scores (:mod:`hxex.picking.screen`) measure another species in the raw spectrum
+    (NaN: not assessed).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -60,8 +63,16 @@ class BinnedSet:
     mz_offset_ppm: np.ndarray | None = None
     rt: np.ndarray | None = None
     role: np.ndarray | None = None
+    screen_below_mono: np.ndarray | None = None
+    screen_off_position: np.ndarray | None = None
+    screen_between: np.ndarray | None = None
+    screen_between_separate: np.ndarray | None = None
+    screen_beyond_reach: np.ndarray | None = None
 
     def __post_init__(self):
+        for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.rt is None:  # retention times (minutes) not given: unknown
             object.__setattr__(self, "rt", np.full(len(self.offsets) - 1, np.nan))
         if self.peak_mz is None:

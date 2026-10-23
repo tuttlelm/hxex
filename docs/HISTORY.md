@@ -3822,3 +3822,18 @@ CSVs or mzML if wanted.
     benchmark, with a hump at mid intensity in the undeuterated controls. Not yet in the bootstrap
     or the screen. Next to try: weights from predicted intensities (iterative), the floor, the
     curve's model-error share.
+
+151. **Spectrum quality screens, part 1: the scores (2026-10-23).** The five scores of item 149
+    are computed at picking (`hxex.picking.screen`; `raw_scores` per spectrum inside
+    `pick_spectrum`, `off_position_scores` over the picked set in `pick_spectra`, since R2 needs
+    the series' undeuterated offset), kept on `BinnedSet`, in the bundle's binned table and at
+    the end of `spectra.csv`: `screen_below_mono` (R1), `screen_off_position` (R2),
+    `screen_between` (R3t), `screen_between_separate` (R3s), `screen_beyond_reach` (R4). Every
+    path that picks computes them (a run, a rerun from stored spectra); a resume keeps the
+    bundle's; a set picked elsewhere and bundles written before them read NaN (not assessed).
+    The reachable range uses the plan's exchangeable sites (amides plus `Hex`) and its isotope
+    clusters (the ion-type mixture when there is one), where the prototype took the backbone
+    amides and the fitted shape: the same on the benchmark. Checked against the v4 prototype
+    on the benchmark (26,211 spectra, re-picked from the stored spectra): all five identical,
+    picked bins unchanged; picking 23.6 s -> 29.2 s (0.2 ms per spectrum). Nothing acts on the
+    scores yet: part 2 is the `spectrum_quality_filtering` setting (PLAN Next steps 9).

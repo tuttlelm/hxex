@@ -17,6 +17,7 @@ from hxex.io import open_bundle
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import PickerConfig, pick_spectra, plan_bins
+from hxex.picking.screen import SCREEN_SCORES
 from hxex.quality import QualityConfig
 from hxex.run import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
@@ -212,6 +213,9 @@ def test_the_bundle_is_written_and_records_the_run(tmp_path):
         np.testing.assert_array_equal(b.quality().mz_offset, res.quality.mz_offset)
         np.testing.assert_array_equal(b.quality().mz_shift, res.quality.mz_shift)
         assert np.isfinite(res.quality.mz_offset).all()
+        for name in SCREEN_SCORES:  # the spectrum quality screens too
+            np.testing.assert_array_equal(getattr(b.binned(), name), getattr(res.binned, name))
+        assert np.isfinite(res.binned.screen_beyond_reach[~res.binned.empty]).all()
     plain = run(raw, config(controls=None, quality=None, bootstrap=None), out=tmp_path / "p",
                 keep_spectra=False)
     with open_bundle(tmp_path / "p") as b:

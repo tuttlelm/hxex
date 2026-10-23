@@ -21,6 +21,7 @@ import numpy as np
 from ..controls import CONTROL_NOTES, correct_means
 from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
+from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
 from .results import Results
@@ -203,7 +204,8 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
-    fewer components)."""
+    fewer components), then the spectrum quality screens' scores (``screen_*``,
+    :mod:`hxex.picking.screen`; empty where not assessed)."""
     out = dict(_index_columns(results))
     ks = results.effective_K
     k_max = int(ks.max())
@@ -226,7 +228,19 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
                 wide[f"mean_corrected_{r}"][i] = cor[c]
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
     out.update(wide)
+    out.update(_screen_columns(results))
     return out
+
+
+def _screen_columns(results: Results) -> dict[str, np.ndarray]:
+    m = len(results.fit)
+    b = results.binned
+    if b is None:
+        return {name: np.full(m, np.nan) for name in SCREEN_SCORES}
+    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    rows = np.array([index.get(str(s), -1) for s in results.fit.spectrum_id], dtype=np.int64)
+    return {name: np.where(rows >= 0, np.asarray(getattr(b, name))[rows], np.nan)
+            for name in SCREEN_SCORES}
 
 
 def uptake_table(results: Results) -> dict[str, np.ndarray]:

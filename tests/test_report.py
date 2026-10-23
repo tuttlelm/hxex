@@ -14,6 +14,7 @@ from hxex import chem
 from hxex.io import ReviewTable, open_bundle, write_bundle
 from hxex.model import Backend
 from hxex.model.mixture import MixtureBatch, PaddedBatch, shape_weights
+from hxex.picking.screen import SCREEN_SCORES
 from hxex.report import (
     PlotConfig,
     Reference,
@@ -312,6 +313,7 @@ def test_tables_have_the_documented_columns_and_values(results):
     assert (comp["peptide"] == "RDKVQKEYAL").all() and set(comp["rep"]) == {1, 2, 3}
     k_max = int(ks.max())
     assert f"mean_{k_max}" in spec and f"population_se_{k_max}" in spec
+    assert list(spec)[-5:] == list(SCREEN_SCORES)  # the screens last, one column each
     i = 8
     sel = comp["spectrum_id"] == spec["spectrum_id"][i]
     assert np.isclose(spec["centroid"][i], (comp["mean"][sel] * comp["population"][sel]).sum())

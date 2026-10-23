@@ -43,6 +43,7 @@ from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
+from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
 from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
 from ._arrow import (
@@ -145,6 +146,7 @@ def _binned_table(b: BinnedSet) -> pa.Table:
         ("mz_offset_ppm", np.float64),
         ("env_width", np.float64), ("env_symm", np.float64), ("threshold", np.float64),
         ("max_namides", np.int64), ("empty", bool), ("no_signal", bool), ("capped", bool),
+        *((name, np.float64) for name in SCREEN_SCORES),
     )
     for name, typ in per_spectrum:
         cols[name] = pa.array(np.asarray(getattr(b, name), dtype=typ))
@@ -1230,6 +1232,8 @@ class Bundle:
             capped=np.asarray(_col(t, "capped"), dtype=bool),
             **{**_index_arrays(t, ("rt",)), ROLE: self._roles(t)},
             peak_mz=peak_mz, mz_offset_ppm=offset,
+            **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed
+               for name in SCREEN_SCORES if name in t.column_names},
         )
 
     def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:
