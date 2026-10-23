@@ -3749,3 +3749,76 @@ CSVs or mzML if wanted.
     mostly a property of the series (the undeuterated control's offset puts 92 % of spectra
     within 10 ppm), and a peptide whose deuterated peaks sit 0.07 Da from the predicted
     positions while its undeuterated control is on position is another species, not a shift.
+
+148. **A residue-level confidence for the number of populations (design item 3a; 2026-10-22/23;
+    scratch only, design note not yet written).** Built per residue from the covering peptide
+    sets (charges and replicates pooled): *strength*, a weighted Stouffer combination of each
+    set's z (the tail of a gamma fitted to its simulated null, B = 100; z clipped at +-3.09: the
+    calibration study's clipping of p to 1e-6 made a p = 1 set count -4.75 and the strongest +2.33,
+    biasing its Stouffer rows towards "no"), and *agreement*, the weighted share of the covering
+    sets with two populations (calibrated likelihood-ratio test p < 0.01, minor population >= 10 %).
+    Owner's choice: four tiers, two localised (strong, agreement >= 0.5), two (strong, 0.33-0.5),
+    undecided (one criterion), no sign. Agreement grades localisation, not existence: on the
+    simulation the share of strong residues inside the true region falls steadily from 0.95
+    (agreement >= 0.67) to 0.48 (below 0.2), and strong residues far from the region are nearly
+    absent above 0.2. Why 1/3: a truly two-state residue is covered by peptides that reach outside
+    it and lose power (agreement median 0.52, lower quartile 0.33), so a majority rule loses half of
+    them; on the intact-peptide benchmark the owner's dimer interface is marked at 1/3 in every
+    sample from 4 s to 30 min, and intermittently at 0.5. Undeuterated control sets have 9 % with
+    two populations but no residue at "two": ion artefacts do not survive the combination.
+    Considered and dropped (owner): decoding blocks with exoneration (spans whose bimodality appears
+    only when slow and fast parts are measured together would be cleared) and minor-fraction
+    agreement. Owner: multimodality from exchange differences within a peptide or from several
+    conformations is signal; fit evidence takes precedence over eyeballed verdicts. Found: an
+    isolated residue at "two" in one region came from a second species under one family of ions
+    (a z = 2 series below the monoisotopic m/z, 40-70 ppm off the peptide's isotope grid, moving
+    with a substitution in the sequence; not carry-over, which would sit on the grid); the K = 1
+    gain of the central domain between 30 min and 20 h follows the owner's measured
+    subunit-exchange order of five samples exactly, mostly as both populations moving, not as a
+    transfer between them.
+
+149. **Spectrum quality screens for interfering species (2026-10-23; prototypes, levels agreed,
+    not built).** None of the earlier detectors looked at the raw m/z profile. Four fit-free
+    scores from the raw spectrum and the picked bins, with tolerances from the picker's window:
+    R1, a species below the monoisotopic m/z extrapolated into the lowest positions; R2, low picked
+    bins off their predicted m/z beyond half the window (after the series' undeuterated offset);
+    R3, peaks between the isotope positions (outside the window and a quarter step from every
+    position) inside the reachable range, split into R3t (up to the envelope's top edge) and R3s
+    (separate clusters above it); R4, picked intensity beyond the reachable range (the zero bins
+    there are kept: real information). Profile and stick (centroided) paths; about 0.3 ms per
+    spectrum. Dead ends: the fitted envelope as the region (fit-dependent), picked bins at 10 % or
+    connected bins as the region (a cluster between positions leaves little in the picked bins),
+    the picking window alone as "between" (counted peptides' own split maxima). Across four
+    datasets (two Q-TOF, a published one at 6 ppm point spacing, an Orbitrap) the scores mean the
+    same; flag rates differ with the samples (0.5-12 % at 0.10). The owner's blind scoring of 128
+    banded spectra, then fit evidence (counterfactual refits with the interference taken out, and
+    replicate agreement): R1 biases the K = 1 mean (median 0.8-3.4 replicate sd), R2 and R3t give
+    heavy replicate tails, R3s leaves the K = 1 mean alone but creates false populations (K > 1
+    78 % -> 36 %), R4 has no measurable effect. Agreed: one setting, `spectrum_quality_filtering`
+    (none / loose / strict, default loose), with three actions: loose removes R1 >= 0.10,
+    R2 >= 0.20, R3t >= 0.40, keeps R3s >= 0.20 at K = 1 only, warns at R4 >= 0.10; strict removes
+    R1 >= 0.05, R2 >= 0.10, R3t >= 0.20, K = 1 only at R3s >= 0.10. On the benchmark loose removes
+    2.1 % and strict 4.4 %. A review of `accepted` keeps a spectrum; the same setting will hold the
+    weak-spectrum rule (weak spectra at K = 1 only), to be sized after the noise model. Also:
+    `review_K` explained in the guide (picks one of the fits already made; status may stay empty).
+
+150. **Noise: weak spectra and a per-bin noise model (2026-10-23; prototype on a branch).** Weak
+    spectra give false extra populations: undeuterated control sets judged two-population by the
+    calibrated test, 6 % with tops above 20,000, 11 % at 5,000-20,000, 25 % at 1,300-5,000, 40 %
+    below. The fixed 3 % of the series' undeuterated top is wrong in three ways: too low for the
+    Q-TOF data (4-5 % at the top of the envelope, 7-11 % for weak spectra), too high for the
+    Orbitrap (about 1 %), and constant across a spectrum where the noise grows with each bin's
+    height. Measured per run from the undeuterated controls (the natural-abundance envelope is
+    known: one height fitted, the residuals are the noise; HDExaminer exports have a flat baseline,
+    so the baseline cannot be used), which needs no replicates and so applies to the known-answer
+    set; checked against consecutive-scan scatter on Orbitrap infusions (33,788 bin pairs): the
+    residual method reads 5-40 % high, the shape's own error. One sd per spectrum from that curve
+    brackets the answer from both sides (at each spectrum's own top: known-answer correct K 79.1 %
+    against 74.9 % now but benchmark labelled K > 1 still 22 %; at the series' top: K > 1 down to
+    6.5-10.7 % but known-answer 71.3 %): a deuterated envelope spreads the same ions over more bins.
+    Per-bin weights (branch `perbin-noise`, uncommitted; `NoiseConfig.estimate = "controls"`,
+    variance a2 + b I + c2 I^2 per run; default fits unchanged): known-answer 80.6 % (K = 1 / 2 / 3:
+    93 / 81 / 69 %), labelled K > 1 21 -> 8 % on a noisy mostly unimodal dataset and 24 -> 17 % on the
+    benchmark, with a hump at mid intensity in the undeuterated controls. Not yet in the bootstrap
+    or the screen. Next to try: weights from predicted intensities (iterative), the floor, the
+    curve's model-error share.
