@@ -126,5 +126,11 @@ with no measured fully deuterated control at all keeps them, since every one of 
 uses one. Set `stand_in_controls = "include"` to keep them everywhere. The run's own tables
 and uptake plots always show every series.
 
+A control that shows another species in its spectrum is left out of the correction in
+`hxex analyse` (`spectrum_quality_filtering`; see
+[Spectrum quality screens](outputs.md#spectrum-quality-screens)). If that leaves a series
+without a measured fully deuterated control, it takes a stand-in as above, and is then left
+out with the reason `stand-in control (screened)`.
+
 The same control settings in `[analysis.controls]` recompute the values for an analysis of an
 existing bundle.

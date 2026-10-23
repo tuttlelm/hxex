@@ -1662,6 +1662,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.controls]             # control settings to change for the analysis (the",
         "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
         "# [analysis.filters]              # which spectra and K=2 descriptions are kept",
+        '# spectrum_quality_filtering = "loose"  # or "strict", "none": spectra showing another',
+        "#                                 # species (spectra.csv screen_* columns)",
         "# replicate_outlier = 6           # typical replicate sd from the other replicates",
         "# above_amides = true             # leave out a K=1 mean above the amide count",
         '# stand_in_controls = "exclude"   # series without a measured fully deuterated control',

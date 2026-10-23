@@ -3837,3 +3837,23 @@ CSVs or mzML if wanted.
     on the benchmark (26,211 spectra, re-picked from the stored spectra): all five identical,
     picked bins unchanged; picking 23.6 s -> 29.2 s (0.2 ms per spectrum). Nothing acts on the
     scores yet: part 2 is the `spectrum_quality_filtering` setting (PLAN Next steps 9).
+
+152. **Spectrum quality screens, part 2: `spectrum_quality_filtering` (owner, 2026-10-23).** One
+    `[analysis.filters]` setting, `"loose"` (default), `"strict"` or `"none"`, with the levels
+    of item 149 (`hxex.analysis.screening`): remove (left out whole, reason `spectrum quality
+    (<score>)` in `left_out_spectra.csv`), one population only (the spectrum's K >= 2 records
+    dropped where the other K >= 2 filters act; the analysis never reads `review_K`, so this is
+    the same route), or a logged warning. Decided (owner, on my recommendations): controls are
+    screened, and a removed control counts as rejected, so `analysis_controls` recomputes the
+    correction without it (`screened`); a series whose measured fully deuterated controls all
+    go becomes a stand-in and, with `stand_in_controls = "exclude"`, is left out as
+    `stand-in control (screened)`; fragment series are not screened (levels set on intact
+    peptides; on a private ETD example loose would remove 6 %, mostly R2 on c-1 ions, i.e.
+    hydrogen-transfer mixtures, not contaminants); accepted spectra and NaN scores are never
+    touched; screened spectra do not count in the replicate-outlier scatter. The run is
+    unchanged (an analysis setting acts in the analysis). On the benchmark (scores injected
+    into the existing bundle): loose leaves out 555 spectra by the screens plus 146 through
+    the stand-in cascade, keeps 110 at one population and warns about 465; strict 1,144 + 389,
+    174. Replicate outliers fall from 148 to 103 at loose (45 were screened spectra). Each
+    analysis takes seconds. Bundles made before item 151 have no scores, so nothing changes
+    for them until they are run again.

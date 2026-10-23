@@ -224,6 +224,11 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.filters.stand_in_controls": '"exclude" or "include" the series whose fully '
                                           "deuterated control is a stand-in (a sample with "
                                           "no measured control keeps them)",
+    "analysis.filters.spectrum_quality_filtering": '"loose", "strict", or "none": what the '
+                                                   "spectrum quality screens do: leave out "
+                                                   "spectra showing another species, keep one "
+                                                   "population only, or warn (fragments are "
+                                                   "not screened)",
     "analysis.choice.confidence": "a fraction (0.5: 50 %): the interval that must separate the "
                                   "two K=2 values; default 0.5 with populations = "
                                   '"best_set", 0.95 with "bootstrap"',
@@ -302,7 +307,8 @@ _INTROS: dict[str, str] = {
     "analysis": "The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See "
                 "docs/ANALYSIS.md for the methods.",
     "analysis.filters": "Which spectra and K=2 descriptions the analysis trusts. Whole "
-                        "spectra: replicate_outlier, above_amides, stand_in_controls (the "
+                        "spectra: spectrum_quality_filtering, replicate_outlier, "
+                        "above_amides, stand_in_controls (the "
                         "spectra left out are listed in left_out_spectra.csv; one you accept "
                         "in the review is kept). K=2 descriptions per spectrum: "
                         "min_population, max_fD; per species and time: max_fD_se, "

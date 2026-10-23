@@ -19,6 +19,7 @@ from hxex.analysis import (
 )
 from hxex.analysis.species import _combine, _is_trend
 from hxex.io.bundle import ReviewTable
+from hxex.picking.screen import SCREEN_SCORES
 from hxex.report import Results, plot_residue_profile
 from hxex.report.coverage import (
     FD_CMAP,
@@ -1591,3 +1592,92 @@ def test_k2_threshold_comes_from_the_two_population_sets(results):
     assert compare_peptides(results, sample, K=2, rank=1, best_sets=every).delta_crit == (
         pytest.approx(ungated.delta_crit))
     assert np.isnan(compare_peptides(results, sample, K=2, rank=1, best_sets=none).delta_crit)
+
+
+def test_spectrum_quality_filtering(caplog):
+    """[analysis.filters] spectrum_quality_filtering (owner, 2026-10-23, HISTORY 152): the
+    screens' scores remove a spectrum (a control too, which then leaves the back-exchange
+    correction; a series whose measured fully deuterated controls all go becomes a stand-in and
+    says so), keep one at one population, or warn; strict uses lower thresholds; accepted
+    spectra, fragment series and unassessed spectra are never touched."""
+    import dataclasses
+    import logging
+    from types import SimpleNamespace
+
+    from hxex.analysis import left_out_spectra
+    from hxex.analysis.screening import screening
+    from hxex.analysis.species import SpeciesFilters, _spectrum_records, analysis_controls
+
+    results = Results.from_run(run(raw_spectra(n_series=3), config()))
+    fit, b = results.fit, results.binned
+    rows = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    role, data_id = np.asarray(fit.role).astype(str), np.asarray(fit.data_id)
+    timed = np.flatnonzero((role == "") & (data_id == 0))
+    point, two, beyond = timed
+    mild = np.flatnonzero((role == "") & (data_id == 1))[0]
+    undeut = np.flatnonzero((role == "undeut") & (data_id == 1))[0]
+    fulldeut = np.flatnonzero((role == "fulldeut") & (data_id == 2))
+    scores = {name: np.zeros(len(b)) for name in SCREEN_SCORES}
+
+    def put(name, i, value):
+        scores[name][rows[str(fit.spectrum_id[i])]] = value
+
+    put("screen_below_mono", point, 0.3)
+    put("screen_below_mono", undeut, 0.3)
+    for i in fulldeut:
+        put("screen_off_position", i, 0.5)
+    put("screen_between_separate", two, 0.3)
+    put("screen_beyond_reach", beyond, 0.3)
+    put("screen_between", mild, 0.3)  # removed at strict (0.20), kept at loose (0.40)
+    # series 2 another peptide (L -> I: the same mass and amides), so that its fully
+    # deuterated control cannot come from the others
+    peptide = np.where(np.asarray(b.data_id) == 2, "RDKVQKEYAI", np.asarray(b.peptide))
+    results = dataclasses.replace(results, binned=dataclasses.replace(b, peptide=peptide))
+    b = results.binned
+    screened = dataclasses.replace(results, binned=dataclasses.replace(b, **scores))
+
+    loose = screening(screened, "loose")
+    assert set(np.flatnonzero(loose.remove)) == {point, undeut, *fulldeut}
+    assert loose.reason[point] == "spectrum quality (screen_below_mono)"
+    assert list(np.flatnonzero(loose.one_population)) == [two]
+    assert list(np.flatnonzero(loose.warn)) == [beyond]
+    assert screening(screened, "strict").remove[mild] and not loose.remove[mild]
+    assert not screening(screened, "none").remove.any()
+    assert not screening(results, "loose").remove.any()  # clean synthetic data
+    with pytest.raises(ValueError, match="spectrum_quality_filtering"):
+        SpeciesFilters(spectrum_quality_filtering="medium")
+
+    # the removed controls leave the correction: series 1 loses one undeuterated replicate,
+    # series 2 its measured fully deuterated control
+    before = analysis_controls(screened, None, quiet=True)
+    after = analysis_controls(screened, None, quiet=True, screened=loose.remove)
+    one, two_ = before.rows(np.array([1, 2]))
+    assert after.m0[one] != before.m0[one] and after.n_undeut[one] == before.n_undeut[one] - 1
+    assert before.fd_measured[two_] and not after.fd_measured[two_]
+
+    left = left_out_spectra(screened)
+    why = dict(zip(left["spectrum_id"], left["reason"], strict=True))
+    assert why[str(fit.spectrum_id[point])] == "spectrum quality (screen_below_mono)"
+    assert why[str(fit.spectrum_id[undeut])] == "spectrum quality (screen_below_mono)"
+    series2 = [str(s) for s, d in zip(fit.spectrum_id, data_id, strict=True) if d == 2]
+    lost = {why.get(s) for s in series2} - {"spectrum quality (screen_off_position)"}
+    assert lost == {"stand-in control (screened)"}
+    assert not len(left_out_spectra(screened, SpeciesFilters(spectrum_quality_filtering="none"))[
+        "spectrum_id"])
+
+    with caplog.at_level(logging.INFO):
+        _, _, _, dropped = _spectrum_records(screened, (1, 2), False, SpeciesFilters())
+    assert dropped["one_population"] == 1
+    assert "screen_beyond_reach" in caplog.text
+
+    # accepted spectra and fragment series are not screened
+    status = np.asarray(screened.review_status).copy()
+    status[point] = "accepted"
+    fake = SimpleNamespace(fit=fit, binned=screened.binned, review_status=status,
+                           spectra_source=None)
+    assert not screening(fake, "loose").remove[point]
+    fragment = dataclasses.replace(screened.binned, modification=np.where(
+        np.asarray(b.data_id) == 0, "ion_type:c", np.asarray(b.modification)))
+    fake = SimpleNamespace(fit=fit, binned=fragment, review_status=screened.review_status,
+                           spectra_source=None)
+    assert not screening(fake, "loose").remove[point] and screening(fake, "loose").remove[undeut]

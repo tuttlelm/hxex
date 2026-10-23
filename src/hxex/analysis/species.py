@@ -40,6 +40,8 @@ from scipy import stats
 from .. import chem
 from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
 from ..spectra import point_order_key
+from .screening import LEVELS as SCREEN_LEVELS
+from .screening import Screening, screening
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +69,15 @@ class SpeciesFilters:
       deuterated control is a stand-in (the run's median retention, the kint prediction or
       ``d2o_fraction``; not one measured at the peptide's other charge states), except in a
       sample with no measured fully deuterated control at all, whose series all use one
-      (``stand-in control``); ``'include'`` keeps them.
+      (``stand-in control``); ``'include'`` keeps them. A series whose measured controls were
+      all removed by ``spectrum_quality_filtering`` says so (``stand-in control (screened)``).
+    - ``spectrum_quality_filtering``: what the spectrum quality screens
+      (:mod:`hxex.picking.screen`) do, at ``'loose'`` (the default) or ``'strict'``
+      thresholds (:mod:`hxex.analysis.screening`): a spectrum showing another species is left
+      out (``spectrum quality (<score>)``; a control is then left out of the back-exchange
+      correction too), one with a separate cluster between the isotope positions keeps only
+      its K = 1 description, and intensity beyond the reachable range is a warning.
+      ``'none'`` turns it off. Fragment series are not screened.
 
     Two-population descriptions, per spectrum, before replicates and charge states are
     combined:
@@ -95,6 +105,7 @@ class SpeciesFilters:
     replicate_outlier: float | None = 6.0
     above_amides: bool = True
     stand_in_controls: str = "exclude"
+    spectrum_quality_filtering: str = "loose"
 
     def __post_init__(self):
         if not 0 <= self.min_population < 0.5:
@@ -109,6 +120,9 @@ class SpeciesFilters:
             raise ValueError("above_amides must be true or false")
         if self.stand_in_controls not in STAND_IN_CONTROLS:
             raise ValueError(f"stand_in_controls must be one of {', '.join(STAND_IN_CONTROLS)}")
+        if self.spectrum_quality_filtering not in SCREEN_LEVELS:
+            raise ValueError("spectrum_quality_filtering must be one of "
+                             f"{', '.join(SCREEN_LEVELS)}")
 
 
 STAND_IN_CONTROLS = ("exclude", "include")
@@ -282,12 +296,14 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
 _RECOMPUTED: dict[tuple, tuple[weakref.ref, Any]] = {}
 
 
-def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quiet: bool = False):
+def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quiet: bool = False,
+                      screened: np.ndarray | None = None):
     """The controls the analysis uses (:class:`hxex.controls.ControlTable`, or None without
     controls): those of the run, recomputed from its K=1 fits when the review rejected a control
-    spectrum (so that a rejected control does not count) or when ``changes`` (control settings
-    to change, e.g. ``{'d2o_fraction': 0.85}``) are given. Recomputed controls leave out the
-    rejected spectra and the noise outliers."""
+    spectrum (so that a rejected control does not count), when ``screened`` (one entry per row
+    of the fit: the spectra the spectrum quality screens remove) holds a control, or when
+    ``changes`` (control settings to change, e.g. ``{'d2o_fraction': 0.85}``) are given.
+    Recomputed controls leave out the rejected and screened spectra and the noise outliers."""
     stored = results.controls
     run = results.settings.run if results.settings is not None else None
     base = stored.config if stored is not None else (run.controls if run is not None else None)
@@ -304,10 +320,15 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
             fit.role, fit.time, config, where="[analysis.controls]"))
     at_control = np.asarray(fit.role, dtype=str) != ""
     n_rejected = int((rejected & at_control).sum())
-    if stored is not None and not changes and not n_rejected:
+    screened = (np.zeros(len(rejected), dtype=bool) if screened is None
+                else np.asarray(screened, dtype=bool) & at_control & ~rejected)
+    n_screened = int(screened.sum())
+    if stored is not None and not changes and not n_rejected and not n_screened:
         return stored
+    rejected = rejected | screened
     # one analysis asks for the same recomputed controls once per table: compute them once
-    key = (id(results), tuple(sorted((str(k), repr(v)) for k, v in (changes or {}).items())))
+    key = (id(results), tuple(sorted((str(k), repr(v)) for k, v in (changes or {}).items())),
+           np.flatnonzero(screened).tobytes())
     hit = _RECOMPUTED.get(key)
     if hit is not None and hit[0]() is results:
         return hit[1]
@@ -347,6 +368,8 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (
                      f"{n_rejected} rejected control spectra left out" if n_rejected else "",
+                     f"{n_screened} control spectra left out by spectrum_quality_filtering"
+                     if n_screened else "",
                      f"settings changed: {', '.join(sorted(changes))}" if changes else "") if x),
                  int(out.fallback.sum()), len(out),
                  f" (stored: {int(stored.fallback.sum())})" if stored is not None else "")
@@ -408,6 +431,17 @@ def _kept(results, exclude_flagged: bool) -> np.ndarray:
     return keep
 
 
+def _screened_controls(results, changes, screen: Screening, keep: np.ndarray, quiet: bool):
+    """The controls the analysis uses with the screened controls left out, and those before
+    (the same object when the screens left none out)."""
+    removed = screen.remove & keep & (np.asarray(results.review_status) != "accepted")
+    removed &= np.asarray(results.fit.role, dtype=str) != ""
+    unscreened = analysis_controls(results, changes, quiet=quiet or bool(removed.any()))
+    if not removed.any() or unscreened is None:
+        return unscreened, unscreened
+    return analysis_controls(results, changes, quiet=quiet, screened=removed), unscreened
+
+
 def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
                      *, exclude_flagged: bool = False,
                      controls: Mapping[str, Any] | None = None) -> dict[str, np.ndarray]:
@@ -428,12 +462,14 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
         return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     fit, binned = results.fit, results.binned
     keep = _kept(results, exclude_flagged)
-    ctl = analysis_controls(results, controls, quiet=True)
     n_amides = _site_counts(results)
     if filters is None:
         out, why, fd = np.zeros(len(fit), dtype=bool), np.full(len(fit), "", dtype=object), None
     else:
-        out, why, fd = _left_out(results, filters, ctl, n_amides, keep, values=True)
+        screen = screening(results, filters.spectrum_quality_filtering)
+        ctl, unscreened = _screened_controls(results, controls, screen, keep, quiet=True)
+        out, why, fd = _left_out(results, filters, ctl, n_amides, keep, values=True,
+                                 screen=screen, unscreened=unscreened)
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id], dtype=np.int64)
     i = np.flatnonzero(out)
@@ -453,10 +489,13 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
 
 
 def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
-              keep: np.ndarray, values: bool = False):
+              keep: np.ndarray, values: bool = False, screen: Screening | None = None,
+              unscreened=None):
     """Which rows of the fit :class:`SpeciesFilters` leaves out whole, and why (the first
-    reason that applies: the stand-in control, then the amide count, then the replicate
-    outlier); with ``values`` also each row's K=1 fD."""
+    reason that applies: the spectrum quality screens (``screen``, :func:`screening`), the
+    stand-in control, then the amide count, then the replicate outlier); with ``values`` also
+    each row's K=1 fD. ``unscreened`` (the controls before the screens left any out) tells a
+    stand-in the screens made from one there was already."""
     fit, binned = results.fit, results.binned
     n = len(fit.spectrum_id)
     out = np.zeros(n, dtype=bool)
@@ -471,6 +510,11 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
         out[new] = True
         why[new] = reason
 
+    screened = np.zeros(n, dtype=bool)
+    if screen is not None:
+        screened = screen.remove & keep & ~accepted
+        out |= screened
+        why[screened] = screen.reason[screened]
     raw = np.zeros(n, dtype=bool)
     if controls is not None:
         at = controls.rows(fit.data_id)
@@ -481,6 +525,11 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
             stand_in = ~measured & ~raw
             # a sample without any measured fully deuterated control keeps its stand-ins
             has = {s for s in np.unique(sample) if (measured & ~raw & (sample == s)).any()}
+            lost = np.zeros(n, dtype=bool)
+            if unscreened is not None and unscreened is not controls:
+                lost = np.asarray(unscreened.fd_measured, dtype=bool)[
+                    unscreened.rows(fit.data_id)] & stand_in
+            mark(lost & np.isin(sample, list(has)), "stand-in control (screened)")
             mark(stand_in & np.isin(sample, list(has)), "stand-in control")
     k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
     if filters.above_amides:
@@ -494,7 +543,7 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
         role = np.asarray(fit.role).astype(str)
         time = np.asarray(fit.time, dtype=float)
         at_time = (role != "undeut") & (role != "fulldeut") & np.isfinite(time)
-        usable = at_time & keep & np.isfinite(fd)
+        usable = at_time & keep & ~screened & np.isfinite(fd)
         groups: dict[tuple, list[int]] = {}
         data_id = np.asarray(fit.data_id)
         for i in np.flatnonzero(usable):  # the replicates of one series (peptide and charge)
@@ -534,10 +583,18 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
     keep = _kept(results, exclude_flagged)
-    controls = analysis_controls(results, controls_changes, quiet=quiet)
+    screen = (screening(results, filters.spectrum_quality_filtering) if filters is not None
+              else Screening.nothing(len(fit)))
+    controls, unscreened = _screened_controls(results, controls_changes, screen, keep, quiet)
     n_amides = _site_counts(results)
     if filters is not None:
-        out, why = _left_out(results, filters, controls, n_amides, keep)
+        out, why = _left_out(results, filters, controls, n_amides, keep, screen=screen,
+                             unscreened=unscreened)
+        warned = screen.warn & keep & ~out
+        if warned.any() and not quiet:
+            log.warning("%d spectra have picked intensity beyond the range the peptide can reach "
+                        "(screen_beyond_reach in spectra.csv): kept; worth a look",
+                        int(warned.sum()))
         keep &= ~out
         if out.any() and not quiet:
             counts: dict[str, int] = {}
@@ -559,7 +616,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     # role), K and rank
     points = _points(fit)
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
-    dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0}
+    dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0,
+               "one_population": 0}
     for k in ks:
         kf = fit.fits[k]
         order = np.argsort(kf.means, axis=1)
@@ -587,6 +645,9 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
             means, mean_se = c.mean, c.se
         usable = keep & fitted
         if filters is not None and k >= 2:
+            one = screen.one_population & usable
+            dropped["one_population"] += int(one.sum())
+            usable &= ~one
             lo = filters.min_population
             bad_pop = np.any((fracs < lo) | (fracs > 1 - lo), axis=1) & usable
             bad_fd = np.any(means / n_amides[:, None] > filters.max_fD, axis=1) & usable
@@ -672,6 +733,8 @@ def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = Fals
                           f"{filters.max_fD_se:g} or more (max_fD_se)"),
                 "k1_between_ranks": (f"{dropped['k1_between_ranks']} with the K=1 value "
                                      "outside the ranks (k1_between_ranks)"),
+                "one_population": (f"{dropped['one_population']} spectra kept at one population "
+                                   "(screen_between_separate, spectrum_quality_filtering)"),
             }
             log.info("K >= 2 descriptions left out by [analysis.filters]: %s",
                      "; ".join(text for key, text in reasons.items() if dropped.get(key)))

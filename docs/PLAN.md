@@ -626,12 +626,13 @@ Planned, not built:
    back-exchange start of the protection fit. Since HISTORY 140 the retention is combined over
    charge states by default (`combine_charges`; charges that disagree are flagged
    `fd_charges_disagree`). Still open: the kint model treating charge states as one.
-9. **Spectrum quality screens** (owner, 2026-10-23; HISTORY 149, 151). Part 1 built: five
+9. **Spectrum quality screens** (owner, 2026-10-23; HISTORY 149, 151, 152). Built: five
    fit-free scores for another species in the raw spectrum (`screen_*`, computed at picking,
-   in the bundle and `spectra.csv`). Part 2 next: one `[analysis.filters]` setting,
-   `spectrum_quality_filtering` (none / loose / strict, default loose), that removes, keeps at
-   K = 1 only, or warns, at the levels agreed in HISTORY 149; `accepted` in the review keeps a
-   spectrum. Later the same setting holds the weak-spectrum rule (after the noise model).
+   in the bundle and `spectra.csv`), and `[analysis.filters] spectrum_quality_filtering`
+   (none / loose / strict, default loose) that removes (controls leave the correction too),
+   keeps at K = 1 only, or warns; `accepted` in the review keeps a spectrum; fragments are not
+   screened. Later the same setting holds the weak-spectrum rule (after the noise model), and
+   fragment levels if fragment data are ever scored.
 
 ## Risks and open decisions
 

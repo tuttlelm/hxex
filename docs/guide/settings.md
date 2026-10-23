@@ -401,7 +401,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 
 ## `[analysis.filters]`
 
-Which spectra and K=2 descriptions the analysis trusts. Whole spectra: replicate_outlier, above_amides, stand_in_controls (the spectra left out are listed in left_out_spectra.csv; one you accept in the review is kept). K=2 descriptions per spectrum: min_population, max_fD; per species and time: max_fD_se, k1_between_ranks.
+Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_quality_filtering, replicate_outlier, above_amides, stand_in_controls (the spectra left out are listed in left_out_spectra.csv; one you accept in the review is kept). K=2 descriptions per spectrum: min_population, max_fD; per species and time: max_fD_se, k1_between_ranks.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -412,6 +412,7 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: replicate
 | `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
 | `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) |
+| `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
 
 ## `[analysis.choice]`
 

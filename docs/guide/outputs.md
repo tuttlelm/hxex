@@ -175,23 +175,77 @@ Flags mark spectra for review; nothing is dropped. They appear in the `flags` co
 ## Spectrum quality screens
 
 When *hxex* picks a spectrum, it also looks at the raw spectrum around the peptide for signs of
-another species: a second peptide, or a contaminant, whose peaks overlap the peptide's. Each
-score is a share of the intensity, from 0 (nothing seen) to 1, in the last columns of
-`spectra.csv`:
+another species: a second peptide, or a contaminant, whose peaks overlap the peptide's. Such a
+spectrum can shift the measured deuteration or show a second population that is not there.
+Five scores, each a share of the intensity from 0 (nothing seen) to 1, are in the last
+columns of `spectra.csv`.
 
-| Column | What it measures |
-|---|---|
-| `screen_below_mono` | peaks one and two isotope steps below the peptide's lightest (monoisotopic) peak, carried on into the peptide's lowest peaks: another species that starts below the peptide and overlaps it. Empty when the spectrum does not reach far enough below the peptide |
-| `screen_off_position` | intensity in the five lowest peaks found away from where they should be (more than half the picking window, after taking out the series' own offset in its undeuterated control) |
-| `screen_between` | peaks between the peptide's isotope positions, inside or touching its envelope |
-| `screen_between_separate` | peaks between the positions in a separate cluster above the envelope, still within the range the peptide's deuterium could reach |
-| `screen_beyond_reach` | picked intensity beyond that range: more mass than the peptide can have with every amide deuterated |
+**`screen_below_mono`: another species starting below the peptide.** *hxex* looks one and two
+isotope steps below the peptide's lightest (monoisotopic) peak. Peaks there belong to something
+else, and that species' own isotope peaks carry on into the peptide's lowest peaks. The score
+is the share of the peptide's peaks that this carry-on explains. It moves the measured
+deuteration (on a large test dataset, by one to three times the replicate scatter), so
+`hxex analyse` leaves the spectrum out. The score is empty when the spectrum does not reach far
+enough below the peptide to look.
+
+**`screen_off_position`: low peaks in the wrong place.** The five lowest peaks should sit where
+the peptide's composition puts them. The score is the share of the intensity in those peaks
+found more than half the picking window away, after allowing for the series' own offset (the
+calibration, measured on its undeuterated control). An overlapping species of slightly
+different mass does this. Such spectra disagree with their replicates, so `hxex analyse` leaves
+the spectrum out.
+
+**`screen_between`: peaks between the isotope positions, in the envelope.** A peptide's peaks
+come one isotope step apart; peaks well between those positions (outside the picking window,
+at least a quarter step from any position) belong to another species, often of another charge.
+The score is their share of all the peaks, counted where they lie inside or touching the
+peptide's envelope. These spectra also disagree with their replicates, so `hxex analyse` leaves
+the spectrum out.
+
+**`screen_between_separate`: a separate cluster above the envelope.** The same kind of peaks,
+but in a cluster of their own above the peptide's envelope, still in the range the peptide's
+deuterium could reach. It does not move the one-population result, but the fit can take the
+cluster for a second, more deuterated population. `hxex analyse` keeps the spectrum with one
+population only.
+
+**`screen_beyond_reach`: intensity past the peptide's reach.** The share of the picked intensity
+beyond the heaviest the peptide can be (every amide deuterated, plus its natural isotope
+envelope). Those peaks belong to something else, but they made no measurable difference to the
+fits, so `hxex analyse` keeps the spectrum and only warns, with a count.
+
+What `hxex analyse` does is set by `spectrum_quality_filtering` in `[analysis.filters]`:
+`"loose"` (the default), `"strict"`, or `"none"` (the scores are still in `spectra.csv`, but
+nothing is done with them). The levels were set from fits on a large dataset: with and without
+the interference taken out, and how well replicates agree.
+
+| Score | `loose` | `strict` | What happens |
+|---|---|---|---|
+| `screen_below_mono` | 0.10 | 0.05 | left out |
+| `screen_off_position` | 0.20 | 0.10 | left out |
+| `screen_between` | 0.40 | 0.20 | left out |
+| `screen_between_separate` | 0.20 | 0.10 | one population only |
+| `screen_beyond_reach` | 0.10 | 0.10 | warning |
+
+A spectrum left out is listed in `left_out_spectra.csv` with the score that caught it (for
+example `spectrum quality (screen_below_mono)`). On a large intact-peptide dataset `loose` left out
+about 2 % of the spectra and `strict` about 4 %.
+
+- **Controls.** A control the screens leave out is also left out of the back-exchange
+  correction, which is worked out again without it. When that removes every measured fully
+  deuterated control of a series, the series has only a stand-in left and is left out too
+  (`stand-in control (screened)` in `left_out_spectra.csv`; see
+  [Back-exchange correction](back-exchange-correction.md)).
+- **Your review wins.** A spectrum marked `accepted` in the
+  [user review table](project-file.md#the-user-review-table) is never screened out.
+- **Fragments are not screened.** The levels were set on intact peptides; fragment spectra
+  have their scores in `spectra.csv` but nothing is done with them.
+- **Not assessed.** An empty score means *hxex* could not look: the spectrum had no picked
+  intensity, the data were picked outside *hxex* (a table of picked peaks, not spectra), or
+  the results were made by an earlier version of *hxex* (run again to get them).
 
 The tolerances follow the picking window (`[run.picker]`), so the scores mean the same on
-instruments of different resolving power. An empty score means the spectrum was not assessed:
-it had no picked intensity, its data were picked outside *hxex* (a table of picked peaks, not
-spectra), or the results were made by an earlier version of *hxex* (run again to get them). For
-now the scores only describe the spectra: nothing is left out because of them.
+instruments of different resolving power. The run itself does nothing with the scores: its
+tables and figures show every spectrum.
 
 ## Tables from `hxex analyse`
 
@@ -202,7 +256,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 | File | Holds |
 |---|---|
 | `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`, `control_fallback` (corrected with a stand-in control: such series are left out unless `stand_in_controls = "include"` or the sample has no measured control), `fd_other_charge` (with `combine_charges = false` only: the only stand-in was a fully deuterated control from the peptide's other charge states, which the protection-factor fit treats as measured); and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
-| `left_out_spectra.csv` | the spectra the analysis left out whole (`[analysis.filters]`), with `reason`: `replicate outlier` (far from its other replicates), `above the amide count` (more deuterium than the peptide can hold, before the back-exchange correction), or `stand-in control` (its series has no measured fully deuterated control). To keep one, mark it `accepted` in the [user review table](project-file.md#the-user-review-table) |
+| `left_out_spectra.csv` | the spectra the analysis left out whole (`[analysis.filters]`), with `reason`: `replicate outlier` (far from its other replicates), `above the amide count` (more deuterium than the peptide can hold, before the back-exchange correction), `stand-in control` (its series has no measured fully deuterated control), `stand-in control (screened)` (it had one, but the [spectrum quality screens](#spectrum-quality-screens) left it out), or `spectrum quality (<score>)` (another species in the spectrum: the score that caught it). To keep one, mark it `accepted` in the [user review table](project-file.md#the-user-review-table) |
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution, coverage |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `populations.csv` | per residue and time: the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
