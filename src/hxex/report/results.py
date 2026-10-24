@@ -39,6 +39,9 @@ class Settings:
     notes: str = ""
     versions: dict[str, str] = field(default_factory=dict)
     configs: dict[str, Any] = field(default_factory=dict)
+    # the spectra [[input.exclude]] left out before fitting (the manifest's ``excluded``: the
+    # rules with how many each matched, and the spectrum ids; empty without rules)
+    excluded: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_manifest(cls, manifest: dict[str, Any]) -> Settings:
@@ -46,6 +49,7 @@ class Settings:
             project=str(manifest.get("project", "")), created=str(manifest.get("created", "")),
             notes=str(manifest.get("notes", "")), versions=dict(manifest.get("versions", {})),
             configs=dict(manifest.get("configs", {})),
+            excluded=dict(manifest.get("excluded") or {}),
         )
 
     @classmethod
@@ -56,6 +60,7 @@ class Settings:
             project=project, created=datetime.now(UTC).isoformat(timespec="seconds"),
             notes=notes, versions=_versions(),
             configs={"run": run.config.to_dict(), "spectra_source": run.spectra_source},
+            excluded=dict(run.excluded or {}),
         )
 
     @property

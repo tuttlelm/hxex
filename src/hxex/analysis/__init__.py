@@ -92,6 +92,7 @@ from .species import (
     analysis_controls,
     best_sets,
     left_out_spectra,
+    left_out_summary,
     species_uptake,
 )
 
@@ -160,4 +161,5 @@ __all__ = [
     "species_uptake",
     "best_sets",
     "left_out_spectra",
+    "left_out_summary",
 ]

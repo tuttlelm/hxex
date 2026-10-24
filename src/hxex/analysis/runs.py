@@ -121,7 +121,7 @@ class RunSet:
         run, _, sample = str(label).partition(SEPARATOR)
         return run, sample
 
-    def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None):
+    def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None, counts=None):
         """:func:`hxex.analysis.species._records` of every run, each group keyed by its
         :meth:`state`: the per-spectrum filters are applied within each run, the per-species
         ones once, after merged samples have pooled their spectra."""
@@ -152,6 +152,8 @@ class RunSet:
                         ", ".join(label(*s) for s, v in corrected.items() if v) or "none")
         first = self.names[0]
         groups = _filter_species(groups, ks, filters, dropped, quiet)
+        if counts is not None:
+            counts.update(dropped)
         return groups, corrected, nterm[first]
 
 

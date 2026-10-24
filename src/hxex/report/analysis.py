@@ -54,6 +54,7 @@ from ..analysis import (
     compare_settings,
     coverage_table,
     left_out_spectra,
+    left_out_summary,
     region_summary,
     residue_map,
     species_uptake,
@@ -473,6 +474,11 @@ def write_analysis(
                             min_population=config.choice_limits.min_population)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
+            # what was left out on the way, step by step, for people
+            tables["left_out_summary"] = left_out_summary(
+                results, config.filters, ks=config.ks, exclude_flagged=config.exclude_flagged,
+                controls=config.controls, left_out=tables.get("left_out_spectra"),
+                exclude_times=config.exclude_times)
     tables.update(frag_tables)
     jobs += frag_jobs
 

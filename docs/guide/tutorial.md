@@ -257,10 +257,12 @@ after the review of step 9):
 retention of every fully deuterated control: the share of the label it still held when
 measured. Here it is about 0.5, much below the 0.85 of the buffer, because deuterium exchanges
 back during the quench, digestion, and LC. All 194 measured controls were accepted (the
-dashed lines are the limits they were judged by); the one peptide without a fully deuterated
-control uses the median of the others. The grey bars count controls that are used but carry a
-warning: here, controls whose replicates were best fitted with two populations, which happens
-for a few peptides with broad envelopes.
+dashed lines are the limits they were judged by); the one peptide and charge without a fully
+deuterated control takes the control of the same peptide at its other charge. The bars below
+`both measured` count controls that are used but carry a note: here, controls whose replicates
+were best fitted with two populations, which happens for a few peptides with broad envelopes,
+and, for most of those, that their retention agrees with the same peptide's in the other
+samples, so the correction is sound.
 
 ![The controls page of the overview](../images/tutorial_controls.png)
 
@@ -328,7 +330,7 @@ hxex resume hxex.toml
 
 This takes 20 to 30 minutes on a laptop (13 minutes on a fast desktop); it prints its progress
 and the time left. A computer with an NVIDIA graphics card and the GPU version of *hxex* does
-it in a minute or two ([Installing *hxex*](install.md)). When it is done, draw the figures
+it in about four minutes ([Installing *hxex*](install.md)). When it is done, draw the figures
 again; they now have error bars:
 
 ```bash
@@ -354,7 +356,7 @@ pictures that open with a double-click (the default, `pdf`, is better for public
 hxex analyse hxex.toml
 ```
 
-This takes under a minute and writes `results_analysis_WT`, with tables and about 30 figures.
+This takes under a minute and writes `results_analysis_WT`, with tables and about 40 figures.
 A few of them:
 
 **The butterfly plot** (`butterfly_R120G.png`) shows the deuterium of every peptide, WT above

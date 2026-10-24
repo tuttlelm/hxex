@@ -144,3 +144,68 @@ def test_a_series_whose_peaks_are_shifted_is_flagged_mz_shift(run):
         assess_quality(meas, fit, mz_offset_ppm=offsets[:-1])
     with pytest.raises(ValueError, match="max_mz_offset_ppm"):
         QualityConfig(max_mz_offset_ppm=0)
+
+
+def _scale_control_peaks(meas, rows, band, factor):
+    """Scale the picked sticks of the controls ``rows`` whose natural-abundance shape puts them
+    in ``band`` (relative to the tallest predicted peak) by ``factor``."""
+    for i in rows:
+        shape = np.asarray(meas.shapes[i])
+        k = np.asarray(meas.bins[i]).astype(int)
+        rel = np.where(k < len(shape), shape[np.minimum(k, len(shape) - 1)] / shape.max(), 0.0)
+        y = np.array(meas.observed[i], dtype=float)
+        sel = (rel >= band[0]) & (rel < band[1])
+        y[sel] *= factor
+        meas = replace_observed(meas, i, y)
+    return meas
+
+
+def test_compressed_tails_in_the_controls_flag_them_and_the_brighter_spectra(run):
+    meas, fit = run
+    controls = np.flatnonzero(np.asarray(meas.role) == "undeut")
+    assert len(controls) == 3
+    planted = _scale_control_peaks(meas, controls, (0.01, 0.1), 0.5)
+    q = assess_quality(planted, fit)
+    tops = np.array([np.max(o) for o in planted.observed])
+    # the brighter half of the controls (at or above their median top) is judged: two of three
+    judged = controls[tops[controls] >= np.median(tops[controls])]
+    assert len(judged) == 2 and q.tails_low[judged].all() and q.tails_low.sum() == 2
+    assert not q.saturated.any()
+    # bright: the series' other spectra at least as bright as a flagged control, and only those
+    others = np.flatnonzero(np.asarray(meas.role) != "undeut")  # labelled and fully deuterated
+    assert np.array_equal(q.bright[others], tops[others] >= tops[judged].min())
+    assert q.bright.any() and not q.bright[controls].any()
+    j = int(others[q.bright[others]][0])
+    scale = 0.5 * tops[judged].min() / tops[j]
+    dimmer = replace_observed(planted, j, np.asarray(planted.observed[j]) * scale)
+    assert not assess_quality(dimmer, fit).bright[j]
+    # one replicate of three is not "most": nothing flagged
+    one = _scale_control_peaks(meas, controls[:1], (0.01, 0.1), 0.5)
+    assert not assess_quality(one, fit).tails_low.any()
+    # switched off
+    assert not assess_quality(planted, fit, QualityConfig(tails_low_ratio=None)).tails_low.any()
+
+
+def test_a_low_tallest_peak_flags_the_controls_saturated(run):
+    meas, fit = run
+    controls = np.flatnonzero(np.asarray(meas.role) == "undeut")
+    planted = _scale_control_peaks(meas, controls, (0.3, 1.0), 1.3)  # beside the tallest: high
+    q = assess_quality(planted, fit)
+    assert q.saturated[controls].sum() == 2 and not q.tails_low.any()  # the brighter two
+    assert np.array_equal(q.flagged[controls], q.saturated[controls])
+    assert not assess_quality(meas, fit).saturated.any()
+    for bad in ({"saturated_ratio": 1.0}, {"tails_low_ratio": 1.0}, {"tails_low_ratio": 0}):
+        with pytest.raises(ValueError):
+            QualityConfig(**bad)
+
+
+def test_flags_written_before_the_brightness_flags_read_as_false(run):
+    from hxex.io.bundle import _quality_table, _read_quality
+
+    meas, fit = run
+    q = assess_quality(meas, fit)
+    table = _quality_table(q)
+    old = table.drop_columns(["saturated", "tails_low", "bright"])
+    back = _read_quality(old, q.config.to_dict(), q.spectrum_id)
+    assert not back.saturated.any() and not back.tails_low.any() and not back.bright.any()
+    assert np.array_equal(back.flagged, q.flagged)

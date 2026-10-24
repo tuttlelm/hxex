@@ -311,7 +311,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 
 ## `[run.quality]`
 
-Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_intensity, noise_outlier, mz_shift, poor_envelope. Nothing is dropped; the review layer of the bundle takes the decisions.
+Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_intensity, noise_outlier, mz_shift, poor_envelope, saturated, tails_low, bright. Nothing is dropped; the review layer of the bundle takes the decisions.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -320,6 +320,8 @@ Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_inte
 | `min_series_fits` | integer | `5` | poor_fit: fewest fitted spectra in a series to judge |
 | `min_intensity` | number | `0.3` | low_intensity: total intensity below this share of the other replicates' mean |
 | `max_mz_offset_ppm` | number | `15.0` | mz_shift: a series' m/z offset (ppm) beyond this (false: screen off) |
+| `saturated_ratio` | number | `1.15` | saturated: an undeuterated control whose peaks beside the tallest read above this times natural abundance (false: off) |
+| `tails_low_ratio` | number | `0.7` | tails_low: an undeuterated control whose tail peaks (1-10 % of the top) read below this times natural abundance (false: off) |
 
 ## `[run.registry]`
 

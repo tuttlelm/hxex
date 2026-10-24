@@ -37,6 +37,21 @@ signal never reach the fit and are handled before it.
   conditions, not describing the series' own references. A fragment's envelope is a mixture of
   ion types (``c-1`` and ``c``, say) that the theory cannot predict, so its deuteration is then
   off by up to a hydrogen. False with the theory envelope.
+- ``saturated`` and ``tails_low``: the isotope pattern of an undeuterated control, whose true
+  shape is the natural abundance of its composition, compared with that shape (the height
+  fixed at the tallest predicted peak; :func:`control_shape_ratios`). ``saturated``: the peaks
+  beside the tallest one (predicted at 30 to 100 % of it) read above ``saturated_ratio`` times
+  their prediction, that is the tallest peak reads low, the sign of detector saturation.
+  ``tails_low``: the small peaks (predicted at 1 to 10 % of the top, at least two of them) read
+  below ``tails_low_ratio`` times their prediction; seen in bright spectra on every dataset
+  examined, following the height relative to the top, its cause unknown (HISTORY 156). A
+  control is flagged only when most of its series' control replicates show the sign (a
+  single replicate's tail is noisy), and only the brighter half of the run's undeuterated
+  controls (tallest stick at or above their median) is judged: the signs belong to bright
+  spectra, and a weak control's peak ratios are noise.
+- ``bright``: a labelled spectrum or fully deuterated control whose tallest stick is at least as
+  high as that of a control of its series flagged ``saturated`` or ``tails_low``: likely
+  distorted the same way. Their own shape cannot be checked, since it is not known in advance.
 """
 # evidence for the screens: docs/HISTORY.md items 37, 57 and 87
 
@@ -52,9 +67,10 @@ from .fit.measurements import Measurements
 from .fit.result import FitResult
 from .model import Backend
 from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
-from .spectra import time_point
+from .spectra import UNDEUT, time_point
 
-FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "poor_envelope")
+FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "poor_envelope",
+              "saturated", "tails_low", "bright")
 
 
 @dataclass(frozen=True)
@@ -69,6 +85,10 @@ class QualityConfig:
       other replicates' mean at the same time.
     - ``max_mz_offset_ppm``: ``mz_shift`` when a series' m/z offset against the run is beyond
       this; None: screen off.
+    - ``saturated_ratio``: ``saturated`` when an undeuterated control's peaks beside the
+      tallest read above this times natural abundance; None: off.
+    - ``tails_low_ratio``: ``tails_low`` when an undeuterated control's tail peaks read below
+      this times natural abundance; None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -77,6 +97,8 @@ class QualityConfig:
     min_series_fits: int = 5
     min_intensity: float = 0.3
     max_mz_offset_ppm: float | None = 15.0
+    saturated_ratio: float | None = 1.15
+    tails_low_ratio: float | None = 0.7
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -89,6 +111,10 @@ class QualityConfig:
             raise ValueError("min_intensity must be between 0 and 1")
         if self.max_mz_offset_ppm is not None and not self.max_mz_offset_ppm > 0:
             raise ValueError("max_mz_offset_ppm must be > 0 (or None to skip the screen)")
+        if self.saturated_ratio is not None and not self.saturated_ratio > 1:
+            raise ValueError("saturated_ratio must be > 1 (or None to skip the screen)")
+        if self.tails_low_ratio is not None and not 0 < self.tails_low_ratio < 1:
+            raise ValueError("tails_low_ratio must be between 0 and 1 (or None to skip the screen)")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -111,7 +137,8 @@ class QualityFlags:
     read from a bundle written before it); ``intensity`` is the total intensity and
     ``intensity_rel`` its ratio to the mean of the other replicates at the same time; ``mz_offset``
     is the series' m/z offset relative to the run, in ppm. NaN where not assessed (the flag is False
-    there). ``flagged`` is True where any flag is set.
+    there). ``flagged`` is True where any flag is set. Flags read from a bundle written before
+    them are False.
     """
 
     config: QualityConfig
@@ -128,12 +155,15 @@ class QualityFlags:
     misfit: np.ndarray | None = None
     misfit_rel: np.ndarray | None = None
     poor_envelope: np.ndarray | None = None
+    saturated: np.ndarray | None = None
+    tails_low: np.ndarray | None = None
+    bright: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel"):  # or the envelope flag
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
-        for name in ("mz_shift", "poor_envelope"):
+        for name in ("mz_shift", "poor_envelope", "saturated", "tails_low", "bright"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -214,6 +244,72 @@ def series_mz_offset(data_id: np.ndarray, offset_ppm: np.ndarray) -> np.ndarray:
     return out
 
 
+def control_shape_ratios(meas: Measurements) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each undeuterated control against the natural-abundance shape of its composition, the
+    height fixed at the tallest predicted peak: the median observed / predicted of the peaks
+    beside it (predicted at 30 to 100 % of the top), of the tail peaks (1 to 10 %; NaN with fewer
+    than two), and the spectrum's tallest stick. NaN for every other spectrum, and for a control
+    whose tallest predicted peak was not picked."""
+    m = len(meas)
+    near, tail, top = np.full(m, np.nan), np.full(m, np.nan), np.full(m, np.nan)
+    role = np.asarray(meas.role, dtype=str) if meas.role is not None else np.full(m, "")
+    for i in np.flatnonzero(role == UNDEUT):
+        y = np.asarray(meas.observed[i], dtype=np.float64)
+        k = np.asarray(meas.bins[i]).astype(int)
+        shape = np.asarray(meas.shapes[i], dtype=np.float64)
+        ok = (k >= 0) & (k < len(shape))
+        if not len(y) or y.max() <= 0 or not ok.any():
+            continue
+        rel = shape[k[ok]] / shape.max()
+        t = int(np.argmax(rel))
+        if rel[t] < 1 or y[ok][t] <= 0:
+            continue
+        ratio = y[ok] / (y[ok][t] * shape[k[ok]] / shape.max())
+        beside = (rel >= 0.3) & (rel < 1)
+        tails = (rel >= 0.01) & (rel < 0.1)
+        if beside.any():
+            near[i] = np.median(ratio[beside])
+        if tails.sum() >= 2:
+            tail[i] = np.median(ratio[tails])
+        top[i] = y.max()
+    return near, tail, top
+
+
+def _brightness_flags(meas: Measurements, data_id: np.ndarray, config: QualityConfig):
+    """``saturated``, ``tails_low`` (undeuterated controls, when most of the series' control
+    replicates show the sign) and ``bright`` (the series' labelled spectra and fully deuterated
+    controls at least as bright as a flagged control), see the module docstring."""
+    m = len(meas)
+    flags = {name: np.zeros(m, dtype=bool) for name in ("saturated", "tails_low", "bright")}
+    if config.saturated_ratio is None and config.tails_low_ratio is None:
+        return flags
+    near, tail, top = control_shape_ratios(meas)
+    role = np.asarray(meas.role, dtype=str) if meas.role is not None else np.full(m, "")
+    peak = np.array([float(np.max(o)) if len(o) else 0.0 for o in meas.observed])
+    tests = (("saturated", near, lambda r: r > config.saturated_ratio, config.saturated_ratio),
+             ("tails_low", tail, lambda r: r < config.tails_low_ratio, config.tails_low_ratio))
+    # only the brighter half of the run's controls is judged: the signs belong to bright
+    # spectra, and a weak control's peak ratios are noise (6 % of the controls below 5,000
+    # read 'saturated' on two datasets without this)
+    assessed = np.isfinite(top)
+    level = float(np.median(top[assessed])) if assessed.any() else np.inf
+    for s in np.unique(data_id):
+        rows = np.flatnonzero(data_id == s)
+        controls = rows[role[rows] == UNDEUT]
+        others = rows[role[rows] != UNDEUT]  # labelled spectra and fully deuterated controls
+        for name, stat, test, limit in tests:
+            if limit is None:
+                continue
+            judged = controls[np.isfinite(stat[controls]) & (top[controls] >= level)]
+            if not len(judged):
+                continue
+            hit = judged[test(stat[judged])]
+            if 2 * len(hit) > len(judged):  # most replicates
+                flags[name][hit] = True
+                flags["bright"][others[peak[others] >= top[hit].min()]] = True
+    return flags
+
+
 def assess_quality(
     meas: Measurements,
     fit: FitResult,
@@ -264,6 +360,7 @@ def assess_quality(
     limit = config.max_mz_offset_ppm
     mz_shift = (np.zeros(m, dtype=bool) if limit is None
                 else np.abs(np.nan_to_num(mz_offset)) > limit)
+    brightness = _brightness_flags(meas, np.asarray(fit.data_id), config)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -274,4 +371,5 @@ def assess_quality(
         misfit=misfit, misfit_rel=misfit_rel,
         poor_envelope=np.isin(fit.data_id, np.asarray(
             [] if poor_envelope_series is None else poor_envelope_series, dtype=np.int64)),
+        **brightness,
     )

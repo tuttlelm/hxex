@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import logging
 import signal
 import sys
@@ -726,8 +727,9 @@ def cmd_resume(args) -> int:
         bundle, review = project.output.bundle, project.review
         held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
         # the bootstrap there is kept when it has the project's settings: only what the
-        # review's chosen K lacks is added
-        redo = held != project.run.bootstrap.to_dict()
+        # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
+        # a tuple such as ks = (1, 2) comes back a list, and never equalled the project's)
+        redo = held != json.loads(json.dumps(project.run.bootstrap.to_dict()))
         extra = {"bootstrap": project.run.bootstrap, "add": redo,
                  "view_exclude": _view_exclude(project),
                  "chosen_k": table_choices(project.review)}

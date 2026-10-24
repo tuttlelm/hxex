@@ -39,6 +39,7 @@ from scipy import stats
 
 from .. import chem
 from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
+from ..io.times import format_time
 from ..spectra import point_order_key
 from .screening import LEVELS as SCREEN_LEVELS
 from .screening import Screening, screening, spectra_source
@@ -399,7 +400,8 @@ def _site_counts(results) -> np.ndarray:
     return np.rint(np.asarray(results.measurements.n_max, dtype=float) / factor)
 
 
-def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None):
+def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None,
+             counts=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
     n_amides, rep, control_fallback, run, not_measured, uncorrected)`` (run: '' for one run, the
@@ -407,14 +409,18 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
     :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
     point of a group is a :class:`Point` (``(time, role)``: a time, or a control role).
-    ``results`` may be a :class:`hxex.analysis.RunSet`."""
+    ``results`` may be a :class:`hxex.analysis.RunSet`. ``counts`` (a dict) receives what the
+    K >= 2 filters left out (:func:`_filter_species`; for :func:`left_out_summary`)."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
-        return results._records(ks, exclude_flagged, filters, quiet, controls_changes)
+        return results._records(ks, exclude_flagged, filters, quiet, controls_changes,
+                                counts=counts)
     groups, corrected, nterm, dropped = _spectrum_records(
         results, ks, exclude_flagged, filters, quiet, controls_changes)
     groups = _filter_species(groups, ks, filters, dropped, quiet)
+    if counts is not None:
+        counts.update(dropped)
     return groups, corrected, nterm
 
 
@@ -486,6 +492,161 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
         "fD": (fd[i] if fd is not None else np.full(len(i), np.nan)),
         "reason": why[i].astype(str),
     }
+
+
+# control flags that mean a fully deuterated control was measured but not used
+_FD_REJECTED = ("retention_low", "retention_high", "retention_outlier", "fd_below_data",
+                "fd_off_model")
+# the reasons the spectrum quality screens remove a spectrum, in the order of the summary
+_SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between")
+
+
+def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+                     *, ks: Sequence[int] = (1, 2), exclude_flagged: bool = False,
+                     controls: Mapping[str, Any] | None = None,
+                     left_out: Mapping[str, np.ndarray] | None = None,
+                     exclude_times: Sequence[float] = ()) -> dict[str, np.ndarray]:
+    """What was left out on the way from the spectra read to the analysis, one row per step,
+    for people (``left_out_summary.csv``): columns ``run`` ('' for one run), ``stage``
+    (``before fitting``, ``review``, ``controls``, ``analysis: whole spectra``, ``analysis:
+    two-population descriptions``), ``what``, ``count``, ``unit`` (spectra, series, or
+    peptides and times) and ``setting`` (where it is set). Every check that ran has a row, a
+    count of 0 included. ``left_out``: the :func:`left_out_spectra` table if already made."""
+    from .runs import RunSet
+
+    rows: list[tuple] = []
+
+    def add(run, stage, what, count, unit, setting=""):
+        rows.append((run, stage, what, int(count), unit, setting))
+
+    runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
+    if left_out is None and filters is not None:
+        left_out = left_out_spectra(results, filters, exclude_flagged=exclude_flagged,
+                                    controls=controls)
+    for name, r in runs:
+        fit = r.fit
+        record = r.settings.excluded if r.settings is not None else {}
+        n_excluded = len(record.get("spectrum_ids", ()))
+        picked = len(r.binned) if r.binned is not None else len(fit)
+        stage = "before fitting"
+        add(name, stage, "spectra read", picked + n_excluded, "spectra")
+        rules = record.get("rules", ())
+        for rule in rules:
+            keys = ", ".join(f"{k} {format_time(v) if k == 'time' else v}"
+                             for k, v in rule.items() if k not in ("note", "matched"))
+            what = f"{keys} ({rule['note']})" if rule.get("note") else keys
+            add(name, stage, f"matched by an [[input.exclude]] rule: {what}; stored, not "
+                "fitted", rule.get("matched", 0), "spectra", "[[input.exclude]]")
+        if len(rules) != 1:
+            add(name, stage, "left out by [[input.exclude]] in all" if rules else
+                "left out by [[input.exclude]] (no rules set)", n_excluded, "spectra",
+                "[[input.exclude]]")
+        add(name, stage, "no peaks to fit (empty, or without signal)", picked - len(fit),
+            "spectra", "[run.picker]")
+        add(name, stage, "fitted", len(fit), "spectra")
+        stage = "review"
+        status = np.asarray(r.review_status)
+        add(name, stage, "rejected (the review table, [[review.exclude]], [analysis] exclude)",
+            np.sum(status == "rejected"), "spectra", "[review]")
+        chosen = (np.asarray(r.effective_K) != np.asarray(fit.selected_K)) & (status != "rejected")
+        add(name, stage, "kept, with the number of populations chosen in the review (review_K)",
+            np.sum(chosen), "spectra", "[review] table")
+        if exclude_times:
+            add(name, stage, "at a time left out by exclude_times", np.sum(r.excluded),
+                "spectra", "[analysis] exclude_times")
+        keep = _kept(r, exclude_flagged)
+        if exclude_flagged:
+            add(name, stage, "flagged by a quality check (exclude_flagged)",
+                np.sum(~keep & (status != "rejected")), "spectra", "[analysis] exclude_flagged")
+        level = filters.spectrum_quality_filtering if filters is not None else "none"
+        screen = screening(r, level) if filters is not None else Screening.nothing(len(fit))
+        ctl, _ = _screened_controls(r, controls, screen, keep, quiet=True)
+        stage = "controls"
+        if ctl is None:
+            add(name, stage, "no back-exchange correction (no [run.controls] table)", 0,
+                "series", "[run.controls]")
+        else:
+            corrected = ~np.asarray(ctl.uncorrected, dtype=bool)
+            tokens = [set(str(f).split(";")) for f in ctl.flags]
+
+            def series_with(*names, tokens=tokens, corrected=corrected):
+                return sum(1 for t, c in zip(tokens, corrected, strict=True)
+                           if c and t & set(names))
+
+            role = np.asarray(fit.role, dtype=str)
+            screened = (screen.remove & keep & (status != "accepted") & (role != ""))
+            add(name, stage, "series corrected", np.sum(corrected), "series")
+            add(name, stage, "control spectra left out by the spectrum quality screens",
+                np.sum(screened), "spectra", "[analysis.filters] spectrum_quality_filtering")
+            add(name, stage, "a control replicate left out (far from the others, or above the "
+                "amide count)", series_with("m0_replicate_left_out", "fd_replicate_left_out"),
+                "series", "[run.controls] replicate_outlier")
+            add(name, stage, "undeuterated control missing or rejected: natural abundance used",
+                series_with("m0_missing", "m0_high"), "series", "[run.controls] m0_max")
+            add(name, stage, "fully deuterated control missing", series_with("fd_missing"),
+                "series", "")
+            add(name, stage, "fully deuterated control rejected (retention, or below the "
+                "series' own time points)", series_with(*_FD_REJECTED), "series",
+                "[run.controls]")
+            add(name, stage, "corrected with a stand-in fully deuterated control",
+                np.sum(~np.asarray(ctl.fd_measured, dtype=bool) & corrected), "series",
+                "[run.controls] fd_fallback")
+        if filters is None:
+            continue
+        stage = "analysis: whole spectra"
+        mine = (np.asarray(left_out["run"]).astype(str) == name) if left_out is not None else []
+        reasons = (np.asarray(left_out["reason"]).astype(str)[mine] if left_out is not None
+                   else np.array([], dtype=str))
+        listed = [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
+        if filters.stand_in_controls == "exclude":
+            listed += ["stand-in control", "stand-in control (screened)"]
+        if filters.above_amides:
+            listed.append("above the amide count")
+        if filters.replicate_outlier is not None:
+            listed.append("replicate outlier")
+        listed += sorted(set(reasons) - set(listed))
+        where = {"spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
+                 "stand-in control": "stand_in_controls = \"exclude\"",
+                 "above the amide count": "above_amides = true",
+                 "replicate outlier": f"replicate_outlier = {filters.replicate_outlier:g}"
+                 if filters.replicate_outlier is not None else ""}
+        for reason in listed:
+            setting = next((v for k, v in where.items() if reason.startswith(k)), "")
+            add(name, stage, f"left out: {reason}", np.sum(reasons == reason), "spectra",
+                f"[analysis.filters] {setting}" if setting else "[analysis.filters]")
+        if level != "none":
+            gone = set(np.asarray(left_out["spectrum_id"]).astype(str)[mine]) if left_out else set()
+            out_now = np.array([str(x) in gone for x in fit.spectrum_id], dtype=bool)
+            add(name, stage, "kept, with a warning: picked intensity beyond the peptide's reach "
+                "(screen_beyond_reach)", np.sum(screen.warn & keep & ~out_now), "spectra",
+                f"[analysis.filters] spectrum_quality_filtering = \"{level}\"")
+    if filters is not None and any(k >= 2 for k in ks):
+        dropped: dict[str, int] = {}
+        _records(results, ks, exclude_flagged, filters, quiet=True, controls_changes=controls,
+                 counts=dropped)
+        stage = "analysis: two-population descriptions (the spectrum stays, at one population)"
+        level = filters.spectrum_quality_filtering
+        for key, what, unit, setting in (
+                ("one_population", "a separate cluster inside the peptide's range "
+                 "(screen_between_separate)", "spectra",
+                 f"spectrum_quality_filtering = \"{level}\""),
+                ("population", f"a population below {filters.min_population:g} or above "
+                 f"{1 - filters.min_population:g}", "spectra",
+                 f"min_population = {filters.min_population:g}"),
+                ("fD", f"a population above fD {filters.max_fD:g}", "spectra",
+                 f"max_fD = {filters.max_fD:g}"),
+                ("fD_se", f"an fD error of {filters.max_fD_se:g} or more", "peptides and times",
+                 f"max_fD_se = {filters.max_fD_se:g}"),
+                ("k1_between_ranks", "the one-population value outside the two populations",
+                 "peptides and times", "k1_between_ranks = true")):
+            if key == "k1_between_ranks" and not filters.k1_between_ranks:
+                continue
+            add("", stage, what, dropped.get(key, 0), unit, f"[analysis.filters] {setting}")
+    names = ("run", "stage", "what", "count", "unit", "setting")
+    return {n: np.array([row[i] for row in rows],
+                        dtype=np.int64 if n == "count" else object).astype(
+                            np.int64 if n == "count" else str)
+            for i, n in enumerate(names)}
 
 
 def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,

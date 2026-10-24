@@ -957,6 +957,13 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     with open_bundle(tmp_path / "out") as b:
         assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
         assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4
+    # the same settings again, a list among them (ks): kept, not redone (a list came back from
+    # the manifest's JSON and never equalled the project's tuple, so every resume redid it)
+    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4\nks = [1]"))
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 0
+    assert "nothing to add" in capsys.readouterr().out
     # the bundle's settings file follows: the new bootstrap, the project file's input kept
     used = load_project(tmp_path / "out" / "run_settings_used.toml")
     assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input

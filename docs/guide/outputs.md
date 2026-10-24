@@ -34,6 +34,7 @@ my_protein/
 │   ├── ...
 │   └── hxex_listing.json
 ├── results_analysis_WT/         the analysis with WT as the reference (hxex analyse)
+│   ├── left_out_summary.csv           what was left out, step by step: read it first
 │   ├── species_uptake.csv, compare_peptides.csv, ...
 │   ├── woods_Mut_60s.pdf, ...
 │   ├── analysis_settings_used.toml    every setting of the analysis, written out
@@ -171,6 +172,57 @@ Flags mark spectra for review; nothing is dropped. They appear in the `flags` co
 | `noise_outlier` | a replicate the replicate-based noise estimate left out |
 | `mz_shift` | the series sits off its predicted m/z: a wrong sequence, modification, terminus or ion type |
 | `poor_envelope` | the fragment envelope could not be measured well |
+| `saturated` | an undeuterated control whose peaks beside the tallest one read higher than natural abundance predicts: the tallest peak reads low, the usual sign of detector saturation |
+| `tails_low` | an undeuterated control whose small isotope peaks read lower than natural abundance predicts; seen in bright spectra, cause unknown |
+| `bright` | a labelled spectrum or fully deuterated control at least as bright as a control of its series flagged `saturated` or `tails_low` |
+
+### Very bright spectra: `saturated`, `tails_low`, and `bright`
+
+An undeuterated control has a known shape: the natural isotope pattern of the peptide. *hxex*
+compares each undeuterated control with that pattern, with the height set by its tallest peak.
+
+- **`saturated`**: the peaks beside the tallest one read more than 1.15 times what the pattern
+  predicts (the setting `saturated_ratio`). The tallest peak is then too low, which is how a
+  detector behaves when it saturates.
+- **`tails_low`**: the small isotope peaks, those the pattern puts at 1 to 10 % of the tallest,
+  read less than 0.7 times their prediction (the setting `tails_low_ratio`). This is seen in the
+  brightest spectra of several datasets and instruments. Its cause is not known, so the flag
+  names what is seen, not a mechanism.
+- **`bright`**: the labelled spectra and fully deuterated controls of the same series that are at
+  least as bright as a flagged control. Their own shape cannot be checked, because it is not
+  known in advance, so they are marked as likely to be distorted in the same way.
+
+A control is flagged only when most of its series' undeuterated replicates show the sign, and
+only the brighter half of a run's undeuterated controls is judged: the peak ratios of a weak
+spectrum are mostly noise. Set either setting to `false` in `[run.quality]` to switch its flag
+off.
+
+**What they mean for the results.** Measured on four datasets, with about 400 to
+3,000 undeuterated controls each:
+
+- A `saturated` undeuterated control reads 0.07 to 0.17 deuterons too high (about 1 to 2 % of
+  the peptide's amides). Its value is subtracted from every time point of the series, so the
+  corrected deuterium uptake of that series reads low by about as much, unless its labelled
+  spectra are saturated in the same way. On the dataset with the most saturated controls they
+  were also fitted with more than one population more often (22 % against 14 % of unflagged
+  controls of similar brightness).
+- A `tails_low` spectrum is narrower than the pattern predicts. It does not make extra
+  populations more likely: flagged controls chose more than one population less often than
+  unflagged ones (2 % against 5 %). The mean of a labelled spectrum is expected to read slightly
+  low, by an amount the controls cannot show, because a control's value cannot fall below zero.
+- A `bright` spectrum chooses more than one population more often than its dimmer replicates at
+  the same time point (12 to 23 percentage points more). The same happens in series with no
+  flagged control at all, and grows with how much brighter one replicate is than another (5 to 7
+  points at up to 1.5 times brighter, 15 to 38 points at three times or more). So most of it is
+  not the distortion these flags detect, but the noise level: *hxex* sets one noise level per
+  series from its undeuterated control, which makes the error bars of a spectrum much brighter
+  than that control too small. Its mean differs little from its replicates' (a median of 0.01 to
+  0.02 deuterons).
+
+What to do: none of these flags removes or changes anything. When a result rests on a
+`saturated` series, check its corrected uptake against the peptide's other charge states. When
+two populations are found only in the brightest replicate of a time point, flagged or not, look
+at the dimmer replicates before trusting the second population.
 
 ## Spectrum quality screens
 
@@ -257,6 +309,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 |---|---|
 | `species_uptake.csv` | per species (peptide or fragment, charges and replicates combined), time, K and rank: mean, fD and their errors, population, amides, `charge_trend`, `control_fallback` (corrected with a stand-in control: such series are left out unless `stand_in_controls = "include"` or the sample has no measured control), `fd_other_charge` (with `combine_charges = false` only: the only stand-in was a fully deuterated control from the peptide's other charge states, which the protection-factor fit treats as measured); and the number of populations chosen for the species at that time from all its spectra together: `best_set_K`, `best_set` (true on the rows of that description: filter on it for one description per peptide and time), `best_set_reason`, and `set_delta_criterion` (the evidence: negative favours two populations) |
 | `left_out_spectra.csv` | the spectra the analysis left out whole (`[analysis.filters]`), with `reason`: `replicate outlier` (far from its other replicates), `above the amide count` (more deuterium than the peptide can hold, before the back-exchange correction), `stand-in control` (its series has no measured fully deuterated control), `stand-in control (screened)` (it had one, but the [spectrum quality screens](#spectrum-quality-screens) left it out), or `spectrum quality (<score>)` (another species in the spectrum: the score that caught it). To keep one, mark it `accepted` in the [user review table](project-file.md#the-user-review-table) |
+| `left_out_summary.csv` | what was left out on the way from the spectra read to the analysis, one row per step, with a count of 0 where nothing was: before fitting (the `[[input.exclude]]` rules, spectra without peaks), the review (rejected, a chosen number of populations), the controls (control spectra screened out, missing or rejected controls, stand-ins), and the analysis (the whole spectra of `left_out_spectra.csv` by reason, and the two-population descriptions set aside by each filter, the spectrum kept at one population). Columns: `stage`, `what`, `count`, `unit` (spectra, series, or peptides and times), and `setting` (where it is set). Read it first: it shows where a dataset loses its spectra |
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution, coverage |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `populations.csv` | per residue and time: the K=1 and the two K=2 values, whether two populations are kept and, if not, why |

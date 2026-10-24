@@ -1349,6 +1349,11 @@ _COMMENTS: dict[str, str] = {
                                  "replicates' mean",
     "run.quality.max_mz_offset_ppm": "mz_shift: a series' m/z offset (ppm) beyond this (false: "
                                      "screen off)",
+    "run.quality.saturated_ratio": "saturated: an undeuterated control whose peaks beside the "
+                                   "tallest read above this times natural abundance (false: off)",
+    "run.quality.tails_low_ratio": "tails_low: an undeuterated control whose tail peaks (1-10 % "
+                                   "of the top) read below this times natural abundance "
+                                   "(false: off)",
     "figures.series": '"flagged" (series with a flag, a rejection or a control fallback), '
                       '"all" or a list of data_id',
     "figures.kinds": "pages of a series' figure: spectra, populations, uptake",
@@ -1399,8 +1404,9 @@ _SECTION_COMMENTS: dict[str, str] = {
                     "controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium "
                     "retention here is the fraction of deuterium kept, not a retention time.",
     "run.quality": "Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, "
-                   "low_intensity, noise_outlier, mz_shift, poor_envelope. Nothing is dropped; "
-                   "the review layer of the bundle takes the decisions.",
+                   "low_intensity, noise_outlier, mz_shift, poor_envelope, saturated, tails_low, "
+                   "bright. Nothing is dropped; the review layer of the bundle takes the "
+                   "decisions.",
     "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
                "draws none; hxex.report.PlotConfig). Changing these needs no new run.",
     "run.registry": "Modified residues, written in sequences as modX labels (a lowercase "

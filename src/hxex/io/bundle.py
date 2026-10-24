@@ -313,6 +313,9 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         misfit_rel=f("misfit_rel") if "misfit_rel" in table.column_names else None,
         # written before the envelope flag: False
         poor_envelope=(b("poor_envelope") if "poor_envelope" in table.column_names else None),
+        # written before the brightness flags: False
+        **{name: (b(name) if name in table.column_names else None)
+           for name in ("saturated", "tails_low", "bright")},
     )
 
 

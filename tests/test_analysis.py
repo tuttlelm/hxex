@@ -1556,6 +1556,51 @@ def test_spectra_left_out_whole_and_why():
         SpeciesFilters(replicate_outlier=0)
 
 
+def test_the_left_out_summary_counts_every_step(two_sample_bundle, tmp_path):
+    """left_out_summary.csv (owner, 2026-10-24): one row per step from the spectra read to the
+    analysis, a count of 0 included, its whole-spectra rows equal to left_out_spectra.csv's
+    reasons; the spectra [[input.exclude]] left out before fitting come from the manifest."""
+    import collections
+    import csv
+    import dataclasses
+
+    from hxex.analysis import AnalysisConfig, left_out_spectra, left_out_summary
+    from hxex.io import open_bundle
+    from hxex.report import Settings, write_analysis
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    write_analysis(results, AnalysisConfig(reference="S", format="png"), tmp_path / "a")
+    with open(tmp_path / "a" / "left_out_summary.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert list(rows[0]) == ["run", "stage", "what", "count", "unit", "setting"]
+    stages = {r["stage"] for r in rows}
+    assert {"before fitting", "review", "controls", "analysis: whole spectra"} <= stages
+    assert any(s.startswith("analysis: two-population descriptions") for s in stages)
+    count = {r["what"]: int(r["count"]) for r in rows}
+    assert count["fitted"] == len(results.fit)
+    assert count["spectra read"] == len(results.binned)  # nothing excluded before fitting
+    assert count["left out by [[input.exclude]] (no rules set)"] == 0
+    reasons = collections.Counter(left_out_spectra(results)["reason"])
+    for r in rows:
+        if r["what"].startswith("left out: "):
+            assert int(r["count"]) == reasons.get(r["what"][len("left out: "):], 0)
+    # the rules of [[input.exclude]], as the manifest records them
+    record = {"rules": [{"time": 0.1, "note": "quench-flow", "matched": 3}],
+              "spectrum_ids": ["a", "b", "c"]}
+    assert Settings.from_manifest({"excluded": record}).excluded == record
+    excluded = dataclasses.replace(results,
+                                   settings=dataclasses.replace(results.settings, excluded=record))
+    t = left_out_summary(excluded)
+    by = dict(zip(t["what"], t["count"], strict=True))
+    assert by["matched by an [[input.exclude]] rule: time 100 ms (quench-flow); stored, not "
+              "fitted"] == 3
+    assert by["spectra read"] == len(results.binned) + 3
+    # without [analysis.filters]: the steps before the analysis only
+    plain = left_out_summary(results, None)
+    assert not any(s.startswith("analysis") for s in plain["stage"])
+
+
 def test_choice_defaults_follow_the_populations_rule(tmp_path):
     """[analysis.choice]'s defaults depend on the rule (owner, 2026-10-22, HISTORY 142): the
     bootstrap rule's tests are the rule itself (0.95, 10 %); with best_set_K they only check

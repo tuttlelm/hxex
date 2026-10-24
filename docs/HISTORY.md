@@ -3913,3 +3913,177 @@ CSVs or mzML if wanted.
     a spectrum weakens (an absolute noise floor, as V4's, item 153). To be evaluated before
     anything is built (owner): whether the errors grow with weakness today, and whether weighting
     by them improves the combined values against replicates and known answers.
+
+155. **The Gaussian choice reopened: a t loss on per-bin weights, and calibrated errors (2026-10-24;
+    scratch on branch `perbin-noise`, uncommitted; private noise_model README).** Owner: the
+    Gaussian decision of item 56 "made sense with the information at the time"; another loss is
+    worth considering if it can be justified. Two directions item 153 never tried, scored as there
+    (the K chosen on the known-answer set and on undeuterated controls): a model-error share of
+    the intensity added to V4's curve in quadrature, and a Student-t loss (0.5 (nu + 1) log(1 +
+    w r^2 / nu) per bin, IRLS weights in the polish, BIC on that loss) with 4 or 10 degrees of
+    freedom on the current noise (V0t) and on V4's per-bin weights (V4t). Correct K on the
+    known-answer set: V0 74.9 %, V4 80.6, V4t4 81.7, V4t10 81.9, model error 79.6 / 77.5 (K = 3
+    recovery falls, as with every variant that loosens the small bins), V0t4 76.7. Labelled K > 1
+    on the noisy unimodal dataset: V0 20.9 %, V4 8.0, V4t4 5.6, V4t10 6.9 (undeuterated controls
+    10.0 / 3.2 / 1.4 / 1.7); on the intact-peptide benchmark 23.7 / 16.8 / 15.0 / 15.9
+    (undeuterated 7.1 / 5.8 / 4.5 / 5.1; the mid-intensity hump shrinks but stays). Candidate:
+    V4t4, best or within 0.2 points of best on every line, at V4's cost. Errors (benchmark, K = 1
+    means with K = 1 bootstrap errors against replicate sets, which include labelling-time
+    variation, and charge sets of one replicate, which include any charge offset; median
+    observed-over-bootstrap ratio normalised to 1 for Gaussian noise): today's errors are
+    miscalibrated monotonically with brightness, 2-5x too large below 0.3 of the undeuterated
+    control's top and 3-4x too small above it; they grow with relative weakness but hardly with
+    the absolute top. V4's errors are flat across brightness and bracket 1 (replicates 0.84,
+    charges 1.06) and grow 10x from the brightest to the weakest spectra; V4t4's are 1.2-1.5x
+    too large because the bootstrap resamples t noise (variance 2x the curve's): resampling
+    Gaussian noise at the per-bin sd under the t-loss fit restores V4's calibration (V4t4g:
+    replicates 0.83, charges 1.06, flat across brightness; median error 0.071 D, 0.044 at
+    tops above 100,000 and 0.66 below 1,300). Weighting
+    by the errors (leave-one-out, inverse-variance against the plain mean): never helps for
+    replicates (separately prepared samples; V0 hurts by 16 %, V4 neutral) and helps for charge
+    states of one replicate (6-8 %, 13-19 % where the errors differ most) once the errors are
+    calibrated. The per-bin fits' K = 1 means are also more reproducible: the median squared
+    replicate difference falls 34 % and the charge difference 40 % under V4 (30 / 36 % under
+    V4t4). Decision pending (owner): adopt V4t4 as the default loss and noise (per-bin variance
+    from the run's undeuterated controls, V4's absolute curve and floor, t loss nu = 4, Gaussian
+    resamples at the per-bin sd), the Gaussian resample for its bootstrap, inverse-variance
+    combination of charge states within a replicate and a plain mean across replicates. The
+    build would need the weights in the screen (its NNLS floor is a least-squares bound: off
+    under the t loss, or a t-consistent bound), the calibrated null simulations under the same
+    model, new regression goldens, and a deliberate-difference entry in PLAN.md.
+
+156. **Envelope membership (owner's idea) evaluated: strays do not drive the fits; bright spectra's
+    isotope tails fall below natural abundance (2026-10-24; private envelope_membership README).**
+    Owner's framing: two issues, off-target intensity in the picked peaks (the greater risk) and
+    the error bar on each reliable peak. The test: every envelope of the peptide, whatever its
+    deuterium distribution, is a non-negative combination of the natural-abundance shape shifted
+    along the grid, so a non-negative deconvolution (lenient, NNLS) or the largest envelope that
+    fits under the sticks (strict, a linear programme with a tolerance of 2 sd or 5 % of the
+    top) leaves the intensity no envelope can produce. On the intact-peptide benchmark the
+    lenient unexplained share at 5 % flags 8.7 % of spectra and catches 58 % of the owner's
+    "contaminating peptide" marks (the earlier connectivity detector 13 % at the same
+    precision); flagged spectra choose K > 1 twice as often (41 against 21 %). But setting the
+    excess bins to the explainable intensity and refitting (K 1-3, V0 noise) changes almost
+    nothing: labelled K > 1 23.7 -> 23.6 %, K changed in 4-6 % of the flagged spectra,
+    known-answer recovery 74.9 -> 74.9-75.7 %, replicate agreement of the K = 1 means unchanged;
+    the same on the noisy unimodal dataset. The mixture fit already ignores isolated strays; the
+    extra K > 1 of flagged spectra comes from intensity consistent with an envelope (shoulders on
+    the flank), which no shape test separates from a population: only replicate, charge-state
+    and control evidence can. Not built. Side finding: with the height fixed at the monoisotopic
+    peak, the undeuterated controls' isotope peaks at 1-10 % of the top read 0.6-0.8 of natural
+    abundance in bright spectra (tops above 20,000), following the height relative to the top,
+    not the absolute intensity; in the raw exported profiles (sticks equal the raw apex heights,
+    areas agree), on all three datasets (their profiles are TOF-like: resolving power flat in
+    m/z; the known-answer set's resampled points do not say). The tutorial data are from a
+    Waters Synapt G2-Si (the paper's methods). The natural-abundance shape is wider than bright
+    spectra's real envelopes: part of the small-bin model error of item 153. Also in the
+    published GSK3 data (Waters, DynamX export), so not one export program; the tutorial run's
+    brightest spectra show the opposite (the monoisotopic top reads low: saturation); the
+    Orbitrap targeted project zeroes small peaks outright (instrument noise threshold); on the
+    benchmark the deficit grows as the charge falls (M+3 at 0.54 of prediction at z1, 1.06 at
+    z4). Cause unknown to the owner (candidates: the dead-time correction, thresholding before
+    scans are summed); a per-run response curve from the controls is the possible remedy, not
+    tested.
+
+157. **Quality flags `saturated`, `tails_low` and `bright` (owner: flag only; 2026-10-24).** The
+    two signs of item 156 measured on every undeuterated control, whose true shape is the natural
+    abundance of its composition, the height fixed at the tallest predicted peak
+    (`quality.control_shape_ratios`): `saturated` when the peaks beside the tallest one (predicted
+    at 30 to 100 % of it) read above `saturated_ratio` (1.15) times their prediction, that is the
+    tallest peak reads low, the classic sign of detector saturation, which is the only sign the
+    owner's question about saturation nomenclature fits; `tails_low` when the tail peaks
+    (predicted at 1 to 10 % of the top, at least two) read below `tails_low_ratio` (0.7), the
+    deficit of item 156, named for what is seen because its cause is unknown. A control is flagged
+    only when most of its series' control replicates show the sign (as `m0_multimodal`) and only
+    the brighter half of the run's controls is judged (tallest stick at or above their median):
+    without that guard 6 % of the controls below 5,000 read "saturated" on two datasets, noise.
+    `bright` marks a series' spectra without a role at least as bright as a flagged control: likely
+    distorted the same way, though their own shape cannot be checked. `[run.quality]`
+    `saturated_ratio` and `tails_low_ratio` (false: off); `quality.parquet` columns (old bundles
+    read False); flags, spectra.csv and the overview as the other flags. Counts: intact-peptide
+    benchmark, controls 13 % tails_low (37 % above 300,000) and 4 % saturated, 2.3 % of labelled
+    spectra bright; the tutorial run, 27 % saturated (47 % above 300,000), 11 % bright; the
+    published GSK3 data, 10 % tails_low (29 % above 300,000); the noisy unimodal dataset 2 % each.
+    No fit changes. `bright` also covers the fully deuterated controls, which feed the correction
+    (benchmark 46, tutorial 27). Risks measured (private envelope_membership/flags): a saturated
+    undeuterated control's K = 1 mean reads 0.07-0.17 D high (0.9-2 % of the amides) against 0 for
+    unflagged controls of similar brightness, so the series' corrected uptake reads low by about
+    as much; on the tutorial run saturated controls chose K > 1 more often (22 against 14 %).
+    tails_low controls chose K > 1 less often (1.9 / 2.4 against 4.5 / 5.1 %); their mean bias
+    cannot be read from controls (the K = 1 mean is bounded at 0). Bright spectra choose K > 1
+    12-23 points more often than their dimmer replicates at the same time, but series without
+    any flagged control show the same, growing with the brightness ratio (brightest minus
+    dimmest replicate: +5-7 points at up to 1.5x, +15-38 at 3x or more): mostly the fixed noise
+    level per series (errors of spectra brighter than their undeuterated control 3-4x too
+    small, item 155), not the distortion the flags detect; their K = 1 means differ from their
+    replicates' by a median of 0.01-0.02 D. Documented with this statement in the guide's
+    outputs page.
+    A grouping of every flag and screen by what goes wrong, proposed and kept here only (owner,
+    2026-10-24: "model mismatch" could confuse users; to revisit as the flags are refined):
+    interference, another species adds intensity (the five screens; a second species in the
+    undeuterated control); envelope distortion, the peptide's own pattern is recorded wrongly
+    (`saturated`, `tails_low`, with `bright` as at risk); model mismatch, the theory cannot
+    predict the true shape (`poor_envelope`, `poor_fit`); weighting, the error bars are the
+    wrong size (`low_intensity`, the bright-replicate effect). Each calls for a different
+    remedy: remove intensity, correct the shape, a better model, better errors. It also
+    explains item 156: removing stray intensity is the interference remedy, and interference
+    was not the main source of error. The guide keeps the flat flag table.
+
+158. **The tutorial download was stale; `hxex resume` redid every bootstrap with a list setting
+    (2026-10-24).** Owner: the tutorial "currently throws errors". The committed notebook,
+    executed end to end with the committed code (1874fb0) from a fresh unpack, ran without an
+    error and reproduced the page's numbers (3,874 measurements; K 1/2/3 = 2,912/839/123). The
+    errors come from the download: the zip on `tutorial-data-1` was built on 2026-10-20, before
+    `hxex report` refused to replace existing figures (item 134), and its notebook's report cells
+    at steps 9 and 10 lack `--overwrite`. A rebuilt zip (the owner replaces the asset; the
+    tutorial is not yet announced) carries the current notebook. Running the notebook a second
+    time in the same folder showed the refusals the introduction promises for `init` and `run`,
+    and also for `report` and `analyse`: the introduction now says so, and how to start again.
+    It also showed that the bootstrap cell redid the whole bootstrap (14 minutes): `hxex resume
+    PROJECT` keeps a bootstrap only when the manifest's settings equal the project's, and the
+    manifest's JSON returns `ks = [1, 2]` as a list while the project holds a tuple, so they never
+    matched. Fixed by comparing the project's settings in the manifest's JSON form; regression
+    test in `test_resume_adds_or_redoes_a_bootstrap_from_the_project_file`. Page text updated: the
+    peptide and charge without a fully deuterated control now takes its other charge's control
+    (item 129), the controls notes include retention agreement, the analysis writes about 40
+    figures; the page's figures redrawn from this run (butterfly, controls, residues, both Woods
+    figures changed; the spectra and uptake figures are identical). Benchmark rerun with the same
+    commit for the owner (private: results_1874fb0 beside the earlier bundles).
+
+159. **A fast route without the bootstrap evaluated (owner's question, 2026-10-24; private
+    fast_route README).** `best_set_K` is computed from the fits alone (the K = 1 and K = 2
+    criteria summed over a peptide's spectra at one time, and the population limit). Each
+    project's analysis written with and without its bootstrap (committed code 1874fb0): best_set_K
+    identical for 98.8 % (tutorial) and 99.5 % (intact-peptide benchmark) of species and times;
+    adding the bootstrap moves the other 9 and 15 from two populations to one (owner: best_set_K
+    comes first, the bootstrap after), because the K = 2 precision filter (`max_fD_se`) drops
+    their K = 2 description once its error is known, and lets an unknown error pass. The peptide comparisons are unchanged (K = 1 and
+    K = 2 positions: identical significance), because the hybrid rule uses only the replicate
+    spectra (Welch's t, `delta_crit`); only `delta_se` shrinks (0.4-0.8 of the bootstrap error).
+    Without the bootstrap, the residue comparisons agree 97.5 / 88.8 % (they test |delta| / se), the
+    K = 2 population comparison has unknown errors for most peptides, and the error bars are too
+    small. The tutorial's bootstrap (K = 1 and 2, 3,874 spectra) takes 13.5 minutes on the CPU
+    (PyTorch's default 24 threads; 12 are faster here, item 46) and 3.8 on the GPU, against 1.3
+    minutes for the fit; the tutorial page and notebook now say about four minutes on a GPU
+    (they said a minute or two). Workflows (owner): a quality assessment of a dataset needs only
+    the fits and best_set_K; error bars, residue comparisons and the population comparison need
+    the bootstrap at K = 1 and K = 2 for every spectrum (`ks = [1, 2]`; not `selected`, which
+    leaves each spectrum without the other K, and not K = 3, which the analysis never uses).
+    Not built: a fits-only route would need the precision filter to treat unknown errors as
+    failing; a bootstrap at K = 2 only for the sets with best_set_K = 2 (28 % of the tutorial's
+    species and times, 23 % of the benchmark's) would save about a third; decisions for the owner.
+    Guide page started (owner): docs/guide/statistics.md, what the fits alone give, what the
+    bootstrap adds, and the roles of replicates and controls, with the tutorial's numbers.
+
+160. **`left_out_summary.csv` in every analysis folder (owner, 2026-10-24).** What was left out
+    between the spectra read and the analysis was only on screen (the analysis log) or spread
+    over `left_out_spectra.csv` (whole spectra only), the manifest (`[[input.exclude]]`) and
+    `series.csv` (controls). The new table has one row per step, a count of 0 included, with
+    `stage` (before fitting, review, controls, analysis: whole spectra, analysis: two-population
+    descriptions), `what`, `count`, `unit` (spectra, series, peptides and times) and `setting`
+    (`analysis.left_out_summary`). It reuses the analysis' own counts: the whole-spectra rows
+    count `left_out_spectra`'s reasons, and `_records` hands back the K >= 2 filters' counts
+    (`counts=`); `Settings.excluded` carries the manifest's exclusion record (empty for older
+    bundles without rules). On the tutorial and the intact-peptide benchmark (1874fb0 bundles)
+    every count equals the analysis log's. Guide: outputs.md (table list, folder tree) and
+    statistics.md ("Seeing what was left out").
