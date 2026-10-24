@@ -41,7 +41,7 @@ from .. import chem
 from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
 from ..spectra import point_order_key
 from .screening import LEVELS as SCREEN_LEVELS
-from .screening import Screening, screening
+from .screening import Screening, screening, spectra_source
 
 log = logging.getLogger(__name__)
 
@@ -355,7 +355,7 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
 
         b = results.binned
         groups = series_groups(b.peptide, b.modification, b.charge, b.data_id)
-        scan_fragments = fragment_series(getattr(results, "spectra_source", None))
+        scan_fragments = fragment_series(spectra_source(results))
         charges = charge_groups(b.sample, b.peptide, b.modification, b.charge, b.data_id,
                                 scan_fragments)
         fragments = fragment_ids(b.modification, b.data_id, scan_fragments)

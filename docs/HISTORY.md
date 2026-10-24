@@ -3857,3 +3857,38 @@ CSVs or mzML if wanted.
     174. Replicate outliers fall from 148 to 103 at loose (45 were screened spectra). Each
     analysis takes seconds. Bundles made before item 151 have no scores, so nothing changes
     for them until they are run again.
+
+153. **Per-bin noise: refinements of V4 tried, none adopted (2026-10-23; branch `perbin-noise`,
+    still uncommitted).** The undeuterated controls' residual scatter at one bin height grows
+    with the spectrum's top: for tops of 5,000 and more it is a function of the height relative
+    to the top alone (about 0.2 % of the top at empty bins, 2 % at 3-10 %, 4 % at 10-30 %, 6 % at
+    30-60 %, on the intact-peptide benchmark and the noisy unimodal dataset alike), i.e.
+    variance ~ kappa T I, better described by the top T than by the total intensity. Refitted
+    with that curve (kappa 1.6e-3 / 0.9e-3 / 0.45e-3: 4 / 3 / 2 % of the top at the tallest bin),
+    the choice of K got much worse: known-answer correct K 80.6 % (V4) -> 68.7 %, labelled K > 1
+    on the noisy set 8 % -> 43 %, on the benchmark 17 % -> 45 %. Weights at the fit's own
+    prediction (one reweighting pass) gave 82.2 % on the known-answer set but 18 % on the noisy
+    set (its weak undeuterated controls 38-69 % K > 1); V4's curve fitted to relative errors was
+    mixed; the floor (0.2-1 % of the top) made no difference. Reason: these give the small bins
+    small variances, so the binomial model's mismatch in the flanks and tail of a labelled
+    envelope reads as significant and a second component absorbs it (the Poisson failure of
+    item 55). The controls' residuals are noise around the right shape; labelled fits also carry
+    model error, largest at small bins. A noise model is judged by the K it chooses (known
+    answers, undeuterated controls), not by how well it matches the controls' residuals. V4
+    (absolute curve fit, smoothed-observed weights) stays the candidate; the benchmark's
+    mid-intensity rise of undeuterated K > 1 (9 % at tops 5,000-20,000) is not a matter of the
+    curve's form. The Poisson loss under the current code (owner: item 55's conditions did not
+    rule it out): at the 3 % scale (about 1,100 counts at the series' undeuterated top), at the
+    count measured from the controls (1/kappa), scaled by each spectrum's own top, with an
+    absolute counting term in the gain (up to 7 % + 30) and with an offset (variance = prediction
+    + 1 to 30 counts), it stays worse than the current Gaussian on the unimodal data (labelled
+    K > 1 23-31 % against 21 % on the noisy set, 18-30 % against 24 % on the benchmark; weak
+    undeuterated controls 50-56 %), the offset bringing the known-answer set to 78.6 % (V4 80.6,
+    now 74.9). The weak controls' second component (median 9 %, about 6 D above the main one,
+    always heavier) fits the tail: picked noise is the window maximum, so an empty bin reads
+    small and positive (1-8 % of the top in weak spectra), and a loss that scales every spectrum
+    to the same counts makes that tail significant. V4 copes through its absolute variance
+    floor. Decided (owner): the noise-model work stops here; V4 stays shelved on the branch
+    (not built into the bootstrap or the screen), to come back to only if the calibrated
+    set-level tests show that the spectrum-level noise still matters. Next: the weak-spectrum
+    rule with the current noise. Scripts and tables: private noise_model README.

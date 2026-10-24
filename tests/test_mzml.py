@@ -643,6 +643,14 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
         assert set(t["fragment"][ms2]) == {"c:10"} and set(t["fragment"][~ms2]) == {""}
         assert set(t["activation"][ms2]) == {"ETD"} and set(t["precursor_charge"][ms2]) == {20}
         assert set(t["precursor_mz"][ms2]) == {1012.0} and np.isnan(t["precursor_mz"][~ms2]).all()
+        # a fragment known only from its scan target is not screened (HISTORY 152)
+        from hxex.analysis.screening import screening
+        from hxex.picking.screen import SCREEN_SCORES
+
+        flagged = dataclasses.replace(results, binned=dataclasses.replace(
+            results.binned, **{n: np.full(len(results.binned), 0.9) for n in SCREEN_SCORES}))
+        removed = screening(flagged, "loose").remove
+        assert not removed[ms2].any() and removed[~ms2].all()
 
 
 ETD = ("MS:1000598", "electron transfer dissociation")

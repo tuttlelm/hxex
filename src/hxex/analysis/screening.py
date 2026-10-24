@@ -60,6 +60,16 @@ class Screening:
         return cls(no, np.full(n, "", dtype=object), no.copy(), no.copy())
 
 
+def spectra_source(results) -> dict | None:
+    """How the spectra of ``results`` were read: a run result's own record, else the one in
+    its settings (:class:`hxex.report.Results`)."""
+    source = getattr(results, "spectra_source", None)
+    settings = getattr(results, "settings", None)
+    if source is None and settings is not None:
+        source = settings.spectra_source
+    return source
+
+
 def screening(results, level: str) -> Screening:
     """The action the level ``level`` (:data:`LEVELS`) takes on every spectrum of the fit."""
     if level not in LEVELS:
@@ -74,7 +84,7 @@ def screening(results, level: str) -> Screening:
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id], dtype=np.int64)
     fragments = fragment_ids(binned.modification, binned.data_id,
-                             fragment_series(getattr(results, "spectra_source", None)))
+                             fragment_series(spectra_source(results)))
     eligible = ~np.isin(np.asarray(fit.data_id), list(fragments))
     eligible &= np.asarray(results.review_status) != "accepted"
 
