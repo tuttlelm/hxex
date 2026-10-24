@@ -3892,3 +3892,24 @@ CSVs or mzML if wanted.
     (not built into the bootstrap or the screen), to come back to only if the calibrated
     set-level tests show that the spectrum-level noise still matters. Next: the weak-spectrum
     rule with the current noise. Scripts and tables: private noise_model README.
+
+154. **No weak-spectrum rule; weak spectra should weigh less through their errors (owner,
+    2026-10-23).** Weak spectra (total picked intensity below 0.05-0.2 of the run's median
+    undeuterated total) give false extra populations on three of five datasets (undeuterated
+    controls 22-73 % at K > 1 against 3-7 % typical; their labelled K > 1 carry no information:
+    stronger siblings at another charge or replicate are no more often at K > 1), not on the
+    tutorial data, and the known-answer set's weak spectra are mostly truly multimodal. A rule
+    calibrated per run from the controls works (private evaluation, weak_spectra README) but needs
+    about 100-200 undeuterated controls, too many to be feasible (owner); a sibling check and a
+    fixed threshold (0.05: a point or two fewer false K > 1, no cost on the known-answer set)
+    were judged too complicated or not worth a rule. The existing `low_intensity` flag (below
+    0.3 of the replicates' mean) is a different thing: it finds a dropout replicate and flags
+    only 1-4 % of the weak spectra at K > 1, which are weak together with their replicates.
+    Decided: no rule. Direction (owner): the size of the errors of weak spectra should lower
+    their weight in the aggregate fits. Today replicates and charge states are combined by a
+    plain mean (the errors only set the combined standard error), and the noise sd is 3 % of the
+    series' own undeuterated top, so a weak series' errors are not larger than a strong one's;
+    weighting by the errors needs both an inverse-variance combination and errors that grow as
+    a spectrum weakens (an absolute noise floor, as V4's, item 153). To be evaluated before
+    anything is built (owner): whether the errors grow with weakness today, and whether weighting
+    by them improves the combined values against replicates and known answers.
