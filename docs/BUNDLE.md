@@ -178,7 +178,10 @@ Index columns of `binned` and `spectra`: `spectrum_id`, `sample`, `peptide` (mod
 `acK`), `peptide_range`, `file`, `label`, `modification`, `start_seq`, `end_seq`, `charge`,
 `rep`, `data_id`, `time`, `role`, `rt` (the chromatographic retention time in minutes, NaN when
 unknown; from `[input] retention_times`, a peptide table's `rt` column or the scans of a
-fixed-time run; absent in bundles written before 2026-10-15, read as unknown).
+fixed-time run; absent in bundles written before 2026-10-15, read as unknown); in `spectra` and
+`binned`, `rt_start` and `rt_end` (minutes: the times of the first and last scan summed into the
+spectrum, for LC-MS scan files with a fixed time; NaN otherwise; absent in bundles written
+before 2026-10-24, read as unknown).
 
 `role` (`undeut`, `fulldeut` or empty) is in every per-spectrum table (`spectra`, `binned`,
 `measurements`, `fit`, `components`). Bundles written before 2026-10-18 have no `role` column

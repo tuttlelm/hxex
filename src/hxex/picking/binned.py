@@ -63,6 +63,8 @@ class BinnedSet:
     mz_offset_ppm: np.ndarray | None = None
     rt: np.ndarray | None = None
     role: np.ndarray | None = None
+    rt_start: np.ndarray | None = None
+    rt_end: np.ndarray | None = None
     screen_below_mono: np.ndarray | None = None
     screen_off_position: np.ndarray | None = None
     screen_between: np.ndarray | None = None
@@ -73,8 +75,9 @@ class BinnedSet:
         for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
-        if self.rt is None:  # retention times (minutes) not given: unknown
-            object.__setattr__(self, "rt", np.full(len(self.offsets) - 1, np.nan))
+        for name in ("rt", "rt_start", "rt_end"):  # retention times (minutes) not given: unknown
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.peak_mz is None:
             object.__setattr__(self, "peak_mz", np.full(len(self.mz), np.nan))
         if self.mz_offset_ppm is None:

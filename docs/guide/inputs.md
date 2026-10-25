@@ -323,6 +323,7 @@ Optional columns:
 | `rt` | the retention time, minutes (stored with the spectra) |
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
 | `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`); not allowed in a project that reads fragment ions (see [Fragment ions](#fragment-ions)) |
+| `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, say) |
 
 Other columns are kept with the entry but not used.
 
@@ -394,6 +395,10 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 | `sum_ppm` | 10.0 | centroided peaks closer than this are merged when scans are summed |
 | `gap_factor` | 3.0 | profile scans: gaps the instrument left out are not bridged when summing |
 | `precursor_tol` | 1.0 | m/z tolerance when matching a scan's precursor |
+| `find_peak` | false | time-point and control runs: find each peptide's elution peak near its `rt` and sum only that peak's scans (see [Finding each peptide's peak](#finding-each-peptides-peak)) |
+| `peak_search` | 30 s | how far either side of `rt` the peak is looked for |
+| `peak_smoothing` | (measured) | the chromatogram's smoothing, in seconds; left out, half the run's typical peak width |
+| `peak_width` | 0.5 | the window: the peak's apex plus and minus this many peak widths at half height |
 
 Profile and centroided scans are both read. Summed profile scans are put on a common m/z grid;
 centroided scans are merged peak by peak. Profile data is recommended: when converting Thermo
@@ -480,7 +485,43 @@ The fragments' own analysis is described in [Experiment types](experiments.md#fr
 
 A spectrum's retention time (minutes) comes from, in order: the `[input] retention_times` table;
 the peptide table's `rt` column; for a fragment, its parent's; in a time-point or control file,
-the signal-weighted time of the summed scans. Kinetics spectra have none.
+the signal-weighted time of the summed scans. Kinetics spectra have none. With `find_peak`, a
+found peak's own time takes the place of the `rt` column.
+
+`spectra.csv` also says which scans each spectrum summed: `rt_start` and `rt_end` are the times,
+in minutes, of its first and last scan (time-point and control files only).
+
+### Finding each peptide's peak
+
+In an LC-MS run each peptide elutes as a peak a few seconds wide, and other peptides elute
+around it. Summing a fixed window takes in whatever else falls on the peptide's m/z values in
+that time; in a crowded digest that is often another species. If your peptide table gives only
+a retention time (`rt`) for each peptide, *hxex* can find the peptide's peak in every run
+itself, as HDExaminer does:
+
+```toml
+[input.scans]
+find_peak = true
+```
+
+For each run and peptide, *hxex* follows the intensity at the peptide's predicted isotope
+positions, scan by scan, within 30 seconds either side of its `rt` (`peak_search`). It smooths
+this trace, takes the peak nearest to `rt` (not the tallest one: another species often elutes
+a few seconds away), and sums the scans from the peak's apex to half its width at half height
+either side (`peak_width`), stopping where the trace turns up again. The charge states of a
+peptide come out of the column together, so they share one peak. The smoothing follows the
+run: half its typical peak width, measured on its strongest peptides, so it suits a short or
+long gradient and a fast or slow scan rate alike; `peak_smoothing` sets it in seconds instead.
+The run log reports each run's measured peak width and the smoothing used.
+
+A peptide with its own `rt_start` and `rt_end` keeps them. To correct one run, add a row for
+that run alone (the `run` column) with the window you want; the other runs keep finding the
+peak. Every peptide needs either `rt` or `rt_start` and `rt_end`; `hxex check` names any that
+has neither. Fragment ions keep their windows.
+
+On a whole-cell digest measured on an Orbitrap (563 peptides, 45 runs), the peaks found were
+a median of 0.8 seconds from those HDExaminer used, and the spectra that wrongly needed a second
+population fell by about a third against a fixed window (HISTORY 164).
 
 ### Thermo raw files
 

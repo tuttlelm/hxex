@@ -157,6 +157,8 @@ class Spectrum:
     the scans sets it, otherwise it comes from the entry's ``rt`` column (:func:`entry_rt`).
     ``resolving_power`` is the instrument's resolving power recorded with the scans, quoted at
     ``resolving_power_mz`` (both NaN when the file does not record it; Thermo raw files do).
+    ``rt_start`` and ``rt_end`` (minutes) are the times of the first and last scan summed into
+    the spectrum, for an LC-MS run with a fixed time (NaN otherwise).
     """
 
     mz: np.ndarray
@@ -171,6 +173,8 @@ class Spectrum:
     resolving_power: float = float("nan")
     resolving_power_mz: float = float("nan")
     role: str = ""
+    rt_start: float = float("nan")
+    rt_end: float = float("nan")
 
     def __post_init__(self):
         object.__setattr__(self, "role", check_role(self.role))
@@ -251,9 +255,11 @@ class SpectrumSet:
     resolving_power: np.ndarray | None = None
     resolving_power_mz: np.ndarray | None = None
     role: np.ndarray | None = None
+    rt_start: np.ndarray | None = None
+    rt_end: np.ndarray | None = None
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
-        for name in ("rt", "resolving_power", "resolving_power_mz"):
+        for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.role is None:  # built without roles: time points only
@@ -337,6 +343,8 @@ class SpectrumSet:
                         dtype=np.float64),
             source=source,
             resolving_power=np.array([s.resolving_power for s in spectra], dtype=np.float64),
+            rt_start=np.array([s.rt_start for s in spectra], dtype=np.float64),
+            rt_end=np.array([s.rt_end for s in spectra], dtype=np.float64),
             resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
                                         dtype=np.float64),
             role=np.array([s.role for s in spectra], dtype="<U8"),

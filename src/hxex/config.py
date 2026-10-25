@@ -38,6 +38,7 @@ and :func:`template` writes a project file with every default.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import textwrap
 import tomllib
@@ -669,7 +670,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if not isinstance(scans, Mapping):
         raise ProjectError(f"[input] scans = {_toml_value(scans)}: expected a table")
     scans = _false_to_none(scans, MzmlConfig)
-    scans = _times_in(scans, ("min_time",), "input.scans")
+    scans = _times_in(scans, ("min_time", "peak_search", "peak_smoothing"), "input.scans")
     if isinstance(scans.get("windows"), list):
         scans["windows"] = [_window(w, "input.scans.windows") for w in scans["windows"]]
     _check_types(scans, MzmlConfig, "input.scans")
@@ -946,13 +947,20 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
 def scan_peptides(project: Project):
     """The peptide table of an mzML or Thermo project, checked against its runs: a row's
     ``sample`` (empty: every run) must be the sample of a run, and a peptide (with its charge and
-    modification) may be listed once per sample, or once with an empty sample."""
+    modification) may be listed once per sample, or once with an empty sample. A row may also
+    name one ``run`` (the file name of an ``[[input.runs]]`` path): it is read from that run
+    only, and once per run; a run with a row of its own does not read the peptide's general row
+    (the general row's entry gets ``not_runs``), so a run's row overrides it (its own
+    ``rt_start``, ``rt_end``, say)."""
     from .io.entries import SCAN_REQUIRED, read_peptide_table
+    from .io.mzml import run_name
 
     inp = project.input
     entries = read_peptide_table(inp.peptides, required=SCAN_REQUIRED)
     samples = sorted({r.sample for r in inp.runs})
+    run_samples = {run_name(r): r.sample for r in inp.runs}
     seen: dict[tuple, list[str]] = {}
+    own: dict[tuple, set[str]] = {}  # peptide key -> the runs with a row of their own
     for line, entry in enumerate(entries, start=2):
         name = f"{inp.peptides} line {line}: {entry.peptide} (charge {entry.charge})"
         if entry.sample and entry.sample not in samples:
@@ -961,6 +969,19 @@ def scan_peptides(project: Project):
                                "the runs of its sample, or from every run when its sample is "
                                "empty")
         key = (entry.peptide, entry.start_seq, entry.end_seq, entry.charge, entry.modification)
+        run = str(dict(entry.extra).get("run", "") or "").strip()
+        if run:
+            if run not in run_samples:
+                raise ProjectError(f"{name}: run {run!r} is not the file of any [[input.runs]]; "
+                                   "the run column names a run by its file name")
+            if entry.sample and run_samples[run] != entry.sample:
+                raise ProjectError(f"{name}: run {run!r} is a run of sample "
+                                   f"{run_samples[run]!r}, not {entry.sample!r}")
+            if run in own.setdefault(key, set()):
+                raise ProjectError(f"{name}: listed again for run {run!r}; list a peptide once "
+                                   "per run")
+            own[key].add(run)
+            continue
         before = seen.setdefault(key, [])
         if entry.sample in before or (before and "" in (entry.sample, *before)):
             raise ProjectError(f"{name}: listed again for "
@@ -971,6 +992,12 @@ def scan_peptides(project: Project):
     problems = fragment_parent_problems(project, entries)
     if problems:
         raise ProjectError("; ".join(problems))
+    if own:  # the general rows step aside for the runs that have their own
+        entries = [e if str(dict(e.extra).get("run", "") or "").strip() or not own.get(
+            (e.peptide, e.start_seq, e.end_seq, e.charge, e.modification)) else
+            replace(e, extra=tuple(dict(e.extra, not_runs=";".join(sorted(own[(
+                e.peptide, e.start_seq, e.end_seq, e.charge, e.modification)]))).items()))
+            for e in entries]
     return entries
 
 
@@ -1006,11 +1033,16 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
     ``rt_start`` and ``rt_end`` columns set the retention window of its targets, in place of
     ``rt_window``."""
     from .fragments import fragment_targets
-    from .spectra import entry_rt_window
+    from .spectra import entry_rt, entry_rt_window
 
     inp = project.input
     targets = []
-    for entry in scan_peptides(project):
+    for line, entry in enumerate(scan_peptides(project), start=2):
+        if (inp.scans.find_peak and inp.parents and entry_rt_window(entry) is None
+                and not math.isfinite(entry_rt(entry))):
+            raise ProjectError(f"{inp.peptides} line {line}: {entry.peptide} (charge "
+                               f"{entry.charge}): [input.scans] find_peak needs each peptide's "
+                               "rt (minutes) to look near, or its own rt_start, rt_end")
         # the peptide's own retention window (rt_start, rt_end) overrides the project's
         window = entry_rt_window(entry)
         if inp.parents:
@@ -1206,6 +1238,13 @@ _COMMENTS: dict[str, str] = {
     "input.scans.gap_factor": "profile scans: a point spacing this many times its neighbours' "
                               "is a stretch the instrument left out",
     "input.scans.precursor_tol": "m/z tolerance matching a scan's precursor to a target's",
+    "input.scans.find_peak": "LC-MS runs with a fixed time: find each peptide's elution peak "
+                             "near its rt (peptide table, minutes) and sum that peak's "
+                             "scans; rows with rt_start, rt_end keep them",
+    "input.scans.peak_search": "s either side of a peptide's rt that its peak is looked for in",
+    "input.scans.peak_smoothing": "s: the chromatogram's running mean (false: half the run's "
+                                  "typical peak width, measured)",
+    "input.scans.peak_width": "the window: the apex +- this many peak widths at half maximum",
     "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
                                   "series' undeuterated controls are missing or poor (false: "
                                   "none)",

@@ -1228,3 +1228,60 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     assert "out_tables: up to date" in info and "out_figures: made from earlier results" in info
+
+
+def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):
+    """[input.scans] find_peak in a project (PLAN Next steps 10): a peptide row's rt is searched
+    near in each run; a row naming one run (the run column) overrides the general row there,
+    here with its own rt_start, rt_end; check refuses a peptide without rt or a window, and a
+    run column naming no run."""
+    from test_mzml import lc_run, write_mzml
+
+    for name in ("a", "b"):
+        write_mzml(tmp_path / f"{name}.mzML", lc_run(charges=(2,)))
+    (tmp_path / "peptides.csv").write_text(
+        "peptide,start_seq,end_seq,charge,rt,rt_start,rt_end,run\n"
+        f"{PEPTIDE},1,10,2,0.5,,,\n"
+        f"{PEPTIDE},1,10,2,0.5,0.70,0.80,b.mzML\n")
+    text = f"""
+project = "lc"
+[input]
+format = "mzml"
+peptides = "peptides.csv"
+[[input.runs]]
+path = "a.mzML"
+sample = "WT"
+time = "60 s"
+[[input.runs]]
+path = "b.mzML"
+sample = "WT"
+rep = 2
+time = "60 s"
+[input.scans]
+find_peak = true
+peak_search = "30 s"
+[output]
+bundle = "out"
+{FAST_RUN}
+"""
+    path = tmp_path / "hxex.toml"
+    path.write_text(text)
+    assert cli.main(["-q", "check", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        s = b.spectra()
+    by_rep = {int(r): (60 * a, 60 * z) for r, a, z in zip(s.rep, s.rt_start, s.rt_end, strict=True)}
+    assert 25 < by_rep[1][0] and by_rep[1][1] < 35  # a: found around 30 s
+    # b: its own window, 42-48 s (where the 45 s species elutes)
+    assert 41.5 <= by_rep[2][0] and by_rep[2][1] <= 48.5
+    rows = (tmp_path / "out_tables" / "spectra.csv").read_text().splitlines()
+    assert {"rt_start", "rt_end"} <= set(rows[0].split(","))
+    capsys.readouterr()
+    (tmp_path / "peptides.csv").write_text(
+        "peptide,start_seq,end_seq,charge\n" f"{PEPTIDE},1,10,2\n")
+    assert cli.main(["check", str(path)]) != 0
+    assert "find_peak needs each peptide's rt" in capsys.readouterr().err
+    (tmp_path / "peptides.csv").write_text(
+        "peptide,start_seq,end_seq,charge,rt,run\n" f"{PEPTIDE},1,10,2,0.5,c.mzML\n")
+    assert cli.main(["check", str(path)]) != 0
+    assert "run 'c.mzML' is not the file of any [[input.runs]]" in capsys.readouterr().err

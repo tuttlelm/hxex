@@ -164,6 +164,10 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `sum_ppm` | number | `10.0` | centroided peaks closer than this (ppm) are summed |
 | `gap_factor` | number | `3.0` | profile scans: a point spacing this many times its neighbours' is a stretch the instrument left out |
 | `precursor_tol` | number | `1.0` | m/z tolerance matching a scan's precursor to a target's |
+| `find_peak` | true/false | `false` | LC-MS runs with a fixed time: find each peptide's elution peak near its rt (peptide table, minutes) and sum that peak's scans; rows with rt_start, rt_end keep them |
+| `peak_search` | number | `30.0` | s either side of a peptide's rt that its peak is looked for in |
+| `peak_smoothing` | number | unset | s: the chromatogram's running mean (false: half the run's typical peak width, measured) |
+| `peak_width` | number | `0.5` | the window: the apex +- this many peak widths at half maximum |
 
 ## `[output]`
 

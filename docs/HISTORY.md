@@ -4087,3 +4087,118 @@ CSVs or mzML if wanted.
     bundles without rules). On the tutorial and the intact-peptide benchmark (1874fb0 bundles)
     every count equals the analysis log's. Guide: outputs.md (table list, folder tree) and
     statistics.md ("Seeing what was left out").
+
+161. **The set test needs very little resampling (owner's question, 2026-10-24; private
+    population_calibration/resampling README).** The calibrated set test (a likelihood-ratio
+    test of one against two populations per peptide set, against a simulated null from the K = 1
+    fits; design item 3a) was run with B = 100 null resamples per spectrum, 2.39 million fits
+    (72 minutes on the GPU) for the intact-peptide benchmark. Subsampled offline (4,724 sets):
+    the empirical p cannot go below 1 / (B + 1), so per set it needs B >= 100; a gamma tail or an
+    independent recombination of each spectrum's draws agrees with B = 100 on 97.4-97.6 % of sets
+    at B = 20; a null pooled over the run's spectra (summed over n draws for a set of n) agrees on
+    97.7-97.9 % (kappa 0.95, as close as the two B = 100 methods are to each other) from as few as
+    2,400 null fits (5 % of the spectra, 2 resamples each; seconds on the GPU). A chi-square with
+    3 degrees of freedom per spectrum did as well here, without any simulation, but is not
+    guaranteed. The undeuterated sets read two populations 8-10 % of the time whatever the
+    method or B: that is the noise model and contaminants, not resampling. Against today's
+    best_set_K (summed BIC) the set test finds two populations in 36 against 27 % of labelled sets
+    at the same false rate on the undeuterated sets (agreement 91 %). Consequence for the
+    workflow (owner: fits with an estimated K first, the bootstrap after for firmer statistics):
+    a pooled-null set test fits in the first step, at a few per cent of the fits' cost, and does
+    not need or change the bootstrap; the residue-level tiers (item 148) built on it would then
+    also come from the fits alone. Not built; to check first on other datasets and within-run
+    heterogeneity of the null.
+
+162. **The set test on public Orbitrap data; a crowded digest's interference (2026-10-24; private
+    resampling README and the local project's README).** The owner pointed to MassIVE
+    MSV000094510 (Moroco et al., Mol Cell Proteomics 2025, doi 10.1016/j.mcpro.2025.100904; CC0;
+    owner: may be named, it is from a public repository): an Orbitrap HX study of an unstructured
+    Jurkat whole-cell digest and synthetic PTM peptides. The digest's 45 Q Exactive HF runs
+    (MS1 at 45,000; 563 peptides; triplicates of 13 times; both controls) were read as Thermo raw
+    files with a peptide table built from the paper's supplement. Findings:
+    - Interference: 58 % of the undeuterated controls chose K > 1 (51 % with a +-10 ppm window in
+      place of the +-30-40 ppm the recorded resolving power gives). Their second component sits
+      about 8 D above the first with about 20 % of the intensity: other peptides' peaks landing on
+      the deuterium grid over the 8-24 positions a peptide can reach. The loose spectrum quality
+      screens remove 11-14 % of the spectra and leave this untouched (it is on the grid). After the
+      back-exchange correction hxex and the paper's HDExaminer values both sit on the
+      intrinsic-rate prediction (median difference 0.00), hxex with more outliers (12 % off by
+      more than 0.1, HDExaminer 7 %); the outliers carry interference (62 % K > 1, 11 % of the
+      intensity beyond reach). A centroid of the same sticks is worse than the K = 1 fit, so the
+      difference is in the sticks: HDExaminer finds each peptide's peak in each run, reads around
+      the envelope and was curated; hxex used one retention time per peptide +-0.15 min (my guess:
+      the paper gives no integration range, only a 0.8 min scheduling window for its ETD runs).
+      Owner: retention windows found from the data, as well as given ones (PLAN Next steps 10).
+    - Resampling (item 161) on these data: a per-set gamma tail at B = 20 agrees with B = 100 on
+      98.8 % (benchmark 97.8 %), robust on both; the pooled null is unstable here (single draws
+      90-96 %; the null grows more with peptide size: mean 2.5 to 4.6 by size quarter), so it is
+      not the safe default item 161 suggested; chi-square 3 df 97.8 % but drifting with size.
+      The undeuterated sets read two populations in 49 % whatever the null: interference, not
+      calibration.
+    Item 161's workflow note stands with one change: the set test's null is best a per-set
+    simulation at about 20 resamples (the cost of a bootstrap), not a pooled one.
+
+163. **Unknown K = 2 errors failing the precision filter: tried and reverted (2026-10-24; private
+    fast_route, `*_unknown_fails`).** Item 159 found that the fits-only route keeps a few
+    two-population descriptions the bootstrap later sets aside, mostly where a set's error is
+    unknown (one spectrum and no bootstrap at K = 2: 14 of 18 such rows in the tutorial, 20 of 30
+    on the benchmark). Owner approved making an unknown error fail `max_fD_se`. Measured without
+    the bootstrap against with it: best_set_K identical for 97.4 % (tutorial) and 98.5 %
+    (benchmark), against 98.8 and 99.5 % before; the over-calls fell (tutorial 9 -> 2) but 18 and
+    41 sets now read one population where the bootstrap keeps two, because many single-spectrum
+    sets have precise K = 2 errors once bootstrapped. Reverted: unknown errors pass as before;
+    the fits-only route's small over-call stays, documented in the guide's statistics page.
+
+164. **Retention windows found from the data: prototype on the Orbitrap digest (2026-10-24;
+    PLAN Next steps 10; local project README, section "Retention windows found from the data").**
+    Per run and peptide, a chromatogram summed over the peptide's predicted bins (the profile's
+    tallest point within +-10 ppm), over +-0.5 min of the given time, smoothed over 2.4 s; the
+    local maximum nearest the given time; window apex +- a multiple of its half-maximum width,
+    ended at the valleys; spectra summed again with hxex's own summing and refitted. The found
+    peaks sit a median 0.8 s from HDExaminer's per-run peak times (97 % within 6 s); nearest, not
+    tallest, matters (a taller species often elutes 20 s away); the first try with 3-scan smoothing
+    split the peaks (MS1 every 0.27 s). With windows of +-0.5 width (median 6.5 s, against the
+    fixed 18 s) the undeuterated controls at K > 1 fall from 51 to 35 % and the labelled spectra
+    from 30 to 20 %; the corrected uptake against the intrinsic-rate prediction does not change
+    (12 % more than 0.1 off). Those misses concentrate in 9 % of the peptides, which sit 2.9 ppm
+    off their predicted m/z (0.7 ppm for the rest): co-eluting near-isobaric species, the
+    remaining interference (next step). The ambiguity rule as written flags half the spectra and
+    needs rethinking. So the windows are worth building for the populations; the uptake
+    discrepancy with HDExaminer is not a retention-time matter. Smoothing (owner asked how
+    dataset-dependent it is): flat from 1.3 to 4 s (5 to 15 scans; every measure within a point
+    or two, the apex changing in 2-3 % of the spectra); only 0.8 s failed. An automatic rule,
+    half the run's median half-maximum peak width over its 50 tallest chromatograms (at least 3
+    scans), chose 11-12 scans (about 3 s) in all 45 runs: the proposed default, with a setting in
+    seconds as the override, since peak widths (LC) and scan spacing (method) vary by dataset.
+
+165. **Retention windows found from the data, built (owner: "build it", 2026-10-24; PLAN Next
+    steps 10).** `[input.scans] find_peak` (default false: existing projects read as before):
+    in an LC-MS run with a fixed time, each MS1 peptide whose table row gives `rt` and no
+    `rt_start`, `rt_end` has its elution peak found (`hxex.io.mzml.find_peaks`): a chromatogram per
+    scan, the sum over the peptide's predicted bins of the profile's tallest point within the
+    picker's own half-width (`PickerConfig.half_width`, so finding and picking agree), within
+    `peak_search` (30 s) of `rt`; the charge states of a peptide summed into one chromatogram
+    (retention belongs to the peptide; charge states read from the same scans); a running mean of
+    `peak_smoothing` s, by default half the run's median half-maximum width over its 50 tallest
+    chromatograms (at least 3 scans); the local maximum (>= 10 % of the tallest) nearest `rt`;
+    the window apex +- `peak_width` (0.5) half-maximum widths, ended at the valleys. A peptide
+    without signal gets no spectrum in that run; the run log gives each run's measured width and
+    smoothing. A found spectrum's `rt` is its scans' signal-weighted time (not the table's).
+    Every spectrum of a fixed-time scan run now records `rt_start`, `rt_end` (its first and last
+    scan, minutes) through the spectra, the picked table, the bundle (absent in older bundles:
+    NaN) and `spectra.csv`. The peptide table takes a `run` column (a run's file name): such a
+    row is read from that run only, once per run, and a peptide's general row steps aside for
+    the runs that have their own (`not_runs` on its entry), so a run's row overrides it (its own
+    window, say); `hxex check` refuses a run name that is no run's file, and with `find_peak` a
+    peptide with neither `rt` nor a window. With `find_peak`, `hxex check`'s spectrum index
+    plans a found target over its search range (the peak is not known before the scans are
+    read). Not built: the ambiguity flag (the prototype's rule flagged half of a crowded
+    digest's spectra), finding for fragment ions. Defaults from the prototype on the Orbitrap
+    digest (HISTORY 164; smoothing flat from 1.3 to 4 s). Guide: inputs.md ("Finding each
+    peptide's peak", the run column, the four settings), outputs.md (spectra.csv), BUNDLE.md.
+    On the Orbitrap digest with a peptide table of retention times only (a table with
+    `rt_start`, `rt_end` keeps them and reads as before: the same fits exactly): peaks found for
+    all 563 peptides in all 45 runs, measured peak width 6.2 s, smoothing 11 scans (3.0 s);
+    every window within 1 s of the prototype's (median 0.1 s); K > 1 in the undeuterated controls
+    34.0 % (fixed window 51.4 %), labelled 21.0 % (30.3 %); uptake against the prediction 12.6 %
+    more than 0.1 off (12.0 %).

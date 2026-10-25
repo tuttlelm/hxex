@@ -1233,7 +1233,7 @@ class Bundle:
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
             capped=np.asarray(_col(t, "capped"), dtype=bool),
-            **{**_index_arrays(t, ("rt",)), ROLE: self._roles(t)},
+            **{**_index_arrays(t, ("rt", "rt_start", "rt_end")), ROLE: self._roles(t)},
             peak_mz=peak_mz, mz_offset_ppm=offset,
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed
                for name in SCREEN_SCORES if name in t.column_names},

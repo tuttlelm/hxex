@@ -633,6 +633,32 @@ Planned, not built:
    keeps at K = 1 only, or warns; `accepted` in the review keeps a spectrum; fragments are not
    screened. Later the same setting holds the weak-spectrum rule (after the noise model), and
    fragment levels if fragment data are ever scored.
+10. **Retention windows from the data** (owner, 2026-10-24; built 2026-10-24, HISTORY 165:
+   `[input.scans] find_peak`, the peptide table's `run` column, `rt_start`/`rt_end` per spectrum;
+   still open: the ambiguity flag, fragments). For LC-MS scan files,
+   find each peptide's elution in the runs themselves, as well as using any range a peptide
+   table or metadf-style file gives (`rt_start`, `rt_end`, kept as they are). Prompted by a
+   public Orbitrap whole-cell digest whose tables give only one retention time per peptide:
+   a fixed window guessed from the gradient took in co-eluting peptides (HISTORY 162). The
+   reference practice (owner, 2026-10-24): HDExaminer starts from each peptide's retention time,
+   usually from an MS/MS identification run, adjusts the LC peak it uses automatically for
+   each spectrum (so it can move somewhat from the undeuterated control's), and lets the user
+   move the peak's boundaries by hand. So the likely shape: a given time as the start, a
+   per-spectrum (run and peptide) peak found near it, and a user override of the boundaries.
+   Proposed home (2026-10-24): the peptide table, not the review table (windows act when the
+   scans are summed, before spectra.csv exists): given `rt_start`/`rt_end` used as they are; the
+   found windows written as a copy of the peptide table with a `run` column (one row per
+   peptide and run, shared by its charge states: retention belongs to the peptide); the user
+   edits that copy and points `[input] peptides` at it, its windows winning over finding (the
+   pattern of the user review table). Needs a `run` column and charge-free rows for the
+   retention columns in the peptide table. To design: the chromatogram from which isotope positions
+   (a labelled envelope moves); how wide around the apex (a multiple of the peak's width); the
+   search range around the given time; what to do when two species elute within it; where
+   the found boundaries are recorded and shown; and what `hxex check` reports. Prototype
+   (HISTORY 164): chromatogram summed over the predicted bins (+-10 ppm), smoothed over about
+   2.5 s, nearest local maximum to the given time within +-0.5 min, window apex +- half the
+   half-maximum width: a third fewer artefactual populations, uptake unchanged; the ambiguity
+   rule needs rethinking (it flagged half the spectra of a crowded digest).
 
 ## Risks and open decisions
 

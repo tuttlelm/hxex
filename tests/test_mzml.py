@@ -976,3 +976,92 @@ def test_the_scan_index_is_what_the_read_makes(tmp_path):
         for name in ("sample", "charge", "role", "rep", "label"):
             assert list(getattr(index, name)) == list(getattr(read, name)), name
         np.testing.assert_allclose(index.time, read.time)
+
+
+# --- retention windows found from the data (find_peak) ------------------------------------------
+
+def _envelope_at(charge, height, center_bin=1.0):
+    """The test peptide's profile envelope at ``charge`` (as profile_envelope, any charge)."""
+    plan = plan_bins(PEPTIDE, charge)
+    mz, y = [], []
+    for b, pmz in enumerate(plan.pred_mz):
+        h = height * np.exp(-0.5 * ((b - center_bin) / 1.0) ** 2)
+        if h < 1:
+            continue
+        x = pmz + np.arange(-0.012, 0.0121, 0.002)
+        mz.append(x)
+        y.append(h * np.exp(-0.5 * ((x - pmz) / 0.004) ** 2))
+    return np.concatenate(mz), np.concatenate(y)
+
+
+def lc_run(apex=30.0, other=45.0, sigma=2.0, step=0.25, end=60.0, charges=(2, 3), seed=0):
+    """MS1 scans every ``step`` s: the peptide eluting at ``apex`` s (Gaussian, ``sigma``) at each
+    of ``charges``, and a taller species on the same bins at ``other`` s (None: none), with a
+    little noise."""
+    rng = np.random.default_rng(seed)
+    scans = []
+    for t in np.arange(0.0, end + 1e-9, step):
+        parts = []
+        for z in charges:
+            h = 1e5 * np.exp(-0.5 * ((t - apex) / sigma) ** 2) / z
+            if other is not None:
+                h += 3e5 * np.exp(-0.5 * ((t - other) / sigma) ** 2) / z
+            mz, y = _envelope_at(z, max(h, 2.0))
+            parts.append((mz, y * (1 + 0.02 * rng.standard_normal(len(y)))))
+        mz = np.concatenate([p[0] for p in parts])
+        y = np.concatenate([p[1] for p in parts])
+        order = np.argsort(mz)
+        scans.append({"mz": mz[order], "intensity": np.clip(y[order], 0, None), "time": t,
+                      "unit": "s", "filter": "FTMS + p ESI Full ms"})
+    return scans
+
+
+def _with_rt(entry, rt_min, charge=CHARGE):
+    return dataclasses.replace(entry, charge=charge, extra={**dict(entry.extra), "rt": str(rt_min)})
+
+
+def test_find_peak_sums_the_peptides_own_peak(tmp_path):
+    """find_peak (PLAN Next steps 10): near the peptide's rt, the peak nearest that time, not the
+    taller species 15 s later on the same bins; the spectrum records its first and last scans'
+    times (rt_start, rt_end) and its own retention time; both charge states take one window."""
+    path = write_mzml(tmp_path / "lc.mzML", lc_run())
+    run = MzmlRun(path=str(path), sample="S", time=60.0)
+    targets = [MzmlTarget(_with_rt(ENTRY, 30.5 / 60, z)) for z in (2, 3)]
+    found = read_mzml([run], targets, project="p",
+                      config=MzmlConfig(find_peak=True, peak_search=30.0))
+    assert len(found) == 2
+    start, end = 60 * found.rt_start, 60 * found.rt_end
+    assert np.all(start > 25) and np.all(end < 35)  # around 30 s, nowhere near 45 s
+    assert start[0] == start[1] and end[0] == end[1]  # one window for both charges
+    assert np.all(np.abs(60 * found.rt - 30.0) < 1.0)  # the peak's own time, not the table's
+    # without find_peak the search range (here the whole run) is summed: the other species too
+    plain = read_mzml([run], [MzmlTarget(ENTRY, rt_window=(0.0, 60.0))], project="p")
+    assert plain.rt_start[0] == 0.0 and 60 * plain.rt_end[0] == pytest.approx(60.0)
+    # the found peak's intensity is a small part of the whole run's (the other species is 3x)
+    assert found.intensity[: found.offsets[1]].sum() < 0.25 * plain.intensity.sum()
+
+
+def test_find_peak_width_smoothing_and_no_signal(tmp_path, caplog):
+    """peak_width scales the window; peak_smoothing set in seconds replaces the measured one; a
+    peptide with no signal in its search range gets no spectrum (logged); the settings check
+    their values."""
+    path = write_mzml(tmp_path / "lc.mzML", lc_run(other=None, charges=(2,)))
+    run = MzmlRun(path=str(path), sample="S", time=60.0)
+    target = MzmlTarget(_with_rt(ENTRY, 30.0 / 60))
+
+    def width(**kw):
+        s = read_mzml([run], [target], project="p", config=MzmlConfig(find_peak=True, **kw))
+        return 60 * (s.rt_end[0] - s.rt_start[0])
+    narrow, wide = width(peak_width=0.25), width(peak_width=1.0)
+    assert wide > 1.5 * narrow  # sigma 2 s: half-maximum width about 4.7 s
+    assert width(peak_smoothing=1.0) == pytest.approx(width(), abs=1.0)
+    with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
+        far = MzmlTarget(_with_rt(ENTRY, 120.0 / 60))  # nothing there (the run ends at 60 s)
+        with pytest.raises(MzmlError, match="no spectra"):
+            read_mzml([run], [far], project="p", config=MzmlConfig(find_peak=True))
+    for bad in ({"peak_width": 0}, {"peak_search": -1}, {"peak_smoothing": 0}):
+        with pytest.raises(ValueError):
+            MzmlConfig(**bad)
+    # a target without rt (and without its own window) cannot be searched for
+    with pytest.raises(MzmlError, match="no rt"):
+        read_mzml([run], [MzmlTarget(ENTRY)], project="p", config=MzmlConfig(find_peak=True))

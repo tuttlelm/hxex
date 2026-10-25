@@ -41,13 +41,15 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         for name in names:
             values = getattr(b, name)
             cols[name] = np.array([values[j] if j >= 0 else "" for j in rows])
-        rt = getattr(b, "rt", None)
-        cols["rt"] = np.array([float(rt[j]) if j >= 0 and rt is not None else np.nan
-                               for j in rows])
+        for name in ("rt", "rt_start", "rt_end"):  # minutes: the spectrum's, and its scans'
+            values = getattr(b, name, None)
+            cols[name] = np.array([float(values[j]) if j >= 0 and values is not None else np.nan
+                                   for j in rows])
     else:
         for name in names:
             cols[name] = np.array([""] * m)
-        cols["rt"] = np.full(m, np.nan)
+        for name in ("rt", "rt_start", "rt_end"):
+            cols[name] = np.full(m, np.nan)
     cols.update(_target_columns(results))
     cols["review_status"] = np.asarray(results.review_status).astype(str)
     cols["review_K"] = _review_k(results)

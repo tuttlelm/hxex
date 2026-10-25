@@ -838,6 +838,16 @@ class MzmlConfig:
     - ``gap_factor``: in profile scans, a point spacing this many times both neighbours' is a
       stretch the instrument left out (it stays zero when summed).
     - ``precursor_tol`` (m/z): the tolerance matching a scan's precursor to a target's.
+    - ``find_peak``: in a run with a fixed time (an LC-MS time point or control), find each
+      peptide's elution peak near its ``rt`` (the peptide table's column) and sum the scans of
+      that peak only (:func:`find_peaks`; PLAN Next steps 10, HISTORY 164-165). A peptide with
+      its own ``rt_start``, ``rt_end`` keeps them; fragments keep their windows. Every peptide
+      needs one or the other.
+    - ``peak_search`` (s): how far either side of ``rt`` the peak is looked for.
+    - ``peak_smoothing`` (s): the chromatogram's running mean; None: half the run's typical peak
+      width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
+    - ``peak_width``: the window is the apex +- this many widths at half maximum (ended at the
+      valleys either side).
     """
 
     group: str = "each"
@@ -849,8 +859,16 @@ class MzmlConfig:
     sum_ppm: float = 10.0
     gap_factor: float = 3.0
     precursor_tol: float = 1.0
+    find_peak: bool = False
+    peak_search: float = 30.0
+    peak_smoothing: float | None = None
+    peak_width: float = 0.5
 
     def __post_init__(self):
+        if self.peak_search <= 0 or self.peak_width <= 0 or (
+                self.peak_smoothing is not None and self.peak_smoothing <= 0):
+            raise ValueError("need peak_search > 0, peak_width > 0 and peak_smoothing > 0 (or "
+                             "unset)")
         if self.group not in ("each", "every", "windows"):
             raise ValueError("group must be 'each', 'every' or 'windows'")
         if self.every < 1:
@@ -1021,8 +1039,23 @@ SAMPLES_TIE = "samples_tie_targets"
 
 def target_applies(target: MzmlTarget, run: MzmlRun, tie: bool = True) -> bool:
     """Whether ``target`` is read from ``run``: its entry names no sample, or the run's (always,
-    when ``tie`` is False: a read recorded before targets were tied to samples)."""
-    return not tie or not target.entry.sample or target.entry.sample == run.sample
+    when ``tie`` is False: a read recorded before targets were tied to samples); and its entry's
+    ``run`` column, when given, names this run's file, while an entry without one is not read
+    from the runs its peptide has a row of their own for (``not_runs``,
+    :func:`hxex.config.scan_peptides`)."""
+    if not (not tie or not target.entry.sample or target.entry.sample == run.sample):
+        return False
+    extra = dict(target.entry.extra)
+    name = run_name(run)
+    own = str(extra.get("run", "") or "").strip()
+    if own:
+        return own == name
+    return name not in str(extra.get("not_runs", "") or "").split(";")
+
+
+def run_name(run: MzmlRun) -> str:
+    """The name a peptide table's ``run`` column gives a run by: its file name."""
+    return Path(str(run.path)).name
 
 
 def _run_paths(runs: Sequence[MzmlRun], data_root, record_paths: str):
@@ -1092,7 +1125,7 @@ def _read_runs(
                 extra = fmt.extra(f)
             instruments.append(instrument_record(f))
             _read_run(f, run, targets, windows, series, spectra, project=project,
-                      config=config, tie=tie)
+                      config=config, tie=tie, picker=picker, registry=registry)
         origin.extend([n_run] * (len(spectra) - len(origin)))
         report(progress, n_run + 1, len(runs))
     if not spectra:
@@ -1230,8 +1263,12 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
                     project: str, config: MzmlConfig, tie: bool = True) -> list[dict]:
     """The spectra :func:`read_mzml` would make of one run's file, without reading any scan:
     one mapping per spectrum with the fields of :class:`hxex.exclusions.SpectrumIndex` (the
-    same ids, times and labels as the read)."""
-    _, plans = _plans(table, run, targets, config, tie)
+    same ids, times and labels as the read). With ``find_peak`` the peaks are not known before
+    the scans are read: such a target is planned over its search range, so its scan numbers
+    (in the ids) are those of the range, not of the peak."""
+    planned = [_search_target(t, config) if config.find_peak and run.fixed and _finds_peak(t)
+               else t for t in targets]
+    _, plans = _plans(table, run, planned, config, tie)
     rows = []
     for target, plan in zip(targets, plans, strict=True):
         if plan is None:
@@ -1253,13 +1290,18 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
 
 
 def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
-              tie: bool = True) -> None:
+              tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS) -> None:
     """Add the spectra of every target of this run (:func:`target_applies`) in the open file
     ``f`` to ``spectra``."""
     table = f.scans()
+    # the targets whose peak is found (find_peak): planned over their search range first
+    find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
+    planned = [_search_target(t, config) if fnd else t for t, fnd in zip(targets, find,
+                                                                           strict=True)]
     # the scans of every spectrum, per target, before anything is read (so that sampling a
     # large file reads only the scans it keeps)
-    applies, plans = _plans(table, run, targets, config, tie)
+    applies, plans = _plans(table, run, planned, config, tie)
     needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
               for i in g}
     if not needed:
@@ -1274,6 +1316,9 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         for label in missing:
             log.debug("%s: no scan for target %s", f.path.name, label)
     by_index = f.read_scans(sorted(needed), windows)
+    if any(find):
+        plans = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
+                           registry)
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
@@ -1311,7 +1356,8 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             extra = dict(entry.extra)
             parent_key = (extra.get("parent_peptide"), extra.get("parent_range"),
                           extra.get("parent_charge"))
-            rt = entry_rt(entry)
+            # a found peak's own time wins over the table's rt (the time it was found near)
+            rt = float("nan") if find[t_i] else entry_rt(entry)
             if not np.isfinite(rt) and "fragment" in extra and parent_key in parent_rt:
                 rt = parent_rt[parent_key]
             elif not np.isfinite(rt) and run.fixed:
@@ -1325,6 +1371,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             # median when the summed scans differ) and the m/z the instrument quotes it at
             resolutions = np.array([s.resolution for s in scans], dtype=float)
             resolutions = resolutions[np.isfinite(resolutions)]
+            scan_times = np.array([s.time for s in scans], dtype=float) / 60.0
             spectra.append(Spectrum(
                 mz, y, entry, time, run.rep, data_id=data_id,
                 label=f"{f.path.name} {scan_text}",
@@ -1332,7 +1379,151 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
                 resolving_power_mz=float(getattr(f, "resolving_power_mz", np.nan)),
                 role=run.role,
+                rt_start=float(scan_times.min()) if run.fixed else np.nan,
+                rt_end=float(scan_times.max()) if run.fixed else np.nan,
             ))
+
+
+def _finds_peak(target: MzmlTarget) -> bool:
+    """Whether find_peak applies to ``target``: an MS1 peptide (not a fragment) without its own
+    ``rt_start``, ``rt_end``."""
+    from ..spectra import entry_rt_window
+
+    extra = dict(target.entry.extra)
+    return target.ms_level == 1 and "fragment" not in extra and entry_rt_window(
+        target.entry) is None
+
+
+def _search_target(target: MzmlTarget, config: MzmlConfig) -> MzmlTarget:
+    """``target`` with its retention window set to its search range: ``rt`` +- ``peak_search``,
+    inside the project's ``rt_window`` when one is set."""
+    rt = entry_rt(target.entry)
+    if not np.isfinite(rt):
+        raise MzmlError(f"find_peak: {_target_label(target)} has no rt (the peptide table's rt "
+                        "column, minutes), and no rt_start, rt_end")
+    lo, hi = 60.0 * rt - config.peak_search, 60.0 * rt + config.peak_search
+    if target.rt_window is not None:
+        lo, hi = max(lo, target.rt_window[0]), min(hi, target.rt_window[1])
+    return replace(target, rt_window=(lo, max(lo, hi)))
+
+
+def _chromatogram(scans, pred: np.ndarray, half: np.ndarray) -> np.ndarray:
+    """Per scan, the sum over the predicted bins of the tallest point within ``half`` (m/z)."""
+    out = np.zeros(len(scans))
+    for n, s in enumerate(scans):
+        mz, y = s.mz, s.intensity
+        if not len(mz):
+            continue
+        a = np.searchsorted(mz, pred - half)
+        z = np.searchsorted(mz, pred + half)
+        out[n] = sum(float(y[i:j].max()) for i, j in zip(a, z, strict=True) if j > i)
+    return out
+
+
+def _half_max_span(v: np.ndarray, apex: int) -> tuple[int, int]:
+    lo = apex
+    while lo > 0 and v[lo - 1] > v[apex] / 2:
+        lo -= 1
+    hi = apex
+    while hi < len(v) - 1 and v[hi + 1] > v[apex] / 2:
+        hi += 1
+    return lo, hi
+
+
+def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
+    """The window (s) of the peak nearest ``given`` (s) in the smoothed chromatogram: the
+    local maxima at least 10 % of its tallest, the nearest one's width at half maximum, apex +-
+    ``width`` such widths, ended at the valleys either side; None without signal."""
+    if not len(smooth) or smooth.max() <= 0:
+        return None
+    top = smooth.max()
+    peaks = [j for j in range(len(smooth))
+             if smooth[j] >= 0.1 * top and (j == 0 or smooth[j] >= smooth[j - 1])
+             and (j == len(smooth) - 1 or smooth[j] >= smooth[j + 1])]
+    apex = min(peaks, key=lambda j: abs(times[j] - given))
+    lo, hi = _half_max_span(smooth, apex)
+    spacing = float(np.median(np.diff(times))) if len(times) > 1 else 0.0
+    fwhm = max(float(times[hi] - times[lo]), spacing)
+    left = apex
+    while left > 0 and smooth[left - 1] <= smooth[left]:
+        left -= 1
+    right = apex
+    while right < len(smooth) - 1 and smooth[right + 1] <= smooth[right]:
+        right += 1
+    return (max(times[apex] - width * fwhm, times[left]),
+            min(times[apex] + width * fwhm, times[right]), fwhm)
+
+
+def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
+               config: MzmlConfig, picker: PickerConfig, registry):
+    """The plans of the ``find`` targets narrowed to their elution peak (``find_peak``): per
+    peptide (its charge states share one chromatogram, the sum of theirs: retention belongs to
+    the peptide), the scans of the window :func:`_peak` finds near its ``rt``, smoothed over
+    ``peak_smoothing`` (or half the run's typical half-maximum width). A peptide without signal
+    gets no spectrum in this run. Logs the run's peak width and smoothing."""
+    plans = list(plans)
+    chroms: dict[tuple, list] = {}  # peptide -> [(target position, order, chromatogram)]
+    r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
+        if not find[t_i] or plan is None:
+            continue
+        e = target.entry
+        bins = plan_bins(e.peptide, e.charge, modification=e.modification, config=picker,
+                         registry=registry)
+        pred = np.asarray(bins.pred_mz, dtype=float)
+        order = plan[0]
+        scans = [by_index[int(table.index[k])] for k in order]
+        recorded = np.array([s.resolution for s in scans], dtype=float)
+        recorded = recorded[np.isfinite(recorded)]
+        half = picker.half_width(pred, e.charge,
+                                 resolving_power=float(np.median(recorded)) if len(recorded)
+                                 else None, resolving_power_mz=r_mz)
+        key = (e.peptide, e.modification, e.start_seq, e.end_seq)
+        chroms.setdefault(key, []).append((t_i, order, _chromatogram(scans, pred, half)))
+    if not chroms:
+        return plans
+    groups = []  # (target positions, order, summed chromatogram, given rt in s)
+    for members in chroms.values():
+        by_order: dict[bytes, list] = {}
+        for t_i, order, c in members:  # charge states read from the same scans add up
+            by_order.setdefault(np.asarray(order).tobytes(), []).append((t_i, order, c))
+        for same in by_order.values():
+            groups.append(([m[0] for m in same], same[0][1], np.sum([m[2] for m in same], 0),
+                           60.0 * entry_rt(targets[same[0][0]].entry)))
+    all_times = np.concatenate([table.time[g[1]] for g in groups])
+    spacing = float(np.median(np.diff(np.unique(all_times)))) if len(all_times) > 1 else 1.0
+    if config.peak_smoothing is not None:
+        n_smooth = max(1, int(round(config.peak_smoothing / spacing)))
+        run_width = float("nan")
+    else:  # half the run's typical width at half maximum (its tallest chromatograms, raw)
+        widths = []
+        for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:
+            if c.max() > 0 and len(c) > 2:
+                lo, hi = _half_max_span(c, int(np.argmax(c)))
+                widths.append(float(table.time[order][hi] - table.time[order][lo]))
+        run_width = float(np.median(widths)) if widths else 3.0 * spacing
+        n_smooth = max(3, int(round(0.5 * run_width / spacing)))
+    missing = 0
+    for members, order, c, given in groups:
+        times = table.time[order]
+        smooth = np.convolve(c, np.ones(n_smooth) / n_smooth, mode="same") if len(c) >= 3 else c
+        found = _peak(times, smooth, given, config.peak_width)
+        if found is None:
+            missing += 1
+            for t_i in members:
+                plans[t_i] = None
+            continue
+        start, end = found[0], found[1]
+        inside = np.flatnonzero((times >= start - 1e-9) & (times <= end + 1e-9))
+        for t_i in members:
+            plans[t_i] = (order, [inside]) if len(inside) else None
+    log.info("%s: peaks found for %d peptides%s; typical peak width %s, smoothing over %d "
+             "scans (%.1f s)", Path(f.path).name, len(groups) - missing,
+             f" ({missing} without signal: no spectrum)" if missing else "",
+             f"{run_width:.1f} s" if np.isfinite(run_width)
+             else "not measured (peak_smoothing set)",
+             n_smooth, n_smooth * spacing)
+    return plans
 
 
 def instrument_record(f) -> dict | None:
