@@ -497,6 +497,14 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   `"recorded"` from Thermo raw files): the half-width is `window_fwhm` peak widths `m / R(m)`,
   floored at `mass_accuracy_ppm`; pyHXExpress has only the constant ppm window, which hxex
   keeps as the default (item 98).
+- A peptide-ion series whose undeuterated controls put its envelope off the run's calibration
+  (a Theil-Sen line in m/z per undeuterated injection; beyond `off_mz_sd` = 6 times the
+  injection's robust scatter, at least 3 ppm) is flagged `off_mz`, and with `recentre` (on by
+  default) its windows are moved onto its envelope in every spectrum of the series;
+  pyHXExpress always centres the window on the prediction. Most such series share their peaks
+  with a near-isobaric species; reading the merged peak's top instead of its flank brought an
+  Orbitrap digest's flagged peptides from 73 % to 82 % of time points within 0.1 of the
+  predicted uptake, and changes nothing with a ±50 ppm window (item 166).
 
 Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status"):
 
@@ -659,6 +667,16 @@ Planned, not built:
    2.5 s, nearest local maximum to the given time within +-0.5 min, window apex +- half the
    half-maximum width: a third fewer artefactual populations, uptake unchanged; the ambiguity
    rule needs rethinking (it flagged half the spectra of a crowded digest).
+11. **The remaining interference: near-isobaric species** (owner, 2026-10-25; HISTORY 166).
+   Built: the picker's m/z check (`[run.picker] off_mz_sd`, `recentre`; quality flag
+   `off_mz`; `spectra.csv` `envelope_offset_ppm`, `envelope_offset_limit_ppm`,
+   `window_shift_ppm`). Tried and not adopted: a per-bin apex rule (a bin whose window holds
+   only a flank set to 0 or left out of the fit: uptake worse either way), a fixed ppm limit
+   (removed 30 % of the known-answer series), leaving flagged series out by default (cost more
+   good values than bad ones), recentring every series (nothing gained). Open: the series whose
+   undeuterated envelopes are inconsistent (M, M+1, M+2 tops disagree: 32 % of their time
+   points off on the Orbitrap digest, no worse than the rest on a Q-TOF); the unflagged
+   peptides' gap to HDExaminer (90 % against 94 % within 0.1); then the set test (HISTORY 162).
 
 ## Risks and open decisions
 

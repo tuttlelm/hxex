@@ -4,10 +4,11 @@
 Bin ``n`` is the isotope cluster of nominal mass +n. By default its position is the cluster's
 abundance-weighted mass from the composition (the composition ladder); pyHXExpress's ExMS
 spacing is an option and also gives the first pass that estimates the deuteration level. Each
-bin takes the tallest point inside a +/- ppm window (docs/PEAK_PICKING.md). Picking covers
-every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the last bin
-that reaches the noise threshold, so a valley inside a multimodal envelope never ends picking
-early.
+bin takes the tallest point inside a +/- ppm window (docs/PEAK_PICKING.md), moved onto the
+undeuterated envelope's peaks for a series off its m/z (:mod:`hxex.picking.recentre`). Picking
+covers every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the
+last bin that reaches the noise threshold, so a valley inside a multimodal envelope never ends
+picking early.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import SpectrumSet
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .recentre import series_offsets
 from .screen import RAW_SCORES, off_position_scores, raw_scores
 
 log = logging.getLogger(__name__)
@@ -258,10 +260,17 @@ def pick_spectrum(
     plan: BinPlan | None = None,
     resolving_power: float | None = None,
     resolving_power_mz: float | None = None,
+    window_shift_ppm: float = 0.0,
 ) -> PickedSpectrum:
     """Pick one spectrum (arrays of m/z and intensity; sorted by m/z if they are not).
     ``resolving_power`` and ``resolving_power_mz`` are the spectrum's recorded values, used
-    when ``config.resolving_power`` is ``'recorded'`` (:meth:`PickerConfig.half_width`)."""
+    when ``config.resolving_power`` is ``'recorded'`` (:meth:`PickerConfig.half_width`).
+    ``window_shift_ppm`` moves every window (and the screens' positions) by that many ppm from
+    the predicted m/z; the bins keep their predicted m/z and the peaks' offset is measured
+    from it."""
+    if not np.isfinite(window_shift_ppm):
+        raise ValueError("window_shift_ppm must be finite")
+    scale = 1.0 + float(window_shift_ppm) * 1e-6
     recorded = {"resolving_power": resolving_power, "resolving_power_mz": resolving_power_mz}
     plan = plan or plan_bins(
         peptide, charge, modification=modification, config=config, registry=registry
@@ -279,7 +288,7 @@ def pick_spectrum(
         threshold = float("nan")
 
     pred = plan.pred_mz
-    values, where = _bin_values(mz, intensity, pred, config, charge, recorded)
+    values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded)
     if config.ladder == "composition" and plan.clusters is not None:
         # the deuteration level from a first pass with the ExMS ladder, then the composition
         # ladder; the level is estimated once more from those picks (a first pass that missed
@@ -292,7 +301,7 @@ def pick_spectrum(
             centre = float((np.arange(len(strong)) * strong).sum() / strong.sum())
             level = min(max(centre - natural, 0.0), float(plan.n_sites))
             pred = composition_mz(plan, level)
-            values, where = _bin_values(mz, intensity, pred, config, charge, recorded)
+            values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1
@@ -309,9 +318,9 @@ def pick_spectrum(
     n_deut = np.arange(end + 1, dtype=np.int64)
     screen = PickedSpectrum.screen
     if plan.clusters is not None and len(picked_y):
-        screen = raw_scores(mz, intensity, picked_mz, picked_y, n_deut, charge,
+        screen = raw_scores(mz, intensity, picked_mz * scale, picked_y, n_deut, charge,
                             plan.clusters[0], plan.n_sites,
-                            config.half_width(picked_mz, charge, **recorded))
+                            config.half_width(picked_mz * scale, charge, **recorded))
     return PickedSpectrum(
         mz=picked_mz,
         intensity=picked_y,
@@ -340,10 +349,31 @@ def pick_spectra(
 ) -> BinnedSet:
     """Pick every spectrum of ``spectra``. Nothing is dropped; see the flags on the result.
     ``clusters`` gives the isotope clusters of some series (``data_id``), for example an
-    ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones."""
+    ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones.
+    With ``config.off_mz_sd`` set, the series of peptide ions with undeuterated controls are
+    checked for an envelope off its m/z first (:mod:`hxex.picking.recentre`), and with
+    ``config.recentre`` the windows of those off it are moved onto their envelope."""
     clusters = clusters or {}
     plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
+    n = len(spectra)
+    off_rel, off_limit, shift = np.full(n, np.nan), np.full(n, np.nan), np.zeros(n)
+    if config.off_mz_sd is not None and n:
+        from ..controls import fragment_ids
+        from ..io.mzml import fragment_series
+
+        skip = fragment_ids(spectra.modification, spectra.data_id,
+                            fragment_series(spectra.source))
+        checked = series_offsets(spectra, config, registry=registry, skip=skip,
+                                 clusters=clusters)
+        off_rel, off_limit, shift = checked.per_spectrum(spectra.data_id, config.recentre)
+        n_off = int(checked.off.sum())
+        if n_off:
+            log.warning("%d of %d series sit off their m/z in their undeuterated controls "
+                        "(beyond %g times the run's scatter; flagged off_mz)%s", n_off,
+                        len(checked.data_id), config.off_mz_sd,
+                        ": their windows were moved onto their envelope" if config.recentre
+                        else "")
     if config.uses_recorded:
         missing = int((~np.isfinite(spectra.resolving_power)).sum())
         if missing:
@@ -366,12 +396,15 @@ def pick_spectra(
                 mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
                 plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
                 resolving_power_mz=float(spectra.resolving_power_mz[i]),
+                window_shift_ppm=float(shift[i]),
             )
         )
         report(progress, i + 1, len(spectra))
     binned = _assemble(spectra, picked)
-    return dataclasses.replace(binned, screen_off_position=off_position_scores(
-        binned, config, spectra.resolving_power, spectra.resolving_power_mz))
+    return dataclasses.replace(
+        binned, screen_off_position=off_position_scores(
+            binned, config, spectra.resolving_power, spectra.resolving_power_mz),
+        envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit, window_shift_ppm=shift)
 
 
 def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:

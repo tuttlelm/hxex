@@ -39,8 +39,8 @@ square root of m/z), computes the peak's width at half maximum (`m / R(m)`), and
 
 - the half-width never falls below `mass_accuracy_ppm`, so a very high resolving power does not
   shrink the window below the instrument's calibration error (series on a well-calibrated
-  Orbitrap sit within a few ppm of their predicted m/z; a wrong sequence or modification moves
-  them by tens of ppm, which the `mz_shift` quality flag reports);
+  Orbitrap sit within a few ppm of their predicted m/z; a series further away is moved and
+  flagged, [below](#a-series-whose-peaks-sit-off-its-mz));
 - the half-width never exceeds half the isotope spacing (`1.00235 / (2 z)` Da), so the windows
   of neighbouring bins never overlap.
 
@@ -71,10 +71,84 @@ formats (SpecExport, HX-Express) carry no resolving power. Spectra without a rec
 the `resolution_ppm` window; `hxex run` logs how many. For those formats, set `resolving_power`
 to a number instead.
 
+## A series whose peaks sit off its m/z
+
+```toml
+[run.picker]
+off_mz_sd = 6.0   # how far from the run's calibration counts as off, in multiples of its scatter
+recentre = true   # move the windows of such a series onto its peaks
+```
+
+Before picking, *hxex* looks at the undeuterated controls. In each one it finds where the tops
+of the three lightest peaks (M, M+1, and M+2) actually are, searching well beyond the picking
+window (at least 40 ppm either side). On a calibrated instrument the peptides of one injection
+sit together: their peaks are all off by about the same small amount, the instrument's
+calibration, give or take a little scatter. On an Orbitrap the calibration is the same across
+the m/z range; on a Q-TOF it drifts by about 1 ppm per 100 m/z, so *hxex* fits a straight line
+in m/z for each injection.
+
+A few series sit much further from that line, 10 to 40 ppm, by the same amount in every
+control. A peptide does not move that far by itself. Most likely another peptide of almost the
+same mass comes off the column at the same time, and the instrument cannot tell the two apart:
+what it records is one merged peak whose top lies between them. A narrow window centred on the
+predicted m/z then catches only the side of that peak, and a side catches a different share of
+each peak, which distorts the envelope.
+
+*hxex* calls such a series **off its m/z** when its controls sit further from the line than
+`off_mz_sd` times the injection's scatter (and at least 3 ppm). An injection with fewer than ten
+undeuterated controls uses the line and scatter of all of them. Because the limit follows the
+scatter, it adapts to the instrument: on an Orbitrap digest the scatter was 0.7 ppm, on a Q-TOF
+dataset 2 to 3 ppm.
+
+What happens to a series off its m/z:
+
+- every one of its spectra is flagged `off_mz` in `spectra.csv`, and `hxex run` says how many
+  series were flagged. Nothing is removed;
+- with `recentre = true` (the default), all its windows, in the controls and in the labelled
+  spectra, move by the series' measured offset, so each bin reads the top of the merged peak
+  instead of its side. On the Orbitrap digest (a ±10 ppm window) this brought the flagged
+  peptides' uptake much closer to the expected values: 82 % of their time points within 0.1 of
+  the prediction, against 73 % before. With a wide window (±50 ppm on a Q-TOF) the tops are
+  already inside it, and moving it changes nothing.
+
+Moving the window does not take the other peptide out of the spectrum, which is why the flag
+stays. Look at a flagged series' spectra. If its uptake disagrees with the same peptide at
+another charge, or with its replicates, consider [leaving it out](excluding-spectra.md).
+
+`spectra.csv` shows the check in three columns: `envelope_offset_ppm` (how far the series'
+undeuterated peaks sit from the injection's calibration), `envelope_offset_limit_ppm` (the limit
+it was compared with), and `window_shift_ppm` (how far its windows moved; 0 when they did not).
+Fragment ions are not checked (their own ion-type mixtures move their peaks), nor series without
+an undeuterated control; the `mz_shift` flag looks after those.
+
+### Changing these settings
+
+| Setting | What changes |
+|---|---|
+| `off_mz_sd` lower (4, say) | more series are flagged and moved: those only a little further from the calibration than the rest. On the Orbitrap digest 74 of 527 series instead of 66; on the Q-TOF dataset 22 of 1,320 instead of 4 |
+| `off_mz_sd` higher (10, say) | only the series furthest away: 59 and 1 on the same datasets |
+| `off_mz_sd = false` | no check: no `off_mz` flag, no window moved, and the three columns are empty; `mz_shift` judges every series instead |
+| `recentre = false` | the series are still checked and flagged, but every window stays on the predicted m/z: the picked peaks are the same as with `off_mz_sd = false` |
+
+Only the flagged series change; every other series is picked exactly as before. The settings
+act when *hxex* picks the spectra, so they take effect in `hxex run` only (not in `hxex
+report`, `hxex resume`, or `hxex analyse`). To apply a change to results you already have,
+change the setting in `hxex.toml` and run again from the spectra stored in the bundle, which
+does not read the raw files again, into a new folder:
+
+```bash
+hxex run hxex.toml --spectra results --bundle results_offmz4
+```
+
+The figures and analyses made from the earlier results are then out of date (see [Running
+again](outputs.md#running-again)). Results made with a version of *hxex* before this check have
+empty columns and no `off_mz` flag until they are run again.
+
 ## Seeing the window
 
 The spectrum figures (`hxex report --figures`, `hxex.report.plot_spectrum`) draw every picked
-bin as a shaded bar spanning the window *hxex* actually used for that spectrum, and the legend
+bin as a shaded bar spanning the window *hxex* actually used for that spectrum (moved, for a
+series off its m/z), and the legend
 says where the window came from: "±50 ppm window", "window from R 60000 at m/z 200" or
 "window from the recorded R 120000".
 

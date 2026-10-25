@@ -1278,6 +1278,12 @@ _COMMENTS: dict[str, str] = {
                               "m/R(m); never below mass_accuracy_ppm, never above half the "
                               "isotope spacing",
     "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
+    "run.picker.off_mz_sd": "off_mz: a series whose undeuterated controls put its envelope "
+                            "further than this many times the run's scatter from the run's "
+                            "calibration (at least 3 ppm; peptide ions only; false: not "
+                            "checked)",
+    "run.picker.recentre": "move the windows of an off_mz series onto its undeuterated "
+                           "envelope's peaks (false: flag only)",
     "run.fit.k_min": "fewest populations tried (must be 1 with screen; the controls are also "
                      "fitted at K = 1 for the back-exchange correction, whatever k_min)",
     "run.fit.k_max": "most populations tried (equal to k_min: that number only, no choice)",
@@ -1386,8 +1392,9 @@ _COMMENTS: dict[str, str] = {
     "run.quality.min_series_fits": "poor_fit: fewest fitted spectra in a series to judge",
     "run.quality.min_intensity": "low_intensity: total intensity below this share of the other "
                                  "replicates' mean",
-    "run.quality.max_mz_offset_ppm": "mz_shift: a series' m/z offset (ppm) beyond this (false: "
-                                     "screen off)",
+    "run.quality.max_mz_offset_ppm": "mz_shift: a series' m/z offset (ppm) beyond this, for "
+                                     "series [run.picker] off_mz_sd does not check (fragment "
+                                     "ions; false: screen off)",
     "run.quality.saturated_ratio": "saturated: an undeuterated control whose peaks beside the "
                                    "tallest read above this times natural abundance (false: off)",
     "run.quality.tails_low_ratio": "tails_low: an undeuterated control whose tail peaks (1-10 % "
@@ -1443,9 +1450,9 @@ _SECTION_COMMENTS: dict[str, str] = {
                     "controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium "
                     "retention here is the fraction of deuterium kept, not a retention time.",
     "run.quality": "Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, "
-                   "low_intensity, noise_outlier, mz_shift, poor_envelope, saturated, tails_low, "
-                   "bright. Nothing is dropped; the review layer of the bundle takes the "
-                   "decisions.",
+                   "low_intensity, noise_outlier, mz_shift, off_mz (thresholds in "
+                   "[run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is "
+                   "dropped; the review layer of the bundle takes the decisions.",
     "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
                "draws none; hxex.report.PlotConfig). Changing these needs no new run.",
     "run.registry": "Modified residues, written in sequences as modX labels (a lowercase "

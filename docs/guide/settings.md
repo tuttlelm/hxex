@@ -213,6 +213,8 @@ Peak picking: the spectra become sticks at the predicted isotope positions (hxex
 | `resolving_power_exponent` | number | `0.5` | R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR |
 | `window_fwhm` | number | `1.0` | half-width as a multiple of the peak width at half maximum, m/R(m); never below mass_accuracy_ppm, never above half the isotope spacing |
 | `mass_accuracy_ppm` | number | `10.0` | floor (ppm) of the resolving-power window |
+| `off_mz_sd` | number | `6.0` | off_mz: a series whose undeuterated controls put its envelope further than this many times the run's scatter from the run's calibration (at least 3 ppm; peptide ions only; false: not checked) |
+| `recentre` | true/false | `true` | move the windows of an off_mz series onto its undeuterated envelope's peaks (false: flag only) |
 
 ## `[run.picker.amide_rules]`
 
@@ -315,7 +317,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 
 ## `[run.quality]`
 
-Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_intensity, noise_outlier, mz_shift, poor_envelope, saturated, tails_low, bright. Nothing is dropped; the review layer of the bundle takes the decisions.
+Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_intensity, noise_outlier, mz_shift, off_mz (thresholds in [run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is dropped; the review layer of the bundle takes the decisions.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -323,7 +325,7 @@ Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_inte
 | `min_deviance` | number | `1.0` | poor_fit: and a reduced deviance above this |
 | `min_series_fits` | integer | `5` | poor_fit: fewest fitted spectra in a series to judge |
 | `min_intensity` | number | `0.3` | low_intensity: total intensity below this share of the other replicates' mean |
-| `max_mz_offset_ppm` | number | `15.0` | mz_shift: a series' m/z offset (ppm) beyond this (false: screen off) |
+| `max_mz_offset_ppm` | number | `15.0` | mz_shift: a series' m/z offset (ppm) beyond this, for series [run.picker] off_mz_sd does not check (fragment ions; false: screen off) |
 | `saturated_ratio` | number | `1.15` | saturated: an undeuterated control whose peaks beside the tallest read above this times natural abundance (false: off) |
 | `tails_low_ratio` | number | `0.7` | tails_low: an undeuterated control whose tail peaks (1-10 % of the top) read below this times natural abundance (false: off) |
 

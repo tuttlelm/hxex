@@ -12,6 +12,8 @@ from ..spectra import _check_mask, ragged_mask, time_index
 from .screen import SCREEN_SCORES
 
 _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
+# the m/z check of each spectrum's series (hxex.picking.recentre)
+MZ_CHECK_COLUMNS = ("envelope_offset_ppm", "envelope_offset_limit_ppm", "window_shift_ppm")
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,11 @@ class BinnedSet:
     the usual reason to drop a SpecExport spectrum), ``no_signal`` (no bin
     reaches the threshold) and ``capped`` (the bin limit cut the zero filling short). The
     ``screen_*`` scores (:mod:`hxex.picking.screen`) measure another species in the raw spectrum
-    (NaN: not assessed).
+    (NaN: not assessed). The m/z check of the spectrum's series (:mod:`hxex.picking.recentre`):
+    ``envelope_offset_ppm``, the series' undeuterated envelope offset from its runs'
+    calibration, ``envelope_offset_limit_ppm``, the limit it was compared with (both NaN: not
+    assessed), and ``window_shift_ppm``, how far the picker's windows were moved from the
+    predicted m/z (0: not moved).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -70,11 +76,19 @@ class BinnedSet:
     screen_between: np.ndarray | None = None
     screen_between_separate: np.ndarray | None = None
     screen_beyond_reach: np.ndarray | None = None
+    envelope_offset_ppm: np.ndarray | None = None
+    envelope_offset_limit_ppm: np.ndarray | None = None
+    window_shift_ppm: np.ndarray | None = None
 
     def __post_init__(self):
         for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        for name in ("envelope_offset_ppm", "envelope_offset_limit_ppm"):  # not assessed
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        if self.window_shift_ppm is None:  # picked elsewhere or by an older version: not moved
+            object.__setattr__(self, "window_shift_ppm", np.zeros(len(self.offsets) - 1))
         for name in ("rt", "rt_start", "rt_end"):  # retention times (minutes) not given: unknown
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))

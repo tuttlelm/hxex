@@ -43,6 +43,7 @@ from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
+from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
 from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
@@ -147,6 +148,7 @@ def _binned_table(b: BinnedSet) -> pa.Table:
         ("env_width", np.float64), ("env_symm", np.float64), ("threshold", np.float64),
         ("max_namides", np.int64), ("empty", bool), ("no_signal", bool), ("capped", bool),
         *((name, np.float64) for name in SCREEN_SCORES),
+        *((name, np.float64) for name in MZ_CHECK_COLUMNS),
     )
     for name, typ in per_spectrum:
         cols[name] = pa.array(np.asarray(getattr(b, name), dtype=typ))
@@ -289,7 +291,7 @@ def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
 def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
     for name in ("deviance", "deviance_rel", "misfit", "misfit_rel", "intensity",
-                 "intensity_rel", "mz_offset"):
+                 "intensity_rel", "mz_offset", "envelope_offset"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
     for name in FLAG_NAMES:
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
@@ -316,6 +318,10 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         # written before the brightness flags: False
         **{name: (b(name) if name in table.column_names else None)
            for name in ("saturated", "tails_low", "bright")},
+        # written before the m/z check: not assessed
+        envelope_offset=(f("envelope_offset") if "envelope_offset" in table.column_names
+                         else None),
+        off_mz=b("off_mz") if "off_mz" in table.column_names else None,
     )
 
 
@@ -1237,6 +1243,8 @@ class Bundle:
             peak_mz=peak_mz, mz_offset_ppm=offset,
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed
                for name in SCREEN_SCORES if name in t.column_names},
+            **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not checked
+               for name in MZ_CHECK_COLUMNS if name in t.column_names},
         )
 
     def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:

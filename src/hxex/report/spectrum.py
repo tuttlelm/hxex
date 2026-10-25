@@ -73,12 +73,16 @@ def _layers(show: Sequence[str]) -> tuple[str, ...]:
 
 
 def _picked(spectrum_id: str, results: Results | None, binned: BinnedSet | None):
-    """(predicted m/z or None, n_deut bins, intensity) of the picked spectrum, or None."""
+    """(m/z of the windows or None, n_deut bins, intensity) of the picked spectrum, or None.
+    The windows sit at the predicted m/z, moved by ``window_shift_ppm`` for a series off its
+    m/z (:mod:`hxex.picking.recentre`)."""
     binned = binned if binned is not None else (results.binned if results else None)
     if binned is not None:
         try:
-            mz, y, bins = binned.spectrum(binned.find(spectrum_id))
-            return np.asarray(mz, float), np.asarray(bins, float), np.asarray(y, float)
+            i = binned.find(spectrum_id)
+            mz, y, bins = binned.spectrum(i)
+            centre = np.asarray(mz, float) * (1.0 + float(binned.window_shift_ppm[i]) * 1e-6)
+            return centre, np.asarray(bins, float), np.asarray(y, float)
         except KeyError:
             pass
     if results is not None:
@@ -142,7 +146,8 @@ def spectrum_data(
     be found (``raw``, ``picked``, ``fit``), each a dict:
 
     - ``raw``: ``mz``, ``intensity``;
-    - ``picked``: ``mz`` (predicted, None without the picked table), ``bins`` (deuterium bins),
+    - ``picked``: ``mz`` (where the picker's windows were: the predicted m/z, moved for a series
+      off its m/z; None without the picked table), ``bins`` (deuterium bins),
       ``intensity``, ``window`` (the half width in m/z of the picker's window around each bin,
       :meth:`hxex.picking.PickerConfig.half_width` of the results' picker settings with the
       spectrum's recorded resolving power, or ``mz * resolution_ppm / 1e6`` when that is given

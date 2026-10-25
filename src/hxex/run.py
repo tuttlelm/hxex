@@ -366,14 +366,16 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
-    fragments=(),
+    fragments=(), envelope_offset=(None, None),
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
     """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
     need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
     (:func:`site_counts`); without it they are read back from ``data.n_max`` (rounded; an ion
     without any site then counts one). ``poor_envelope``: the series whose envelope is poor;
     ``groups``: the molecule of each series (:func:`hxex.controls.series_groups`);
-    ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`)."""
+    ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`);
+    ``envelope_offset``: the picker's m/z check of every measurement, (offset, limit) in ppm
+    (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     fits: list[FitResult] = []
     start_stage(progress, "fit", lo, lo + (hi - lo) * share)
@@ -395,7 +397,9 @@ def _fit_part(
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
-                                 poor_envelope_series=poor_envelope)
+                                 poor_envelope_series=poor_envelope,
+                                 envelope_offset_ppm=envelope_offset[0],
+                                 envelope_offset_limit_ppm=envelope_offset[1])
     return fits, fit, controls, quality
 
 
@@ -496,6 +500,8 @@ def analyse(
     cancel: CancelHook | None = None,
     progress_range: tuple[float, float] = (0.0, float(UNITS)),
     mz_offset_ppm: np.ndarray | None = None,
+    envelope_offset_ppm: np.ndarray | None = None,
+    envelope_offset_limit_ppm: np.ndarray | None = None,
 ) -> tuple[
     FitResult,
     BootstrapResult | None,
@@ -505,9 +511,12 @@ def analyse(
 ]:
     """Fit (and bootstrap) ``data`` in chunks of whole series, then the controls and the quality
     flags of the merged result (``mz_offset_ppm``, the picker's offset of every measurement,
-    for the m/z screen). The chunking does not change the result."""
+    for the m/z screen; ``envelope_offset_ppm`` and ``envelope_offset_limit_ppm``, the
+    picker's m/z check, for ``off_mz``). The chunking does not change the result."""
     plan = _plan(data, config, progress_range)
-    fits, fit, controls, quality = _fit_part(data, config, plan, progress, cancel, mz_offset_ppm)
+    fits, fit, controls, quality = _fit_part(
+        data, config, plan, progress, cancel, mz_offset_ppm,
+        envelope_offset=(envelope_offset_ppm, envelope_offset_limit_ppm))
     boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
     return fit, boot, by_k, controls, quality
 
@@ -696,7 +705,10 @@ def run(
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
-                                             charges=charges, fragments=fragments)
+                                             charges=charges, fragments=fragments,
+                                             envelope_offset=(
+                                                 binned.envelope_offset_ppm[kept],
+                                                 binned.envelope_offset_limit_ppm[kept]))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

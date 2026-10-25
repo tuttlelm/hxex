@@ -4202,3 +4202,56 @@ CSVs or mzML if wanted.
     every window within 1 s of the prototype's (median 0.1 s); K > 1 in the undeuterated controls
     34.0 % (fixed window 51.4 %), labelled 21.0 % (30.3 %); uptake against the prediction 12.6 %
     more than 0.1 off (12.0 %).
+
+166. **Near-isobaric species: the picker's m/z check (owner, 2026-10-25; PLAN Next steps 11;
+    private notes in the Orbitrap project's `mz_offset/` and `analysis_examples/series_offset/`).**
+    Step 2 of the owner's order: on the public Orbitrap digest (MSV000094510; HISTORY 162, 165)
+    57 peptides missed the intrinsic-rate prediction (corrected K = 1 fD more than 0.1 off at
+    half their time points or more), HDExaminer fine on 40 of them. Findings:
+    - 14 of the 57 were cysteine peptides read as carbamidomethylated (from the DDA
+      identifications): HDExaminer's masses are 57.02 Da per cysteine lower and the unmodified
+      m/z peaks at the table's retention times, so the HDX samples were not alkylated. An input
+      error, corrected in the local peptide table (misses 57 -> 53; > 0.1 off 12.6 -> 11.6 %).
+    - Not the calibration: per-run offsets +0.5 to +1.5 ppm, flat in m/z and time; per-scan
+      offsets do not drift across the elution peak (no window in time avoids the interference).
+    - `mz_offset_ppm` is measured inside the picking window, so a +-10 ppm window hides larger
+      offsets (and `mz_shift` at 15 ppm can never fire). Measured from the peak tops of M, M+1,
+      M+2 within +-40 ppm, 91 % of undeuterated envelopes sit within 10 ppm (median 0.9); 9 % sit
+      10 to 40 ppm away, by the same amount in both undeuterated runs (r = 1.00), whatever the
+      m/z, time or intensity: near-isobaric species merged with the peptide's peaks at R 45,000
+      (peaks 30 to 40 ppm wide). The +-10 ppm window then reads their flank.
+    - A per-bin rule (a bin whose window maximum leads uphill to a top outside the window set to
+      0, or left out of the fit's loss) cut K > 1 (labelled 20 -> 13 %) but made uptake worse
+      (> 0.1 off 11.6 -> 14.3 to 14.7 %; misses 53 -> 77 to 80): it contested 37 % of the bins,
+      whole far-off envelopes included. Not adopted; zero against left out not fairly tested.
+    - Series level: flagging a series whose undeuterated offset is beyond 6 times its run's
+      robust scatter isolates bad series on both instruments (Orbitrap: 27 % of time points off
+      against 9.6 %; Q-TOF benchmark: the flagged series with other charge states disagree with
+      them by 1.1 to 1.5 D, typical 0.08 D; known-answer set: none flagged). A fixed 10 ppm
+      limit flags 30 % of the known-answer series (their scatter is 8 ppm); the picking window
+      as the limit flags nothing in a +-50 ppm window. Inconsistent undeuterated envelopes (M to
+      M+2 disagreeing) are bad on the Orbitrap (32 % off) but not on the Q-TOF: not used.
+    - Leaving flagged series out (owner's question) costs good values: HDExaminer is within 0.1
+      on 86 % of the flagged peptides' time points, hxex on 73 %; leaving them out drops hxex's
+      good values from 5,969 to 5,400 (HDExaminer 6,258). Moving their windows by the measured
+      offset recovers most: 82 % (5,969 -> 6,034 in all; K > 1 labelled 20.2 -> 17.7 %, fully
+      deuterated 19.6 -> 17.2 %). Moving every series gains nothing (the rest lose 13 values).
+      On the Q-TOF benchmark (+-50 ppm) moving changes nothing (median 0.000 D, largest 0.27 D)
+      and the flagged series still disagree with their other charges: moving does not rescue a
+      foreign species, so the flag stays.
+    Built (owner: on by default; the limit a setting, 6 by default; document how the settings
+    change a run): `hxex.picking.recentre`; `[run.picker] off_mz_sd` (6; false: no check) and
+    `recentre` (true; false: flag only). A run is one undeuterated injection (sample and
+    replicate); its calibration a Theil-Sen line in m/z (the Q-TOF's drifts by about +1 ppm per
+    100 m/z within an injection: with a constant calibration the benchmark's scatter was 2.9
+    ppm and two of its four flagged series fell below the limit), its scatter the robust sd
+    about it; fewer than 10 controls: all the controls'. Quality flag `off_mz` (statistic
+    `envelope_offset`); `mz_shift` now only for series the check does not assess (fragment ions,
+    series without undeuterated controls), since it still catches wrong fragment compositions.
+    `binned.parquet` and `spectra.csv`: `envelope_offset_ppm`, `envelope_offset_limit_ppm`,
+    `window_shift_ppm` (absent in older bundles: not assessed, not moved); `mz` stays the
+    predicted m/z; spectrum figures draw the windows where they were. Flagged at 4 / 6 / 8 / 10
+    sd: Orbitrap 74 / 66 / 61 / 59 of 527, Q-TOF 22 / 4 / 2 / 1 of 1,320, known-answer 0. The
+    built run on the Orbitrap digest reproduces the experiment exactly (6,034 good values).
+    Guide: picking-window.md "A series whose peaks sit off its m/z" (with "Changing these
+    settings"), outputs.md; PEAK_PICKING.md; BUNDLE.md.

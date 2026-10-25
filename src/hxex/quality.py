@@ -30,7 +30,13 @@ signal never reach the fit and are handled before it.
   data with the right composition the series are within about 3 ppm; a wrong C-terminus moved
   them by 23 to 41 ppm; on an intact-peptide dataset 2 % of series were beyond 15 ppm. Not
   assessed without the picker's offsets (a binned table read from
-  elsewhere).
+  elsewhere), nor for a series the picker's m/z check assessed (``off_mz`` replaces it there:
+  the picker's offsets are measured inside its window, which a narrow window clips).
+- ``off_mz``: the series' undeuterated controls put its envelope further from the run's
+  calibration than ``[run.picker] off_mz_sd`` times the run's scatter
+  (:mod:`hxex.picking.recentre`): most likely another, near-isobaric species shares its
+  peaks. The statistic is ``envelope_offset`` (ppm). Peptide ions with undeuterated controls
+  only; with ``recentre`` the picker moved the series' windows onto its envelope.
 - ``poor_envelope``: the series' ion-type envelope (``mixed`` or ``infer``) was not measured
   well (:attr:`hxex.picking.EnvelopeTable.poor`): left with the theory of one ion type for want
   of usable reference spectra, not describing the spectra it was fitted to, or, shared between
@@ -69,8 +75,8 @@ from .model import Backend
 from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
 from .spectra import UNDEUT, time_point
 
-FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "poor_envelope",
-              "saturated", "tails_low", "bright")
+FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
+              "poor_envelope", "saturated", "tails_low", "bright")
 
 
 @dataclass(frozen=True)
@@ -136,7 +142,8 @@ class QualityFlags:
     ``misfit_rel`` its ratio to the median of the series (the ``poor_fit`` statistic; NaN in flags
     read from a bundle written before it); ``intensity`` is the total intensity and
     ``intensity_rel`` its ratio to the mean of the other replicates at the same time; ``mz_offset``
-    is the series' m/z offset relative to the run, in ppm. NaN where not assessed (the flag is False
+    is the series' m/z offset relative to the run, in ppm, and ``envelope_offset`` the picker's
+    m/z check of the series (``off_mz``), in ppm. NaN where not assessed (the flag is False
     there). ``flagged`` is True where any flag is set. Flags read from a bundle written before
     them are False.
     """
@@ -158,12 +165,14 @@ class QualityFlags:
     saturated: np.ndarray | None = None
     tails_low: np.ndarray | None = None
     bright: np.ndarray | None = None
+    envelope_offset: np.ndarray | None = None
+    off_mz: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
-        for name in ("mz_offset", "misfit", "misfit_rel"):  # or the envelope flag
+        for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset"):  # or a flag
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
-        for name in ("mz_shift", "poor_envelope", "saturated", "tails_low", "bright"):
+        for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -316,11 +325,16 @@ def assess_quality(
     config: QualityConfig = QualityConfig(),  # noqa: B008
     mz_offset_ppm: np.ndarray | None = None,
     poor_envelope_series: np.ndarray | None = None,
+    envelope_offset_ppm: np.ndarray | None = None,
+    envelope_offset_limit_ppm: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
-    without it the m/z screen is not assessed. ``poor_envelope_series`` lists the series
-    (``data_id``) whose envelope is poor (:attr:`hxex.picking.EnvelopeTable.poor`)."""
+    without it the m/z screen is not assessed. ``envelope_offset_ppm`` and
+    ``envelope_offset_limit_ppm`` are the picker's m/z check of every measurement's series
+    (:attr:`~hxex.picking.BinnedSet.envelope_offset_ppm`; NaN or None: not assessed).
+    ``poor_envelope_series`` lists the series (``data_id``) whose envelope is poor
+    (:attr:`hxex.picking.EnvelopeTable.poor`)."""
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
         raise ValueError("the measurements and the fit must be for the same spectra")
     m = len(fit)
@@ -357,9 +371,20 @@ def assess_quality(
         if len(mz_offset_ppm) != m:
             raise ValueError("mz_offset_ppm must have one value per measurement")
         mz_offset = series_mz_offset(fit.data_id, mz_offset_ppm)
+    envelope_offset = np.full(m, np.nan)
+    envelope_limit = np.full(m, np.nan)
+    for name, given, out in (("envelope_offset_ppm", envelope_offset_ppm, envelope_offset),
+                             ("envelope_offset_limit_ppm", envelope_offset_limit_ppm,
+                              envelope_limit)):
+        if given is not None:
+            if len(given) != m:
+                raise ValueError(f"{name} must have one value per measurement")
+            out[:] = np.asarray(given, dtype=float)
+    checked = np.isfinite(envelope_offset) & np.isfinite(envelope_limit)
+    off_mz = checked & (np.abs(np.nan_to_num(envelope_offset)) > np.nan_to_num(envelope_limit))
     limit = config.max_mz_offset_ppm
     mz_shift = (np.zeros(m, dtype=bool) if limit is None
-                else np.abs(np.nan_to_num(mz_offset)) > limit)
+                else (np.abs(np.nan_to_num(mz_offset)) > limit) & ~checked)
     brightness = _brightness_flags(meas, np.asarray(fit.data_id), config)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
@@ -368,6 +393,7 @@ def assess_quality(
         & (np.nan_to_num(deviance) > config.min_deviance),
         low_intensity=np.nan_to_num(intensity_rel, nan=1.0) < config.min_intensity,
         noise_outlier=noise_outlier, mz_offset=mz_offset, mz_shift=mz_shift,
+        envelope_offset=envelope_offset, off_mz=off_mz,
         misfit=misfit, misfit_rel=misfit_rel,
         poor_envelope=np.isin(fit.data_id, np.asarray(
             [] if poor_envelope_series is None else poor_envelope_series, dtype=np.int64)),
