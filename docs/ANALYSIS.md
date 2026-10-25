@@ -484,6 +484,116 @@ Plots (matplotlib, returning figures):
 - for fragments: cleavage maps, uptake against fragment length (c ions, and the parent minus
   z ions), closure plots, comparisons between activations and precursor charges.
 
+### The population test: one evaluation of K from spectrum to residue (design; owner, 2026-10-25; not built)
+
+**Why.** Today each level decides the number of populations differently: the run per spectrum by
+BIC or AIC; `best_set_K` per peptide set by the summed criterion (uncalibrated; minor share
+5 %); the residues by a half-weight vote of the `best_set_K = 2` peptides, or in `"bootstrap"`
+mode by the bootstrap errors; and the residue-level confidence of HISTORY item 148 by a
+calibrated test with four tiers. The owner wants one consistent statistical evaluation of K at
+the peptide level carried through to the residues. Evidence: HISTORY items 139, 148, 161, 162,
+166, 167.
+
+**The test.** For a spectrum, the statistic of K against K + 1 is
+`T = 2 (nll_K - nll_K+1)` from its own fits. Its null comes from simulation: data drawn from the
+spectrum's K-population fit with the fit's noise, refitted at K and K + 1, `simulations` times
+(20). A set (sample, peptide, time or control role; charge states and replicates pooled) sums
+the statistics of its spectra and their nulls; a gamma fitted to the summed null gives the set's
+p-value (per-set null; at 20 simulations it agrees with 100 on 97-99 % of sets on a Q-TOF and an
+Orbitrap dataset, HISTORY 161-162; a null pooled over the run was unstable on the Orbitrap and is
+not used). A set has at least K + 1 populations when `p < significance` (0.01) and the added
+population's mean share is at least `min_population` (0.10); the steps run from `k_min` to
+`k_max - 1` and stop at the first that does not reject. Calibration on simulated single
+populations: about 1 % called two (HISTORY 139).
+
+**Which spectra enter a set.** The spectra the analysis keeps: left-out spectra
+(`left_out_spectra.csv`), spectra kept at one population only (the spectrum quality screens,
+and the undeuterated rule below) and spectra with a reviewed `review_K = 1` leave the test; a
+set made only of those has one population. Accepting a spectrum in the review restores its
+evidence.
+
+**The undeuterated reference.** An undeuterated sample cannot hold two deuterium populations,
+so an undeuterated set that reads two holds another species (on the public Orbitrap digest: the
+second component a median 7.9 D above the first, share 0.16; 28 % of the undeuterated sets kept
+by the analysis). Where a series' undeuterated set reads two, 42 % of its labelled sets read two
+against 7 % where it reads one, and two thirds of all labelled two-population sets are in such
+series; their K = 1 values are still close to another program's (1.8 % more than 0.1 fD apart
+against 0.3 %). Rule (owner): by default the labelled spectra of such a series are kept at one
+population only (the route of item 152), with a switch; an accepted spectrum keeps its K >= 2
+evidence. The same cap applies at every step (a series whose undeuterated set reads two is not
+tested for three).
+
+**Each level from the same numbers.**
+- Spectrum: with the population test switched on, each spectrum's own K (`spectra.csv`, the
+  figures, a `"selected"` bootstrap) comes from the same steps, the spectrum tested as a set of
+  one (owner: tie the spectrum's properties to the test when it is on; otherwise the fit's
+  criterion, BIC or AIC, as now). A single spectrum has less power than its set, so spectra stay
+  at one population more often than their sets; the set pools the evidence. A reviewed
+  `review_K` still wins.
+- Peptide: the set's K replaces `best_set_K` and gates the peptide comparisons as today
+  (HISTORY 137, 144).
+- Residue: from the covering sets' results at each step, agreement (the weighted share of
+  covering sets with at least K + 1 populations) and strength (a weighted Stouffer combination of
+  the sets' z values, `z = Phi^-1(1 - p)` clipped at +-3.09), and the owner's four tiers (two,
+  localised: strong and agreement >= 0.5; two: strong and agreement 0.33-0.5; undecided: one of
+  the two; no sign; HISTORY 148). K = 2 values from every covering peptide (HISTORY 141).
+- The bootstrap gives errors only (positions, populations), never the decision.
+
+`significance` and `min_population` act in the run (each spectrum's K) and in the analysis
+(sets), so one value serves both: set in the run's table, read by the analysis, an override
+recorded in `analysis_settings_used.toml`.
+
+**Beyond two.** The steps generalise (two against three with a null from the K = 2 fits). At the
+residue level the tiers generalise step by step, and more than two states at a residue is real
+conformational heterogeneity (owner); the difficulty is that a peptide reading three can mean
+three states at some residues or two two-state regions together, which only overlapping peptides
+separate, and that a step-two p-value exists only for sets that read two (how untested sets
+enter the step-two combination is to be defined). To be tested on simulated data with both cases
+before the residue tiers beyond two are built.
+
+**Settings (names agreed for the run table; the rest proposed).**
+
+```toml
+[run.fit]
+k_min = 1                 # must be 1 for the test
+k_max = 2                 # 3: a second step, and a second null
+
+[run.population_test]     # opt-in: the table turns the stage on, as [run.bootstrap] does
+simulations = 20          # per spectrum and step
+significance = 0.01
+min_population = 0.10
+
+[analysis]
+populations = "test"      # the test when the bundle has it; "best_set" and "bootstrap" kept
+```
+
+Without `[run.population_test]` the analysis uses `best_set_K` as now and says so in its log and
+settings file; `populations = "test"` on a bundle without the test is refused with the fix (add
+the table, `hxex resume`). `hxex resume` can add the test to an existing bundle; spectra whose K
+changes then have a `"selected"` bootstrap redone (`ks = [1, 2]` bootstraps are unaffected).
+Refused: `k_min > 1` or `k_min = k_max` with the test on.
+
+**Workflow.** `hxex run` fits K from `k_min` to `k_max`, runs the test, sets each spectrum's K,
+then bootstraps if asked; `hxex analyse` forms the sets, their K and the residue tiers in
+seconds (changing filters, review or `significance` needs no new simulation); the bootstrap can
+come later (`hxex resume`, `ks = [1, 2]`) for error bars, without changing the tiers.
+
+**Cost (measured).** 1.8 ms per spectrum and simulation on the GPU (RTX A4500: 25,297 spectra,
+one step, 15 min) and 9.7 ms on the CPU (24 threads of a 48-core workstation: 1.4 h for the same
+data); `k_max = 3` doubles it. About a 20-resample bootstrap; several hours on a laptop CPU for a
+dataset of this size, so opt-in, and the guide states the cost.
+
+**To evaluate before building.**
+1. `[run.fit] screen` (the owner's quick-look route, whose desired output resembles the tiers):
+   set verdicts and tier figures with the screen on and off, side by side (a skipped K = 2 fit
+   enters with `T = 0`); whether the screen's bound on the K = 2 gain lets spectra skip the
+   simulation; whether the tiers themselves can be the quick look.
+2. The residue tiers beyond two on simulated data (three real states at residues, and two
+   neighbouring two-state regions).
+3. The undeuterated rule on the intact-peptide benchmark and the known-answer set (how much it
+   removes where interference is rare).
+4. The CPU cost on a smaller machine.
+
 ## Later parts
 
 - **Comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons
@@ -600,7 +710,8 @@ Recommendation first:
 1. Spectra with quality flags: kept by default, with an option to leave them out.
 2. Whether the undeuterated and fully deuterated controls appear as panels in the residue
    figures (the owner's figures show them).
-3. Three populations: ranks 1 to 3 are shown, but the choice is between one and two only, for now.
+3. Three populations: ranks 1 to 3 are shown, but the choice is between one and two only, for now
+   (the population test, above, is designed to step beyond two).
 4. The stitched-sequence option (decision 4 above).
 
 ## Reference notes (pyHXExpress `hxex_utils.py`)
