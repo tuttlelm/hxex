@@ -4293,3 +4293,27 @@ CSVs or mzML if wanted.
     and one borderline (a 90-113 4+ at 0.59 D, K = 1: the kind to accept by hand). Known-answer
     set: one series (13.0 D), the one the owner had already excluded for its +13 Da envelope. Tutorial data: none.
     Guide: back-exchange-correction.md, outputs.md.
+
+168. **The set test on the cleaned Orbitrap bundle; the population test designed (owner,
+    2026-10-25; docs/ANALYSIS.md "The population test"; private notes in the Orbitrap project's
+    `set_test_offmz/`).** Re-measured after items 165-167 (B = 20 per-set null, 505,940 fits,
+    15 min on the GPU; p < 0.01, minor share >= 0.10; the spectra hxex analyse keeps): undeuterated
+    sets read two in 28.4 % (49.4 % on the old bundle; best_set_K 35.2 %, 59.1 %), labelled sets
+    17.5 % (36.2 %); the rules agree on 95.5 % of labelled sets. The undeuterated sets read as two
+    hold another species, not a calibration error: the second component a median 7.9 D above the
+    first, share 0.16, the heavier in 99 %; screen_beyond_reach >= 0.10 in 40 % (16 % of those read
+    as one); no intensity trend. Labelled sets read two in 42 % of series whose undeuterated set
+    reads two and 7 % where it reads one (65 % of all labelled two-population sets are in the
+    former); their K = 1 fD stays close to HDExaminer's (1.8 % against 0.3 % of peptide-times more
+    than 0.1 apart). CPU cost of the null: 9.7 ms per spectrum and simulation (24 threads),
+    against 1.8 ms on the GPU. Owner's decisions for the design: one statistic from spectrum to
+    residue (the set test replaces best_set_K; "best_set" and "bootstrap" modes kept for now);
+    significance 0.01 and a 10 % minor population, user settings; a series whose undeuterated set
+    reads two is kept at one population by default (the route of item 152); the bootstrap gives
+    errors only; the stage is opt-in (`[run.population_test]`; the owner rejected `[run.null]` as
+    meaningless to users), and with it on each spectrum's K follows the test, otherwise BIC or AIC;
+    the test steps beyond two (K against K + 1), and a residue can hold more than two
+    conformations (owner: more than two states at a residue is the heterogeneity measured), so the
+    residue tiers beyond two are to be tested on simulated data; `[run.fit] screen` is the owner's
+    quick-look route, whose desired output resembles the tiers, so their interaction is to be
+    evaluated (verdicts and tier figures with the screen on and off).
