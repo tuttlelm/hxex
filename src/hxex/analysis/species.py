@@ -72,6 +72,11 @@ class SpeciesFilters:
       sample with no measured fully deuterated control at all, whose series all use one
       (``stand-in control``); ``'include'`` keeps them. A series whose measured controls were
       all removed by ``spectrum_quality_filtering`` says so (``stand-in control (screened)``).
+      ``'exclude'`` also leaves out the series whose undeuterated control read above
+      ``[run.controls] m0_max`` (``m0_high``: the windows hold another species, which the
+      labelled spectra share; ``stand-in control (undeuterated)``), with no exception for a
+      sample (a warning when a sample loses half its series or more). A missing undeuterated
+      control (``m0_missing``) is not a reason: 0 stands in for it fairly.
     - ``spectrum_quality_filtering``: what the spectrum quality screens
       (:mod:`hxex.picking.screen`) do, at ``'loose'`` (the default) or ``'strict'``
       thresholds (:mod:`hxex.analysis.screening`): a spectrum showing another species is left
@@ -599,7 +604,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
                    else np.array([], dtype=str))
         listed = [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
         if filters.stand_in_controls == "exclude":
-            listed += ["stand-in control", "stand-in control (screened)"]
+            listed += ["stand-in control", "stand-in control (screened)",
+                       "stand-in control (undeuterated)"]
         if filters.above_amides:
             listed.append("above the amide count")
         if filters.replicate_outlier is not None:
@@ -692,6 +698,20 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                     unscreened.rows(fit.data_id)] & stand_in
             mark(lost & np.isin(sample, list(has)), "stand-in control (screened)")
             mark(stand_in & np.isin(sample, list(has)), "stand-in control")
+            # an undeuterated control above m0_max holds another species: no sample exception
+            heavy = np.char.find(np.asarray(controls.flags, dtype=str)[at], "m0_high") >= 0
+            heavy &= ~raw
+            mark(heavy, "stand-in control (undeuterated)")
+            data_id = np.asarray(fit.data_id)
+            for s in (() if values else np.unique(sample)):  # once per analysis
+                mine = sample == s
+                n_series = len(np.unique(data_id[mine]))
+                n_heavy = len(np.unique(data_id[mine & heavy]))
+                if n_series and 2 * n_heavy >= n_series:
+                    log.warning("sample %s: %d of %d series have an undeuterated control above "
+                                "m0_max and are left out (stand_in_controls = \"exclude\"); "
+                                "is a labelled file marked as undeuterated?", s, n_heavy,
+                                n_series)
     k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
     if filters.above_amides:
         mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, "above the amide count")

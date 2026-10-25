@@ -675,8 +675,10 @@ Planned, not built:
    (removed 30 % of the known-answer series), leaving flagged series out by default (cost more
    good values than bad ones), recentring every series (nothing gained). Open: the series whose
    undeuterated envelopes are inconsistent (M, M+1, M+2 tops disagree: 32 % of their time
-   points off on the Orbitrap digest, no worse than the rest on a Q-TOF); the unflagged
-   peptides' gap to HDExaminer (90 % against 94 % within 0.1); then the set test (HISTORY 162).
+   points off on the Orbitrap digest, no worse than the rest on a Q-TOF); then the set test
+   (HISTORY 162). The gap to HDExaminer (item 167): mostly series whose undeuterated control is
+   another species; `stand_in_controls = "exclude"` now also leaves out `m0_high` series, and
+   the programs then differ at 0.6 % of the kept peptide-times.
 
 ## Risks and open decisions
 

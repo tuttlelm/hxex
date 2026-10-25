@@ -1556,6 +1556,47 @@ def test_spectra_left_out_whole_and_why():
         SpeciesFilters(replicate_outlier=0)
 
 
+def test_an_undeuterated_control_above_m0_max_leaves_its_series_out(caplog):
+    """stand_in_controls = "exclude" also leaves out a series whose undeuterated control read
+    above m0_max (m0_high: another species in its windows; owner, 2026-10-25, HISTORY 167), with
+    no exception for a sample; a missing one (m0_missing) is not a reason; the review's
+    acceptance and "include" keep it."""
+    import dataclasses
+    import logging
+    from types import SimpleNamespace
+
+    from hxex.analysis.species import SpeciesFilters, _left_out, analysis_controls
+
+    results = Results.from_run(run(raw_spectra(n_series=3), config()))
+    fit = results.fit
+    controls = analysis_controls(results, None, quiet=True)
+    n_am = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
+    keep = np.ones(len(fit), dtype=bool)
+    first = np.asarray(fit.data_id) == controls.data_id[0]
+
+    def with_flags(values):
+        return dataclasses.replace(controls, flags=np.asarray(values, dtype=str))
+
+    flags = np.asarray(controls.flags).astype(object)
+    flags[0] = "m0_high;m0_multimodal"
+    heavy = with_flags(flags)
+    out, why = _left_out(results, SpeciesFilters(), heavy, n_am, keep)
+    assert (why[first] == "stand-in control (undeuterated)").all() and not out[~first].any()
+    assert not _left_out(results, SpeciesFilters(stand_in_controls="include"), heavy, n_am,
+                         keep)[0].any()
+    accepted = SimpleNamespace(fit=fit, binned=results.binned, review_status=np.where(
+        first, "accepted", np.asarray(results.review_status)))
+    assert not _left_out(accepted, SpeciesFilters(), heavy, n_am, keep)[0].any()
+    flags[0] = "m0_missing"
+    assert not _left_out(results, SpeciesFilters(), with_flags(flags), n_am, keep)[0].any()
+    # every series heavy: all left out (no sample exception), with one warning
+    with caplog.at_level(logging.WARNING, logger="hxex.analysis.species"):
+        out, _ = _left_out(results, SpeciesFilters(), with_flags(
+            np.full(len(controls), "m0_high")), n_am, keep)
+    assert out.all()
+    assert sum("above m0_max" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_the_left_out_summary_counts_every_step(two_sample_bundle, tmp_path):
     """left_out_summary.csv (owner, 2026-10-24): one row per step from the spectra read to the
     analysis, a count of 0 included, its whole-spectra rows equal to left_out_spectra.csv's

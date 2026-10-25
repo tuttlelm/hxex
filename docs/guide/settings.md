@@ -419,7 +419,7 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
 | `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
-| `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) |
+| `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species) |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
 
 ## `[analysis.choice]`

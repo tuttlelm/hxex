@@ -4255,3 +4255,41 @@ CSVs or mzML if wanted.
     built run on the Orbitrap digest reproduces the experiment exactly (6,034 good values).
     Guide: picking-window.md "A series whose peaks sit off its m/z" (with "Changing these
     settings"), outputs.md; PEAK_PICKING.md; BUNDLE.md.
+
+167. **The remaining gap to HDExaminer, and undeuterated controls above `m0_max` (owner,
+    2026-10-25; private notes in the Orbitrap project's `gap/`).** On the Orbitrap digest
+    (bundle with the m/z check, item 166) the paper's predicted uptake is a rough yardstick: it
+    cannot be reproduced with `hxex.kint` at the stated pH 3 and 20 C (best fit at an apparent pH
+    ~2.4 leaves a median 0.044 fD), whether or not k_back is included (the spreadsheet
+    convention of pure-D2O forward rates; at 88 % D2O the correct relaxation rate is only ~5 %
+    faster, moving the normalised prediction by at most 0.015 fD), and both programs miss the
+    same mid-curve points (rate errors; the paper itself reports 97 % within two-fold). Compared
+    directly instead: HDExaminer's deuterons are 1.145 times hxex's everywhere, controls included
+    (about 1/0.88: it probably divides by the D2O fraction; cancels in fD); the fully deuterated
+    ranges agree (median ratio 0.999); the programs differ by > 0.1 fD at 240 of 6,751 peptide-
+    times, 197 of them in 24 peptides. Those 24 have undeuterated controls choosing K > 1 (median
+    share 1.0 against 0.0), differences of several deuterons, `data_below_m0` in 9 (0 of the 514
+    peptides that never differ) and stand-in controls in 22 (`m0_high` in 14). Side by side, the
+    peptide's own envelope is small or absent in the undeuterated control and another species
+    fills the reachable range (+5 to +12 Da, a 5+ across a 2+, one 47 ppm off); hxex's K = 1 fit
+    takes it for the peptide. For IACLDFSLQK HDExaminer's values are the uptake of the species
+    47 ppm off (windows moved onto it reproduce them within 0.03-0.07); nothing is at the exact
+    m/z at HDExaminer's retention time, and the weak signal at the exact m/z at 4.29 min is no
+    peptide envelope (M+1/M 0.2 against 0.62): the free-cysteine peptide is not seen (its DDA
+    identification was of the alkylated form). A guard on recentring (move only below one peak
+    width) has no support: 5 of the 66 off_mz series are 0.85 peak widths or more off, none with
+    a separate peak at the exact m/z, and moving improved agreement with both yardsticks there;
+    the 40 ppm search is about one peak width on this Orbitrap.
+    `hxex analyse`'s `stand_in_controls = "exclude"` already left out 20 of the 24 (series whose
+    fully deuterated control is a stand-in). Built (owner: option 2, `m0_max` as the limit, the
+    existing reason kept, no sample exception, one switch): it also leaves out the series whose
+    undeuterated control read above `[run.controls] m0_max` (`m0_high`), reason `stand-in
+    control (undeuterated)`, with a warning when a sample loses half its series or more; a
+    missing undeuterated control (`m0_missing`) is not a reason; `accepted` in the review and
+    `stand_in_controls = "include"` keep them. Effect: digest 22 of the 24 left out, 11 of the
+    25 that differ at 1-3 times, 2 of the 514; among the series kept the programs differ at 38 of
+    6,334 peptide-times (0.6 %, from 0.9 %). Q-TOF benchmark: 6 series newly left out, five
+    plainly another species (70-78 2+/3+ in three samples, a 107-117 2+; means 3.5-7 D, K > 1)
+    and one borderline (a 90-113 4+ at 0.59 D, K = 1: the kind to accept by hand). Known-answer
+    set: one series (13.0 D), the one the owner had already excluded for its +13 Da envelope. Tutorial data: none.
+    Guide: back-exchange-correction.md, outputs.md.

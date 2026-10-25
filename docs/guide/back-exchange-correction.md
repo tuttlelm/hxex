@@ -20,7 +20,10 @@ that fails is not used: the series takes a stand-in value instead (see
 (`control_fallback`, with the reason in the `controls` column of `series.csv`).
 
 **The undeuterated control** is rejected when its mean is above 0.5 deuterons beyond natural
-abundance (`m0_max`).
+abundance (`m0_max`; flagged `m0_high`). An undeuterated sample holds no deuterium, so a mean
+that high means the peaks *hxex* picked are not the peptide's alone: most often another species
+of almost the same m/z, a few mass units heavier or at another charge, sits in the picking
+windows, and it is usually in the labelled spectra too.
 
 **The fully deuterated control** is judged by its *retention*: the fraction of the label it
 still holds when it is measured, (mFD − m0) / number of amides. Retention is always below the
@@ -125,6 +128,17 @@ they were the series whose corrected values most often went above full deuterati
 with no measured fully deuterated control at all keeps them, since every one of its series
 uses one. Set `stand_in_controls = "include"` to keep them everywhere. The run's own tables
 and uptake plots always show every series.
+
+The same setting leaves out a series whose undeuterated control was rejected as too heavy
+(`m0_high`), with the reason `stand-in control (undeuterated)` in `left_out_spectra.csv`:
+replacing its m0 by 0 fixes the starting point, but the other species is still in its labelled
+spectra. On a public Orbitrap digest, these were most of the peptides whose uptake differed from
+another program's by several deuterons. Here there is no exception for a sample: if half of a
+sample's series or more are left out this way, `hxex analyse` warns, since that usually means a
+labelled file was marked as undeuterated. A missing undeuterated control (`m0_missing`) is not
+a reason: 0 is then a fair stand-in. A series just over the limit can be a good one (a long
+peptide at 0.6 deuterons, say): look at its undeuterated spectra, and to keep it, mark its
+spectra `accepted` in the [user review table](project-file.md#the-user-review-table).
 
 A control that shows another species in its spectrum is left out of the correction in
 `hxex analyse` (`spectrum_quality_filtering`; see

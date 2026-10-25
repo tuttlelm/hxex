@@ -223,7 +223,9 @@ _DESCRIPTIONS: dict[str, str] = {
                                      "count before the back-exchange correction",
     "analysis.filters.stand_in_controls": '"exclude" or "include" the series whose fully '
                                           "deuterated control is a stand-in (a sample with "
-                                          "no measured control keeps them)",
+                                          "no measured control keeps them) or whose "
+                                          "undeuterated control read above [run.controls] "
+                                          "m0_max (m0_high: another species)",
     "analysis.filters.spectrum_quality_filtering": '"loose", "strict", or "none": what the '
                                                    "spectrum quality screens do: leave out "
                                                    "spectra showing another species, keep one "
