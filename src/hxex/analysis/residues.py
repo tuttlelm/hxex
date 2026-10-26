@@ -52,7 +52,11 @@ class ResidueMap:
     proline or another residue without an amide between them included), so a line may join
     them. ``two_population_weight`` (K=1 rows, with ``two_population_peptides``): the share of
     the residue's weight carried by peptides whose set is best described by two populations
-    (``best_set_K = 2``); NaN otherwise."""
+    (``best_set_K = 2``); NaN otherwise. With the population test (``population_test``, K=1
+    rows): ``test_strength_2`` and ``test_agreement_2`` (two populations or more: the
+    combined p-value of the covering sets and the share of their weight that has two or more),
+    ``test_strength_3`` and ``test_agreement_3`` (three or more), and ``population_tier``
+    (:func:`population_tiers`); NaN and '' otherwise."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -72,8 +76,19 @@ class ResidueMap:
     run: np.ndarray | None = None
     linked_next: np.ndarray | None = None
     two_population_weight: np.ndarray | None = None
+    test_strength_2: np.ndarray | None = None
+    test_agreement_2: np.ndarray | None = None
+    test_strength_3: np.ndarray | None = None
+    test_agreement_3: np.ndarray | None = None
+    population_tier: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback; prolines only; time points
+        for name in TEST_COLUMNS:
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.sample), np.nan))
+        if self.population_tier is None:
+            object.__setattr__(self, "population_tier",
+                               np.full(len(self.sample), "", dtype=object))
         if self.linked_next is None:
             object.__setattr__(self, "linked_next", np.zeros(len(self.sample), dtype=bool))
         if self.two_population_weight is None:
@@ -215,6 +230,62 @@ def _peptides_only(uptake: SpeciesUptake) -> SpeciesUptake:
     return pep
 
 
+TEST_COLUMNS = ("test_strength_2", "test_agreement_2", "test_strength_3", "test_agreement_3")
+# the residue tiers of the population test (owner, HISTORY 148; up to three, HISTORY 170)
+TIER_STRENGTH = 0.01  # strong: the combined p-value below this
+TIER_AGREEMENT = 1 / 3  # agreeing: this share of the covering weight has the populations
+TIER_LOCALISED = 0.5  # localised: at least this share
+Z_CLIP = 3.09  # a set's z = Phi^-1(1 - p), clipped (p = 0.001)
+TIERS = ("no sign", "undecided", "two", "two, localised", "three", "three, localised")
+
+
+def _step_tier(strength: np.ndarray, agreement: np.ndarray) -> np.ndarray:
+    """0 no sign, 1 undecided (one criterion), 2 strong and agreeing, 3 also localised; -1
+    where unknown."""
+    with np.errstate(invalid="ignore"):
+        strong = strength < TIER_STRENGTH
+        agree = agreement >= TIER_AGREEMENT - 1e-12
+        code = np.where(strong & (agreement >= TIER_LOCALISED - 1e-12), 3,
+                        np.where(strong & agree, 2, np.where(strong ^ agree, 1, 0)))
+    return np.where(np.isfinite(strength) & np.isfinite(agreement), code, -1)
+
+
+def population_tiers(strength_2, agreement_2, strength_3, agreement_3) -> np.ndarray:
+    """The residue tier (:data:`TIERS`; '' where unknown) from the strength and agreement of
+    each step: the first step's four tiers (two, localised: strong and agreement >= 0.5; two:
+    strong and agreement >= 1/3; undecided: one of the two; no sign), and "three" or "three,
+    localised" where the first step has two and the second step reaches its two tiers by the
+    same rule. Two neighbouring two-state regions can read as three at their junction
+    (HISTORY 169)."""
+    one = _step_tier(np.asarray(strength_2, float), np.asarray(agreement_2, float))
+    two = _step_tier(np.asarray(strength_3, float), np.asarray(agreement_3, float))
+    code = np.where((one >= 2) & (two >= 2), two + 2, one)
+    names = np.array(TIERS + ("",), dtype=object)
+    return names[np.where(code < 0, len(TIERS), code)]
+
+
+def _test_levels(z: np.ndarray, p: np.ndarray, reads: np.ndarray, exponent: float):
+    """Per residue: the strength (the weighted Stouffer combination of the covering sets' z
+    values; sets without a p-value enter with z = 0) and the agreement (the share of the
+    covering weight whose sets read at least the step's populations); both NaN where no set
+    has a p-value at this step."""
+    from scipy.stats import norm
+
+    if not np.isfinite(p).any():  # no set tested at this step (k_max below it)
+        nan = np.full(z.shape[1], np.nan)
+        return nan, nan.copy()
+    w = np.where(z > 0, z**exponent, 0.0)
+    total = w.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        zs = np.where(np.isfinite(p), np.clip(norm.isf(np.clip(p, 0.0, 1.0)), -Z_CLIP, Z_CLIP),
+                      0.0)
+        combined = (w * zs[:, None]).sum(axis=0) / np.sqrt((w**2).sum(axis=0))
+        strength = np.where(total > 0, norm.sf(combined), np.nan)
+        agreement = np.where(total > 0, (w * reads.astype(float)[:, None]).sum(axis=0)
+                             / np.where(total > 0, total, 1.0), np.nan)
+    return strength, agreement
+
+
 def residue_map(
     uptake: SpeciesUptake,
     *,
@@ -223,6 +294,7 @@ def residue_map(
     modified: str = "separate",
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     two_population_peptides: bool = False,
+    population_test: bool = False,
 ) -> ResidueMap:
     """The residue-level values of every sample, time, K and rank of ``uptake`` (peptides only).
 
@@ -234,6 +306,12 @@ def residue_map(
     K=2 values use every covering peptide, as K=1 does, so the three describe the same peptides
     (averaging the K=2 values over the two-population peptides alone gave curves that did not
     bracket K=1); the vote decides which residues have two populations.
+
+    With ``population_test`` (the species table's sets tested, ``populations =
+    'population_test'``) the K=1 rows also carry the residue levels of the test
+    (:data:`TEST_COLUMNS`, ``population_tier``): each covering peptide's set enters with its
+    p-values (``set_p_1``, ``set_p_2``) and the test's number of populations (``set_test_K``),
+    weighted as the values are.
 
     ``modified`` says what happens to modified peptides (a modified residue in the modX
     sequence, or a composition change): ``'separate'`` (the default) gives
@@ -287,6 +365,15 @@ def residue_map(
             two = (best_k[rows] == 2).astype(float)
             support = np.where(total > 0, (w * two[:, None]).sum(axis=0)
                                / np.where(total > 0, total, 1.0), np.nan)
+        levels = {name: np.full(len(known), np.nan) for name in TEST_COLUMNS}
+        tier = np.full(len(known), "", dtype=object)
+        if population_test and k == 1:
+            for step, name in ((1, "2"), (2, "3")):
+                s, a = _test_levels(z, np.asarray(getattr(pep, f"set_p_{step}"), float)[rows],
+                                    np.asarray(pep.set_test_K)[rows] >= step + 1,
+                                    weight_exponent)
+                levels[f"test_strength_{name}"], levels[f"test_agreement_{name}"] = s, a
+            tier = population_tiers(*(levels[name] for name in TEST_COLUMNS))
         fell_back = ((z > 0) & np.asarray(pep.control_fallback[rows], dtype=bool)[:, None]).any(
             axis=0)
         for res in range(len(known)):
@@ -299,16 +386,19 @@ def residue_map(
                 ("no_amide", known[res] == "P" or res + 1 <= uptake.nterm_subtract),
                 ("linked_next", bool(linked[res])),
                 ("two_population_weight", float(support[res])),
+                *((name, float(levels[name][res])) for name in TEST_COLUMNS),
+                ("population_tier", str(tier[res])),
             ):
                 cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
     for name in ("K", "rank", "residue", "redundancy"):
         out[name] = out[name].astype(np.int64)
-    for name in ("time", "fD", "fD_se", "resolution", "two_population_weight"):
+    for name in ("time", "fD", "fD_se", "resolution", "two_population_weight", *TEST_COLUMNS):
         out[name] = out[name].astype(np.float64)
     for name in ("proline", "covered", "control_fallback", "no_amide", "linked_next"):
         out[name] = out[name].astype(bool)
     out["run"] = out["run"].astype(object)
+    out["population_tier"] = out["population_tier"].astype(object)
     return ResidueMap(**out)
 
 

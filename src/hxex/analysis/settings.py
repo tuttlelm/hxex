@@ -17,7 +17,23 @@ from .residues import COUNTS, MODIFIED
 from .runs import SEPARATOR
 from .species import SpeciesFilters
 
-POPULATION_RULES = ("best_set", "bootstrap")  # how one or two populations are decided
+POPULATION_RULES = ("population_test", "best_set", "bootstrap")  # how the populations are decided
+
+
+def population_rule(populations: str | None, results) -> str:
+    """The ``populations`` rule an analysis of ``results`` uses: the one set, else
+    ``'population_test'`` when every run has the population test (:mod:`hxex.population_test`)
+    and ``'best_set'`` when not. ``'population_test'`` on results without the test is refused
+    with the fix."""
+    from .set_test import has_test
+
+    if populations is None:
+        return "population_test" if has_test(results) else "best_set"
+    if populations == "population_test" and not has_test(results):
+        raise ValueError("[analysis] populations = \"population_test\" needs the population "
+                         "test in the run: add [run.population_test] to the project file and "
+                         "run again (hxex run), or use populations = \"best_set\"")
+    return populations
 
 
 def choice_defaults(populations: str = "best_set") -> ChoiceConfig:
@@ -82,12 +98,15 @@ class AnalysisConfig:
       ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw the K=2 values
       only where the choice keeps two populations (the default; False draws every K=2 value
       the filters keep).
-    - ``populations``: how one or two populations are decided (HISTORY 137, 139):
-      ``'best_set'`` (the default: a peptide has two where its set of spectra is best described by
-      two, ``best_set_K``; a residue where such peptides carry at least half of its weight; the
-      K=2 comparisons need both samples to have two) or ``'bootstrap'`` (the residue's K=2
-      positions tested with their bootstrap errors, ``choice``'s confidence and population
-      limits, every peptide's K=2 values used, no ``best_set_K`` gate).
+    - ``populations``: how the number of populations is decided (HISTORY 137, 139):
+      ``'population_test'`` (the population test of the sets, :mod:`hxex.analysis.set_test`, in
+      place of ``best_set_K``; otherwise as ``'best_set'``), ``'best_set'`` (a peptide has two where
+      its set of spectra is best described by two, ``best_set_K``; a residue where such
+      peptides carry at least half of its weight; the K=2 comparisons need both samples to
+      have two) or ``'bootstrap'`` (the residue's K=2 positions tested with their bootstrap
+      errors, ``choice``'s confidence and population limits, every peptide's K=2 values used,
+      no ``best_set_K`` gate). None (the default): ``'population_test'`` when the run has the
+      test, else ``'best_set'`` (:func:`population_rule`).
     - ``borderline_evidence``: in the comparison of the number of populations
       (:func:`compare_population_counts`), a difference is ``borderline`` unless the
       two-population side's summed criterion is at least this far below 0 and the other side's
@@ -137,7 +156,7 @@ class AnalysisConfig:
     overlay: tuple[str, ...] = ("low", "high", "avg")
     overlay_two_only: bool = True
     peptide_match: str = "range"
-    populations: str = "best_set"
+    populations: str | None = None
     borderline_evidence: float = 10.0
     modified_peptides: str = "separate"
     controls: Mapping[str, Any] | None = None
@@ -210,7 +229,7 @@ class AnalysisConfig:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
         if self.peptide_match not in MATCHES:
             raise ValueError(f"peptide_match must be one of {', '.join(MATCHES)}")
-        if self.populations not in POPULATION_RULES:
+        if self.populations is not None and self.populations not in POPULATION_RULES:
             raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
             raise ValueError("borderline_evidence must be a number >= 0")

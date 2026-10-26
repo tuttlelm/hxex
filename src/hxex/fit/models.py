@@ -15,7 +15,7 @@ from .init import split_start
 from .measurements import Measurements
 from .optimise import fit_batch, prepare, stable_keys
 from .result import FitResult, KFit
-from .screen import can_win, loss_floor
+from .screen import can_exceed, can_win, loss_floor
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ def fit_models(
     *,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    test_screen: bool = False,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
@@ -47,7 +48,10 @@ def fit_models(
 
     With ``config.screen`` each K above 1 is fitted only for the measurements that could still
     select it (:mod:`hxex.fit.screen`); the others get NaN for that K (parameters, loss and
-    criteria) and an ``inf`` score. The selected K is the same as without the screen.
+    criteria) and an ``inf`` score. The selected K is the same as without the screen. With
+    ``test_screen`` (the population test is on) the screen fits K only where the test's
+    statistic of K against K - 1 could reach 1 (:func:`hxex.fit.screen.can_exceed`); the
+    selected K can then differ from fitting every K, and the test chooses it.
     """
     backend = config.backend
     m = len(data)
@@ -107,6 +111,10 @@ def fit_models(
             rows = np.flatnonzero(controls)
             log.info("fitting K=1 for the %d control spectra (the back-exchange correction "
                      "uses it; it is not one of the K chosen from)", len(rows))
+        elif floor is not None and k > 1 and test_screen:
+            rows = np.flatnonzero(can_exceed(fits[k - 1].nll, floor))
+            log.info("screen: the population test can find K=%d for %d of %d measurements", k,
+                     len(rows), m)
         elif floor is not None and k > 1:
             rows = np.flatnonzero(can_win(config.criterion, k, sizes, floor, best))
             log.info("screen: K=%d can be selected for %d of %d measurements", k, len(rows), m)

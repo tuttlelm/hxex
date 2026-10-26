@@ -139,6 +139,21 @@ def test_kmeans_start_finds_the_populations():
     assert means[0] < 6.0 < means[1] and np.all(np.isfinite(log_a))
 
 
+def test_kmeans_start_keeps_the_mean_of_a_weak_spectrum():
+    # a weak, highly deuterated envelope (peak 6 at 18 D) under unit noise over 40 bins: the
+    # spread exceeds the mean, and the start used to collapse to about 0.5 D (HISTORY 176)
+    from scipy.stats import binom
+
+    x = np.arange(41, dtype=float)
+    y = 6.0 * binom.pmf(x, 24, 0.75) / binom.pmf(18, 24, 0.75)
+    y = y + np.random.default_rng(3).standard_normal(len(x))
+    _, n_raw, logit_p = kmeans_start(x, y, 1, np.array([1.0]), 30.0, seed=0)
+    n = 30.0 / (1 + np.exp(-n_raw[0]))
+    mean = n / (1 + np.exp(-logit_p[0]))
+    weights = np.round(np.clip(y, 0, None))
+    assert abs(mean - np.sum(weights * x) / weights.sum()) < 0.5
+
+
 def test_kmeans_start_pads_when_there_are_fewer_distinct_bins_than_components():
     out = kmeans_start(np.array([0.0, 1.0]), np.array([100.0, 50.0]), 4, np.array([1.0]), 10.0)
     assert all(len(x) == 4 and np.all(np.isfinite(x)) for x in out)

@@ -84,6 +84,11 @@ class SpeciesFilters:
       correction too), one with a separate cluster between the isotope positions keeps only
       its K = 1 description, and intensity beyond the reachable range is a warning.
       ``'none'`` turns it off. Fragment series are not screened.
+    - ``undeuterated_cap``: with the population test (``[analysis] populations =
+      "population_test"``), keep the labelled and fully deuterated spectra of a peptide whose
+      undeuterated set has two populations or more, in any sample of the run, at one population
+      (off by default: such peptides are flagged, ``undeuterated_two``;
+      :mod:`hxex.analysis.set_test`).
 
     Two-population descriptions, per spectrum, before replicates and charge states are
     combined:
@@ -112,6 +117,7 @@ class SpeciesFilters:
     above_amides: bool = True
     stand_in_controls: str = "exclude"
     spectrum_quality_filtering: str = "loose"
+    undeuterated_cap: bool = False
 
     def __post_init__(self):
         if not 0 <= self.min_population < 0.5:
@@ -126,6 +132,8 @@ class SpeciesFilters:
             raise ValueError("above_amides must be true or false")
         if self.stand_in_controls not in STAND_IN_CONTROLS:
             raise ValueError(f"stand_in_controls must be one of {', '.join(STAND_IN_CONTROLS)}")
+        if not isinstance(self.undeuterated_cap, bool):
+            raise ValueError("undeuterated_cap must be true or false")
         if self.spectrum_quality_filtering not in SCREEN_LEVELS:
             raise ValueError("spectrum_quality_filtering must be one of "
                              f"{', '.join(SCREEN_LEVELS)}")
@@ -167,7 +175,13 @@ class SpeciesUptake:
     ``n_spectra_by_run`` (``'4,4'``) and ``run_offset`` (a merged species whose runs disagree
     systematically; see :func:`species_uptake`); ``best_set_K``, ``best_set``,
     ``best_set_reason`` and ``set_delta_criterion``: the number of populations chosen for the
-    species at that time from its whole set of spectra (:func:`best_set`); ``rt``: the median
+    species at that time from its whole set of spectra (:func:`best_set`, or the population
+    test, :mod:`hxex.analysis.set_test`, whose p-values are ``set_p_1``, one against two, and
+    ``set_p_2``, two against three, NaN without the test; ``set_test_K`` is the test's own
+    number, which ``best_set_K`` can only follow up to the largest K analysed; 0 without the
+    test; ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in
+    some sample of the run, has two populations or more by the test: another species); ``rt``:
+    the median
     retention time of its
     spectra (minutes; NaN: unknown); ``role``: ``'undeut'`` or ``'fulldeut'`` for a control
     (whose ``time`` is NaN unless it was also a time point), ``''`` for a time point: coverage,
@@ -207,6 +221,10 @@ class SpeciesUptake:
     best_set: np.ndarray | None = None
     best_set_reason: np.ndarray | None = None
     set_delta_criterion: np.ndarray | None = None
+    set_p_1: np.ndarray | None = None
+    set_p_2: np.ndarray | None = None
+    set_test_K: np.ndarray | None = None
+    undeuterated_two: np.ndarray | None = None
     nterm_subtract: int = 1
 
     def __post_init__(self):  # built without them: no fallback, one run, no controls
@@ -228,7 +246,10 @@ class SpeciesUptake:
                             ("best_set_K", np.zeros(n, dtype=np.int64)),
                             ("best_set", np.zeros(n, dtype=bool)),
                             ("best_set_reason", np.full(n, "", dtype=object)),
-                            ("set_delta_criterion", np.full(n, np.nan))):
+                            ("set_delta_criterion", np.full(n, np.nan)),
+                            ("set_p_1", np.full(n, np.nan)), ("set_p_2", np.full(n, np.nan)),
+                            ("set_test_K", np.zeros(n, dtype=np.int64)),
+                            ("undeuterated_two", np.zeros(n, dtype=bool))):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, empty)
 
@@ -510,13 +531,16 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
                      *, ks: Sequence[int] = (1, 2), exclude_flagged: bool = False,
                      controls: Mapping[str, Any] | None = None,
                      left_out: Mapping[str, np.ndarray] | None = None,
-                     exclude_times: Sequence[float] = ()) -> dict[str, np.ndarray]:
+                     exclude_times: Sequence[float] = (),
+                     population_test: bool = False) -> dict[str, np.ndarray]:
     """What was left out on the way from the spectra read to the analysis, one row per step,
     for people (``left_out_summary.csv``): columns ``run`` ('' for one run), ``stage``
     (``before fitting``, ``review``, ``controls``, ``analysis: whole spectra``, ``analysis:
     two-population descriptions``), ``what``, ``count``, ``unit`` (spectra, series, or
     peptides and times) and ``setting`` (where it is set). Every check that ran has a row, a
-    count of 0 included. ``left_out``: the :func:`left_out_spectra` table if already made."""
+    count of 0 included. ``left_out``: the :func:`left_out_spectra` table if already made.
+    ``population_test``: the analysis decides by the population test (a row for the spectra
+    held out of it)."""
     from .runs import RunSet
 
     rows: list[tuple] = []
@@ -648,6 +672,18 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             if key == "k1_between_ranks" and not filters.k1_between_ranks:
                 continue
             add("", stage, what, dropped.get(key, 0), unit, f"[analysis.filters] {setting}")
+    if filters is not None and population_test:
+        from .set_test import above_max_fd
+
+        stage = "analysis: population test (the spectrum stays, at one population)"
+        for name, r in runs:
+            if getattr(r, "population_test", None) is None:
+                continue
+            held = (above_max_fd(r, filters, controls)[:, 0] & _kept(r, exclude_flagged)
+                    & (np.asarray(r.review_status) != "accepted"))
+            add(name, stage, f"held out of the test: a population above fD {filters.max_fD:g} "
+                "in the two-population fit", np.sum(held), "spectra",
+                f"[analysis.filters] max_fD = {filters.max_fD:g}")
     names = ("run", "stage", "what", "count", "unit", "setting")
     return {n: np.array([row[i] for row in rows],
                         dtype=np.int64 if n == "count" else object).astype(
@@ -930,6 +966,7 @@ def species_uptake(
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
     controls: Mapping[str, Any] | None = None,
     min_population: float = 0.05,
+    populations: str = "best_set",
 ) -> SpeciesUptake:
     """The species uptake table of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` of several runs) at each fixed K in ``ks`` (K values the run
@@ -953,11 +990,16 @@ def species_uptake(
     ``best_set_K`` (with ``best_set``, ``best_set_reason`` and ``set_delta_criterion``) is the
     number of populations chosen for each species and time from all of its spectra together
     (:func:`best_set`; ``min_population``: the population limit of that choice, the
-    ``[analysis.choice]`` one).
+    ``[analysis.choice]`` one); with ``populations = 'population_test'`` they come from the
+    population test of the sets instead (:func:`hxex.analysis.set_test.set_tests`), and
+    ``set_p_1`` and ``set_p_2`` are its p-values.
     """
     groups, corrected, nterm = _records(results, ks, exclude_flagged, filters,
                                                 controls_changes=controls)
-    cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake) if f.name not in _SCALARS}
+    cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake)
+                             if f.name not in _SCALARS
+                             and f.name not in ("set_p_1", "set_p_2", "set_test_K",
+                                                "undeuterated_two")}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
@@ -1033,6 +1075,13 @@ def species_uptake(
                           zip(out["run"], out["sample"], out["peptide"], out["modification"],
                               strict=True)], dtype=np.float64)
     out.update(best_set(out, _set_evidence(results, ks, exclude_flagged), ks, min_population))
+    if populations == "population_test":
+        from .set_test import set_tests
+
+        tests = set_tests(results, filters=filters, exclude_flagged=exclude_flagged,
+                          controls=controls,
+                          undeuterated_cap=filters is not None and filters.undeuterated_cap)
+        out.update(test_set(out, tests))
     return SpeciesUptake(**out, nterm_subtract=nterm)
 
 
@@ -1087,6 +1136,20 @@ def best_sets(uptake: SpeciesUptake) -> dict[tuple, tuple[int, float]]:
                str(uptake.modification[i]), int(uptake.start[i]), int(uptake.end[i]),
                float(uptake.time[i]))
         out.setdefault(key, (int(uptake.best_set_K[i]), float(uptake.set_delta_criterion[i])))
+    return out
+
+
+def set_pvalues(uptake: SpeciesUptake) -> dict[tuple, tuple[float, float]]:
+    """``(run, sample, peptide, modification, start, end, time) -> (set_p_1, set_p_2)`` for
+    every species and time point of a species table made with the population test (the
+    controls left out; the keys of :func:`best_sets`)."""
+    out: dict[tuple, tuple[float, float]] = {}
+    role = np.asarray(uptake.role, dtype=str)
+    for i in np.flatnonzero(role == ""):
+        key = (str(uptake.run[i]), str(uptake.sample[i]), str(uptake.peptide[i]),
+               str(uptake.modification[i]), int(uptake.start[i]), int(uptake.end[i]),
+               float(uptake.time[i]))
+        out.setdefault(key, (float(uptake.set_p_1[i]), float(uptake.set_p_2[i])))
     return out
 
 
@@ -1145,6 +1208,49 @@ def best_set(cols: Mapping[str, np.ndarray], evidence: Mapping[tuple, dict], ks,
                           f"{words.get(chosen, str(chosen))} used")
             else:
                 reason = f"set evidence for {words.get(chosen, str(chosen))}"
+        out["best_set_K"][idx] = chosen
+        out["best_set_reason"][idx] = reason
+        out["best_set"][by_k.get(chosen, [])] = True
+    return out
+
+
+def test_set(cols: Mapping[str, np.ndarray], tests: Mapping[tuple, Any]
+             ) -> dict[str, np.ndarray]:
+    """The columns ``best_set_K``, ``best_set``, ``best_set_reason``, ``set_p_1``, ``set_p_2``,
+    ``set_test_K`` and ``undeuterated_two`` of a species table (``cols``) from the population
+    test of its sets (``tests``, :func:`hxex.analysis.set_test.set_tests`). Where the table has
+    no description at the test's K (not analysed, or left out by the filters), the largest K
+    below it that it has is used, and the reason says so."""
+    n = len(cols["K"])
+    out = {"best_set_K": np.zeros(n, dtype=np.int64), "best_set": np.zeros(n, dtype=bool),
+           "best_set_reason": np.full(n, "", dtype=object), "set_p_1": np.full(n, np.nan),
+           "set_p_2": np.full(n, np.nan), "set_test_K": np.ones(n, dtype=np.int64),
+           "undeuterated_two": np.zeros(n, dtype=bool)}
+    rows: dict[tuple, list[int]] = {}
+    for i in range(n):
+        key = _set_key(cols["run"][i], cols["sample"][i], cols["peptide"][i],
+                       cols["modification"][i], cols["start"][i], cols["end"][i],
+                       cols["time"][i], cols["role"][i])
+        rows.setdefault(key, []).append(i)
+    words = {1: "one", 2: "two", 3: "three"}
+    for key, idx in rows.items():
+        by_k: dict[int, list[int]] = {}
+        for i in idx:
+            by_k.setdefault(int(cols["K"][i]), []).append(i)
+        t = tests.get(key)
+        if t is None:  # no spectrum of the set kept for the test (the filters left them out)
+            chosen, reason = (1 if 1 in by_k else min(by_k)), "not tested: one population"
+        else:
+            for s, p in enumerate(t.p[:2]):
+                out[f"set_p_{s + 1}"][idx] = p
+            out["set_test_K"][idx] = t.K
+            out["undeuterated_two"][idx] = t.undeuterated_two
+            below = [k for k in by_k if k <= t.K]
+            chosen = max(below) if below else min(by_k)
+            reason = t.reason
+            if chosen != t.K:
+                reason += (f"; K = {t.K} not kept by the filters or not analysed: "
+                           f"{words.get(chosen, str(chosen))} used")
         out["best_set_K"][idx] = chosen
         out["best_set_reason"][idx] = reason
         out["best_set"][by_k.get(chosen, [])] = True

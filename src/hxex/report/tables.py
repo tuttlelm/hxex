@@ -207,10 +207,14 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
-    fewer components), then the spectrum quality screens' scores (``screen_*``,
-    :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of the spectrum's
-    series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``, ``window_shift_ppm``,
-    :mod:`hxex.picking.recentre`; the first two empty where not assessed)."""
+    fewer components); with the population test (:mod:`hxex.population_test`), the K the
+    fit's criterion chose (``criterion_K``; ``K`` is then the test's), each step's p-value
+    (``test_p_<K>``, K against K + 1; empty where untested) and ``narrow_component`` (the width
+    check left the spectrum at fewer populations); then the spectrum quality screens' scores
+    (``screen_*``, :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of
+    the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
+    ``window_shift_ppm``, :mod:`hxex.picking.recentre`; the first two empty where not
+    assessed)."""
     out = dict(_index_columns(results))
     ks = results.effective_K
     k_max = int(ks.max())
@@ -233,7 +237,19 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
                 wide[f"mean_corrected_{r}"][i] = cor[c]
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
     out.update(wide)
+    out.update(_test_columns(results))
     out.update(_screen_columns(results))
+    return out
+
+
+def _test_columns(results: Results) -> dict[str, np.ndarray]:
+    test = results.population_test
+    if test is None:
+        return {}
+    out = {"criterion_K": np.asarray(test.criterion_K, dtype=np.int64)}
+    for s, k in enumerate(test.steps):
+        out[f"test_p_{k}"] = np.asarray(test.p[:, s], dtype=float)
+    out["narrow_component"] = np.asarray(test.narrow[:, -1], dtype=bool)  # at any step
     return out
 
 

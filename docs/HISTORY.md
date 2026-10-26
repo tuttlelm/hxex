@@ -4428,3 +4428,167 @@ CSVs or mzML if wanted.
     Orbitrap, where most of item 171's enrichment had been flank picks). Both together: labelled
     sets reading two 33.8 -> 22.9 % (Q-TOF) and 12.5 -> 5.9 % (Orbitrap), fully deuterated
     18.2 -> 11.1 % and 14.4 -> 9.6 %.
+
+174. **The population test, built (owner: "continue with the population test things",
+    2026-10-25; docs/ANALYSIS.md "The population test"; guide population-test.md; private notes
+    in the population-test examples folder, `built_test/`).** `[run.population_test]`
+    (`simulations` 20, `significance` 0.01, `min_population` 0.10, `null` simulated or
+    chi_square, `width_check`, `seed`; needs `k_min = 1`, `k_max >= 2`, the Gaussian loss):
+    `hxex.population_test` simulates each spectrum's null at every step (K against K + 1, the
+    run's own fit settings, each draw seeded by the spectrum id so chunking does not matter),
+    keeps the null's mean and variance, applies the width check (the HISTORY 173 rule, r from
+    `[run.controls] d2o_fraction`, its default 0.9 without controls; a spectrum leaves the step
+    where its K + 1 fit has a narrow component and every step after) and sets each spectrum's K
+    from its own test (the bootstrap, figures and `spectra.csv` follow; `criterion_K`,
+    `test_p_<K>`, `narrow_component` in `spectra.csv`; `population_test.parquet` in the bundle,
+    carried by `hxex resume`). With `[run.fit] screen` the run uses the test's screen (K + 1
+    fitted only where the loss floor leaves T room to reach 1; skipped spectra T = 0 with the
+    chi-square(3) null); `population_test()` refuses a fit made with the criterion's screen.
+    `hxex.analysis.set_test`: sets of the spectra the analysis keeps (left-out spectra, the
+    screens' one-population spectra and `review_K = 1` leave; accepted spectra are exempt from
+    the width check and the cap), summed statistics and null moments, a gamma tail;
+    `[analysis.filters] undeuterated_cap` (default true) keeps a peptide's labelled and fully
+    deuterated spectra at one population, in every sample, when one of its undeuterated sets
+    reads two judged *before* the width check (as HISTORY 173 evaluated it; judged after, only
+    peptides with a wide extra population were capped: labelled two 24.3 against 22.1 %).
+    `[analysis] populations = "test"` (the default when every run has the test, else
+    `best_set`; the settings file records the rule used) fills `best_set_K`, `best_set_reason`
+    and the new `set_p_1`, `set_p_2`; downstream the test is treated as `best_set` (the
+    residue gate, the comparisons). Residues (K = 1 rows of `residues.csv`):
+    `test_strength_2/3`, `test_agreement_2/3` and `population_tier` (six tiers; sets without a
+    p-value at a step enter with z = 0, a step no set reached is NaN), and the figure
+    `population_tiers` (the HISTORY 148 tier map; the two "three" tiers a rose pair, every pair
+    of tiers at least 9.9 apart in OKLab under simulated protan, deutan, and tritan vision).
+    One change from the evaluation: a set adds up its spectra's null means and variances
+    instead of summing the draws elementwise (deterministic, exact for the chi-square null;
+    same rates on the benchmark, 98.6 % of set verdicts equal on the Q-TOF and 99.5 % on the
+    Orbitrap, the differences symmetric at the boundary). Benchmark check (Q-TOF, K = 1 and 2,
+    13.5 min on the GPU, the null 12.3 min = 1.4 ms per spectrum and simulation): sets reading
+    two UN / FD / labelled 3.2 / 10.9 / 22.1 % against the prototype's 2.8 / 11.1 / 22.9 % on the
+    same fits, 97.6 % of the 4,731 sets equal one by one (two independent 20-draw nulls);
+    spectra reading two 13.5 % by the test against 19.5 % by BIC; the width check stops 10.0 %.
+    Tutorial data (published; CPU, default threads of the 48-core workstation, K = 1 to 3):
+    fits 73 s, step one 13.2 min (10.2 ms per spectrum and simulation), step two 22.5 min
+    (17.4 ms): 11 and 18 times the fits, not the "about five times" of item 169 (measured with
+    pinned cores; the progress weights and the guide use these). Spectra: 3,092 one, 705 two,
+    77 three (BIC: 2,912 one, 840 two); width check 221. Sets: 13 labelled sets read three,
+    15 of 174 undeuterated sets two (10 peptides capped); residue cells two (localised) 223,
+    two 99, three, localised 3 (R120G at residue 144, the long peptide the owner expects rate
+    heterogeneity in, and WT at 24). Found on the way: `best_set_K` follows the test only up to
+    the largest K the analysis describes (`ks`, (1, 2) by default), so the residue levels read
+    the test's own number, the new column `set_test_K`. Open: a null draw far above the rest (a K = 1 refit stuck in a poor optimum)
+    inflates its spectrum's null variance (0.06 % of the Q-TOF spectra, 0.43 % of the
+    Orbitrap's; the evaluation's numbers include them); `hxex resume` adding the test to an
+    existing bundle; the test for fragment series (not evaluated).
+
+175. **The population test's two rules become flags; borderline from the test; why null refits
+    get stuck (owner, 2026-10-26).** Decisions: the width check is a flag only (not yet
+    justified as a rule: nothing showed the labelled spectra it stopped were wrong):
+    `narrow_component` in `spectra.csv`, the `width_check` setting removed, each spectrum's and
+    set's test unchanged. The undeuterated cap is a flag by default (`undeuterated_two` in
+    `species_uptake.csv`, on every set of a peptide whose undeuterated set reads two in some
+    sample of the run; the tier figure's undeuterated rows show it) and a switch
+    (`[analysis.filters] undeuterated_cap`, default false): the owner, "the potential
+    contaminant could move out of the measured bins", and item 173's enrichment does not show
+    that the labelled spectra's second populations are the species. With the test on, a
+    difference in the number of populations between samples (`compare_population_counts.csv`,
+    the Woods plot's outlines) is borderline unless the side with more populations has p below
+    `significance / 10` and the other above `significance x 10`, at the step where they differ
+    (columns `p`, `p_reference`); `borderline_evidence` acts only without the test.
+    Stuck refits (private notes `built_test/stuck/`): the null draws far above the rest are K = 1
+    refits stuck on a tiny envelope at 0-5 D while the data sit at 8-21 D: weak (peak 4-49 against
+    unit noise), highly deuterated spectra, four of six fully deuterated controls (6 spectra,
+    0.02 %, on the new picks of the Q-TOF benchmark; reproduced exactly from their seeds). Cause:
+    the K = 1 start (`hxex.fit.init.kmeans_starts`) is a method-of-moments estimate from the
+    weighted bins; noise spread over 30-45 bins makes the variance exceed the mean, p is clipped
+    to 0.02 and n to its cap, so the start's mean collapses to about 0.5 D wherever the data are,
+    and Adam does not recover from an envelope that does not overlap them (the random restarts
+    did not either). A start that keeps the cluster mean (p raised to mean / n when the estimate
+    loses it) refits all six to the loss of the generating curve (statistics 64-5,276 -> 1-8).
+    The run's own fits share the start: 21 of 26,164 benchmark spectra (0.08 %; 16 labelled, 5
+    undeuterated) have a stuck K = 1 fit (K = 1 mean 1.5 D, 8.4 D with the kept-mean start); their
+    statistics stay above 20 (verdicts barely move), but their K = 1 values are wrong. Proposed,
+    not built (it changes every fit): keep the mean in the start.
+
+176. **The k-means start keeps the mean (owner: "fix the stuck fits", 2026-10-26; item 175).**
+    `hxex.fit.init.kmeans_starts`: where the method-of-moments `n` is clipped to its range, `p`
+    is set to `mean / n`, so the start keeps the cluster's mean instead of collapsing to about
+    0.5 D (p clipped to 0.02 when noise makes the spread exceed the mean). Every K's k-means start
+    uses it (the nested starts follow from K = 1). Refits of the two private bundles at their own
+    settings (`built_test/stuck/start_fix_eval.py`): Q-TOF benchmark, K = 1 losses lower in 21
+    spectra (19 by more than 10: the stuck fits of item 175), higher in none; K = 2 lower by more
+    than 1 in 112 (20 by more than 10), higher in 10 (none by more than 10); K = 1 means moving
+    by more than 0.5 D: 26; the criterion's K changed for 47 of 26,164 spectra (42 up, as their
+    K = 2 fits improved). Tutorial data, K = 1 to 3: K = 1 unchanged, K = 2 lower in 6 and higher
+    in 2, K = 3 lower in 14 and higher in 4 (none worse by more than 10); the criterion's K changed
+    for 3 of 3,874. The six stuck null draws refit to the loss of their generating curve. Test:
+    `test_kmeans_start_keeps_the_mean_of_a_weak_spectrum`. The prototype regression
+    (`HXEX_FULL_REGRESSION`) and GPU parity pass. Found by the chunking test with the new start:
+    a spectrum fitted exactly at K and K + 1 (an undeuterated test spectrum of 9 bins) had a
+    statistic and null draws of rounding noise (1e-15), whose p-value was arbitrary (0.78 in one
+    chunking, 0 in the other, reading two). A statistic is now 0 below the precision of the
+    losses, the screen's tolerance (`2 (1e-3 + 1e-4 |nll_K|)`, `statistic_of`), for the observed
+    statistic and every null draw: on the benchmark 5 % of the statistics and 2 % of the draws
+    are below it (median 0.0024), and no spectrum's or set's K changes.
+
+177. **The residue choice follows the tiers; `populations = "population_test"` (owner,
+    2026-10-26).** The rule's name is `"population_test"` (was `"test"`: too little information,
+    owner), matching `[run.population_test]`. With it, `choose_populations(..., tiers=True)`
+    decides each residue by its tier: two populations where the tier is "two" or above
+    (`[analysis.choice] tier = "two"`, the default the owner chose: strong evidence and a third
+    of the covering weight) or "two, localised" or above (`"localised"`), and the residue has
+    K = 2 values; the bootstrap tests of the choice (separation, precision, K = 1 between,
+    population range) no longer apply in this mode (owner: "if those rationales are now
+    obsolete, then they can go"; they stay in the "best_set" and "bootstrap" modes). The K = 2
+    values and their error bars come from the bootstrap; without one they are drawn without
+    error bands, and the residue profile and choice figures say "no error bands: they need a
+    bootstrap ([run.bootstrap], ks = [1, 2])" (owner: clear communication that reliable error
+    bars need the bootstrap). `reason` names the tier that fell short (`tier: undecided`, `tier:
+    no sign`, `tier: two` with `"localised"`) or `no K=2`; a "three" tier is drawn as two
+    (`tier: three, drawn as two`; K = 3 residue values are not drawn yet). Without a bootstrap
+    the bands come from the replicates' scatter only (too small: `statistics.md`), and the
+    figures say "no bootstrap: error bands from the replicates' scatter only, too small". The
+    private reruns with the start of item 176 (`results_start`, `analysis_start_WT` in both
+    population-test folders): at the time points, 1,032 of the benchmark's 1,238 residue-times
+    at tier two or above are drawn as two and 206 (17 %) have no K = 2 values (the filters left
+    out every covering peptide's K = 2 description; 3,139 spectra have a component above fD 1.1,
+    `max_fD`); the tutorial data 570 of 577 (7 without K = 2 values).
+
+178. **K = 2 fits above full deuteration (2026-10-26; private notes `built_test/above_fd/`).** Why
+    17 % of the benchmark's tier-two residue-times had no K = 2 values (item 177): the `max_fD`
+    filter leaves out K = 2 fits whose higher component is above corrected fD 1.1, 16 % of the kept
+    K = 2 fits (3,810), all above the series' own fully deuterated control (measured median 0.72 of
+    the amides). The share grows with deuteration: undeuterated 8.7 %, 4 s 9.1 %, 60 s 9.5 %, 30 min
+    15.4 %, 20 h 22.0 %, fully deuterated controls 43.4 %: nearly fully deuterated envelopes (K = 1
+    fD close to 1; not detector saturation) split into a main component and a minor (median 0.24),
+    often narrow component beyond full deuteration; the series' retention is ordinary (0.56). The
+    test calls 2,988 of these spectra one population and 822 two (higher component median corrected
+    fD 1.40, 90 % 2.11; 38 % carry `narrow_component` against 18 % of all spectra tested two). A
+    second deuterated population of the peptide cannot sit there, so for those the test's "two" says
+    the envelope is not one binomial (a heavy tail, a broader envelope, another species), not that
+    there are two deuterated populations. Open (owner to decide; flags first): a flag on sets and
+    residues whose two populations have no physical K = 2 description; why the heavy end of nearly
+    fully deuterated envelopes is heavier than a binomial. The threshold of `max_fD` (1.1), measured
+    (`above_fd/threshold.py`): genuine single fully deuterated populations, the K = 1 corrected fD
+    of every fully deuterated control spectrum and of the 20 h points (measured controls only),
+    reach q99 1.07 / 1.07 and q99.5 1.08 / 1.10 on the benchmark (controls / 20 h) and q99 1.03 /
+    1.10, q99.5 1.04 / 1.13 on the tutorial data; the control part of the correction's error is far
+    smaller (se median 0.007, q99 0.04-0.06), so a per-series threshold from it would cut real
+    values; the K = 2 high components have no valley to place a threshold in (a continuous tail from
+    1.0 to above 2). So 1.1 sits at about the 99th to 99.5th percentile of genuine fully deuterated
+    single populations on both datasets.
+
+179. **Spectra above full deuteration leave the population test (owner, 2026-10-26; item 178).**
+    With the population test, a spectrum whose K + 1 fit has a population above corrected fD
+    `[analysis.filters] max_fD` (1.1; uncorrected series: deuterons over amides) leaves the set test
+    from that step on, at one population (as the screens' one-population spectra; the review's
+    accepted spectra excepted); no new setting, on fits alone (owner: no bootstrap needed in the
+    current workflow). `left_out_summary.csv` counts them ("held out of the test: a population above
+    fD 1.1 in the two-population fit"). Benchmark (`results_start`): 4,583 spectra held out; sets
+    reading two undeuterated 7.0 -> 3.0 % (a known false result), fully deuterated 18.6 -> 10.0 %,
+    labelled 33.0 -> 28.2 %; residue-times at tier two or above 1,032 -> 895. The threshold is the
+    existing one, about the 99th to 99.5th percentile of genuine fully deuterated single
+    populations (item 178). Not built: widening it by the component's own error with a bootstrap,
+    `1 + sqrt(0.1^2 + (z se)^2)` (the two errors in quadrature: subtracting `z se` and keeping 1.1
+    would count the scatter twice); a bootstrap-free error from the fit's curvature is possible but
+    least reliable for exactly these minor, narrow components.

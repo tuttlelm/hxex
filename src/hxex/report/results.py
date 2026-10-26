@@ -20,6 +20,7 @@ from ..bootstrap import BootstrapResult
 from ..controls import ControlTable
 from ..fit import FitResult, Measurements
 from ..picking import BinnedSet, PickerConfig
+from ..population_test import PopulationTest
 from ..quality import QualityFlags
 from ..spectra import SpectrumSet
 
@@ -109,7 +110,8 @@ class Results:
     (:meth:`without_times`, :meth:`without_series`; the fits are kept). ``figures`` is the
     ``[figures]`` table (:class:`hxex.report.PlotConfig`) of the project the results were
     loaded from (:func:`hxex.load_results`), which :func:`hxex.show_series` draws with; None
-    otherwise.
+    otherwise. ``population_test`` is the run's population test (:mod:`hxex.population_test`),
+    if it had one.
     """
 
     measurements: Measurements
@@ -128,6 +130,7 @@ class Results:
     excluded_times: tuple[float, ...] = ()
     excluded_series: tuple[int, ...] = ()
     figures: Any = field(default=None, compare=False)  # a PlotConfig (import cycle)
+    population_test: PopulationTest | None = None
 
     @classmethod
     def from_bundle(cls, bundle: Bundle) -> Results:
@@ -135,7 +138,7 @@ class Results:
             measurements=bundle.measurements(), fit=bundle.fit(), bootstrap=bundle.bootstrap(),
             bootstrap_by_k={k: bundle.bootstrap(k) for k in bundle.bootstrap_ks()},
             controls=bundle.controls(), quality=bundle.quality(), review=bundle.review(),
-            binned=bundle.binned(),
+            binned=bundle.binned(), population_test=bundle.population_test(),
             settings=Settings.from_manifest(bundle.manifest),
             loader=bundle.spectra if bundle.has("spectra") else None,
         )
@@ -151,6 +154,7 @@ class Results:
             bootstrap_by_k=dict(run.bootstrap_by_k or {}), controls=run.controls,
             quality=run.quality, review=review if review is not None else run.review,
             binned=run.binned, spectra=spectra, settings=Settings.from_run(run),
+            population_test=run.population_test,
         )
 
     def with_review(self, review: ReviewTable | None) -> Results:

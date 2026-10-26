@@ -62,7 +62,7 @@ FORMATS = ("specexport", "hxexpress", "pooled", "mzml", "thermo")
 FOLDER_FORMATS = ("specexport", "hxexpress", "pooled")
 SCAN_FORMATS = ("mzml", "thermo")
 # run settings that are None unless the file gives them, and their classes
-_OPTIONAL_SECTIONS = ("bootstrap", "controls", "quality")
+_OPTIONAL_SECTIONS = ("bootstrap", "population_test", "controls", "quality")
 # the figures moved out of the run (owner, 2026-10-20): hxex report draws them
 FIGURES_MOVED = ("the figure settings are the [figures] table now, and hxex run draws no "
                  "figures: hxex report hxex.toml --figures draws them with those settings")
@@ -1310,7 +1310,8 @@ _COMMENTS: dict[str, str] = {
                             "(0: none)",
     "run.fit.seed": "seed of everything random (each measurement is also seeded by its id)",
     "run.fit.screen": "fit K > 1 only where it could be selected: about a third of the time, "
-                      "but the skipped fits are missing from fixed-K analyses",
+                      "but the skipped fits are missing from fixed-K analyses (with "
+                      "[run.population_test]: only where the test could find it)",
     "run.fit.noise.model": '"gaussian" or "poisson"',
     "run.fit.noise.sd": "gaussian: the sd in intensity units (false: percent instead)",
     "run.fit.noise.percent": "sd (or poisson scale) as percent of the tallest peak of the "
@@ -1337,6 +1338,15 @@ _COMMENTS: dict[str, str] = {
     "run.bootstrap.seed": "seed of the resampling and the restarts",
     "run.bootstrap.keep_draws": "keep every resample's fit in the bundle",
     "run.bootstrap.curve_band": "also the band of the total uptake curve",
+    "run.population_test.simulations": "simulated spectra per spectrum and step for the test's "
+                                       "reference (20; time grows with it)",
+    "run.population_test.significance": "a further population counts when the chance of "
+                                        "seeing the evidence without it is below this",
+    "run.population_test.min_population": "... and the further population is at least this "
+                                          "share of the molecules",
+    "run.population_test.null": '"simulated", or "chi_square" for a quick first look without '
+                                "simulations (less exact)",
+    "run.population_test.seed": "seed of the simulations",
     "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
                         "list of K (fixed-K bootstraps for the analysis)",
     "run.controls.m0_max": "largest mean (D) of a good undeuterated control",
@@ -1433,9 +1443,9 @@ _COMMENTS: dict[str, str] = {
 # comment lines written before a table's header
 _SECTION_COMMENTS: dict[str, str] = {
     "run": "Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The "
-           "bootstrap and the controls are stages that their table turns on: uncomment the "
-           "commented-out run.bootstrap or run.controls table below to use it; a stage's "
-           "\"name = false\" turns it off.",
+           "bootstrap, the population test, and the controls are stages that their table "
+           "turns on: uncomment the commented-out run.bootstrap, run.population_test, or "
+           "run.controls table below to use it; a stage's \"name = false\" turns it off.",
     "run.picker": "Peak picking: the spectra become sticks at the predicted isotope positions "
                   "(hxex.picking.PickerConfig; docs/PEAK_PICKING.md).",
     "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
@@ -1449,6 +1459,11 @@ _SECTION_COMMENTS: dict[str, str] = {
     "run.fit.backend": "Where the fit runs (hxex.model.Backend); nothing is set globally.",
     "run.bootstrap": "Standard errors and intervals from resampled refits of every "
                      "measurement (hxex.bootstrap.BootstrapConfig). Slow: most of a run's time.",
+    "run.population_test": "Tests how many populations each spectrum, and each set of "
+                           "replicates and charge states, holds against simulated spectra "
+                           "(hxex.population_test.PopulationTestConfig). Each spectrum's K is "
+                           "then the test's; needs k_min = 1. Slow: ten to twenty times the "
+                           "fit per step.",
     "run.controls": "Back-exchange correction from the undeuterated and fully deuterated "
                     "controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium "
                     "retention here is the fraction of deuterium kept, not a retention time.",
@@ -1706,9 +1721,11 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# overlay_two_only = true         # K=2 values only where two populations are chosen",
         '# peptide_match = "range"         # compare peptides over the same residues ("range",',
         '#                                 # mutated or not) or identical sequences ("sequence")',
-        '# populations = "best_set"        # one or two populations: "best_set" (each peptide\'s',
-        '#                                 # spectra together) or "bootstrap" (the residue\'s',
-        '#                                 # K=2 values and their errors, [analysis.choice])',
+        '# populations = "best_set"        # how many populations: "population_test" (the',
+        '#                                 # default with [run.population_test]), "best_set"',
+        '#                                 # (each peptide\'s spectra together; the default',
+        '#                                 # without), or "bootstrap" (the residue\'s K=2 values',
+        '#                                 # and their errors, [analysis.choice])',
         '# modified_peptides = "separate"  # modified forms as their own states ("WT pS59") or',
         '#                                 # averaged with the sample ("combined")',
         '# format = "pdf"                  # or "png", "svg"',
@@ -1727,10 +1744,16 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# max_fD_se = 0.25",
         "# max_fD = 1.1",
         "# k1_between_ranks = true",
+        "# undeuterated_cap = false        # population test: keep a peptide whose undeuterated",
+        "#                                 # set has two populations at one in every sample",
+        "#                                 # (off: flagged only, undeuterated_two)",
         "# [analysis.choice]               # the choice between one and two populations",
         '# confidence = 0.5                # 0.95 with populations = "bootstrap"',
         "# max_fD_se = 0.25",
         '# min_population = 0.05           # 0.10 with populations = "bootstrap"',
+        '# tier = "two"                    # population_test: the least residue tier with two',
+        '#                                 # populations ("two": a third of the weight agrees;',
+        '#                                 # "localised": half); the three limits above unused',
         "# [[analysis.regions]]",
         '# name = "N-terminal region"',
         "# start = 1",
@@ -1959,7 +1982,7 @@ def run_settings_text(manifest: Mapping) -> str:
         table = _toml_table("run", _falsified(data, defaults), cls=RunConfig)
         intro = textwrap.wrap(  # the template's says how to turn the stages on
             "Run settings (hxex.run.RunConfig); times are in s. A stage written \"name = "
-            "false\" (bootstrap, controls, quality) was off.", _LINE_WIDTH,
+            "false\" (bootstrap, population_test, controls, quality) was off.", _LINE_WIDTH,
             initial_indent="# ", subsequent_indent="# ")
         lines += [""] + intro + table[len(_section_comment("run")):]
     return "\n".join(lines) + "\n"
@@ -2066,6 +2089,11 @@ def describe(project: Project) -> dict[str, Any]:
         "bootstrap": ("off: no standard errors or intervals (a [run.bootstrap] table turns "
                       "it on)" if run.bootstrap is None
                       else f"{run.bootstrap.n_boot} resamples"),
+        "population test": ("off: K by the fit's criterion (a [run.population_test] table "
+                            "turns it on)" if run.population_test is None
+                            else f"on, {run.population_test.null} null"
+                            + (f", {run.population_test.simulations} simulations"
+                               if run.population_test.null == "simulated" else "")),
         "controls": ("off: no back-exchange correction, means in deuterons measured (a "
                      "[run.controls] table turns it on)" if run.controls is None
                      else "on" + _promotions(run.controls)),

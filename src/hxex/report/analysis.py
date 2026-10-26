@@ -12,8 +12,10 @@ reference's), with regions ``regions.csv``, and for several runs (a
 :class:`hxex.analysis.RunSet`) ``run_settings.csv``
 (where their settings differ) and ``run_identity.csv`` (species whose identity differs).
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
-``profile_<sample>_<time>`` without K=2), and with a reference ``compare_residues_<time>`` (the
-values of ``config.overlay``, :func:`hxex.report.residue_overlay_figure`),
+``profile_<sample>_<time>`` without K=2), ``population_tiers`` (with the population test: the
+residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
+``compare_residues_<time>`` (the values of ``config.overlay``,
+:func:`hxex.report.residue_overlay_figure`),
 ``compare_populations_<time>``, ``woods_<sample>_<time>`` (K=1, and where the number of
 populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
@@ -57,12 +59,13 @@ from ..analysis import (
     left_out_summary,
     region_summary,
     residue_map,
+    set_pvalues,
     species_uptake,
 )
 from ..analysis.residues import NoPeptideAtTime
 from ..analysis.residues import states as _states
 from ..analysis.runs import display_labels, label, resolve_sample
-from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED
+from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED, population_rule
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
 from ..io.times import format_time
@@ -81,6 +84,7 @@ from .protection import (
 )
 from .residues import plot_population_choice, plot_residue_profile
 from .tables import write_csv
+from .tiers import plot_population_tiers
 
 log = logging.getLogger(__name__)
 
@@ -200,10 +204,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     sequences = config.sequences(base)
     # K=2 residue values from the peptides whose sets are best described by two populations,
     # with the share of the weight they carry (HISTORY 137)
-    gate = config.populations == "best_set"  # else the bootstrap rule (HISTORY 139)
+    # else the bootstrap rule (HISTORY 139)
+    gate = config.populations in ("best_set", "population_test")
     residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent,
                            modified=config.modified_peptides,
-                           two_population_peptides=gate and 2 in config.ks)
+                           two_population_peptides=gate and 2 in config.ks,
+                           population_test=config.populations == "population_test")
     # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
     state_pairs = [s for s in _states(residues) if s not in wanted]
     all_states = wanted + state_pairs
@@ -220,7 +226,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         log.warning("%s: coverage_times = \"all\" is used instead (set [analysis] "
                     "coverage_times to choose the times coverage is judged on)", exc)
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy, time="all")
-    choice = choose_populations(residues, config.choice_limits) if 2 in config.ks else None
+    choice = (choose_populations(residues, config.choice_limits,
+                                 tiers=config.populations == "population_test")
+              if 2 in config.ks else None)
     length = int(residues.residue.max())
     # the per-time figures: every time point (the controls are not times; a control that is
     # also a time point is one)
@@ -274,9 +282,16 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 rows.setdefault(name, []).append(values)
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
         if 2 in config.ks and gate:
+            test_p = None
+            if config.populations == "population_test":
+                from ..analysis.set_test import run_tests
+
+                test_p = dict(significance=run_tests(results)[0].config.significance,
+                              set_p=set_pvalues(up))
             counts = compare_population_counts(best, ref, samples=kw["samples"],
                                                match=config.peptide_match,
-                                               evidence=config.borderline_evidence)
+                                               evidence=config.borderline_evidence,
+                                               **(test_p or {}))
             tables["compare_population_counts"] = counts.columns()
             counts_d = _display(counts, labels, reference)
         res_cmp = compare_residues(residues, ref, alpha=config.alpha,
@@ -322,15 +337,20 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             up, samples=[s], times=times, length=length, **when)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
         coverage, samples=samples, marks=marks)))
+    runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
+    booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
     for s in samples + states:
         for t in times:
             when_ = _time_label(t, scale)
             if choice is not None and choice.where(sample=s, time=t).any():
                 jobs.append((f"choice_{s}_{when_}", lambda s=s, t=t: plot_population_choice(
-                    choice, s, t, marks=marks, length=length, **when)))
+                    choice, s, t, marks=marks, length=length, bootstrap=booted, **when)))
             elif residues.where(sample=s, time=t).any():
                 jobs.append((f"profile_{s}_{when_}", lambda s=s, t=t: plot_residue_profile(
-                    residues, s, t, marks=marks, length=length, **when)))
+                    residues, s, t, marks=marks, length=length, bootstrap=booted, **when)))
+    if config.populations == "population_test" and (residues.population_tier != "").any():
+        jobs.append(("population_tiers", lambda: plot_population_tiers(
+            residues, samples + states, length=length, **when)))
     if config.reference:
         others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
@@ -449,6 +469,11 @@ def write_analysis(
             results = view(results)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
+    rule = population_rule(config.populations, results)
+    if config.populations is None:
+        log.info("the number of populations: %s", "the population test of the sets"
+                 if rule == "population_test" else "best_set_K (the run has no population test)")
+    config = dataclasses.replace(config, populations=rule)
     frag_tables, frag_jobs = {}, []
     # fragment series (and precursor ions read with them) are not peptides: the peptide
     # branch leaves them out by series (a peptide read from MS1 too has the same sequence)
@@ -471,14 +496,16 @@ def write_analysis(
                        else peptides[""])
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
                             filters=config.filters, controls=config.controls,
-                            min_population=config.choice_limits.min_population)
+                            min_population=config.choice_limits.min_population,
+                            populations=config.populations)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
             # what was left out on the way, step by step, for people
             tables["left_out_summary"] = left_out_summary(
                 results, config.filters, ks=config.ks, exclude_flagged=config.exclude_flagged,
                 controls=config.controls, left_out=tables.get("left_out_spectra"),
-                exclude_times=config.exclude_times)
+                exclude_times=config.exclude_times,
+                population_test=config.populations == "population_test")
     tables.update(frag_tables)
     jobs += frag_jobs
 

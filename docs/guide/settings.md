@@ -23,6 +23,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[run.fit.noise]`](#runfitnoise)
 - [`[run.fit.backend]`](#runfitbackend)
 - [`[run.bootstrap]`](#runbootstrap)
+- [`[run.population_test]`](#runpopulation_test)
 - [`[run.controls]`](#runcontrols)
 - [`[run.quality]`](#runquality)
 - [`[run.registry]`](#runregistry)
@@ -184,7 +185,7 @@ Where results go. The bundle and the folders named after it (<bundle>_tables, <b
 
 ## `[run]`
 
-Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The bootstrap and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap or run.controls table below to use it; a stage's "name = false" turns it off.
+Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The bootstrap, the population test, and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap, run.population_test, or run.controls table below to use it; a stage's "name = false" turns it off.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -245,7 +246,7 @@ The fit of k_min to k_max populations to every spectrum, the number chosen by th
 | `grad_clip` | text | `"per_measurement"` | "per_measurement" (each fit on its own) or "global" gradient clipping |
 | `polish_steps` | integer | `40` | Levenberg-Marquardt iterations per measurement after the restarts (0: none) |
 | `seed` | integer | `0` | seed of everything random (each measurement is also seeded by its id) |
-| `screen` | true/false | `false` | fit K > 1 only where it could be selected: about a third of the time, but the skipped fits are missing from fixed-K analyses |
+| `screen` | true/false | `false` | fit K > 1 only where it could be selected: about a third of the time, but the skipped fits are missing from fixed-K analyses (with [run.population_test]: only where the test could find it) |
 
 ## `[run.fit.noise]`
 
@@ -290,6 +291,18 @@ Standard errors and intervals from resampled refits of every measurement (hxex.b
 | `keep_draws` | true/false | `false` | keep every resample's fit in the bundle |
 | `curve_band` | true/false | `true` | also the band of the total uptake curve |
 | `ks` | text or list | `"selected"` | "selected" (each measurement at its own K), "all" fitted K, or a list of K (fixed-K bootstraps for the analysis) |
+
+## `[run.population_test]`
+
+Tests how many populations each spectrum, and each set of replicates and charge states, holds against simulated spectra (hxex.population_test.PopulationTestConfig). Each spectrum's K is then the test's; needs k_min = 1. Slow: ten to twenty times the fit per step.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `simulations` | integer | `20` | simulated spectra per spectrum and step for the test's reference (20; time grows with it) |
+| `significance` | number | `0.01` | a further population counts when the chance of seeing the evidence without it is below this |
+| `min_population` | number | `0.1` | ... and the further population is at least this share of the molecules |
+| `null` | text | `"simulated"` | "simulated", or "chi_square" for a quick first look without simulations (less exact) |
+| `seed` | integer | `0` | seed of the simulations |
 
 ## `[run.controls]`
 
@@ -403,8 +416,8 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |
-| `populations` | text | `"best_set"` | how one or two populations are decided: "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
-| `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 |
+| `populations` | text | unset | how the number of populations is decided: "population_test" (the population test of each peptide's spectra together, made by [run.population_test]; the default when the run has it), "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two; the default without the test) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
+| `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 (with populations = "population_test" the test's p-values decide instead: below significance / 10 on the side with more populations, above significance x 10 on the other) |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
 
@@ -416,12 +429,13 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 |---|---|---|---|
 | `min_population` | number | `0.05` | every population of a spectrum within [min_population, 1 - min_population] |
 | `max_fD_se` | number | `0.25` | every population's fD standard error below this |
-| `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides |
+| `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides (with the population test, such a spectrum also leaves the test, at one population) |
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
 | `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
 | `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species) |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
+| `undeuterated_cap` | true/false | `false` | with the population test: keep the other spectra of a peptide whose undeuterated set has two populations or more at one population, in every sample (off: the peptide is only flagged, undeuterated_two) |
 
 ## `[analysis.choice]`
 
@@ -432,6 +446,7 @@ The limits of the choice between one and two populations. With populations = "bo
 | `confidence` | number | `0.5` | a fraction (0.5: 50 %): the interval that must separate the two K=2 values; default 0.5 with populations = "best_set", 0.95 with "bootstrap" |
 | `max_fD_se` | number | `0.25` | both K=2 standard errors below this |
 | `min_population` | number | `0.05` | the low-D population (lever rule) within [min_population, 1 - min_population]; default 0.05 with populations = "best_set", 0.10 with "bootstrap" |
+| `tier` | text | `"two"` | with populations = "population_test": the least residue tier with two populations, "two" (strong evidence and a third of the covering weight agrees) or "localised" (half); the other limits of this table do not apply then |
 
 ## `[analysis.controls]`
 

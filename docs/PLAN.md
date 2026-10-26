@@ -567,6 +567,12 @@ and "Phase 2 status"):
 - Bootstrap: a failed resample is dropped for that measurement only (the prototype discarded the
   iteration for all), a measurement whose own fit failed is not resampled, and resamples are
   seeded per iteration and spectrum id.
+- An optional population test (`[run.population_test]`, off by default) decides each
+  spectrum's number of populations by a simulated null instead of BIC or AIC, with a width
+  check against populations narrower than deuterium allows, and the analysis decides each
+  peptide set's and residue's from the same test (HISTORY 174; `docs/ANALYSIS.md` "The
+  population test"); pyHXExpress chooses K per spectrum by its criterion or bootstrap
+  p-values.
 
 Fragments (`hxex_fragments.py`; HISTORY item 36):
 
@@ -685,6 +691,13 @@ Planned, not built:
    (HISTORY 162). The gap to HDExaminer (item 167): mostly series whose undeuterated control is
    another species; `stand_in_controls = "exclude"` now also leaves out `m0_high` series, and
    the programs then differ at 0.6 % of the kept peptide-times.
+12. **The population test** (owner, 2026-10-25; design in `docs/ANALYSIS.md` "The population
+   test"; evaluations HISTORY 169-173; built HISTORY 174). One calibrated test of the number
+   of populations for each spectrum, each peptide set and each residue: opt-in
+   `[run.population_test]` (simulated null per spectrum), the width check, the peptide-wide
+   undeuterated cap, `[analysis] populations = "population_test"`, residue tiers up to three and their
+   figure. Open: `hxex resume` adding the test to an existing bundle; stuck K = 1 refits in the
+   null; fragment series.
 
 ## Risks and open decisions
 

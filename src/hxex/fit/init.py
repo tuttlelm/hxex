@@ -50,6 +50,9 @@ def kmeans_starts(
         n*p        ~= mean(cluster) - mean(shape)
         n*p*(1-p)  ~= var(cluster)  - var(shape)
 
+    and where ``n`` is clipped to its range (``0.1`` to ``0.98 n_max``), ``p`` is set to keep
+    the mean ``n * p``.
+
     ``n_raw`` is the inverse of the sigmoid parameterisation of ``n``. A measurement with fewer
     distinct bins than components is padded with jittered copies (from ``seeds``).
     """
@@ -117,6 +120,11 @@ def kmeans_starts(
     p_est = np.clip(1.0 - npq_est / np.maximum(np_est, 1e-6), 0.02, 0.98)
     n_cap = np.asarray(n_max, dtype=np.float64)[:, None]
     n_est = np.clip(np_est / np.maximum(p_est, 1e-6), 0.1, n_cap * 0.98)
+    # keep the cluster's mean where n was clipped: a weak spectrum's noise spread over many bins
+    # makes the variance exceed the mean, p_est is clipped low and n hits its cap, and the
+    # start's mean (n p) collapsed to about 0.5 D wherever the data were; a start that does
+    # not overlap the data never moves (HISTORY 176)
+    p_est = np.clip(np_est / n_est, 0.02, 0.98)
     r = np.clip(n_est / n_cap, 1e-4, 1.0 - 1e-4)
     log_a = np.broadcast_to(
         np.log(np.maximum(total / np.maximum(k_eff, 1), 1.0))[:, None], (m, k)

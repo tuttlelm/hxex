@@ -40,6 +40,25 @@ def _when(time: float, scale: str = "seconds") -> str:
     return f"point {format_time(time, scale)}" if scale == "order" else format_time(time)
 
 
+NO_ERRORS = "no error bands: they need a bootstrap ([run.bootstrap], ks = [1, 2])"
+SCATTER_ONLY = ("no bootstrap: error bands from the replicates' scatter only, too small "
+                "([run.bootstrap], ks = [1, 2])")
+
+
+def _no_errors_note(ax, values, ses, bootstrap: bool | None = None) -> None:
+    """Say on ``ax`` that the values drawn have no error bands, when none of them has one, or
+    that their bands come from the replicates' scatter only, when ``bootstrap`` is False."""
+    values, ses = np.asarray(values, dtype=float), np.asarray(ses, dtype=float)
+    drawn = np.isfinite(values)
+    if not drawn.any():
+        return
+    text = (NO_ERRORS if not np.isfinite(ses[drawn]).any()
+            else SCATTER_ONLY if bootstrap is False else None)
+    if text:
+        ax.text(0.01, 0.97, text, transform=ax.transAxes, ha="left", va="top", fontsize=8,
+                color="#555555")
+
+
 def plot_residue_profile(
     residues: ResidueMap,
     sample: str,
@@ -52,6 +71,7 @@ def plot_residue_profile(
     ax: Axes | None = None,
     legend: bool = True,
     time_scale: str = "seconds",
+    bootstrap: bool | None = None,
 ) -> Figure:
     """The ``fD`` of every residue of ``sample`` at ``time`` for each ``(K, rank)`` in ``show``
     (those present in ``residues``), each with a band of the ``band`` confidence interval
@@ -73,6 +93,7 @@ def plot_residue_profile(
     drawn = 0
     top = 1.0
     n_res = 0
+    all_y, all_se = [], []
     for k, rank in show:
         rows = residues.where(sample=sample, time=time, K=k, rank=rank)
         if not rows.any():
@@ -82,6 +103,8 @@ def plot_residue_profile(
         x = residues.residue[rows][order]
         y = residues.fD[rows][order]
         se = residues.fD_se[rows][order]
+        all_y.append(y)
+        all_se.append(se)
         n_res = max(n_res, int(x.max()))
         if z > 0:
             ax.fill_between(x, y - z * se, y + z * se, color=colour, alpha=0.25, linewidth=0,
@@ -103,6 +126,7 @@ def plot_residue_profile(
     ax.grid(color="#e5e5e5", linewidth=0.8)
     ax.text(0.99, 0.04, f"{sample} {_when(time, time_scale)}", transform=ax.transAxes,
             ha="right", va="bottom", fontsize=10)
+    _no_errors_note(ax, np.concatenate(all_y), np.concatenate(all_se), bootstrap)
     if legend:
         ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=drawn, frameon=False)
     return fig
@@ -136,6 +160,7 @@ def plot_population_choice(
     length: int | None = None,
     fig: Figure | None = None,
     time_scale: str = "seconds",
+    bootstrap: bool | None = None,
 ) -> Figure:
     """The choice between one and two populations along the sequence
     (:func:`hxex.analysis.choose_populations`): the K=1 and
@@ -145,7 +170,9 @@ def plot_population_choice(
     markers ``chosen:<name>``.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
-    labelled as a point number, not a time."""
+    labelled as a point number, not a time. ``bootstrap`` False (the results have none) adds a
+    note that the error bands are the replicates' scatter only; with no error at all the
+    figure says so whatever ``bootstrap`` is."""
     rows = choice.where(sample=sample, time=time)
     if not rows.any():
         raise ValueError(f"no choice for {sample!r} at time {time:g}")
@@ -197,6 +224,10 @@ def plot_population_choice(
     top.set_ylabel("fD (fractional deuteration)")
     top.text(0.99, 0.04, f"{sample} {_when(time, time_scale)}", transform=top.transAxes,
              ha="right", va="bottom", fontsize=10)
+    shown = [(getattr(choice, f"fD_{n}")[rows], getattr(choice, f"fD_{n}_se")[rows])
+             for n in ("avg", "low", "high")]
+    _no_errors_note(top, np.concatenate([v for v, _ in shown]),
+                    np.concatenate([e for _, e in shown]), bootstrap)
     top.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=6, frameon=False,
                fontsize=8)
     bottom.set_ylim(0, 1.05)

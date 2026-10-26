@@ -28,6 +28,8 @@ a short text file.
 
 - [Statistics: fits, bootstrap, replicates, and controls](statistics.md): what the fits
   alone tell you, what the bootstrap adds, and the role of replicates and controls.
+- [The population test](population-test.md): how many populations each spectrum, peptide,
+  and residue has, decided by one calibrated test, and the checks that keep other species out.
 - [Controls and times](controls.md): undeuterated and fully deuterated controls, a time point as
   a control, writing times, times that only order the points.
 - [Back-exchange correction](back-exchange-correction.md): how the controls are judged, and

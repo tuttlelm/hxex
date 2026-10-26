@@ -26,6 +26,16 @@ When the residue map was made from the two-population peptides
 comes first: the peptides whose set is best described by two populations carry at least half of
 the residue's weight (``two_population_weight >= 0.5``); otherwise ``reason`` is
 ``'one-population peptides'``.
+
+With the population test (``tiers``; ``[analysis] populations = "population_test"``; owner,
+2026-10-26, HISTORY 177) the residue's tier decides instead
+(:func:`hxex.analysis.residues.population_tiers`): two populations where the tier is "two" or
+above (``ChoiceConfig.tier = 'two'``, the default: strong evidence and a third of the covering
+weight) or "two, localised" or above (``'localised'``: half of it), and the residue has K=2
+values to draw. The tests above do not apply (the bootstrap gives errors only, never the
+decision); ``reason`` then names the tier that did not reach it (``'tier: undecided'``,
+``'tier: no sign'``, ``'tier: two'``) or ``'no K=2'``. A residue in a "three" tier is drawn
+with its K=2 values (``reason`` ``'tier: three, drawn as two'``).
 """
 # the method follows pyHXExpress's choose_fits, per residue instead of per spectrum; its
 # population error left a derivative unsquared
@@ -37,8 +47,9 @@ from dataclasses import dataclass, fields
 import numpy as np
 from scipy.stats import norm
 
-from .residues import ResidueMap
+from .residues import TIERS, ResidueMap
 
+TIER_LEVELS = ("two", "localised")  # ChoiceConfig.tier: the least tier that is two populations
 REASONS = ("", "no K=2", "one-population peptides", "not separated", "error", "K=1 outside",
            "population")
 TWO_POPULATION_SHARE = 0.5  # the weight two-population peptides must carry (HISTORY 137)
@@ -58,11 +69,15 @@ class ChoiceConfig:
 
     A residue whose K=2 standard errors are unknown (NaN) fails the separation and precision
     tests: the one-population description is kept.
+    - ``tier``: with the population test, the least residue tier that has two populations:
+      ``'two'`` (a third of the covering weight agrees, the default) or ``'localised'`` (half
+      of it); the three limits above do not apply then.
     """
 
     confidence: float = 0.5
     max_fD_se: float = 0.25
     min_population: float = 0.05
+    tier: str = "two"
 
     def __post_init__(self):
         if not 0 <= self.confidence < 1:
@@ -71,6 +86,8 @@ class ChoiceConfig:
             raise ValueError("max_fD_se must be positive")
         if not 0 <= self.min_population < 0.5:
             raise ValueError("min_population must be in [0, 0.5)")
+        if self.tier not in TIER_LEVELS:
+            raise ValueError(f"tier must be one of {', '.join(TIER_LEVELS)}")
 
     @property
     def z(self) -> float:
@@ -150,13 +167,15 @@ def lever_population(avg, low, high, se_avg, se_low, se_high):
     return p, se
 
 
-def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig()  # noqa: B008
-                       ) -> PopulationChoice:
+def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig(),  # noqa: B008
+                       *, tiers: bool = False) -> PopulationChoice:
     """The choice for every sample, time and residue of ``residues`` that has a K=1 value or
-    K=2 values (see the module docstring)."""
+    K=2 values (see the module docstring); with ``tiers``, by the residue tiers of the
+    population test (the residue map made with ``population_test=True``)."""
     table: dict[tuple, dict] = {}
     fell_back: dict[tuple, bool] = {}
     share: dict[tuple, float] = {}
+    tier_of: dict[tuple, str] = {}
     weights = np.asarray(residues.two_population_weight, dtype=float)
     voted = bool(np.isfinite(weights).any())  # made from the two-population peptides
     for i in range(len(residues)):
@@ -169,6 +188,7 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         table.setdefault(key, {})[name] = (float(residues.fD[i]), float(residues.fD_se[i]))
         if name == "avg":
             share[key] = float(weights[i])
+            tier_of[key] = str(residues.population_tier[i])
         fell_back[key] = fell_back.get(key, False) or bool(residues.control_fallback[i])
     keys = sorted(table)
     nan = (np.nan, np.nan)
@@ -196,7 +216,19 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
                       (has_k2, "no K=2")):
         reason = np.where(~test, why, reason)  # the first failing test, in REASONS order
     two = has_k2 & enough & separated & precise & between & in_range
-    reason = np.where(two | ~np.isfinite(avg), "", reason)
+    if tiers:  # the population test decides; the bootstrap gives the errors only
+        tier = np.array([tier_of.get(key, "") for key in keys], dtype=object)
+        least = 2 if config.tier == "two" else 3  # in TIERS order
+        rank = np.array([TIERS.index(t) if t in TIERS else -1 for t in tier])
+        rank = np.where(rank >= 4, rank - 2, rank)  # three, three localised: as two, localised
+        reached = rank >= least
+        two = has_k2 & reached
+        reason = np.where(~has_k2, "no K=2", np.where(reached, "", "tier: " + tier.astype(str)))
+        reason = np.where(np.isin(tier, ("three", "three, localised")) & two,
+                          "tier: three, drawn as two", reason)
+        reason = np.where(tier == "", np.where(has_k2, "tier: none", "no K=2"), reason)
+    reason = np.where((two & (reason != "tier: three, drawn as two")) | ~np.isfinite(avg), "",
+                      reason)
     usable = has_k2 & between
     return PopulationChoice(
         run=np.array([k[0] for k in keys], dtype=object), sample=np.array([k[1] for k in keys]),

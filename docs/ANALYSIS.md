@@ -484,7 +484,11 @@ Plots (matplotlib, returning figures):
 - for fragments: cleavage maps, uptake against fragment length (c ions, and the parent minus
   z ions), closure plots, comparisons between activations and precursor charges.
 
-### The population test: one evaluation of K from spectrum to residue (design; owner, 2026-10-25; not built)
+### The population test: one evaluation of K from spectrum to residue
+
+Design: owner, 2026-10-25; decisions settled; built 2026-10-25 (HISTORY item 174):
+`hxex.population_test` (the run), `hxex.analysis.set_test` (the sets), the residue tiers in
+`hxex.analysis.residues`, the tier figure in `hxex.report.tiers`.
 
 **Why.** Today each level decides the number of populations differently: the run per spectrum by
 BIC or AIC; `best_set_K` per peptide set by the summed criterion (uncalibrated; minor share
@@ -492,121 +496,153 @@ BIC or AIC; `best_set_K` per peptide set by the summed criterion (uncalibrated; 
 mode by the bootstrap errors; and the residue-level confidence of HISTORY item 148 by a
 calibrated test with four tiers. The owner wants one consistent statistical evaluation of K at
 the peptide level carried through to the residues. Evidence: HISTORY items 139, 148, 161, 162,
-166, 167.
+166-173.
+
+**Picking first.** The test is only as good as the sticks: taking the window maximum picked a
+neighbour's flank whenever a brighter peak sat just outside a window, and those flanks read as
+extra populations. `[run.picker] pick = "peak"` (the default since HISTORY item 172) takes only
+apexes; bundles picked before keep their sticks until run again.
 
 **The test.** For a spectrum, the statistic of K against K + 1 is
-`T = 2 (nll_K - nll_K+1)` from its own fits. Its null comes from simulation: data drawn from the
-spectrum's K-population fit with the fit's noise, refitted at K and K + 1, `simulations` times
-(20). A set (sample, peptide, time or control role; charge states and replicates pooled) sums
-the statistics of its spectra and their nulls; a gamma fitted to the summed null gives the set's
-p-value (per-set null; at 20 simulations it agrees with 100 on 97-99 % of sets on a Q-TOF and an
-Orbitrap dataset, HISTORY 161-162; a null pooled over the run was unstable on the Orbitrap and is
-not used). A set has at least K + 1 populations when `p < significance` (0.01) and the added
-population's mean share is at least `min_population` (0.10); the steps run from `k_min` to
-`k_max - 1` and stop at the first that does not reject. Calibration on simulated single
-populations: about 1 % called two (HISTORY 139).
+`T = 2 (nll_K - nll_K+1)` from its own fits (negative values count as 0). Its null comes from
+simulation: data drawn from the spectrum's K-population fit with the fit's noise, refitted at 1
+to K + 1 as the run fits (nested starts), `simulations` times (20); each spectrum keeps the mean
+and variance of its null draws. A set (sample, peptide, time or control role; charge states and
+replicates pooled) adds up its spectra's statistics, and the means and variances of their nulls
+(independent spectra); a gamma with those moments gives the set's p-value (per-set null; at 20
+simulations it agrees with 100 on 97-99 % of sets on a Q-TOF and an Orbitrap dataset, HISTORY
+161-162; a null pooled over the run was unstable on the Orbitrap and is not used). A set has at
+least K + 1 populations when `p < significance` (0.01) and the added population's mean share
+(the smallest share of the K + 1 fits, averaged over the set) is at least `min_population`
+(0.10); the steps run from 1 to `k_max - 1` and stop at the first that does not reject.
+Calibration on simulated single populations: about 1 % called two (HISTORY 139).
+
+**The width check (per spectrum): a flag (owner, 2026-10-26: not yet justified as a rule;
+HISTORY 175).** A deuterated population of mean mu D whose amides each hold at most the
+labelling D2O fraction r has a variance of at least mu (1 - r). A K + 1 fit with a component of
+at least 1 D and 10 % narrower than 0.3 sqrt(mu (1 - r)) may hold something else (a co-eluting
+species on the isotope grid, a single-bin spike): the spectrum is flagged (`narrow_component`
+in `spectra.csv`), and its test is unchanged. Measured as a rule (HISTORY 170-171, 173), it took
+the undeuterated sets reading two from 7.0 to 2.8 % on a Q-TOF benchmark and from 15.8 to 3.2 %
+on an Orbitrap digest, but nothing showed the labelled spectra it would stop were wrong. r is
+`[run.controls] d2o_fraction` (its default, 0.9, without controls).
+
+**The undeuterated reference (per peptide): a flag by default, a cap as a switch (owner,
+2026-10-26; HISTORY 175).** An undeuterated set cannot hold two deuterium populations, so one
+that reads two holds another species. Every set of such a peptide (peptide and modification, in
+every sample of the run; charge states pooled) is flagged `undeuterated_two` in
+`species_uptake.csv`, and its undeuterated rows show it in the tier figure. Whether the labelled
+spectra share the species is not known: it can move out of the measured bins as the peptide
+takes up deuterium, and the measured enrichment (labelled sets of such peptides read two 62
+against 30 % on the Q-TOF, 33 against 9 % on the Orbitrap; HISTORY 171, 173) does not show
+that their second populations are the species. So their tests are unchanged by default; the
+switch `[analysis.filters] undeuterated_cap` keeps the peptide's labelled and fully deuterated
+spectra at one population, in every sample and at every step (spectra the review accepted
+excepted). Candidate for later: cap a labelled spectrum only where its extra component sits at
+the species' position.
 
 **Which spectra enter a set.** The spectra the analysis keeps: left-out spectra
-(`left_out_spectra.csv`), spectra kept at one population only (the spectrum quality screens,
-and the undeuterated rule below) and spectra with a reviewed `review_K = 1` leave the test; a
-set made only of those has one population. Accepting a spectrum in the review restores its
-evidence.
-
-**The undeuterated reference.** An undeuterated sample cannot hold two deuterium populations,
-so an undeuterated set that reads two holds another species (on the public Orbitrap digest: the
-second component a median 7.9 D above the first, share 0.16; 28 % of the undeuterated sets kept
-by the analysis). Where a series' undeuterated set reads two, 42 % of its labelled sets read two
-against 7 % where it reads one, and two thirds of all labelled two-population sets are in such
-series; their K = 1 values are still close to another program's (1.8 % more than 0.1 fD apart
-against 0.3 %). Rule (owner): by default the labelled spectra of such a series are kept at one
-population only (the route of item 152), with a switch; an accepted spectrum keeps its K >= 2
-evidence. The same cap applies at every step (a series whose undeuterated set reads two is not
-tested for three).
+(`left_out_spectra.csv`), spectra kept at one population (the spectrum quality screens, the
+undeuterated cap when switched on), spectra with a reviewed `review_K = 1`, and, from the step
+whose K + 1 fit it is, a spectrum with a population above full deuteration (corrected fD above
+`[analysis.filters] max_fD`, 1.1; owner, 2026-10-26, HISTORY 178-179) leave the test (accepted
+spectra excepted); a set made only of those has one population. The limit 1.1 is about the
+99th to 99.5th percentile of genuine fully deuterated single populations on two datasets; with a
+bootstrap the component's own error could widen it (`1 + sqrt(0.1^2 + (z se)^2)`; not built:
+the hold-out works on fits alone).
 
 **Each level from the same numbers.**
-- Spectrum: with the population test switched on, each spectrum's own K (`spectra.csv`, the
-  figures, a `"selected"` bootstrap) comes from the same steps, the spectrum tested as a set of
-  one (owner: tie the spectrum's properties to the test when it is on; otherwise the fit's
-  criterion, BIC or AIC, as now). A single spectrum has less power than its set, so spectra stay
-  at one population more often than their sets; the set pools the evidence. A reviewed
-  `review_K` still wins.
-- Peptide: the set's K replaces `best_set_K` and gates the peptide comparisons as today
-  (HISTORY 137, 144).
+- Spectrum: with the population test on, each spectrum's own K (`spectra.csv`, the figures, a
+  `"selected"` bootstrap) comes from the same steps, the spectrum tested as a set of one
+  (owner: tie the spectrum's properties to the test when it is on; otherwise
+  the fit's criterion, BIC or AIC, as now). The undeuterated cap is a peptide-level rule and acts
+  in the analysis only. A single spectrum has less power than its set, so spectra stay at one
+  population more often than their sets; the set pools the evidence. A reviewed `review_K` still
+  wins.
+- Peptide: the set's K fills `best_set_K` (and `best_set`, `best_set_reason`, with the set's
+  p-values in new columns) and gates the peptide comparisons as today (HISTORY 137, 144). Where
+  two samples differ in their number of populations, the difference is borderline unless the
+  side with more has p below `significance / 10` and the other above `significance x 10` at
+  the step where they differ (owner, 2026-10-26; replaces the summed-criterion rule of
+  `borderline_evidence` when the test is on).
 - Residue: from the covering sets' results at each step, agreement (the weighted share of
   covering sets with at least K + 1 populations) and strength (a weighted Stouffer combination of
-  the sets' z values, `z = Phi^-1(1 - p)` clipped at +-3.09), and the owner's four tiers (two,
+  the sets' z values, `z = Phi^-1(1 - p)` clipped at +-3.09), and the owner's tiers (two,
   localised: strong and agreement >= 0.5; two: strong and agreement 0.33-0.5; undecided: one of
-  the two; no sign; HISTORY 148). K = 2 values from every covering peptide (HISTORY 141).
-- The bootstrap gives errors only (positions, populations), never the decision.
+  the two; no sign; HISTORY 148), up to three for now: step two gives "three" and "three,
+  localised" by the same rule, a set without a step-two test (it read one) entering step two
+  with z = 0. Risk, documented (HISTORY 169): two neighbouring two-state regions read as three at
+  their junction, which the residue level cannot tell from three states. K = 2 values from every
+  covering peptide (HISTORY 141). The residue choice (the `choice_*` figures, `populations.csv`,
+  and every comparison built on it) follows the tiers (owner, 2026-10-26, HISTORY 177): two
+  populations where the tier is "two" or above (`[analysis.choice] tier = "two"`, the default;
+  `"localised"` for half the weight) and the residue has K = 2 values to draw; the choice's
+  bootstrap tests (separation, precision, K = 1 between, population range) do not apply. A
+  "three" tier is drawn as two (K = 3 residue values are not drawn yet).
+- The bootstrap gives errors only (positions, populations), never the decision. Without one,
+  the values are drawn without error bands, and the figures say so.
 
 `significance` and `min_population` act in the run (each spectrum's K) and in the analysis
-(sets), so one value serves both: set in the run's table, read by the analysis, an override
-recorded in `analysis_settings_used.toml`.
+(sets), so one value serves both: set in the run's table, read by the analysis.
 
-**Beyond two.** The steps generalise (two against three with a null from the K = 2 fits). At the
-residue level the tiers generalise step by step, and more than two states at a residue is real
-conformational heterogeneity (owner); the difficulty is that a peptide reading three can mean
-three states at some residues or two two-state regions together, which only overlapping peptides
-separate, and that a step-two p-value exists only for sets that read two (how untested sets
-enter the step-two combination is to be defined). To be tested on simulated data with both cases
-before the residue tiers beyond two are built.
+**The screen with the test.** The BIC screen does not combine with the test (it zeroes a fifth
+of the two-population sets, HISTORY 169). With the test on, `[run.fit] screen = true` skips the
+K + 1 fit only where the loss floor bounds the statistic below 1 (`T <= 2 (nll_K - floor) < 1`):
+such a spectrum enters with T = 0 and a chi-square null with 3 degrees of freedom (mean 3,
+variance 6) instead of its simulation (31 % of the fits and simulations saved, 99.1 % of the
+labelled sets' verdicts unchanged on the benchmark). The quick look, `null = "chi_square"`, gives
+every spectrum that null with every fit made (no simulation; 95.6 % of sets and 89 % of residue
+cells as the simulated null on the benchmark, but drifting with peptide size on the Orbitrap,
+HISTORY 162): for a first look, not for the results.
 
-**Settings (names agreed for the run table; the rest proposed).**
+**Settings.**
 
 ```toml
 [run.fit]
 k_min = 1                 # must be 1 for the test
-k_max = 2                 # 3: a second step, and a second null
+k_max = 2                 # 3: a second step (twice the simulations)
+screen = false            # with the test: skip K + 1 where T is bounded below 1
 
 [run.population_test]     # opt-in: the table turns the stage on, as [run.bootstrap] does
 simulations = 20          # per spectrum and step
 significance = 0.01
 min_population = 0.10
+null = "simulated"        # "chi_square": the quick look, no simulation
 
 [analysis]
-populations = "test"      # the test when the bundle has it; "best_set" and "bootstrap" kept
+populations = "population_test"      # the default when the bundle has the test; "best_set" and
+                          # "bootstrap" kept
+[analysis.filters]
+undeuterated_cap = false   # true: keep a flagged peptide's other spectra at one population
 ```
 
-Without `[run.population_test]` the analysis uses `best_set_K` as now and says so in its log and
-settings file; `populations = "test"` on a bundle without the test is refused with the fix (add
-the table, `hxex resume`). `hxex resume` can add the test to an existing bundle; spectra whose K
-changes then have a `"selected"` bootstrap redone (`ks = [1, 2]` bootstraps are unaffected).
-Refused: `k_min > 1` or `k_min = k_max` with the test on.
+Without `[run.population_test]` the analysis uses `best_set_K` as now; `populations = "population_test"` on
+a bundle without the test is refused with the fix (add the table, run again). Refused: `k_min >
+1` with the test on, the Poisson loss (the null draws the Gaussian noise of the fit).
 
 **Workflow.** `hxex run` fits K from `k_min` to `k_max`, runs the test, sets each spectrum's K,
 then bootstraps if asked; `hxex analyse` forms the sets, their K and the residue tiers in
 seconds (changing filters, review or `significance` needs no new simulation); the bootstrap can
-come later (`hxex resume`, `ks = [1, 2]`) for error bars, without changing the tiers.
+come later (`hxex resume`, `ks = [1, 2]`) for error bars, without changing the tiers. Later:
+`hxex resume` adding the test to an existing bundle.
 
-**Cost (measured).** 1.8 ms per spectrum and simulation on the GPU (RTX A4500: 25,297 spectra,
-one step, 15 min) and 9.7 ms on the CPU (24 threads of a 48-core workstation: 1.4 h for the same
-data); `k_max = 3` doubles it. About a 20-resample bootstrap; several hours on a laptop CPU for a
-dataset of this size, so opt-in, and the guide states the cost.
+**Cost (measured, HISTORY 168-169, 174).** 1.4-1.8 ms per spectrum and simulation on the GPU
+(RTX A4500: 26,164 spectra, one step, 12 min); on the CPU 13-21 ms on 2-8 cores (2.1 hours on
+four cores for 26,000 spectra, one step), and 10 ms for step one, 17 ms for step two with the
+default threads of a 48-core workstation (the tutorial's 3,874 spectra: fits 73 s, step one 13
+min, step two 22 min: 11 and 18 times the fits). Opt-in, and the guide states the cost.
 
-**To evaluate before building.**
-1. `[run.fit] screen` (the owner's quick-look route, whose desired output resembles the tiers):
-   set verdicts and tier figures with the screen on and off, side by side (a skipped K = 2 fit
-   enters with `T = 0`); whether the screen's bound on the K = 2 gain lets spectra skip the
-   simulation; whether the tiers themselves can be the quick look.
-2. The residue tiers beyond two on simulated data (three real states at residues, and two
-   neighbouring two-state regions).
-3. The undeuterated rule on the intact-peptide benchmark and the known-answer set (how much it
-   removes where interference is rare).
-4. The CPU cost on a smaller machine.
+**Build order.** (1) The run stage: `hxex.population_test` (settings, the null, the test screen,
+the width check flag, each spectrum's K), stored in the bundle (`population_test.parquet`) and
+`spectra.csv`. (2) The analysis: the sets, the undeuterated cap, `populations = "population_test"` filling
+the set columns. (3) The residue tiers (table, then the tier figure, the owner's reference being
+the HISTORY 148 tier figure). (4) The guide, the settings reference, `hxex resume`.
 
-**Evaluated (HISTORY item 169; decisions open).** 1: the BIC screen does not combine with the test
-(it zeroes a fifth of the two-population sets); a screen made for the test (skip K = 2 where the loss
-floor bounds T below 1, chi-square(3) null for those spectra) saves about 31 % of fits and
-simulations at 99 % unchanged verdicts; a chi-square null with every fit is a usable quick look
-(96 % of sets). 2: step two works where three states are resolvable, but two neighbouring two-state
-regions read as three at their junction, indistinguishable at the residue level. 3: the undeuterated
-rule removes nothing on the known-answer set and 16 % of the labelled two-population sets on the
-intact-peptide benchmark, mostly in peptides that read two in other samples too. 4: about five
-times the run's fits on any CPU at 20 simulations (2.1 hours on four cores for 26,000 spectra).
-Decided (owner, HISTORY item 170): with the test on, the test-specific screen replaces the BIC
-screen, and the chi-square null is the quick look; residue tiers go up to three for now. The
-undeuterated rule is reopened: its sets reading two hold a narrow cluster (not deuterium; see item
-170), and a per-spectrum width bound is the candidate in its place.
+**Evaluated (HISTORY items 169-173).** 1: the BIC screen does not combine with the test; the test
+screen and the chi-square quick look above. 2: step two works where three states are resolvable;
+the junction risk above. 3: the undeuterated rule as first designed (one sample's series) was
+replaced by the width check and the peptide-wide cap, both flags since HISTORY 175 (the cap a
+switch, off by default). 4: the CPU cost above.
 
 ## Later parts
 

@@ -77,6 +77,7 @@ from .tables import (
     write_csv,
     write_tables,
 )
+from .tiers import TIER_COLOURS, plot_population_tiers
 
 __all__ = [
     "closure_figure",
@@ -97,6 +98,8 @@ __all__ = [
     "woods_populations_figure",
     "PROFILE_STYLES",
     "plot_population_choice",
+    "plot_population_tiers",
+    "TIER_COLOURS",
     "plot_residue_profile",
     "FD_CMAP",
     "autowrap",

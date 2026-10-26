@@ -10,6 +10,10 @@ that floor plus K's penalty does not beat the best criterion of the smaller K al
 The screen is exact: it skips only fits that cannot be selected, so the selected K is that of
 fitting every K.
 
+With the population test (:mod:`hxex.population_test`) the screen asks another question: K + 1
+is fitted only where the floor leaves the test's statistic room to reach 1 (:func:`can_exceed`);
+the criterion's screen would leave out the many small gains a set of spectra adds up.
+
 The floor needs whole-number bins and the Gaussian loss (the Poisson loss of
 :mod:`hxex.model` drops a constant and can be negative); other measurements are never skipped.
 """
@@ -85,3 +89,17 @@ def can_win(
     reach = penalty(criterion, k, sample_size) + 2.0 * floor
     margin = _TOLERANCE_ABS + _TOLERANCE_REL * np.abs(best)
     return ~(reach > best + margin)
+
+
+# with the population test, K + 1 is fitted only where its statistic could reach this
+TEST_BOUND = 1.0
+
+
+def can_exceed(nll_previous: np.ndarray, floor: np.ndarray, bound: float = TEST_BOUND
+               ) -> np.ndarray:
+    """Whether the population test's statistic of K + 1 against K, ``2 (nll_K - nll_K+1)``,
+    could reach ``bound``: the loss floor bounds it by ``2 (nll_K - floor)``. False where the
+    K fit was not made (its statistic is bounded by the one before). Evidence: HISTORY 169 (a
+    bound of 1 skips about 31 % of the fits at 99.8 % of the sets' verdicts unchanged)."""
+    with np.errstate(invalid="ignore"):
+        return 2.0 * (np.asarray(nll_previous, dtype=float) - floor) >= bound

@@ -29,7 +29,8 @@ Without any bootstrap, *hxex* gives you:
   second is `best_set_K` in `species_uptake.csv`: all the spectra of one peptide at one time in
   one sample, replicates and charge states together, are asked whether two populations describe
   them better than one. This is the decision the residue plots and the population comparisons
-  are built on.
+  are built on. The optional [population test](population-test.md) makes this decision by a
+  calibrated test instead, from spectrum to residue.
 - **The deuterium uptake** of every population of every spectrum, and the corrected values
   when the project has a `[run.controls]` table. The correction uses the controls' fits only.
 - **Which peptides differ between samples**, the coloured bars of the Woods plot. This test

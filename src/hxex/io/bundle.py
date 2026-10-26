@@ -45,6 +45,7 @@ from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
 from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
+from ..population_test import PopulationTest, PopulationTestConfig
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
 from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
 from ._arrow import (
@@ -254,6 +255,51 @@ def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.
             "ok": _ragged(_rows(d.ok), pa.bool_()),
         })
     return tables
+
+
+_TEST_STEP_COLUMNS = ("statistic", "null_mean", "null_var", "null_kind", "added_population",
+                      "narrow", "p")
+
+
+def _population_test_table(t: PopulationTest) -> pa.Table:
+    """One row per measurement; the columns of each step K (K against K + 1) end in ``_K``."""
+    cols: dict[str, pa.Array] = {
+        "measurement": pa.array(np.arange(len(t), dtype=np.int64)),
+        "selected_K": pa.array(np.asarray(t.selected_K, dtype=np.int64)),
+        "criterion_K": pa.array(np.asarray(t.criterion_K, dtype=np.int64)),
+    }
+    types = {"null_kind": pa.string(), "narrow": pa.bool_()}
+    for s, k in enumerate(t.steps):
+        for name in _TEST_STEP_COLUMNS:
+            values = getattr(t, name)[:, s]
+            kind = types.get(name, pa.float64())
+            cols[f"{name}_{k}"] = pa.array(values.tolist() if kind == pa.string() else values,
+                                           type=kind)
+        cols[f"null_draws_{k}"] = _ragged(_rows(t.null_draws[:, s]), pa.float32())
+    return pa.table(cols)
+
+
+def _read_population_test(table: pa.Table, config: dict, steps, d2o_fraction: float
+                          ) -> PopulationTest:
+    steps = tuple(int(k) for k in steps)
+    cfg = PopulationTestConfig.from_dict(config)
+
+    def stack(name: str, dtype) -> np.ndarray:
+        return np.column_stack([np.asarray(_col(table, f"{name}_{k}"), dtype=dtype)
+                                for k in steps])
+
+    draws = np.stack([_matrix(table, f"null_draws_{k}", cfg.simulations, dtype=np.float32)
+                      for k in steps], axis=1)
+    return PopulationTest(
+        config=cfg, steps=steps, statistic=stack("statistic", np.float64),
+        null_mean=stack("null_mean", np.float64), null_var=stack("null_var", np.float64),
+        null_kind=np.column_stack([_strs(table, f"null_kind_{k}") for k in steps]),
+        null_draws=draws, added_population=stack("added_population", np.float64),
+        narrow=stack("narrow", bool), p=stack("p", np.float64),
+        selected_K=np.asarray(_col(table, "selected_K"), dtype=np.int64),
+        criterion_K=np.asarray(_col(table, "criterion_K"), dtype=np.int64),
+        d2o_fraction=float(d2o_fraction),
+    )
 
 
 def _envelopes_table(e: EnvelopeTable) -> pa.Table:
@@ -690,6 +736,7 @@ def write_bundle(
     controls: ControlTable | None = None,
     quality: QualityFlags | None = None,
     envelopes: EnvelopeTable | None = None,
+    population_test: PopulationTest | None = None,
     run_config: dict | None = None,
     spectra_source: Mapping | None = None,
     project: str | None = None,
@@ -718,7 +765,8 @@ def write_bundle(
     :func:`hxex.run.resume_bootstrap`). ``provenance`` is recorded as given (see
     :func:`provenance_of`: the bundle this one replaces, what changed, the review carried), and
     ``excluded`` too (the run-level exclusions: :func:`hxex.exclusions.exclusion_record`).
-    ``project_file`` is the project file's other settings, as used
+    ``population_test`` (:mod:`hxex.population_test`) is stored with its steps and the D2O
+    fraction of its width check. ``project_file`` is the project file's other settings, as used
     (:func:`hxex.config.project_record`; None for a run from Python). Beside the manifest, the
     bundle holds ``run_settings_used.toml``, every setting of the run written out for people
     (:func:`hxex.config.run_settings_text`); it is replaced with the bundle and not read back.
@@ -733,6 +781,9 @@ def write_bundle(
         measurements.spectrum_id, fit.spectrum_id
     ):
         raise BundleError("the measurements and the fit must be for the same spectra")
+    if population_test is not None and not np.array_equal(population_test.selected_K,
+                                                          fit.selected_K):
+        raise BundleError("the population test was not made from this fit")
     if bootstrap is not None and not np.array_equal(bootstrap.selected_K, fit.selected_K):
         raise BundleError("the bootstrap was not made from this fit")
     for k, b in (bootstrap_by_k or {}).items():
@@ -783,6 +834,10 @@ def write_bundle(
             _write_table(tmp, "envelopes", _envelopes_table(envelopes), files)
         if controls is not None:
             _write_table(tmp, "controls", _controls_table(controls), files)
+        if population_test is not None:
+            _write_table(tmp, "population_test", _population_test_table(population_test), files,
+                         steps=list(population_test.steps),
+                         d2o_fraction=population_test.d2o_fraction)
         components = _components_table(fit, bootstrap, controls, bootstrap_by_k)
         _write_table(tmp, "components", components, files, derived=True)
         if review is not None:
@@ -803,6 +858,8 @@ def write_bundle(
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
+                "population_test": (None if population_test is None
+                                    else population_test.config.to_dict()),
                 "picker": None if picker_config is None else picker_config.to_dict(),
                 "controls": None if controls is None else controls.config.to_dict(),
                 "quality": None if quality is None else quality.config.to_dict(),
@@ -1278,6 +1335,17 @@ class Bundle:
             config = self.manifest["configs"]["controls"]
             self._cache["controls"] = _read_controls(self._table("controls"), config)
         return self._cache["controls"]
+
+    def population_test(self) -> PopulationTest | None:
+        """The population test of every measurement, or None if the run had none."""
+        if not self.has("population_test"):
+            return None
+        if "population_test" not in self._cache:
+            entry = self.manifest["files"]["population_test.parquet"]
+            self._cache["population_test"] = _read_population_test(
+                self._table("population_test"), self.manifest["configs"]["population_test"],
+                entry["steps"], entry["d2o_fraction"])
+        return self._cache["population_test"]
 
     def envelopes(self) -> EnvelopeTable | None:
         """The envelope of every series, or None if the run used the theory."""

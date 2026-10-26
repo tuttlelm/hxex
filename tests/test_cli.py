@@ -905,7 +905,9 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     # the settings used go with the analysis: its own, and a copy of the run's
     assert {"analysis_settings_used.toml", "run_settings_used.toml"} <= set(listed)
     used = load_project(folder / "analysis_settings_used.toml", analysis_only=True)
-    assert used.analysis == load_project(path).analysis
+    # the settings used name the rule the analysis took (no population test: best_set)
+    assert used.analysis == dataclasses.replace(load_project(path).analysis,
+                                                populations="best_set")
     run_copy = (folder / "run_settings_used.toml").read_text()
     assert run_copy == (tmp_path / "out" / "run_settings_used.toml").read_text()
     # a figure an earlier analysis wrote and this one does not, and a file of the user's

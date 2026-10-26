@@ -66,6 +66,13 @@ from .picking import (
     pick_spectra,
     series_envelopes,
 )
+from .population_test import (
+    DEFAULT_D2O_FRACTION,
+    PopulationTest,
+    PopulationTestConfig,
+    check_fit_config,
+    population_test,
+)
 from .quality import QualityConfig, QualityFlags, assess_quality
 from .spectra import SpectrumSet
 
@@ -95,6 +102,10 @@ class RunConfig:
     - ``fit``: the fit of one to several populations (:class:`~hxex.fit.FitConfig`).
     - ``bootstrap``: standard errors and intervals (:class:`~hxex.bootstrap.BootstrapConfig`);
       None: no bootstrap.
+    - ``population_test``: the population test
+      (:class:`~hxex.population_test.PopulationTestConfig`); None: none, each spectrum's K is
+      the fit criterion's. With it, each spectrum's K is the test's, and ``fit.screen`` is the
+      test's screen (:func:`hxex.fit.screen.can_exceed`).
     - ``controls``: the back-exchange correction from the undeuterated and fully deuterated
       controls (:class:`~hxex.controls.ControlConfig`); None: no correction, the means stay in
       measured deuterons. The controls are the K=1 fits, made for the control spectra whatever
@@ -118,6 +129,7 @@ class RunConfig:
     picker: PickerConfig = DEFAULT_PICKER_CONFIG
     fit: FitConfig = FitConfig()  # noqa: RUF009
     bootstrap: BootstrapConfig | None = None
+    population_test: PopulationTestConfig | None = None
     controls: ControlConfig | None = None
     quality: QualityConfig | None = QualityConfig()  # noqa: RUF009
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
@@ -135,6 +147,8 @@ class RunConfig:
             raise ValueError("memory_budget_bytes must be positive")
         if self.max_chunk is not None and self.max_chunk < 1:
             raise ValueError("max_chunk must be at least 1")
+        if self.population_test is not None:
+            check_fit_config(self.fit)
         if self.bootstrap is not None and not isinstance(self.bootstrap.ks, str):
             missing = [k for k in self.bootstrap.ks if k not in self.fit.k_values]
             if missing:
@@ -160,7 +174,8 @@ class RunConfig:
             raise ValueError(f"unknown run setting(s): {', '.join(sorted(unknown))}")
         parts = {
             "picker": PickerConfig, "fit": FitConfig,
-            "bootstrap": BootstrapConfig, "controls": ControlConfig, "quality": QualityConfig,
+            "bootstrap": BootstrapConfig, "population_test": PopulationTestConfig,
+            "controls": ControlConfig, "quality": QualityConfig,
             "registry": chem.ModificationRegistry, "envelope": EnvelopeConfig,
         }
         kwargs = {
@@ -176,9 +191,11 @@ class RunResult:
     where ``kept`` is False were dropped and are not in ``measurements`` or ``fit``;
     ``dropped_reason`` says why (``empty`` or ``no_signal``). ``bootstrap`` is at each
     measurement's selected K; ``bootstrap_by_k`` (when ``BootstrapConfig.ks`` asks for it) has
-    the fixed-K bootstrap of every measurement at each K requested. ``spectra_source`` is how the
-    raw spectra were read (their :attr:`~hxex.spectra.SpectrumSet.source`), written to the
-    bundle even when the spectra are not."""
+    the fixed-K bootstrap of every measurement at each K requested. ``population_test`` is the
+    test of every measurement (with it, ``fit.selected_K`` is the test's K).
+    ``spectra_source`` is how the raw spectra were read (their
+    :attr:`~hxex.spectra.SpectrumSet.source`), written to the bundle even when the spectra are
+    not."""
 
     config: RunConfig
     binned: BinnedSet
@@ -196,6 +213,7 @@ class RunResult:
     excluded: dict | None = None  # the run-level exclusions (hxex.exclusions.exclusion_record)
     view_exclude: tuple = ()  # [[review.exclude]] rules applied to the run's figures
     project_file: dict | None = None  # the project file's other settings (config.project_record)
+    population_test: PopulationTest | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -246,7 +264,7 @@ class RunResult:
             bootstrap_by_k=self.bootstrap_by_k, binned=self.binned, spectra=spectra,
             picker_config=self.config.picker,
             controls=self.controls, quality=self.quality, envelopes=self.envelopes,
-            run_config=self.config.to_dict(),
+            population_test=self.population_test, run_config=self.config.to_dict(),
             spectra_source=self.spectra_source if spectra is None or spectra.source is None
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
@@ -340,7 +358,8 @@ def _bootstrap_ks(config: RunConfig, fit: FitResult) -> list[int]:
 
 @dataclass
 class _Plan:
-    """The chunks of an analysis and its progress units: the fit's share of ``progress_range``
+    """The chunks of an analysis and its progress units: the share of ``progress_range`` of
+    the fit and the population test (``fit_share``), the test's share of that (``test_share``)
     and, per chunk, its edges (fraction of the measurements before it)."""
 
     chunks: list[np.ndarray]
@@ -349,6 +368,13 @@ class _Plan:
     lo: float
     hi: float
     fit_share: float
+    test_share: float = 0.0
+
+
+# time of the population test's null and of a bootstrap, against the fit's: at 20 simulations
+# step K took 11 + 7 (K - 1) times the fits on a CPU (the tutorial data, HISTORY 174)
+_TEST_WEIGHT, _TEST_WEIGHT_STEP = 11.0, 7.0
+_BOOTSTRAP_WEIGHT = 7.0 / 3.0
 
 
 def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
@@ -359,16 +385,29 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
     sizes = np.array([len(c) for c in chunks], dtype=float)
     edges = np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()])
     lo, hi = progress_range
+    test = config.population_test
+    w_test = (0.0 if test is None or test.null != "simulated"
+              else sum(_TEST_WEIGHT + _TEST_WEIGHT_STEP * (k - 1)
+                       for k in range(1, config.fit.k_max)) * test.simulations / 20.0)
+    w_boot = _BOOTSTRAP_WEIGHT if config.bootstrap is not None else 0.0
     return _Plan(chunks, [data.select(rows) for rows in chunks], edges, lo, hi,
-                 0.3 if config.bootstrap is not None else 1.0)
+                 (1.0 + w_test) / (1.0 + w_test + w_boot), w_test / (1.0 + w_test))
+
+
+def _d2o_fraction(config: RunConfig) -> float:
+    """The labelling D2O fraction of the population test's width check."""
+    return (config.controls.d2o_fraction if config.controls is not None
+            else DEFAULT_D2O_FRACTION)
 
 
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None),
-) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None]:
-    """Fit every chunk, then the controls and the quality flags of the merged fit (which do not
+) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
+           PopulationTest | None]:
+    """Fit every chunk (and test it, with the population test: each measurement's K is then
+    the test's), then the controls and the quality flags of the merged fit (which do not
     need the bootstrap). ``n_sites`` is the exchangeable sites of every measurement
     (:func:`site_counts`); without it they are read back from ``data.n_max`` (rounded; an ion
     without any site then counts one). ``poor_envelope``: the series whose envelope is poor;
@@ -378,13 +417,28 @@ def _fit_part(
     (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     fits: list[FitResult] = []
-    start_stage(progress, "fit", lo, lo + (hi - lo) * share)
+    tests: list[PopulationTest] = []
+    testing = config.population_test is not None
+    start_stage(progress, "fit and population test" if testing else "fit", lo,
+                lo + (hi - lo) * share)
     for j, sub in enumerate(plan.subs):
         check_cancel(cancel)
         a = lo + (hi - lo) * share * edges[j]
         b = lo + (hi - lo) * share * edges[j + 1]
-        fits.append(fit_models(sub, config.fit, progress=_Span(progress, a, b), cancel=cancel))
+        mid = a + (b - a) * (1.0 - plan.test_share)
+        part = fit_models(sub, config.fit, progress=_Span(progress, a, mid), cancel=cancel,
+                          test_screen=testing)
+        if testing:
+            test = population_test(sub, part, config.population_test,
+                                   d2o_fraction=_d2o_fraction(config), test_screen=True,
+                                   progress=_Span(progress, mid, b), cancel=cancel)
+            part = dataclasses.replace(part, selected_K=test.selected_K.copy())
+            tests.append(test)
+        fits.append(part)
     fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, plan.chunks)
+    test = None
+    if tests:
+        test = tests[0] if len(tests) == 1 else PopulationTest.merge(tests, plan.chunks)
     check_cancel(cancel)
     at = lo + (hi - lo) * share
     start_stage(progress, "controls and quality", at, at)
@@ -400,7 +454,7 @@ def _fit_part(
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
                                  envelope_offset_limit_ppm=envelope_offset[1])
-    return fits, fit, controls, quality
+    return fits, fit, controls, quality, test
 
 
 def _bootstrap_part(
@@ -514,7 +568,7 @@ def analyse(
     for the m/z screen; ``envelope_offset_ppm`` and ``envelope_offset_limit_ppm``, the
     picker's m/z check, for ``off_mz``). The chunking does not change the result."""
     plan = _plan(data, config, progress_range)
-    fits, fit, controls, quality = _fit_part(
+    fits, fit, controls, quality, _ = _fit_part(
         data, config, plan, progress, cancel, mz_offset_ppm,
         envelope_offset=(envelope_offset_ppm, envelope_offset_limit_ppm))
     boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
@@ -701,7 +755,7 @@ def run(
                             picked.data_id, scan_fragments)
     fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
-    fits, fit, controls, quality = _fit_part(measurements, config, plan, progress, cancel,
+    fits, fit, controls, quality, test = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
@@ -716,6 +770,7 @@ def run(
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
         excluded=excluded, view_exclude=tuple(view_exclude),
         project_file=None if project_file is None else dict(project_file),
+        population_test=test,
     )
     spectra = stored if keep_spectra else None
     review = _review_for(review, fit)
@@ -892,6 +947,7 @@ def resume_bootstrap(
         excluded = b.manifest.get("excluded")
         project_file = b.manifest["configs"].get("project_file")
         stored_boot = None if redo else b.bootstrap()
+        test = b.population_test()
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
                       np.where(~kept, "no_signal", "")).astype(str)
@@ -908,6 +964,7 @@ def resume_bootstrap(
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_file,
+        population_test=test,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

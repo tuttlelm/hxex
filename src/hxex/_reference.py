@@ -192,11 +192,18 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.borderline_evidence": "where the number of populations differs between samples: "
                                     "borderline unless the two-population side's summed "
                                     "criterion is at least this far below 0 and the other's "
-                                    "above 0",
-    "analysis.populations": 'how one or two populations are decided: "best_set" (where a '
+                                    "above 0 (with populations = \"population_test\" the "
+                                    "test's p-values decide instead: below significance / 10 "
+                                    "on the side with "
+                                    "more populations, above significance x 10 on the other)",
+    "analysis.populations": 'how the number of populations is decided: "population_test" '
+                            "(the population test of each peptide's spectra together, made by "
+                            "[run.population_test]; the default when the run has it), "
+                            '"best_set" (where a '
                             'peptide\'s spectra together are best described by two; a residue '
                             'where such peptides carry half its weight; K=2 compared where both '
-                            'samples have two) or "bootstrap" (the residue\'s K=2 positions '
+                            'samples have two; the default without the test) or "bootstrap" '
+                            "(the residue's K=2 positions "
                             'and their bootstrap errors, with [analysis.choice]\'s limits)',
     "analysis.peptide_match": 'which peptides are compared: "range" (the same residues, mutated '
                               'or not) or "sequence" (identical sequences)',
@@ -212,7 +219,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.labelling": "the labelling solvent: [analysis.labelling] (below)",
     "analysis.filters.min_population": "every population of a spectrum within [min_population, "
                                        "1 - min_population]",
-    "analysis.filters.max_fD": "no population deuterated beyond this fraction of the amides",
+    "analysis.filters.max_fD": "no population deuterated beyond this fraction of the amides "
+                               "(with the population test, such a spectrum also leaves the "
+                               "test, at one population)",
     "analysis.filters.max_fD_se": "every population's fD standard error below this",
     "analysis.filters.k1_between_ranks": "the K=1 value lies between the two populations' values",
     "analysis.filters.replicate_outlier": "leave out a spectrum whose K=1 fD lies more than "
@@ -226,6 +235,10 @@ _DESCRIPTIONS: dict[str, str] = {
                                           "no measured control keeps them) or whose "
                                           "undeuterated control read above [run.controls] "
                                           "m0_max (m0_high: another species)",
+    "analysis.filters.undeuterated_cap": "with the population test: keep the other spectra of a "
+                                         "peptide whose undeuterated set has two populations "
+                                         "or more at one population, in every sample (off: "
+                                         "the peptide is only flagged, undeuterated_two)",
     "analysis.filters.spectrum_quality_filtering": '"loose", "strict", or "none": what the '
                                                    "spectrum quality screens do: leave out "
                                                    "spectra showing another species, keep one "
@@ -238,6 +251,10 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.choice.min_population": "the low-D population (lever rule) within "
                                       "[min_population, 1 - min_population]; default 0.05 "
                                       'with populations = "best_set", 0.10 with "bootstrap"',
+    "analysis.choice.tier": 'with populations = "population_test": the least residue tier '
+                            'with two populations, "two" (strong evidence and a third of the '
+                            'covering weight agrees) or "localised" (half); the other limits '
+                            "of this table do not apply then",
     "analysis.regions.name": "the region's name",
     "analysis.regions.start": "first residue (1-based, inclusive)",
     "analysis.regions.end": "last residue (inclusive)",

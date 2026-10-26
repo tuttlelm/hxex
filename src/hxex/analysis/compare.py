@@ -765,6 +765,10 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
 
 
 BORDERLINE_EVIDENCE = 10.0  # summed criterion: the two-population side at least this below 0
+# with the population test (owner, 2026-10-26, HISTORY 175): a difference is clear when the side
+# with more populations has p below significance / this and the other side above significance
+# times this
+BORDERLINE_P_FACTOR = 10.0
 
 
 @dataclass(frozen=True)
@@ -774,8 +778,12 @@ class PopulationCountComparison:
     ``best_set_K``), with the evidence (``delta_criterion_reference``, ``delta_criterion``: the
     summed criterion at K = 2 minus K = 1, negative favouring two), ``differs`` and
     ``borderline``: a difference whose evidence is weak (the two-population side's criterion is
-    not at least ``evidence`` below 0, or the one-population side's not above 0). The peptides
-    are paired as in :func:`compare_peptides` (``peptide_reference``,
+    not at least ``evidence`` below 0, or the one-population side's not above 0). With the
+    population test, ``p_reference`` and ``p`` are each side's p-value at the step where they
+    differ (``set_p_1`` for one against two), and ``borderline`` comes from them instead: clear
+    only when the side with more populations has p below ``significance /``
+    :data:`BORDERLINE_P_FACTOR` and the other side above ``significance`` times it (NaN p:
+    borderline). The peptides are paired as in :func:`compare_peptides` (``peptide_reference``,
     ``modification_reference``). ``reference`` and ``reference_run`` name the reference."""
 
     sample: np.ndarray
@@ -793,6 +801,8 @@ class PopulationCountComparison:
     differs: np.ndarray
     borderline: np.ndarray
     run: np.ndarray | None = None
+    p_reference: np.ndarray | None = None
+    p: np.ndarray | None = None
     reference: str = ""
     reference_run: str = ""
     evidence: float = BORDERLINE_EVIDENCE
@@ -800,6 +810,9 @@ class PopulationCountComparison:
     def __post_init__(self):
         if self.run is None:
             object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+        for name in ("p_reference", "p"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.sample), np.nan))
 
     def __len__(self) -> int:
         return len(self.sample)
@@ -818,6 +831,13 @@ class PopulationCountComparison:
         return keep
 
 
+def _step_p(p: tuple[float, ...] | None, step: int) -> float:
+    """The p-value of step K (K against K + 1) of a set's ``(set_p_1, set_p_2, ...)``."""
+    if p is None or step - 1 >= len(p):
+        return np.nan
+    return float(p[step - 1])
+
+
 def compare_population_counts(
     best_sets: Mapping[tuple, tuple[int, float]],
     reference: str,
@@ -825,12 +845,16 @@ def compare_population_counts(
     samples: Sequence[str] | None = None,
     match: str = "range",
     evidence: float = BORDERLINE_EVIDENCE,
+    set_p: Mapping[tuple, tuple[float, ...]] | None = None,
+    significance: float = 0.01,
 ) -> PopulationCountComparison:
     """Every sample against ``reference``: per peptide and time, whether each is best described
     by one or two populations (``best_sets``, :func:`hxex.analysis.best_sets`), paired as in
     :func:`compare_peptides`. A sample that has two populations where the reference has one (or
     the other way round) is a finding of its own, beside the K=2 comparisons, which are made
-    only where both have two (owner, 2026-10-21; HISTORY 137)."""
+    only where both have two (owner, 2026-10-21; HISTORY 137). ``set_p`` (the population
+    test's p-values of each set, by the keys of ``best_sets``: :func:`hxex.analysis.set_pvalues`)
+    judges ``borderline`` by the test, at its ``significance``, instead of ``evidence``."""
     if match not in MATCHES:
         raise ValueError(f"match must be one of {', '.join(MATCHES)}")
     by_state: dict[tuple[str, str], dict[tuple, tuple[int, float]]] = {}
@@ -848,7 +872,16 @@ def compare_population_counts(
             (kr, dr), (k, d) = ref[rkey], by_state[state][key]
             differs = kr != k and kr > 0 and k > 0
             borderline = False
-            if differs:
+            p_ref = p_here = np.nan
+            if set_p is not None and kr > 0 and k > 0:
+                step = min(kr, k)  # the step the two sides differ at (K against K + 1)
+                p_ref = _step_p(set_p.get((*reference, *rkey)), step)
+                p_here = _step_p(set_p.get((*state, *key)), step)
+            if differs and set_p is not None:
+                more, fewer = (p_here, p_ref) if k > kr else (p_ref, p_here)
+                borderline = not (more < significance / BORDERLINE_P_FACTOR
+                                  and fewer > significance * BORDERLINE_P_FACTOR)
+            elif differs:
                 two, one = (d, dr) if k > kr else (dr, d)
                 borderline = not (two <= -evidence and one > 0)
             rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
@@ -856,7 +889,8 @@ def compare_population_counts(
                          "time": key[4], "peptide_reference": rkey[0],
                          "modification_reference": rkey[1], "K_reference": kr, "K": k,
                          "delta_criterion_reference": dr, "delta_criterion": d,
-                         "differs": differs, "borderline": borderline})
+                         "differs": differs, "borderline": borderline,
+                         "p_reference": p_ref, "p": p_here})
     names = [f.name for f in fields(PopulationCountComparison)
              if f.name not in ("reference", "reference_run", "evidence")]
     cols = {name: np.array([r[name] for r in rows]) for name in names} if rows else {
@@ -866,6 +900,8 @@ def compare_population_counts(
         cols[name] = np.asarray(cols[name], dtype=bool)
     for name in ("K_reference", "K"):
         cols[name] = np.asarray(cols[name], dtype=np.int64)
+    for name in ("p_reference", "p"):
+        cols[name] = np.asarray(cols[name], dtype=np.float64)
     return PopulationCountComparison(**cols, reference=reference[1], reference_run=reference[0],
                                      evidence=evidence)
 
