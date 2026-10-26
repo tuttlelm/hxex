@@ -4592,3 +4592,30 @@ CSVs or mzML if wanted.
     `1 + sqrt(0.1^2 + (z se)^2)` (the two errors in quadrature: subtracting `z se` and keeping 1.1
     would count the scatter twice); a bootstrap-free error from the fit's curvature is possible but
     least reliable for exactly these minor, narrow components.
+
+180. **What drives two-population fits above full deuteration (2026-10-26; items 178-179).** The
+    owner declined widening the threshold by the component's error. Measured on the Q-TOF benchmark
+    (`results_start`) and the tutorial run. (1) Most of these fits are the null's behaviour, not a
+    physical heavy tail: K = 2 fits of spectra drawn from each spectrum's own K = 1 fit plus the
+    run's Gaussian noise (three draws each, refitted at 1 and 2) put a population above corrected
+    fD 1.1 as often as the data do (fully deuterated controls 41 vs 40 % benchmark, 51 vs 51 %
+    tutorial; at every time point the simulation is at or above the data). They are splits of
+    the main envelope (high component median 0.2 to 0.5 sd above the K = 1 mean; 74 % benchmark,
+    93 % tutorial), common for short peptides because one sd of the envelope is 0.25 to 0.4 of the
+    undeuterated-to-fully-deuterated span, so half a sd above a fully deuterated envelope is
+    already above 1.1. Not the n bound (K = 1 at its n cap is not more common among them), not
+    overdispersion (variance ratio no higher than the rest). The test calls most of them one
+    population. (2) Those the test calls two (benchmark 822, tutorial 184) are of two kinds: another
+    species beyond 3 sd of the envelope (benchmark 227, mostly undeuterated and early points; the
+    heavy species of items 168-170), and splits of spectra brighter than their undeuterated
+    reference: among the splits, the test calls two 74 % (benchmark) and 84 % (tutorial) of those
+    more than twice as bright as their series' undeuterated controls and 0 to 5 % of those dimmer.
+    The brightness effect is general, not limited to these: fully deuterated controls (one
+    population) more than twice as bright as their undeuterated controls test two in 51 %
+    (benchmark) and 62 % (tutorial), those dimmer in 0 to 2 %; labelled spectra 63 and 68 % vs 1 to
+    8 %. Cause: the Gaussian noise sd is fixed at 3 % of the reference's tallest peak, so a relative
+    misfit of the envelope's shape (tutorial: flattened tops of the brightest spectra, log10
+    intensity 6.7 vs 5.9; benchmark: envelopes broader than a binomial) grows with brightness, and
+    the null, drawn with the same constant noise, does not contain it. The hold-out of item 179
+    removes some of these (those above 1.1), not the cause. Scripts:
+    `population_test/built_test/above_fd/drivers` (private, README).
