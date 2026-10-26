@@ -594,6 +594,20 @@ dataset of this size, so opt-in, and the guide states the cost.
    removes where interference is rare).
 4. The CPU cost on a smaller machine.
 
+**Evaluated (HISTORY item 169; decisions open).** 1: the BIC screen does not combine with the test
+(it zeroes a fifth of the two-population sets); a screen made for the test (skip K = 2 where the loss
+floor bounds T below 1, chi-square(3) null for those spectra) saves about 31 % of fits and
+simulations at 99 % unchanged verdicts; a chi-square null with every fit is a usable quick look
+(96 % of sets). 2: step two works where three states are resolvable, but two neighbouring two-state
+regions read as three at their junction, indistinguishable at the residue level. 3: the undeuterated
+rule removes nothing on the known-answer set and 16 % of the labelled two-population sets on the
+intact-peptide benchmark, mostly in peptides that read two in other samples too. 4: about five
+times the run's fits on any CPU at 20 simulations (2.1 hours on four cores for 26,000 spectra).
+Decided (owner, HISTORY item 170): with the test on, the test-specific screen replaces the BIC
+screen, and the chi-square null is the quick look; residue tiers go up to three for now. The
+undeuterated rule is reopened: its sets reading two hold a narrow cluster (not deuterium; see item
+170), and a per-spectrum width bound is the candidate in its place.
+
 ## Later parts
 
 - **Comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons

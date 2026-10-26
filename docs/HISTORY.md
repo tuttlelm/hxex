@@ -4317,3 +4317,57 @@ CSVs or mzML if wanted.
     residue tiers beyond two are to be tested on simulated data; `[run.fit] screen` is the owner's
     quick-look route, whose desired output resembles the tiers, so their interaction is to be
     evaluated (verdicts and tier figures with the screen on and off).
+
+169. **The population test's four evaluations (2026-10-25; docs/ANALYSIS.md "The population test";
+    private notes in the population-test examples folder).** Step-1 null of the intact-peptide
+    benchmark at B = 20 (524,240 fits, 17 minutes on the GPU); sets of the spectra hxex analyse
+    keeps; p < 0.01 and a 10 % added population.
+    - **The screen.** `[run.fit] screen` skips K = 2 for 73 % of the benchmark's spectra: it is exact
+      for one spectrum's BIC, but the set test adds many gains below that penalty. With T = 0 for
+      skipped spectra 200 of 1,093 labelled two-population sets are lost and the residue tiers keep
+      79 % of their cells (the "two" tier 10 -> 2 % of residues); leaving skipped spectra out of
+      their sets biases the other way (280 gained). The screen's loss floor bounds a skipped
+      spectrum's statistic (T <= 2 (nll1 - floor), held for all), so a screen made for the test
+      skips K = 2 only where that bound is below 1: 31 % of the fits, 99.8 % of labelled-set
+      verdicts unchanged, 99.1 % when those spectra also take a chi-square(3) null in place of
+      their simulation (31 % of the simulations saved). A chi-square(3) null for every spectrum
+      with every fit (no simulation) agrees on 95.6 % of sets and 89 % of residue cells: a usable
+      quick look, but item 162 found it drifting with peptide size on the Orbitrap.
+    - **Beyond two (simulation).** Overlapping peptides over 60 residues, three replicates. Three
+      equally spaced states 0.35 fD apart are not resolvable: BIC picks K = 3 in 13 % of the
+      clearest peptides and the test in 7 %; the step-2 null itself is well behaved (per spectrum
+      mean 2.5, 99 % 9.6). With states 0.05 / 0.50 / 0.95, 35 % of the three-state peptides read
+      three and 77 % of the true residues reach a three tier (60 % localised), none far away; but
+      two independent two-state regions two residues apart put 23 % of their residues at a three
+      tier (15 % localised), all at the junction, where most peptides span both regions and show
+      three or four components: there agreement cannot tell them from a three-state region, as the
+      design feared. How sets that read one enter step two hardly matters (z = 0 is the simplest;
+      leaving them out adds stray marks). One two-state region never reaches a three tier.
+    - **The undeuterated rule.** Known-answer set: no undeuterated set reads two, so it removes
+      nothing; each spectrum's K from the test equals BIC's within two points (73.1 against 74.9 %
+      correct; K = 3 57 against 56 %). Benchmark: 8.0 % of undeuterated sets read two (second
+      component 6.2 D above, share 0.15); capping their series removes 16 % of the labelled
+      two-population sets and a quarter to a third of the residue cells at two at the early times.
+      Unlike the Orbitrap (item 168), these peptides read two in their other samples too, where
+      the undeuterated set reads one (53-62 % against 32 % overall), and 15 of the 31 peptides read
+      two in one sample's undeuterated set only: on this Q-TOF the rule mostly removes evidence
+      other samples confirm.
+    - **CPU cost.** CPU-only build pinned to 8, 4, and 2 cores: 12.7, 14.6, and 20.6 ms per spectrum
+      and simulation, about five times the run's own K = 1 to 3 fits at B = 20 whatever the cores
+      (more cores help little beyond four): 2.1 hours on four cores for 26,000 spectra, one step.
+
+170. **The undeuterated rule examined; decisions on the population test (owner, 2026-10-25).**
+    Decisions: the test-specific screen of item 169 replaces the BIC screen when the population
+    test is on, with the chi-square null as the quick look; the residue tiers go up to three for
+    now. The undeuterated rule, examined on the intact-peptide benchmark: its sets reading two are
+    not carry-over (the extra component sits at a labelled level of the same peptide no more often
+    than chance) but a narrow cluster on the isotope grid (7 D above, share 0.20, width 0.11 D
+    against about 1.1 D for populations in labelled spectra; the Orbitrap's signature too). They
+    are the dim ones (share reading two 15 % in the dimmest intensity quartile, 3 % in the
+    brightest; dimmer than the same peptide in other samples in 76 %), with a cluster of similar
+    height across samples: a species of fixed abundance shows only under a weak peptide, so capping
+    the series of the sample where it shows is arbitrary. A physical bound separates such clusters
+    from deuterated populations: a population of mean mu D whose amides each hold at most the D2O
+    fraction r has a variance of at least mu (1 - r). Below 0.3 of that width (components of at
+    least 1 D and 10 %) are 78 % of the undeuterated and 16 % of the labelled spectra reading two on
+    the benchmark, and 1-2 % of the known-answer set's real two-population mixtures.
