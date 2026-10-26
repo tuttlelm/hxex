@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Peak-picker tests: synthetic spectra for the logic, and pyHXExpress output as the oracle.
 
-The logic tests place their peaks on the ExMS ladder and pin ``ladder="exms"``; so do the
-oracle comparisons, since pyHXExpress uses that ladder. The composition ladder (the default) is
+The logic tests place their peaks on the ExMS ladder and pin ``ladder="exms"`` and
+``pick="window_max"``; so do the oracle comparisons, since pyHXExpress picks that way. The
+default, ``pick="peak"``, is tested in its own section. The composition ladder (the default) is
 tested in its own section.
 
 The golden file (HXEX_PICKER_GOLDEN, made by tests/golden/make_picker_golden.py; it holds
@@ -41,8 +42,9 @@ from hxex.picking.pick import D_MINUS_H, composition_mz
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE = "RDKVQKEYAL"  # 10 residues
-CFG = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0)
-GOLDEN_CFG = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=50.0, nterm_subtract=2)
+CFG = PickerConfig(ladder="exms", pick="window_max", zero_filling=3, noise_threshold=100.0)
+GOLDEN_CFG = PickerConfig(ladder="exms", pick="window_max", zero_filling=3, noise_threshold=50.0,
+                          nterm_subtract=2)
 
 
 def sticks(plan, heights, spread=0.002):
@@ -215,7 +217,7 @@ def test_resolution_ppm():
     mz = np.array([plan.pred_mz[0] * (1 + 30e-6)])
     y = np.array([500.0])
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 500.0
-    narrow = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0, resolution_ppm=20.0)
+    narrow = replace(CFG, resolution_ppm=20.0)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=narrow).intensity[0] == 0.0
 
 
@@ -236,8 +238,7 @@ def test_shoulder_rejection_applies_to_windows_with_many_points():
     # a window with fewer than shoulder_min_points points is treated as stick data
     mz, y = profile(plan, np.linspace(100, 1000, 9), n=9)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0] == 1000.0
-    lenient = PickerConfig(ladder="exms", zero_filling=3, noise_threshold=100.0,
-                           shoulder_min_points=20)
+    lenient = replace(CFG, shoulder_min_points=20)
     mz, y = profile(plan, rising)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=lenient).intensity[0] == 1000.0
 
@@ -258,6 +259,80 @@ def test_unsorted_input_is_sorted():
     a = pick_spectrum(mz, y, PEPTIDE, 2, config=CFG)
     b = pick_spectrum(mz[::-1], y[::-1], PEPTIDE, 2, config=CFG)
     np.testing.assert_array_equal(a.intensity, b.intensity)
+
+
+# --- pick="peak" (the default): only peaks count -------------------------------------------
+
+PEAK_CFG = replace(CFG, pick="peak")
+
+
+def peaks_profile(centres, heights, lo, hi, spacing=0.004, width=0.008):
+    """Profile points every ``spacing`` m/z from ``lo`` to ``hi``: Gaussian peaks (sd ``width``)
+    at ``centres``."""
+    mz = np.arange(lo, hi, spacing)
+    y = sum(h * np.exp(-0.5 * ((mz - c) / width) ** 2)
+            for c, h in zip(centres, heights, strict=True))
+    return mz, np.asarray(y, float)
+
+
+def test_peak_is_the_default():
+    assert PickerConfig().pick == "peak"
+    assert PickerConfig.from_dict(PickerConfig(pick="window_max").to_dict()).pick == "window_max"
+
+
+def test_a_neighbours_flank_is_never_picked():
+    # a tall peak 90 ppm below bin 0: its falling flank reaches into the +-50 ppm window. In a
+    # sparse profile (about 5 points per window, as on a Q-TOF) the shoulder rule (10 points or
+    # more) cannot apply, and the window maximum is the flank
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    p0 = plan.pred_mz[0]
+    sparse = {"spacing": 0.012, "width": 0.015}
+    mz, y = peaks_profile([p0 * (1 - 90e-6)], [1e5], p0 - 0.3, p0 + 0.3, **sparse)
+    half = p0 * 50e-6
+    inside = (mz >= p0 - half) & (mz <= p0 + half)
+    assert y[inside].max() > 1000  # the flank is well above the noise threshold
+    window_max = pick_spectrum(mz, y, PEPTIDE, 2, config=CFG).intensity[0]
+    assert window_max == pytest.approx(y[inside].max())
+    assert pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG).intensity[0] == 0.0
+    # with a real peak of its own in the window, that peak is picked, not the flank
+    mz, y = peaks_profile([p0 * (1 - 90e-6), p0], [1e5, 3e4], p0 - 0.3, p0 + 0.3, **sparse)
+    got = pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[0] == pytest.approx(3e4, rel=0.1)
+    assert abs(got.peak_mz[0] - p0) / p0 < 10e-6
+
+
+def test_a_peak_whose_apex_is_in_the_window_is_picked_at_its_height():
+    # apex 45 ppm above the prediction: its tallest point may fall outside the window, and the
+    # window maximum would be a lower point on its flank
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    p0 = plan.pred_mz[0]
+    centre = p0 * (1 + 45e-6)
+    mz, y = peaks_profile([centre], [1e4], p0 - 0.2, p0 + 0.2, spacing=0.01)
+    got = pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[0] == y.max()
+    assert abs(got.peak_mz[0] - centre) / centre < 5e-6
+
+
+def test_centroided_points_are_each_a_peak():
+    # sticks: one point per peak, so a weaker stick beside a taller one is still a peak
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    mz = np.array([plan.pred_mz[0] * (1 - 300e-6), plan.pred_mz[0], plan.pred_mz[1]])
+    y = np.array([5000.0, 800.0, 600.0])
+    got = pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[:2].tolist() == [800.0, 600.0]
+
+
+def test_a_gap_in_the_data_counts_as_lower():
+    # profile data with the points beyond the window left out (a gap): the last point before
+    # the gap is a peak when it is higher than the point before it
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    p0 = plan.pred_mz[0]
+    mz, y = peaks_profile([p0], [1e4], p0 - 0.05, p0 + 0.002, spacing=0.004)
+    far_mz, far_y = peaks_profile([plan.pred_mz[1]], [5e3], plan.pred_mz[1] - 0.05,
+                                     plan.pred_mz[1] + 0.05, spacing=0.004)
+    got = pick_spectrum(np.r_[mz, far_mz], np.r_[y, far_y], PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[0] == y.max()
+    assert got.intensity[1] == pytest.approx(far_y.max())
 
 
 # --- noise threshold and flags --------------------------------------------------------------
@@ -340,7 +415,7 @@ def test_config_round_trip_and_json():
     "kwargs",
     [{"resolution_ppm": 0}, {"zero_filling": -1}, {"zero_filling": 1.5}, {"noise_threshold": -1},
      {"noise_percent": -1}, {"env_threshold": 0}, {"env_threshold": 1.5},
-     {"nterm_subtract": -1}, {"shoulder_min_points": 0}],
+     {"nterm_subtract": -1}, {"shoulder_min_points": 0}, {"pick": "tallest"}],
 )
 def test_config_validation(kwargs):
     with pytest.raises(ValueError):

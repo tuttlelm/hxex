@@ -15,6 +15,7 @@ from ..chem import DEFAULT_AMIDE_RULES, AmideRules, ChemistryError
 log = logging.getLogger(__name__)
 
 RECORDED = "recorded"  # resolving_power: take each spectrum's value from the scan files
+PICKS = ("peak", "window_max")  # pick: what a bin takes from its window
 ISOTOPE_STEP = 1.00235  # Da, the average spacing of a peptide's isotope peaks
 
 # Thermo quotes the resolving power at m/z 400 on the first Orbitrap generation and at m/z 200
@@ -38,6 +39,11 @@ class PickerConfig:
     """Settings of :func:`hxex.picking.pick_spectra` (the ``[run.picker]`` table): how a
     spectrum becomes sticks at the predicted isotope positions. See docs/PEAK_PICKING.md.
 
+    - ``pick``: what a bin takes from its window. ``'peak'`` (the default): the tallest peak of the
+      raw spectrum whose apex lies in the window (in profile data a local maximum, its apex the
+      vertex of the parabola through it and its neighbours; in centroided data every point), so
+      the flank of a peak outside the window is never picked. ``'window_max'``: the tallest point
+      in the window, with the shoulder rule (``shoulder_min_points``), as pyHXExpress picks.
     - ``resolution_ppm``: the half-width, in ppm, of the window around each predicted m/z in
       which a peak is picked (not a resolving power).
     - ``zero_filling``: how many bins are picked after the last one above the noise threshold.
@@ -46,8 +52,8 @@ class PickerConfig:
     - ``env_threshold``: the fraction of the tallest bin at which the envelope width is measured.
     - ``nterm_subtract``: N-terminal residues without an exchanging amide; the amide count
       (with ``amide_rules`` for fragment ions) bounds the number of bins.
-    - ``shoulder_min_points``: in a window of this many points or more, a maximum at the
-      window's edge counts as a neighbour's shoulder and the bin is 0.
+    - ``shoulder_min_points``: with ``pick = 'window_max'``, in a window of this many points or
+      more a maximum at the window's edge counts as a neighbour's shoulder and the bin is 0.
     - ``ladder``: how the bin positions are predicted. ``'composition'`` (the default) puts each
       bin at the abundance-weighted mass of its isotope cluster, the natural isotope clusters of
       the composition convolved with a binomial deuterium distribution whose level comes from a
@@ -84,6 +90,7 @@ class PickerConfig:
     ``noise`` is the former name of ``noise_threshold`` and is still accepted.
     """
 
+    pick: str = "peak"
     resolution_ppm: float = 50.0
     zero_filling: int = 4
     noise_threshold: float | None = None
@@ -107,6 +114,9 @@ class PickerConfig:
             if self.noise_threshold is not None and self.noise_threshold != noise:
                 raise ValueError("noise is the former name of noise_threshold: give one of them")
             object.__setattr__(self, "noise_threshold", noise)
+        if self.pick not in PICKS:
+            raise ValueError(f"pick must be one of {', '.join(map(repr, PICKS))}, "
+                             f"not {self.pick!r}")
         if not self.resolution_ppm > 0:
             raise ValueError("resolution_ppm must be positive")
         if self.zero_filling < 0 or int(self.zero_filling) != self.zero_filling:

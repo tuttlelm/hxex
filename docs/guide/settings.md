@@ -200,13 +200,14 @@ Peak picking: the spectra become sticks at the predicted isotope positions (hxex
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `pick` | text | `"peak"` | what a bin takes: "peak" (the tallest peak whose apex is in the window) or "window_max" (the tallest point in the window, as pyHXExpress) |
 | `resolution_ppm` | number | `50.0` | half-width (ppm) of the window a peak is picked in around its predicted m/z (never above half the isotope spacing); not a resolving power |
 | `zero_filling` | integer | `4` | bins picked after the last one above the noise threshold |
 | `noise_threshold` | number | unset | absolute intensity below which a point is noise (false: noise_percent of the tallest point instead) |
 | `noise_percent` | number | `1.0` | noise threshold as percent of the spectrum's tallest point |
 | `env_threshold` | number | `0.1` | fraction of the tallest bin at which the envelope width is measured |
 | `nterm_subtract` | integer | `1` | N-terminal residues without an exchanging amide (the amide count bounds the bins) |
-| `shoulder_min_points` | integer | `10` | points in a window from which a maximum at the window's edge counts as a neighbour's shoulder (bin 0) |
+| `shoulder_min_points` | integer | `10` | with pick = "window_max": points in a window from which a maximum at its edge counts as a neighbour's shoulder (bin 0) |
 | `ladder` | text | `"composition"` | bin positions: "composition" (isotope clusters of the composition) or "exms" (pyHXExpress's fixed steps) |
 | `resolving_power` | number or text | unset | window from the instrument instead of resolution_ppm: R quoted at resolving_power_mz, or "recorded" (each spectrum's value from Thermo raw files; hxex check shows them); false: the resolution_ppm window |
 | `resolving_power_mz` | number | `200.0` | m/z the resolving power is quoted at (Thermo: 200; 400 on the first Orbitrap generation) |

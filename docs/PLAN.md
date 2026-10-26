@@ -423,6 +423,12 @@ Project and design:
   a project file may be written with a unit (`"5 min"`, `"20 h"`); stored values stay in
   seconds (`docs/AUDIT_2026-10-17.md` design item 1; HISTORY 101).
 
+Peak picking (`docs/PEAK_PICKING.md` "The intensity of a bin"):
+
+- Each bin takes the tallest peak (a local maximum of the raw spectrum, its apex inside the
+  window) instead of the tallest point in the window, so a neighbour's flank is never picked;
+  `pick = "window_max"` picks as pyHXExpress, shoulder rule included (HISTORY 172).
+
 Chemistry (HISTORY "Phase 1 status: `hxex.chem`"):
 
 - Residues are tokenised, never sliced as characters: with `Nterm_subtract = 2` and a modified

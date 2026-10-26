@@ -4,6 +4,33 @@
 predicted for that bin from the peptide's composition and charge. The **picking window** is how
 far from the predicted m/z *hxex* looks for the peak. Two settings in `[run.picker]` choose it.
 
+## What a bin takes: a peak
+
+```toml
+[run.picker]
+pick = "peak"   # the default; "window_max" picks as pyHXExpress does
+```
+
+Each bin takes the tallest **peak** whose top lies inside its window. In a profile spectrum a
+peak is a point higher than its neighbours, and its top is found from that point and the two
+beside it, so it can lie between the recorded points. In a centroided spectrum every point is a
+peak.
+
+This matters when a brighter peak sits just outside a window, for example the peak of another
+peptide that comes off the column at the same time, a little away from where *hxex* expects this
+peptide's peaks. Its side slopes into the window. Taking the tallest point in the window, as
+pyHXExpress does (`pick = "window_max"`), picks that side as if it were this peptide's peak;
+taking peaks does not, because a side has no top of its own. On coarse profile data (a Q-TOF
+records a point about every 20 ppm, so a ±50 ppm window holds only 4 or 5 points) and with
+narrow windows (±10 ppm on an Orbitrap) this happened often: on an Orbitrap digest, taking peaks
+removed 40 % of the undeuterated controls that seemed to hold two populations (which they
+cannot), without changing how well replicates agree.
+
+Set `pick = "window_max"` only to reproduce pyHXExpress's sticks, or results made with *hxex*
+before this change. With it, a window of ten or more points whose tallest point sits at its edge
+gives 0 (the "shoulder rule", `shoulder_min_points`); windows with fewer points keep their
+tallest point.
+
 ## The default: a ppm tolerance
 
 ```toml
@@ -11,8 +38,8 @@ far from the predicted m/z *hxex* looks for the peak. Two settings in `[run.pick
 resolution_ppm = 50.0   # half-width of the window, ppm of the predicted m/z
 ```
 
-Each bin takes the tallest point within 50 ppm either side of its predicted m/z. This is a
-mass-accuracy tolerance (the same as pyHXExpress's `Peak_Resolution`). It is simple and it is
+Each bin takes the tallest peak whose top lies within 50 ppm either side of its predicted m/z.
+The 50 ppm is a mass-accuracy tolerance (the same as pyHXExpress's `Peak_Resolution`). It is simple and it is
 the setting every earlier *hxex* result was made with, so it stays the default.
 
 The window never reaches further than half the spacing of the isotope peaks, about 1 Da divided
@@ -157,9 +184,12 @@ says where the window came from: "±50 ppm window", "window from R 60000 at m/z 
 - Intact peptides at low charge on a calibrated instrument: the default is fine.
 - High charge states (top-down, large fragments, intact proteins): set `resolving_power`, or
   `"recorded"` for Thermo raw files, so the windows stop overlapping.
-- Centroided data or coarse profile data: either works; the shoulder rule (windows of ten or
-  more points whose maximum sits at the edge are set to zero) does not apply to windows with
-  fewer points.
+- Centroided data or coarse profile data: either works.
+- Do not narrow the window to sharpen the picking on deuterated data. A deuterated peak mixes
+  molecules carrying deuterium and carbon-13, which differ slightly in mass, so it does not sit
+  exactly where the undeuterated peaks do. On a Q-TOF dataset the undeuterated peaks sat within
+  16 ppm of their predicted m/z, but the deuterated ones within 20 to 40 ppm, and a 16 ppm window
+  lost real deuterated peaks.
 
 The two modes do not give identical sticks on the same spectrum, so compare runs made with the
 same setting. The results bundle records the picker settings, and `hxex info` shows them.

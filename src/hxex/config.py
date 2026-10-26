@@ -1263,8 +1263,11 @@ _COMMENTS: dict[str, str] = {
                                 "measured",
     "run.picker.nterm_subtract": "N-terminal residues without an exchanging amide (the amide "
                                  "count bounds the bins)",
-    "run.picker.shoulder_min_points": "points in a window from which a maximum at the window's "
-                                      "edge counts as a neighbour's shoulder (bin 0)",
+    "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window) '
+                       'or "window_max" (the tallest point in the window, as pyHXExpress)',
+    "run.picker.shoulder_min_points": "with pick = \"window_max\": points in a window from which "
+                                      "a maximum at its edge counts as a neighbour's shoulder "
+                                      "(bin 0)",
     "run.picker.ladder": 'bin positions: "composition" (isotope clusters of the composition) '
                          'or "exms" (pyHXExpress\'s fixed steps)',
     "run.picker.resolving_power": "window from the instrument instead of resolution_ppm: R "

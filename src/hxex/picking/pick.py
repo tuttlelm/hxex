@@ -4,7 +4,8 @@
 Bin ``n`` is the isotope cluster of nominal mass +n. By default its position is the cluster's
 abundance-weighted mass from the composition (the composition ladder); pyHXExpress's ExMS
 spacing is an option and also gives the first pass that estimates the deuteration level. Each
-bin takes the tallest point inside a +/- ppm window (docs/PEAK_PICKING.md), moved onto the
+bin takes the tallest peak whose apex lies inside a +/- ppm window (or, as pyHXExpress, the
+tallest point in it; docs/PEAK_PICKING.md), moved onto the
 undeuterated envelope's peaks for a series off its m/z (:mod:`hxex.picking.recentre`). Picking
 covers every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the
 last bin that reaches the noise threshold, so a valley inside a multimodal envelope never ends
@@ -27,10 +28,11 @@ from ..spectra import SpectrumSet
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .recentre import series_offsets
-from .screen import RAW_SCORES, off_position_scores, raw_scores
+from .screen import RAW_SCORES, STICK_POINTS, off_position_scores, raw_scores
 
 log = logging.getLogger(__name__)
 
+GAP_SPACING = 2.5  # profile points further apart than this many median spacings: a gap
 # ExMS isotope spacing (Da) for the first five steps; later steps repeat the last value.
 EXMS_DELTA_M = (1.003355, 1.003355, 1.004816, 1.004816, 1.006277)
 
@@ -192,18 +194,30 @@ def envelope(
 
 def _bin_values(
     mz: np.ndarray, y: np.ndarray, pred: np.ndarray, config: PickerConfig, charge: int,
-    recorded: Mapping[str, float | None],
+    recorded: Mapping[str, float | None], peaks: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Window maximum for every bin (0 where the window is empty or rejected as a shoulder),
-    and where it is: the m/z of the maximum, refined by a parabola through it and its two
-    neighbours in the spectrum when they are lower (NaN where the value is 0). The window is
-    ``config.half_width`` either side of the predicted m/z (``recorded``: the spectrum's
-    recorded resolving power and its reference m/z)."""
+    """Value for every bin (0 where its window holds nothing, or a rejected shoulder), and where
+    it is (NaN where the value is 0). The window is ``config.half_width`` either side of the
+    predicted m/z (``recorded``: the spectrum's recorded resolving power and its reference m/z).
+    With ``config.pick = 'peak'`` the value is the height of the tallest of ``peaks`` (indices
+    into the spectrum and their apex m/z, :func:`_peaks`) whose apex lies in the window, and
+    where it is that apex; with ``'window_max'`` the tallest point in the window and its m/z,
+    refined by a parabola through it and its two neighbours when they are lower."""
     lower, upper = config.window_edges(pred, charge, **recorded)
-    lo = np.searchsorted(mz, lower, side="left")
-    hi = np.searchsorted(mz, upper, side="right")
     values = np.zeros(len(pred))
     where = np.full(len(pred), np.nan)
+    if config.pick == "peak":
+        index, apex = peaks if peaks is not None else _peaks(mz, y, charge)
+        lo = np.searchsorted(apex, lower, side="left")
+        hi = np.searchsorted(apex, upper, side="right")
+        for i, (a, b) in enumerate(zip(lo, hi, strict=True)):
+            if b > a:
+                k = a + int(np.argmax(y[index[a:b]]))  # first maximum: ties resolved by m/z
+                values[i] = y[index[k]]
+                where[i] = apex[k]
+        return values, where
+    lo = np.searchsorted(mz, lower, side="left")
+    hi = np.searchsorted(mz, upper, side="right")
     for i, (a, b) in enumerate(zip(lo, hi, strict=True)):
         window = y[a:b]
         if len(window) == 0:
@@ -215,6 +229,49 @@ def _bin_values(
         if values[i] > 0:
             where[i] = _apex(mz, y, a + top, a, b)
     return values, where
+
+
+def _peaks(mz: np.ndarray, y: np.ndarray, charge: int, span: tuple[float, float] | None = None
+           ) -> tuple[np.ndarray, np.ndarray]:
+    """The peaks of a spectrum (``mz`` sorted), within ``span`` (m/z) when given: their indices
+    and apex m/z, in order of the apex. Profile data: every point above 0 higher than the point
+    before it and at least as high as the point after it (the first point of a plateau), a gap
+    in the data (more than ``GAP_SPACING`` times the median spacing) counting as lower; the apex
+    is the vertex of the parabola through the point and its neighbours when both are lower,
+    above 0 and evenly spaced, else the point. Centroided data (fewer than ``STICK_POINTS``
+    points per isotope step, ``1.00235 / charge``): every point above 0, at its own m/z."""
+    a, b = 0, len(mz)
+    if span is not None:
+        a = max(int(np.searchsorted(mz, span[0], side="left")) - 1, 0)
+        b = min(int(np.searchsorted(mz, span[1], side="right")) + 1, len(mz))
+    x, v = mz[a:b], y[a:b]
+    if len(x) == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0)
+    d = np.diff(x)
+    spacing = float(np.median(d[d > 0])) if (d > 0).any() else np.inf
+    if len(x) < 3 or (1.00235 / charge) / spacing < STICK_POINTS:
+        j = np.flatnonzero(v > 0)
+        return a + j, x[j]
+    gap = d > GAP_SPACING * spacing
+    rises = np.r_[True, gap | (v[:-1] < v[1:])]  # lower (or no data) before the point
+    falls = np.r_[gap | (v[1:] <= v[:-1]), True]  # not higher (or no data) after it
+    j = np.flatnonzero(rises & falls & (v > 0))
+    apex = x[j].copy()
+    inner = j[(j > 0) & (j < len(x) - 1)]
+    if len(inner):
+        x0, x1, x2 = x[inner - 1], x[inner], x[inner + 1]
+        y0, y1, y2 = v[inner - 1], v[inner], v[inner + 1]
+        even = np.maximum(x1 - x0, x2 - x1) < GAP_SPACING * np.minimum(x1 - x0, x2 - x1)
+        ok = (y0 < y1) & (y2 < y1) & (y0 > 0) & (y2 > 0) & even
+        with np.errstate(divide="ignore", invalid="ignore"):
+            den = (x0 - x1) * (x0 - x2) * (x1 - x2)
+            qa = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den
+            qb = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den
+            vertex = np.clip(-qb / (2 * qa), x0, x2)
+        ok &= qa < 0
+        apex[np.searchsorted(j, inner[ok])] = vertex[ok]
+    order = np.argsort(apex, kind="stable")
+    return a + j[order], apex[order]
 
 
 def _apex(mz: np.ndarray, y: np.ndarray, j: int, a: int, b: int) -> float:
@@ -288,7 +345,12 @@ def pick_spectrum(
         threshold = float("nan")
 
     pred = plan.pred_mz
-    values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded)
+    peaks = None
+    if config.pick == "peak" and len(pred):  # found once: the later passes only move windows
+        reach = config.half_width(pred, charge, **recorded).max() + 1.00235 / charge
+        span = (pred.min() * scale - reach, pred.max() * scale + reach)
+        peaks = _peaks(mz, intensity, charge, span)
+    values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded, peaks)
     if config.ladder == "composition" and plan.clusters is not None:
         # the deuteration level from a first pass with the ExMS ladder, then the composition
         # ladder; the level is estimated once more from those picks (a first pass that missed
@@ -301,7 +363,8 @@ def pick_spectrum(
             centre = float((np.arange(len(strong)) * strong).sum() / strong.sum())
             level = min(max(centre - natural, 0.0), float(plan.n_sites))
             pred = composition_mz(plan, level)
-            values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded)
+            values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded,
+                                        peaks)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1

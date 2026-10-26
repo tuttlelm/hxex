@@ -136,10 +136,36 @@ half a bin after about 120.
 
 ## The intensity of a bin
 
-Each bin takes the tallest point within `resolution_ppm` of its predicted m/z (default +/- 50 ppm),
-but never further than half the isotope spacing, `1.00235 / (2 z)`. The reported m/z of the bin is
-the predicted one; where the peak was found is reported separately (see "Where the peaks were
-found").
+Each bin takes the tallest **peak** whose apex lies within `resolution_ppm` of its predicted m/z
+(default +/- 50 ppm), but never further than half the isotope spacing, `1.00235 / (2 z)`
+(`pick = "peak"`, the default). In profile data a peak is a local maximum of the raw spectrum (a
+point higher than the one before it and at least as high as the one after it; a gap in the data,
+more than 2.5 times the median point spacing, counts as lower), its value the height of that point
+and its apex the vertex of the parabola through it and its two neighbours when both are lower and
+evenly spaced. In centroided data (fewer than four points per isotope step) every point is a peak.
+The flank of a peak whose apex is outside the window is therefore never picked, and a peak whose
+apex is inside the window is picked at its full height even when its tallest point lies just
+outside. The reported m/z of the bin is the predicted one; where the peak was found is reported
+separately (see "Where the peaks were found").
+
+`pick = "window_max"` takes the tallest point in the window instead, with the shoulder rule below,
+as pyHXExpress does. On sparse profiles (a Q-TOF at about 23 ppm per point: 4 to 5 points in a +/- 50
+ppm window, too few for the shoulder rule) and on narrow windows (+/- 10 ppm on an Orbitrap) the
+window maximum is often the flank of a brighter peak just outside the window: another species' peak
+90 ppm below the predicted positions gave a picked envelope made of its flanks in every window
+(HISTORY item 172). Judged by results that cannot be true (undeuterated sets reading two
+populations), taking peaks cut those from 25.3 to 15.4 % on an Orbitrap digest and from 7.2 to
+6.6 % on a Q-TOF benchmark, with fully deuterated sets reading two down from 17.1 to 14.0 % on the
+Orbitrap and the replicates' agreement unchanged on both; the known-answer set's K recovery was
+unchanged (74.9 %).
+
+**Why not a tighter window.** On the Q-TOF benchmark the undeuterated peaks (M to M+2) sit within
+16 ppm of their predicted m/z within a series (99 %), but deuterated peaks scatter +/- 20 to 40 ppm
+about theirs: each is a blend of isotopologues with deuterium (+1.00628 Da) and carbon-13
+(+1.00336 Da) sampled every 23 ppm, and the blend at a bin is not where one deuteration level puts
+it. A +/- 16 ppm tolerance about each series' offset cut real deuterated peaks (fully deuterated
+sets reading two rose from 17.6 to 22.0 %, replicate outliers doubled; HISTORY item 172), so the
+window's reach stays as it is; only what counts inside it changed.
 
 **The half-spacing cap.** A constant ppm window is a mass tolerance with no relation to the peak
 spacing: at m/z 1000 and z = 20 a 50 ppm half-width is 50 mDa, the whole isotope spacing, so each
@@ -162,7 +188,7 @@ whether it is quoted at m/z 200 or 400 (`hxex check` prints both); mzML files re
 spectrum without a value keeps the `resolution_ppm` window (logged). The spectrum figures draw
 the window actually used.
 
-**Shoulder rule (from pyHXExpress).** If the window holds `shoulder_min_points` (10) or more points
+**Shoulder rule (from pyHXExpress; `pick = "window_max"` only).** If the window holds `shoulder_min_points` (10) or more points
 and its tallest point is the first or the last of the window, the bin is set to 0, on the reasoning
 that the maximum is then the flank of a neighbouring peak. The rule assumes the predicted position
 is on the peak: when it is not, it removes real peaks. With the ExMS ladder on an intact protein it
@@ -293,10 +319,11 @@ changes nothing measurable, and it does not change fit accuracy there.
 | End of picking | after a running count of below-threshold bins | `zero_filling` bins after the last bin above the threshold |
 | Empty or signal-less spectra | dropped silently | flagged, dropped by the run and recorded |
 | Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or from the resolving power (`resolving_power`, a value or `"recorded"`) |
-| Maximum, shoulder rule, threshold, predicted m/z reported | as here | unchanged |
+| What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"` as pyHXExpress) |
+| Threshold, predicted m/z reported | as here | unchanged |
 | A series whose undeuterated envelope sits off its m/z | not checked | flagged `off_mz`, windows moved onto its envelope (`off_mz_sd`, `recentre`) |
 
-With `ladder="exms"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
+With `ladder="exms"` and `pick="window_max"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
 (every bin both pickers produce identical in m/z and intensity); the cap never binds on peptide
 data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffected by it.
 
@@ -309,8 +336,9 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
   prediction belongs to the ion; the offsets are reported instead (see "Where the peaks were
   found"). Whole series are moved, from their undeuterated controls (whose isotope pattern is
   known), only when they sit off the run's calibration (see "A series off its m/z").
-- **The shoulder rule** is unvalidated: it was designed against overlapping species but cannot tell
-  their flank from a real peak off its prediction. With the composition ladder and the capped
+- **The shoulder rule** (`pick = "window_max"` only) is unvalidated: it was designed against
+  overlapping species but cannot tell their flank from a real peak off its prediction; taking
+  peaks (the default) does not need it. With the composition ladder and the capped
   window it mostly zeroes small tail bins; the high-charge failure (a window holding both
   neighbours) is gone with the cap.
 - **Fragment ions.** Constant offsets of -14 to -49 ppm seen for fragment targets on the
@@ -326,6 +354,7 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `pick` | `peak` | what a bin takes: the tallest peak whose apex is in the window, or `window_max` (the tallest point, with the shoulder rule, as pyHXExpress) |
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
 | `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z, capped at half the isotope spacing |
 | `resolving_power` | None | R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
@@ -340,5 +369,5 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 | `zero_filling` | 4 | bins picked after the last bin above the threshold |
 | `env_threshold` | 0.1 | fraction of the tallest bin at which the envelope width is measured |
 | `nterm_subtract` | 1 | N-terminal residues whose amides are not counted |
-| `shoulder_min_points` | 10 | window size from which the shoulder rule applies |
+| `shoulder_min_points` | 10 | window size from which the shoulder rule applies (`window_max` only) |
 | `amide_rules` | default | which fragment ion types hold the amide at their cleavage site |
