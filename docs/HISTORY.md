@@ -4371,3 +4371,60 @@ CSVs or mzML if wanted.
     fraction r has a variance of at least mu (1 - r). Below 0.3 of that width (components of at
     least 1 D and 10 %) are 78 % of the undeuterated and 16 % of the labelled spectra reading two on
     the benchmark, and 1-2 % of the known-answer set's real two-population mixtures.
+
+171. **The width check and the undeuterated cap, by the data (owner, 2026-10-25: the data decide,
+    not the eyeballed review).** The owner's blind review of 70 benchmark spectra (picked as
+    current hxex picks them; the sparse-profile shoulder problem of item 147 is unchanged) did not
+    tell the width check's narrow components from passing ones (interference seen in 7 of 30 and
+    5 of 30). The data: narrow components are single-bin in 52 % (Orbitrap 63 %), above the most
+    deuterium possible in 25 % (passing 6 %), present in the undeuterated spectrum in 23 % (5 %);
+    neither kind moves the K = 1 values (distance to the replicates' median identical to
+    one-population spectra). Undeuterated sets (two is a known false result): the width check
+    lowers their two from 8.0 to 2.9 % on the Q-TOF and from 25.3 to 9.1 % on the Orbitrap, at the
+    cost of 158 and 236 labelled two-population sets. The undeuterated cap cannot change that rate,
+    but the fully deuterated sets of capped peptides read two twice as often as the rest (Q-TOF 29
+    against 15 %, Orbitrap 29 against 14 %), and as often when the cap is widened to the peptide in
+    every sample (15 % of the FD sets instead of 8 %): the species is there in every sample, so item
+    170's reading (the cap removes evidence other samples confirm) was wrong. Width check with the
+    peptide-wide cap: Q-TOF UN / FD / labelled two 8.0 / 17.0 / 34.8 -> 2.9 / 9.7 / 22.2 %, Orbitrap
+    25.3 / 17.5 / 16.2 -> 9.1 / 9.4 / 5.7 % (an unstructured digest, where two should be rare).
+
+172. **Peak picking: only apexes count (owner, 2026-10-25: picking first; the window maximum may
+    be a habit carried over from pyHXExpress, and rules on top of it are patches).** The window
+    maximum takes a neighbour's flank whenever a brighter peak sits just outside a window (the
+    owner's example: another species ~90 ppm below the predicted positions, its falling flank
+    picked in every window). Prototypes on stored spectra, judged by known-false results
+    (undeuterated sets reading two), fully deuterated sets reading two, labelled sets reading
+    two, and replicate agreement: two patches on the window maximum (zero an edge maximum;
+    only when it rises into a neighbour beyond 1.5 half-widths) changed little on the Q-TOF
+    benchmark (undeuterated two 7.2 -> 6.2-6.7 %). Taking the tallest local maximum whose apex
+    lies inside the window (a flank is never a peak) did as well there (6.6 %, values unchanged)
+    and much better on the Orbitrap digest with its +-10 ppm window (undeuterated two 25.3 ->
+    15.4 %, fully deuterated 17.1 -> 14.0 %, labelled 15.7 -> 12.1 %, replicate agreement
+    unchanged; 22,293 spectra changed); the known-answer set's K recovery was unchanged (74.9 %).
+    A tolerance tighter than the window, centred on each series' offset and sized by undeuterated
+    peaks (+-16 ppm on the Q-TOF, where they sit within 16 ppm), cut real deuterated peaks: these
+    scatter +-20 to 40 ppm about the predicted positions on the Q-TOF (blended deuterium and
+    carbon-13 isotopologues sampled every 23 ppm), so the window's reach is not arbitrary there
+    (undeuterated two 3.3 % but fully deuterated 22.0 %, replicate outliers doubled).
+    Built (owner, 2026-10-25): `[run.picker] pick`, `"peak"` the default (a local maximum of the
+    raw spectrum, a gap in the data counting as lower; every point in centroided data, fewer
+    than four points per isotope step as in the screens; the apex from the parabola through the
+    point and its neighbours; peaks found once per spectrum over the windows' reach), and
+    `"window_max"` for pyHXExpress's picks (the golden file and the whole-run oracle still match
+    with it); the shoulder rule applies to `"window_max"` only. A documented difference from
+    pyHXExpress (docs/PLAN.md); guide picking-window.md "What a bin takes: a peak". Results made
+    before keep their sticks until run again (`hxex run --spectra`).
+
+173. **The width check and the undeuterated cap on the new picks (2026-10-25).** Re-measured after
+    item 172 with the full simulated null (B = 20). Picking alone took the undeuterated sets
+    reading two from 8.0 to 7.0 % on the Q-TOF benchmark and from 25.3 to 15.8 % on the Orbitrap
+    digest. The width check (a K = 2 component narrower than 0.3 sqrt(mu (1 - D2O fraction)),
+    >= 1 D and >= 10 %, keeps the spectrum at one population) then brings both to about 3 % (2.8
+    and 3.2 %), at 139 and 218 labelled sets. The undeuterated cap, widened to the peptide in every
+    sample of the run, still finds deuterated sets reading two far more often in the capped
+    peptides (labelled 62 against 30 % on the Q-TOF, 33 against 9 % on the Orbitrap, an
+    unstructured digest; fully deuterated 32 against 16 % on the Q-TOF, but 18 against 14 % on the
+    Orbitrap, where most of item 171's enrichment had been flank picks). Both together: labelled
+    sets reading two 33.8 -> 22.9 % (Q-TOF) and 12.5 -> 5.9 % (Orbitrap), fully deuterated
+    18.2 -> 11.1 % and 14.4 -> 9.6 %.
