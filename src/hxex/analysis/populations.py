@@ -223,7 +223,8 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         rank = np.where(rank >= 4, rank - 2, rank)  # three, three localised: as two, localised
         reached = rank >= least
         two = has_k2 & reached
-        reason = np.where(~has_k2, "no K=2", np.where(reached, "", "tier: " + tier.astype(str)))
+        named = np.array(["tier: " + str(t) for t in tier], dtype=str)  # numpy 1.26: no string +
+        reason = np.where(~has_k2, "no K=2", np.where(reached, "", named))
         reason = np.where(np.isin(tier, ("three", "three, localised")) & two,
                           "tier: three, drawn as two", reason)
         reason = np.where(tier == "", np.where(has_k2, "tier: none", "no K=2"), reason)
