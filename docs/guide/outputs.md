@@ -98,6 +98,10 @@ from the results in the bundle now, and which command would need `--overwrite` o
 `--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
 command stops by itself, before doing any work.
 
+Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
+few values (stand-in controls, outlier limits, the comparisons' critical difference) come from
+the whole project. [Analysing part of a dataset](part-of-a-dataset.md) lists them.
+
 Deleting only the `results` folder does not start afresh: its tables, figures, and analysis
 folders stay beside it, and the next `hxex run` stops at the tables folder. To start afresh,
 delete every folder whose name starts with `results`, or use `--overwrite` or

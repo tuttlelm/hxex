@@ -1308,7 +1308,8 @@ _COMMENTS: dict[str, str] = {
                          "clipping",
     "run.fit.polish_steps": "Levenberg-Marquardt iterations per measurement after the restarts "
                             "(0: none)",
-    "run.fit.seed": "seed of everything random (each measurement is also seeded by its id)",
+    "run.fit.seed": "seed of everything random (each spectrum is also seeded by what it is: "
+                    "sample, peptide, charge, replicate, time, role)",
     "run.fit.screen": "fit K > 1 only where it could be selected: about a third of the time, "
                       "but the skipped fits are missing from fixed-K analyses (with "
                       "[run.population_test]: only where the test could find it)",

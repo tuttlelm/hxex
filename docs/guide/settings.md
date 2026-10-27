@@ -245,7 +245,7 @@ The fit of k_min to k_max populations to every spectrum, the number chosen by th
 | `warm_noise` | number | `0.05` | sd of the jitter added to a warm start |
 | `grad_clip` | text | `"per_measurement"` | "per_measurement" (each fit on its own) or "global" gradient clipping |
 | `polish_steps` | integer | `40` | Levenberg-Marquardt iterations per measurement after the restarts (0: none) |
-| `seed` | integer | `0` | seed of everything random (each measurement is also seeded by its id) |
+| `seed` | integer | `0` | seed of everything random (each spectrum is also seeded by what it is: sample, peptide, charge, replicate, time, role) |
 | `screen` | true/false | `false` | fit K > 1 only where it could be selected: about a third of the time, but the skipped fits are missing from fixed-K analyses (with [run.population_test]: only where the test could find it) |
 
 ## `[run.fit.noise]`

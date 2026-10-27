@@ -41,7 +41,7 @@ from typing import Any
 import numpy as np
 from scipy.stats import gamma
 
-from .fit import FitConfig, FitResult, Measurements, fit_models, stable_keys
+from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, shape_weights
 from .noise import NoiseConfig
@@ -392,13 +392,13 @@ def simulate_null(
     """``(len(rows), n_sim)`` null statistics ``2 (nll_K - nll_K+1)`` of the measurements at
     ``rows``: data drawn from their K-population fit (noise-scaled curve plus unit Gaussian
     noise), refitted at 1 to K + 1 with the run's fit settings (no screen). Each draw is seeded
-    by ``seed``, the simulation and the spectrum id, so the result does not depend on the other
-    spectra. NaN where a refit failed."""
+    by ``seed``, the simulation and what the spectrum is (``random_id``), so the result does not
+    depend on the other spectra or the project's name. NaN where a refit failed."""
     rows = np.asarray(rows, dtype=np.int64)
     cfg = dataclasses.replace(fit.config, k_min=1, k_max=k + 1, screen=False,
                               noise=NoiseConfig(model="gaussian", sd=1.0, percent=None))
     pred = scaled_prediction(data, fit, rows, k)
-    keys = stable_keys(data.spectrum_id[rows])
+    keys = data.random_keys()[rows]
     bins = [data.bins[i] for i in rows]
     shapes = [data.shapes[i] for i in rows]
     n_max = data.n_max[rows]
@@ -408,7 +408,9 @@ def simulate_null(
         observed = [curve + np.random.default_rng([seed, 11, k, s, int(key)]).standard_normal(
             len(curve)) for curve, key in zip(pred, keys, strict=True)]
         ids = [f"null{k}.{s}:{sid}" for sid in data.spectrum_id[rows]]
-        sim = Measurements.from_arrays(bins, observed, shapes, n_max, spectrum_id=ids)
+        rids = [f"null{k}.{s}:{rid}" for rid in data.random_id[rows]]
+        sim = Measurements.from_arrays(bins, observed, shapes, n_max, spectrum_id=ids,
+                                       random_id=rids)
         with _quiet_fits():
             res = fit_models(sim, cfg, cancel=cancel)
         lo, hi = res.fits[k].nll, res.fits[k + 1].nll

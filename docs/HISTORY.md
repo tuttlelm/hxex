@@ -4619,3 +4619,110 @@ CSVs or mzML if wanted.
     the null, drawn with the same constant noise, does not contain it. The hold-out of item 179
     removes some of these (those above 1.1), not the cause. Scripts:
     `population_test/built_test/above_fd/drivers` (private, README).
+
+181. **Peak heights vs integrals, and per-bin noise curves on both (2026-10-26/27; items 150-153,
+    180).** Five datasets: the Q-TOF benchmark, the tutorial run, the private noisy unimodal
+    dataset, the known-answer set (all Q-TOF exports), and the published Orbitrap digest. (1)
+    Picking: on the Q-TOF exports weak peaks are wider than tall ones (1.15 to 1.22x at 5 to 15 % of
+    the spectrum's top in three datasets, 1.04x overall in the noisy one; the monoisotopic peak
+    included, so not isotopic fine structure; not baseline: valleys 0.3 % of their neighbours), so
+    `pick = "peak"` heights under-read the weak, heavy bins (benchmark: -13 % three bins past the
+    tallest). Integrals over +-1.5 FWHM, the FWHM measured from the run's tallest peaks (a power law
+    in m/z, capped below half the isotope spacing) and rescaled per spectrum to the heights'
+    maximum, remove that deficit and halve the undeuterated controls' residuals; integrating to the
+    valleys overshoots (rejected); 1.5 FWHM suits every dataset (2 is the same on the benchmark).
+    The Orbitrap shows no width effect and keeps its heavy-side deficit (-8.6 -> -7.3 %): not
+    picking. (2) Integrals with the constant 3 % noise: fully deuterated controls at K > 1 15 -> 9 %
+    (benchmark; 8.8 -> 5.2 % without its one outlying sample, whose fully deuterated controls read
+    K > 1 in 38.7 % with heights against 4 to 13 % in the other four, and are much brighter relative
+    to their undeuterated controls: 49 of the 70 more than twice as bright as their reference), 8.5
+    -> 6.6 % (tutorial), 27 -> 20 % (noisy); known-answer correct K 74.9 -> 78.3 %; the robust
+    replicate scatter of K = 1 means falls by a quarter to a half and the charge scatter by a fifth
+    to a half (the bootstrap errors do not change, so they now over-state); the Orbitrap is slightly
+    worse (+1 to +3 points). (3) Per-bin curves `a2 + b I + c2 I^2`: the proportional term is
+    required (without it fully deuterated K > 1 17 to 92 %; benchmark heights without the outlying
+    sample 24 %, against 4 % with the term). Heights with the prototype's controls curve are the
+    best combination on the Q-TOF data (fully deuterated K > 1 5 / 5 / 9 %, the benchmark without
+    the outlying sample 4.0 %, which the controls curve also brings from 38.7 to 9.2 %; the
+    brightness effect of item 180 84 -> 10 % on the benchmark, 86 -> 14 % without the outlying
+    sample; robust error ratios 0.72 to 0.88 replicate, 1.07 to 1.50 charge), but the prototype's
+    fit is decided by the brightest group and over-states weak bins' noise 3 to 7x; on integrals it
+    set the low terms to 0 and under-stated them. A relative fit that follows the controls' noise at
+    every intensity chooses K > 1 more often in the controls (benchmark fully deuterated heights 6.8
+    %, integrals 17 %; Orbitrap 74 %). Reading: the undeuterated controls' residuals are noise only
+    (their shape is exactly natural abundance), whereas deuterated envelopes also carry shape error
+    (broader than one binomial, items 178-180); the more exact the noise and the sticks, the more
+    that shape error reads as a second population. A curve pooled from the bundle's own fits (no
+    controls) is worse still (the K = 2 and 3 fits absorb the shape error). (4) The noise floor
+    (owner's question: do instruments and exports set it differently?). Measured from each bundle's
+    undeuterated controls (bins where the natural-abundance envelope is below 1e-3 of the top;
+    trimmed RMS), the floor grows with the spectrum's brightness as about top^0.5 to 0.8 on every
+    dataset, the same four or more bins past the envelope as next to it (co-eluting species and
+    background, not the envelope's tail). Exports differ: Q-TOF exports 37 to 56 counts in their
+    dimmest controls with 25 to 33 % exact zeros (one tutorial-protocol export about 200); the
+    Orbitrap 76 % exact zeros (censored) and the rest other species at 2 to 7 % of the top. Refits
+    with the prototype's floor (sd at least 0.5 % of the top), a measured constant, or a measured
+    power law of the top: on the Q-TOF data the floor moves K > 1 by at most 1 to 3 points (not the
+    limit there); on the Orbitrap the measured power law is what makes per-bin noise work, better
+    than the constant sd for the first time (undeuterated K > 1 21.2 -> 15.1 %, fully deuterated
+    13.7 -> 13.4 %, labelled 12.9 -> 11.9 %), where the 0.5 % share had made it worse (25 %). The
+    measured floor is instrument-agnostic (from the run's own controls), but on the Orbitrap it is
+    not a noise estimate: those spectra are reduced profile data close to sticks (about 9 points per
+    resolved peak, 44 % exact zeros, sub-threshold signal removed), so heights and areas carry the
+    same information and there is no noise floor to measure; its gain comes from down-weighting bins
+    that hold other species' signal. The principled form for such data is counting variance for
+    reported peaks with zeros as censored, and off-target signal handled as interference (owner's
+    point, 2026-10-27). The fully deuterated K > 1 shares are a yardstick, not false-positive rates:
+    heterogeneous back-exchange narrows an envelope (a Poisson-binomial) and cannot by itself make a
+    mixture choose K > 1, but some fully deuterated controls may truly hold two populations; the
+    conclusions rest on what does not need that assumption (the brightness gradient, which real
+    populations cannot follow, the undeuterated controls, the mostly unimodal set, the known
+    answers, and error calibration). (5) What drives the misfit (the fully deuterated controls need
+    not be single populations, so nothing is learnt from them): K = 1 residuals divided by a noise
+    model matching the undeuterated controls grow with the spectrum's absolute brightness in every
+    role, the undeuterated controls included (benchmark heights chi2/dof 0.31 -> 2.88 from the
+    dimmest to the brightest fifth), so the error scales with the spectrum's amplitude at every bin
+    and can be measured from the undeuterated controls alone; relative brightness adds a
+    flattened-top (saturation) signature on the tutorial run only. On the Orbitrap detection is a
+    probability (undeuterated isotope peaks at 1-3 % of the top reported 45 %, at 3-10 % 76 %; Q-TOF
+    exports 96-100 % above 0.3 %); 35 % of its undeuterated controls have a dropped peak inside the
+    envelope, these are fitted with K > 1 more than twice as often, and they are half of its
+    undeuterated controls at K > 1. (6) Item 156's tail test (`quality.control_shape_ratios`)
+    repeated with integrals: the tail deficit and its charge dependence go (benchmark tails at 1-10
+    % of the top 0.73 -> 0.97 at tops 100,000-300,000, the noisy set 0.77 -> 1.05), so `tails_low`
+    mostly detects the height artefact (item 156's areas used a window of half the peak width);
+    left: the benchmark's brightest controls (0.81 above 300,000) and the tutorial run's saturation
+    (peaks beside the tallest 1.18, unchanged). In bright undeuterated controls the remaining misfit
+    sits in the bins at 1-30 % of the top, with a consistent sign, and repeats from replicate to
+    replicate (brightest third: median series error 11.8 % against 5.5 % replicate scatter, Spearman
+    0.74, benchmark integrals; dimmest third: equal, 0.23 to 0.36): a per-series shape error, not
+    noise, dominant once counting noise is small; as variance it would be treated as independent
+    between replicates. Nothing built; owner (2026-10-27): area picking waits on the noise model.
+    Open for the owner: integrals with the constant sd now; heights with the controls curve; or
+    first a shape-error term estimated from the fully deuterated controls (cross-validated). Scripts
+    and tables: `noise_model/height_vs_area`, `noise_model/areas` (private, README).
+
+182. **Random numbers keyed by what a spectrum is, not its id; analysing part of a dataset
+    (2026-10-27; owner).** Every random number of a measurement (fit restarts and k-means
+    jitter, bootstrap draws, population-test nulls) was seeded by the stage's seed and the
+    CRC-32 of its spectrum id, `PROJECT:LOCAL`, so the same spectrum read under another project
+    name, or with another file layout, got other draws. Now `Measurements.random_id` (default
+    the spectrum id) keys them, and `Measurements.from_binned` sets it to
+    `fit.measurements.measurement_identity`: sample, peptide, modification, residue range,
+    charge, replicate, time, role and label, with `#1`, `#2`, ... for spectra alike in all of
+    these, numbered in spectrum-id order. A bundle recomputes it from its picked spectra when
+    read (nothing new is stored), so `hxex resume` and the population test draw as the run did.
+    The seeds themselves were already settings (`[run.fit]` 0, `[run.bootstrap]` 42,
+    `[run.population_test]` 0) and are written in `run_settings_used.toml` and the manifest.
+    Existing bundles give slightly different bootstrap errors and nulls when rerun. Also from
+    the owner's question about users fitting their own batches: a read-only audit listed the
+    values pooled across series or the whole run (stand-in fully deuterated retention, the
+    outlier floor of 5 or more controls, kint with 10 or more, the replicate-outlier limits,
+    `stand_in_controls`, `delta_crit` over every peptide, time and sample, the m/z calibration
+    per injection with its fallback below 10, the brightness-relative flags) and the silent
+    fallback of a series without its undeuterated control (each spectrum its own noise
+    reference: a smaller sd, more populations; no warning yet). Owner: what matters most is that
+    users know what analysing part of a dataset does; new guide page
+    `docs/guide/part-of-a-dataset.md`, linked from the index and from outputs.md "Running again".
+    Not built: warnings for the silent fallbacks, storing every run-level value, a
+    batch-invariance test.

@@ -195,6 +195,21 @@ def test_the_stages_are_named_in_order_and_cover_the_units(tmp_path):
     assert done.count(1000) == 1 and rec.calls[-1] == ("done", 1000, 1000)
 
 
+def test_random_numbers_follow_what_a_spectrum_is_not_the_project_name(tmp_path):
+    raw = raw_spectra(n_series=2)
+    other = dataclasses.replace(raw, spectrum_id=np.array(
+        [str(i).replace("proj:", "other:") for i in raw.spectrum_id]))
+    a = run(raw, config(), out=tmp_path / "a")
+    b = run(other, config())
+    assert not set(a.measurements.spectrum_id) & set(b.measurements.spectrum_id)
+    np.testing.assert_array_equal(a.measurements.random_id, b.measurements.random_id)
+    for k in a.fit.k_values:  # the same random starts, so the same fits
+        np.testing.assert_array_equal(a.fit.fits[k].means, b.fit.fits[k].means)
+    np.testing.assert_array_equal(a.bootstrap.mean_se, b.bootstrap.mean_se)  # and draws
+    with open_bundle(tmp_path / "a") as bundle:  # read back as fitted (resume, population test)
+        np.testing.assert_array_equal(bundle.measurements().random_id, a.measurements.random_id)
+
+
 def test_the_bundle_is_written_and_records_the_run(tmp_path):
     raw = raw_spectra(n_series=2, empty=(0, 7))
     cfg = config()

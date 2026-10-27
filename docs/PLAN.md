@@ -555,8 +555,11 @@ and "Phase 2 status"):
 - Gradient clipping per measurement, no L-BFGS (`lbfgs_steps=0`; a per-measurement
   Levenberg-Marquardt polish instead), so a spectrum's fit does not depend on the rest of the
   batch.
-- Every random number of a measurement comes from a generator seeded by `seed` and its
-  `spectrum_id`, so runs are reproducible and independent of batch position and size.
+- Every random number of a measurement comes from a generator seeded by `seed` and what the
+  measurement is (`Measurements.random_id`: sample, peptide, modification, range, charge,
+  replicate, time, role, label; not the spectrum id, which carries the project's name), so runs
+  are reproducible and independent of batch position and size, the project's name, and the file
+  layout (item 182).
 - A K with a nested start is also fitted from the k-means start (`FitConfig.kmeans_after_warm`),
   so a K in a run of several is not worse than the same K fitted alone (item 30).
 - The k-means start clusters the bins weighted by their rounded intensities (the same clusters as
@@ -566,7 +569,7 @@ and "Phase 2 status"):
   selected, from a lower bound on the loss of any mixture; the prototype fits every K (item 85).
 - Bootstrap: a failed resample is dropped for that measurement only (the prototype discarded the
   iteration for all), a measurement whose own fit failed is not resampled, and resamples are
-  seeded per iteration and spectrum id.
+  seeded per iteration and measurement identity.
 - An optional population test (`[run.population_test]`, off by default) decides each
   spectrum's number of populations by a simulated null instead of BIC or AIC, with a width
   check against populations narrower than deuterium allows, and the analysis decides each

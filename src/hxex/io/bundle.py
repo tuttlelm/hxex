@@ -41,6 +41,7 @@ import pyarrow.parquet as pq
 from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult, interval_table
 from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
+from ..fit.measurements import measurement_identity
 from ..noise import NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
 from ..picking.binned import MZ_CHECK_COLUMNS
@@ -1156,13 +1157,14 @@ class Bundle:
                 None if ref_null[i] else tuple(int(x) for x in ref_flat[ref_off[i]:ref_off[i + 1]])
                 for i in range(t.num_rows)
             )
+            spectrum_id = _strs(t, "spectrum_id")
             self._cache["measurements"] = Measurements(
                 bins=tuple(bins), observed=tuple(observed), shapes=tuple(shapes),
                 n_max=np.asarray(_col(t, "n_max"), dtype=np.float64), references=refs,
-                spectrum_id=_strs(t, "spectrum_id"),
+                spectrum_id=spectrum_id,
                 data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
-                role=self._roles(t),
+                role=self._roles(t), random_id=self._random_id(spectrum_id),
             )
         return self._cache["measurements"]
 
@@ -1273,6 +1275,21 @@ class Bundle:
         )
         self._cache[name, k] = result
         return result
+
+    def _random_id(self, spectrum_id: np.ndarray) -> np.ndarray | None:
+        """What each fitted spectrum is (:func:`hxex.fit.measurements.measurement_identity`),
+        from the picked spectra, as when it was fitted; None (the spectrum id) without them."""
+        binned = self.binned()
+        if binned is None:
+            return None
+        wanted = {str(s) for s in spectrum_id}
+        keep = np.array([str(s) in wanted for s in binned.spectrum_id], dtype=bool)
+        if int(keep.sum()) != len(wanted):
+            return None
+        picked = binned.select(keep)
+        by_id = dict(zip((str(s) for s in picked.spectrum_id), measurement_identity(picked),
+                         strict=True))
+        return np.array([by_id[str(s)] for s in spectrum_id], dtype=str)
 
     def binned(self) -> BinnedSet | None:
         if not self.has("binned"):

@@ -40,6 +40,8 @@ a short text file.
   resolving power.
 - [Comparing separate runs](comparing-runs.md): several bundles in one analysis, pooled or side
   by side.
+- [Analysing part of a dataset](part-of-a-dataset.md): which results can change when you fit
+  only some of your data, or add more later, and how to keep them steady.
 - [Protection factors](protection-factors.md).
 - [Residue-level rates and protection factors from fragment ladders](fragment-residues.md).
 

@@ -13,7 +13,7 @@ from ..noise import estimate_noise, noise_scale, sample_size
 from .config import FitConfig
 from .init import split_start
 from .measurements import Measurements
-from .optimise import fit_batch, prepare, stable_keys
+from .optimise import fit_batch, prepare
 from .result import FitResult, KFit
 from .screen import can_exceed, can_win, loss_floor
 
@@ -81,7 +81,7 @@ def fit_models(
             )
     prep = prepare(
         data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
-        keys=stable_keys(data.spectrum_id),
+        keys=data.random_keys(),
     )
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values

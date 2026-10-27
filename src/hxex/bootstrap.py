@@ -14,7 +14,8 @@ while the mean and the population stay well determined.
 Measurements are independent: a resample that fails for one measurement is dropped for that
 measurement only (``n_success`` counts the ones that count; a measurement whose own fit failed is
 not resampled at all), and every random number of a measurement comes from a generator seeded by
-the seed, the iteration and the spectrum id.
+the seed, the iteration and what the measurement is (``Measurements.random_id``), not its spectrum
+id, so the project's name does not change the draws.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from typing import Any
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from .fit import FitError, FitResult, Measurements, Start, fit_batch, prepare, stable_keys
+from .fit import FitError, FitResult, Measurements, Start, fit_batch, prepare
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, convolve, shape_weights
 
@@ -367,7 +368,7 @@ def bootstrap(
     backend, kinds = fit.config.backend, fit.noise_kind
     m_total, n_boot = len(fit), config.n_boot
     k_max = max(fit.k_values)
-    scale, keys = fit.obs_scale, stable_keys(data.spectrum_id)
+    scale, keys = fit.obs_scale, data.random_keys()
     # a measurement whose own fit failed (non-finite loss, placeholder parameters) is not resampled
     fit_ok = np.array([np.isfinite(fit.fits[int(k)].nll[i]) for i, k in enumerate(fit.selected_K)])
     groups = {

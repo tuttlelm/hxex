@@ -455,6 +455,20 @@ def test_pick_spectra_builds_a_binned_set():
         b.find("p:nope")
 
 
+def test_the_measurement_identity_leaves_out_the_project_and_tells_duplicates_apart():
+    from hxex.fit.measurements import measurement_identity
+    b = pick_spectra(make_set(), CFG)
+    ids = measurement_identity(b)
+    renamed = dataclasses.replace(b, spectrum_id=np.array([f"q{i[1:]}" for i in b.spectrum_id]))
+    np.testing.assert_array_equal(measurement_identity(renamed), ids)
+    assert len(set(ids)) == len(ids) and not any(":s" in i for i in ids)
+    twice = pick_spectra(make_set(times=(60.0, 60.0, 60.0)), CFG)  # spectra 0 and 1 are alike
+    dup = measurement_identity(twice)
+    assert dup[1] == dup[0] + "#1" and dup[2] != dup[0]
+    swapped = dataclasses.replace(twice, spectrum_id=twice.spectrum_id[[1, 0, 2]])
+    assert measurement_identity(swapped)[0] == dup[0] + "#1"  # numbered in spectrum-id order
+
+
 def test_pick_spectra_matches_pick_spectrum():
     s = make_set()
     b = pick_spectra(s, CFG)

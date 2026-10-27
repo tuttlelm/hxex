@@ -23,7 +23,10 @@ class Measurements:
     each measurement's noise level (see :mod:`hxex.noise`). ``spectrum_id``, ``data_id``,
     ``time`` and ``role`` (``'undeut'``, ``'fulldeut'`` or ``''``: the controls of a series are
     the measurements with a role; all ``''`` when not given) identify the measurements and are
-    carried into the results.
+    carried into the results. ``random_id`` (default the spectrum id) is what each measurement's
+    random numbers are keyed by (:meth:`random_keys`): from a picked set, what the spectrum is
+    (:func:`measurement_identity`), so its random starts, bootstrap draws and null simulations do
+    not depend on the project's name, the file layout or the other spectra.
     """
 
     bins: tuple[np.ndarray, ...]
@@ -35,6 +38,7 @@ class Measurements:
     data_id: np.ndarray
     time: np.ndarray
     role: np.ndarray | None = None
+    random_id: np.ndarray | None = None
 
     def __post_init__(self):
         m = len(self.bins)
@@ -42,8 +46,11 @@ class Measurements:
             object.__setattr__(self, "role", np.full(m, "", dtype="<U8"))
         else:
             object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
+        object.__setattr__(self, "random_id", np.asarray(
+            self.spectrum_id if self.random_id is None else self.random_id, dtype=str))
         sizes = (len(self.observed), len(self.shapes), len(self.n_max), len(self.references),
-                 len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role))
+                 len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role),
+                 len(self.random_id))
         if any(s != m for s in sizes):
             raise ValueError("every field needs one entry per measurement")
         for i, (b, o) in enumerate(zip(self.bins, self.observed, strict=True)):
@@ -59,6 +66,12 @@ class Measurements:
 
     def __len__(self) -> int:
         return len(self.bins)
+
+    def random_keys(self) -> np.ndarray:
+        """One stable integer per measurement, from its ``random_id``: with the stage's seed it
+        seeds every random number drawn for the measurement."""
+        from .optimise import stable_keys
+        return stable_keys(self.random_id)
 
     def select(self, index, *, drop_references: bool = False) -> Measurements:
         """The measurements at ``index`` (positions, in that order). The reference spectra of each
@@ -81,6 +94,7 @@ class Measurements:
             shapes=tuple(self.shapes[i] for i in index), n_max=self.n_max[index],
             references=tuple(refs), spectrum_id=self.spectrum_id[index],
             data_id=self.data_id[index], time=self.time[index], role=self.role[index],
+            random_id=self.random_id[index],
         )
 
     @classmethod
@@ -95,6 +109,7 @@ class Measurements:
         data_id: Sequence[int] | None = None,
         time: Sequence[float] | None = None,
         role: Sequence[str] | None = None,
+        random_id: Sequence[str] | None = None,
     ) -> Measurements:
         """Measurements from plain arrays (for tests and for data that did not come from the
         picker). Missing identifiers become ``m0, m1, ...``, series 0, time 0 and no role."""
@@ -113,6 +128,7 @@ class Measurements:
             data_id=np.asarray(data_id if data_id is not None else [0] * m, dtype=np.int64),
             time=np.asarray(time if time is not None else [0.0] * m, dtype=np.float64),
             role=None if role is None else np.asarray(role, dtype=str),
+            random_id=None if random_id is None else np.asarray(random_id, dtype=str),
         )
 
     @classmethod
@@ -180,5 +196,31 @@ class Measurements:
             n_max=np.asarray(n_max, dtype=np.float64),
             references=tuple(references),
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,
-            role=binned.role,
+            role=binned.role, random_id=measurement_identity(binned),
         )
+
+
+def measurement_identity(binned: BinnedSet) -> np.ndarray:
+    """What each spectrum of ``binned`` is: sample, peptide, modification, residue range, charge,
+    replicate, time, role and label, joined into one text. Unlike the spectrum id it does not
+    contain the project's name or depend on how the files are laid out, so the random numbers
+    keyed by it (:attr:`Measurements.random_id`) are the same whichever project or batch the
+    spectrum is fitted in. Spectra that are the same in every one of these get ``#1``, ``#2``,
+    ... after the first, in the order of their spectrum ids."""
+    def text(value) -> str:
+        if isinstance(value, (float, np.floating)):
+            return repr(float(value))
+        return str(value)
+
+    fields = (binned.sample, binned.peptide, binned.modification, binned.start_seq,
+              binned.end_seq, binned.charge, binned.rep, binned.time, binned.role, binned.label)
+    ids = ["\x1f".join(text(f[i]) for f in fields) for i in range(len(binned))]
+    groups: dict[str, list[int]] = {}
+    for i, key in enumerate(ids):
+        groups.setdefault(key, []).append(i)
+    for key, members in groups.items():
+        if len(members) > 1:
+            for n, i in enumerate(sorted(members, key=lambda j: str(binned.spectrum_id[j]))):
+                if n:
+                    ids[i] = f"{key}#{n}"
+    return np.asarray(ids, dtype=str)
