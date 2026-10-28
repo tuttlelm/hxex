@@ -5,7 +5,8 @@ Bin ``n`` is the isotope cluster of nominal mass +n. By default its position is 
 abundance-weighted mass from the composition (the composition ladder); pyHXExpress's ExMS
 spacing is an option and also gives the first pass that estimates the deuteration level. Each
 bin takes the tallest peak whose apex lies inside a +/- ppm window (or, as pyHXExpress, the
-tallest point in it; docs/PEAK_PICKING.md), moved onto the
+tallest point in it; docs/PEAK_PICKING.md), its height or its area as the bin's value
+(:mod:`hxex.picking.measure`), the window moved onto the
 undeuterated envelope's peaks for a series off its m/z (:mod:`hxex.picking.recentre`). Picking
 covers every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the
 last bin that reaches the noise threshold, so a valley inside a multimodal envelope never ends
@@ -27,6 +28,7 @@ from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import SpectrumSet
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .measure import PeakMeasure, area_values, choose_measure
 from .recentre import series_offsets
 from .screen import RAW_SCORES, STICK_POINTS, off_position_scores, raw_scores
 
@@ -318,13 +320,16 @@ def pick_spectrum(
     resolving_power: float | None = None,
     resolving_power_mz: float | None = None,
     window_shift_ppm: float = 0.0,
+    measure: PeakMeasure | None = None,
 ) -> PickedSpectrum:
     """Pick one spectrum (arrays of m/z and intensity; sorted by m/z if they are not).
     ``resolving_power`` and ``resolving_power_mz`` are the spectrum's recorded values, used
     when ``config.resolving_power`` is ``'recorded'`` (:meth:`PickerConfig.half_width`).
     ``window_shift_ppm`` moves every window (and the screens' positions) by that many ppm from
     the predicted m/z; the bins keep their predicted m/z and the peaks' offset is measured
-    from it."""
+    from it. ``measure`` is the run's choice of bin value
+    (:func:`~hxex.picking.measure.choose_measure`); None: heights (``config.measure`` is
+    decided per run, not here)."""
     if not np.isfinite(window_shift_ppm):
         raise ValueError("window_shift_ppm must be finite")
     scale = 1.0 + float(window_shift_ppm) * 1e-6
@@ -365,6 +370,8 @@ def pick_spectrum(
             pred = composition_mz(plan, level)
             values, where = _bin_values(mz, intensity, pred * scale, config, charge, recorded,
                                         peaks)
+    if measure is not None and measure.measure == "area":
+        values = area_values(mz, intensity, where, values, charge, measure)
     n_last = len(pred) - 1
     signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
     last = int(signal[-1]) if len(signal) else -1
@@ -409,14 +416,20 @@ def pick_spectra(
     clusters: Mapping[int, tuple[np.ndarray, np.ndarray]] | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    measure: PeakMeasure | None = None,
 ) -> BinnedSet:
     """Pick every spectrum of ``spectra``. Nothing is dropped; see the flags on the result.
+    ``measure`` is the run's choice of bin value; None: decided here from ``spectra`` under
+    ``config.measure`` (:func:`~hxex.picking.measure.choose_measure`).
     ``clusters`` gives the isotope clusters of some series (``data_id``), for example an
     ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones.
     With ``config.off_mz_sd`` set, the series of peptide ions with undeuterated controls are
     checked for an envelope off its m/z first (:mod:`hxex.picking.recentre`), and with
     ``config.recentre`` the windows of those off it are moved onto their envelope."""
     clusters = clusters or {}
+    if measure is None:
+        measure = choose_measure(spectra, config, registry=registry)
+        log.info("picking: bins take %s", measure.describe())
     plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
     n = len(spectra)
@@ -459,7 +472,7 @@ def pick_spectra(
                 mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
                 plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
                 resolving_power_mz=float(spectra.resolving_power_mz[i]),
-                window_shift_ppm=float(shift[i]),
+                window_shift_ppm=float(shift[i]), measure=measure,
             )
         )
         report(progress, i + 1, len(spectra))

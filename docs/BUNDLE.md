@@ -92,7 +92,11 @@ and version), `at`, `moved_to` (the generation it was moved to with `keep_previo
 null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
 and `spectra_source` when other files were read or read differently) and `review`
 (`carried`, `stale`: the review entries carried over and how many are stale);
-`hxex.io.provenance_of` builds it, and a resumed bundle keeps it), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
+`hxex.io.provenance_of` builds it, and a resumed bundle keeps it), `peak_measure` (whether the
+bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
+from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power in m/z),
+`width_ratio`, `n_controls`, `n_weak`, `area_fwhm`, `area_scale` and `reason`; absent in bundles
+written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and

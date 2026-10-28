@@ -159,6 +159,31 @@ populations), taking peaks cut those from 25.3 to 15.4 % on an Orbitrap digest a
 Orbitrap and the replicates' agreement unchanged on both; the known-answer set's K recovery was
 unchanged (74.9 %).
 
+**Height or area (`measure`; `hxex.picking.measure`).** The picked peak gives its bin its
+height (`"height"`, as pyHXExpress) or its area (`"area"`); `"auto"`, the default, decides per
+run. On the Q-TOF exports measured (four datasets) a peak at 5 to 30 % of its spectrum's tallest
+is 1.12 to 1.20 times as wide at half height as the tallest, so heights under-read the heavy side
+of every envelope; on an Orbitrap's reduced profiles the ratio is 1.02 (HISTORY items 181 and
+185). The undeuterated controls, whose envelope is known from the composition, are the test: with
+areas over +/- 1.5 FWHM their systematic misfit halved on the Q-TOF data, and the Orbitrap gained
+nothing. `"auto"` picks the run's undeuterated controls once with heights, measures the FWHM of
+each control's tallest peak and of its weak peaks from the raw profile (linear interpolation at
+half height), and takes areas when the median weak / tallest ratio over the brighter half of the
+controls is at least 1.06, from at least 20 controls; with fewer, or with centroided spectra,
+heights. The Q-TOF datasets read 1.12 to 1.19 and the Orbitrap 1.02; with only 20 controls the
+5-95 % range of the ratio was 1.04-1.25 on the Q-TOF data and 1.00-1.03 on the Orbitrap. The
+peak width at an m/z is a power law fitted (Theil-Sen, log-log) to the controls' tallest peaks:
+flat on the Q-TOF data, exponent +0.50 on the Orbitrap, as its resolving power predicts. An area
+is the integral of the linearly interpolated profile (a gap counts as zero) over `area_fwhm`
+(1.5) widths either side of the apex, never beyond 0.45 of the isotope spacing, divided by the
+width there times the median area per unit height and width of the controls' tallest peaks (a
+capped range by the Gaussian share it holds): a peak of the run's width keeps its height on
+average, whatever its line shape. Positions, the threshold, and the end of picking are as with
+heights; the values that cross the threshold are the areas. An area does not depend on where
+the profile points fall on the peak; a height does (at 2.6 points per FWHM the tallest point can
+read up to a tenth low). The choice is recorded in the bundle (`peak_measure`) and shown by
+`hxex info`.
+
 **Why not a tighter window.** On the Q-TOF benchmark the undeuterated peaks (M to M+2) sit within
 16 ppm of their predicted m/z within a series (99 %), but deuterated peaks scatter +/- 20 to 40 ppm
 about theirs: each is a blend of isotopologues with deuterium (+1.00628 Da) and carbon-13
@@ -320,10 +345,11 @@ changes nothing measurable, and it does not change fit accuracy there.
 | Empty or signal-less spectra | dropped silently | flagged, dropped by the run and recorded |
 | Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or from the resolving power (`resolving_power`, a value or `"recorded"`) |
 | What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"` as pyHXExpress) |
+| A bin's value | the height | the area when the run's weak peaks are wider than its tallest (`measure = "auto"`), else the height; `"height"` as pyHXExpress |
 | Threshold, predicted m/z reported | as here | unchanged |
 | A series whose undeuterated envelope sits off its m/z | not checked | flagged `off_mz`, windows moved onto its envelope (`off_mz_sd`, `recentre`) |
 
-With `ladder="exms"` and `pick="window_max"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
+With `ladder="exms"`, `pick="window_max"` and `measure="height"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
 (every bin both pickers produce identical in m/z and intensity); the cap never binds on peptide
 data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffected by it.
 
@@ -347,6 +373,9 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
   within 1 to 3 ppm. Still open: the z fragments' 0.1 to 0.2 D difference from pyHXExpress, and
   whether a transferred hydrogen can be a deuteron in labelled samples (which would make the
   mixture weights change with deuteration).
+- **Areas and neighbours.** An area over +/- 1.5 FWHM reaches further than a height, so another
+  species' peak right beside a bin's peak adds more to it; not yet measured on labelled spectra
+  (the undeuterated controls and the known-answer set improved with areas).
 - **One deuteration level.** The ladder uses one binomial level per spectrum; spectra with several
   populations are placed by their overall level.
 
@@ -355,6 +384,8 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 | Setting | Default | Meaning |
 |---|---|---|
 | `pick` | `peak` | what a bin takes: the tallest peak whose apex is in the window, or `window_max` (the tallest point, with the shoulder rule, as pyHXExpress) |
+| `measure` | `auto` | a bin's value: `height`, `area`, or `auto` (areas when the run's weak peaks are wider than its tallest) |
+| `area_fwhm` | 1.5 | the area's half-range, in peak widths |
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
 | `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z, capped at half the isotope spacing |
 | `resolving_power` | None | R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |

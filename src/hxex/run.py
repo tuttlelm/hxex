@@ -62,7 +62,9 @@ from .picking import (
     BinnedSet,
     EnvelopeConfig,
     EnvelopeTable,
+    PeakMeasure,
     PickerConfig,
+    choose_measure,
     pick_spectra,
     series_envelopes,
 )
@@ -195,7 +197,8 @@ class RunResult:
     test of every measurement (with it, ``fit.selected_K`` is the test's K).
     ``spectra_source`` is how the raw spectra were read (their
     :attr:`~hxex.spectra.SpectrumSet.source`), written to the bundle even when the spectra are
-    not."""
+    not. ``peak_measure`` is whether the bins took heights or areas, and why
+    (:class:`~hxex.picking.PeakMeasure`; None for a set picked before the run)."""
 
     config: RunConfig
     binned: BinnedSet
@@ -214,6 +217,7 @@ class RunResult:
     view_exclude: tuple = ()  # [[review.exclude]] rules applied to the run's figures
     project_file: dict | None = None  # the project file's other settings (config.project_record)
     population_test: PopulationTest | None = None
+    peak_measure: PeakMeasure | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -269,6 +273,7 @@ class RunResult:
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
             provenance=provenance, excluded=self.excluded, project_file=self.project_file,
+            peak_measure=self.peak_measure,
         )
 
 
@@ -709,6 +714,10 @@ def run(
     pick_share = 0.05 if raw is not None else 0.0
     envelope_share = 0.03 if raw is not None and config.envelope.mode != "theory" else 0.0
     envelopes, clusters, shapes = None, None, None
+    measure = None
+    if raw is not None:
+        measure = choose_measure(raw, config.picker, registry=config.registry)
+        log.info("picking: the bins take %s", measure.describe())
     if raw is not None and config.envelope.mode != "theory":
         groups = None
         if config.envelope.share:
@@ -724,6 +733,7 @@ def run(
             fallback_time=config.envelope_fallback_time, picker=config.picker,
             registry=config.registry, groups=groups,
             progress=_Span(progress, 0.0, UNITS * envelope_share), cancel=cancel,
+            measure=measure,
         )
         clusters = {d: e.clusters for d, e in by_series.items()}
         shapes = {d: e.fit_shape for d, e in by_series.items()}
@@ -747,6 +757,7 @@ def run(
             raw, config.picker, registry=config.registry, clusters=clusters,
             progress=_Span(progress, UNITS * envelope_share,
                            UNITS * (envelope_share + pick_share)), cancel=cancel,
+            measure=measure,
         )
         pick_share += envelope_share
     else:
@@ -797,7 +808,7 @@ def run(
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
         excluded=excluded, view_exclude=tuple(view_exclude),
         project_file=None if project_file is None else dict(project_file),
-        population_test=test,
+        population_test=test, peak_measure=measure,
     )
     spectra = stored if keep_spectra else None
     review = _review_for(review, fit)
@@ -972,6 +983,7 @@ def resume_bootstrap(
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
         provenance = b.manifest.get("provenance")
         excluded = b.manifest.get("excluded")
+        peak_measure = b.peak_measure()
         project_file = b.manifest["configs"].get("project_file")
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
@@ -991,7 +1003,7 @@ def resume_bootstrap(
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_file,
-        population_test=test,
+        population_test=test, peak_measure=peak_measure,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

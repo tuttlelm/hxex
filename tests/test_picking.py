@@ -43,8 +43,8 @@ from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE = "RDKVQKEYAL"  # 10 residues
 CFG = PickerConfig(ladder="exms", pick="window_max", zero_filling=3, noise_threshold=100.0)
-GOLDEN_CFG = PickerConfig(ladder="exms", pick="window_max", zero_filling=3, noise_threshold=50.0,
-                          nterm_subtract=2)
+GOLDEN_CFG = PickerConfig(ladder="exms", pick="window_max", measure="height", zero_filling=3,
+                          noise_threshold=50.0, nterm_subtract=2)
 
 
 def sticks(plan, heights, spread=0.002):

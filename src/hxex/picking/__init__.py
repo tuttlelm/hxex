@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Peak picking: raw spectra to binned deuterium sticks at predicted positions (the composition
-ladder, see docs/PEAK_PICKING.md), and the envelope of each series (theory, an ion-type mixture or
+ladder, see docs/PEAK_PICKING.md), each bin a peak's height or area (:mod:`.measure`), and the
+envelope of each series (theory, an ion-type mixture or
 inferred from a reference)."""
 
 from .binned import BinnedSet
@@ -13,6 +14,7 @@ from .envelopes import (
     reference_residual,
     series_envelopes,
 )
+from .measure import PeakMeasure, choose_measure
 from .pick import (
     EXMS_DELTA_M,
     BinPlan,
@@ -32,9 +34,11 @@ __all__ = [
     "Envelope",
     "EnvelopeConfig",
     "EnvelopeTable",
+    "PeakMeasure",
     "PickedSpectrum",
     "PickerConfig",
     "reference_mz",
+    "choose_measure",
     "envelope",
     "estimate_envelope",
     "pick_spectra",

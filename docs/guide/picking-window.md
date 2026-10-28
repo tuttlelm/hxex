@@ -31,6 +31,51 @@ before this change. With it, a window of ten or more points whose tallest point 
 gives 0 (the "shoulder rule", `shoulder_min_points`); windows with fewer points keep their
 tallest point.
 
+## A peak's height or its area
+
+```toml
+[run.picker]
+measure = "auto"   # the default; "height" as pyHXExpress, or "area"
+area_fwhm = 1.5    # with areas: how far either side of a peak's top, in peak widths
+```
+
+Once a bin has its peak, it needs a value: the peak's **height** or its **area**. On the Q-TOF
+data tested, weak peaks are wider than tall ones (by 12 to 20 % for peaks at 5 to 30 % of the
+tallest), so a weak peak's height reads it low against a tall one, and the heavy side of every
+envelope comes out too small. An area counts the whole peak. With areas, the undeuterated
+controls matched the isotope pattern of their composition about twice as closely, fewer fully
+deuterated controls seemed to hold two populations (8.8 % instead of 14.9 % on one dataset), and
+the number of populations of the known-answer set was right more often (78 % instead of 75 %).
+An area also does not depend on where the instrument's points happen to fall on a peak: with two
+or three points across a peak, its tallest point can miss the top and read up to a tenth low.
+
+On an Orbitrap, weak and tall peaks are equally wide and areas gained nothing, so heights stay.
+
+With `measure = "auto"`, *hxex* decides for each run from its undeuterated controls. It measures
+the width at half height of each control's tallest peak and of its weak peaks, and takes areas
+when the weak ones are at least 6 % wider (judged on the brighter half of the controls: dim
+spectra give unreliable widths). It needs at least 20 undeuterated controls in profile mode; with
+fewer, or with centroided spectra, it keeps heights. `hxex run` logs the choice, and `hxex info`
+shows it:
+
+```
+bin values     areas (weak peaks 1.12 times as wide as the tallest); peak width 48.6 ppm at m/z 1000
+```
+
+An area is turned back into a number on the height scale: it is divided by the area that the
+run's tallest peaks have per unit of height, so a peak as wide as those keeps its height and a
+wider one counts for more. Tables and figures read as before; mostly the weak bins change.
+
+The area is taken over 1.5 peak widths either side of the peak's top (never more than 0.45 of
+the isotope spacing). That reaches a little further than a height does, so a peak of another
+species right beside this peptide's peak adds more to an area than to a height.
+
+Set `measure = "height"` to reproduce pyHXExpress's sticks, or results made with *hxex* before
+this change. Set `measure = "area"` to take areas whatever the width check says; *hxex* still
+measures the peak width from the undeuterated controls. Like the other picker settings, the
+choice acts when the spectra are picked (`hxex run`; see [Changing these
+settings](#changing-these-settings) for running again from the stored spectra).
+
 ## The default: a ppm tolerance
 
 ```toml
@@ -191,6 +236,6 @@ says where the window came from: "±50 ppm window", "window from R 60000 at m/z 
   16 ppm of their predicted m/z, but the deuterated ones within 20 to 40 ppm, and a 16 ppm window
   lost real deuterated peaks.
 
-The two modes do not give identical sticks on the same spectrum, so compare runs made with the
-same setting. The results bundle records the picker settings, and `hxex info` shows them.
+The two modes do not give identical sticks on the same spectrum, and neither do heights and
+areas, so compare runs made with the same settings. The results bundle records the picker settings, and `hxex info` shows them.
 

@@ -71,6 +71,11 @@ dataset, or adding more, changes them:
   against the m/z calibration of its injection, worked out from all the peptides in it (or from
   the whole project when an injection has fewer than 10). With `recentre` (on by default), a
   series flagged `off_mz` has its windows moved, which changes its picked spectra.
+- **Heights or areas.** With `measure = "auto"` (the default), *hxex* decides whether the bins
+  take the peaks' heights or their areas from all the project's undeuterated controls, and needs
+  at least 20 of them; a project with fewer keeps heights. The peak width used for areas is
+  measured from the same controls. Set `measure = "height"` or `"area"` in `[run.picker]` to fix
+  the choice ([A peak's height or its area](picking-window.md#a-peaks-height-or-its-area)).
 - **Some quality flags.** `saturated` and `tails_low` are judged only on the brighter half of the
   project's undeuterated controls, and `mz_shift` compares a series with the project's typical
   offset.

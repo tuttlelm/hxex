@@ -1265,6 +1265,12 @@ _COMMENTS: dict[str, str] = {
                                  "count bounds the bins)",
     "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window) '
                        'or "window_max" (the tallest point in the window, as pyHXExpress)',
+    "run.picker.measure": 'the value a picked peak gives its bin: "auto" (areas when the run\'s '
+                          "undeuterated controls show weak peaks wider than tall ones, as on "
+                          "the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex "
+                          'info says which), "height" (as pyHXExpress) or "area"',
+    "run.picker.area_fwhm": "with areas: how far either side of a peak's apex its area is "
+                            "taken, in peak widths at half maximum (measured from the run)",
     "run.picker.shoulder_min_points": "with pick = \"window_max\": points in a window from which "
                                       "a maximum at its edge counts as a neighbour's shoulder "
                                       "(bin 0)",

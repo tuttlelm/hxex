@@ -43,7 +43,7 @@ from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..fit.measurements import measurement_identity
 from ..noise import NoiseEstimate
-from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PickerConfig
+from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PeakMeasure, PickerConfig
 from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..population_test import PopulationTest, PopulationTestConfig
@@ -747,6 +747,7 @@ def write_bundle(
     provenance: Mapping | None = None,
     excluded: Mapping | None = None,
     project_file: Mapping | None = None,
+    peak_measure: PeakMeasure | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
@@ -768,7 +769,9 @@ def write_bundle(
     ``excluded`` too (the run-level exclusions: :func:`hxex.exclusions.exclusion_record`).
     ``population_test`` (:mod:`hxex.population_test`) is stored with its steps and the D2O
     fraction of its width check. ``project_file`` is the project file's other settings, as used
-    (:func:`hxex.config.project_record`; None for a run from Python). Beside the manifest, the
+    (:func:`hxex.config.project_record`; None for a run from Python). ``peak_measure``, whether
+    the bins took heights or areas and why (:class:`hxex.picking.PeakMeasure`), is recorded in
+    the manifest. Beside the manifest, the
     bundle holds ``run_settings_used.toml``, every setting of the run written out for people
     (:func:`hxex.config.run_settings_text`); it is replaced with the bundle and not read back.
     """
@@ -856,6 +859,7 @@ def write_bundle(
             "pending": list(pending),
             "provenance": None if provenance is None else dict(provenance),
             **({} if not excluded else {"excluded": dict(excluded)}),
+            **({} if peak_measure is None else {"peak_measure": peak_measure.to_dict()}),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
@@ -1337,6 +1341,12 @@ class Bundle:
         :func:`~hxex.io.read_mzml`, which :func:`~hxex.io.read_mzml_source` repeats), or None if
         it was not recorded. Present even when the spectra themselves were not stored."""
         return self.manifest["configs"].get("spectra_source")
+
+    def peak_measure(self) -> PeakMeasure | None:
+        """Whether the bins took heights or areas, and why (:mod:`hxex.picking.measure`); None
+        for a bundle written before the choice was recorded (its bins are heights)."""
+        data = self.manifest.get("peak_measure")
+        return None if data is None else PeakMeasure.from_dict(data)
 
     def components_table(self) -> dict[str, np.ndarray]:
         """The tidy table of every fit with its intervals (as written for other tools)."""

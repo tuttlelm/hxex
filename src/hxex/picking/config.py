@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 RECORDED = "recorded"  # resolving_power: take each spectrum's value from the scan files
 PICKS = ("peak", "window_max")  # pick: what a bin takes from its window
+MEASURES = ("auto", "height", "area")  # measure: what value a picked peak gives its bin
 ISOTOPE_STEP = 1.00235  # Da, the average spacing of a peptide's isotope peaks
 
 # Thermo quotes the resolving power at m/z 400 on the first Orbitrap generation and at m/z 200
@@ -44,6 +45,14 @@ class PickerConfig:
       vertex of the parabola through it and its neighbours; in centroided data every point), so
       the flank of a peak outside the window is never picked. ``'window_max'``: the tallest point
       in the window, with the shoulder rule (``shoulder_min_points``), as pyHXExpress picks.
+    - ``measure``: what value the picked peak gives its bin (:mod:`hxex.picking.measure`).
+      ``'height'``: its height, as pyHXExpress. ``'area'``: its area over ``area_fwhm`` peak
+      widths either side of its apex, divided by the area of a Gaussian of the run's peak width
+      over the same range (so a peak of that width keeps its height, and a wider one counts
+      for more). ``'auto'`` (the default): areas when the run's undeuterated controls show the
+      width effect (their weak peaks wider than their tallest), heights otherwise; the peak
+      width is measured from the same controls.
+    - ``area_fwhm``: the area's half-range, in peak widths (full width at half maximum).
     - ``resolution_ppm``: the half-width, in ppm, of the window around each predicted m/z in
       which a peak is picked (not a resolving power).
     - ``zero_filling``: how many bins are picked after the last one above the noise threshold.
@@ -91,6 +100,8 @@ class PickerConfig:
     """
 
     pick: str = "peak"
+    measure: str = "auto"
+    area_fwhm: float = 1.5
     resolution_ppm: float = 50.0
     zero_filling: int = 4
     noise_threshold: float | None = None
@@ -117,6 +128,11 @@ class PickerConfig:
         if self.pick not in PICKS:
             raise ValueError(f"pick must be one of {', '.join(map(repr, PICKS))}, "
                              f"not {self.pick!r}")
+        if self.measure not in MEASURES:
+            raise ValueError(f"measure must be one of {', '.join(map(repr, MEASURES))}, "
+                             f"not {self.measure!r}")
+        if isinstance(self.area_fwhm, bool) or not self.area_fwhm > 0:
+            raise ValueError("area_fwhm must be positive")
         if not self.resolution_ppm > 0:
             raise ValueError("resolution_ppm must be positive")
         if self.zero_filling < 0 or int(self.zero_filling) != self.zero_filling:

@@ -4760,3 +4760,39 @@ CSVs or mzML if wanted.
     populations in 22-63 % before inference: saturation, item 181). Noise that scales with the
     spectrum's own intensity, not the reference's, is the next candidate. Undeuterated controls are their own fit shape
     with inference, so their rate of two populations (0-1 %) is no evidence. No code change.
+
+185. **Areas when the run shows the width effect (2026-10-27; items 181, 184).** Owner: the
+    stick measure is judged by how well the undeuterated controls reproduce their
+    natural-abundance envelope (the one ground truth, free of any noise model), so the choice
+    does not wait on the noise model; rule agreed: areas when the run's weak peaks are wider
+    than its tall ones, heights otherwise. Built as `[run.picker] measure` (`"auto"`, the
+    default; `"height"` as pyHXExpress; `"area"`) and `area_fwhm` (1.5), in
+    `hxex.picking.measure`: the run's undeuterated controls are picked once with heights, the
+    FWHM of each one's tallest peak and of its weak peaks (5-30 % of the tallest) measured from
+    the raw profile, and areas taken when the median weak / tallest ratio over the brighter half
+    of the controls is at least 1.06, from at least 20 controls (fewer, or centroided spectra:
+    heights). Dim spectra give unreliable widths: over all controls the noisy unimodal dataset
+    read 1.07, over the brighter half 1.14. The four Q-TOF datasets read 1.12-1.19, the Orbitrap
+    digest 1.02 (with only 20 controls, 5-95 % ranges 1.04-1.25 and 1.00-1.03). The width at an
+    m/z is a Theil-Sen power law from the tallest peaks (flat on the Q-TOF data, +0.50 on the
+    Orbitrap, as its resolving power predicts). An area is the integral of the linearly
+    interpolated profile (gaps count as zero) over +/- 1.5 widths of the apex (at most 0.45 of
+    the isotope spacing), divided by the width times the median area per unit height and width
+    of the controls' tallest peaks, so a peak of the run's width keeps its height on average
+    whatever its line shape (a Gaussian's factor assumed instead read 4 % low, because linear
+    interpolation reads a peak sampled at 2.6 points per width a few per cent wide). The
+    choice is the same for envelope inference and picking, recorded in the manifest
+    (`peak_measure`) and shown by `hxex info`. Also found: at 2.6 points per width a height
+    depends on where the points fall on the peak (the tallest point up to a tenth below the
+    apex), an area does not. Refits of the four Q-TOF datasets with the built picker reproduce
+    the scratch integrals (known answer correct K 74.9 % with heights, 78.3 % scratch, 79.6 %
+    built; benchmark fully deuterated controls reading two or more populations 14.9, 8.8, and
+    8.6 %; labelled 22.9, 19.1, and 20.2 %); the mean replicate-to-bootstrap ratio rose on the
+    benchmark and the noisy dataset (1.43 to 1.54, 1.62 to 1.95) with the robust ratio unchanged,
+    because labelled spectra now read brighter against their undeuterated reference and the
+    constant noise (3 % of its top) is relatively smaller: the noise model's problem of item
+    184. Owner on the next step, the noise from replicate differences: labelled replicates can
+    differ in their real exposure (timing at short times), so only undeuterated and fully
+    deuterated controls (and adjacent scans, where the scans are read) can measure noise that
+    way. Guide: picking-window.md "A peak's height or its area" and part-of-a-dataset.md;
+    PEAK_PICKING.md, PLAN.md (deliberate difference), BUNDLE.md.

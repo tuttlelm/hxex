@@ -826,6 +826,13 @@ def cmd_report(args) -> int:
     return 0
 
 
+def _peak_measure_text(measure) -> str:
+    """What the bins took (heights or areas) and why, for ``hxex info``."""
+    if measure is None:
+        return "heights (written before hxex chose between heights and areas)"
+    return measure.describe()
+
+
 def _noise_reference_text(meas) -> str:
     """What the series' noise levels come from, counted (``hxex info``)."""
     from .noise import noise_reference_kinds
@@ -888,6 +895,7 @@ def cmd_info(args) -> int:
             ("created", m.get("created", "")),
             ("hxex", m.get("versions", {}).get("hxex", "")),
             ("input", source.get("reader", source.get("format", "(not recorded)"))),
+            ("bin values", _peak_measure_text(b.peak_measure())),
             ("measurements", str(len(fit))),
             ("series", str(len(set(fit.data_id.tolist())))),
             ("K tried", ", ".join(str(k) for k in fit.config.k_values)

@@ -355,7 +355,7 @@ def test_run_info_and_report(tmp_path, capsys):
     info = capsys.readouterr().out
     for line in ("project        cli", "input          mzml", "measurements   6",
                  "selected K     1: 6", "bootstrap      yes", "pending        nothing",
-                 "review         none", "checksums      ok"):
+                 "review         none", "checksums      ok", "bin values     heights ("):
         assert line in info
     assert "replaced" not in info and "generations" not in info
     assert cli.main(["report", str(tmp_path / "out"), "--figures", str(tmp_path / "f"),

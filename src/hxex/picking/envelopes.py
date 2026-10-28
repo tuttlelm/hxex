@@ -49,6 +49,7 @@ from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import UNDEUT, time_point
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .measure import PeakMeasure
 from .pick import pick_spectrum, plan_bins
 
 MODES = ("theory", "mixed", "infer")
@@ -307,6 +308,7 @@ def series_envelopes(
     groups: Mapping[int, Hashable] | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    measure: PeakMeasure | None = None,
 ) -> tuple[EnvelopeTable, dict[int, Envelope]]:
     """The envelope of every series (``data_id``) of a :class:`~hxex.spectra.SpectrumSet` from
     its undeuterated controls (the spectra with the role ``'undeut'``). If those are missing or
@@ -316,8 +318,9 @@ def series_envelopes(
     with neither, the theory. With ``config.share``, the series of one group (``groups``:
     ``data_id`` to a key, :func:`hxex.io.envelope_groups`; a series not in it is a group of its
     own) share one envelope (see the module docstring). ``progress(done, total)`` counts the
-    series; ``cancel`` is polled before each group (:class:`hxex.hooks.Cancelled`). Returns the
-    table and the envelopes by series."""
+    series; ``cancel`` is polled before each group (:class:`hxex.hooks.Cancelled`). ``measure``
+    is the run's bin value (:mod:`hxex.picking.measure`; None: heights), so the references are
+    picked as the run picks. Returns the table and the envelopes by series."""
     by_series: dict[int, Envelope] = {}
     sources: dict[int, str] = {}
     own_count: dict[int, int] = {}
@@ -345,7 +348,8 @@ def series_envelopes(
         def taken(sel):
             return [(*spectra.spectrum(int(i)),
                      {"resolving_power": float(spectra.resolving_power[i]),
-                      "resolving_power_mz": float(spectra.resolving_power_mz[i])}) for i in sel]
+                      "resolving_power_mz": float(spectra.resolving_power_mz[i]),
+                      "measure": measure}) for i in sel]
 
         def controls(d, rows=rows):
             return taken(rows[d][spectra.role[rows[d]] == UNDEUT])

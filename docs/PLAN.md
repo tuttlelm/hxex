@@ -428,6 +428,9 @@ Peak picking (`docs/PEAK_PICKING.md` "The intensity of a bin"):
 - Each bin takes the tallest peak (a local maximum of the raw spectrum, its apex inside the
   window) instead of the tallest point in the window, so a neighbour's flank is never picked;
   `pick = "window_max"` picks as pyHXExpress, shoulder rule included (HISTORY 172).
+- A bin takes the peak's area instead of its height when the run's undeuterated controls show
+  weak peaks wider than tall ones (`[run.picker] measure = "auto"`, the default; Q-TOF exports
+  do, an Orbitrap does not); `measure = "height"` picks as pyHXExpress (HISTORY 181, 185).
 
 Chemistry (HISTORY "Phase 1 status: `hxex.chem`"):
 
