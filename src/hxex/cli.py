@@ -826,6 +826,19 @@ def cmd_report(args) -> int:
     return 0
 
 
+def _noise_reference_text(meas) -> str:
+    """What the series' noise levels come from, counted (``hxex info``)."""
+    from .noise import noise_reference_kinds
+
+    kinds = Counter(noise_reference_kinds(meas.data_id, meas.references, meas.role).values())
+    parts = [f"{kinds[k]} series {name}" for k, name in (
+        ("undeuterated control", "from their undeuterated controls"),
+        ("run's scans", "from the run's own scans"),
+        ("own spectrum", "from their own spectra (no undeuterated control fitted: see series.csv "
+                         "noise_reference)")) if kinds[k]]
+    return "; ".join(parts) or "none"
+
+
 def _role_counts_text(fit) -> str:
     """``N undeuterated (S series), M fully deuterated (T series)`` from the fit's roles."""
     from .io import format_time
@@ -885,6 +898,7 @@ def cmd_info(args) -> int:
             ("controls", ("yes" if b.has("controls") else "no")
              + _promotion_text(run_config.get("controls"))),
             ("roles", _role_counts_text(fit)),
+            ("noise reference", _noise_reference_text(b.measurements())),
             ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
              else "order: the times only order the points"),
             ("quality flags", "yes" if b.has("quality") else "no"),

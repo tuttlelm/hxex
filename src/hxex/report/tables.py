@@ -21,6 +21,7 @@ import numpy as np
 from ..controls import CONTROL_NOTES, correct_means
 from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
+from ..noise import noise_reference_kinds
 from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
@@ -313,8 +314,10 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     control flags that only warn, :data:`hxex.controls.CONTROL_NOTES`), ``retention`` (the
     deuterium retention used for the back-exchange correction, a fraction; NaN without
     controls), ``control_fallback`` (the correction used a fallback, not the series' own
-    controls) and ``rt`` (the median chromatographic retention time of its spectra, minutes;
-    NaN: unknown)."""
+    controls), ``noise_reference`` (what its noise level comes from: ``undeuterated control``,
+    ``own spectrum`` when no undeuterated control of the series was fitted, or ``run's scans``
+    for kinetics; :func:`hxex.noise.noise_reference_kinds`) and ``rt`` (the median
+    chromatographic retention time of its spectra, minutes; NaN: unknown)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
     b = results.binned
@@ -325,9 +328,11 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
         "n_rejected", "n_multi", "controls", "control_notes", "retention", "control_fallback",
-        "rt")}
+        "noise_reference", "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
+    meas = results.measurements
+    refs = noise_reference_kinds(meas.data_id, meas.references, meas.role)
     for d in ids:
         members = np.flatnonzero(fit.data_id == d)
         j = where.get(str(fit.spectrum_id[members[0]]))
@@ -345,12 +350,13 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
             "control_notes": "" if r is None else _control_notes(str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
             "control_fallback": False if r is None else bool(ctrl.fallback[r]),
+            "noise_reference": refs.get(int(d), ""),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),
         }
         for name, value in values.items():
             cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
-    for name in ("sample", "peptide_range", "peptide", "controls"):
+    for name in ("sample", "peptide_range", "peptide", "controls", "noise_reference"):
         out[name] = out[name].astype(str)
     return out
 

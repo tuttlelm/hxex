@@ -33,8 +33,10 @@ These are expected: keep each series together with its controls.
   undeuterated control. If the control is missing from the project, each spectrum is judged
   against itself instead. A labelled spectrum is usually dimmer than its undeuterated control,
   so its noise is then set lower, and the fit chooses two or three populations more often than
-  it should. *hxex* does not yet warn about this, so check that every peptide
-  and charge state you fit has its undeuterated control in the same project.
+  it should. `hxex run` warns when this happens and names the series, the `noise_reference`
+  column of `series.csv` says for every series where its noise level came from (`undeuterated
+  control` or `own spectrum`), and `hxex info` counts them. Keep every peptide and charge state
+  you fit together with its undeuterated control in the same project.
 - **The fully deuterated control sets the scale of the correction** (see
   [Back-exchange correction](back-exchange-correction.md)).
 - **The charge states of a peptide share their fully deuterated controls.** With

@@ -195,6 +195,29 @@ def test_the_stages_are_named_in_order_and_cover_the_units(tmp_path):
     assert done.count(1000) == 1 and rec.calls[-1] == ("done", 1000, 1000)
 
 
+def test_a_series_without_its_undeuterated_control_is_warned_about(tmp_path, caplog):
+    from hxex import load_results
+    from hxex.noise import noise_reference_kinds
+    from hxex.report import series_table
+
+    raw = raw_spectra(n_series=2)
+    keep = ~((raw.data_id == 1) & (raw.role == "undeut"))
+    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+        run(raw.select(keep), config(bootstrap=None), out=tmp_path / "b")
+    assert "1 of 2 series have no undeuterated control" in caplog.text
+    assert "S 0001-0010 2+" in caplog.text
+    table = series_table(load_results(tmp_path / "b"))
+    assert list(table["noise_reference"]) == ["undeuterated control", "own spectrum"]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hxex.run"):  # a fixed sd needs no reference
+        run(raw.select(keep), config(bootstrap=None, fit=dataclasses.replace(
+            config().fit, noise=NoiseConfig("gaussian", sd=100.0, percent=None))))
+    assert "undeuterated control" not in caplog.text
+    assert noise_reference_kinds([0, 0, 1, 2], [(0,), (0,), None, (3,)],
+                                 ["undeut", "", "", ""]) == {
+        0: "undeuterated control", 1: "own spectrum", 2: "run's scans"}
+
+
 def test_random_numbers_follow_what_a_spectrum_is_not_the_project_name(tmp_path):
     raw = raw_spectra(n_series=2)
     other = dataclasses.replace(raw, spectrum_id=np.array(

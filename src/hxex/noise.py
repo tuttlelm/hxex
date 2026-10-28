@@ -147,6 +147,26 @@ def control_references(
     return out
 
 
+def noise_reference_kinds(
+    data_id: Sequence[int], references: Sequence[Reference], role: Sequence[str]
+) -> dict[int, str]:
+    """What each series' noise level comes from: ``'undeuterated control'`` (its own controls),
+    ``"run's scans"`` (a kinetics run's own scans, :func:`kinetics_references`) or
+    ``'own spectrum'`` when one of its measurements has no reference (no undeuterated control of
+    the series was fitted, so the spectrum sets its own level from its tallest peak). A series
+    with several kinds takes the first of own spectrum, run's scans, undeuterated control."""
+    undeut = np.asarray(role, dtype=str) == UNDEUT
+    order = ("own spectrum", "run's scans", "undeuterated control")
+    out: dict[int, str] = {}
+    for series, ref in zip(np.asarray(data_id), references, strict=True):
+        kind = ("own spectrum" if ref is None
+                else "undeuterated control" if all(undeut[j] for j in ref) else "run's scans")
+        s = int(series)
+        if s not in out or order.index(kind) < order.index(out[s]):
+            out[s] = kind
+    return out
+
+
 def kinetics_references(
     data_id: Sequence[int],
     rep: Sequence[int],

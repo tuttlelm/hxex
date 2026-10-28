@@ -781,6 +781,7 @@ def test_series_table_and_finding_series(results):
     assert set(t["peptide"]) == {"RDKVQKEYAL"} and list(t["charge"]) == [2, 2]
     assert list(t["controls"]) == ["measured", "measured"] and not t["control_fallback"].any()
     np.testing.assert_allclose(t["retention"], results.controls.retention)
+    assert list(t["noise_reference"]) == ["undeuterated control"] * 2
     assert list(t["n_multi"]) == [int((results.effective_K[results.fit.data_id == d] > 1).sum())
                                   for d in (0, 1)]
     assert find_series(results) == [0, 1] and find_series(results, samples=["S"]) == [0, 1]

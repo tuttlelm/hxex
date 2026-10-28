@@ -147,7 +147,7 @@ The main commands and options; every option is in the
 | `hxex resume PROJECT` | complete the bootstrap of the project's bundle, the fits kept: add one (the project's `[run.bootstrap]`) when there is none, redo it when its settings changed, and bootstrap the spectra whose number of populations the review table chose (only those). Slow: a whole bootstrap; only the chosen spectra when that is all that is missing |
 | `hxex report PROJECT` or `hxex report BUNDLE` `[--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--k K] [--format F]` | figures and tables from a bundle (given the project file: its bundle, `[figures]` settings and exclusion rules); fits nothing. The tables take seconds; the figures about a second per peptide drawn, so an hour or more with `--series all` on a large run |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`); fits nothing. Seconds to minutes |
-| `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, times, review, what it replaced, earlier generations |
+| `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, noise reference, times, review, what it replaced, earlier generations |
 
 `hxex init` refuses to write over an existing project file, so your edits are not lost by
 accident; `--force` replaces it with a fresh template.

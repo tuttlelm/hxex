@@ -377,6 +377,32 @@ _TEST_WEIGHT, _TEST_WEIGHT_STEP = 11.0, 7.0
 _BOOTSTRAP_WEIGHT = 7.0 / 3.0
 
 
+def _warn_own_reference(meas: Measurements, picked, config: RunConfig) -> None:
+    """Warn when series are fitted without an undeuterated control: each of their spectra is
+    then its own noise reference, so its noise is usually set lower than its series' and the
+    number of populations can be over-estimated (guide: Analysing part of a dataset)."""
+    from .noise import noise_reference_kinds
+
+    if config.fit.noise.sd is not None:  # a fixed sd: the reference is not used
+        return
+    kinds = noise_reference_kinds(meas.data_id, meas.references, meas.role)
+    own = sorted(s for s, k in kinds.items() if k == "own spectrum")
+    if not own:
+        return
+    if len(own) == len(kinds):
+        log.warning("no series has an undeuterated control in this run, so every spectrum is its "
+                    "own noise reference (its noise set from its own tallest peak): the number of "
+                    "populations can be over-estimated (guide: Analysing part of a dataset)")
+        return
+    first = {int(d): i for i, d in reversed(list(enumerate(picked.data_id)))}
+    names = [f"{picked.sample[first[s]]} {picked.peptide_range[first[s]]} "
+             f"{int(picked.charge[first[s]])}+" for s in own[:5]]
+    log.warning("%d of %d series have no undeuterated control in this run, so their spectra are "
+                "their own noise reference (noise set from their own tallest peak; the number of "
+                "populations can be over-estimated): %s%s; series.csv noise_reference lists them",
+                len(own), len(kinds), ", ".join(names), ", ..." if len(own) > 5 else "")
+
+
 def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
     k_max = config.fit.k_max
     itemsize = config.fit.backend.torch_dtype().itemsize
@@ -744,6 +770,7 @@ def run(
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )
+    _warn_own_reference(measurements, picked, config)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None

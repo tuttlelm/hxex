@@ -4726,3 +4726,37 @@ CSVs or mzML if wanted.
     `docs/guide/part-of-a-dataset.md`, linked from the index and from outputs.md "Running again".
     Not built: warnings for the silent fallbacks, storing every run-level value, a
     batch-invariance test.
+
+183. **A warning for series fitted without their undeuterated control (2026-10-27; item 182).**
+    `hxex run` now warns when series have no undeuterated control (each of their spectra its own
+    noise reference: the sd set from its own tallest peak, usually lower than the series', so
+    the number of populations can be over-estimated), naming up to five series, or once when no
+    series has one; not with a fixed `[run.fit.noise] sd`. `series.csv` gains `noise_reference`
+    (`undeuterated control`, `own spectrum`, or `run's scans` for kinetics;
+    `hxex.noise.noise_reference_kinds`), and `hxex info` counts the series of each kind. The
+    guide page `part-of-a-dataset.md` points to them. Not built: the same in `hxex check` (it
+    would need the reference rules before fitting).
+
+184. **Inferred envelopes and the bright-spectrum misfit (2026-10-27; items 180-181).** The
+    reproducible residual of bright undeuterated controls is mostly specific to each peptide
+    (a response shared by share of the top and brightness explains R² 0.13-0.34 on integrals;
+    a co-eluting species at a fixed m/z adds some: rank correlation of undeuterated and fully
+    deuterated excesses at the same bins +0.30 on the intact-peptide benchmark, +0.39 on the
+    private noisy unimodal dataset). A peptide-specific error of the natural-abundance shape
+    would reach the deuterated spectra by convolution, which `[run.envelope] mode = "infer"`
+    already models, so four Q-TOF datasets were refitted with it (constant noise, heights and
+    integrals). It helps slightly and harms nothing measured: labelled spectra with two or
+    more populations down 0.6-3 points (most on the noisy unimodal dataset), the known-answer
+    set's correct K up 0.3-1.3 points, the replicate-to-bootstrap ratio on the benchmark
+    1.46 to 1.37 (heights) and 1.43 to 1.36 (integrals). Fully deuterated controls more than
+    twice as bright as their undeuterated reference still read two or more populations in
+    58-89 %. Those controls are not bright in absolute terms on the Q-TOF datasets (median top
+    about 25,000 against an undeuterated reference of about 8,000; 4-6 % above the undeuterated
+    controls' 90th percentile), and by absolute top neither control reads two populations more
+    often when brighter (bright undeuterated controls 0 % above the 95th percentile). So on
+    those data the excess comes from the noise reference, not from brightness: the sd is 3 % of
+    a dim reference's tallest peak, too small for a spectrum two or more times taller. On the
+    tutorial data it is brightness (undeuterated controls above about 800,000 read two
+    populations in 22-63 % before inference: saturation, item 181). Noise that scales with the
+    spectrum's own intensity, not the reference's, is the next candidate. Undeuterated controls are their own fit shape
+    with inference, so their rate of two populations (0-1 %) is no evidence. No code change.
