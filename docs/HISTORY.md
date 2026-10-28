@@ -4796,3 +4796,46 @@ CSVs or mzML if wanted.
     deuterated controls (and adjacent scans, where the scans are read) can measure noise that
     way. Guide: picking-window.md "A peak's height or its area" and part-of-a-dataset.md;
     PEAK_PICKING.md, PLAN.md (deliberate difference), BUNDLE.md.
+
+186. **Are the sequence-based natural-abundance shapes right? (2026-10-28; items 181, 184.)**
+    Owner: be confident in the theoretical shapes before attributing differences from them to
+    anything else. (1) The calculation: brainpy's shapes equal a direct convolution of the NIST
+    isotope abundances (pyteomics `nist_mass`) to 1e-15, and every stored shape in five bundles
+    (the intact-peptide benchmark, the tutorial run, the private noisy unimodal dataset, and the
+    known-answer set, area sticks; the published Orbitrap digest, heights) rebuilds exactly from
+    its sequence. (2) The composition: an error in an abundance or a composition rule grows with
+    the number of atoms, but the 13C abundance that best fits each undeuterated control (bins at
+    least 5 % of the tallest; middle three brightness quintiles) does not change with carbon count
+    within one charge (benchmark 2+ rho -0.04, n 890; 3+ -0.14, n 586; noisy set 2+ and 3+ within
+    0.02). (3) The abundance: fitted 13C 1.065-1.09 % on the Q-TOF datasets at 2+ and above,
+    against IUPAC's 1.070 % (d13C -32.6 permil; biological material -10 to -30 permil is
+    1.068-1.095 %, a difference of a few per cent at heavy bins), with residuals at the bins that
+    carry the signal within +-1.5 % (benchmark), +-3 % (noisy set), +-1 % (tutorial, dimmest
+    quintile only), and +-3 % at the first three bins of the Orbitrap (later bins lose weak peaks,
+    item 181(5)). (4) Charge pairs of one injection agree less than replicate pairs of one charge
+    (residual Spearman +0.17 vs +0.45 benchmark, -0.09 vs +0.30 noisy set; tutorial +0.91 vs +0.90,
+    saturation shared): the composition is the same at both charges, so the reproducible pattern
+    of item 181(6) belongs to the ion, not to the sequence-based shape. Item 184's "peptide-
+    specific error of the natural-abundance shape" is withdrawn: what repeats across replicates
+    is driven by brightness (replicates of one peptide share it) and by the ion. What departs
+    from the shapes: brightness (the tutorial run's compression from tops of about 275,000, lower
+    than the 600,000-800,000 of item 181; the benchmark's heavy-side deficit above about 210,000,
+    -16 to -26 % at bins 3-5), a tilt with charge, the picked floor at bins
+    below 5 % of the top in dim spectra, and the Orbitrap's dropped weak peaks. The IUPAC value
+    stays (small next to these). Not tested: sulfur on its own. The tilt with charge: across
+    spectra 1+ ions read 13C 1.035-1.050 % (d13C about -60 permil, below any biological value)
+    and 3+ and above 1.08-1.10 %, but 90-99 % of the 1+ undeuterated controls carry another
+    species (a picker screen above 0; chemical background in electrospray is mostly singly
+    charged) and the few clean ones read 1.072 % (benchmark, n 18); paired within one injection
+    1+ to 2+ is +0.013 (share higher 0.56). From 2+ to 4+ a small tilt remains: paired +0.02 to
+    +0.03 points of 13C per charge step (2+ to 3+ higher in 70 % of 327 pairs, 3+ to 4+ 72 % of 134;
+    noisy set 2+ to 3+ +0.025, 63 %), the same in spectra no screen flags and with heights, and
+    unrelated to m/z or brightness within one charge (|rho| <= 0.1). Peak geometry cannot cause it:
+    the Q-TOF widths are a constant share of m/z (49 ppm, exponent 0.05), so width over isotope
+    spacing is the same at every charge of a peptide. Untested candidate: a detector response that
+    depends on the ion's charge (impact energy, single-ion pulse height) acting on weak signals.
+    Its size: about 3 % of the M+1/M ratio per charge step, a shift of the natural envelope's mean
+    of about 0.015 Da for 50 carbons, negligible for uptake. Heights read 13C 0.03-0.05 points
+    lower than areas (benchmark 2+ 1.000-1.050 %, d13C to -95 permil): the height deficit of weak
+    peaks of item 181, which areas remove. Scripts:
+    `noise_model/shape_check` (private, README).
