@@ -278,7 +278,8 @@ def compare_peptides(
     controls: Mapping | None = None,
     choice: ChoiceConfig = ChoiceConfig(),  # noqa: B008
     best_sets: Mapping[tuple, tuple[int, float]] | None = None,
-    two_population_sets: bool = True,
+    two_population_sets: bool | None = None,
+    populations: str | None = None,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
@@ -310,8 +311,10 @@ def compare_peptides(
     elsewhere one side's K=2 fit is a small tail, not a second state. Such a row's difference
     is NaN and ``reason`` says ``'one population (sample)'``, ``'(reference)'`` or ``'(both)'``.
     ``best_sets`` (:func:`hxex.analysis.best_sets`) gives each species' choice; without it, it
-    is computed from the results with the same settings. ``two_population_sets=False`` turns
-    this off (``[analysis] populations = "bootstrap"``): every K=2 description is compared."""
+    is computed from the results with the same settings and the ``populations`` rule (None:
+    the results', as ``hxex analyse`` takes it, :func:`hxex.analysis.settings.population_rule`).
+    ``two_population_sets=False`` turns this off (the default with ``populations =
+    "bootstrap"``): every K=2 description is compared."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if match not in MATCHES:
@@ -320,6 +323,11 @@ def compare_peptides(
         raise ValueError(f"quantity must be one of {', '.join(QUANTITIES)}")
     if quantity == "population" and K != 2:
         raise ValueError("populations are compared at K = 2 (the lever rule)")
+    from .settings import population_rule
+
+    populations = population_rule(populations, results)
+    if two_population_sets is None:
+        two_population_sets = populations != "bootstrap"
     if not two_population_sets:
         best_sets = None
     elif K >= 2 and best_sets is None:
@@ -328,7 +336,8 @@ def compare_peptides(
 
         best_sets = _best_sets(species_uptake(
             results, (1, K), exclude_flagged=exclude_flagged, filters=filters,
-            controls=controls, min_population=choice.min_population))
+            controls=controls, min_population=choice.min_population,
+            populations=populations))
     if quantity == "population":
         return _compare_populations_peptides(results, reference, samples, rank, alpha,
                                              exclude_flagged, filters, match, controls, choice,

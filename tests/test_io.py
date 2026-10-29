@@ -688,6 +688,38 @@ def test_spectrum_ids_are_unique_and_stable(hxdir, specroot):
         s.find("nope")
 
 
+def test_entries_sharing_a_file_get_distinct_ids(specroot, hxdir):
+    """One peptide folder listed twice in the table (two modifications of one peptide): its
+    spectra are read for each entry, the ids of the two carry the entry's series number, and
+    every other id stays as it was, also when a filter leaves one twin out; spectrum_index
+    gives the same ids."""
+    import dataclasses
+
+    entries = hio.scan(specroot, "specexport")
+    plain = hio.read_spectra(entries, specroot, "specexport", project="p")
+    twin = dataclasses.replace(entries[0], modification="H:1")
+    both = list(entries) + [twin]
+    s = hio.read_spectra(both, specroot, "specexport", project="p")
+    assert len(set(s.spectrum_id)) == len(s) == len(plain) + int((plain.data_id == 0).sum())
+    shared = s.data_id == 0
+    assert all(i.endswith("#series0") for i in s.spectrum_id[shared])
+    assert all(i.endswith(f"#series{len(entries)}") for i in s.spectrum_id[s.data_id == len(
+        entries)])
+    others = ~shared & (s.data_id != len(entries))
+    assert set(s.spectrum_id[others]) == set(plain.spectrum_id[plain.data_id != 0])
+    assert set(s.modification[s.data_id == len(entries)]) == {"H:1"}
+    index = hio.spectrum_index(both, specroot, "specexport", project="p")
+    assert list(index.spectrum_id) == list(s.spectrum_id)
+    one = hio.read_spectra(both, specroot, "specexport", project="p",
+                           peptide_ranges=[entries[0].peptide_range])
+    assert set(one.spectrum_id) <= set(s.spectrum_id)
+    # an HX-Express file is read whole: two entries of one file share their columns
+    hx = hio.scan(hxdir, "hxexpress")
+    h = hio.read_spectra(list(hx) + [dataclasses.replace(hx[0], modification="H:1")], hxdir,
+                         "hxexpress", project="p")
+    assert len(set(h.spectrum_id)) == len(h)
+
+
 def test_project_name_qualifies_ids(hxdir):
     from hxex.spectra import qualify_spectrum_id, split_spectrum_id
 

@@ -57,8 +57,11 @@ def test_residue_values_from_every_peptide_and_the_two_population_vote():
     same peptides (owner, 2026-10-22, HISTORY 141); the two-population peptides' vote decides
     which residues have two populations."""
     up = uptake()
-    plain = residue_map(up, sequences=SEQUENCE)
+    plain = residue_map(up, sequences=SEQUENCE, two_population_peptides=False)
     gated = residue_map(up, sequences=SEQUENCE, two_population_peptides=True)
+    # the table's rule (best_set) is followed when not given
+    assert np.array_equal(residue_map(up, sequences=SEQUENCE).two_population_weight,
+                          gated.two_population_weight, equal_nan=True)
     for residue in (8, 13, 15):
         for k, rank in ((1, 1), (2, 1), (2, 2)):
             assert value(gated, residue, k, rank) == value(plain, residue, k, rank)

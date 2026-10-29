@@ -585,6 +585,49 @@ def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tm
         assert RunConfig.from_dict(b.manifest["configs"]["run"]).fit.screen
 
 
+def test_a_k_chosen_in_review_survives_the_screen(whole, tmp_path, caplog):
+    """A K the screen skips: a review table's choice of it is fitted by the run anyway (the
+    selected K unchanged) and bootstrapped; a bundle fitted without it gets it from resume,
+    as the run would have fitted it; a carried-over bundle review choosing it is marked stale
+    (no crash at write, with the bootstrap's checkpoint)."""
+    from hxex.io import ReviewTable
+    from hxex.run import resume_bootstrap
+
+    raw, res = whole
+    cfg = config(fit=dataclasses.replace(config().fit, screen=True))
+    plain = run(raw, cfg, out=tmp_path / "s")
+    skipped = np.flatnonzero(~plain.fit.fitted(2))
+    assert len(skipped) >= 2
+    a, b = (str(plain.fit.spectrum_id[i]) for i in skipped[:2])
+    # the run with the table's choice
+    chosen = run(raw, cfg, chosen_k={a: 2})
+    i = skipped[0]
+    assert chosen.fit.fitted(2)[i] and not chosen.fit.fitted(2)[skipped[1]]
+    np.testing.assert_array_equal(chosen.fit.selected_K, plain.fit.selected_K)
+    assert chosen.bootstrap_by_k[2].covers(i)
+    # the bundle fitted without it: resume fits it, as the run did, and bootstraps it
+    resumed = resume_bootstrap(tmp_path / "s", chosen_k={a: 2})
+    assert resumed.fit.fitted(2)[i] and resumed.bootstrap_by_k[2].covers(i)
+    assert resumed.fit.fits[2].nll[i] == pytest.approx(chosen.fit.fits[2].nll[i], rel=1e-4)
+    others = np.ones(len(plain.fit), dtype=bool)
+    others[i] = False
+    np.testing.assert_array_equal(resumed.fit.fitted(2)[others], plain.fit.fitted(2)[others])
+    np.testing.assert_array_equal(resumed.fit.selected_K, plain.fit.selected_K)
+    with open_bundle(tmp_path / "s") as bundle:
+        assert bundle.fit().fitted(2)[i]
+    # a bundle review choosing K = 2 (fitted there) carried to a run whose screen skips it:
+    # stale, and the run completes (it failed at the checkpoint write)
+    run(raw, config(), out=tmp_path / "r")
+    with open_bundle(tmp_path / "r") as bundle:
+        bundle.set_review(ReviewTable.empty().update(b, k_override=2, note="two?"))
+    with caplog.at_level(logging.INFO, logger="hxex.run"):
+        again = run(raw, cfg, out=tmp_path / "r", overwrite=True)
+    assert "1 stale" in caplog.text
+    assert again.review.get(b)["stale"] and again.review.get(b)["note"] == "two?"
+    with open_bundle(tmp_path / "r") as bundle:
+        assert bundle.review().get(b)["stale"] and not bundle.pending
+
+
 def test_a_late_time_point_serves_as_the_fully_deuterated_control(whole):
     """[run.controls] fulldeut_at: the spectra at that time are the control as well."""
     raw, _ = whole
@@ -611,6 +654,34 @@ def test_stored_spectra_keep_the_readers_roles(whole, tmp_path):
     again = run(stored, config(controls=ControlConfig(), bootstrap=None))
     assert (again.controls.n_fd == 2).all()
     assert ((again.fit.role == "") & np.isclose(again.fit.time, 60.0)).any()
+
+
+def test_a_rerun_from_stored_spectra_reuses_their_picking(whole, tmp_path, caplog):
+    """A rerun from a bundle's stored spectra takes the bundle's picked table when picking again
+    would give it (the same spectra, roles, picking settings and hxex version): the results
+    equal a run that picks; a change of any of them picks again, saying what differed."""
+    from hxex.config import load_stored_spectra
+
+    raw, _ = whole
+    cfg = config(bootstrap=None)
+    first = run(raw, cfg, out=tmp_path / "b")
+    stored = load_stored_spectra(tmp_path / "b")
+    with caplog.at_level(logging.INFO, logger="hxex.run"):
+        again = run(stored, cfg)
+    assert "the picking stored in" in caplog.text
+    for a, b in zip(again.binned.intensity, first.binned.intensity, strict=True):
+        np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(again.fit.selected_K, first.fit.selected_K)
+    np.testing.assert_allclose(again.fit.fits[1].nll, first.fit.fits[1].nll)
+    caplog.clear()
+    wider = dataclasses.replace(cfg, picker=dataclasses.replace(cfg.picker, resolution_ppm=40.0))
+    with caplog.at_level(logging.INFO, logger="hxex.run"):
+        run(stored, wider)
+    assert "picking the stored spectra again: [run.picker] differ(s)" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hxex.run"):
+        run(stored, config(controls=ControlConfig(fulldeut_at=60.0), bootstrap=None))
+    assert "the control roles" in caplog.text
 
 
 def test_the_controls_are_fitted_at_k1_whatever_k_min(tmp_path):

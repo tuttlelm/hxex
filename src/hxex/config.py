@@ -37,6 +37,7 @@ and :func:`template` writes a project file with every default.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -51,7 +52,7 @@ from typing import Any
 
 from .hooks import CancelHook, ProgressHook
 from .io.errors import ReadError
-from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget
+from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget, _run_file_name, number_replicates
 from .io.times import TIME_SCALES, parse_time
 from .run import RunConfig
 from .spectra import SpectrumSet, check_role
@@ -526,7 +527,8 @@ def _fragment_settings(block) -> FragmentSettings:
     _check_keys(frag, {f.name for f in fields(FragmentSettings)}, "[input.fragments]")
     if "ions" not in frag:
         raise ProjectError("input.fragments needs ions (for example \"c-1:ALL z-dot:ALL\")")
-    frag = {k: _none(v) for k, v in frag.items()}
+    frag = _false_to_none(frag, FragmentSettings)  # limit_charge = false stays a switch
+    _check_types(frag, FragmentSettings, "input.fragments")
     if "rt_window" in frag:
         frag["rt_window"] = _window(frag["rt_window"], "input.fragments.rt_window")
     if frag.get("parent_mz") not in (None, "parent"):
@@ -536,11 +538,13 @@ def _fragment_settings(block) -> FragmentSettings:
 
 
 def _input_from(data: Mapping, base: Path) -> InputSettings:
-    """The ``[input]`` table. With ``spectra`` (stored raw spectra) the rest of the table is
-    checked as usual when it is there (the same project file can read the input or rerun from a
-    bundle), but the format is that of the stored spectra's read record (logged when the file
-    says otherwise); with ``spectra`` alone (and at most ``retention_times`` and
-    ``time_scale``) it comes from the record only."""
+    """The ``[input]`` table. With ``spectra`` (stored raw spectra) the read is skipped; the
+    rest of the table is checked as usual when it is there (the same project file can read the
+    input or rerun from a bundle), but the format is that of the stored spectra's read record
+    (logged when the file says otherwise, as is any other read setting the file gives that
+    differs from the record: the record is what ``run_settings_used.toml`` keeps); with
+    ``spectra`` alone (and at most ``retention_times`` and ``time_scale``) it comes from the
+    record only."""
     names = {f.name for f in fields(InputSettings)}
     _refuse_control_times(data, "[input]", "the control labels (Non/Full, undeut/TD) give "
                           "their spectra a role; for a scan format set role in [[input.runs]]")
@@ -561,7 +565,7 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
             time_scale=_time_scale(data, source), spectra=stored, exclude=_exclude(data),
             **record)
-    inp = replace(_read_settings(data, base), time_scale=_time_scale(data, source))
+    inp = replace(_read_settings(data, base, stored=True), time_scale=_time_scale(data, source))
     if source is None:  # the file's own settings until the record can be read
         return replace(inp, spectra=stored)
     differs = {k: getattr(inp, k) for k, v in record.items() if getattr(inp, k) != v
@@ -571,7 +575,67 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
                     "%s do(es) not apply to them", ", ".join(
                         f"{k} = {v!r}" for k, v in record.items() if k in differs),
                     ", ".join(f"{k} = {v!r}" for k, v in differs.items()))
+    elif other := _read_differences(inp, source, set(data)):
+        log.warning("input.spectra: the stored spectra were read with other %s than the "
+                    "project file's [input] gives; they are recorded as read (in the bundle's "
+                    "run_settings_used.toml), and the project file's do not apply",
+                    ", ".join(other))
     return replace(inp, spectra=stored, **record)
+
+
+def stored_read_settings(source: Mapping | None) -> dict[str, Any]:
+    """The ``[input]`` read settings recorded in the read record of stored spectra, written as
+    the reader recorded them (paths as ``record_paths`` said): ``format`` and, for a folder
+    format, ``data_dir``, ``samples``, ``peptide_ranges`` and ``peptide_region``, or for a scan
+    format the ``runs`` and ``scans``, with ``record_paths``. Empty without a record."""
+    reader = (source or {}).get("reader")
+    if reader not in FORMATS:
+        return {}
+    out: dict[str, Any] = {"format": reader}
+    if reader in FOLDER_FORMATS:
+        out.update({key: source.get(key) for key in ("data_dir", "samples", "peptide_ranges",
+                                                     "peptide_region")})
+    else:
+        runs = []
+        for r in source.get("runs") or []:
+            item = dict(r)
+            if item.get("time") is None:
+                item.pop("time", None)  # each scan has its own time
+            runs.append(_toml_ready(item))
+        out.update(runs=runs, scans=source.get("config"))
+    out["record_paths"] = source.get("record_paths", "path")
+    return out
+
+
+def _read_differences(inp: InputSettings, source: Mapping, given: set[str]) -> list[str]:
+    """The read settings the project file gives (``given``: its ``[input]`` keys) that differ
+    from those the stored spectra were read with (``source``, their read record)."""
+    def names(paths):
+        return [_run_file_name(p) for p in paths]
+
+    out = []
+    if inp.format in FOLDER_FORMATS:
+        if "data_dir" in given and inp.data_dir is not None and source.get("data_dir"):
+            recorded = Path(source["data_dir"])
+            same = (recorded.name == inp.data_dir.name
+                    if source.get("record_paths") == "name" or not recorded.is_absolute()
+                    else recorded.resolve() == inp.data_dir.resolve())
+            if not same:
+                out.append("data_dir")
+        for key in ("samples", "peptide_ranges", "peptide_region"):
+            mine = getattr(inp, key)
+            if key in given and (None if mine is None else list(mine)) != source.get(key):
+                out.append(key)
+        return out
+    recorded = [MzmlRun.from_dict(r) for r in source.get("runs") or []]
+    if "runs" in given and (
+            [(r.sample, r.time, r.role) for r in inp.runs]
+            != [(r.sample, r.time, r.role) for r in recorded]
+            or names(r.path for r in inp.runs) != names(r.path for r in recorded)):
+        out.append("runs")
+    if "scans" in given and json.loads(json.dumps(inp.scans.to_dict())) != source.get("config"):
+        out.append("scans")
+    return out
 
 
 def _record_paths(data: Mapping, allowed: tuple[str, ...], fmt: str) -> None:
@@ -583,7 +647,9 @@ def _record_paths(data: Mapping, allowed: tuple[str, ...], fmt: str) -> None:
                            f"{', '.join(repr(a) for a in allowed)} for {fmt}{extra}")
 
 
-def _read_settings(data: Mapping, base: Path) -> InputSettings:
+def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSettings:
+    """The read settings of ``[input]``; with ``stored`` (beside ``spectra``: they describe the
+    stored spectra and are not used to read) the paths the read needs may be left out."""
     fmt = data.get("format")
     if fmt not in FORMATS:
         raise ProjectError(f"input.format must be one of {', '.join(FORMATS)}")
@@ -593,11 +659,11 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         if extra:
             raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are for mzml and "
                                f"thermo, not {fmt}")
-        if "data_dir" not in data:
+        if "data_dir" not in data and not stored:
             raise ProjectError(f"input.data_dir is needed for {fmt}")
         _record_paths(data, ("path", "name"), fmt)
         return InputSettings(
-            format=fmt, data_dir=_path(base, data["data_dir"], "input.data_dir"),
+            format=fmt, data_dir=_path(base, data.get("data_dir"), "input.data_dir"),
             samples=_strings(data.get("samples"), "input.samples"),
             peptide_ranges=_ranges(data.get("peptide_ranges")),
             peptide_region=_region(data.get("peptide_region")),
@@ -612,11 +678,11 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     if extra:
         raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are not used by {fmt} "
                            "(the runs give the samples and times)")
-    if "peptides" not in data:
+    if "peptides" not in data and not stored:
         raise ProjectError("input.peptides (a peptide table, CSV) is needed for mzml and thermo")
     _record_paths(data, ("path", "relative", "name"), fmt)
     runs = _items(data.get("runs"))
-    if not isinstance(runs, list) or not runs:
+    if not isinstance(runs, list) or (not runs and not stored):
         raise ProjectError("give at least one [[input.runs]] (path and sample)")
     run_names = {f.name for f in fields(MzmlRun)}
     parsed_runs = []
@@ -654,6 +720,11 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
                                                   for k, v in r.items()}))
         except (TypeError, ValueError) as exc:
             raise ProjectError(f"{where}: {exc}") from exc
+    try:
+        parsed_runs = number_replicates(parsed_runs, ["rep" in r for r in runs])
+    except ValueError as exc:
+        if not stored:  # a record of runs read before replicates were numbered
+            raise ProjectError(f"[[input.runs]]: {exc}") from exc
     target = dict(data.get("target", {}))
     _check_keys(target, _TARGET_KEYS, "[input.target]")
     target = {k: _none(v) for k, v in target.items()}
@@ -663,7 +734,9 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
         target["parent_mz"] = _window(target["parent_mz"], "input.target.parent_mz",
                                       "[low, high] (m/z) or false")
     fragments = tuple(_fragment_settings(b) for b in _items(data.get("fragments")))
-    parents = bool(data.get("parents", True))
+    parents = data.get("parents", True)
+    if not isinstance(parents, bool):
+        raise ProjectError(f"[input] parents = {_toml_value(parents)}: expected true or false")
     if not parents and not fragments:
         raise ProjectError("parents = false needs [input.fragments]: there would be no target")
     scans = data.get("scans", {})
@@ -679,7 +752,7 @@ def _read_settings(data: Mapping, base: Path) -> InputSettings:
     except (TypeError, ValueError) as exc:
         raise ProjectError(f"[input.scans]: {exc}") from exc
     return InputSettings(
-        format=fmt, peptides=_path(base, data["peptides"], "input.peptides"),
+        format=fmt, peptides=_path(base, data.get("peptides"), "input.peptides"),
         runs=tuple(parsed_runs), parents=parents, target=target, fragments=fragments,
         scans=scans, record_paths=str(data.get("record_paths", "path")),
         time_scale=_time_scale(data),
@@ -698,6 +771,12 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
                  "the line can go")
         data = {k: v for k, v in data.items() if k != "figures"}
     _check_keys(data, {f.name for f in fields(OutputSettings)}, "[output]")
+    data = _false_to_none(data, OutputSettings)
+    _check_types(data, OutputSettings, "output")
+    if isinstance(data.get("tables"), str) and data["tables"].strip().lower() in ("true",
+                                                                                  "false"):
+        raise ProjectError(f"[output] tables = \"{data['tables']}\": write true or false "
+                           f"without quotes (in quotes it names a folder)")
 
     def where(key, default):
         value = data.get(key, default)
@@ -932,7 +1011,7 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
     spectra in place of the input, :func:`project_from`)."""
     path = Path(path)
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")  # a byte-order mark is not TOML
         data = tomllib.loads(text)
     except OSError as exc:
         raise ProjectError(f"cannot read {path}: {exc}") from exc
@@ -1086,8 +1165,6 @@ def stored_spectra_source(path: str | Path) -> dict | None:
     """The read record of the raw spectra stored in ``path`` (a bundle, as a directory or
     ``.zip``, or a spectra file of :func:`hxex.io.save_spectra`), without reading the
     spectra; None when they have none. A bundle without raw spectra is an error."""
-    import json
-
     from .io import BundleError, open_bundle, spectra_info
 
     path = Path(path)
@@ -1148,7 +1225,8 @@ def read_input(
     """The raw spectra the project's ``[input]`` names (recorded, so the read can be
     repeated), with the retention times of ``retention_times`` when it names a table. With
     ``spectra`` they are the spectra stored by an earlier run (:func:`load_stored_spectra`):
-    the settings of the read itself (files, targets, scans) do not apply then. The read record
+    the read is skipped, and the settings of the read itself (files, targets, scans) stay in
+    the project file as the description of the data. The read record
     (``source``) carries ``time_scale``, so the results know whether the times are real."""
     inp = project.input
     if inp.spectra is not None:
@@ -1157,8 +1235,9 @@ def read_input(
         unused = [k for k in _READ_STAGE if k != "format"
                   and getattr(inp, k) != getattr(default, k)
                   and not (k == "data_root" and inp.data_root == base)]
-        log.info("taking the raw spectra stored in %s%s", inp.spectra,
-                 f"; not used: input {', '.join(unused)}" if unused else "")
+        log.info("taking the raw spectra stored in %s: the read was skipped%s", inp.spectra,
+                 f" (input {', '.join(unused)} describe the data, as read before)"
+                 if unused else "")
         spectra = load_stored_spectra(inp.spectra)
     else:
         spectra = _read_input(project, progress=progress, cancel=cancel)
@@ -1433,7 +1512,8 @@ _COMMENTS: dict[str, str] = {
                  'times only order the points, input.time_scale = "order")',
     "figures.scale": 'uptake axis: "linear" or "log"',
     "figures.corrected": "draw back-exchange corrected values (unset: when there are "
-                         "controls)",
+                         "controls; a series without correction, such as a fragment ion, is "
+                         "drawn as measured)",
     "figures.format": '"pdf" (one file per series, a page per kind), "png" or "svg" (one '
                       "file per kind)",
     "figures.dpi": "resolution of PNG files and of raster images in PDF or SVG",
@@ -1866,8 +1946,18 @@ def _toml_ready(value):
 def _input_record(inp: InputSettings, mode: str) -> dict[str, Any]:
     """The ``[input]`` table of ``inp`` with every setting written out (None where unset)."""
     data: dict[str, Any] = {"format": inp.format}
-    if inp.spectra is not None:  # stored spectra: the read settings do not apply to them
-        return {"spectra": _recorded(inp.spectra, mode), "time_scale": inp.time_scale,
+    if inp.spectra is not None:  # stored spectra: the read settings they were read with
+        try:
+            read = stored_read_settings(stored_spectra_source(inp.spectra))
+        except ProjectError:
+            read = {}
+        own = (_input_record(replace(inp, spectra=None), mode)
+               if read.get("format") == inp.format else {})
+        # what the record does not hold (the peptide table, the targets) from the project file
+        extra = {k: own[k] for k in ("peptides", "sample", "data_root", "thermo_dir", "parents",
+                                     "target", "fragments") if own.get(k) not in (None, "", [], {})}
+        return {**read, **extra, "spectra": _recorded(inp.spectra, mode),
+                "time_scale": inp.time_scale,
                 "retention_times": _recorded(inp.retention_times, mode),
                 **({"exclude": [r.to_dict() for r in inp.exclude]} if inp.exclude else {})}
     if inp.format in FOLDER_FORMATS:
@@ -2120,22 +2210,36 @@ def describe(project: Project) -> dict[str, Any]:
         **_exclusion_lines("excluded later", () if project.review is None
                            else project.review.exclude,
                            "treated as rejected in the tables, figures and analysis"),
-        **_review_table_line(project.review),
+        **_review_table_line(project.review, project.run.fit.k_values),
     }
 
 
-def _review_table_line(review) -> dict[str, str]:
-    """The summary line of the review table (none without one); a table that cannot be read is
-    a problem of the project (ProjectError)."""
+def _review_table_line(review, k_values) -> dict[str, str]:
+    """The summary line of the review table (none without one); a table that cannot be read, or
+    that chooses a K the run does not try (``k_values``), is a problem of the project
+    (ProjectError)."""
     if review is None or not review.table:
         return {}
-    from .review_table import read_review_table
+    from .review_table import read_review_table, table_choices
 
     try:
         sheet = read_review_table(review.table)
     except ValueError as exc:
         raise ProjectError(f"[review] table: {exc}") from None
+    check_table_choices(table_choices(review), k_values)
     return {"review table": f"{review.table}: {sheet.describe()}"}
+
+
+def check_table_choices(choices, k_values) -> None:
+    """Refuse (ProjectError) review-table choices of a K the run does not try: no run or resume
+    could fit it (checked before anything is read)."""
+    from .review_table import choices_outside
+
+    if outside := choices_outside(choices, k_values):
+        raise ProjectError(
+            f"[review] table chooses a K the run does not try for {len(outside)} spectra "
+            f"({', '.join(outside[:3])}); [run.fit] tries K = {', '.join(map(str, k_values))}: "
+            "change k_min or k_max, or choose another K")
 
 
 def _exclusion_lines(key: str, rules, what: str) -> dict[str, str]:

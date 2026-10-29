@@ -101,7 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "settings")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
-                   help="write the tables (default: beside the bundle)")
+                   help="write the tables (default: beside the bundle, or a project file's "
+                        "[output] tables)")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
                    help="write the figures (default: beside the bundle)")
     _output_options(p, "the tables or figures folder")
@@ -593,7 +594,7 @@ def _control_file_text(roles: dict | None, sample: str) -> str:
 def cmd_run(args) -> int:
     import dataclasses
 
-    from .config import project_record, read_input
+    from .config import check_table_choices, project_record, read_input
     from .hooks import ProgressLog
     from .model import Backend
     from .review_table import table_choices
@@ -634,6 +635,8 @@ def cmd_run(args) -> int:
                        what="tables of earlier results",
                        elsewhere="another output.bundle (or output.tables)")
     config = project.run
+    chosen_k = table_choices(project.review)  # before anything is read
+    check_table_choices(chosen_k, config.fit.k_values)
     if args.device:
         b = config.fit.backend
         config = dataclasses.replace(config, fit=dataclasses.replace(
@@ -651,7 +654,7 @@ def cmd_run(args) -> int:
             spectra, config, out=bundle, project=project.project, notes=out.notes,
             overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
             exclude=project.input.exclude, view_exclude=_view_exclude(project),
-            chosen_k=table_choices(project.review),
+            chosen_k=chosen_k,
             project_file=project_record(dataclasses.replace(
                 project, threads=threads, output=dataclasses.replace(
                     out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
@@ -713,14 +716,16 @@ def cmd_resume(args) -> int:
     tables_arg, threads = args.tables, args.threads
     review = None
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
-        from .config import load_project
+        from .config import check_table_choices, load_project
         from .review_table import table_choices
 
         project = load_project(bundle, analysis_only=True)
         if project.output.bundle is None:
             log.error("%s names no [output] bundle", bundle)
             return EXIT_ERROR
-        if project.run.bootstrap is None:
+        chosen = table_choices(project.review)
+        check_table_choices(chosen, project.run.fit.k_values)
+        if project.run.bootstrap is None and not chosen:
             log.error("%s has no [run.bootstrap] table: add one with the bootstrap's settings",
                       bundle)
             return EXIT_ERROR
@@ -729,10 +734,21 @@ def cmd_resume(args) -> int:
         # the bootstrap there is kept when it has the project's settings: only what the
         # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
         # a tuple such as ks = (1, 2) comes back a list, and never equalled the project's)
-        redo = held != json.loads(json.dumps(project.run.bootstrap.to_dict()))
+        # A key the stored settings lack (one added to hxex after that bootstrap) takes its
+        # default, so only a real change of settings redoes the bootstrap
+        from .bootstrap import BootstrapConfig
+
+        if isinstance(held, dict):
+            defaults = json.loads(json.dumps(BootstrapConfig().to_dict()))
+            if filled := sorted(set(defaults) - set(held)):
+                log.info("%s: the stored bootstrap settings lack %s; taken as the defaults",
+                         bundle, ", ".join(filled))
+                held = {**{k: defaults[k] for k in filled}, **held}
+        # without [run.bootstrap] (a review table's K to fit) the bundle's bootstrap is kept
+        redo = (project.run.bootstrap is not None
+                and held != json.loads(json.dumps(project.run.bootstrap.to_dict())))
         extra = {"bootstrap": project.run.bootstrap, "add": redo,
-                 "view_exclude": _view_exclude(project),
-                 "chosen_k": table_choices(project.review)}
+                 "view_exclude": _view_exclude(project), "chosen_k": chosen}
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
         threads = threads if threads is not None else project.threads
@@ -771,6 +787,7 @@ def cmd_report(args) -> int:
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
     overwrite, keep_previous = args.overwrite, args.keep_previous
+    own_tables: Path | bool = True  # the tables folder when neither --tables nor --figures
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle, rules, figures
         from .config import load_project
 
@@ -782,15 +799,21 @@ def cmd_report(args) -> int:
         plots = project.figures or plots
         overwrite = overwrite or project.output.overwrite
         keep_previous = keep_previous or project.output.keep_previous
+        own_tables = project.output.tables
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
     if tables is None and figures is None:
-        tables = _beside(bundle, True, "_tables")
-    for folder, what, option in ((tables, "tables", "--tables DIR"),
-                                 (figures, "figures", "--figures DIR")):
-        if folder is not None:  # the bundle's rule, before anything is drawn
-            prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous,
-                           what=what, elsewhere=f"another folder with {option}")
+        if own_tables is False:
+            _say(f"nothing to write: {args.bundle} has [output] tables = false (--tables writes "
+                 "the tables all the same, --figures draws the figures)")
+            return 0
+        tables = _beside(bundle, own_tables, "_tables")
+    outputs = [(folder, what, option) for folder, what, option in (
+        (tables, "tables", "--tables DIR"), (figures, "figures", "--figures DIR"))
+        if folder is not None]
+    for folder, what, option in outputs:  # the bundle's rule, before anything is opened
+        prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous, move=False,
+                       what=what, elsewhere=f"another folder with {option}")
     stop = _Stop()
     with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
         if b.pending:
@@ -798,7 +821,7 @@ def cmd_report(args) -> int:
                         ", ".join(b.pending))
         from .review_table import apply_view, missing_bootstraps
 
-        results = apply_view(Results.from_bundle(b), review)
+        results = apply_view(Results.from_bundle(b), review)  # a K not fitted: ValueError
         missing = missing_bootstraps(results)
         if missing:
             log.error("%d spectra are shown at a K chosen in the review that has no bootstrap "
@@ -808,6 +831,9 @@ def cmd_report(args) -> int:
                                               for s, k in list(missing.items())[:2]),
                       args.bundle)
             return EXIT_ERROR
+        if keep_previous:  # moved only now that nothing more can refuse the report
+            for folder, _, _ in outputs:
+                prepare_output(folder, keep_previous=True)
         if tables is not None:
             written = write_tables(results, tables, created=b.manifest.get("created", ""))
             _say(f"{len(written)} table(s) in {tables}")
@@ -1116,7 +1142,7 @@ def cmd_analyse(args) -> int:
     from .io import prepare_output
 
     prepare_output(out, overwrite=overwrite, keep_previous=keep_previous, what="analysis",
-                   elsewhere="another folder with --out DIR (or [analysis] out)")
+                   elsewhere="another folder with --out DIR (or [analysis] out)", move=False)
     stop = _Stop()
     with contextlib.ExitStack() as stack:
         stack.enter_context(stop.installed())
@@ -1133,7 +1159,10 @@ def cmd_analyse(args) -> int:
                                  review=review,
                                  progress=ProgressLog(name="analysis",
                                                       interval=args.progress_every),
-                                 cancel=stop)
+                                 cancel=stop,
+                                 # moved only once nothing more can refuse the analysis
+                                 before_writing=(lambda: prepare_output(out, keep_previous=True))
+                                 if keep_previous else None)
     if not several:
         _stale_analyses(lead, out)
     tables = sum(1 for p in written if p.suffix == ".csv")

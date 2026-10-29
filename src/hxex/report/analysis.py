@@ -254,7 +254,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         unmerged = up if not results.merge else species_uptake(
             results.unmerged(), ks=config.ks, exclude_flagged=config.exclude_flagged,
             filters=config.filters, controls=config.controls,
-            min_population=config.choice_limits.min_population)
+            min_population=config.choice_limits.min_population, populations="best_set")
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = counts_d = None
@@ -433,6 +433,7 @@ def write_analysis(
     review=None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    before_writing=None,
 ) -> list[Path]:
     """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
@@ -450,7 +451,10 @@ def write_analysis(
     :class:`~hxex.analysis.RunSet`), written from their bundles' records, so the folder keeps
     them when a bundle is replaced. Nothing is written when there is no table or figure. The
     folder's listing records the results read (:func:`hxex.io.made_from`), so ``hxex info``
-    can tell when the folder no longer matches its bundle."""
+    can tell when the folder no longer matches its bundle. ``before_writing`` (no arguments) is
+    called once everything is computed, just before the first file is written (``hxex
+    analyse --keep-previous`` moves the earlier folder then, so that a refusal moves
+    nothing)."""
     from ..config import settings_records
 
     directory = Path(directory)
@@ -518,6 +522,8 @@ def write_analysis(
     # as the tables and figures folders: the files of the earlier analysis go, yours stay
     made = {name: str(getattr(getattr(r, "settings", None), "created", "") or "")
             for name, r in (read.items() if isinstance(read, Mapping) else [("", read)])}
+    if total and before_writing is not None:
+        before_writing()
     with replace_outputs(directory, names, made=made) as written:
         for n, (name, cols) in enumerate(tables.items()):
             check_cancel(cancel)

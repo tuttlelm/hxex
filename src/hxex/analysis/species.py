@@ -148,7 +148,7 @@ TREND_Z = 2.0
 TREND_SHARE = 0.5
 
 
-_SCALARS = ("nterm_subtract",)  # settings of the table, not columns
+_SCALARS = ("nterm_subtract", "populations")  # settings of the table, not columns
 
 
 @dataclass(frozen=True)
@@ -186,7 +186,9 @@ class SpeciesUptake:
     spectra (minutes; NaN: unknown); ``role``: ``'undeut'`` or ``'fulldeut'`` for a control
     (whose ``time`` is NaN unless it was also a time point), ``''`` for a time point: coverage,
     redundancy and resolution refer to the undeuterated controls. ``nterm_subtract`` (the
-    N-terminal residues that do not count) is the run's.
+    N-terminal residues that do not count) is the run's; ``populations`` is the rule the table
+    was made with (:data:`hxex.analysis.settings.POPULATION_RULES`), which
+    :func:`hxex.analysis.residue_map` follows.
     """
 
     sample: np.ndarray
@@ -226,6 +228,7 @@ class SpeciesUptake:
     set_test_K: np.ndarray | None = None
     undeuterated_two: np.ndarray | None = None
     nterm_subtract: int = 1
+    populations: str = "best_set"
 
     def __post_init__(self):  # built without them: no fallback, one run, no controls
         n = len(self.sample)
@@ -265,7 +268,7 @@ class SpeciesUptake:
         mask = np.asarray(mask)
         return SpeciesUptake(**{f.name: getattr(self, f.name)[mask] for f in fields(self)
                                 if f.name not in _SCALARS},
-                             nterm_subtract=self.nterm_subtract)
+                             **{name: getattr(self, name) for name in _SCALARS})
 
     def where(self, *, sample=None, time=None, K=None, rank=None, kind=None,
               role=None, run=None) -> np.ndarray:
@@ -987,7 +990,7 @@ def species_uptake(
     filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
     controls: Mapping[str, Any] | None = None,
     min_population: float = 0.05,
-    populations: str = "best_set",
+    populations: str | None = None,
 ) -> SpeciesUptake:
     """The species uptake table of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` of several runs) at each fixed K in ``ks`` (K values the run
@@ -1013,8 +1016,13 @@ def species_uptake(
     (:func:`best_set`; ``min_population``: the population limit of that choice, the
     ``[analysis.choice]`` one); with ``populations = 'population_test'`` they come from the
     population test of the sets instead (:func:`hxex.analysis.set_test.set_tests`), and
-    ``set_p_1`` and ``set_p_2`` are its p-values.
+    ``set_p_1`` and ``set_p_2`` are its p-values. ``populations`` None takes the rule of the
+    results, as ``hxex analyse`` does (:func:`hxex.analysis.settings.population_rule`: the
+    population test when the run has it), and the table records the rule.
     """
+    from .settings import population_rule
+
+    populations = population_rule(populations, results)
     evidence: dict[tuple, dict] = {}
     groups, corrected, nterm = _records(results, ks, exclude_flagged, filters,
                                         controls_changes=controls, evidence=evidence)
@@ -1104,7 +1112,7 @@ def species_uptake(
                           controls=controls,
                           undeuterated_cap=filters is not None and filters.undeuterated_cap)
         out.update(test_set(out, tests))
-    return SpeciesUptake(**out, nterm_subtract=nterm)
+    return SpeciesUptake(**out, nterm_subtract=nterm, populations=populations)
 
 
 def _set_key(run, sample, peptide, mod, start, end, time, role) -> tuple:

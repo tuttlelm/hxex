@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -123,9 +124,14 @@ def spectrum_index(
     root = Path(data_dir)
     kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
                           peptide_region=peptide_region)
+    wanted = {id(e) for e in kept}
+    shared = _shared_inputs(entries, fmt)
     rows = []
-    for entry in kept:
+    for data_id, entry in enumerate(entries):
+        if id(entry) not in wanted:
+            continue
         rel = _input_path(fmt, entry)
+        suffix = _id_suffix(fmt, entry, data_id, shared)
         if not (root / rel).exists():
             raise ReadError(f"{root / rel} not found (give the directory that holds the data)")
         common = {"sample": entry.sample, "start_seq": entry.start_seq,
@@ -135,19 +141,40 @@ def spectrum_index(
                     read_hxexpress_header(root / rel), root / rel):
                 rows.append({**common, "time": _time(time), "role": check_role(role),
                              "rep": rep, "label": label,
-                             "spectrum_id": qualify_spectrum_id(project,
-                                                                f"{entry.file}#{col + 1}")})
+                             "spectrum_id": qualify_spectrum_id(
+                                 project, f"{entry.file}#{col + 1}{suffix}")})
         else:
             for time, role, rep, path in specexport_points(root / rel, entry):
                 rows.append({**common, "time": _time(time), "role": check_role(role),
                              "rep": rep, "label": path.name,
-                             "spectrum_id": qualify_spectrum_id(project,
-                                                                f"{rel}/{path.name}")})
+                             "spectrum_id": qualify_spectrum_id(
+                                 project, f"{rel}/{path.name}{suffix}")})
     return SpectrumIndex.from_rows(rows)
 
 
 def _time(time) -> float:
     return float("nan") if time is None else float(time)
+
+
+def _input_key(fmt: str, entry: PeptideEntry) -> tuple[str, int]:
+    """What an entry's spectra are read from: its input and charge (a SpecExport folder holds
+    every charge, one file each; an HX-Express file is read whole, whatever the charge)."""
+    return _input_path(fmt, entry), (0 if fmt == "hxexpress" else int(entry.charge))
+
+
+def _shared_inputs(entries: Sequence[PeptideEntry], fmt: str) -> set[tuple[str, int]]:
+    """The inputs (:func:`_input_key`) that several entries of the whole peptide table read (a
+    peptide listed with two modifications, or twice): their spectra would have the same ids."""
+    counts = Counter(_input_key(fmt, e) for e in entries)
+    return {key for key, n in counts.items() if n > 1}
+
+
+def _id_suffix(fmt: str, entry: PeptideEntry, data_id: int, shared) -> str:
+    """What the local spectrum id of ``entry`` (number ``data_id`` of the whole table) gains:
+    ``#series`` and its number where its input is shared (:func:`_shared_inputs`), else
+    nothing, so that the ids of every other entry stay as they were and a filter never changes
+    an id."""
+    return f"#series{data_id}" if _input_key(fmt, entry) in shared else ""
 
 
 def _input_path(fmt: str, entry: PeptideEntry) -> str:
@@ -165,6 +192,7 @@ def _read(entries, root: Path, fmt: str, *, project, samples,
                           peptide_region=peptide_region)
     wanted = {id(e) for e in kept}
     jobs = [(i, e) for i, e in enumerate(entries) if id(e) in wanted]
+    shared = _shared_inputs(entries, fmt)
     spectra: list[Spectrum] = []
     files: dict[str, dict] = {}
     for done, (data_id, entry) in enumerate(jobs):
@@ -179,9 +207,12 @@ def _read(entries, root: Path, fmt: str, *, project, samples,
                           else compare_identity(root / rel, known.get(rel), on_change,
                                                 ReadError))
         if fmt == "hxexpress":
-            spectra += read_hxexpress_file(root / rel, entry, data_id=data_id)
+            read = read_hxexpress_file(root / rel, entry, data_id=data_id)
         else:
-            spectra += read_specexport_dir(root / rel, entry, data_id=data_id, id_prefix=rel)
+            read = read_specexport_dir(root / rel, entry, data_id=data_id, id_prefix=rel)
+        if suffix := _id_suffix(fmt, entry, data_id, shared):
+            read = [replace(sp, spectrum_id=sp.spectrum_id + suffix) for sp in read]
+        spectra += read
         report(progress, done + 1, len(jobs))
     source = {
         "reader": fmt,

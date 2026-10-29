@@ -62,8 +62,9 @@ def plot_k_comparison(
 ) -> Figure:
     """One spectrum fitted at each K side by side (default: every K tried), each panel with its
     loss, its selection score relative to the best and whether the minimum-population rule
-    rejected it; the selected K is marked, and the reviewer's K if it differs. Keyword arguments
-    go to :func:`plot_spectrum`."""
+    rejected it; the selected K is marked, and the reviewer's K if it differs. A K the screen
+    skipped for the spectrum shows the picked spectrum alone. Keyword arguments go to
+    :func:`plot_spectrum`."""
     d = k_comparison_data(spectrum_id, results)
     ks = list(d["k_values"] if ks is None else ks)
     bad = [k for k in ks if k not in d["k_values"]]
@@ -71,8 +72,13 @@ def plot_k_comparison(
         raise ValueError(f"K = {bad} was not fitted (tried {d['k_values']})")
     fig = Figure(figsize=(cell[0] * len(ks), cell[1]))
     axes = np.atleast_1d(fig.subplots(1, len(ks), sharey=True))
+    fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
     for ax, k in zip(axes, ks, strict=True):
         j = d["k_values"].index(k)
+        if not fitted[k]:  # the screen skipped it: the spectrum alone
+            plot_spectrum(spectrum_id, results, show=("picked",), ax=ax, title=False, **kwargs)
+            ax.set_title(f"K={k} not fitted (screened)", fontsize=8)
+            continue
         plot_spectrum(spectrum_id, results, k=k, show=show, ax=ax, title=False, **kwargs)
         marks = []
         if k == d["selected"]:

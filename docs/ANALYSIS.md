@@ -619,7 +619,11 @@ undeuterated_cap = false   # true: keep a flagged peptide's other spectra at one
 ```
 
 Without `[run.population_test]` the analysis uses `best_set_K` as now; `populations = "population_test"` on
-a bundle without the test is refused with the fix (add the table, run again). Refused: `k_min >
+a bundle without the test is refused with the fix (add the table, run again). The rule travels
+with the tables (audit 2026-10-28, question 17): `species_uptake` and `compare_peptides` take the
+bundle's rule when none is given (as `hxex analyse` does), the species table records the rule it
+was made with (`SpeciesUptake.populations`), `residue_map` follows it, and `choose_populations`
+uses the tiers whenever the residue table has them; each can still be set explicitly. Refused: `k_min >
 1` with the test on, the Poisson loss (the null draws the Gaussian noise of the fit).
 
 **Workflow.** `hxex run` fits K from `k_min` to `k_max`, runs the test, sets each spectrum's K,

@@ -53,9 +53,11 @@ from ..spectra import (
     entry_rt,
     qualify_spectrum_id,
     split_spectrum_id,
+    time_point,
 )
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
+from .times import format_time
 
 log = logging.getLogger(__name__)
 
@@ -182,10 +184,31 @@ def filter_stages(filt: str) -> tuple[Stage, ...]:
     return tuple(stages)
 
 
-def _cv(elem) -> dict[str, tuple[str, str]]:
-    """accession -> (value, unit accession) of the cvParams directly under ``elem``."""
-    return {p.get("accession"): (p.get("value", ""), p.get("unitAccession", ""))
-            for p in elem.findall(f"{_NS}cvParam")}
+def _cv(elem, groups: Mapping[str, dict] | None = None) -> dict[str, tuple[str, str]]:
+    """accession -> (value, unit accession) of the cvParams directly under ``elem``, and of the
+    parameter groups it refers to (``referenceableParamGroupRef``; ``groups`` by id, as
+    :func:`_param_groups` reads them); a parameter written directly takes precedence."""
+    out = {}
+    for ref in elem.findall(f"{_NS}referenceableParamGroupRef") if groups else ():
+        out.update(groups.get(ref.get("ref", ""), {}))
+    out.update({p.get("accession"): (p.get("value", ""), p.get("unitAccession", ""))
+                for p in elem.findall(f"{_NS}cvParam")})
+    return out
+
+
+def _param_groups(path: Path) -> dict[str, dict]:
+    """The file's ``referenceableParamGroup``s by id (mzML 1.1 lets a spectrum, or any element
+    under it, give its parameters by reference); read from the file's head, before its run."""
+    groups = {}
+    try:
+        for event, elem in ET.iterparse(path, events=("start", "end")):
+            if event == "start" and elem.tag == f"{_NS}run":
+                break
+            if event == "end" and elem.tag == f"{_NS}referenceableParamGroup":
+                groups[elem.get("id", "")] = _cv(elem)
+    except ET.ParseError as exc:
+        raise MzmlError(f"{path}: not readable as mzML ({exc})") from exc
+    return groups
 
 
 def _user_param(elem, name: str) -> str:
@@ -196,9 +219,9 @@ def _user_param(elem, name: str) -> str:
     return ""
 
 
-def _decode(bda, n_expected: int, where: str) -> tuple[str, np.ndarray]:
+def _decode(bda, n_expected: int, where: str, groups=None) -> tuple[str, np.ndarray]:
     """The array type (m/z or intensity accession) and the values of a binaryDataArray."""
-    cv = _cv(bda)
+    cv = _cv(bda, groups)
     kind = _MZ_ARRAY if _MZ_ARRAY in cv else _INT_ARRAY if _INT_ARRAY in cv else ""
     if _NUMPRESS & set(cv):
         raise MzmlError(f"{where}: numpress compression is not supported; convert the file "
@@ -250,19 +273,19 @@ def in_windows(mz: np.ndarray, merged: tuple[np.ndarray, np.ndarray]) -> np.ndar
     return (j >= 0) & (mz <= highs[np.maximum(j, 0)])
 
 
-def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
+def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
     """A :class:`Scan` from a ``spectrum`` element (``mz_windows`` merged, as
-    :func:`merge_windows` returns them)."""
+    :func:`merge_windows` returns them; ``groups``: the file's parameter groups)."""
     index = int(elem.get("index", -1))
     sid = elem.get("id", "")
     where = f"scan {index} ({sid})"
-    cv = _cv(elem)
+    cv = _cv(elem, groups)
     ms_level = int(float(cv.get(_MS_LEVEL, ("1", ""))[0]))
     centroid = True if _CENTROID in cv else False if _PROFILE in cv else None
     time, filt = np.nan, ""
     scan = elem.find(f"{_NS}scanList/{_NS}scan")
     if scan is not None:
-        scv = _cv(scan)
+        scv = _cv(scan, groups)
         if _SCAN_TIME in scv:
             value, unit = scv[_SCAN_TIME]
             time = float(value) * _TIME_UNITS.get(unit, 60.0)  # mzML's default unit: minutes
@@ -276,14 +299,14 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
         pmz, pz, activation, isolation, energy = np.nan, 0, (), (np.nan, np.nan), np.nan
         window = prec.find(f"{_NS}isolationWindow")
         if window is not None:
-            wcv = _cv(window)
+            wcv = _cv(window, groups)
             if _ISOLATION_TARGET in wcv:
                 centre = float(wcv[_ISOLATION_TARGET][0])
                 isolation = (centre - float(wcv.get(_ISOLATION_LOWER, ("nan", ""))[0]),
                              centre + float(wcv.get(_ISOLATION_UPPER, ("nan", ""))[0]))
         ion = prec.find(f"{_NS}selectedIonList/{_NS}selectedIon")
         if ion is not None:
-            icv = _cv(ion)
+            icv = _cv(ion, groups)
             if _SELECTED_MZ in icv:
                 pmz = float(icv[_SELECTED_MZ][0])
             if _CHARGE in icv:
@@ -293,7 +316,7 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
             params = act.findall(f"{_NS}cvParam")
             activation = tuple(sorted(p.get("name", "").lower() for p in params
                                       if not p.get("value")))
-            energy = float(_cv(act).get(_COLLISION_ENERGY, ("nan", ""))[0] or "nan")
+            energy = float(_cv(act, groups).get(_COLLISION_ENERGY, ("nan", ""))[0] or "nan")
         stages.append(Stage(pmz, isolation, activation, energy))
     if ms_level > 2 and 0 < len(stages) < ms_level - 1:
         # the earlier stages from the filter string (ThermoRawFileParser writes the last only)
@@ -305,7 +328,7 @@ def _scan_from(elem, read_arrays: bool, mz_windows) -> Scan:
         n = int(elem.get("defaultArrayLength", 0))
         arrays = {}
         for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
-            kind, values = _decode(bda, n, where)
+            kind, values = _decode(bda, n, where, groups)
             if kind:
                 arrays[kind] = values
         if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
@@ -331,15 +354,18 @@ def iter_scans(
     the scan is returned."""
     path = Path(path)
     merged = None if mz_windows is None else merge_windows(mz_windows)
+    groups = {}  # the parameter groups, listed before the run
     try:
         for event, elem in ET.iterparse(path, events=("end",)):
             if event != "end":
                 continue
             if elem.tag == f"{_NS}spectrum":
-                meta = _scan_from(elem, False, None)
+                meta = _scan_from(elem, False, None, groups)
                 if keep is None or keep(meta):
-                    yield _scan_from(elem, read_arrays, merged) if read_arrays else meta
+                    yield _scan_from(elem, read_arrays, merged, groups) if read_arrays else meta
                 elem.clear()  # the spectrum's content is no longer needed
+            elif elem.tag == f"{_NS}referenceableParamGroup":
+                groups[elem.get("id", "")] = _cv(elem)
             elif elem.tag == f"{_NS}chromatogram":
                 elem.clear()
     except ET.ParseError as exc:
@@ -530,6 +556,7 @@ class MzmlFile:
             raise MzmlError(f"{self.path}: no such file")
         self._table: ScanTable | None = None
         self._offsets: dict[int, int] | None = None
+        self._groups: dict[str, dict] | None = None
 
     def scans(self) -> ScanTable:
         if self._table is None:
@@ -587,8 +614,10 @@ class MzmlFile:
                     chunk += more
             text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
             text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ', 1)
+            if self._groups is None:
+                self._groups = _param_groups(self.path)
             return _scan_from(ET.fromstring(text), True,
-                              None if windows is None else merge_windows(windows))
+                              None if windows is None else merge_windows(windows), self._groups)
         for s in iter_scans(self.path, mz_windows=windows, keep=lambda m: m.index == index):
             return s
         raise MzmlError(f"{self.path}: no scan {index}")
@@ -1066,7 +1095,16 @@ def _run_paths(runs: Sequence[MzmlRun], data_root, record_paths: str):
         raise ValueError("record_paths='relative' needs a data_root")
     root = None if data_root is None else Path(data_root)
     opened = [Path(r.path) if root is None else root / r.path for r in runs]
-    return opened, [_recorded_path(p, root, record_paths) for p in opened]
+    recorded = [_recorded_path(p, root, record_paths) for p in opened]
+    files_of: dict[str, set] = {}
+    for p, name in zip(opened, recorded, strict=True):
+        files_of.setdefault(name, set()).add(p.resolve())
+    if clash := sorted(name for name, paths in files_of.items() if len(paths) > 1):
+        raise ValueError(f"record_paths = {record_paths!r} records only the file name, and "
+                         f"several files are named {', '.join(clash)}: a repeated read could "
+                         "not tell them apart; record the path (\"path\" or \"relative\") or "
+                         "rename the files")
+    return opened, recorded
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1150,10 @@ def _read_runs(
     qualify_spectrum_id(project, "")
     if not runs or not targets:
         raise ValueError(f"read_{fmt.reader} needs at least one run and one target")
+    try:
+        number_replicates(runs)  # two replicates of one sample and point with one rep
+    except ValueError as exc:
+        raise fmt.error(str(exc)) from None
     windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
     series: dict[tuple[str, int], int] = {}
     spectra: list[Spectrum] = []
@@ -1151,6 +1193,61 @@ def _read_runs(
     }
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
+
+
+def _run_point(run: MzmlRun) -> str:
+    """The point a run's spectra are measured at, for numbering its replicates: its time (or
+    control role), or ``kinetics`` for a run whose scans have their own times."""
+    if not run.fixed:
+        return "kinetics"
+    return str(time_point([run.spectrum_time], [run.role or ""])[0])
+
+
+def _point_text(run: MzmlRun) -> str:
+    if not run.fixed:
+        return "a time course"
+    if run.time is not None:
+        return f"time {format_time(run.time)}"
+    return f"the {run.role} control"
+
+
+def number_replicates(runs: Sequence[MzmlRun], given: Sequence[bool] | None = None
+                      ) -> list[MzmlRun]:
+    """``runs`` with the replicates of each sample at each point told apart: the runs whose
+    ``rep`` is not ``given`` are numbered 1, 2, ... in the order listed among the runs of their
+    sample at their point (the same time, the same control role, or the kinetics runs of the
+    sample), skipping the numbers given to the others (logged where several are numbered).
+    Raises ValueError when two runs of one sample at one time or control role have the same
+    ``rep``; kinetics runs may share one (a time course split over files). ``given`` None:
+    every rep is as given (the Python interface)."""
+    given = [True] * len(runs) if given is None else list(given)
+    groups: dict[tuple[str, str], list[int]] = {}
+    for n, run in enumerate(runs):
+        groups.setdefault((run.sample, _run_point(run)), []).append(n)
+    out = list(runs)
+    for (sample, point), members in groups.items():
+        taken = {out[n].rep for n in members if given[n]}
+        free = (k for k in range(1, len(members) + len(taken) + 1) if k not in taken)
+        numbered = [n for n in members if not given[n]]
+        for n in numbered:
+            out[n] = replace(out[n], rep=next(free))
+        if len(numbered) > 1 or (numbered and taken):
+            log.info("sample %s, %s: replicates numbered in the order listed (%s)", sample,
+                     _point_text(out[members[0]]),
+                     ", ".join(f"rep {out[n].rep} {_run_file_name(out[n].path)}"
+                               for n in members))
+        if point == "kinetics":
+            continue
+        seen: dict[int, int] = {}
+        for n in members:
+            if out[n].rep in seen:
+                first = out[seen[out[n].rep]]
+                raise ValueError(
+                    f"{first.path} and {out[n].path} are both rep {out[n].rep} of sample "
+                    f"{sample} at {_point_text(out[n])}: give each replicate its own rep (or "
+                    "leave rep out, and the runs are numbered in the order listed)")
+            seen[out[n].rep] = n
+    return out
 
 
 def _check_unique_ids(fmt: _ScanFormat, spectra, origin, runs, opened) -> None:
@@ -1209,11 +1306,14 @@ def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.n
 
 
 def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
-                 config: MzmlConfig) -> np.ndarray:
+                 config: MzmlConfig, unstated: list | None = None) -> np.ndarray:
     """Positions (in ``table``, one file's scans) of the scans of ``target`` in ``run``, as
     :func:`read_mzml` chooses them: the MS level and the scan conditions (the run's where it sets
     them), within the retention window for a run with a fixed time, or from ``config.min_time``
-    otherwise, and from the run's ``usable_from`` (all on the acquisition clock: scan times)."""
+    otherwise, and from the run's ``usable_from`` (all on the acquisition clock: scan times).
+    A run without a time (kinetics) whose scans of the target's MS level lack a scan time is
+    refused. ``unstated`` (a list) collects the label of a target that found no scan only
+    because every scan it would take does not state its precursor charge."""
     if run.fixed:
         time_range = target.rt_window
     else:
@@ -1221,9 +1321,24 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     if run.usable_from is not None:
         lo, hi = time_range if time_range is not None else (-np.inf, np.inf)
         time_range = (max(lo, run.usable_from), hi)
+    if not run.fixed:  # a kinetics run's scan times are its exchange times
+        untimed = (table.ms_level == target.ms_level) & np.isnan(table.time)
+        if untimed.any():
+            raise MzmlError(f"{run.path}: {int(untimed.sum())} MS{target.ms_level} scans have "
+                            "no scan start time; a run without a time (kinetics) takes each "
+                            "scan's time as its exchange time")
+    conditions = run.conditions(target)
     rows = table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
                         time_range=time_range, parent_mz=target.parent_mz,
-                        preactivation=target.preactivation, **run.conditions(target))
+                        preactivation=target.preactivation, **conditions)
+    if (unstated is not None and not len(rows) and target.ms_level >= 2
+            and conditions["precursor_charge"] is not None):
+        any_charge = table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
+                                  time_range=time_range, parent_mz=target.parent_mz,
+                                  preactivation=target.preactivation,
+                                  **{**conditions, "precursor_charge": None})
+        if len(any_charge) and (table.precursor_charge[any_charge] == 0).all():
+            unstated.append(_target_label(target))
     if target.ms_level > 2 and (target.parent_mz is not None or target.preactivation is not None):
         unknown = (table.ms_level == target.ms_level) & (table.preactivation == "?")
         if unknown.any():
@@ -1238,8 +1353,15 @@ def _plans(table: ScanTable, run: MzmlRun, targets, config: MzmlConfig, tie: boo
     that make one spectrum each) or None (not this run's, or no scans), from the scan table
     alone."""
     applies = [target_applies(t, run, tie) for t in targets]
-    chosen = [target_scans(table, run, t, config) if a else None
+    unstated: list[str] = []
+    chosen = [target_scans(table, run, t, config, unstated) if a else None
               for t, a in zip(targets, applies, strict=True)]
+    if unstated:
+        log.warning("%s: %d target(s) (%s) find no scan because the scans they would take do "
+                    "not state their precursor charge while the target asks for one; "
+                    "precursor_charge = false (for the run or the fragments) accepts scans of "
+                    "any charge", run.path, len(unstated),
+                    ", ".join(unstated[:3]) + (", ..." if len(unstated) > 3 else ""))
     plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
     for rows in chosen:
         if rows is None or not len(rows):
@@ -1649,6 +1771,14 @@ def _repeat_read(
         opened.append(p)
         identities.append(now)
     recorded = [str(r.path) for r in runs]  # as the original read recorded them
+    runs_of: dict[Path, set] = {}
+    for p, was in zip(opened, recorded, strict=True):
+        runs_of.setdefault(p.resolve(), set()).add(was)
+    for p, was in runs_of.items():
+        if len(was) > 1:  # one file for runs that read different files
+            raise fmt.error(f"{p} would be read for the runs of {', '.join(sorted(was))}, which "
+                            "were different files: give a directory that holds them apart, or "
+                            "read the input again")
     return _read_runs(
         fmt, runs, opened, recorded, identities, source.get("record_paths", "path"),
         [MzmlTarget.from_dict(t) for t in source["targets"]],

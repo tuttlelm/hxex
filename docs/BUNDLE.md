@@ -65,7 +65,10 @@ analyse` or `hxex report --figures` runs again. `hxex info` lists the generation
 
 - `spectrum_id` is the key of a spectrum in every table: `PROJECT:LOCAL_ID` (for example
   `myproj:0001-0006-PEPTIDE/60s-2-z2.csv`, or `bimodal:Angio_2_HI.xlsx#3`). It is unique within a
-  bundle. `measurement` is the row number (0-based) of a measurement in `measurements.parquet`
+  bundle. Where one input (a SpecExport folder at one charge, or an HX-Express file) is read by
+  several rows of the peptide table (a peptide listed with two modifications), their local ids
+  end with `#series` and the series number (`#series3`); every other id stays as it was.
+  `measurement` is the row number (0-based) of a measurement in `measurements.parquet`
   and joins the per-measurement tables.
 - Time is in seconds. The controls are the rows with a `role` (`undeut` or `fulldeut`; `""`
   for a time point); a control's `time` is NaN unless it was also a time point (a late point
@@ -146,7 +149,10 @@ agrees with it; a bundle written from Python has the `[run]` settings only. It i
 in `files` and never read back: hxex replaces it with the bundle (it is the bundle's, like
 `manifest.json`), and copied out of the bundle it repeats the run. Its paths are recorded as
 the input's `record_paths` says (`name` and `relative` leave no directory but the run paths
-relative to `data_root`).
+relative to `data_root`). A run from stored spectra (`[input] spectra`) records, beside
+`spectra`, the read settings of the stored spectra's own read record (`hxex.config.stored_read_settings`:
+the format, the data folder and its filters or the runs and scan settings), and from the project
+file what the record does not hold (the peptide table, the targets).
 
 `hxex analyse` (`hxex.report.write_analysis`) writes the settings it used into the analysis
 folder: `analysis_settings_used.toml` (the `[analysis]` table with every setting written out;
@@ -204,7 +210,7 @@ bundles only; the manifest is updated with the new checksum). It never changes t
 `ReviewTable.effective_K(fit)` and `status_of(fit)` for the reviewed view. A chosen K must be
 one that was fitted. A run that replaces a reviewed bundle carries the review over and marks
 the entries it cannot apply `stale` (the spectrum is not in the new fit, or the chosen K was
-not fitted): the status and note stay on record (`status_of` still reports the status when
+not fitted for it: not tried, or skipped by the screen): the status and note stay on record (`status_of` still reports the status when
 the spectrum is there), `effective_K` ignores a stale entry's chosen K, and `hxex info` counts
 them. `ReviewTable.update` makes an entry current again, so a stale entry you change is
 checked like any other when stored (an entry for a spectrum the bundle does not have is

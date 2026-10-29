@@ -60,15 +60,25 @@ the row that names the most columns. The scan formats also have their own source
 
 **Recorded paths.** `record_paths` says how the files read are recorded in the bundle:
 `"path"` (as given, the default), `"name"` (file names only, for results to be shared), or, for
-the scan formats, `"relative"` (relative to `data_root`).
+the scan formats, `"relative"` (relative to `data_root`). `"name"` is refused when two runs read
+files of the same name from different folders: a later read could not tell them apart.
 
 **Rerunning from stored spectra.** A bundle keeps the raw spectra it was made from (unless
 `[output] keep_spectra = false`). `hxex run hxex.toml --spectra old_results`, or
 `[input] spectra = "old_results"`, fits them again without reading the files: useful after
-changing the picker or fit settings, or when the original files are not at hand. The format then
-comes from the stored record. `retention_times` and `time_scale` still apply. The stored spectra
-keep the control roles the files gave them; `undeut_at` and `fulldeut_at` in `[run.controls]`
-(see [Controls](controls.md)) act on every run, so a rerun follows the project file as it is now.
+changing the picker or fit settings, or when the original files are not at hand. The read is
+skipped; the format comes from the stored record, and the read settings in the project file stay
+as the description of the data (*hxex* warns when they differ from those the spectra were read
+with). The new bundle's `run_settings_used.toml` records the read settings of the stored spectra.
+`retention_times` and `time_scale` still apply. The stored spectra keep the control roles the
+files gave them; `undeut_at` and `fulldeut_at` in `[run.controls]` (see
+[Controls](controls.md)) act on every run, so a rerun follows the project file as it is now.
+
+When nothing the picking depends on has changed (the same spectra, after `[[input.exclude]]`,
+with the same control roles, the same `[run.picker]` and `[run.envelope]` settings, and the same
+version of *hxex*), the rerun takes the picked spectra stored in the bundle instead of picking
+again, which gives the same result. Otherwise everything is picked again, and the log says
+what differed.
 
 **Times that only order the points.** If the times are labels rather than labelling times (1, 2,
 3 for three conditions), set `[input] time_scale = "order"`. The uptake is then drawn by index,
@@ -268,7 +278,7 @@ optional:
 |---|---|
 | `peptide_range` | the range's label in tables and figures; left out, it is made from `start_seq` and `end_seq` (`0001-0008`). A label that names other residues gets a warning: the residues are always `start_seq` to `end_seq` |
 | `rt` | the retention time, minutes, kept with the spectra |
-| `modification` | extra composition, in pyHXExpress's syntax |
+| `modification` | extra composition, in pyHXExpress's syntax. The same peptide folder or file can be listed twice with different modifications: each row is read as a series of its own, and the ids of their spectra end with `#series` and the series number (the ids of every other row stay as they are) |
 
 Other columns are kept but not used.
 
@@ -345,7 +355,7 @@ own `[[input.runs]]` table, which names the file and says what was measured in i
 |---|---|
 | `path` | the run's file (relative paths start at `data_root`) |
 | `sample` | its sample |
-| `rep` | replicate number (default 1) |
+| `rep` | replicate number. Left out, the runs of one sample at one time (or one control role, or the kinetics runs of a sample) are numbered 1, 2, ... in the order they are listed. The same `rep` given to two runs of one sample at one time or control role is refused; kinetics runs may share one (a time course split over files) |
 | `time` | the labelling time of the whole file (`"60 s"`, `"5 min"`) |
 | `role` | `"undeut"` or `"fulldeut"`: a control run |
 | `time_offset`, `usable_from` | for kinetics runs (below) |
@@ -359,8 +369,8 @@ What a run holds depends on `time` and `role`:
   `time` as well, the run is a time point that also serves as the control (a long time point
   that has reached full deuteration, for example).
 - **A kinetics run** (neither given): every scan has its own time, the scan time. Used for
-  continuous infusion, where exchange runs while the instrument acquires. See
-  [Experiment types](experiments.md#kinetics).
+  continuous infusion, where exchange runs while the instrument acquires. A file whose scans do
+  not record their time is refused. See [Experiment types](experiments.md#kinetics).
 
 The scan-condition keys are for runs acquired differently from the rest. For example, a control
 run acquired with in-source activation throughout takes `filter_excludes = false` while the

@@ -380,7 +380,7 @@ def test_residue_profile():
         getattr(k2, f.name) if f.name not in ("K", "rank", "fD") else
         {"K": np.full(2, 2), "rank": np.full(2, r), "fD": k2.fD + 0.1 * r}[f.name]
         for r in (1, 2)]) for f in dataclasses.fields(SpeciesUptake)
-        if f.name not in ("nterm_subtract",)}, nterm_subtract=1)
+        if f.name not in ("nterm_subtract", "populations")}, nterm_subtract=1)
     rm = residue_map(both, sequences=SEQUENCE)
     fig = plot_residue_profile(rm, "S", 4.0, marks=(7,))
     ax = fig.axes[0]

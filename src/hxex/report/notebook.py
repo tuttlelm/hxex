@@ -41,7 +41,22 @@ def load_results(path: str | Path = "hxex.toml") -> Results:
         if b.pending:
             log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
                         ", ".join(b.pending))
-        return dataclasses.replace(apply_view(Results.from_bundle(b), review), figures=figures)
+        results = dataclasses.replace(apply_view(Results.from_bundle(b), review), figures=figures)
+    if results.loader is not None:  # the bundle is closed now (a zip cannot be read closed)
+        results = dataclasses.replace(results, loader=_reopening(bundle))
+    return results
+
+
+def _reopening(bundle: Path):
+    """A raw-spectra loader that opens the bundle for each request (the results outlive the
+    bundle they were loaded from)."""
+    from ..io import open_bundle
+
+    def load(ids):
+        with open_bundle(bundle) as b:
+            return b.spectra(ids)
+
+    return load
 
 
 def show_series(

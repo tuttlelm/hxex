@@ -998,9 +998,18 @@ class ReviewTable:
 
     def mark_stale(self, fit: FitResult) -> ReviewTable:
         """The entries ``fit`` cannot hold (a spectrum it does not have, a chosen K it did not
-        fit) marked stale and the others current, so the table can be stored with ``fit``."""
-        known = set(map(str, fit.spectrum_id))
-        stale = [str(s) not in known or (int(k) != 0 and int(k) not in fit.k_values)
+        fit for the spectrum, also one the screen skipped) marked stale and the others current,
+        so the table can be stored with ``fit``."""
+        index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+        fitted = {k: fit.fitted(k) for k in fit.k_values}
+
+        def unusable(sid: str, k: int) -> bool:
+            if sid not in index:
+                return True
+            # a K not tried, or one the screen skipped for this spectrum
+            return k != 0 and (k not in fitted or not fitted[k][index[sid]])
+
+        stale = [unusable(str(s), int(k))
                  for s, k in zip(self.spectrum_id, self.k_override, strict=True)]
         return self.with_stale(np.array(stale, dtype=bool))
 

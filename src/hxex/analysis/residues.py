@@ -295,8 +295,8 @@ def residue_map(
     weight_exponent: float = 1.0,
     modified: str = "separate",
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
-    two_population_peptides: bool = False,
-    population_test: bool = False,
+    two_population_peptides: bool | None = None,
+    population_test: bool | None = None,
 ) -> ResidueMap:
     """The residue-level values of every sample, time, K and rank of ``uptake`` (peptides only).
 
@@ -314,6 +314,10 @@ def residue_map(
     (:data:`TEST_COLUMNS`, ``population_tier``): each covering peptide's set enters with its
     p-values (``set_p_1``, ``set_p_2``) and the test's number of populations (``set_test_K``),
     weighted as the values are.
+
+    Both follow the rule the species table was made with when not given
+    (:attr:`SpeciesUptake.populations`): ``two_population_peptides`` with ``best_set`` and the
+    population test (where the table has K = 2), ``population_test`` with the test.
 
     ``modified`` says what happens to modified peptides (a modified residue in the modX
     sequence, or a composition change): ``'separate'`` (the default) gives
@@ -333,6 +337,12 @@ def residue_map(
         raise ValueError("weight_exponent must be >= 0")
     if modified not in MODIFIED:
         raise ValueError(f"modified must be one of {', '.join(MODIFIED)}")
+    rule = uptake.populations
+    if population_test is None:
+        population_test = rule == "population_test"
+    if two_population_peptides is None:
+        two_population_peptides = (rule in ("best_set", "population_test")
+                                   and bool(np.any(np.asarray(uptake.K) == 2)))
     pep = _peptides_only(uptake)
     base = None
     if modified == "separate":

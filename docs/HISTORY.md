@@ -5049,3 +5049,58 @@ CSVs or mzML if wanted.
     against 3.6 / 4.2 %; known-answer correct K 83.5 against 84.0 % (criterion) and 84.8 against
     84.2 % (test). The calibration moved by 0.05 at most, so `model_error` stays 9. Scripts:
     `noise_model/pairs` (private, `built_check_edges.py`, `built_check_edges/summary.txt`).
+
+193. **Audit of 2026-10-28, Session B: crashes and data mix-ups (2026-10-29;
+    docs/AUDIT_2026-10-28.md, with the owner's Session B design decisions).** Each with a test
+    that fails on the old code. High 3 and Medium 5: a K a review table chooses is honoured: the
+    run's screen never skips it (`fit_models(required_k=)`; the K and every K between 2 and it
+    are fitted for that spectrum, the selected K unchanged), so it is bootstrapped like every
+    chosen K; a table changed after the run that names a K the screen skipped is reported by
+    `hxex report` (the remedy named), and `hxex resume hxex.toml` fits it first (`run._fit_chosen`:
+    the spectrum's whole series fitted again without the screen, only the missing fits taken; the
+    same values as a run with the table), also without `[run.bootstrap]`; a K the run does not try
+    at all is refused by `hxex check`, `run` and `resume` before anything is read. A carried-over
+    bundle review choosing a K the screen skipped is marked stale (`ReviewTable.mark_stale` tests
+    the spectrum's own fit; it crashed at the checkpoint write). Question 11: `review_K = 0` clears
+    a K chosen before (`review_table.CLEARED`, `merge_choices`); `inf`, `nan` and `1e400` are
+    refused with their row. High 4: where one input file and charge (an HX-Express file: the file)
+    is read by several rows of the whole peptide table, their local ids end with `#seriesN` (the
+    data_id); every other id is unchanged and a filter never changes an id; `spectrum_index`
+    agrees. High 5: `record_paths = "name"` is refused when two runs read files of one name from
+    different folders, and a repeated read in which runs that read different files resolve to
+    one file is refused. Medium 15: runs without `rep` are numbered 1, 2, ... per sample and
+    point (time, control role, or kinetics) in the order listed (`io.mzml.number_replicates`,
+    logged); the same `rep` twice at one fixed point is refused in the project file and at the
+    Python interface; the series figures fall back to the time-ordered grid (warned) when two
+    spectra still share a time and replicate. High 7: uptake.csv carries the measured mean of a
+    series the controls leave uncorrected. High 8: `corrected = true` draws such a series
+    uncorrected, its axis labelled "uncorrected series". High 9: `load_results` of a zip bundle
+    reopens the zip for each raw-spectra request; a loader failure is noted in the spectra panels
+    instead of stopping the figure. Medium 1: `[output]` and `[input] parents` are type-checked
+    (`tables = "true"` refused with the hint). Medium 2: `hxex report` and `analyse
+    --keep-previous` move the earlier folder only once nothing more can refuse the command
+    (`write_analysis(before_writing=)`). Medium 3: a project file with a byte-order mark is read.
+    Medium 4: `hxex report hxex.toml` writes the tables where `[output] tables` says (`false`:
+    none). Medium 6: mzML `referenceableParamGroupRef` parameters are read (also for single scans
+    through the index). Medium 7: the m/z check reads centroided spectra by the nearest stick (it
+    climbed to a taller isotope stick and gave no offset), and the profile climb is bounded by the
+    spectrum's median point spacing. Medium 12: `plot_k_comparison` draws a K the screen skipped
+    as the picked spectrum, titled "not fitted (screened)". Question 10: a series taking its other
+    charge states' fully deuterated retention (combine_charges or fd_other_charge) that the
+    value would put below its own time course is `fd_below_data` with the run's median
+    retention; a series whose own control passed its checks keeps it there instead of the
+    combined one (owner, 2026-10-29). Question 12: `hxex resume` fills keys the
+    stored bootstrap settings lack with their defaults before comparing (logged). Question 13:
+    `limit_charge = false` stays a switch. Question 14: a rerun from stored spectra skips the read
+    (logged so) and records in `run_settings_used.toml` the read settings of the stored spectra's
+    record (`config.stored_read_settings`; the peptide table and targets from the project file),
+    with a warning when the project file's read settings differ from the record; and it takes the
+    bundle's picked table (with its peak measure and envelopes) instead of picking again when the
+    picker, envelope and registry settings, the hxex version, the spectra picked (in order) and
+    their control roles all match (`run._stored_picking`; otherwise it picks again and logs what
+    differed). Question 17: the population rule travels with the tables: `species_uptake` and
+    `compare_peptides` default to the results' rule, `SpeciesUptake.populations` records it,
+    `residue_map` follows it and `choose_populations` uses the tiers whenever the residue map has
+    them. Question 24: a fragment target that finds no scan only because the scans do not state
+    their precursor charge is warned about, once per run. Question 25: a kinetics run whose scans
+    lack a scan time is refused.

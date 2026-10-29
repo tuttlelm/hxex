@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 SUGGESTED_NAME = "user_review_table.csv"  # the guide's suggestion; any name works
+CLEARED = -1  # review_K = 0: the K chosen before (in the bundle's review layer) is cleared
 STATUSES = ("rejected", "accepted")
 _COLUMNS = ("spectrum_id", "review_status", "review_K", "note")
 
@@ -55,7 +57,8 @@ class ReviewSettings:
 @dataclass(frozen=True)
 class ReviewSheet:
     """The decisions of a user review table: one entry per spectrum with ``status``
-    (``rejected``, ``accepted`` or empty), ``k`` (0: none) and ``note``; ``path`` is the file."""
+    (``rejected``, ``accepted`` or empty), ``k`` (0: none; :data:`CLEARED`: ``review_K = 0``,
+    which clears a K chosen before) and ``note``; ``path`` is the file."""
 
     spectrum_id: tuple[str, ...]
     status: tuple[str, ...]
@@ -71,8 +74,9 @@ class ReviewSheet:
         rejected = sum(s == "rejected" for s in self.status)
         accepted = sum(s == "accepted" for s in self.status)
         chosen = sum(k > 0 for k in self.k)
+        cleared = sum(k == CLEARED for k in self.k)
         return (f"{len(self)} spectra: {rejected} rejected, {accepted} accepted, {chosen} with "
-                "a chosen K")
+                "a chosen K" + (f", {cleared} with a chosen K cleared" if cleared else ""))
 
 
 def _delimiter(header: str) -> str:
@@ -129,11 +133,11 @@ def read_review_table(path: str | Path) -> ReviewSheet:
                 value = float(k_text)
             except ValueError:
                 value = 0.5
-            if value != int(value) or value < 1:
+            if not math.isfinite(value) or value != int(value) or value < 0:
                 problems.append(f"row {row_number}: review_K {k_text!r} (a whole number of at "
-                                "least 1, or empty)")
+                                "least 1, 0 to clear a K chosen before, or empty)")
                 continue
-            k = int(value)
+            k = int(value) if value else CLEARED
         if sid in entries and entries[sid][:2] != (status, k):
             problems.append(f"row {row_number}: {sid} is already in row {entries[sid][3]} with "
                             "other values")
@@ -153,7 +157,8 @@ def apply_review_table(results, sheet: ReviewSheet | None):
     review layer, in memory only (the bundle is not changed): a status replaces the stored
     one, a chosen K replaces the stored one, and a note replaces the stored one when given.
     Spectra the results do not have are skipped with a warning; a chosen K that was not fitted
-    for its spectrum raises ValueError."""
+    for its spectrum (one the run did not try, or one its screen skipped, which ``hxex resume``
+    fits) raises ValueError saying which."""
     from .io.bundle import ReviewTable
 
     if sheet is None or not len(sheet):
@@ -165,14 +170,20 @@ def apply_review_table(results, sheet: ReviewSheet | None):
         log.warning("the review table %s names %d spectra these results do not have (for "
                     "example %s): they are skipped; a table from an earlier run may name "
                     "spectra since left out", sheet.path, len(unknown), ", ".join(unknown[:3]))
-    bad = []
-    for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True):
-        if k and sid in index and (k not in fit.k_values or not fit.fitted(k)[index[sid]]):
-            bad.append(f"{sid} (K = {k})")
-    if bad:
-        raise ValueError(f"the review table {sheet.path} chooses a K that was not fitted for "
-                         f"{len(bad)} spectra ({', '.join(bad[:3])}); the run tried K = "
-                         f"{', '.join(map(str, fit.k_values))}")
+    tried = fit.config.k_values
+    beyond = [f"{sid} (K = {k})" for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True)
+              if k > 0 and sid in index and k not in tried]
+    if beyond:
+        raise ValueError(f"the review table {sheet.path} chooses a K the run did not try for "
+                         f"{len(beyond)} spectra ({', '.join(beyond[:3])}); the run tried K = "
+                         f"{', '.join(map(str, tried))}: change [run.fit] k_min or k_max and "
+                         "run again, or choose another K")
+    skipped = [f"{sid} (K = {k})" for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True)
+               if k > 0 and sid in index and not fit.fitted(k)[index[sid]]]
+    if skipped:
+        raise ValueError(f"the review table {sheet.path} chooses a K the run's screen skipped "
+                         f"for {len(skipped)} spectra ({', '.join(skipped[:3])}): 'hxex resume "
+                         "hxex.toml' fits it for them (and bootstraps them), then report again")
     review = results.review if results.review is not None else ReviewTable.empty()
     stored = {str(s): j for j, s in enumerate(review.spectrum_id)}
     status = list(review.status.astype(object))
@@ -192,7 +203,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
         if j is None:
             ids.append(sid)
             status.append(st)
-            k_override.append(k)
+            k_override.append(max(k, 0))
             note.append(nt)
             updated.append(stamp)
             stale.append(False)
@@ -201,7 +212,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
         if st:
             status[j] = st
         if k:
-            k_override[j] = k
+            k_override[j] = max(k, 0)  # review_K = 0 clears the K chosen before
         if nt:
             note[j] = nt
         stale[j] = False
@@ -252,8 +263,25 @@ def apply_view(results, review: ReviewSettings | None):
 
 
 def table_choices(review: ReviewSettings | None) -> dict[str, int]:
-    """The K the project's review table chooses, by spectrum (none without a table)."""
+    """The K the project's review table chooses, by spectrum (none without a table), with
+    :data:`CLEARED` where it clears a K chosen before (laid over the bundle's review layer's
+    choices, it removes them: :func:`merge_choices`)."""
     if review is None or not review.table:
         return {}
     sheet = read_review_table(review.table)
     return {s: k for s, k in zip(sheet.spectrum_id, sheet.k, strict=True) if k}
+
+
+def merge_choices(*layers) -> dict[str, int]:
+    """The K chosen per spectrum from ``layers`` (spectrum id -> K mappings, later ones laid
+    over earlier ones), without the cleared ones."""
+    merged: dict[str, int] = {}
+    for layer in layers:
+        merged.update(layer or {})
+    return {s: k for s, k in merged.items() if k > 0}
+
+
+def choices_outside(choices, k_values) -> list[str]:
+    """The table's choices (:func:`table_choices`) of a K the run does not try (``k_values``,
+    :attr:`hxex.fit.FitConfig.k_values`), as ``id (K = k)``."""
+    return [f"{s} (K = {k})" for s, k in choices.items() if k > 0 and k not in k_values]

@@ -208,6 +208,31 @@ def test_series_info_orders_by_time_then_replicate(results):
         series_info(results, 9)
 
 
+def test_spectra_sharing_a_time_and_replicate_are_drawn_apart(written, caplog):
+    """Two spectra of one series at one time with the same replicate number (an input that did
+    not number them): the pages fall back to the time-ordered grid, warned, instead of drawing
+    one panel over the other."""
+    import dataclasses
+
+    raw, res, _ = written
+    results = Results.from_run(res, spectra=raw)
+    info = series_info(results, 0)
+    rows, b = info["rows"], results.binned
+    at = [int(i) for i, t in enumerate(info["times"]) if t == 60.0]
+    rep = np.array(b.rep, copy=True)
+    rep[b.find(str(results.fit.spectrum_id[rows[at[1]]]))] = rep[
+        b.find(str(results.fit.spectrum_id[rows[at[0]]]))]
+    clash = dataclasses.replace(results, binned=dataclasses.replace(b, rep=rep))
+    with caplog.at_level(logging.WARNING, logger="hxex.report.series"):
+        fig = plot_series_spectra(clash, 0)
+    assert "share a time and a replicate number" in caplog.text
+    places = {tuple(np.round(ax.get_position().bounds, 3)) for ax in fig.axes}
+    assert len(places) == len(fig.axes) == len(rows)
+    pops = plot_populations(clash, 0)
+    titles = [ax.get_title() for ax in pops.axes if ax.get_visible()]
+    assert len(titles) == len(rows)
+
+
 def test_uptake_data_corrected_and_raw(results):
     raw = uptake_data(results, 0, corrected=False)
     cor = uptake_data(results, 0)
@@ -823,6 +848,16 @@ def test_k_comparison(results):
     reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=other))
     titles = [ax.get_title() for ax in plot_k_comparison(sid, reviewed).axes]
     assert any("reviewer's choice" in t for t in titles)
+    # a K the screen skipped: the spectrum alone, said in the title (it raised)
+    raw = raw_spectra(n_series=1)
+    cfg = config(bootstrap=None)
+    screened = Results.from_run(run(raw, dataclasses.replace(
+        cfg, fit=dataclasses.replace(cfg.fit, screen=True))), spectra=raw)
+    skipped = np.flatnonzero(~screened.fit.fitted(2))
+    assert len(skipped)
+    fig = plot_k_comparison(str(screened.fit.spectrum_id[skipped[0]]), screened)
+    assert fig.axes[1].get_title() == "K=2 not fitted (screened)"
+    assert "component:2" not in {a.get_gid() for a in fig.axes[1].get_children()}
 
 
 def test_controls_overview(results):
@@ -1002,6 +1037,38 @@ def test_a_series_without_controls_is_uncorrected_or_an_error(results):
     assert np.isfinite(comp["mean_corrected"][comp["data_id"] == 0]).all()
 
 
+def test_an_uncorrected_series_keeps_its_measured_values(results):
+    """A series the controls leave uncorrected (fragment ions): uptake.csv carries its measured
+    means (not blanks), and corrected = True draws it uncorrected, the axis saying so."""
+    import dataclasses
+
+    ctrl = results.controls
+    flags = np.array([("uncorrected" if d == 1 else str(f)) for d, f in
+                      zip(ctrl.data_id, ctrl.flags, strict=True)], dtype=object)
+    partial = dataclasses.replace(results, controls=dataclasses.replace(ctrl, flags=flags))
+    up, comp = uptake_table(partial), components_table(partial)
+    one = up["data_id"] == 1
+    assert one.any() and np.isfinite(up["mean"][one]).all()
+    first = (comp["data_id"] == 1) & (comp["rank"] == 1) & (comp["review_status"] != "rejected")
+    times = up["time"][one & (up["rank"] == 1)]
+    assert np.isfinite(times).any()
+    t = times[np.isfinite(times)][0]
+    at = first & (comp["time"] == t)
+    assert up["mean"][one & (up["rank"] == 1) & (up["time"] == t)][0] == pytest.approx(
+        comp["mean"][at].mean())
+    assert np.isfinite(up["mean"][up["data_id"] == 0]).all()  # the corrected series as before
+    sid = str(results.fit.spectrum_id[8])
+    d = population_data(partial, sid, corrected=True)
+    assert not d["corrected"] and d["uncorrected_series"] and d["n_amides"] is None
+    fig = plot_populations(partial, 1, corrected=True)
+    assert {ax.get_xlabel() for ax in fig.axes if ax.get_visible() and ax.get_xlabel()} == {
+        "deuterium (uncorrected series)"}
+    fig = plot_uptake(partial, 1, corrected=True)
+    assert fig.axes[0].get_ylabel() == "deuterium (uncorrected series)"
+    assert plot_uptake(partial, 0, corrected=True).axes[0].get_ylabel() == (
+        "deuterium (back-exchange corrected)")
+
+
 def test_effective_k_and_review_status_are_computed_once(results):
     assert results.effective_K is results.effective_K
     assert results.review_status is results.review_status
@@ -1102,6 +1169,33 @@ def test_notebook_helpers_load_and_draw_a_series(written, tmp_path):
     project.write_text('project = "p"\n[analysis]\n')
     with pytest.raises(ValueError, match="no \\[output\\] bundle"):
         load_results(project)
+
+
+def test_results_loaded_from_a_zip_read_their_raw_spectra(written, tmp_path):
+    """load_results of a zipped bundle returns results whose raw spectra can still be read
+    (the zip is opened again for each request); a loader that fails leaves a note in the
+    panels instead of stopping the figure."""
+    import dataclasses
+    import shutil
+
+    from hxex.report import load_results
+
+    _, _, path = written
+    zipped = shutil.make_archive(str(tmp_path / "zipped"), "zip", root_dir=path.parent,
+                                 base_dir=path.name)
+    loaded = load_results(zipped)
+    assert loaded.loader is not None
+    sid = str(loaded.fit.spectrum_id[0])
+    assert loaded.raw_spectrum(sid) is not None
+    fig = plot_series_spectra(loaded, 0, show=("raw", "picked"))
+    assert "raw_unread" not in gids(fig)
+
+    def broken(ids):
+        raise OSError("the disk is gone")
+
+    fig = plot_series_spectra(dataclasses.replace(loaded, loader=broken), 0,
+                              show=("raw", "picked"))
+    assert "raw_unread" in gids(fig)
 
 
 def test_notebook_images_are_sharp_png_or_svg(results):

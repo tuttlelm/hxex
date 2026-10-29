@@ -345,7 +345,17 @@ def test_the_residues_carry_the_tiers(tested_run):
     un = rm.where(K=1, role="undeut") & ~rm.no_amide
     assert set(rm.population_tier[un]) == {"no sign"}
     assert (rm.population_tier[rm.K == 2] == "").all()
-    assert set(residue_map(up).population_tier) == {""}
+    assert set(residue_map(up, population_test=False).population_tier) == {""}
+    # the rule travels with the tables: the species table records it, the residue map and the
+    # choice follow it, and the results' own rule is the default (as in hxex analyse)
+    assert up.populations == "population_test"
+    assert list(residue_map(up).population_tier) == list(rm.population_tier)
+    from hxex.analysis import choose_populations
+
+    assert np.array_equal(choose_populations(rm).two_populations,
+                          choose_populations(rm, tiers=True).two_populations)
+    assert species_uptake(res).populations == "population_test"
+    assert species_uptake(res, populations="best_set").populations == "best_set"
 
 
 def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):

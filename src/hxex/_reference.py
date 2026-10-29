@@ -113,7 +113,8 @@ _DESCRIPTIONS: dict[str, str] = {
                                   "none)",
     "input.runs.path": "the file (relative paths from data_root)",
     "input.runs.sample": "the sample the file belongs to",
-    "input.runs.rep": "replicate number (1 or more)",
+    "input.runs.rep": "replicate number (1 or more); left out, the runs of one sample at one "
+                      "time or control role are numbered in the order listed",
     "input.runs.time": 'labelling time of the whole file (s, or text with a unit: "60 s", '
                        '"5 min"); leave it out when each scan has its own time (kinetics)',
     "input.runs.time_offset": "s: the exchange clock is the scan time plus this (when exchange "

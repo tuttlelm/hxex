@@ -207,7 +207,11 @@ and you can make them in a spreadsheet.
      would leave it out (it lists those in `left_out_spectra.csv`).
    - `review_K`: the number of populations to use for that spectrum, instead of the one the fit
      chose (`K`). *hxex* has already fitted every spectrum with each number from `k_min` to
-     `k_max`, so this picks one of those fits; nothing is refitted. `1`, for example, keeps the
+     `k_max`, so this picks one of those fits; nothing is refitted. (With `[run.fit] screen =
+     true` some of those fits are skipped. `hxex run` always fits a number this table chooses;
+     for a table filled in after the run, `hxex report` says so, and `hxex resume hxex.toml`
+     fits it for those spectra.) `0` clears a number chosen before (in a review stored in the
+     results). `1`, for example, keeps the
      spectrum but uses only its one-population fit, in the analysis too: its two-population
      values leave the tables and do not count as evidence for two populations. `review_status` can stay empty when you fill
      in `review_K`. Leave `review_K` empty to keep the fit's choice.
@@ -246,9 +250,10 @@ and you can make them in a spreadsheet.
 **What the decisions change.** A rejected spectrum is left out of everything that uses the
 results: `uptake.csv`, the figures (where it is drawn hollow and grey), and `hxex analyse`. A
 chosen number of populations changes the run's tables and figures (`spectra.csv`,
-`components.csv`, `uptake.csv`, and the spectrum, population, and uptake figures). It does not
-change `hxex analyse`, which works from fits with one and with two populations for every
-spectrum and decides residue by residue
+`components.csv`, `uptake.csv`, and the spectrum, population, and uptake figures). In `hxex
+analyse` only `review_K = 1` counts (the spectrum's two-population values are left out): the
+analysis works from fits with one and with two populations for every spectrum and decides
+residue by residue
 ([What each one does](#run-report-and-analyse-what-each-one-does)).
 
 **Error bars for a chosen number of populations.** When the run had a bootstrap, every

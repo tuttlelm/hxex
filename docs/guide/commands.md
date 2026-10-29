@@ -80,7 +80,7 @@ Draw the figures, and write the tables again, from a bundle; fits nothing.
 |---|---|
 | `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [review] decisions applied and its [figures] settings |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
-| `--tables` `[DIR]` | write the tables (default: beside the bundle) |
+| `--tables` `[DIR]` | write the tables (default: beside the bundle, or a project file's [output] tables) |
 | `--figures` `[DIR]` | write the figures (default: beside the bundle) |
 | `--overwrite` | replace hxex's files in the tables or figures folder when it holds earlier output (or [output] overwrite = true) |
 | `--keep-previous` | move the tables or figures folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |

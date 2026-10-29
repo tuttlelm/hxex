@@ -723,7 +723,8 @@ Planned, not built:
    (Sessions A to D) are in `docs/AUDIT_2026-10-28.md`. Deliberate differences from pyHXExpress
    decided there, to be recorded in the table above when built: an acetylated N-terminus keeps
    its residue-1 amide (`nterm_subtract` applies to a free amine only); HX-Express spectra are
-   read from the labelled column and the one to its right, not by label position.
+   read from the labelled column and the one to its right, not by label position. Session A
+   done (HISTORY 192), Session B done (HISTORY 193).
 
 ## Risks and open decisions
 

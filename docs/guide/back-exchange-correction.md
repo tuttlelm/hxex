@@ -98,11 +98,16 @@ replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_
    the same scans their deuterium differed by at most about 1.5 %. A charge state without a
    good control of its own takes this value too (`fd_other_charge`) and counts as measured.
    Charge states whose retentions differ by more than `sample_tolerance` (0.1) are still
-   combined, with the warning `fd_charges_disagree` in `control_notes`.
+   combined, with the warning `fd_charges_disagree` in `control_notes`. The combined value is
+   checked against each charge state's own time course, as a measured control is: a charge
+   state whose time points it would put below keeps its own control if that passed its
+   checks; one without a good control of its own is rejected (`fd_below_data`) and takes the
+   run's value (step 2) instead.
 
    To correct each charge state with its own control instead, set `combine_charges = false`
    in `[run.controls]`. A charge state without one then takes the mean of the peptide's other
-   charge states (`fd_other_charge`, a stand-in), unless `fd_other_charge = false` too.
+   charge states (`fd_other_charge`, a stand-in, checked against its time course in the same
+   way), unless `fd_other_charge = false` too.
 2. A value for the whole run, chosen by `fd_fallback`:
    - Without quench conditions (the default, `"median"`): the median retention of the run's
      accepted controls (`fd_median`). When no control is accepted: the D₂O fraction of the

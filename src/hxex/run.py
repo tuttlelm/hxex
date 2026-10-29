@@ -27,6 +27,7 @@ without fitting again. Stopped before, nothing is written.
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
@@ -56,6 +57,7 @@ from .controls import (
     series_rt,
 )
 from .fit import FitConfig, FitResult, Measurements, fit_models
+from .fit.result import _KFIT_ARRAYS
 from .hooks import CancelHook, ProgressHook, check_cancel, report, start_stage
 from .picking import (
     DEFAULT_PICKER_CONFIG,
@@ -76,6 +78,7 @@ from .population_test import (
     population_test,
 )
 from .quality import QualityConfig, QualityFlags, assess_quality
+from .review_table import merge_choices
 from .spectra import SpectrumSet
 
 if TYPE_CHECKING:
@@ -466,7 +469,7 @@ def _d2o_fraction(config: RunConfig) -> float:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
-    fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None,
+    fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None, chosen=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -481,7 +484,8 @@ def _fit_part(
     noise (:func:`bundle_noise`); with ``estimate = "controls"`` and none given it is measured
     here from every undeuterated control of ``data``, once for all the chunks. ``screened``:
     the control spectra the spectrum quality screens remove at the loose level
-    (:func:`hxex.analysis.screening.control_removal`), left out of the controls."""
+    (:func:`hxex.analysis.screening.control_removal`), left out of the controls. ``chosen``
+    (spectrum id -> K, a review table's choices): fitted whatever the screen says."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is None and config.fit.noise.estimate == "controls":
         from .noise import controls_noise
@@ -498,8 +502,10 @@ def _fit_part(
         a = lo + (hi - lo) * share * edges[j]
         b = lo + (hi - lo) * share * edges[j + 1]
         mid = a + (b - a) * (1.0 - plan.test_share)
+        required = (np.array([int(chosen.get(str(i), 0)) for i in sub.spectrum_id])
+                    if chosen else None)
         part = fit_models(sub, config.fit, progress=_Span(progress, a, mid), cancel=cancel,
-                          test_screen=testing, noise_curve=noise_curve)
+                          test_screen=testing, noise_curve=noise_curve, required_k=required)
         if testing:
             test = population_test(sub, part, config.population_test,
                                    d2o_fraction=_d2o_fraction(config), test_screen=True,
@@ -612,6 +618,55 @@ def _missing_choices(fit: FitResult, by_k: Mapping[int, BootstrapResult] | None,
             continue
         wanted.setdefault(int(k), []).append(i)
     return wanted
+
+
+def _unfitted_choices(fit: FitResult, chosen: Mapping[str, int]) -> np.ndarray:
+    """For each row of ``fit``, the K chosen for it (``chosen``, spectrum id -> K) when that K,
+    or a K between 2 and it, was not fitted for it (the screen skipped it); else 0. A K the
+    run never tried is not counted (it cannot be fitted without the run's settings)."""
+    index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+    need = np.zeros(len(fit), dtype=np.int64)
+    for sid, k in chosen.items():
+        i = index.get(str(sid))
+        if i is None or not k or k not in fit.fits:
+            continue
+        if any(not fit.fitted(j)[i] for j in fit.k_values if 1 < j <= k):
+            need[i] = int(k)
+    return need
+
+
+def _fit_chosen(config: RunConfig, data: Measurements, fit: FitResult,
+                chosen: Mapping[str, int], cancel) -> FitResult:
+    """``fit`` with the K chosen in a review table (``chosen``) fitted for the spectra the screen
+    skipped it for, and every K between 2 and it, as a run with the table would have fitted
+    them: their whole series are fitted again without the screen (each measurement is seeded
+    from its own id) and only the missing fits are taken; every other fit and the selected K
+    stay as they were."""
+    need = _unfitted_choices(fit, chosen)
+    if not need.any():
+        return fit
+    rows = np.flatnonzero(np.isin(fit.data_id, np.unique(fit.data_id[need > 0])))
+    log.info("fitting the K chosen in the review table for %d spectra the screen skipped it "
+             "for (their %d series fitted again without the screen)", int((need > 0).sum()),
+             len(np.unique(fit.data_id[rows])))
+    sub = dataclasses.replace(config.fit, screen=False, k_max=int(need.max()))
+    refit = fit_models(data.select(rows), sub, cancel=cancel, noise_curve=fit.noise_curve)
+    fits, score = dict(fit.fits), fit.score.copy()
+    for k in fit.k_values:
+        if k < 2 or k > need.max():
+            continue
+        cells = np.flatnonzero((k <= need[rows]) & ~fit.fitted(k)[rows])
+        if not len(cells):
+            continue
+        new, at = refit.fits[k], rows[cells]
+        arrays = {name: getattr(fits[k], name).copy() for name in _KFIT_ARRAYS}
+        for name, values in arrays.items():
+            values[at] = getattr(new, name)[cells]
+        fits[k] = dataclasses.replace(fits[k], **arrays)
+        criterion = getattr(new, fit.config.criterion)[cells]
+        score[at, fit.k_values.index(k)] = np.where(new.passes_min_pop[cells], criterion,
+                                                    np.inf)
+    return dataclasses.replace(fit, fits=fits, score=score)
 
 
 def _review_choices(review) -> dict[str, int]:
@@ -763,10 +818,20 @@ def run(
     envelope_share = 0.03 if raw is not None and config.envelope.mode != "theory" else 0.0
     envelopes, clusters, shapes = None, None, None
     measure = None
-    if raw is not None:
+    stored_picking = _stored_picking(raw, config) if raw is not None else None
+    if stored_picking is not None:  # the bundle's picking, as picking again would give it
+        binned, measure, envelopes = stored_picking
+        if envelopes is not None:
+            shapes = {int(d): envelopes.fit_shape[envelopes.shape_offsets[i]:
+                                                  envelopes.shape_offsets[i + 1]]
+                      for i, d in enumerate(envelopes.data_id)}
+        raw_for_picking = None
+    else:
+        raw_for_picking = raw
+    if raw_for_picking is not None:
         measure = choose_measure(raw, config.picker, registry=config.registry)
         log.info("picking: the bins take %s", measure.describe())
-    if raw is not None and config.envelope.mode != "theory":
+    if raw_for_picking is not None and config.envelope.mode != "theory":
         groups = None
         if config.envelope.share:
             from .io.mzml import envelope_groups
@@ -798,7 +863,7 @@ def run(
         if n_poor:
             log.warning("%d of %d series have a poor envelope (flagged poor_envelope)", n_poor,
                         len(envelopes))
-    if raw is not None:
+    if raw_for_picking is not None:
         start_stage(progress, "pick", UNITS * envelope_share,
                     UNITS * (envelope_share + pick_share))
         binned = pick_spectra(
@@ -808,7 +873,7 @@ def run(
             measure=measure,
         )
         pick_share += envelope_share
-    else:
+    elif stored_picking is None:
         binned = data
     drop_empty = np.asarray(binned.empty, dtype=bool)
     drop_nosig = np.asarray(binned.no_signal, dtype=bool) & config.drop_no_signal
@@ -853,7 +918,8 @@ def run(
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),
-                                             noise_curve=noise_curve)
+                                             noise_curve=noise_curve,
+                                             chosen=merge_choices(chosen_k))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -890,11 +956,57 @@ def run(
                         "hxex.run.resume_bootstrap) adds the bootstrap to them", out)
         raise
     by_k = _chosen_part(config, measurements, fit, by_k,
-                        {**_review_choices(review), **(chosen_k or {})}, progress, cancel)
+                        merge_choices(_review_choices(review), chosen_k), progress, cancel)
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, progress=progress, cancel=cancel, review=review,
                    provenance=provenance)
+
+
+def _stored_picking(raw: SpectrumSet, config: RunConfig):
+    """The picking of the bundle the raw spectra were taken from (``[input] spectra``), when
+    picking them again would give it: ``(binned, peak measure, envelopes)``, or None. It is
+    taken when the bundle's ``[run.picker]``, ``[run.envelope]`` (with its fallback time) and
+    modification registry are the run's, its picked spectra are these (after
+    ``[[input.exclude]]``, in this order) with these control roles (after ``undeut_at`` and
+    ``fulldeut_at``), and it was written by this version of hxex; otherwise the log says what
+    differs and everything is picked again."""
+    from .io.bundle import BundleError, _versions, open_bundle
+
+    where = (raw.source or {}).get("stored_in")
+    if not where or not Path(where).exists():
+        return None
+    try:
+        with open_bundle(where) as b:
+            if not b.has("binned"):
+                return None
+            stored = (b.manifest.get("configs") or {}).get("run") or {}
+            now = json.loads(json.dumps(config.to_dict()))
+            differ = [label for key, label in (
+                ("picker", "[run.picker]"), ("envelope", "[run.envelope]"),
+                ("envelope_fallback_time", "[run] envelope_fallback_time"),
+                ("registry", "the modification registry"))
+                if now.get(key) != stored.get(key)]
+            written = (b.manifest.get("versions") or {}).get("hxex")
+            if written != _versions()["hxex"]:
+                differ.append(f"the hxex version ({written} then)")
+            binned = b.binned()
+            if list(map(str, binned.spectrum_id)) != list(map(str, raw.spectrum_id)):
+                differ.append("the spectra picked")
+            elif list(map(str, binned.role)) != list(map(str, raw.role)):
+                differ.append("the control roles")
+            if differ:
+                log.info("picking the stored spectra again: %s differ(s) from the picking "
+                         "stored in %s", ", ".join(differ), where)
+                return None
+            measure, envelopes = b.peak_measure(), b.envelopes()
+    except BundleError:
+        return None
+    if config.envelope.mode != "theory" and envelopes is None:
+        return None
+    log.info("the picking stored in %s is used (the same spectra and picking settings)",
+             where)
+    return binned, measure, envelopes
 
 
 def _previous(out, replace: bool):
@@ -994,17 +1106,20 @@ def resume_bootstrap(
     Either way, and on its own for a complete bundle, the spectra shown at a K other than the
     fit's choice (``chosen_k``, spectrum id -> K, from a review table, and the bundle's own
     review) are bootstrapped at that K where they have no bootstrap there (:func:`run` does
-    the same); a complete bundle with nothing to add is refused (ValueError)."""
+    the same); a K a review table chose that the run's screen skipped for its spectrum is
+    fitted first (as a run with the table fits it). A complete bundle with nothing to add is
+    refused (ValueError)."""
     from .io.bundle import open_bundle
 
     path = Path(path)
     with open_bundle(path) as b:
         redo = "bootstrap" in b.pending or add
-        chosen = {**_review_choices(b.review() if b.has("review") else None),
-                  **(chosen_k or {})}
+        chosen = merge_choices(_review_choices(b.review() if b.has("review") else None),
+                               chosen_k)
         held = None if redo else {k: b.bootstrap(k) for k in b.bootstrap_ks()}
-        if not redo and (b.bootstrap() is None
-                         or not _missing_choices(b.fit(), held, chosen)):
+        unfitted = _unfitted_choices(b.fit(), merge_choices(chosen_k)).any()
+        if not redo and not unfitted and (b.bootstrap() is None
+                                          or not _missing_choices(b.fit(), held, chosen)):
             raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
                              "every K chosen in the review has one; to add or redo the "
                              "bootstrap, give the project file with its [run.bootstrap] "
@@ -1020,7 +1135,7 @@ def resume_bootstrap(
         config = RunConfig.from_dict(b.manifest["configs"]["run"])
         if bootstrap is not None:
             config = dataclasses.replace(config, bootstrap=bootstrap)
-        if config.bootstrap is None:
+        if config.bootstrap is None and (redo or b.bootstrap() is not None):
             raise ValueError("the run had no bootstrap settings: give bootstrap=")
         measurements, fit, binned = b.measurements(), b.fit(), b.binned()
         if device is not None:  # the bootstrap takes its backend from the stored fit
@@ -1043,6 +1158,10 @@ def resume_bootstrap(
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
                       np.where(~kept, "no_signal", "")).astype(str)
+    refitted = _fit_chosen(config, measurements, fit, merge_choices(chosen_k), cancel)
+    if refitted is not fit and review is not None:
+        review = review.mark_stale(refitted)  # a chosen K now fitted is current again
+    fit = refitted
     if redo:
         plan = dataclasses.replace(_plan(measurements, config, (0.0, float(UNITS - _FINISH))),
                                    fit_share=0.0)

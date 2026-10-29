@@ -605,6 +605,37 @@ def test_fully_deuterated_controls_are_combined_over_charge_states():
         ControlConfig(combine_charges=1)
 
 
+def test_a_stand_in_from_other_charges_is_checked_against_the_time_course():
+    """A series taking its other charge states' retention (fd_other_charge, combine_charges)
+    that would then sit below its own time course is fd_below_data, with the run's median
+    retention, as a measured control below its data is; with combine_charges a series whose
+    own control passed keeps it where the combined one would fail (owner, 2026-10-29)."""
+    from hxex.controls import charge_groups
+
+    tol = CFG.time_course_tolerance * 10
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 60.0, 5.3 + 2 * tol),  # 3+: no FD, data above 0.53
+            (1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 5.1), (1, 1e6, 5.3),  # 4+: 0.52
+            (2, 0, 0.0), (2, 0, 0.0), (2, 1e6, 5.4), (2, 1e6, 5.4),  # 5+: 0.54
+            (3, 0, 0.0), (3, 0, 0.0), (3, 1e6, 7.0), (3, 1e6, 7.0),  # QQQ 2+: 0.70
+            (4, 0, 0.0), (4, 0, 0.0), (4, 1e6, 6.0), (4, 1e6, 6.0),  # RRR 2+: 0.60
+            (5, 0, 0.0), (5, 0, 0.0), (5, 1e6, 6.4), (5, 1e6, 6.4)]  # SSS 2+: 0.64
+    who = {0: ("WT", "PEP", 3), 1: ("WT", "PEP", 4), 2: ("WT", "PEP", 5),
+           3: ("WT", "QQQ", 2), 4: ("WT", "RRR", 2), 5: ("WT", "SSS", 2)}
+    ids = [r[0] for r in rows]
+    charges = charge_groups([who[d][0] for d in ids], [who[d][1] for d in ids],
+                            ["" for _ in ids], [who[d][2] for d in ids], ids)
+    median = float(np.median([0.52, 0.54, 0.70, 0.60, 0.64]))
+    for config in (CFG, dataclasses.replace(CFG, combine_charges=False)):
+        c = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), config, charges=charges)
+        assert c.flags[0] == "fd_missing;fd_below_data;fd_median" and c.fallback[0]
+        assert c.retention[0] == pytest.approx(median)
+    # combined: the 5+'s own control (5.4) passes alone but the mean would fail: kept
+    high = [*rows, (2, 60.0, 5.35 + tol)]
+    c = fit_controls(fake_fit(high), np.full(len(high), 10.0), CFG, charges=charges)
+    assert c.flags[2] == "" and c.retention[2] == pytest.approx(0.54) and not c.fallback[2]
+    assert c.flags[1] == "fd_charges_combined" and c.retention[1] == pytest.approx(0.53)
+
+
 def test_fragment_ions_are_not_corrected():
     """Fragment series keep their values (owner, 2026-10-21): flagged uncorrected, no fallback,
     left out of the run's median, and passed through the correction unchanged."""

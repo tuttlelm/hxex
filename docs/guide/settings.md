@@ -104,7 +104,7 @@ Scan formats: one table per file. A file with a time is one time point, a file w
 |---|---|---|---|
 | `path` | text or path | required | the file (relative paths from data_root) |
 | `sample` | text | required | the sample the file belongs to |
-| `rep` | integer | `1` | replicate number (1 or more) |
+| `rep` | integer | `1` | replicate number (1 or more); left out, the runs of one sample at one time or control role are numbered in the order listed |
 | `time` | number | unset | labelling time of the whole file (s, or text with a unit: "60 s", "5 min"); leave it out when each scan has its own time (kinetics) |
 | `time_offset` | number | `0.0` | s: the exchange clock is the scan time plus this (when exchange began relative to acquisition) |
 | `usable_from` | number | unset | s of scan time: this file's scans before it are left out (it does not move the time axis; time_offset does) |
@@ -541,7 +541,7 @@ Figures, drawn by hxex report hxex.toml --figures from the results (hxex run dra
 | `show` | list | `["raw", "picked", "fit"]` | layers of the spectra page: raw, picked, fit |
 | `x` | text | unset | uptake axis: "time" or "index" (unset: "time", or "index" when the times only order the points, input.time_scale = "order") |
 | `scale` | text | `"linear"` | uptake axis: "linear" or "log" |
-| `corrected` | true/false | unset | draw back-exchange corrected values (unset: when there are controls) |
+| `corrected` | true/false | unset | draw back-exchange corrected values (unset: when there are controls; a series without correction, such as a fragment ion, is drawn as measured) |
 | `format` | text | `"pdf"` | "pdf" (one file per series, a page per kind), "png" or "svg" (one file per kind) |
 | `dpi` | integer | `300` | resolution of PNG files and of raster images in PDF or SVG |
 | `overview` | true/false | `true` | also the run's overview (K selection, controls, quality flags) |

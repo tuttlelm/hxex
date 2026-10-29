@@ -40,6 +40,39 @@ def test_the_table_is_read_as_spreadsheets_write_it(tmp_path):
             read_review_table(path)
 
 
+def test_review_k_zero_clears_a_chosen_k(tmp_path):
+    """review_K = 0 clears a K chosen before in the bundle's review layer (an empty cell keeps
+    it); inf and nan are refused with their row."""
+    from hxex.io.bundle import ReviewTable
+    from hxex.report import Results
+    from hxex.review_table import (
+        CLEARED,
+        ReviewSettings,
+        apply_review_table,
+        merge_choices,
+        table_choices,
+    )
+    from hxex.run import run
+    from test_run import config, raw_spectra
+
+    results = Results.from_run(run(raw_spectra(n_series=1), config()))
+    a, b = (str(results.fit.spectrum_id[i]) for i in (3, 4))
+    stored = results.with_review(ReviewTable.empty().update(a, k_override=2)
+                                 .update(b, k_override=2))
+    path = tmp_path / "t.csv"
+    path.write_text(f"spectrum_id,review_K,review_status\n{a},0,\n{b},,accepted\n")
+    sheet = read_review_table(path)
+    assert sheet.k == (CLEARED, 0) and "1 with a chosen K cleared" in sheet.describe()
+    view = apply_review_table(stored, sheet)
+    assert view.review.get(a)["k_override"] == 0 and view.review.get(b)["k_override"] == 2
+    choices = table_choices(ReviewSettings(table=str(path)))
+    assert merge_choices({a: 2, b: 2}, choices) == {b: 2}
+    for bad in ("inf", "nan", "1e400"):
+        path.write_text(f"spectrum_id,review_K\n{a},{bad}\n")
+        with pytest.raises(ValueError, match=f"row 2: review_K '{bad}'"):
+            read_review_table(path)
+
+
 def _edit(spectra_csv, out, changes):
     """A copy of spectra.csv with ``changes`` (row number -> {column: value}) made."""
     with open(spectra_csv, newline="") as f:
@@ -111,10 +144,14 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["analyse", str(path)]) == 0
     assert "user_review_table.csv: 2 spectra: 1 rejected" in capsys.readouterr().err
-    # a K the run did not fit is refused, naming the spectrum
+    # a K the run does not try is refused, naming the spectrum: by report, and by check, run
+    # and resume before anything is read
     _edit(tables / "spectra.csv", tmp_path / "user_review_table.csv", {one: {"review_K": "5"}})
     assert cli.main(["-q", "report", str(path), "--overwrite"]) == 1
-    assert "K that was not fitted" in capsys.readouterr().err
+    assert "K the run did not try" in capsys.readouterr().err
+    for command in (["check"], ["run", "--overwrite"], ["resume"]):
+        assert cli.main(["-q", *command, str(path)]) == 1
+        assert "chooses a K the run does not try" in capsys.readouterr().err
 
 
 def test_spectra_csv_has_the_columns_the_review_table_reads(tmp_path):

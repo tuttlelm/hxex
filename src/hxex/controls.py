@@ -589,7 +589,8 @@ def fit_controls(
 
     cols: dict[str, list] = {name: [] for name in (
         "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd",
-        "mfd_se", "retention", "fallback", "flags")}
+        "mfd_se", "retention", "fallback", "flags",
+        "course_high", "course_tol")}  # the last two for the stand-in checks only
     candidates: list[int] = []  # rows whose measured mFD passed the checks so far
     pending: list[int] = []  # rows whose mFD falls back, filled in after the loop
     for s in series:
@@ -607,6 +608,7 @@ def fit_controls(
                 "n_amides": n_am, "n_undeut": n_u, "n_fd": n_f, "m0_measured": m0_meas,
                 "mfd_measured": mfd_meas, "m0": 0.0, "m0_se": 0.0, "mfd": n_am, "mfd_se": 0.0,
                 "retention": float("nan"), "fallback": False, "flags": "uncorrected",
+                "course_high": high, "course_tol": tol,
             }
             for name, value in values.items():
                 cols[name].append(value)
@@ -661,7 +663,8 @@ def fit_controls(
             "n_amides": n_am, "n_undeut": n_u, "n_fd": n_f, "m0_measured": m0_meas,
             "mfd_measured": mfd_meas, "m0": m0, "m0_se": m0_err, "mfd": mfd, "mfd_se": mfd_err,
             "retention": (mfd - m0) / n_am if n_am > 0 else float("nan"),
-            "fallback": fallback, "flags": ";".join(flags),
+            "fallback": fallback, "flags": ";".join(flags), "course_high": high,
+            "course_tol": tol,
         }
         for name, value in values.items():
             cols[name].append(value)
@@ -701,10 +704,11 @@ def fit_controls(
             cols["mfd"][i] = m0 + r * n_am
             cols["retention"][i] = r if n_am > 0 else float("nan")
             cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_median") if f)
+    median = float(np.median(accepted)) if accepted else None
     if config.combine_charges and charges:
-        _combine_charges(cols, series, charges, config)
+        _combine_charges(cols, series, charges, config, median)
     elif config.fd_other_charge and charges:
-        _other_charge_fallback(cols, series, charges)
+        _other_charge_fallback(cols, series, charges, config, median)
     _flag_disagreement(cols, series, groups, config, charges)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
@@ -924,16 +928,40 @@ def _fd_used(cols: dict, i: int) -> bool:
             and not set(cols["flags"][i].split(";")) & set(FD_REJECTED))
 
 
+def _below_its_data(cols: dict, i: int, r: float) -> bool:
+    """Whether the retention ``r`` taken from other charge states would put row ``i``'s fully
+    deuterated level below its own time course (as ``fd_below_data`` judges a measured one)."""
+    high, tol = cols["course_high"][i], cols["course_tol"][i]
+    return bool(np.isfinite(high) and cols["m0"][i] + r * cols["n_amides"][i] < high - tol)
+
+
+def _stand_in_rejected(cols: dict, i: int, median: float | None,
+                       config: ControlConfig) -> None:
+    """Row ``i``, whose stand-in from other charge states fails its own time course: treated as
+    ``fd_below_data``, with the run's median retention (``d2o_fraction`` without accepted
+    controls)."""
+    r, extra = (median, ["fd_median"]) if median is not None else (config.d2o_fraction, [])
+    n_am = cols["n_amides"][i]
+    cols["mfd"][i], cols["mfd_se"][i] = cols["m0"][i] + r * n_am, 0.0
+    cols["retention"][i] = r
+    cols["fallback"][i] = True
+    kept = [f for f in cols["flags"][i].split(";") if f and f not in (
+        "fd_median", "fd_kint", "fd_below_data", "fd_unreplicated")]
+    cols["flags"][i] = ";".join([*kept, "fd_below_data", *extra])
+
+
 def _combine_charges(cols: dict, series: np.ndarray, charges: Mapping,
-                     config: ControlConfig) -> None:
+                     config: ControlConfig, median: float | None = None) -> None:
     """``combine_charges``: give every series of a peptide (one sample) with an accepted
     measured fully deuterated control at any charge state the plain mean retention of those
-    controls (in ``cols``), replacing a fallback already filled in."""
+    controls (in ``cols``), replacing a fallback already filled in. Where the mean would put
+    a series below its own time course, a series with an accepted control of its own keeps
+    it; one without is ``fd_below_data`` and takes the run's ``median`` retention instead."""
     members: dict[tuple, list[int]] = {}
     for i, s in enumerate(series):
         if int(s) in charges:
             members.setdefault(charges[int(s)][0], []).append(i)
-    n_other = n_combined = n_disagree = 0
+    n_other = n_combined = n_disagree = n_below = n_own = 0
     for rows in members.values():
         donors = [j for j in rows if _fd_used(cols, j)]
         if not donors:
@@ -952,6 +980,13 @@ def _combine_charges(cols: dict, series: np.ndarray, charges: Mapping,
             own = i in donors
             if own and len(donors) == 1:
                 continue  # its own control alone: nothing changes
+            if _below_its_data(cols, i, r):
+                if own:  # its own control passed its checks: kept (owner, 2026-10-29)
+                    n_own += 1
+                    continue
+                _stand_in_rejected(cols, i, median, config)
+                n_below += 1
+                continue
             cols["mfd"][i] = cols["m0"][i] + r * n_am
             cols["mfd_se"][i] = n_am * r_se
             cols["retention"][i] = r
@@ -973,16 +1008,26 @@ def _combine_charges(cols: dict, series: np.ndarray, charges: Mapping,
         log.info("fully deuterated controls combined over charge states (combine_charges): %d "
                  "series take the mean of two or more, %d without a good control of their own "
                  "take the peptide's at its other charges", n_combined, n_other)
+    if n_below:
+        log.info("%d series without a good control of their own would be below their own "
+                 "time course with the combined control: fd_below_data, the run's median "
+                 "retention instead", n_below)
+    if n_own:
+        log.info("%d series keep their own fully deuterated control: the combined one would "
+                 "put it below their own time course", n_own)
     if n_disagree:
         log.warning("%d peptides have fully deuterated controls at different charge states "
                     "whose retentions differ by more than %g; combined anyway "
                     "(fd_charges_disagree)", n_disagree, config.sample_tolerance)
 
 
-def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping) -> None:
+def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping,
+                           config: ControlConfig, median: float | None = None) -> None:
     """Give every series without a good fully deuterated control the mean retention of the
     same peptide's accepted measured controls at its other charges, in place of the fallback
-    already filled in (``fd_median``, ``fd_kint``, or ``d2o_fraction``)."""
+    already filled in (``fd_median``, ``fd_kint``, or ``d2o_fraction``). A series that it
+    would put below its own time course is ``fd_below_data`` and takes the run's ``median``
+    retention instead."""
     def used(i: int) -> bool:
         return _fd_used(cols, i)
 
@@ -1000,6 +1045,9 @@ def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping) -> 
             if not donors:
                 continue
             r = float(np.mean([cols["retention"][j] for j in donors]))
+            if _below_its_data(cols, i, r):
+                _stand_in_rejected(cols, i, median, config)
+                continue
             se = np.array([cols["mfd_se"][j] / cols["n_amides"][j] for j in donors])
             n_am, m0 = cols["n_amides"][i], cols["m0"][i]
             cols["mfd"][i] = m0 + r * n_am

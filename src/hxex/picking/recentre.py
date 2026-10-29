@@ -42,6 +42,7 @@ from scipy.stats import theilslopes
 
 from .. import chem
 from .config import ISOTOPE_STEP, PickerConfig
+from .screen import STICK_POINTS
 
 SEARCH_PPM = 40.0  # the least search range either side of each prediction
 SPACING_SHARE = 0.4  # the search never reaches past this share of the isotope spacing
@@ -52,16 +53,19 @@ MIN_LIMIT_PPM = 3.0  # an offset is never called off within this
 _MAD_SD = 1.4826
 
 
-def _peak_top(mz: np.ndarray, y: np.ndarray, target: float, limit: float) -> float:
+def _peak_top(mz: np.ndarray, y: np.ndarray, target: float, limit: float,
+              spacing: float) -> float:
     """The m/z of the top of the peak nearest ``target`` (NaN when none lies within
-    ``limit``, in m/z)."""
+    ``limit``, in m/z): the climb takes neighbours closer than ``CLIMB_GAP`` times the
+    spectrum's point ``spacing`` (in m/z; infinite for centroided data: the nearest stick)."""
     if not len(mz):
         return float("nan")
     j = int(np.argmin(np.abs(mz - target)))
     if abs(mz[j] - target) > limit or not y[j] > 0:
         return float("nan")
-    near = mz[max(j - 5, 0):j + 6]
-    step = CLIMB_GAP * float(np.median(np.diff(near))) if len(near) > 1 else 0.0
+    if not np.isfinite(spacing):  # centroided: one point per peak
+        return float(mz[j])
+    step = CLIMB_GAP * spacing
     k = j
     for d in (1, -1):  # towards the higher neighbour, if any
         while 0 <= k + d < len(y) and abs(mz[k + d] - mz[k]) <= step and y[k + d] > y[k]:
@@ -95,7 +99,12 @@ def envelope_offset(mz: np.ndarray, intensity: np.ndarray, pred: np.ndarray, cha
         return float("nan")
     reach = min(max(SEARCH_PPM, 2.0 * half_width_ppm),
                 SPACING_SHARE * 1e6 * ISOTOPE_STEP / max(int(charge), 1) / pred[0])
-    offsets = np.array([1e6 * (_peak_top(mz, y, p, reach * 1e-6 * p) - p) / p for p in pred])
+    d = np.diff(mz)
+    spacing = float(np.median(d[d > 0])) if (d > 0).any() else np.inf
+    if (ISOTOPE_STEP / max(int(charge), 1)) / spacing < STICK_POINTS:
+        spacing = np.inf  # centroided (as the picker and the screens tell them)
+    offsets = np.array([1e6 * (_peak_top(mz, y, p, reach * 1e-6 * p, spacing) - p) / p
+                        for p in pred])
     found = offsets[np.isfinite(offsets)]
     if len(found) < 2 or np.ptp(found) > max(AGREE_PPM, half_width_ppm / 4.0):
         return float("nan")

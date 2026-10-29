@@ -36,6 +36,7 @@ def fit_models(
     test_screen: bool = False,
     noise_curve: ControlsNoise | None = None,
     bin_variance=None,
+    required_k: np.ndarray | None = None,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
@@ -69,7 +70,9 @@ def fit_models(
     criteria) and an ``inf`` score. The selected K is the same as without the screen. With
     ``test_screen`` (the population test is on) the screen fits K only where the test's
     statistic of K against K - 1 could reach 1 (:func:`hxex.fit.screen.can_exceed`); the
-    selected K can then differ from fitting every K, and the test chooses it.
+    selected K can then differ from fitting every K, and the test chooses it. ``required_k``
+    (one K per measurement, 0 for none: a K chosen in a review table) is fitted, with every K
+    below it, whatever the screen says (the selected K is not changed by it).
     """
     backend = config.backend
     m = len(data)
@@ -146,13 +149,20 @@ def fit_models(
             rows = np.flatnonzero(controls)
             log.info("fitting K=1 for the %d control spectra (the back-exchange correction "
                      "uses it; it is not one of the K chosen from)", len(rows))
-        elif floor is not None and k > 1 and test_screen:
-            rows = np.flatnonzero(can_exceed(fits[k - 1].nll, floor))
-            log.info("screen: the population test can find K=%d for %d of %d measurements", k,
-                     len(rows), m)
         elif floor is not None and k > 1:
-            rows = np.flatnonzero(can_win(config.criterion, k, sizes, floor, best))
-            log.info("screen: K=%d can be selected for %d of %d measurements", k, len(rows), m)
+            if test_screen:
+                passed = can_exceed(fits[k - 1].nll, floor)
+                log.info("screen: the population test can find K=%d for %d of %d measurements",
+                         k, int(passed.sum()), m)
+            else:
+                passed = can_win(config.criterion, k, sizes, floor, best)
+                log.info("screen: K=%d can be selected for %d of %d measurements", k,
+                         int(passed.sum()), m)
+            if required_k is not None and (more := ~passed & (required_k >= k)).any():
+                log.info("fitting K=%d for %d more measurements: a review table chose it",
+                         k, int(more.sum()))
+                passed = passed | more
+            rows = np.flatnonzero(passed)
         warm = None
         if config.nested_init and (k - 1) in fits and (k - 1) in config.k_values:
             prev = fits[k - 1]

@@ -50,11 +50,13 @@ def _array(values, accession, *, float64=True, compress=True, numpress=False):
             f"<binary>{text}</binary></binaryDataArray>")
 
 
-def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpress=False):
+def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpress=False,
+               param_groups=False):
     """scans: dicts with mz, intensity, time (minutes unless unit='s'), and optionally ms_level,
     filter, centroid (bool), precursor (m/z, charge, activation accession and name) or
-    precursors (several, first stage to last)."""
-    parts = []
+    precursors (several, first stage to last). ``param_groups``: the ms level and the spectrum
+    type given by reference to a ``referenceableParamGroup`` (as the PSI example files do)."""
+    parts, groups = [], {}
     for i, s in enumerate(scans):
         unit = ("UO:0000010", "second") if s.get("unit") == "s" else ("UO:0000031", "minute")
         kind = "MS:1000127" if s.get("centroid") else "MS:1000128"
@@ -77,11 +79,16 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
             )
         if precursors:
             prec = f'<precursorList count="{len(precursors)}">{prec}</precursorList>'
+        common = ('<cvParam cvRef="MS" accession="MS:1000511" name="ms level" '
+                  f'value="{s.get("ms_level", 1)}"/>'
+                  f'<cvParam cvRef="MS" accession="{kind}" name="spectrum type" value=""/>')
+        if param_groups:
+            ref = f"MS{s.get('ms_level', 1)}{kind[-1]}"
+            groups[ref] = f'<referenceableParamGroup id="{ref}">{common}</referenceableParamGroup>'
+            common = f'<referenceableParamGroupRef ref="{ref}"/>'
         parts.append(
             f'<spectrum id="scan={i + 1}" index="{i}" defaultArrayLength="{len(s["mz"])}">'
-            '<cvParam cvRef="MS" accession="MS:1000511" name="ms level" '
-            f'value="{s.get("ms_level", 1)}"/>'
-            f'<cvParam cvRef="MS" accession="{kind}" name="spectrum type" value=""/>'
+            + common +
             '<scanList count="1"><scan>'
             '<cvParam cvRef="MS" accession="MS:1000016" name="scan start time" '
             f'value="{s["time"]}" '
@@ -95,8 +102,11 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
                      numpress=numpress)
             + "</binaryDataArrayList></spectrum>"
         )
-    body = (f'<mzML xmlns="{NS}" version="1.1.0"><run id="r"><spectrumList count="{len(scans)}">'
-            + "".join(parts) + '</spectrumList><chromatogramList count="1"><chromatogram id="TIC" '
+    listed = (f'<referenceableParamGroupList count="{len(groups)}">' + "".join(groups.values())
+              + "</referenceableParamGroupList>") if groups else ""
+    body = (f'<mzML xmlns="{NS}" version="1.1.0">{listed}<run id="r">'
+            f'<spectrumList count="{len(scans)}">' + "".join(parts)
+            + '</spectrumList><chromatogramList count="1"><chromatogram id="TIC" '
             'index="0" defaultArrayLength="0"/></chromatogramList></run></mzML>')
     if not indexed:
         path.write_text('<?xml version="1.0" encoding="utf-8"?>' + body)
@@ -211,6 +221,24 @@ def test_unsupported_and_broken_files(tmp_path):
 
 
 @pytest.mark.parametrize("indexed", [True, False])
+def test_parameters_given_by_reference(tmp_path, indexed):
+    """mzML 1.1 lets a spectrum give its parameters through a referenceableParamGroup (the PSI
+    example files put the ms level there): they are read as if written directly, in the scan
+    table and in single scans read through the index."""
+    scans = time_course(n=4, ms2_every=2)
+    for s in scans:
+        s["centroid"] = s.get("ms_level", 1) == 2
+    f = MzmlFile(write_mzml(tmp_path / "g.mzML", scans, indexed=indexed, param_groups=True))
+    assert "referenceableParamGroupRef" in f.path.read_text()
+    table = f.scans()
+    assert list(table.ms_level) == [s.get("ms_level", 1) for s in scans]
+    assert list(table.centroid) == [s["centroid"] for s in scans]
+    two = int(np.flatnonzero(table.ms_level == 2)[0])
+    assert f.scan(two).ms_level == 2 and f.scan(two).centroid is True
+    assert f.scan(0).ms_level == 1 and f.scan(0).centroid is False
+
+
+@pytest.mark.parametrize("indexed", [True, False])
 def test_single_scans_by_index(tmp_path, indexed):
     scans = time_course(n=5, ms2_every=2)
     f = MzmlFile(write_mzml(tmp_path / "i.mzML", scans, indexed=indexed))
@@ -290,6 +318,60 @@ def test_scan_time_layout_each_every_and_windows(tmp_path):
     windows = read_mzml(runs, [target], project="p",
                         config=MzmlConfig(group="windows", windows=[(0, 70), (80, 200)]))
     assert len(windows) == 2
+
+
+def test_unstated_precursor_charges_and_scan_times(tmp_path, caplog):
+    """A fragment target asking for a precursor charge finds no scan when the scans do not state
+    one: said once per run, with the way out. A kinetics run whose scans lack a scan time is
+    refused (each scan's time is its exchange time); a run with a fixed time is not."""
+    scans = time_course(n=6, ms2_every=2)
+    for s in scans:
+        if "precursor" in s:
+            s["precursor"] = (s["precursor"][0], 0, *s["precursor"][2:])  # charge not stated
+    path = write_mzml(tmp_path / "u.mzML", scans)
+    frag = MzmlTarget(ENTRY, ms_level=2, activation="ETD", precursor_mz=1012.0,
+                      precursor_charge=20)
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        s = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
+    assert not any("@" in i for i in s.spectrum_id)  # the peptide's spectra only
+    said = [r.message for r in caplog.records if "do not state their precursor charge" in r.message]
+    assert len(said) == 1 and "precursor_charge = false" in said[0]
+    caplog.clear()
+    any_charge = MzmlRun(path, "WT", precursor_charge=None)
+    assert len(read_mzml([any_charge], [frag], project="p")) == 3
+    assert not any("precursor charge" in r.message for r in caplog.records)
+    scans = time_course(n=4)
+    scans[1]["time"] = "nan"
+    untimed = write_mzml(tmp_path / "t.mzML", scans)
+    with pytest.raises(MzmlError, match="1 MS1 scans have no scan start time"):
+        read_mzml([MzmlRun(untimed, "WT")], [MzmlTarget(ENTRY)], project="p")
+    assert len(read_mzml([MzmlRun(untimed, "WT", time=60.0)], [MzmlTarget(ENTRY)],
+                         project="p")) == 1
+
+
+def test_replicates_of_one_point_are_kept_apart(tmp_path, caplog):
+    """Runs of one sample at one time (or control role, or kinetics runs) without a rep are
+    numbered in the order listed, skipping a rep given to another; the same rep given twice
+    at one time is refused with both files named, at the project file and at the Python
+    interface; kinetics runs may share one."""
+    from hxex.io.mzml import number_replicates
+
+    runs = [MzmlRun("a.mzML", "WT", time=60.0), MzmlRun("b.mzML", "WT", time=60.0, rep=1),
+            MzmlRun("c.mzML", "WT", time=60.0), MzmlRun("d.mzML", "KO", time=60.0),
+            MzmlRun("u.mzML", "WT", role="undeut"), MzmlRun("v.mzML", "WT", role="undeut"),
+            MzmlRun("k1.mzML", "WT"), MzmlRun("k2.mzML", "WT")]
+    with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
+        out = number_replicates(runs, [False, True, False, False, False, False, False, False])
+    assert [r.rep for r in out] == [2, 1, 3, 1, 1, 2, 1, 2]
+    assert "replicates numbered in the order listed" in caplog.text
+    assert [r.rep for r in number_replicates(runs[6:])] == [1, 1]  # kinetics: may share
+    with pytest.raises(ValueError, match="a.mzML and b.mzML are both rep 1 of sample WT at "
+                                         "time 1 min"):
+        number_replicates(runs[:2])
+    path = write_mzml(tmp_path / "x.mzML", time_course(n=2))
+    with pytest.raises(MzmlError, match="both rep 1"):
+        read_mzml([MzmlRun(path, "WT", time=60.0), MzmlRun(path, "WT", time=60.0)],
+                  [MzmlTarget(ENTRY)], project="p")
 
 
 def test_kinetics_spectra_from_the_read_record(tmp_path):
@@ -578,6 +660,21 @@ def test_files_are_identified_and_paths_recorded_as_asked(tmp_path, caplog):
                   data_root=tmp_path / "elsewhere", record_paths="relative")
     with pytest.raises(ValueError, match="record_paths"):
         read_mzml(runs, [MzmlTarget(ENTRY)], project="p", record_paths="absolute")
+    # two files of one name in two folders: their names alone cannot tell them apart, and a
+    # repeated read from one directory would read one file for both runs
+    for sample in ("A", "B"):
+        (tmp_path / sample).mkdir()
+        write_mzml(tmp_path / sample / "rep1.mzML", time_course(n=2))
+    twins = [MzmlRun(tmp_path / x / "rep1.mzML", x) for x in ("A", "B")]
+    with pytest.raises(ValueError, match="several files are named rep1.mzML"):
+        read_mzml(twins, [MzmlTarget(ENTRY)], project="p", record_paths="name")
+    both = read_mzml(twins, [MzmlTarget(ENTRY)], project="p")
+    with pytest.raises(MzmlError, match="which were different files"):
+        read_mzml_source(both.source, directory=tmp_path / "A")
+    # one file in two runs is still one file
+    one = read_mzml([MzmlRun(plain, "WT"), MzmlRun(plain, "KO")], [MzmlTarget(ENTRY)],
+                    project="p", record_paths="name")
+    assert len(read_mzml_source(one.source, directory=data)) == len(one)
 
 
 def test_a_run_can_replace_the_targets_scan_conditions(tmp_path):

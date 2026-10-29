@@ -268,11 +268,15 @@ def _screen_columns(results: Results) -> dict[str, np.ndarray]:
 
 def uptake_table(results: Results) -> dict[str, np.ndarray]:
     """Replicate-averaged populations: one row per series, time and population rank with the
-    number of replicates averaged (``n_replicates``), the ``mean`` of the (corrected) means over
-    them and its standard deviation (``replicate_sd``; NaN with one replicate), and the mean
+    number of replicates averaged (``n_replicates``), the ``mean`` of the means over them
+    (back-exchange corrected for a series the controls correct, as measured for the others) and
+    its standard deviation (``replicate_sd``; NaN with one replicate), and the mean
     ``population``. Spectra are the ones accepted by the reviewer or not yet reviewed."""
     comp = components_table(results)
-    mean = comp["mean_corrected"] if results.controls is not None else comp["mean"]
+    ctrl = results.controls
+    corrected = (np.zeros(len(comp["data_id"]), dtype=bool) if ctrl is None else
+                 np.isin(comp["data_id"], ctrl.data_id[~np.asarray(ctrl.uncorrected, bool)]))
+    mean = np.where(corrected, comp["mean_corrected"], comp["mean"])  # per series
     ok = comp["review_status"] != "rejected"
     rows = []
     role = comp["role"] if "role" in comp else np.full(len(comp["time"]), "", dtype="<U8")

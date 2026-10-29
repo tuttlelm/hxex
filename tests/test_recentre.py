@@ -13,7 +13,7 @@ from hxex import load_results
 from hxex.fit import FitConfig
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
-from hxex.picking import BinnedSet, PickerConfig, pick_spectra
+from hxex.picking import BinnedSet, PickerConfig, pick_spectra, plan_bins
 from hxex.picking.binned import MZ_CHECK_COLUMNS
 from hxex.picking.recentre import MIN_LIMIT_PPM, envelope_offset, series_offsets
 from hxex.run import RunConfig, run
@@ -57,6 +57,18 @@ def test_the_envelope_offset_is_found_beyond_the_window():
     # beyond the search range (40 ppm, or twice the half-width): nothing found
     far = profile((pos * (1 + 150e-6), h))
     assert np.isnan(envelope_offset(*far, PLAN.pred_mz, Z, 10.0))
+
+
+def test_centroided_envelopes_give_their_sticks():
+    """Centroided data: one stick per isotope peak, so the nearest stick is the peak's top (a
+    climb would cross to a taller isotope stick); a 25-residue peptide, whose M+1 is taller
+    than M, read 10 ppm off."""
+    plan = plan_bins("RDKVQKEYALFYGEDGTLKSAEESQ", 2)
+    shape = plan.clusters[0]
+    assert shape[1] > shape[0]
+    sticks = plan.pred_mz[:len(shape)]
+    assert envelope_offset(sticks * (1 + 10e-6), shape * 1e5, plan.pred_mz, 2,
+                           50.0) == pytest.approx(10, abs=0.01)
 
 
 def test_an_envelope_whose_peaks_disagree_has_no_offset():

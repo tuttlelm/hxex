@@ -168,10 +168,14 @@ def lever_population(avg, low, high, se_avg, se_low, se_high):
 
 
 def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig(),  # noqa: B008
-                       *, tiers: bool = False) -> PopulationChoice:
+                       *, tiers: bool | None = None) -> PopulationChoice:
     """The choice for every sample, time and residue of ``residues`` that has a K=1 value or
     K=2 values (see the module docstring); with ``tiers``, by the residue tiers of the
-    population test (the residue map made with ``population_test=True``)."""
+    population test (the residue map made with ``population_test=True``). ``tiers`` None: by
+    the tiers whenever the residue map has them."""
+    if tiers is None:
+        tiers = residues.population_tier is not None and any(
+            str(t) for t in residues.population_tier)
     table: dict[tuple, dict] = {}
     fell_back: dict[tuple, bool] = {}
     share: dict[tuple, float] = {}

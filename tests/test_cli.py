@@ -3,6 +3,7 @@
 project, resuming a stopped bootstrap, reports from a bundle and bundle summaries."""
 
 import dataclasses
+import json
 import logging
 import shutil
 import tomllib
@@ -100,11 +101,34 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
         ('[analysis]\nalpha = "x"\n', '[analysis] alpha = "x": expected a number'),
         ('[analysis.filters]\nmin_population = "a"\n',
          '[analysis.filters] min_population = "a": expected a number'),
+        ('[output]\noverwrite = "false"\n', '[output] overwrite = "false": expected true or'),
+        ('[output]\nkeep_spectra = "no"\n', '[output] keep_spectra = "no": expected true or'),
+        ('[output]\ntables = "true"\n', 'write true or false without quotes'),
     ]:
         with pytest.raises(ProjectError) as info:
             project(text)
         assert message in str(info.value), (text, str(info.value))
     assert project("[run.fit]\nscreen = false\nk_max = 2\n").run.fit.k_max == 2
+    assert project("[output]\ntables = false\nbundle = false\n").output.tables_dir() is None
+    # limit_charge = false is a switch, not "unset"; a byte-order mark is not an error
+    bom = tmp_path / "bom.toml"
+    bom.write_text('\ufeffproject = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n'
+                   '[[input.runs]]\npath = "a.mzML"\nsample = "S"\ntime = 60\n'
+                   '[[input.fragments]]\nions = "c:ALL"\nlimit_charge = false\n',
+                   encoding="utf-8")
+    assert load_project(bom).input.fragments[0].limit_charge is False
+    # two runs of one sample and time: numbered when rep is left out, refused when given twice
+    twice = bom.read_text().replace('[[input.fragments]]', '[[input.runs]]\npath = "b.mzML"\n'
+                                    'sample = "S"\ntime = 60\n[[input.fragments]]')
+    bom.write_text(twice)
+    assert [r.rep for r in load_project(bom).input.runs] == [1, 2]
+    bom.write_text(twice.replace('time = 60\n', 'time = 60\nrep = 1\n'))
+    with pytest.raises(ProjectError, match="a.mzML and .*b.mzML are both rep 1"):
+        load_project(bom)
+    bom.write_text(twice)
+    bom.write_text(bom.read_text().replace('format = "mzml"', 'format = "mzml"\nparents = "no"'))
+    with pytest.raises(ProjectError, match='parents = "no": expected true or false'):
+        load_project(bom)
     # a file for hxex analyse only may leave the project name out
     only = tmp_path / "only.toml"
     only.write_text('[analysis]\nreference = "WT"\n[output]\nbundle = "res"\n')
@@ -423,8 +447,19 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     (tmp_path / "run1.mzML").unlink()  # not read again
     capsys.readouterr()
     assert cli.main(["run", str(tmp_path / "rerun.toml")]) == 0
-    assert "not used: input peptides, runs" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "the read was skipped (input peptides, runs describe the data" in err
+    assert "the picking stored in" in err  # the same picking: taken, not repeated
     same_results(tmp_path / "out2")
+    # its settings file records the read the stored spectra came from, and loads as a project
+    used = load_project(tmp_path / "out2" / "run_settings_used.toml")
+    assert used.input.spectra is not None and [r.sample for r in used.input.runs] == ["WT"]
+    assert used.input.peptides is not None
+    # a read setting of the project file that differs from the record is said
+    (tmp_path / "changed.toml").write_text(text.replace('sample = "WT"', 'sample = "KO"'))
+    with caplog.at_level(logging.WARNING):
+        load_project(tmp_path / "changed.toml")
+    assert "read with other runs than the project file's [input] gives" in caplog.text
     # or from the command line, into another bundle
     assert cli.main(["-q", "run", str(path), "--spectra", str(tmp_path / "out"),
                      "--bundle", str(tmp_path / "out3")]) == 0
@@ -438,6 +473,8 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     assert "stored in" in capsys.readouterr().out
     assert cli.main(["-q", "run", str(project_file)]) == 0
     same_results(tmp_path / "out4")
+    used = load_project(tmp_path / "out4" / "run_settings_used.toml")  # no peptide table named
+    assert used.input.format == "mzml" and len(used.input.runs) == 1
     # a spectra file works as well
     save_spectra(spectra, tmp_path / "s.parquet")
     project_file.write_text(project_file.read_text().replace('"out"', '"s.parquet"'))
@@ -966,6 +1003,13 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     capsys.readouterr()
     assert cli.main(["resume", str(path)]) == 0
     assert "nothing to add" in capsys.readouterr().out
+    # a key the stored settings lack (added to hxex later) takes its default: not redone
+    manifest = tmp_path / "out" / "manifest.json"
+    stored = json.loads(manifest.read_text())
+    del stored["configs"]["bootstrap"]["curve_band"]
+    manifest.write_text(json.dumps(stored))
+    assert cli.main(["resume", str(path)]) == 0
+    assert "nothing to add" in capsys.readouterr().out
     # the bundle's settings file follows: the new bootstrap, the project file's input kept
     used = load_project(tmp_path / "out" / "run_settings_used.toml")
     assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input
@@ -1211,6 +1255,31 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert (tmp_path / "out_analysis" / "species_uptake.csv").is_file()
     assert cli.main(["-q", "report", str(path), "--figures", "--keep-previous"]) == 0
     assert (tmp_path / "out_figures.2").is_dir()
+    # a command refused after its checks moves nothing (no stray NAME.N generation)
+    assert cli.main(["-q", "analyse", str(path), "--keep-previous", "--reference", "nope",
+                     "--out", str(tmp_path / "out_analysis")]) == 1
+    assert not (tmp_path / "out_analysis.2").exists()
+    assert cli.main(["-q", "report", str(tmp_path / "missing"), "--figures",
+                     "--keep-previous"]) == 1
+    assert cli.main(["-q", "analyse", str(path), "--keep-previous", "--bundle",
+                     str(tmp_path / "missing")]) == 1
+    assert not (tmp_path / "out_analysis.2").exists()
+    review = tmp_path / "review.csv"
+    sid = (tmp_path / "out_tables" / "spectra.csv").read_text().splitlines()[1].split(",")[0]
+    review.write_text(f"spectrum_id,review_K\n{sid},2\n")  # a K the run did not try: refused
+    path.write_text(path.read_text() + '\n[review]\ntable = "review.csv"\n')
+    assert cli.main(["-q", "report", str(path), "--figures", "--keep-previous"]) == 1
+    assert not (tmp_path / "out_figures.3").exists()
+    path.write_text(path.read_text().replace('\n[review]\ntable = "review.csv"\n', ""))
+    # with a project file, report writes its tables where [output] tables says
+    capsys.readouterr()
+    path.write_text(path.read_text().replace("[output]", '[output]\ntables = "my_tables"', 1))
+    assert cli.main(["-q", "report", str(path)]) == 0
+    assert (tmp_path / "my_tables" / "spectra.csv").is_file()
+    path.write_text(path.read_text().replace('tables = "my_tables"', "tables = false"))
+    assert cli.main(["report", str(path)]) == 0
+    assert "nothing to write" in capsys.readouterr().out
+    path.write_text(path.read_text().replace("tables = false\n", ""))
     # the project's [output] overwrite covers every folder
     text = path.read_text()
     path.write_text(text.replace("[output]", "[output]\noverwrite = true", 1))

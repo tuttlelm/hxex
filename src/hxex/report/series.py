@@ -10,6 +10,7 @@ chosen for every time point independently.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT, time_index
 from .results import Results
 from .spectrum import LAYERS, plot_spectrum, population_style
+
+log = logging.getLogger(__name__)
 
 # replicate shapes in the overlay of the population map (there the colour is the population)
 REP_MARKERS = ("o", "s", "^", "D", "v", "P")
@@ -55,7 +58,7 @@ def load_reference(path) -> Reference:
     layout of the Bimodal test set; ``fd`` in percent of the amides, ``#N/A`` for none)."""
     from pathlib import Path
 
-    rows = [r.split("\t") for r in Path(path).read_text(encoding="utf-8").splitlines()
+    rows = [r.split("\t") for r in Path(path).read_text(encoding="utf-8-sig").splitlines()
             if r.strip()]
     head = [h.strip().lower() for h in rows[0]]
     fd_cols = [j for j, h in enumerate(head) if h.startswith("fd")]
@@ -159,14 +162,19 @@ def series_info(results: Results, data_id: int) -> dict:
 def _layout(info: dict, columns: int | None) -> tuple[int, int, list[tuple[int, int]], bool]:
     """Rows, columns and the (row, column) of every spectrum of a series (in ``info`` order).
 
-    With several replicates (and ``columns`` not given) a row is a time and a column a replicate.
-    Otherwise the spectra, in time order, fill a grid of ``columns`` columns (default: a near
-    square of at most 4 columns), so that a long single-replicate time course is not one tall
-    column. The last value says whether the layout is time by replicate."""
+    With several replicates (and ``columns`` not given) a row is a time and a column a replicate,
+    unless two spectra share a time and a replicate number (warned). Otherwise the spectra, in
+    time order, fill a grid of ``columns`` columns (default: a near square of at most 4
+    columns), so that a long single-replicate time course is not one tall column. The last
+    value says whether the layout is time by replicate."""
     n = len(info["rows"])
     # a point is a time or a control role; ``time_index`` ranks them (the controls at the ends)
     points, reps = np.unique(info["time_index"]), np.unique(info["reps"])
-    if columns is None and len(reps) > 1:
+    pairs = list(zip(info["time_index"].tolist(), info["reps"].tolist(), strict=True))
+    if columns is None and len(reps) > 1 and len(set(pairs)) < len(pairs):
+        log.warning("%s: two spectra share a time and a replicate number; drawn in time "
+                    "order, not by replicate", info.get("label", "a series"))
+    elif columns is None and len(reps) > 1:
         pos = [(int(np.searchsorted(points, t)), int(np.searchsorted(reps, r)))
                for t, r in zip(info["time_index"], info["reps"], strict=True)]
         return len(points), len(reps), pos, True
@@ -239,10 +247,16 @@ def plot_series_spectra(
     width on each side."""
     info = series_info(results, data_id)
     fig, cells = _grid(info, cell, columns, residual)
+    unread = None
     if "raw" in show and results.spectra is None and results.loader is not None:
         # the series' raw spectra in one read, not one read per panel
         ids = [str(results.fit.spectrum_id[i]) for i in cells]
-        results = dataclasses.replace(results, spectra=results.loader(ids))
+        try:
+            results = dataclasses.replace(results, spectra=results.loader(ids))
+        except Exception as exc:  # noqa: BLE001 (the other layers can still be drawn)
+            log.warning("the raw spectra of series %d could not be read: %s", data_id, exc)
+            unread = f"raw spectra not read: {exc}"
+            results = dataclasses.replace(results, loader=None)
     for i, (ax, rax) in cells.items():
         sid = str(results.fit.spectrum_id[i])
         try:
@@ -254,6 +268,9 @@ def plot_series_spectra(
         except ValueError as exc:
             ax.text(0.5, 0.5, str(exc), ha="center", va="center", fontsize=6, wrap=True,
                     transform=ax.transAxes)
+        if unread is not None:
+            ax.text(0.02, 0.98, unread, ha="left", va="top", fontsize=6, wrap=True,
+                    color="darkred", transform=ax.transAxes, gid="raw_unread")
         pos = list(info["rows"]).index(i)
         when = _time_text(info["times"][pos], info["roles"][pos])
         ax.set_title(f"{when}, rep {info['reps'][pos]}", fontsize=8)
@@ -325,7 +342,9 @@ def population_data(
     ``(n, K, 2)`` (mean, population; None if not kept), ``centroid`` (population-weighted mean),
     ``corrected`` (whether the means are back-exchange corrected), ``n_amides`` and ``shown``.
     ``corrected`` None (the default) corrects when the results have controls for the spectrum's
-    series; True raises KeyError when they have none for it."""
+    series; True raises KeyError when they have none for it, and draws a series the controls
+    leave uncorrected (fragment ions) uncorrected, with ``uncorrected_series`` True so that the
+    panel says so."""
     i = results.find(spectrum_id)
     k = int(results.effective_K[i] if k is None else k)
     results.fit.require_fitted(i, k)
@@ -348,7 +367,7 @@ def population_data(
     row = _control_row(results, data_id)
     if corrected and row is None and not _uncorrected(results, data_id):
         raise KeyError(f"no controls for series {data_id} (spectrum {spectrum_id})")
-    use = row is not None if corrected is None else corrected
+    use = row is not None and (corrected is None or bool(corrected))
     n_amides = None
     if use:
         n_amides = float(results.controls.n_amides[row])
@@ -366,7 +385,7 @@ def population_data(
         "spectrum_id": spectrum_id, "index": i, "k": k, "mean": mean, "population": frac,
         "mean_se": mean_se, "population_se": population_se, "draws": draws,
         "centroid": float((mean * frac).sum()), "corrected": use, "n_amides": n_amides,
-        "shown": shown,
+        "shown": shown, "uncorrected_series": bool(corrected) and row is None,
     }
 
 
@@ -377,6 +396,14 @@ def _limits(ax: Axes, n_amides: float | None) -> None:
     if not any(line.get_gid() == "limits" for line in ax.collections):
         ax.vlines([0, n_amides], 0, 1, color="grey", ls=":", lw=1, gid="limits")
     ax.set_xlim(-1, n_amides + 1)
+
+
+def _deuterium_label(corrected: bool, uncorrected_series: bool) -> str:
+    """The deuterium axis label; a series drawn uncorrected although corrected values were
+    asked for (one the controls leave uncorrected, such as fragment ions) says so."""
+    if corrected:
+        return "deuterium (back-exchange corrected)"
+    return "deuterium (uncorrected series)" if uncorrected_series else "deuterium"
 
 
 def _draw_population_map(ax: Axes, d: dict, title: str | None) -> None:
@@ -395,7 +422,7 @@ def _draw_population_map(ax: Axes, d: dict, title: str | None) -> None:
                label="centroid", gid="centroid")
     _limits(ax, d["n_amides"])
     ax.set_ylim(-0.05, 1.1)
-    ax.set_xlabel("deuterium (back-exchange corrected)" if d["corrected"] else "deuterium")
+    ax.set_xlabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_ylabel("population")
     if title:
         ax.set_title(title, fontsize=8)
@@ -493,13 +520,13 @@ def uptake_data(
     cols: dict[str, list] = {n: [] for n in (
         "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "population",
         "population_se", "role")}
-    use = False
+    use, uncorrected_series = False, False
     for pos, i in enumerate(info["rows"]):
         if k is not None and not results.fit.fitted(k)[i]:
             continue  # the screen skipped this K for the spectrum
         d = population_data(results, str(results.fit.spectrum_id[i]), k=k, corrected=corrected,
                             components=components)
-        use = d["corrected"]
+        use, uncorrected_series = d["corrected"], d["uncorrected_series"]
         for rank in d["shown"]:
             c = rank - 1
             for name, value in (
@@ -517,7 +544,8 @@ def uptake_data(
     ctrl = results.controls
     row = _control_row(results, data_id)
     out.update({
-        "label": info["label"], "corrected": use, "n_amides": info["n_amides"],
+        "label": info["label"], "corrected": use, "uncorrected_series": uncorrected_series,
+        "n_amides": info["n_amides"],
         "m0": None if row is None else float(ctrl.m0[row]),
         "mfd": None if row is None else float(ctrl.mfd[row]),
         "control_fallback": None if row is None else bool(ctrl.fallback[row]),
@@ -618,7 +646,7 @@ def plot_uptake(
     else:
         ax.set_xlabel("time (s)")
         ax.set_xscale(scale)
-    ax.set_ylabel("deuterium (back-exchange corrected)" if d["corrected"] else "deuterium")
+    ax.set_ylabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_title(d["label"], fontsize=9)
     if legend and (len(reps) > 1 or out.any()):
         ax.legend(fontsize=7, frameon=False, loc="lower right")
