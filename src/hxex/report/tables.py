@@ -250,7 +250,12 @@ def _test_columns(results: Results) -> dict[str, np.ndarray]:
     out = {"criterion_K": np.asarray(test.criterion_K, dtype=np.int64)}
     for s, k in enumerate(test.steps):
         out[f"test_p_{k}"] = np.asarray(test.p[:, s], dtype=float)
-    out["narrow_component"] = np.asarray(test.narrow[:, -1], dtype=bool)  # at any step
+    # the fit at the K in effect: the step that added its last population (none at K = 1)
+    step = {int(k) + 1: s for s, k in enumerate(test.steps)}
+    narrow = np.asarray(test.narrow, dtype=bool)
+    out["narrow_component"] = np.array(
+        [s is not None and bool(narrow[i, s]) for i, s in
+         enumerate(step.get(int(k)) for k in results.effective_K)], dtype=bool)
     return out
 
 
@@ -267,8 +272,9 @@ def _screen_columns(results: Results) -> dict[str, np.ndarray]:
 
 
 def uptake_table(results: Results) -> dict[str, np.ndarray]:
-    """Replicate-averaged populations: one row per series, time and population rank with the
-    number of replicates averaged (``n_replicates``), the ``mean`` of the means over them
+    """Replicate-averaged populations: one row per series, time, ``K`` (the spectra's K in
+    effect: spectra fitted at different K are never averaged together) and population rank,
+    with the number of replicates averaged (``n_replicates``), the ``mean`` of the means over them
     (back-exchange corrected for a series the controls correct, as measured for the others) and
     its standard deviation (``replicate_sd``; NaN with one replicate), and the mean
     ``population``. Spectra are the ones accepted by the reviewer or not yet reviewed."""
@@ -283,19 +289,20 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     points = time_point(comp["time"], role)  # replicates share a point: a time, or a control
     keys = {}
     for i in np.flatnonzero(ok):
-        key = (int(comp["data_id"][i]), points[i], int(comp["rank"][i]))
+        key = (int(comp["data_id"][i]), points[i], int(comp["K"][i]), int(comp["rank"][i]))
         keys.setdefault(key, (key[0], *point_order_key(float(comp["time"][i]), str(role[i])),
-                              key[2]))
-    for d, point, r in sorted(keys, key=lambda k: keys[k]):
-        sel = ok & (comp["data_id"] == d) & (points == point) & (comp["rank"] == r)
+                              *key[2:]))
+    for d, point, k, r in sorted(keys, key=lambda k: keys[k]):
+        sel = (ok & (comp["data_id"] == d) & (points == point) & (comp["K"] == k)
+               & (comp["rank"] == r))
         values, fractions = mean[sel], comp["population"][sel]
         first = np.flatnonzero(sel)[0]
-        rows.append((d, float(comp["time"][first]), str(role[first]), r,
+        rows.append((d, float(comp["time"][first]), str(role[first]), k, r,
                      str(comp["sample"][first]), str(comp["peptide"][first]),
                      str(comp["peptide_range"][first]), int(len(values)), float(values.mean()),
                      float(values.std(ddof=1)) if len(values) > 1 else np.nan,
                      float(fractions.mean())))
-    names = ("data_id", "time", "role", "rank", "sample", "peptide", "peptide_range",
+    names = ("data_id", "time", "role", "K", "rank", "sample", "peptide", "peptide_range",
              "n_replicates", "mean", "replicate_sd", "population")
     return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
 
@@ -314,7 +321,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
     (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
-    (``measured``, or the fallback reasons; empty without controls), ``control_notes`` (the
+    (``measured``, ``uncorrected`` for a series the controls leave as measured, such as a
+    fragment ion, or the fallback reasons; empty without controls), ``control_notes`` (the
     control flags that only warn, :data:`hxex.controls.CONTROL_NOTES`), ``retention`` (the
     deuterium retention used for the back-exchange correction, a fraction; NaN without
     controls), ``control_fallback`` (the correction used a fallback, not the series' own
@@ -335,6 +343,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
         "noise_reference", "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
+    uncorrected = ctrl.uncorrected if ctrl is not None else np.zeros(0, dtype=bool)
     meas = results.measurements
     refs = noise_reference_kinds(meas.data_id, meas.references, meas.role)
     for d in ids:
@@ -349,7 +358,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
             "charge": 0 if j is None else int(b.charge[j]),
             "n_spectra": len(members), "n_flagged": int(flagged[members].sum()),
             "n_rejected": int(rejected[members].sum()), "n_multi": int(multi[members].sum()),
-            "controls": "" if r is None else ("measured" if not ctrl.fallback[r]
+            "controls": "" if r is None else ("uncorrected" if uncorrected[r]
+                                              else "measured" if not ctrl.fallback[r]
                                               else str(ctrl.flags[r])),
             "control_notes": "" if r is None else _control_notes(str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),

@@ -106,14 +106,28 @@ def _rank_points(ax: Axes, x, y, se, colour: str, marker: str, zorder: float, gi
     bars.lines[0].set_gid(gid)
 
 
+def _top(value, se=None) -> float:
+    """The highest point drawn: ``value`` plus its error bar (-inf when nothing is finite)."""
+    value = np.asarray(value, dtype=float)
+    upper = value if se is None else value + np.nan_to_num(np.asarray(se, dtype=float))
+    upper = upper[np.isfinite(upper)]
+    return float(upper.max()) if len(upper) else -np.inf
+
+
+def _upper_limit(top: float) -> float:
+    """The top of a deuteration axis: 1.05, or above the highest point drawn (fD is not
+    clipped at 1: values to ``max_fD`` are kept), as :func:`plot_residue_profile`."""
+    return max(1.05, 1.05 * top)
+
+
 def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample: str,
                   style_index: int, n_diff: int, time: float, time_scale: str,
-                  annotations: Annotations | None) -> None:
+                  annotations: Annotations | None, top: float = -np.inf) -> None:
     """The axes, legend (the samples' colours, and the corrected-differently mark when drawn)
-    and time label every residue figure shares."""
+    and time label every residue figure shares; ``top`` is the highest point drawn."""
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length)
-    ax.set_ylim(-0.05, 1.05)
+    ax.set_ylim(-0.05, _upper_limit(top))
     ax.yaxis.set_minor_locator(AutoMinorLocator(2))
     ax.xaxis.set_minor_locator(AutoMinorLocator(4))
     ax.set_xlabel("Residue")
@@ -172,19 +186,21 @@ def plot_residue_comparison(
     order = np.argsort(comparison.residue[rows])
     x = comparison.residue[rows][order]
     marker = "o" if comparison.K == 1 else "^" if comparison.rank == 1 else "v"
+    top = -np.inf
     for n, (name, value, se) in enumerate((
             (comparison.reference, comparison.value_reference, comparison.value_reference_se),
             (sample, comparison.value, comparison.value_se))):
         colour = _style(0 if n == 0 else style_index)[0]
         _rank_points(ax, x, value[rows][order], se[rows][order], colour, marker, 3 + n,
                      f"{comparison.quantity}:{name}")
+        top = max(top, _top(value[rows], se[rows]))
     n_diff = (_corrected_differently(
         ax, comparison.residue[rows & comparison.corrected_differently], note=False)
         if mark_corrected_differently else 0)
     _residue_axes(ax, length=length if length is not None else int(comparison.residue.max()),
                   ylabel=_label(comparison.quantity), reference=comparison.reference,
                   sample=sample, style_index=style_index, n_diff=n_diff, time=time,
-                  time_scale=time_scale, annotations=annotations)
+                  time_scale=time_scale, annotations=annotations, top=top)
     return fig
 
 
@@ -258,7 +274,7 @@ def plot_residue_overlay(
         ax = fig.add_subplot()
     else:
         fig = ax.figure
-    drawn = 0
+    drawn, top = 0, -np.inf
     shown: dict[str, set] = {reference: set(), sample: set()}
     fell_back: dict[str, set] = {reference: set(), sample: set()}
     for n, (name, index) in enumerate(((reference, 0), (sample, style_index))):
@@ -274,9 +290,10 @@ def plot_residue_overlay(
                 shown[name].update(choice.residue[rows].tolist())
                 fell_back[name].update(choice.residue[rows & choice.control_fallback].tolist())
                 pop = choice.population_low[rows]
-                _rank_points(ax, choice.residue[rows], pop if value == "pop_low" else 1 - pop,
-                             choice.population_low_se[rows], colour, K2_MARKERS[value], 3 + n,
-                             f"overlay:{name}:{value}")
+                pop = pop if value == "pop_low" else 1 - pop
+                _rank_points(ax, choice.residue[rows], pop, choice.population_low_se[rows],
+                             colour, K2_MARKERS[value], 3 + n, f"overlay:{name}:{value}")
+                top = max(top, _top(pop, choice.population_low_se[rows]))
                 continue
             k, rank = OVERLAY_VALUES[value]
             rows = residues.where(sample=name, time=time, K=k, rank=rank) & np.isfinite(
@@ -288,6 +305,7 @@ def plot_residue_overlay(
             drawn += 1
             shown[name].update(residues.residue[rows].tolist())
             fell_back[name].update(residues.residue[rows & residues.control_fallback].tolist())
+            top = max(top, _top(residues.fD[rows], residues.fD_se[rows]))
             if value == "avg":
                 _average_line(ax, residues, name, time, colour, zorder=1.7 + 0.1 * n)
                 (line,) = ax.plot(residues.residue[rows], residues.fD[rows], linestyle="none",
@@ -308,7 +326,7 @@ def plot_residue_overlay(
     _residue_axes(ax, length=length if length is not None else int(residues.residue.max()),
                   ylabel=_overlay_label(show), reference=reference, sample=sample,
                   style_index=style_index, n_diff=n_diff, time=time, time_scale=time_scale,
-                  annotations=annotations)
+                  annotations=annotations, top=top)
     return fig
 
 
@@ -586,6 +604,7 @@ def plot_region_bars(
         fig = ax.figure
     width = 0.8 / max(len(samples), 1)
     x = np.arange(len(names))
+    top = -np.inf
     for n, sample in enumerate(samples):
         colour, _, _ = _style(n)
         values, errors = [], []
@@ -598,9 +617,10 @@ def plot_region_bars(
                       error_kw={"elinewidth": 0.7, "ecolor": "#555555"}, alpha=0.9)
         for patch, name in zip(bars.patches, names, strict=True):
             patch.set_gid(f"region:{sample}:{name}")
+        top = max(top, _top(values, errors))
     labels = [textwrap.fill(name.replace(",", ", "), 10).replace(", ", ",") for name in names]
     ax.set_xticks(x, labels, rotation=0, fontsize=8)
-    ax.set_ylim(0, 1.05)
+    ax.set_ylim(0, _upper_limit(top))
     ax.set_ylabel("fD")
     ax.grid(axis="y", color="#e5e5e5", linewidth=0.8)
     ax.set_axisbelow(True)

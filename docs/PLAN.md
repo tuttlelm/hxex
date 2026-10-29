@@ -724,7 +724,7 @@ Planned, not built:
    decided there, to be recorded in the table above when built: an acetylated N-terminus keeps
    its residue-1 amide (`nterm_subtract` applies to a free amine only); HX-Express spectra are
    read from the labelled column and the one to its right, not by label position. Session A
-   done (HISTORY 192), Session B done (HISTORY 193).
+   done (HISTORY 192), Session B done (HISTORY 193), Session C done (HISTORY 194).
 
 ## Risks and open decisions
 

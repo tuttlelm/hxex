@@ -108,7 +108,7 @@ Then `hxex run hxex.toml`. With the test in the results, `hxex analyse` uses it 
 - `spectra.csv`: `K` is now the test's number for each spectrum; `criterion_K` is the number
   the fit's score chose, `test_p_1` the chance of the spectrum's improvement with one
   population (and `test_p_2` with two, for `k_max = 3`), and `narrow_component` is the flag
-  above.
+  above, for the fit at the spectrum's `K` (never set at one population).
 - `species_uptake.csv`: `best_set_K` is each peptide's number at each time from the test, with
   `set_p_1` (and `set_p_2`), the reason in `best_set_reason`, `set_test_K` (the test's own
   number, which `best_set_K` follows only up to the largest number analysed) and the flag

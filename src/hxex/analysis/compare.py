@@ -725,9 +725,11 @@ def compare_residues(
     ``delta_crit`` is usually the peptides' (:func:`compare_peptides`). With a ``choice``
     (:func:`hxex.analysis.choose_populations`) each row records whether each side keeps two
     populations (``two_reference``, ``two``); at K >= 2 a difference is significant only where
-    both do (HISTORY 137). No row is left out because of it."""
+    both do (HISTORY 137). No row is left out because of it. The controls' rows take no part
+    (:meth:`ResidueMap.time_points`)."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
+    residues = residues.time_points()
     sel = (residues.K == K) & (residues.rank == rank)
     value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb))
              for u, s, t, r, v, e, fb in zip(
@@ -957,7 +959,9 @@ def region_summary(
     K: int = 1,
     rank: int = 1,
 ) -> RegionTable:
-    """The mean ``fD`` of every region for every sample and time of ``residues``."""
+    """The mean ``fD`` of every region for every sample and time point of ``residues`` (the
+    controls' rows take no part: :meth:`ResidueMap.time_points`)."""
+    residues = residues.time_points()
     regions = regions.regions if isinstance(regions, Annotations) else tuple(regions)
     if not regions:
         raise ValueError("no regions given")

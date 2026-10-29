@@ -432,6 +432,40 @@ def choice_map(rows):
     return ResidueMap(**cols)
 
 
+def test_controls_take_no_part_in_the_residue_choice_and_comparisons():
+    """Audit 2026-10-28 Medium 10: a control's NaN time split the choice's and the regions'
+    rows; the controls' rows now take no part (they stay in the residue table)."""
+    import dataclasses
+
+    from hxex.analysis import (
+        Region,
+        ResidueMap,
+        choose_populations,
+        compare_residues,
+        region_summary,
+    )
+
+    rows = [(r, k, rank, fd, 0.01) for r in (1, 2)
+            for k, rank, fd in ((1, 1, 0.5), (2, 1, 0.2), (2, 2, 0.8))]
+    point = choice_map(rows)
+    control = dataclasses.replace(point, time=np.full(len(rows), np.nan),
+                                  role=np.full(len(rows), "undeut"))
+    both = ResidueMap(**{f.name: np.concatenate([getattr(point, f.name),
+                                                 getattr(control, f.name)])
+                         for f in dataclasses.fields(ResidueMap)})
+    choice = choose_populations(both)
+    assert len(choice) == 2 and (choice.time == 4.0).all() and choice.two_populations.all()
+    regions = region_summary(both, [Region("all", 1, 2)])
+    assert len(regions) == 1 and regions.time[0] == 4.0 and regions.n_residues[0] == 2
+    other = dataclasses.replace(both, sample=np.full(len(both), "V"),
+                                fD=both.fD + 0.1)
+    two = ResidueMap(**{f.name: np.concatenate([getattr(both, f.name), getattr(other, f.name)])
+                        for f in dataclasses.fields(ResidueMap)})
+    rc = compare_residues(two, "S")
+    assert len(rc) == 2 and (rc.time == 4.0).all()
+    assert len(both.time_points()) == len(rows)
+
+
 def test_choose_populations_applies_every_test():
     from hxex.analysis import ChoiceConfig, choose_populations
 
@@ -1090,6 +1124,31 @@ def test_residue_overlay_shows_the_chosen_values():
     assert list(lines["overlay:V:high"].get_xdata()) == [3, 4]
     assert list(lines["overlay:WT:high"].get_xdata()) == [3, 4, 6]
     assert list(lines["overlay:V:avg"].get_xdata()) == [3, 4, 6]  # the average is never filtered
+
+
+def test_residue_figures_keep_values_above_full_deuteration_in_view():
+    """Audit 2026-10-28 Medium 19: fD is not clipped at 1 (max_fD allows 1.1), so the
+    comparison, overlay and region figures raise their top above the highest point drawn."""
+    import dataclasses
+
+    from hxex.analysis import Region, ResidueMap, compare_residues, region_summary
+    from hxex.report import plot_region_bars, plot_residue_comparison, plot_residue_overlay
+
+    rows = [(sample, r, fd) for sample, fd in (("WT", 0.9), ("V", 1.09)) for r in (3, 4, 6)]
+    n = len(rows)
+    rm = ResidueMap(sample=np.array([r[0] for r in rows]), time=np.full(n, 4.0),
+                    K=np.ones(n, dtype=np.int64), rank=np.ones(n, dtype=np.int64),
+                    residue=np.array([r[1] for r in rows]), aa=np.array(["A"] * n),
+                    fD=np.array([r[2] for r in rows]), fD_se=np.full(n, 0.02),
+                    redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
+                    proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool))
+    for fig in (plot_residue_overlay(rm, "WT", "V", 4.0, show=("avg",)),
+                plot_residue_comparison(compare_residues(rm, "WT"), "V", 4.0),
+                plot_region_bars(region_summary(rm, [Region("all", 3, 6)]), 4.0)):
+        assert fig.axes[0].get_ylim()[1] >= 1.11 * 1.05 - 1e-9
+    plain = dataclasses.replace(rm, fD=np.full(n, 0.5))
+    assert plot_residue_overlay(plain, "WT", "V", 4.0, show=("avg",)).axes[0].get_ylim()[1] \
+        == pytest.approx(1.05)
 
 
 def test_range_matching_never_crosses_modified_forms():

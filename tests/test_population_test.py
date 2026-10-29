@@ -297,6 +297,21 @@ def test_a_peptide_whose_undeuterated_set_reads_two_is_flagged_or_capped(tested_
                               populations="population_test").undeuterated_two.any()
 
 
+def test_narrow_component_is_the_flag_of_the_fit_at_the_spectrums_k():
+    from types import SimpleNamespace
+
+    from hxex.report.tables import _test_columns
+
+    # steps one and two: the K = 2 and K = 3 fits' flags
+    narrow = np.array([[True, False], [True, False], [False, True], [False, True]])
+    test = SimpleNamespace(criterion_K=np.ones(4), steps=(1, 2), p=np.zeros((4, 2)),
+                           narrow=narrow)
+    cols = _test_columns(SimpleNamespace(population_test=test,
+                                         effective_K=np.array([1, 2, 2, 3])))
+    # K = 1 never; K = 2 the first step's flag; K = 3 the second's
+    np.testing.assert_array_equal(cols["narrow_component"], [False, True, False, True])
+
+
 def test_the_residue_tiers_follow_the_rule():
     from hxex.analysis.residues import population_tiers
 

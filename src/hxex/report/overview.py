@@ -106,8 +106,9 @@ def plot_k_comparison(
 def controls_overview_data(results: Results) -> dict:
     """For every series with controls: ``retention`` of the measured fully deuterated control
     against the undeuterated level used (NaN without one), ``m0`` (the measured undeuterated
-    mean, NaN without one), the counts of each fallback ``reasons`` and of series using both
-    measured controls (``measured``), and the configured limits."""
+    mean, NaN without one), the counts of each fallback ``reasons``, of series using both
+    measured controls (``measured``) and of series the controls leave uncorrected
+    (``uncorrected``: fragment ions), and the configured limits."""
     c = results.controls
     if c is None:
         raise ValueError("these results have no controls")
@@ -121,7 +122,8 @@ def controls_overview_data(results: Results) -> dict:
     return {
         "data_id": c.data_id, "retention": retention, "m0": c.m0_measured,
         "fallback": c.fallback.copy(), "reasons": reasons, "notes": notes,
-        "measured": int((~c.fallback).sum()),
+        "measured": int((~c.fallback & ~c.uncorrected).sum()),
+        "uncorrected": int(c.uncorrected.sum()),
         "retention_min": retention_floor(c), "retention_max": cfg.retention_max,
         "m0_max": cfg.m0_max, "n_series": len(c),
     }
@@ -164,9 +166,12 @@ def plot_controls_overview(results: Results) -> Figure:
     # the reasons that occurred (red), then the flags that only warn (grey, the control used)
     reasons = {k: v for k, v in d["reasons"].items() if v}
     notes = {f"{k} (flag only)": v for k, v in d["notes"].items() if v}
-    names = ["both measured", *reasons, *notes]
-    counts = [d["measured"], *reasons.values(), *notes.values()]
-    colors = [GOOD] + [FIT_COLOR] * len(reasons) + ["#9a9a9a"] * len(notes)
+    # series the controls leave uncorrected (fragment ions): their own bar, in neither group
+    plain = {"uncorrected": d["uncorrected"]} if d["uncorrected"] else {}
+    names = ["both measured", *plain, *reasons, *notes]
+    counts = [d["measured"], *plain.values(), *reasons.values(), *notes.values()]
+    colors = ([GOOD] + ["#6b8fb3"] * len(plain) + [FIT_COLOR] * len(reasons)
+              + ["#9a9a9a"] * len(notes))
     a3.barh(names[::-1], counts[::-1], color=colors[::-1], gid="reasons")
     for y, n in enumerate(counts[::-1]):
         a3.text(n, y, f" {n}", va="center", fontsize=8)

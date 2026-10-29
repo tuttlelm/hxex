@@ -272,7 +272,7 @@ def plot_series_spectra(
             ax.text(0.02, 0.98, unread, ha="left", va="top", fontsize=6, wrap=True,
                     color="darkred", transform=ax.transAxes, gid="raw_unread")
         pos = list(info["rows"]).index(i)
-        when = _time_text(info["times"][pos], info["roles"][pos])
+        when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
         ax.set_title(f"{when}, rep {info['reps'][pos]}", fontsize=8)
     lo, hi = _series_range(results, [str(results.fit.spectrum_id[i]) for i in cells],
                            [ax for ax, _ in cells.values()])
@@ -302,31 +302,32 @@ def _control_role(role: str) -> str | None:
     return ROLE_SHORT.get(str(role))
 
 
-def _time_text(t: float, role: str = "") -> str:
+def _time_text(t: float, role: str = "", scale: str = "seconds") -> str:
     """A point for a title: ``FD`` or ``UN`` for a control (with its time when it has one),
-    else the time in a readable unit (:func:`hxex.io.format_time`)."""
+    else the time in a readable unit (:func:`hxex.io.format_time`); ``point 3`` when the times
+    only order the points (``scale='order'``, :attr:`Results.time_scale`)."""
+    when = format_time(t, scale)
+    if scale == "order" and when:
+        when = f"point {when}"
     short = _control_role(role)
     if short is not None:
-        return f"{short} ({format_time(t)})" if np.isfinite(t) else short
-    return format_time(t)
+        return f"{short} ({when})" if np.isfinite(t) else short
+    return when
 
 
 def _control_row(results: Results, data_id: int) -> int | None:
     """The series' row of the controls table; None without controls and for a series that is
     not corrected (fragment ions)."""
     ctrl = results.controls
-    if ctrl is None or data_id not in set(ctrl.data_id.tolist()):
-        return None
-    row = int(ctrl.rows([data_id])[0])
-    return None if ctrl.uncorrected[row] else row
+    row = None if ctrl is None else ctrl.row_of(data_id)
+    return None if row is None or ctrl.uncorrected[row] else row
 
 
 def _uncorrected(results: Results, data_id: int) -> bool:
     """Whether the series has a controls row that leaves it uncorrected (fragment ions)."""
     ctrl = results.controls
-    if ctrl is None or data_id not in set(ctrl.data_id.tolist()):
-        return False
-    return bool(ctrl.uncorrected[int(ctrl.rows([data_id])[0])])
+    row = None if ctrl is None else ctrl.row_of(data_id)
+    return row is not None and bool(ctrl.uncorrected[row])
 
 
 def population_data(
@@ -463,8 +464,8 @@ def plot_populations(
         ax = axes[positions[pos]]
         ax.set_visible(True)
         rejected = results.review_status[i] == "rejected"
-        label = (f"{_time_text(info['times'][pos], info['roles'][pos])}, rep {info['reps'][pos]}"
-                 + (" (rejected)" if rejected else ""))
+        when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
+        label = f"{when}, rep {info['reps'][pos]}" + (" (rejected)" if rejected else "")
         _draw_population_map(ax, d, label)
         if reference is not None and d["n_amides"] is not None:
             known = reference.at(float(info["times"][pos]), d["n_amides"])
@@ -486,7 +487,7 @@ def plot_populations(
                             lw=1, gid=f"overlay:{info['reps'][pos]}"
                             + (":rejected" if rejected else ""), **style)
             ov.set_ylim(-0.05, 1.1)
-            when = _time_text(info["times"][pos], info["roles"][pos])
+            when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
             ov.set_title(f"{when}, replicates", fontsize=8)
             _limits(ov, d["n_amides"])
             if reference is not None and d["n_amides"] is not None:

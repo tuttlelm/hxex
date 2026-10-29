@@ -35,6 +35,11 @@ Decided with the owner (2026-10-12 and 2026-10-13):
   honoured (`review_K = 1`: the spectrum's K >= 2 descriptions leave the species table and the
   set evidence, as the screens' one-population action does; audit 2026-10-28); uptake is back-exchange corrected by default (`hxex.controls`); populations are
   identified by rank, 1 being the lowest deuteration (see "Nomenclature" below).
+- The controls (undeuterated and fully deuterated) take no part in any per-residue choice or
+  comparison: their rows are dropped before the population choice, the residue and population
+  comparisons and the region summary (`ResidueMap.time_points`). Their fits stay in the species
+  and residue tables (audit 2026-10-28 Medium 10: before, a control's NaN time split the
+  choice's and the regions' rows).
 - Analyses run on one results bundle, or on several for the run comparisons, and are configured
   by an `[analysis]` section of the project file and a command-line command.
 - Fragment data (MS2, MS3) is analysed differently from peptide data (MS1) and gets its own

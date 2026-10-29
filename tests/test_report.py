@@ -6,6 +6,7 @@ import csv
 import dataclasses
 import logging
 
+import matplotlib.pyplot
 import numpy as np
 import pytest
 from matplotlib.figure import Figure
@@ -31,6 +32,7 @@ from hxex.report import (
     population_data,
     select_series,
     series_info,
+    series_table,
     spectra_table,
     spectrum_data,
     uptake_data,
@@ -360,6 +362,22 @@ def test_a_rejected_spectrum_leaves_the_uptake_average(results):
     row = (up["data_id"] == 0) & (up["time"] == 60) & (up["rank"] == 1)
     assert up["n_replicates"][row][0] == 2
     assert components_table(rejected)["review_status"].tolist().count("rejected") >= 1
+
+
+def test_uptake_averages_only_spectra_at_the_same_k(results):
+    """Audit 2026-10-28 Medium 16: a K = 1 mean and a K = 2 low-population mean are never
+    averaged into one row."""
+    rows = np.flatnonzero((results.fit.data_id == 0) & (results.fit.time == 60))
+    k = int(results.effective_K[rows[0]])
+    other = 2 if k == 1 else 1
+    sid = str(results.fit.spectrum_id[rows[0]])
+    chosen = results.with_review(ReviewTable.empty().update(sid, k_override=other))
+    up = uptake_table(chosen)
+    here = (up["data_id"] == 0) & (up["time"] == 60)
+    assert set(up["K"][here]) == {k, other}
+    alone = here & (up["K"] == other)
+    assert (up["n_replicates"][alone] == 1).all() and len(up["rank"][alone]) == other
+    assert (up["n_replicates"][here & (up["K"] == k)] == 2).all()
 
 
 def test_csv_files(results, tmp_path):
@@ -1067,6 +1085,16 @@ def test_an_uncorrected_series_keeps_its_measured_values(results):
     assert fig.axes[0].get_ylabel() == "deuterium (uncorrected series)"
     assert plot_uptake(partial, 0, corrected=True).axes[0].get_ylabel() == (
         "deuterium (back-exchange corrected)")
+    # series.csv and the controls overview do not call it measured (audit 2026-10-28 Medium 17)
+    from hxex.report.overview import controls_overview_data, plot_controls_overview
+
+    st = series_table(partial)
+    assert st["controls"][st["data_id"] == 1].tolist() == ["uncorrected"]
+    over, before = controls_overview_data(partial), controls_overview_data(results)
+    assert over["uncorrected"] == 1 and over["measured"] == before["measured"] - (
+        0 if ctrl.fallback[int(ctrl.rows([1])[0])] else 1)
+    fig = plot_controls_overview(partial)
+    assert "uncorrected" in [t.get_text() for t in fig.axes[2].get_yticklabels()]
 
 
 def test_effective_k_and_review_status_are_computed_once(results):
@@ -1108,6 +1136,12 @@ def test_times_that_only_order_the_points_are_drawn_by_index(results, tmp_path, 
     assert uptake_axis(by_order, PlotConfig(x="time")) is None
     assert format_time(90, "order") == "90" and format_time(90) == "1.5 min"
     assert k_selection_data(by_order)["time_labels"] == ["UN", "60", "FD"]
+    # the series titles (audit 2026-10-28 Medium 14): "point 60", not "1 min"
+    for fig in (plot_series_spectra(by_order, 0), plot_populations(by_order, 0)):
+        titles = {ax.get_title() for ax in fig.axes if ax.get_visible()}
+        assert any(t.startswith("point 60, ") for t in titles), titles
+        assert not any("1 min" in t for t in titles)
+        matplotlib.pyplot.close(fig)
     with caplog.at_level(logging.WARNING):
         write_figures(by_order, tmp_path, PlotConfig(x="time", series=[0], format="png",
                                                      overview=False))

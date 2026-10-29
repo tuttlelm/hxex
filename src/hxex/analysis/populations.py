@@ -172,7 +172,9 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
     """The choice for every sample, time and residue of ``residues`` that has a K=1 value or
     K=2 values (see the module docstring); with ``tiers``, by the residue tiers of the
     population test (the residue map made with ``population_test=True``). ``tiers`` None: by
-    the tiers whenever the residue map has them."""
+    the tiers whenever the residue map has them. The controls' rows take no part
+    (:meth:`ResidueMap.time_points`)."""
+    residues = residues.time_points()
     if tiers is None:
         tiers = residues.population_tier is not None and any(
             str(t) for t in residues.population_tier)

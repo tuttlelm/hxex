@@ -5104,3 +5104,24 @@ CSVs or mzML if wanted.
     them. Question 24: a fragment target that finds no scan only because the scans do not state
     their precursor charge is warned about, once per run. Question 25: a kinetics run whose scans
     lack a scan time is refused.
+
+194. **Audit of 2026-10-28, Session C: tables and figures (2026-10-29; docs/AUDIT_2026-10-28.md).**
+    Each with a test that fails on the old code. Medium 10: the controls take no part in any
+    per-residue choice or comparison (`ResidueMap.time_points` drops their rows before
+    `choose_populations`, `compare_residues`, `compare_populations` (through the choice) and
+    `region_summary`); their fits stay in the species and residue tables (ANALYSIS.md "Ground
+    rules"). Before, a control's NaN time split each control residue into three partial choice
+    rows and gave empty region rows. Medium 13: spectra.csv `narrow_component` is the width
+    check's flag for the fit at the spectrum's K (the step that added its last population; never
+    set at K = 1), not the last step's. Medium 14: series spectra and population titles follow
+    `time_scale = "order"` ("point 60", not "1 min"). Medium 16: uptake.csv has one row per
+    series, point, `K` and rank (new column `K`): spectra fitted at different K are no longer
+    averaged together. Medium 17: series.csv `controls` reads `uncorrected` for a series the
+    controls leave as measured (fragment ions), and the controls overview counts such series in
+    their own bar, not in "both measured". Medium 18: `ControlTable` caches its row index and
+    `uncorrected` (computed once per table; `row_of`), so the report's per-spectrum controls
+    lookups no longer rebuild a map of every series: 0.066 ms per spectrum for the three lookups
+    and one `correct_means` at 3,000 series (the audit measured 1.4 ms per lookup); a vectorised
+    `correct_means` over all spectra was not needed. Medium 19: the residue comparison, overlay
+    and region-bar figures raise their top to 1.05 times the highest point drawn (value plus its
+    error) when that is above 1.05, as `plot_residue_profile` does; fD is not clipped at 1.

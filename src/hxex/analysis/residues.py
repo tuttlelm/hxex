@@ -114,6 +114,17 @@ class ResidueMap:
         return {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
                                     if f.name != "run"}}
 
+    def time_points(self) -> ResidueMap:
+        """The rows of the labelling time points: the controls' rows left out. Controls take no
+        part in any per-residue choice or comparison (:func:`hxex.analysis.choose_populations`,
+        the residue comparisons and :func:`hxex.analysis.region_summary`); their values stay in
+        the residue table."""
+        keep = self.role == ""
+        if keep.all():
+            return self
+        return dataclasses.replace(self, **{f.name: getattr(self, f.name)[keep]
+                                            for f in fields(self)})
+
     def where(self, *, sample=None, time=None, K=None, rank=None, role=None,
               run=None) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)

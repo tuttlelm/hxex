@@ -78,6 +78,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, fields
+from functools import cached_property
 from typing import Any
 
 import numpy as np
@@ -347,11 +348,14 @@ class ControlTable:
     def __len__(self) -> int:
         return len(self.data_id)
 
-    @property
+    @cached_property
     def uncorrected(self) -> np.ndarray:
         """True for the series that are not corrected (fragment ions, flagged
-        ``uncorrected``): their values pass through :func:`correct_means` unchanged."""
-        return np.array(["uncorrected" in str(f).split(";") for f in self.flags], dtype=bool)
+        ``uncorrected``): their values pass through :func:`correct_means` unchanged. Computed
+        once per table (read only)."""
+        out = np.array(["uncorrected" in str(f).split(";") for f in self.flags], dtype=bool)
+        out.flags.writeable = False
+        return out
 
     @property
     def measured(self) -> np.ndarray:
@@ -376,10 +380,19 @@ class ControlTable:
         return (np.array([own_or_other(f) for f in self.flags], dtype=bool)
                 & (np.asarray(self.n_amides) > 0) & ~self.uncorrected)
 
+    @cached_property
+    def _row_index(self) -> dict[int, int]:
+        return {int(d): i for i, d in enumerate(self.data_id)}
+
     def rows(self, data_id) -> np.ndarray:
         """Row of each series id in ``data_id`` (KeyError for a series without a row)."""
-        index = {int(d): i for i, d in enumerate(self.data_id)}
-        return np.array([index[int(d)] for d in np.asarray(data_id)], dtype=np.int64)
+        index = self._row_index
+        return np.array([index[int(d)] for d in np.asarray(data_id).reshape(-1)],
+                        dtype=np.int64)
+
+    def row_of(self, data_id: int) -> int | None:
+        """The row of one series id, or None for a series without a row."""
+        return self._row_index.get(int(data_id))
 
 
 def _mean_se(values: np.ndarray) -> tuple[float, float, int]:
