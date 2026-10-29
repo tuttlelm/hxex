@@ -288,7 +288,9 @@ example `spectrum quality (screen_below_mono)`). On a large intact-peptide datas
 about 2 % of the spectra and `strict` about 4 %.
 
 - **Controls.** A control the screens leave out is also left out of the back-exchange
-  correction, which is worked out again without it. When that removes every measured fully
+  correction. `hxex run` already leaves out the controls the `loose` level removes, so
+  `series.csv` shows the controls the default analysis uses; with `strict` or `none` the
+  analysis works the correction out again for its own level. When that removes every measured fully
   deuterated control of a series, the series has only a stand-in left and is left out too
   (`stand-in control (screened)` in `left_out_spectra.csv`; see
   [Back-exchange correction](back-exchange-correction.md)).

@@ -246,6 +246,31 @@ def test_kint_fallback_fits_the_run_and_replaces_missing_and_off_model_controls(
     assert c2.mfd[0] == pytest.approx(6.0) and c2.flags[0] == "" and not c2.fallback[0]
 
 
+def test_a_control_whose_fit_failed_is_not_averaged(caplog):
+    """Audit 2026-10-28 Medium 9: a replicate whose K = 1 fit failed in every restart (loss
+    inf, placeholder parameters) is not part of the control."""
+    rows = [(0, 0.0, 0.0), (0, 0.0, 0.0), (0, 5.0, 3.0), (0, 1e6, 3.0), (0, 1e6, 8.0)]
+    fit = fake_fit(rows)
+    fit.fits[1].nll[3] = np.inf
+    with caplog.at_level(logging.WARNING, logger="hxex.controls"):
+        c = fit_controls(fit, np.full(5, 10.0), ControlConfig())
+    assert c.n_fd[0] == 1 and c.mfd_measured[0] == pytest.approx(8.0)
+    assert "1 spectra whose K=1 fit failed" in caplog.text
+
+
+def test_uncorrected_series_with_rates_stay_out_of_the_kint_model():
+    """Audit 2026-10-28 High 6: a fragment-ion series (uncorrected) whose ion has intrinsic
+    rates is neither a control of the back-exchange model nor replaced by it."""
+    fit, n, rates = kint_case(off=(3,), extra=(99,), extra_fd=8.0)
+    cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)
+    alone = fit_controls(fit, n, cfg, rates=rates, uncorrected={99})
+    rated = fit_controls(fit, n, cfg, rates={**rates, 99: rates[0]}, uncorrected={99})
+    assert rated.fd_model == alone.fd_model and rated.fd_model["n_rejected"] == 1
+    i = rated.rows([99])[0]
+    assert "fd_kint" not in rated.flags[i] and not rated.fallback[i]
+    assert rated.flags[i] == alone.flags[i] and rated.mfd[i] == alone.mfd[i]
+
+
 def test_kint_fallback_needs_conditions_rates_and_enough_controls():
     fit, n, rates = kint_case(missing=tuple(range(8)))
     cfg = ControlConfig(fd_fallback="kint", quench=QUENCH)

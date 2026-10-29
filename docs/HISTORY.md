@@ -4999,3 +4999,53 @@ CSVs or mzML if wanted.
     the known-answer set's fully deuterated ones) and on the benchmark without its suspect sample,
     the Orbitrap, and steps 2-3 of the noise plan (lost-signal zone, outliers in one replicate). Scripts: `noise_model/pairs` (private,
     `built_check.py`, `built_check/summary.txt`).
+
+192. **Audit of 2026-10-28, Session A: wrong results (2026-10-29; docs/AUDIT_2026-10-28.md).**
+    Each with a test that fails on the old code. High 1 and Medium 11: `best_set_K`'s set evidence
+    now sums the criterion over the spectra the species table keeps (`_add_evidence`, filled by
+    `_spectrum_records`): a spectrum the filters leave out whole adds nothing, as if rejected, and
+    one whose K description the table does not keep (not fitted, left out by the K >= 2 filters,
+    kept at one population by the screens or by the review) adds its criterion at the K below, so
+    it cannot vote for more populations than the table gives it (the difference between K sums is
+    unchanged for unfitted K, which the old sums left out). `review_K = 1` now also acts in the
+    analysis, by the screens' one-population mechanism (owner, 2026-10-29; supersedes item 152's
+    "the analysis never reads review_K"): the K >= 2 descriptions leave the species table, the
+    lever-rule comparisons and the set evidence, and left_out_summary.csv counts them. High 2: the
+    bundle stores the spectra with the readers' roles; `[run.controls] undeut_at`/`fulldeut_at`
+    act again on every run, so a rerun from stored spectra follows the project file as it is
+    (bundles made with those settings before this keep the promoted roles in their spectra). High
+    6: series that are not corrected (fragment ions) leave the rates of the theoretical
+    back-exchange fit. Medium 9: a control replicate whose K = 1 fit failed in every restart (loss
+    inf, placeholder parameters) is not used by the controls or the time course (logged). Question
+    9: the run's controls leave out the control spectra the loose screens remove
+    (`screening.control_removal`; their ids in `ControlTable.screened`, JSON `screened` in
+    controls.parquet), so series.csv shows the controls the default analysis uses;
+    `analysis_controls` reuses the stored table when its own level removes the same spectra and
+    recomputes it otherwise (`screened=None` now means "as the run"). Question 16: sets never
+    tested at step one take no part in the residue strength and agreement. Medium 21: a
+    population-test null without spread leaves the spectrum untested at that step (logged; it gave
+    p = 0 for any statistic above it), and the null's variance is the sample variance (ddof 1; the
+    gamma null was 5 % narrow at B = 20). Recomputed from the stored draws of the private
+    population-test bundles: benchmark 1 flat cell, 57 of 26,164 spectra (0.22 %) and 13 of 4,721
+    sets move, all from two to one; tutorial 4 flat cells, 17 of 3,874 spectra (14 two to one, 1
+    three to one, 2 three to two) and 1 of 1,134 sets; p-values below 0.05 rise by a median 1.4
+    (spectra) and 1.7-2.0 (sets). Medium 8: `screen_below_mono` continues a lone peak below with
+    the peptide's shape scaled to its monoisotopic peak, not its tallest (a 41-residue peptide's
+    same-shape contaminant at half height: 0.062 before, 0.211 now, true share 0.318; the rest is
+    the score's three-bin reach). Benchmark repicked from its stored spectra with both rules
+    (26,333 spectra): loose removes 406 (1.54 %) before and 413 (1.57 %) now, strict 959 (3.64 %)
+    and 966 (3.67 %); 772 scores moved, at most +0.10. Not material: the thresholds stay. Medium
+    20: the per-bin noise smooths the first and last bins over the two bins there are (the zero
+    padding read the first bin of 1000, 300, 50 at 433 instead of 650, which gave that bin, the
+    tallest of an undeuterated control, 2.25 times its weight). Re-check of item 191's yardsticks with the
+    fix (P9 refits, K = 1 bootstrap n_boot 20, population test B = 20 on the four step-2 bundles;
+    V0 unchanged): same K for 98.5-99.3 % of spectra (criterion) and 98.2-99.5 % (test).
+    Before / after: replicate-set calibration (robust) tutorial 0.89 / 0.88, noisy set 1.04 /
+    0.99, benchmark 1.04 / 1.00; charge sets 1.97 / 1.97, 2.38 / 2.28, 1.58 / 1.54. K > 1 with the
+    criterion, labelled / undeuterated / fully deuterated: tutorial 30.3 / 4.3 / 4.2 against 29.1
+    / 3.7 / 4.2 %, noisy set 16.9 / 10.6 / 19.4 against 16.8 / 10.7 / 18.4 %, benchmark 24.7 / 7.0
+    / 8.6 against 23.4 / 7.0 / 8.3 %; with the test, undeuterated / fully deuterated: tutorial 0.8
+    / 3.3 against 0.4 / 3.3 %, noisy set 4.1 / 10.2 against 4.1 / 9.2 %, benchmark 3.6 / 4.4
+    against 3.6 / 4.2 %; known-answer correct K 83.5 against 84.0 % (criterion) and 84.8 against
+    84.2 % (test). The calibration moved by 0.05 at most, so `model_error` stays 9. Scripts:
+    `noise_model/pairs` (private, `built_check_edges.py`, `built_check_edges/summary.txt`).

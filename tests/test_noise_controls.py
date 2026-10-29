@@ -132,6 +132,9 @@ def test_bin_variances_follow_the_curve_with_a_floor():
     expect = np.maximum(2 * 5 * at + (0.1 * at) ** 2, (0.005 * 1000) ** 2)
     np.testing.assert_allclose(var, expect)
     assert var[0] == pytest.approx(25.0)  # an empty bin keeps the floor, 0.5 % of the top
+    # the edge bins are smoothed over the two bins there are (audit 2026-10-28 Medium 20)
+    (var,) = bin_variances([np.array([1000.0, 300.0, 50.0, 5.0, 0.0])], [2.0], curve)
+    assert var[0] == pytest.approx(2 * 5 * 650 + (0.1 * 650) ** 2)
     assert ControlsNoise.from_dict(curve.to_dict()) == curve
 
 

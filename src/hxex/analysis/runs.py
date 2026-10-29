@@ -121,7 +121,8 @@ class RunSet:
         run, _, sample = str(label).partition(SEPARATOR)
         return run, sample
 
-    def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None, counts=None):
+    def _records(self, ks, exclude_flagged, filters, quiet, controls_changes=None, counts=None,
+                 evidence=None):
         """:func:`hxex.analysis.species._records` of every run, each group keyed by its
         :meth:`state`: the per-spectrum filters are applied within each run, the per-species
         ones once, after merged samples have pooled their spectra."""
@@ -130,8 +131,14 @@ class RunSet:
         groups, corrected, nterm = {}, {}, {}
         dropped: dict[str, int] = {}
         for name, results in self.runs.items():
+            own: dict[tuple, dict] | None = {} if evidence is not None else None
             g, c, nterm[name], d = _spectrum_records(
-                results, ks, exclude_flagged, filters, quiet, controls_changes)
+                results, ks, exclude_flagged, filters, quiet, controls_changes, evidence=own)
+            for key, entry in (own or {}).items():  # merged samples add up their evidence
+                total = evidence.setdefault((*self.state(name, key[1]), *key[2:]),
+                                            dict.fromkeys(entry, 0))
+                for k, v in entry.items():
+                    total[k] += v
             for key, n in d.items():
                 dropped[key] = dropped.get(key, 0) + n
             for key, recs in g.items():  # merged samples pool their spectra, each tagged by run

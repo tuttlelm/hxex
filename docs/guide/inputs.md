@@ -66,7 +66,9 @@ the scan formats, `"relative"` (relative to `data_root`).
 `[output] keep_spectra = false`). `hxex run hxex.toml --spectra old_results`, or
 `[input] spectra = "old_results"`, fits them again without reading the files: useful after
 changing the picker or fit settings, or when the original files are not at hand. The format then
-comes from the stored record. `retention_times` and `time_scale` still apply.
+comes from the stored record. `retention_times` and `time_scale` still apply. The stored spectra
+keep the control roles the files gave them; `undeut_at` and `fulldeut_at` in `[run.controls]`
+(see [Controls](controls.md)) act on every run, so a rerun follows the project file as it is now.
 
 **Times that only order the points.** If the times are labels rather than labelling times (1, 2,
 3 for three conditions), set `[input] time_scale = "order"`. The uptake is then drawn by index,

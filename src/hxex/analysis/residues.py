@@ -264,17 +264,19 @@ def population_tiers(strength_2, agreement_2, strength_3, agreement_3) -> np.nda
     return names[np.where(code < 0, len(TIERS), code)]
 
 
-def _test_levels(z: np.ndarray, p: np.ndarray, reads: np.ndarray, exponent: float):
+def _test_levels(z: np.ndarray, p: np.ndarray, reads: np.ndarray, exponent: float,
+                 tested: np.ndarray):
     """Per residue: the strength (the weighted Stouffer combination of the covering sets' z
-    values; sets without a p-value enter with z = 0) and the agreement (the share of the
-    covering weight whose sets read at least the step's populations); both NaN where no set
-    has a p-value at this step."""
+    values; a set tested at step one without a p-value at this step, one that read one, enters
+    with z = 0) and the agreement (the share of the covering weight whose sets read at least
+    the step's populations); both NaN where no set has a p-value at this step. The sets never
+    tested (``tested``: a p-value at step one) take no part (audit 2026-10-28)."""
     from scipy.stats import norm
 
     if not np.isfinite(p).any():  # no set tested at this step (k_max below it)
         nan = np.full(z.shape[1], np.nan)
         return nan, nan.copy()
-    w = np.where(z > 0, z**exponent, 0.0)
+    w = np.where((z > 0) & tested[:, None], z**exponent, 0.0)
     total = w.sum(axis=0)
     with np.errstate(invalid="ignore", divide="ignore"):
         zs = np.where(np.isfinite(p), np.clip(norm.isf(np.clip(p, 0.0, 1.0)), -Z_CLIP, Z_CLIP),
@@ -368,10 +370,11 @@ def residue_map(
         levels = {name: np.full(len(known), np.nan) for name in TEST_COLUMNS}
         tier = np.full(len(known), "", dtype=object)
         if population_test and k == 1:
+            tested = np.isfinite(np.asarray(pep.set_p_1, float)[rows])
             for step, name in ((1, "2"), (2, "3")):
                 s, a = _test_levels(z, np.asarray(getattr(pep, f"set_p_{step}"), float)[rows],
                                     np.asarray(pep.set_test_K)[rows] >= step + 1,
-                                    weight_exponent)
+                                    weight_exponent, tested)
                 levels[f"test_strength_{name}"], levels[f"test_agreement_{name}"] = s, a
             tier = population_tiers(*(levels[name] for name in TEST_COLUMNS))
         fell_back = ((z > 0) & np.asarray(pep.control_fallback[rows], dtype=bool)[:, None]).any(

@@ -135,8 +135,10 @@ def _below_mono(mz, y, pred, shape, mono, step, base) -> float:
     lowest = at_bins[np.argsort(pred)[:3]]
     if m1 <= 0:
         extrapolated = np.zeros(3)
-    elif m2 < 0.2 * m1:  # one peak below: the peptide's own shape continues it
-        extrapolated = m1 * np.array([shape[q] if q < len(shape) else 0.0 for q in (1, 2, 3)])
+    elif m2 < 0.2 * m1:  # one peak below: the peptide's own shape continues it, scaled to
+        # its monoisotopic peak (not the tallest: audit 2026-10-28)
+        extrapolated = m1 * np.array([shape[q] / shape[0] if q < len(shape) else 0.0
+                                      for q in (1, 2, 3)])
     else:
         extrapolated = m1 * min(1.0, m1 / m2) ** np.arange(1, 4)
     return float(np.minimum(lowest, extrapolated[:len(lowest)]).sum()

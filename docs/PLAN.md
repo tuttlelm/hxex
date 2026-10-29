@@ -718,6 +718,12 @@ Planned, not built:
    alone it is mixed. Owner (2026-10-28): not the default until it is more reliable. Not yet done: the
    lost-signal zone (bins below 1-2 % of the tallest peak) and outliers in one replicate
    (steps 2-3 of the noise plan).
+14. **Audit of 2026-10-28** (seven reviewers; no Critical finding, nine High, 21 Medium, about
+   40 Low, 27 questions). Findings, the owner's decisions of 2026-10-29 and the agreed order
+   (Sessions A to D) are in `docs/AUDIT_2026-10-28.md`. Deliberate differences from pyHXExpress
+   decided there, to be recorded in the table above when built: an acetylated N-terminus keeps
+   its residue-1 amide (`nterm_subtract` applies to a free amine only); HX-Express spectra are
+   read from the labelled column and the one to its right, not by label position.
 
 ## Risks and open decisions
 

@@ -77,19 +77,6 @@ def has_test(results) -> bool:
     return bool(tests) and all(t is not None for t in tests)
 
 
-def _review_one(results) -> np.ndarray:
-    """The spectra the review set to one population (``review_K = 1``, current entries)."""
-    out = np.zeros(len(results.fit), dtype=bool)
-    review = results.review
-    if review is None or not len(review):
-        return out
-    index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
-    for sid, k, stale in zip(review.spectrum_id, review.k_override, review.stale, strict=True):
-        if k == 1 and not stale and str(sid) in index:
-            out[index[str(sid)]] = True
-    return out
-
-
 @dataclass
 class _Run:
     """One run's spectra for the sets: the test, the rows used, the rows kept at one
@@ -107,7 +94,7 @@ class _Run:
 
 
 def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> _Run:
-    from .species import _kept, _points, left_out_spectra
+    from .species import _kept, _points, left_out_spectra, review_one
 
     fit, b = r.fit, r.binned
     if b is None:
@@ -124,7 +111,7 @@ def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> 
         use &= np.array([str(s) not in gone for s in fit.spectrum_id], dtype=bool)
     screen = (screening(r, filters.spectrum_quality_filtering) if filters is not None
               else Screening.nothing(len(fit)))
-    one = screen.one_population | _review_one(r)
+    one = screen.one_population | review_one(r)
     index = {str(s): j for j, s in enumerate(b.spectrum_id)}
     rows = [index[str(s)] for s in fit.spectrum_id]
     points = _points(fit)

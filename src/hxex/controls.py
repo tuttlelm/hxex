@@ -320,7 +320,10 @@ class ControlTable:
     when ``retention_min`` was unset (``retention_floor``, with the ``median`` and ``robust_sd``
     of the controls it came from, None with too few of them for a limit (the floor is then 0),
     and their number ``n_series``); None with a set ``retention_min`` and in bundles written
-    before it (judged by half of ``d2o_fraction``).
+    before it (judged by half of ``d2o_fraction``). ``screened`` is the spectrum ids of the
+    control spectra the spectrum quality screens left out (the run: the loose level's
+    removals; the analysis: its own level's); None when nothing was screened (bundles written
+    before the run screened its controls).
     """
 
     config: ControlConfig
@@ -339,6 +342,7 @@ class ControlTable:
     flags: np.ndarray
     fd_model: Mapping[str, Any] | None = None
     limits: Mapping[str, Any] | None = None
+    screened: tuple[str, ...] | None = None
 
     def __len__(self) -> int:
         return len(self.data_id)
@@ -485,6 +489,7 @@ def fit_controls(
     groups: Mapping[int, Any] | None = None,
     charges: Mapping[int, tuple] | None = None,
     uncorrected: Collection[int] = (),
+    screened: np.ndarray | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -502,12 +507,17 @@ def fit_controls(
     lets a series without a good fully deuterated control take its other charge states'
     (``fd_other_charge``). The series of ``uncorrected`` (``data_id``; fragment ions,
     :func:`fragment_ids`) are not corrected and take no part in the others' checks.
+    ``screened`` (``(M,)`` bool) marks the control spectra the spectrum quality screens remove
+    (:mod:`hxex.analysis.screening`): left out like unusable ones, and recorded by id
+    (``ControlTable.screened``).
     """
     uncorrected = {int(d) for d in uncorrected}
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
     if config.fd_mode == "kint" and rates is None:
         raise ValueError("fd_fallback 'kint' needs the amides' intrinsic rates (series_rates)")
+    if rates is not None and uncorrected:  # not in the back-exchange model of the others
+        rates = {d: r for d, r in rates.items() if int(d) not in uncorrected}
     m = len(fit)
     n_amides = np.asarray(n_amides, dtype=float)
     if n_amides.shape != (m,):
@@ -520,6 +530,13 @@ def fit_controls(
     usable = np.asarray(usable, dtype=bool)
     if usable.shape != (m,):
         raise ValueError("usable must have one value per measurement")
+    screened_ids = None
+    if screened is not None:
+        screened = np.asarray(screened, dtype=bool) & (np.asarray(fit.role, dtype=str) != "")
+        if screened.shape != (m,):
+            raise ValueError("screened must have one value per measurement")
+        screened_ids = tuple(str(x) for x in np.asarray(fit.spectrum_id)[screened])
+        usable = usable & ~screened
     means = fit.fits[1].means[:, 0]
     role = np.asarray(fit.role, dtype=str)
     series = np.unique(fit.data_id)
@@ -541,6 +558,14 @@ def fit_controls(
             "point promoted by undeut_at or fulldeut_at after the run). Promote them in "
             "[run.controls] and run again, or run with k_min = 1")
 
+    # a fit that failed in every restart keeps placeholder parameters (a mean of 0.3 n): never a
+    # control or a point of the time course
+    failed = fit.fitted(1) & ~np.isfinite(np.asarray(fit.fits[1].nll, dtype=float)) & usable
+    if failed.any():
+        log.warning("%d spectra whose K=1 fit failed are not used by the controls (%d of them "
+                    "controls)", int(failed.sum()),
+                    int((failed & (serves[UNDEUT] | serves[FULLDEUT])).sum()))
+        usable = usable & ~failed
     left_out = _control_replicates_left_out(fit, means, n_amides, usable, serves, uncorrected,
                                             config)
 
@@ -695,7 +720,7 @@ def fit_controls(
         retention=np.array(cols["retention"], dtype=np.float64),
         fallback=np.array(cols["fallback"], dtype=bool),
         flags=np.array(cols["flags"], dtype=str),
-        fd_model=fd_model, limits=limits,
+        fd_model=fd_model, limits=limits, screened=screened_ids,
     )
 
 

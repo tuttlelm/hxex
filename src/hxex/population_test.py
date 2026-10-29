@@ -316,17 +316,24 @@ def population_test(
         sim = simulate_null(data, fit, rows, k, n_sim, seed=config.seed, cancel=cancel,
                             on_simulation=lambda: tick(len(rows)))  # noqa: B023
         draws[rows, s] = sim
-        enough = np.isfinite(sim).sum(axis=1) >= MIN_DRAWS * n_sim
+        enough = np.isfinite(sim).sum(axis=1) >= max(MIN_DRAWS * n_sim, 2)
         clipped = np.clip(sim, 0.0, None)
         with np.errstate(invalid="ignore"), _warnings_off():
-            mean, var = np.nanmean(clipped, axis=1), np.nanvar(clipped, axis=1)
+            mean, var = np.nanmean(clipped, axis=1), np.nanvar(clipped, axis=1, ddof=1)
+        # a null without spread (every draw the same, usually 0) cannot give a p-value: the
+        # gamma has no shape, and p would be 0 for any statistic above it
+        flat = enough & ~(var > 0)
+        if flat.any():
+            log.info("population test, %d against %d: the null simulations of %d spectra have "
+                     "no spread; they are not tested at this step", k, k + 1, int(flat.sum()))
+        enough &= ~flat
         good = rows[enough]
         null_mean[good, s], null_var[good, s] = mean[enough], var[enough]
         kind[good, s] = SIMULATED
-        if (~enough).any():
+        if (~enough & ~flat).any():
             log.warning("population test, %d against %d: the null simulations failed for %d "
                         "spectra, which are not tested at this step", k, k + 1,
-                        int((~enough).sum()))
+                        int((~enough & ~flat).sum()))
     tested = kind != UNTESTED
     p = np.where(tested, gamma_tail(statistic, null_mean, null_var), np.nan)
     added = np.where(kind == SCREENED, np.nan, added)  # no K + 1 fit to say

@@ -32,7 +32,8 @@ Decided with the owner (2026-10-12 and 2026-10-13):
 - pyHXExpress's `hxex_utils.py` is the reference for what the peptide analyses do (see
   CLAUDE.local.md for its location); its bugs are not copied (see "Reference notes").
 - Rejected spectra (review layer) are always left out and the reviewer's K overrides are
-  honoured; uptake is back-exchange corrected by default (`hxex.controls`); populations are
+  honoured (`review_K = 1`: the spectrum's K >= 2 descriptions leave the species table and the
+  set evidence, as the screens' one-population action does; audit 2026-10-28); uptake is back-exchange corrected by default (`hxex.controls`); populations are
   identified by rank, 1 being the lowest deuteration (see "Nomenclature" below).
 - Analyses run on one results bundle, or on several for the run comparisons, and are configured
   by an `[analysis]` section of the project file and a command-line command.
@@ -571,7 +572,8 @@ the hold-out works on fits alone).
   localised: strong and agreement >= 0.5; two: strong and agreement 0.33-0.5; undecided: one of
   the two; no sign; HISTORY 148), up to three for now: step two gives "three" and "three,
   localised" by the same rule, a set without a step-two test (it read one) entering step two
-  with z = 0. Risk, documented (HISTORY 169): two neighbouring two-state regions read as three at
+  with z = 0; a set never tested (no p-value at step one: every spectrum left out of the test)
+  takes no part in either step (audit 2026-10-28). Risk, documented (HISTORY 169): two neighbouring two-state regions read as three at
   their junction, which the residue level cannot tell from three states. K = 2 values from every
   covering peptide (HISTORY 141). The residue choice (the `choice_*` figures, `populations.csv`,
   and every comparison built on it) follows the tiers (owner, 2026-10-26, HISTORY 177): two

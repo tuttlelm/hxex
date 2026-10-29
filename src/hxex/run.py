@@ -466,7 +466,7 @@ def _d2o_fraction(config: RunConfig) -> float:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
-    fragments=(), envelope_offset=(None, None), noise_curve=None,
+    fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -479,7 +479,9 @@ def _fit_part(
     ``envelope_offset``: the picker's m/z check of every measurement, (offset, limit) in ppm
     (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`). ``noise_curve``: the bundle's per-bin
     noise (:func:`bundle_noise`); with ``estimate = "controls"`` and none given it is measured
-    here from every undeuterated control of ``data``, once for all the chunks."""
+    here from every undeuterated control of ``data``, once for all the chunks. ``screened``:
+    the control spectra the spectrum quality screens remove at the loose level
+    (:func:`hxex.analysis.screening.control_removal`), left out of the controls."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is None and config.fit.noise.estimate == "controls":
         from .noise import controls_noise
@@ -517,7 +519,12 @@ def _fit_part(
         if n_sites is None:
             n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
-                                groups=groups, charges=charges, uncorrected=fragments)
+                                groups=groups, charges=charges, uncorrected=fragments,
+                                screened=screened)
+        if screened is not None and screened.any():
+            log.info("controls: %d control spectra left out by the spectrum quality screens "
+                     "(the loose level of [analysis.filters] spectrum_quality_filtering)",
+                     int(screened.sum()))
     quality = None
     if config.quality is not None:
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
@@ -729,8 +736,10 @@ def run(
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
+    # every spectrum, for the bundle, with the readers' roles: the promotion of [run.controls]
+    # undeut_at/fulldeut_at is applied again from the settings of every run
+    stored = data if isinstance(data, SpectrumSet) else None
     data = with_control_roles(data, config)
-    stored = data if isinstance(data, SpectrumSet) else None  # every spectrum, for the bundle
     excluded = None
     if exclude:
         from .exclusions import exclusion_mask, exclusion_record
@@ -832,12 +841,15 @@ def run(
     charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
                             picked.data_id, scan_fragments)
     fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
+    from .analysis.screening import control_removal
+
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality, test = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
                                              charges=charges, fragments=fragments,
+                                             screened=control_removal(picked, fragments),
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),

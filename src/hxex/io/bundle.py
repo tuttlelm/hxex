@@ -387,6 +387,8 @@ def _controls_table(c: ControlTable) -> pa.Table:
         meta[b"fd_model"] = json.dumps(dict(c.fd_model))
     if c.limits is not None:  # the run-relative retention limit
         meta[b"limits"] = json.dumps(dict(c.limits))
+    if c.screened is not None:  # the control spectra the screens left out
+        meta[b"screened"] = json.dumps(list(c.screened))
     if meta:
         table = table.replace_schema_metadata(meta)
     return table
@@ -406,6 +408,7 @@ def _read_controls(table: pa.Table, config: dict) -> ControlTable:
         fd_model=json.loads(meta[b"fd_model"]) if (meta := table.schema.metadata or {}).get(
             b"fd_model") else None,
         limits=json.loads(meta[b"limits"]) if meta.get(b"limits") else None,
+        screened=tuple(json.loads(meta[b"screened"])) if meta.get(b"screened") else None,
     )
 
 

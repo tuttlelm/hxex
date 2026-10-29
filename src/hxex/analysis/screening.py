@@ -13,7 +13,9 @@ one of three actions per spectrum, at thresholds agreed with the owner from fit 
 - warn (logged; kept): ``screen_beyond_reach`` (no measurable effect on the fits).
 
 A removed control counts as rejected: the back-exchange correction is recomputed without it
-(:func:`hxex.analysis.species.analysis_controls`). A spectrum the review accepted is never
+(:func:`hxex.analysis.species.analysis_controls`). The run's controls already leave out those
+the loose level removes (:func:`control_removal`; audit 2026-10-28), so the stored controls are
+the default analysis's. A spectrum the review accepted is never
 touched; neither are fragment series (the levels were set on intact peptides) nor spectra
 that were not assessed (NaN scores).
 """
@@ -87,6 +89,24 @@ def screening(results, level: str) -> Screening:
                              fragment_series(spectra_source(results)))
     eligible = ~np.isin(np.asarray(fit.data_id), list(fragments))
     eligible &= np.asarray(results.review_status) != "accepted"
+    return _actions(binned, rows, eligible, level)
+
+
+def control_removal(picked, fragments) -> np.ndarray:
+    """``(M,)`` for every spectrum of ``picked`` (a :class:`hxex.picking.BinnedSet`): whether it
+    is a control the loose level removes (the run's controls leave those out, so that
+    series.csv shows the state the default analysis uses; fragment series, ``fragments``
+    (data_id), are not screened)."""
+    n = len(picked.spectrum_id)
+    eligible = np.asarray(picked.role, dtype=str) != ""
+    eligible &= ~np.isin(np.asarray(picked.data_id), list(fragments))
+    return _actions(picked, np.arange(n), eligible, "loose").remove
+
+
+def _actions(binned, rows: np.ndarray, eligible: np.ndarray, level: str) -> Screening:
+    """The actions of ``level`` on the rows ``rows`` of ``binned`` (``eligible``: those that
+    may be screened)."""
+    n = len(rows)
 
     def over(score: str, threshold: float) -> np.ndarray:
         values = np.asarray(getattr(binned, score), dtype=float)[rows]

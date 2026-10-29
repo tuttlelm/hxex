@@ -328,9 +328,11 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     """The controls the analysis uses (:class:`hxex.controls.ControlTable`, or None without
     controls): those of the run, recomputed from its K=1 fits when the review rejected a control
     spectrum (so that a rejected control does not count), when ``screened`` (one entry per row
-    of the fit: the spectra the spectrum quality screens remove) holds a control, or when
-    ``changes`` (control settings to change, e.g. ``{'d2o_fraction': 0.85}``) are given.
-    Recomputed controls leave out the rejected and screened spectra and the noise outliers."""
+    of the fit: the spectra the spectrum quality screens remove; None: those the run's
+    controls left out, ``ControlTable.screened``) holds other control spectra than the run's
+    controls left out, or when ``changes`` (control settings to change, e.g.
+    ``{'d2o_fraction': 0.85}``) are given. Recomputed controls leave out the rejected and
+    screened spectra and the noise outliers."""
     stored = results.controls
     run = results.settings.run if results.settings is not None else None
     base = stored.config if stored is not None else (run.controls if run is not None else None)
@@ -347,12 +349,14 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
             fit.role, fit.time, config, where="[analysis.controls]"))
     at_control = np.asarray(fit.role, dtype=str) != ""
     n_rejected = int((rejected & at_control).sum())
-    screened = (np.zeros(len(rejected), dtype=bool) if screened is None
-                else np.asarray(screened, dtype=bool) & at_control & ~rejected)
+    by_run = set(stored.screened or ()) if stored is not None else set()
+    if screened is None:  # as the run's controls
+        screened = np.isin(np.asarray(fit.spectrum_id).astype(str), list(by_run))
+    screened = np.asarray(screened, dtype=bool) & at_control & ~rejected
     n_screened = int(screened.sum())
-    if stored is not None and not changes and not n_rejected and not n_screened:
+    same = set(np.asarray(fit.spectrum_id).astype(str)[screened]) == by_run
+    if stored is not None and not changes and not n_rejected and same:
         return stored
-    rejected = rejected | screened
     # one analysis asks for the same recomputed controls once per table: compute them once
     key = (id(results), tuple(sorted((str(k), repr(v)) for k, v in (changes or {}).items())),
            np.flatnonzero(screened).tobytes())
@@ -387,7 +391,8 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
                                 scan_fragments)
         fragments = fragment_ids(b.modification, b.data_id, scan_fragments)
     out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
-                       groups=groups, charges=charges, uncorrected=fragments)
+                       groups=groups, charges=charges, uncorrected=fragments,
+                       screened=screened if n_screened else None)
     for k in [k for k, (ref, _) in _RECOMPUTED.items() if ref() is None]:
         del _RECOMPUTED[k]
     _RECOMPUTED[key] = (weakref.ref(results), out)
@@ -427,7 +432,7 @@ def _site_counts(results) -> np.ndarray:
 
 
 def _records(results, ks, exclude_flagged, filters, quiet=False, controls_changes=None,
-             counts=None):
+             counts=None, evidence=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
     n_amides, rep, control_fallback, run, not_measured, uncorrected)`` (run: '' for one run, the
@@ -436,14 +441,15 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
     point of a group is a :class:`Point` (``(time, role)``: a time, or a control role).
     ``results`` may be a :class:`hxex.analysis.RunSet`. ``counts`` (a dict) receives what the
-    K >= 2 filters left out (:func:`_filter_species`; for :func:`left_out_summary`)."""
+    K >= 2 filters left out (:func:`_filter_species`; for :func:`left_out_summary`);
+    ``evidence`` (a dict) the summed criterion of each set (:func:`_add_evidence`)."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
         return results._records(ks, exclude_flagged, filters, quiet, controls_changes,
-                                counts=counts)
+                                counts=counts, evidence=evidence)
     groups, corrected, nterm, dropped = _spectrum_records(
-        results, ks, exclude_flagged, filters, quiet, controls_changes)
+        results, ks, exclude_flagged, filters, quiet, controls_changes, evidence=evidence)
     groups = _filter_species(groups, ks, filters, dropped, quiet)
     if counts is not None:
         counts.update(dropped)
@@ -468,7 +474,8 @@ def _screened_controls(results, changes, screen: Screening, keep: np.ndarray, qu
     (the same object when the screens left none out)."""
     removed = screen.remove & keep & (np.asarray(results.review_status) != "accepted")
     removed &= np.asarray(results.fit.role, dtype=str) != ""
-    unscreened = analysis_controls(results, changes, quiet=quiet or bool(removed.any()))
+    unscreened = analysis_controls(results, changes, quiet=quiet or bool(removed.any()),
+                                   screened=np.zeros(len(removed), dtype=bool))
     if not removed.any() or unscreened is None:
         return unscreened, unscreened
     return analysis_controls(results, changes, quiet=quiet, screened=removed), unscreened
@@ -668,10 +675,12 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
                 ("fD_se", f"an fD error of {filters.max_fD_se:g} or more", "peptides and times",
                  f"max_fD_se = {filters.max_fD_se:g}"),
                 ("k1_between_ranks", "the one-population value outside the two populations",
-                 "peptides and times", "k1_between_ranks = true")):
+                 "peptides and times", "k1_between_ranks = true"),
+                ("review_one", "the review set one population", "spectra", "")):
             if key == "k1_between_ranks" and not filters.k1_between_ranks:
                 continue
-            add("", stage, what, dropped.get(key, 0), unit, f"[analysis.filters] {setting}")
+            add("", stage, what, dropped.get(key, 0), unit,
+                f"[analysis.filters] {setting}" if setting else "review_K = 1")
     if filters is not None and population_test:
         from .set_test import above_max_fd
 
@@ -785,10 +794,11 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
 
 
 def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
-                      controls_changes=None):
+                      controls_changes=None, evidence=None):
     """:func:`_records` of one run with only the per-spectrum filters applied, and the counts
     of what they dropped (the per-species filters, :func:`_filter_species`, come after merged
-    samples are pooled)."""
+    samples are pooled). ``evidence`` (a dict, keyed as the groups without K and rank)
+    receives each set's summed criterion over the same spectra (:func:`_add_evidence`)."""
     fit, binned = results.fit, results.binned
     if binned is None:
         raise ValueError("the species uptake table needs the picked table (results.binned)")
@@ -834,7 +844,9 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     points = _points(fit)
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
     dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0,
-               "one_population": 0}
+               "one_population": 0, "review_one": 0}
+    reviewed_one = review_one(results)
+    described = {}  # K -> the spectra whose K description the table keeps
     for k in ks:
         kf = fit.fits[k]
         order = np.argsort(kf.means, axis=1)
@@ -861,6 +873,10 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se
         usable = keep & fitted
+        if k >= 2:  # the review's one population: the K = 1 description only
+            one = reviewed_one & usable
+            dropped["review_one"] += int(one.sum())
+            usable &= ~one
         if filters is not None and k >= 2:
             one = screen.one_population & usable
             dropped["one_population"] += int(one.sum())
@@ -871,6 +887,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
             dropped["population"] += int(bad_pop.sum())
             dropped["fD"] += int((bad_fd & ~bad_pop).sum())
             usable &= ~(bad_pop | bad_fd)
+        described[k] = usable
         for i in np.flatnonzero(usable):
             j = rows[i]
             key = ("", str(binned.sample[j]), str(binned.peptide[j]),
@@ -884,6 +901,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     bool(raw[i]),
                 ))
 
+    if evidence is not None:
+        _add_evidence(evidence, results, ks, keep, described, rows, points)
     corrected = {("", str(s)): controls is not None for s in np.unique(binned.sample)}
     return groups, corrected, int(nterm), dropped
 
@@ -952,6 +971,8 @@ def _filter_species(groups: dict, ks, filters, dropped: dict, quiet: bool = Fals
                                      "outside the ranks (k1_between_ranks)"),
                 "one_population": (f"{dropped['one_population']} spectra kept at one population "
                                    "(screen_between_separate, spectrum_quality_filtering)"),
+                "review_one": (f"{dropped['review_one']} spectra the review set to one "
+                               "population (review_K = 1)"),
             }
             log.info("K >= 2 descriptions left out by [analysis.filters]: %s",
                      "; ".join(text for key, text in reasons.items() if dropped.get(key)))
@@ -994,8 +1015,9 @@ def species_uptake(
     population test of the sets instead (:func:`hxex.analysis.set_test.set_tests`), and
     ``set_p_1`` and ``set_p_2`` are its p-values.
     """
+    evidence: dict[tuple, dict] = {}
     groups, corrected, nterm = _records(results, ks, exclude_flagged, filters,
-                                                controls_changes=controls)
+                                        controls_changes=controls, evidence=evidence)
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake)
                              if f.name not in _SCALARS
                              and f.name not in ("set_p_1", "set_p_2", "set_test_K",
@@ -1074,7 +1096,7 @@ def species_uptake(
     out["rt"] = np.array([rts.get((str(a), str(b), str(c), str(d)), np.nan) for a, b, c, d in
                           zip(out["run"], out["sample"], out["peptide"], out["modification"],
                               strict=True)], dtype=np.float64)
-    out.update(best_set(out, _set_evidence(results, ks, exclude_flagged), ks, min_population))
+    out.update(best_set(out, evidence, ks, min_population))
     if populations == "population_test":
         from .set_test import set_tests
 
@@ -1091,37 +1113,48 @@ def _set_key(run, sample, peptide, mod, start, end, time, role) -> tuple:
             Point((None if not np.isfinite(t) else t, str(role))))
 
 
-def _set_evidence(results, ks, exclude_flagged: bool = False) -> dict[tuple, dict]:
-    """(run, sample, peptide, modification, start, end, point) -> the criterion of each K of
-    ``ks`` summed over the set's spectra (those the tables use, :func:`_kept`, fitted at every K
-    of ``ks``), with ``n``, the number of spectra summed. The fits' own criterion (BIC or AIC,
+def review_one(results) -> np.ndarray:
+    """The spectra the review set to one population (``review_K = 1``, current entries): the
+    analysis keeps their K = 1 description only, as the run and the population test do."""
+    out = np.zeros(len(results.fit), dtype=bool)
+    review = results.review
+    if review is None or not len(review):
+        return out
+    index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    for sid, k, stale in zip(review.spectrum_id, review.k_override, review.stale, strict=True):
+        if k == 1 and not stale and str(sid) in index:
+            out[index[str(sid)]] = True
+    return out
+
+
+def _add_evidence(evidence: dict, results, ks, keep: np.ndarray,
+                  described: Mapping[int, np.ndarray], rows: np.ndarray, points) -> None:
+    """Add to ``evidence`` ((run, sample, peptide, modification, start, end, point) -> the
+    criterion of each K of ``ks`` summed over the set's spectra, with ``n``, the number of
+    spectra summed) the spectra of one run the species table uses (``keep``: not rejected and
+    not left out whole by the filters). A spectrum whose K description the table does not keep
+    (``described``: not fitted, left out by the K >= 2 filters, kept at one population by the
+    screens or the review) adds its criterion at the K below instead, so it cannot vote for
+    more populations than the table gives it. The fits' own criterion (BIC or AIC,
     ``[run.fit] criterion``) is used, not the run's selection score, which the run's population
     rule sets to infinity: one such spectrum would otherwise decide the whole set."""
-    from .runs import RunSet
-
-    runs = results.runs.items() if isinstance(results, RunSet) else [("", results)]
-    out: dict[tuple, dict] = {}
-    for name, r in runs:
-        fit, b = r.fit, r.binned
-        if b is None or any(k not in fit.fits for k in ks):
-            continue
-        criterion = fit.config.criterion
-        values = {k: np.asarray(getattr(fit.fits[k], criterion), dtype=float) for k in ks}
-        usable = _kept(r, exclude_flagged)
-        for k in ks:
-            usable &= fit.fitted(k) & np.isfinite(values[k])
-        index = {str(s): j for j, s in enumerate(b.spectrum_id)}
-        points = _points(fit)
-        for i in np.flatnonzero(usable):
-            j = index[str(fit.spectrum_id[i])]
-            run, sample = results.state(name, str(b.sample[j])) if name else ("", str(b.sample[j]))
-            key = (run, sample, str(b.peptide[j]), str(b.modification[j]), int(b.start_seq[j]),
-                   int(b.end_seq[j]), points[i])
-            entry = out.setdefault(key, {"n": 0, **{k: 0.0 for k in ks}})
-            entry["n"] += 1
-            for k in ks:
-                entry[k] += float(values[k][i])
-    return out
+    fit, b = results.fit, results.binned
+    criterion = fit.config.criterion
+    order = sorted(ks)
+    values = {k: np.asarray(getattr(fit.fits[k], criterion), dtype=float) for k in order}
+    used: dict[int, np.ndarray] = {}
+    usable = keep & described[order[0]] & np.isfinite(values[order[0]])
+    for n, k in enumerate(order):
+        own = described[k] & np.isfinite(values[k])
+        used[k] = values[k] if n == 0 else np.where(own, values[k], used[order[n - 1]])
+    for i in np.flatnonzero(usable):
+        j = rows[i]
+        key = ("", str(b.sample[j]), str(b.peptide[j]), str(b.modification[j]),
+               int(b.start_seq[j]), int(b.end_seq[j]), points[i])
+        entry = evidence.setdefault(key, {"n": 0, **{k: 0.0 for k in order}})
+        entry["n"] += 1
+        for k in order:
+            entry[k] += float(used[k][i])
 
 
 def best_sets(uptake: SpeciesUptake) -> dict[tuple, tuple[int, float]]:
@@ -1159,7 +1192,7 @@ def best_set(cols: Mapping[str, np.ndarray], evidence: Mapping[tuple, dict], ks,
     ``set_delta_criterion`` of a species table (``cols``): for each species and time, the
     number of populations its whole set of spectra supports. Replicates and charge states are
     spectra of the same molecules, so their evidence adds up: the criterion of each K summed
-    over the set (``evidence``, :func:`_set_evidence`) chooses K, the smallest sum winning. A K
+    over the set (``evidence``, :func:`_add_evidence`) chooses K, the smallest sum winning. A K
     is passed over when the table has no description at it (the filters left it out) or one
     of its combined populations lies outside ``[min_population, 1 - min_population]``; the
     next best K is taken. ``set_delta_criterion`` is the summed criterion at K = 2 minus K = 1

@@ -100,6 +100,30 @@ def test_one_and_two_populations_are_told_apart(mixed):
     # the moments are those of the draws, clipped at 0
     np.testing.assert_allclose(test.null_mean[:, 0],
                                np.clip(test.null_draws[:, 0], 0, None).mean(axis=1), rtol=1e-5)
+    np.testing.assert_allclose(test.null_var[:, 0],  # the sample variance (audit 2026-10-28)
+                               np.clip(test.null_draws[:, 0], 0, None).var(axis=1, ddof=1),
+                               rtol=1e-4)
+
+
+def test_a_null_without_spread_leaves_the_spectrum_untested(mixed, monkeypatch):
+    """Audit 2026-10-28 Medium 21: when every draw of a spectrum's null is the same (0), the
+    null cannot give a p-value (it read 0 for any statistic above it): the spectrum is not
+    tested at that step."""
+    import hxex.population_test as module
+
+    data, fit, test = mixed
+    real = module.simulate_null
+
+    def flat_first(data, fit, rows, *args, **kwargs):
+        out = real(data, fit, rows, *args, **kwargs)
+        out[rows == 7] = 0.0
+        return out
+
+    monkeypatch.setattr(module, "simulate_null", flat_first)
+    again = population_test(data, fit, TEST)
+    assert again.null_kind[7, 0] == "" and np.isnan(again.p[7, 0]) and again.selected_K[7] == 1
+    others = np.arange(len(fit)) != 7
+    np.testing.assert_array_equal(again.selected_K[others], test.selected_K[others])
 
 
 def test_a_spectrum_is_tested_alone_whatever_else_is_in_the_batch(mixed):
@@ -285,6 +309,26 @@ def test_the_residue_tiers_follow_the_rule():
         "three, localised", ""]
     # three needs two first
     assert population_tiers([0.5], [0.1], [0.001], [0.7])[0] == "no sign"
+
+
+def test_sets_never_tested_take_no_part_in_the_residue_levels():
+    """Audit 2026-10-28 question 16: a set without a p-value at step one (never tested) leaves
+    the residue's strength and agreement; one tested at step one that read one still enters
+    step two with z = 0."""
+    from scipy.stats import norm
+
+    from hxex.analysis.residues import _test_levels
+
+    z = np.ones((3, 1))  # three sets covering one residue with equal weight
+    p1 = np.array([0.002, 0.5, np.nan])
+    tested = np.isfinite(p1)
+    s, a = _test_levels(z, p1, np.array([True, False, False]), 1.0, tested)
+    zs = norm.isf([0.002, 0.5])
+    assert a[0] == pytest.approx(0.5)
+    assert s[0] == pytest.approx(norm.sf(zs.sum() / np.sqrt(2)))
+    p2 = np.array([0.2, np.nan, np.nan])  # the second set read one: z = 0 at step two
+    s, a = _test_levels(z, p2, np.array([False, False, False]), 1.0, tested)
+    assert a[0] == 0 and s[0] == pytest.approx(norm.sf(norm.isf(0.2) / np.sqrt(2)))
 
 
 def test_the_residues_carry_the_tiers(tested_run):

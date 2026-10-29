@@ -732,12 +732,21 @@ def bin_variances(
 ) -> list[np.ndarray]:
     """Each measurement's noise variance per bin (raw units) from ``curve``, at its observed
     intensity smoothed over three bins (so a bin that reads high by chance does not raise its own
-    variance alone), floored at (0.5 % of the spectrum's tallest bin)^2 so empty bins keep a
-    finite weight."""
+    variance alone; the first and last bins over the two there are), floored at (0.5 % of the
+    spectrum's tallest bin)^2 so empty bins keep a finite weight."""
     out = []
     for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
         y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
-        at = np.convolve(y, np.ones(3) / 3.0, mode="same") if len(y) >= 3 else y
+        at = _smoothed(y)
         top = max(float(y.max(initial=0.0)), 1e-12)
         out.append(np.maximum(curve.variance(at, float(z)), (_FLOOR_SHARE * top) ** 2))
     return out
+
+
+def _smoothed(y: np.ndarray) -> np.ndarray:
+    """The mean of each bin and its neighbours, over the bins there are (no zero padding: the
+    edges are not pulled down; audit 2026-10-28)."""
+    if len(y) < 2:
+        return y
+    window = np.ones(3)
+    return np.convolve(y, window, mode="same") / np.convolve(np.ones(len(y)), window, mode="same")

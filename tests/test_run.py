@@ -597,6 +597,22 @@ def test_a_late_time_point_serves_as_the_fully_deuterated_control(whole):
         run(raw, config(controls=ControlConfig(fulldeut_at=61.0), bootstrap=None))
 
 
+def test_stored_spectra_keep_the_readers_roles(whole, tmp_path):
+    """Audit 2026-10-28 High 2: the bundle stores the spectra with the roles the readers gave
+    them; fulldeut_at is applied again from the settings of every run, so a rerun from the
+    stored spectra without it has the time point back in its time course."""
+    from hxex.config import load_stored_spectra
+
+    raw, _ = whole
+    run(raw, config(controls=ControlConfig(fulldeut_at=60.0), bootstrap=None),
+        out=tmp_path / "b")
+    stored = load_stored_spectra(tmp_path / "b")
+    assert np.asarray(stored.role).tolist() == np.asarray(raw.role).tolist()
+    again = run(stored, config(controls=ControlConfig(), bootstrap=None))
+    assert (again.controls.n_fd == 2).all()
+    assert ((again.fit.role == "") & np.isclose(again.fit.time, 60.0)).any()
+
+
 def test_the_controls_are_fitted_at_k1_whatever_k_min(tmp_path):
     """With k_min above 1 the controls still get the K = 1 fit the back-exchange correction
     uses (and are fitted from k_min to k_max like the rest); the other spectra are not fitted

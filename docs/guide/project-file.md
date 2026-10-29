@@ -208,7 +208,8 @@ and you can make them in a spreadsheet.
    - `review_K`: the number of populations to use for that spectrum, instead of the one the fit
      chose (`K`). *hxex* has already fitted every spectrum with each number from `k_min` to
      `k_max`, so this picks one of those fits; nothing is refitted. `1`, for example, keeps the
-     spectrum but uses only its one-population fit. `review_status` can stay empty when you fill
+     spectrum but uses only its one-population fit, in the analysis too: its two-population
+     values leave the tables and do not count as evidence for two populations. `review_status` can stay empty when you fill
      in `review_K`. Leave `review_K` empty to keep the fit's choice.
    - `note`: why (optional, but it is kept with the decision and listed in `review.csv`).
 3. Save it as CSV (in Excel, **File > Save As**, type **CSV UTF-8**, and keep the name).

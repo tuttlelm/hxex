@@ -14,6 +14,7 @@ from hxex.analysis import (
     SpeciesUptake,
     coverage_table,
     exchanging_residues,
+    left_out_spectra,
     residue_map,
     species_uptake,
 )
@@ -199,6 +200,52 @@ def test_best_set_k_pools_the_evidence_of_a_set(results):
     assert one["best_set_K"].tolist() == [1, 1, 1] and one["best_set"].tolist() == [1, 0, 0]
     none = best_set(table([0.4, 0.6]), {}, (1, 2))
     assert none["best_set_K"][0] == 1 and none["best_set_reason"][0].startswith("no spectrum")
+
+
+def test_best_set_evidence_counts_only_the_spectra_the_table_keeps(results):
+    """Audit 2026-10-28 High 1 and Medium 11: a spectrum the filters leave out whole adds
+    nothing to its set's evidence (as if rejected), and one the review set to one population
+    (review_K = 1) keeps its K = 1 description only and cannot vote for two."""
+    import dataclasses
+
+    from hxex.analysis.species import analysis_controls
+
+    fit = results.fit
+    controls = analysis_controls(results, None, quiet=True)
+    n_amides = np.asarray(controls.n_amides, dtype=float)[controls.rows(fit.data_id)]
+    timed = np.flatnonzero((np.asarray(fit.role) == "") & np.isfinite(fit.time))
+    i = int(timed[-1])
+    k1 = fit.fits[1]
+    n = k1.n.copy()
+    n[i, 0] = (n_amides[i] + 0.5) / k1.p[i, 0]  # above the amide count: left out whole
+    fake = dataclasses.replace(results, fit=dataclasses.replace(
+        fit, fits={**fit.fits, 1: dataclasses.replace(k1, n=n)}))
+    sid = str(fit.spectrum_id[i])
+    assert sid in set(left_out_spectra(fake)["spectrum_id"])
+
+    def delta(r):
+        up = species_uptake(r, ks=(1, 2))
+        rows = up.where(time=float(fit.time[i]), K=1)
+        return up.set_delta_criterion[rows], up.n_spectra[rows]
+
+    left, n_left = delta(fake)
+    rejected, n_rejected = delta(fake.with_review(
+        ReviewTable.empty().update(sid, status="rejected")))
+    np.testing.assert_allclose(left, rejected)
+    assert (n_left == n_rejected).all()
+
+    criterion = fit.config.criterion
+    gain = float(getattr(fit.fits[2], criterion)[i] - getattr(fit.fits[1], criterion)[i])
+    assert gain != 0
+    base, _ = delta(results)
+    one = results.with_review(ReviewTable.empty().update(sid, k_override=1))
+    reviewed, _ = delta(one)
+    np.testing.assert_allclose(reviewed, base - gain)
+    full = species_uptake(results, ks=(2,))
+    kept = species_uptake(one, ks=(2,))
+    assert int(kept.n_spectra.sum()) == int(full.n_spectra.sum()) - 2  # both ranks
+    assert int(species_uptake(one, ks=(1,)).n_spectra.sum()) == int(
+        species_uptake(results, ks=(1,)).n_spectra.sum())
 
 
 def test_series_left_out_of_the_analysis(results):
@@ -1767,3 +1814,50 @@ def test_spectrum_quality_filtering(caplog):
     fake = SimpleNamespace(fit=fit, binned=fragment, review_status=screened.review_status,
                            spectra_source=None)
     assert not screening(fake, "loose").remove[point] and screening(fake, "loose").remove[undeut]
+
+
+def test_the_runs_controls_leave_out_the_screened_controls(tmp_path):
+    """Audit 2026-10-28 question 9: the run's controls leave out the control spectra the loose
+    level removes (recorded by id), so series.csv shows the state the default analysis uses;
+    the analysis reuses them at that level and recomputes them at another."""
+    import dataclasses
+
+    from hxex.analysis.screening import control_removal, screening
+    from hxex.analysis.species import analysis_controls
+    from hxex.controls import fit_controls
+    from hxex.io import open_bundle
+
+    results = Results.from_run(run(raw_spectra(n_series=2), config()))
+    assert results.controls.screened == ()  # screened, nothing removed
+    fit, b = results.fit, results.binned
+    role = np.asarray(fit.role).astype(str)
+    undeut = np.flatnonzero((role == "undeut") & (np.asarray(fit.data_id) == 1))[0]
+    labelled = np.flatnonzero(role == "")[0]
+    scores = np.zeros(len(b))
+    rows = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    scores[rows[str(fit.spectrum_id[undeut])]] = 0.3
+    scores[rows[str(fit.spectrum_id[labelled])]] = 0.3  # not a control: stays in the controls
+    picked = dataclasses.replace(b, screen_below_mono=scores)
+    removal = control_removal(picked, fragments=())
+    assert list(np.flatnonzero(removal)) == [rows[str(fit.spectrum_id[undeut])]]
+    assert not control_removal(picked, fragments=(1,)).any()  # fragment series: not screened
+
+    by_run = fit_controls(fit, np.asarray(results.measurements.n_max) / 1.2,
+                          results.controls.config,
+                          screened=np.isin(fit.spectrum_id, b.spectrum_id[removal]))
+    assert by_run.screened == (str(fit.spectrum_id[undeut]),)
+    screened = dataclasses.replace(results, binned=picked, controls=by_run)
+    level = screening(screened, "loose").remove
+    assert analysis_controls(screened, None, quiet=True) is by_run
+    assert analysis_controls(screened, None, quiet=True, screened=level) is by_run
+    none = analysis_controls(screened, None, quiet=True, screened=np.zeros(len(fit), bool))
+    i = by_run.rows([1])[0]
+    assert none.n_undeut[i] == by_run.n_undeut[i] + 1 and none.screened is None
+
+    # the bundle keeps the ids
+    out = run(raw_spectra(n_series=2), config())
+    out = dataclasses.replace(out, controls=dataclasses.replace(out.controls,
+                                                                screened=("a", "b")))
+    out.write(tmp_path / "r")
+    with open_bundle(tmp_path / "r") as bundle:
+        assert bundle.controls().screened == ("a", "b")

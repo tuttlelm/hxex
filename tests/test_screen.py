@@ -68,6 +68,29 @@ def test_a_species_below_the_monoisotopic_mz():
     assert 0.05 < lone["screen_below_mono"] < s["screen_below_mono"]
 
 
+def test_below_mono_scales_the_shape_to_the_monoisotopic_peak():
+    """Audit 2026-10-28 Medium 8: the peptide's shape continues a species one step below from
+    its monoisotopic peak, not its tallest, so a long peptide's contaminant is not under-read
+    (the same-shape contaminant at half height: 0.06 before, true share 0.32)."""
+    peptide = "RDKVQKEYALFYGEDGTLKSAEESQRDKVQKEYALFYGEDG"  # 41 residues: M is not the tallest
+    plan = plan_bins(peptide, Z, config=CFG)
+    shape = plan.clusters[0] / plan.clusters[0].max()
+    pos = plan.pred_mz[:len(shape)]
+    lo, hi = pos[0] - 3 * S, pos[-1] + 3 * S
+    mz = np.arange(lo, hi, lo * 3e-6)
+
+    def peaks(centres, heights):
+        sigma = centres * 20e-6 / 2.3548
+        return (heights * np.exp(-0.5 * ((mz[:, None] - centres) / sigma) ** 2)).sum(axis=1)
+
+    own = peaks(pos, shape * TOP)
+    both = own + peaks(pos - S, 0.5 * shape * TOP)
+    p = pick_spectrum(mz, both, peptide, Z, config=CFG, plan=plan)
+    alone = pick_spectrum(mz, own, peptide, Z, config=CFG, plan=plan)
+    share = 1 - alone.intensity.sum() / p.intensity.sum()
+    assert share > 0.3 and p.screen[0] > 0.2
+
+
 def test_below_mono_is_not_assessed_without_the_raw_spectrum_below():
     mz, y = profile(envelope(3.0))
     keep = mz > PLAN.undeut_mz - S  # starts one step below: not far enough
