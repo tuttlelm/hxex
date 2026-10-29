@@ -49,6 +49,7 @@ class Prepared:
     n_max: np.ndarray
     noise_kind: tuple[str, ...]  # one per measurement
     keys: np.ndarray  # stable integer per measurement; seeds its random starting points
+    weights: Sequence[np.ndarray] | None = None  # per-bin inverse noise variance (scaled units)
 
     @property
     def n_measurements(self) -> int:
@@ -59,10 +60,11 @@ class Prepared:
         rows = np.asarray(rows, dtype=np.int64)
         bins = [self.bins[i] for i in rows]
         observed = [self.observed[i] for i in rows]
+        weights = None if self.weights is None else [self.weights[i] for i in rows]
         return Prepared(
-            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend), bins, observed,
-            [self.shapes[i] for i in rows], self.n_max[rows],
-            tuple(self.noise_kind[i] for i in rows), self.keys[rows],
+            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend, weights), bins,
+            observed, [self.shapes[i] for i in rows], self.n_max[rows],
+            tuple(self.noise_kind[i] for i in rows), self.keys[rows], weights,
         )
 
 
@@ -80,19 +82,29 @@ def prepare(
     noise_kind: str | Sequence[str],
     backend: Backend,
     keys: Sequence[int] | None = None,
+    bin_variance: Sequence[np.ndarray] | None = None,
 ) -> Prepared:
     """Divide each spectrum by its noise scale and pad the batch.
+
+    ``bin_variance`` (one array per measurement, in the raw intensity units) gives each bin its
+    own noise variance: the Gaussian loss then weighs each bin by ``scale^2 / variance`` (the
+    inverse variance in the scaled units); None keeps one sd, the scale, for every bin.
 
     ``keys`` (one integer per measurement, default its position) seed the random starting points
     of that measurement, so its fit does not depend on the other measurements in the batch when
     the keys come from stable ids (:func:`stable_keys`).
     """
     scaled = [np.asarray(o, dtype=np.float64) / scale[m] for m, o in enumerate(observed)]
+    weights = None
+    if bin_variance is not None:
+        weights = [scale[m] ** 2 / np.asarray(v, dtype=np.float64)
+                   for m, v in enumerate(bin_variance)]
     return Prepared(
-        PaddedBatch.from_arrays(bins, scaled, n_max, backend), bins, scaled, shapes,
+        PaddedBatch.from_arrays(bins, scaled, n_max, backend, weights), bins, scaled, shapes,
         np.asarray(n_max, dtype=np.float64),
         (noise_kind,) * len(bins) if isinstance(noise_kind, str) else tuple(noise_kind),
         np.arange(len(bins)) if keys is None else np.asarray(keys, dtype=np.int64),
+        weights,
     )
 
 

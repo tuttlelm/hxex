@@ -18,6 +18,15 @@ overconfident for mass-spectrometry data and tends to over-select K).
 
 A reference is given per measurement as the indices of its reference spectra (replicates are
 averaged), or None for the measurement's own spectrum.
+
+``estimate='controls'`` (opt-in) gives every bin its own noise variance instead of one sd per
+spectrum: ``z b1 I + (m I)^2`` at a bin of intensity ``I`` in a spectrum of charge ``z``
+(:class:`ControlsNoise`), at least (0.5 % of the spectrum's tallest bin)^2. ``b1`` (the counting
+noise of the instrument, which grows with the ion's charge) is measured once per bundle from the
+undeuterated controls
+(:func:`controls_noise`); ``m`` (``model_error``, percent) is a fixed allowance for how far real
+envelopes depart from the model's binomial mixtures, the same for every dataset. The scale above
+then only fixes the units. Measurements: docs/HISTORY.md items 187 to 191.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from scipy.stats import chi2
 from .spectra import UNDEUT, time_point
 
 MODELS = ("gaussian", "poisson")
+ESTIMATES = (None, "controls", "replicates")
 
 
 @dataclass(frozen=True)
@@ -47,14 +57,22 @@ class NoiseConfig:
       undeuterated reference spectrum.
     - ``n_eff``: for ``poisson`` only, the effective counts of the tallest peak (alone, or
       without ``percent``).
-    - ``estimate``: ``'replicates'`` estimates the noise of each series (one peptide at one
-      charge, with its controls and time points) from its replicate spectra
+    - ``estimate``: ``'controls'`` gives every bin its own noise variance, ``z b1 I +
+      (m I)^2``, with ``b1`` measured from the run's undeuterated controls
+      (:func:`controls_noise`) and ``m`` = ``model_error`` percent (needs the gaussian model;
+      ``sd`` or ``percent`` then only fix the units). ``'replicates'`` estimates the noise of
+      each series (one peptide at one charge, with its controls and time points) from its
+      replicate spectra
       (:func:`estimate_noise`): a variance equal to a gain times the intensity. The loss stays
       Gaussian (needs the gaussian model): each spectrum of the series gets the sd ``sqrt(gain x
       its mean bin intensity)``. A series with fewer than ``min_replicated`` time points of two
       or more replicates falls back to the level above. ``min_share`` is the smallest share of a
       spectrum's total intensity a bin must have to be used, and a replicate whose score exceeds
       ``outlier_score`` is left out of the estimate and flagged ``noise_outlier``.
+    - ``model_error``: with ``estimate='controls'``, the allowance for model error as percent of
+      each bin's intensity (default 9: the value that calibrated the errors on three Q-TOF
+      datasets, docs/HISTORY.md item 191). Lower: errors smaller and more spectra split into
+      populations; higher: errors larger and fewer splits.
     """
     # why the loss stays Gaussian: docs/HISTORY.md items 49 and 55 to 57
 
@@ -66,6 +84,7 @@ class NoiseConfig:
     min_replicated: int = 3
     min_share: float = 0.005
     outlier_score: float = 4.0
+    model_error: float = 9.0
 
     def __post_init__(self):
         if self.model not in MODELS:
@@ -88,11 +107,13 @@ class NoiseConfig:
                 raise ValueError("n_eff must be > 0")
         if self.percent is not None and self.percent <= 0:
             raise ValueError("percent must be > 0")
-        if self.estimate not in (None, "replicates"):
-            raise ValueError("estimate must be None or 'replicates'")
+        if self.estimate not in ESTIMATES:
+            raise ValueError("estimate must be None, 'controls' or 'replicates'")
         if self.estimate and self.model != "gaussian":
-            raise ValueError("estimate='replicates' sets a Gaussian noise level: use the "
+            raise ValueError(f"estimate={self.estimate!r} sets a Gaussian noise level: use the "
                              "gaussian model")
+        if not (np.isfinite(self.model_error) and self.model_error >= 0):
+            raise ValueError("model_error must be 0 or more (percent)")
         if self.min_replicated < 1:
             raise ValueError("min_replicated must be at least 1")
         if not 0.0 < self.min_share < 1.0:
@@ -425,3 +446,298 @@ def estimate_noise(
             for r in drop:
                 outlier[c[r]] = True
     return NoiseEstimate(gain, estimated, reason.astype(str), score, outlier, n_rep)
+
+
+# --- per-bin noise from the undeuterated controls (estimate='controls') -------------------------
+
+_ONSET_BANDS = (0.0, 3e4, 1e5, 2e5, 4e5, 6e5, 8e5, 1.2e6, 2e6, 4e6, np.inf)
+_FLOOR_SHARE = 0.005  # every bin's variance is at least (this share of its spectrum's top)^2
+
+
+@dataclass(frozen=True)
+class SampleNoise:
+    """The counting scale ``b1`` measured from one sample's undeuterated controls alone, its
+    standard error (from resampling the sample's series) and the series it rests on; NaN
+    (not measured) with fewer than 5 series or when its controls show no counting term."""
+
+    sample: str
+    b1: float
+    b1_se: float
+    n_series: int
+
+
+@dataclass(frozen=True)
+class ControlsNoise:
+    """A bundle's per-bin noise (``estimate='controls'``): variance ``z b1 I + (m I)^2`` at a
+    bin of intensity ``I`` (raw units) in a spectrum of charge ``z``, with ``m`` =
+    ``model_error`` (a share, 0.09 for 9 %), at least (0.5 % of the spectrum's tallest bin)^2
+    (:func:`bin_variances`). ``b1`` comes from ``n_controls`` undeuterated controls of
+    ``n_series`` series below ``onset`` (the tallest peak above which the run's controls depart
+    from their natural-abundance shape; ``inf``: none found); ``b1_se`` is its standard error
+    and ``by_sample`` the same measured per sample. No constant floor is fitted: the controls
+    put it at about 0 (docs/HISTORY.md item 187), and with few controls it trades off against
+    ``b1``."""
+
+    b1: float
+    model_error: float
+    onset: float
+    n_controls: int
+    n_series: int
+    b1_se: float = float("nan")
+    by_sample: tuple[SampleNoise, ...] = ()
+
+    def variance(self, intensity: np.ndarray, charge: float = 1.0) -> np.ndarray:
+        i = np.clip(np.asarray(intensity, dtype=np.float64), 0.0, None)
+        return charge * self.b1 * i + (self.model_error * i) ** 2
+
+    def disagreeing_samples(self, z: float = 3.0) -> list[SampleNoise]:
+        """The samples whose own ``b1`` differs from the bundle's by more than ``z`` combined
+        standard errors: a sign that the bundle mixes instruments or settings."""
+        out = []
+        for s in self.by_sample:
+            se = np.hypot(s.b1_se, self.b1_se if np.isfinite(self.b1_se) else 0.0)
+            if np.isfinite(s.b1) and np.isfinite(se) and se > 0 and abs(s.b1 - self.b1) > z * se:
+                out.append(s)
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        def num(x: float) -> float | None:
+            return float(x) if np.isfinite(x) else None
+
+        return {"b1": self.b1, "model_error": self.model_error, "onset": num(self.onset),
+                "n_controls": self.n_controls, "n_series": self.n_series,
+                "b1_se": num(self.b1_se),
+                "by_sample": [{"sample": s.sample, "b1": num(s.b1), "b1_se": num(s.b1_se),
+                               "n_series": s.n_series} for s in self.by_sample]}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ControlsNoise:
+        def num(x) -> float:
+            return float("nan") if x is None else float(x)
+
+        return cls(b1=float(data["b1"]), model_error=float(data["model_error"]),
+                   onset=float("inf") if data.get("onset") is None else float(data["onset"]),
+                   n_controls=int(data["n_controls"]), n_series=int(data["n_series"]),
+                   b1_se=num(data.get("b1_se")),
+                   by_sample=tuple(SampleNoise(str(s["sample"]), num(s["b1"]), num(s["b1_se"]),
+                                               int(s["n_series"]))
+                                   for s in data.get("by_sample", ())))
+
+
+def _natural_fit(bins, observed, shape) -> tuple[np.ndarray, np.ndarray] | None:
+    """An undeuterated control's intensities and its natural-abundance shape at its bins (zero
+    beyond the shape), or None without signal."""
+    k = np.asarray(bins).astype(np.int64)
+    y = np.asarray(observed, dtype=np.float64)
+    sh = np.asarray(shape, dtype=np.float64)
+    ok = (k >= 0) & (k < len(sh))
+    if not ok.any() or y.max(initial=0.0) <= 0 or sh.max(initial=0.0) <= 0:
+        return None
+    p = np.zeros(len(y))
+    p[ok] = sh[k[ok]]
+    if p.max() <= 0:
+        return None
+    return y, p
+
+
+def distortion_onset(bins, observed, shapes, role) -> float:
+    """The tallest peak above which a run's undeuterated controls stop matching their
+    natural-abundance shape: the lower edge of the first band of tops (30,000, 100,000, ...
+    4,000,000) whose controls' median flattening index (the median observed/predicted ratio of
+    the peaks predicted at 3-30 % of the top on the heavy side, over that ratio at the tallest
+    peak, one least-squares height) is outside 0.9-1.1, with at least 10 controls in the band,
+    above a dimmer band whose controls match (within 0.9-1.1, at least 10 of them); ``inf``
+    when no band departs. Detector compression reads above 1, a heavy-side deficit below
+    (docs/HISTORY.md items 181 and 187). Dim controls can read above 1 too, from picked noise
+    in their small heavy-side peaks: that is no onset, so a departure counts only once the
+    controls have matched (item 191)."""
+    tops, flat = [], []
+    for i, r in enumerate(role):
+        if r != UNDEUT:
+            continue
+        got = _natural_fit(bins[i], observed[i], shapes[i])
+        if got is None:
+            continue
+        y, p = got
+        p = p / p.max()
+        t = int(np.argmax(p))
+        u = p >= 0.03
+        s = float(np.sum(y[u] * p[u]) / np.sum(p[u] ** 2))
+        heavy = (np.arange(len(p)) > t) & (p >= 0.03) & (p < 0.3)
+        if s <= 0 or y[t] <= 0 or not heavy.any():
+            continue
+        tops.append(float(y.max()))
+        flat.append(float(np.median(y[heavy] / (s * p[heavy])) / (y[t] / (s * p[t]))))
+    tops_a, flat_a = np.asarray(tops), np.asarray(flat)
+    matched = False
+    for lo, hi in zip(_ONSET_BANDS[:-1], _ONSET_BANDS[1:], strict=True):
+        band = (tops_a >= lo) & (tops_a < hi)
+        if band.sum() < 10:
+            continue
+        if abs(float(np.median(flat_a[band])) - 1.0) <= 0.1:
+            matched = True
+        elif matched:
+            return float(lo)
+    return float("inf")
+
+
+def _residual_design(shape: np.ndarray, intensity: np.ndarray, charge: float) -> np.ndarray:
+    """Each residual's expected variance per unit of ``b1`` and of an ``I^2`` term when one
+    least-squares height of ``shape`` is fitted: the residuals are ``(1 - H) y`` with ``H`` the
+    projection on the shape, so residual ``i`` has variance ``sum_j (delta_ij - H_ij)^2 v_j``.
+    The tallest peak carries most of the height's fit (its residual is far smaller than its
+    noise), which a flat ``n / (n - 1)`` correction would not undo. ``(n, 2)``."""
+    p = np.asarray(shape, dtype=np.float64)
+    h = np.outer(p, p) / float(p @ p)
+    m = (np.eye(len(p)) - h) ** 2
+    return m @ np.column_stack([charge * intensity, intensity ** 2])
+
+
+def _curve_fit(intensity, resid, charge, design) -> float | None:
+    """``b1`` from residuals: grouped by intensity within each charge (up to 14 log-quantile
+    groups of at least 8 bins per charge), each group's robust variance fitted by non-negative
+    least squares on the group's mean ``design`` row (:func:`_residual_design`) in relative
+    terms (each group to within a share of itself, so the brightest groups do not decide it).
+    The bins of a group differ in variance, which makes a robust spread understate their mean:
+    the residuals are standardised by their expected variance under the current fit and the
+    fit repeated. The ``I^2`` term takes the controls' own departure from their shape and is
+    dropped. None with fewer than three groups."""
+    from scipy.optimize import nnls
+    i = np.asarray(intensity, dtype=np.float64)
+    keep = i > 0
+    i = i[keep]
+    d = np.asarray(resid, dtype=np.float64)[keep]
+    z = np.asarray(charge, dtype=np.float64)[keep]
+    x = np.asarray(design, dtype=np.float64)[keep]
+    groups = []
+    for zz in np.unique(z):
+        at = np.flatnonzero(z == zz)
+        if len(at) < 24:
+            continue
+        log_i = np.log(i[at])
+        n_groups = max(3, min(14, len(at) // 20))
+        edges = np.unique(np.quantile(log_i, np.linspace(0, 1, n_groups + 1)))
+        for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+            g = at[(log_i >= lo) & (log_i <= hi)]
+            if len(g) >= 8:
+                groups.append(g)
+    if len(groups) < 3:
+        return None
+    a = np.array([x[g].mean(axis=0) for g in groups])
+    w = np.array([np.sqrt(len(g)) for g in groups])
+    norm = np.maximum(np.median(a, axis=0), 1e-300)
+    coef = None
+    for _ in range(6):
+        if coef is None:
+            y = np.array([(1.4826 * np.median(np.abs(d[g]))) ** 2 for g in groups])
+            scale = y
+        else:
+            v = np.maximum(x @ coef, 1e-300)
+            y = np.array([(1.4826 * np.median(np.abs(d[g] / np.sqrt(v[g])))) ** 2
+                          * float(np.mean(v[g])) for g in groups])
+            scale = a @ coef  # each group's variance as fitted, not as observed: dividing by
+            # the observed one would favour the groups that happen to read low
+        scale = np.maximum(scale, 1e-300)
+        sol, _ = nnls(a / norm / scale[:, None] * w[:, None], y / scale * w)
+        coef = sol / norm
+    return float(coef[0])
+
+
+def controls_noise(
+    bins: Sequence[np.ndarray],
+    observed: Sequence[np.ndarray],
+    shapes: Sequence[np.ndarray],
+    role: Sequence[str],
+    charge: Sequence[float],
+    data_id: Sequence[int],
+    *,
+    model_error: float,
+    usable: Sequence[bool] | None = None,
+    sample: Sequence[str] | None = None,
+    n_resample: int = 20,
+    seed: int = 0,
+) -> ControlsNoise | None:
+    """The bundle's per-bin noise from its undeuterated controls (``role`` ``'undeut'``).
+
+    Each usable control (``usable``: for example the ones every picker screen passes; default
+    all) whose tallest peak is below the run's :func:`distortion_onset` is fitted with its
+    natural-abundance shape (one least-squares height over the bins predicted at 5 % of the top
+    or more); its residuals there, with their expected variance under that fit
+    (:func:`_residual_design`), give ``b1`` (:func:`_curve_fit`). ``model_error`` is a share
+    (0.09 for 9 %). The standard error of ``b1`` comes from ``n_resample`` resamplings of the
+    series (``data_id``), and with ``sample`` the same is measured for each sample alone. None
+    when fewer than 5 series give residuals or no positive ``b1`` is found. Replicate pairs
+    of controls give the same counting scale on the Q-TOF data (docs/HISTORY.md items 187 and
+    190)."""
+    m = len(bins)
+    role = np.asarray(role, dtype=str)
+    charge = np.asarray(charge, dtype=np.float64)
+    data_id = np.asarray(data_id)
+    use = np.ones(m, dtype=bool) if usable is None else np.asarray(usable, dtype=bool)
+    onset = distortion_onset(bins, observed, shapes, role)
+    parts: dict[int, list[tuple[np.ndarray, ...]]] = {}
+    n_controls = 0
+    for i in np.flatnonzero((role == UNDEUT) & use):
+        got = _natural_fit(bins[i], observed[i], shapes[i])
+        if got is None:
+            continue
+        y, p = got
+        if y.max() >= onset:
+            continue
+        sel = p >= 0.05 * p.max()
+        if int(sel.sum()) < 3:
+            continue
+        h = float(np.sum(y[sel] * p[sel]) / np.sum(p[sel] ** 2))
+        pred = h * p[sel]
+        parts.setdefault(int(data_id[i]), []).append(
+            (pred, y[sel] - pred, np.full(int(sel.sum()), charge[i]),
+             _residual_design(p[sel], pred, float(charge[i]))))
+        n_controls += 1
+
+    def fit(keys) -> float | None:
+        blocks = [b for k in keys for b in parts[k]]
+        if not blocks:
+            return None
+        return _curve_fit(*(np.concatenate([b[j] for b in blocks]) for j in range(4)))
+
+    def with_se(keys) -> tuple[float | None, float]:
+        keys = sorted(keys)
+        got = fit(keys) if len(keys) >= 5 else None
+        if got is None:
+            return None, float("nan")
+        rng = np.random.default_rng(seed)
+        draws = [fit(list(rng.choice(keys, len(keys)))) for _ in range(n_resample)]
+        b = [d for d in draws if d is not None]
+        return got, (float(np.std(b, ddof=1)) if len(b) >= 2 else float("nan"))
+
+    b1, se = with_se(parts)
+    if b1 is None or not b1 > 0:
+        return None
+    by_sample: list[SampleNoise] = []
+    if sample is not None:
+        names = np.asarray(sample, dtype=str)
+        series_sample = {int(d): str(s) for d, s in zip(data_id, names, strict=True)}
+        for name in sorted({series_sample[k] for k in parts}):
+            keys = [k for k in parts if series_sample[k] == name]
+            s_b1, s_se = with_se(keys)
+            if s_b1 is None or not s_b1 > 0:  # too few controls, or no counting term found
+                s_b1, s_se = float("nan"), float("nan")
+            by_sample.append(SampleNoise(name, s_b1, s_se, len(keys)))
+    return ControlsNoise(b1=b1, model_error=model_error, onset=onset, n_controls=n_controls,
+                         n_series=len(parts), b1_se=se, by_sample=tuple(by_sample))
+
+
+def bin_variances(
+    observed: Sequence[np.ndarray], charge: Sequence[float], curve: ControlsNoise
+) -> list[np.ndarray]:
+    """Each measurement's noise variance per bin (raw units) from ``curve``, at its observed
+    intensity smoothed over three bins (so a bin that reads high by chance does not raise its own
+    variance alone), floored at (0.5 % of the spectrum's tallest bin)^2 so empty bins keep a
+    finite weight."""
+    out = []
+    for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
+        y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
+        at = np.convolve(y, np.ones(3) / 3.0, mode="same") if len(y) >= 3 else y
+        top = max(float(y.max(initial=0.0)), 1e-12)
+        out.append(np.maximum(curve.variance(at, float(z)), (_FLOOR_SHARE * top) ** 2))
+    return out

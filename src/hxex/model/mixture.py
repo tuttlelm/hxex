@@ -299,6 +299,7 @@ class PaddedBatch:
     obs: torch.Tensor
     mask: torch.Tensor
     n_max: torch.Tensor
+    weight: torch.Tensor | None = None  # per-bin inverse noise variance (None: all 1)
 
     @classmethod
     def from_arrays(
@@ -307,6 +308,7 @@ class PaddedBatch:
         observed: Sequence[np.ndarray],
         n_max: Sequence[float],
         backend: Backend,
+        weights: Sequence[np.ndarray] | None = None,
     ) -> PaddedBatch:
         m = len(bins)
         if not (len(observed) == len(n_max) == m):
@@ -321,11 +323,18 @@ class PaddedBatch:
             b[: len(bc), i] = bc
             obs[: len(ob), i] = ob
             mask[: len(bc), i] = True
+        weight = None
+        if weights is not None:
+            wt = np.ones((b_max, m))
+            for i, w in enumerate(weights):
+                wt[: len(w), i] = w
+            weight = backend.tensor(wt)
         return cls(
             b=backend.tensor(b),
             obs=backend.tensor(obs),
             mask=torch.tensor(mask, device=backend.torch_device()),
             n_max=backend.tensor(np.asarray(n_max, dtype=np.float64)),
+            weight=weight,
         )
 
     @property
@@ -339,17 +348,21 @@ def logit(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     return np.log(x / (1.0 - x))
 
 
-def noise_loss(pred: torch.Tensor, obs: torch.Tensor, is_gaussian: torch.Tensor) -> torch.Tensor:
+def noise_loss(pred: torch.Tensor, obs: torch.Tensor, is_gaussian: torch.Tensor,
+               weight: torch.Tensor | None = None) -> torch.Tensor:
     """Loss of every bin, ``(B, M)``: ``0.5 (pred - obs)^2`` (Gaussian, unit-sd noise) where
     ``is_gaussian`` is True (broadcast against ``(B, M)``, one flag per measurement) and
-    ``pred - obs log pred`` (Poisson, log-factorial dropped) elsewhere."""
+    ``pred - obs log pred`` (Poisson, log-factorial dropped) elsewhere. ``weight`` (same shape
+    as ``pred``) multiplies the Gaussian term bin by bin: the inverse noise variance of the bin
+    in the scaled units (None: 1, every bin with unit sd)."""
+    gauss = 0.5 * ((pred - obs) ** 2 if weight is None else weight * (pred - obs) ** 2)
     if bool(is_gaussian.all()):
-        return 0.5 * (pred - obs) ** 2
+        return gauss
     pc = pred.clamp(min=1e-10)
     poisson = pc - obs * torch.log(pc)
     if not bool(is_gaussian.any()):
         return poisson
-    return torch.where(is_gaussian, 0.5 * (pred - obs) ** 2, poisson)
+    return torch.where(is_gaussian, gauss, poisson)
 
 
 class MixtureBatch(nn.Module):
@@ -374,6 +387,8 @@ class MixtureBatch(nn.Module):
         self.register_buffer("n_max", batch.n_max)
         self.register_buffer("mask", batch.mask)
         self.register_buffer("b", batch.b)
+        self.register_buffer("weight", batch.weight if batch.weight is not None
+                             else torch.ones_like(batch.obs))
         self.register_buffer("shape_w", shape_w)
         self.log_A = nn.Parameter(log_A.clone())
         self.n_raw = nn.Parameter(n_raw.clone())
@@ -422,7 +437,7 @@ class MixtureBatch(nn.Module):
 
     def nll(self, obs: torch.Tensor) -> torch.Tensor:
         """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``."""
-        loss = noise_loss(self.predict(), obs, self.is_gaussian.unsqueeze(0))
+        loss = noise_loss(self.predict(), obs, self.is_gaussian.unsqueeze(0), self.weight)
         return loss.masked_fill(~self.mask, 0.0).sum(dim=0)
 
     @torch.no_grad()

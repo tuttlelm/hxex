@@ -42,7 +42,7 @@ from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult, interv
 from ..controls import ControlConfig, ControlTable, correct_means
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..fit.measurements import measurement_identity
-from ..noise import NoiseEstimate
+from ..noise import ControlsNoise, NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PeakMeasure, PickerConfig
 from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
@@ -860,6 +860,7 @@ def write_bundle(
             "provenance": None if provenance is None else dict(provenance),
             **({} if not excluded else {"excluded": dict(excluded)}),
             **({} if peak_measure is None else {"peak_measure": peak_measure.to_dict()}),
+            **({} if fit.noise_curve is None else {"noise_curve": fit.noise_curve.to_dict()}),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
@@ -1169,6 +1170,7 @@ class Bundle:
                 data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
                 role=self._roles(t), random_id=self._random_id(spectrum_id),
+                charge=self._charges(spectrum_id),
             )
         return self._cache["measurements"]
 
@@ -1218,6 +1220,8 @@ class Bundle:
                 sample_size=np.asarray(_col(t, "sample_size"), dtype=np.float64),
                 n_max=np.asarray(_col(t, "n_max"), dtype=np.float64),
                 noise_kind=_strs(t, "noise_kind"), noise_estimate=estimate,
+                noise_curve=(None if self.manifest.get("noise_curve") is None
+                             else ControlsNoise.from_dict(self.manifest["noise_curve"])),
             )
             assert m == len(self._cache["fit"])
         return self._cache["fit"]
@@ -1294,6 +1298,17 @@ class Bundle:
         by_id = dict(zip((str(s) for s in picked.spectrum_id), measurement_identity(picked),
                          strict=True))
         return np.array([by_id[str(s)] for s in spectrum_id], dtype=str)
+
+    def _charges(self, spectrum_id: np.ndarray) -> np.ndarray | None:
+        """Each fitted spectrum's charge, from the picked spectra; None without them."""
+        binned = self.binned()
+        if binned is None:
+            return None
+        by_id = dict(zip((str(s) for s in binned.spectrum_id),
+                         np.asarray(binned.charge, dtype=np.float64), strict=True))
+        if any(str(s) not in by_id for s in spectrum_id):
+            return None
+        return np.array([by_id[str(s)] for s in spectrum_id], dtype=np.float64)
 
     def binned(self) -> BinnedSet | None:
         if not self.has("binned"):

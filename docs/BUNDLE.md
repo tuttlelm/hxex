@@ -96,7 +96,10 @@ and `spectra_source` when other files were read or read differently) and `review
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
 from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power in m/z),
 `width_ratio`, `n_controls`, `n_weak`, `area_fwhm`, `area_scale` and `reason`; absent in bundles
-written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
+written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `noise_curve`
+(with `[run.fit.noise] estimate = "controls"` only: the per-bin noise the fit used, `b1`,
+`b1_se`, `model_error` (a share), `onset` (null: none), `n_controls`, `n_series` and `by_sample`
+(`sample`, `b1`, `b1_se`, `n_series`); `hxex.noise.ControlsNoise`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and

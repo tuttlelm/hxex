@@ -70,7 +70,8 @@ def test_unreplicated_time_points_and_small_series_are_not_assessed(run):
         meas, **{f: tuple(getattr(meas, f)[i] for i in keep) if isinstance(getattr(meas, f), tuple)
                  else getattr(meas, f)[keep]
                  for f in ("bins", "observed", "shapes", "n_max", "references", "spectrum_id",
-                           "data_id", "time", "role", "random_id")})
+                           "data_id", "time", "role", "random_id", "charge")
+                 if getattr(meas, f) is not None})
     sub_fit = dataclasses.replace(
         fit, spectrum_id=fit.spectrum_id[keep], data_id=fit.data_id[keep], time=fit.time[keep],
         role=fit.role[keep],

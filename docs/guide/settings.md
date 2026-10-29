@@ -252,7 +252,7 @@ The fit of k_min to k_max populations to every spectrum, the number chosen by th
 
 ## `[run.fit.noise]`
 
-Noise model and level of the fit (hxex.noise.NoiseConfig). The level sets the loss scale and the model selection.
+Noise model and level of the fit (hxex.noise.NoiseConfig). The level sets the loss scale and the model selection. Today's default is one sd per spectrum; estimate = "controls" gives every bin its own noise.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -260,10 +260,11 @@ Noise model and level of the fit (hxex.noise.NoiseConfig). The level sets the lo
 | `sd` | number or list | unset | gaussian: the sd in intensity units (false: percent instead) |
 | `percent` | number | `3.0` | sd (or poisson scale) as percent of the tallest peak of the series' undeuterated reference spectrum |
 | `n_eff` | number | unset | poisson: effective counts in the tallest peak (false: percent) |
-| `estimate` | text | unset | "replicates": estimate each series' noise from its replicate spectra (false: the level above) |
+| `estimate` | text | unset | "controls": every bin its own noise, measured from the undeuterated controls, plus model_error (opt-in; guide: The noise model); "replicates": estimate each series' noise from its replicate spectra (false: the level above) |
 | `min_replicated` | integer | `3` | estimate: fewest time points with two or more replicates |
 | `min_share` | number | `0.005` | estimate: smallest share of a spectrum's intensity a bin needs |
 | `outlier_score` | number | `4.0` | estimate: a replicate scoring above this is left out and flagged noise_outlier |
+| `model_error` | number | `9.0` | estimate = "controls": allowance for model error, percent of each bin's intensity; lower: smaller errors and more spectra split into populations, higher: larger errors and fewer |
 
 ## `[run.fit.backend]`
 

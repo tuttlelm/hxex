@@ -833,6 +833,35 @@ def _peak_measure_text(measure) -> str:
     return measure.describe()
 
 
+def _noise_curve_text(fit) -> str:
+    """The per-bin noise of the fit, with every sample's counting scale (``hxex info``)."""
+    curve, noise = fit.noise_curve, fit.config.noise
+    if curve is None:
+        if noise.model == "poisson":
+            text = "poisson"
+        elif noise.sd is not None:
+            text = "one sd per spectrum, set directly"
+        else:
+            text = f"one sd per spectrum, {noise.percent:g} % of its reference's tallest peak"
+        if noise.estimate == "replicates":
+            text += " (estimated from replicates where a series has enough)"
+        elif noise.estimate == "controls":
+            text += " (too few undeuterated controls for the per-bin noise)"
+        return text
+    onset = ("" if not np.isfinite(curve.onset)
+             else f", controls with tops of {curve.onset:,.0f} or more left out")
+    text = (f"per bin, z x b1 x I + ({100 * curve.model_error:g} % of I)^2 with b1 = "
+            f"{curve.b1:.3g} +- {curve.b1_se:.2g} (from {curve.n_controls} undeuterated "
+            f"controls of {curve.n_series} series{onset})")
+    if curve.by_sample:
+        odd = {s.sample for s in curve.disagreeing_samples()}
+        text += "; b1 by sample: " + ", ".join(
+            (f"{s.sample} {s.b1:.3g} +- {s.b1_se:.2g}{' (differs)' if s.sample in odd else ''}"
+             if np.isfinite(s.b1) else f"{s.sample} not measured ({s.n_series} series)")
+            for s in curve.by_sample)
+    return text
+
+
 def _noise_reference_text(meas) -> str:
     """What the series' noise levels come from, counted (``hxex info``)."""
     from .noise import noise_reference_kinds
@@ -907,6 +936,7 @@ def cmd_info(args) -> int:
              + _promotion_text(run_config.get("controls"))),
             ("roles", _role_counts_text(fit)),
             ("noise reference", _noise_reference_text(b.measurements())),
+            ("noise", _noise_curve_text(fit)),
             ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
              else "order: the times only order the points"),
             ("quality flags", "yes" if b.has("quality") else "no"),

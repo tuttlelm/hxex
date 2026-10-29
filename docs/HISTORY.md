@@ -4839,3 +4839,160 @@ CSVs or mzML if wanted.
     lower than areas (benchmark 2+ 1.000-1.050 %, d13C to -95 permil): the height deficit of weak
     peaks of item 181, which areas remove. Scripts:
     `noise_model/shape_check` (private, README).
+
+187. **The noise curve from replicate differences of the controls (2026-10-28; items 180, 184,
+    186; step 1 of the noise plan).** Noise measured where the signal is clean: two replicates of
+    one series and role (undeuterated or fully deuterated), tops within 1.5x, every screen below
+    its loose threshold, tops below the run's distortion onset (the first band whose
+    undeuterated controls' flattening leaves 0.9-1.1), bins at least 5 % of the pair's tallest.
+    The difference d = y1 - r y2 (r from the sums) has E[d²] = a²(1 + r²) + b I (1 + r) + 2c² I²
+    under a² + b·I + c²·I² per replicate, so replicate differences give the curve without a
+    shape model and cancel any misfit the replicates share; it is compared with the same
+    curve from the same undeuterated controls' residuals against natural abundance (what the
+    per-bin prototype V4 fits). Area sticks of the step-2 bundles of item 185 (the
+    intact-peptide benchmark, the tutorial run, the private noisy unimodal dataset; the
+    known-answer set has no replicates) and heights of the published Orbitrap digest.
+    (1) The counting term agrees between pairs and residuals (b 23 vs 21, 40 vs 51, 16-23 vs 22
+    in the bundles' units) and the floor is about 0. (2) The proportional term is smaller from
+    pairs: tutorial 0 vs 2.1 %, benchmark 1.9 vs 2.9 %, noisy set 3.0 vs 3.1 %, the same with tops
+    within 1.15x. So the residual curve's c mixes noise with the reproducible residual (the residual
+    beyond the replicate-pair noise, i.e. the part the replicates share; any of categories 2-5:
+    lost or distorted signal, added signal present in every replicate, own processing, physics),
+    by a share that differs per run (all of it on the tutorial, where the compression explains
+    it; about half on the benchmark, cause not shown; little on the noisy set). On the
+    benchmark c grows with brightness below the flattening onset (pairs with tops under 100,000
+    0.5 %, 100,000-400,000 2.1 %). (3) Fully deuterated pairs differ more
+    (benchmark 4.0 %, tutorial 1.3 %) because the replicates differ in deuterium content: with a
+    per-pair shift removed they agree with the undeuterated pairs within the datasets' spread.
+    (4) At matched intensity the noise grows with charge (benchmark, 3,000-10,000: 2+ 6.8 %, 3+
+    7.2 %, 4+ 9.5 % per replicate; fully deuterated 1+ 4.6 % to 5+ 10.2 %), roughly as a counting
+    term whose signal per ion grows with charge: consistent with item 186's untested
+    detector-response candidate. (5) Tails: 3.9 % of the benchmark's undeuterated pair bins lie
+    beyond 5 robust sd (in 10 % of the pairs), 1.6 % noisy set, 0.4 % tutorial: added or lost
+    signal in one replicate that the loose screens pass. (6) The bottom: counting holds down to
+    0.2 % of the tallest on the benchmark and reads 1.2-1.7x higher below 2-5 % on the tutorial
+    and the noisy set; bins present in only one replicate pass 5 % below about 1-2 % of the
+    tallest (the lost-signal zone). (7) Orbitrap: a large floor and counting term in its own
+    units (relative sd 24 % at 3e5, 0.8 % at 4e7, no proportional term in the undeuterated
+    pairs), fully deuterated pairs noisier at the same intensity even with the shift removed;
+    adjacent-scan differences not measured (they need the scans re-read). (8) Owner: is part of
+    the reproducible residual another noise source, e.g. the Gaussian term? Noise independent
+    between replicates, of any form, is already in the pair differences (and the floor is about
+    0), so only noise the replicates share can sit there. Pairs of undeuterated controls of one
+    peptide sequence and charge from different samples (chemically identical) give c 1.04 %
+    tutorial (0 within a sample; 0 with the per-pair slope removed: a tilt), 2.63 % benchmark
+    (1.94 within), 3.11 % noisy set (2.95 within), against residuals 2.14 / 2.94 / 3.13 %: about a
+    quarter, two thirds, and most of a small remainder of the reproducible residual varies between
+    samples (session or preparation: the bundles cannot tell). The rest, shared across samples,
+    is the brightness-dependent distortion. Not yet used in any fit. Scripts: `noise_model/pairs`
+    (private, README).
+
+188. **Refits with the replicate-pair noise curve (2026-10-28; item 187).** The per-bin prototype
+    (items 150-153) ported onto main in a scratch worktree; K 1-3 refits and K = 1 bootstraps of
+    the item-185 area bundles with three curves: V4 (the prototype's residual curve), P (item
+    187's undeuterated replicate-pair curve: noise alone) and a fallback for runs without
+    replicates (the residual curve's floor and counting term, no proportional term), against
+    today's constant sd (V0). With P the fully deuterated controls choose K > 1 in 26-33 % (V0 6-21
+    %) and labelled spectra in 25-61 % (V0 16-26 %), and the share grows with brightness (benchmark
+    fully deuterated 16 % below a top of 30,000, 81 % above 1.2 M; V0 5-10 % throughout): the
+    signature of a misfit of constant relative size that the noise, relatively smaller in brighter
+    spectra, no longer covers. Undeuterated controls barely change on the benchmark and the noisy
+    set (their misfit is a heavy-side deficit, which no mixture can use) but split above the
+    tutorial's onset (its compression broadens the envelope). The same misfit sets the real
+    precision: noise-only errors of the K = 1 mean (median 0.012-0.032 D against 0.06-0.07 D) are
+    2-3x smaller than the scatter between charge states of one injection (robust ratio 2.65
+    benchmark, 3.06 noisy set, 8.8 tutorial). So the reproducible residual of deuterated envelopes
+    has to be modelled in the fit (a term of the variance or of the model), not only marked; the
+    marks of the noise plan (brightness onset, lost-signal zone, outliers in one replicate) still
+    apply. V4 on area sticks stays worse than V0 (its fit is ruled by the brightest groups), and
+    the fallback behaves like P (known-answer set: correct K 77.5 % against 79.6 % with V0 and
+    82.7 % with V4; true one-population spectra kept at K = 1: 76 % against 98 %). The charge
+    yardstick assumes that a replicate label names one injection at every charge (the pair curve
+    does not): a replicate's deviation from its charge's mean correlates with the same label's at
+    another charge (+0.85 tutorial, +0.65 noisy set, benchmark Spearman +0.52; different labels
+    -0.06 to -0.34), so it holds; the noisy set's charge sets scattering more than its replicate
+    sets is a systematic difference between charge states, not mixed-up labels. Scripts:
+    `noise_model/pairs` (private, README, step 1b).
+
+189. **Where the model-error term should come from (2026-10-28; item 188).** Item 188 left the
+    reproducible residual of deuterated envelopes to be modelled, as a term (m I)^2 added to the
+    replicate-pair noise. Owner: an m estimated over a bundle depends on what was submitted, and
+    a stability test on these data would only show that they are homogeneous. (A) Per series, from
+    its own clean controls (robust; sampling error from half splits of the bins), m is about as
+    uncertain as its value (medians 2-5 %, sampling sd 1.6-4.7 %), series do differ beyond that,
+    and a series' undeuterated m hardly predicts its fully deuterated m (Spearman 0.07-0.25): no
+    per-series route. The noise level itself grows with charge, consistently (benchmark 1+ 0.46
+    to 6+ 2.79 times the bundle curve; noisy set 0.71 to 2.04; tutorial 1.06 to 3.86), which a
+    per-bundle curve ignores. (B) One fixed m for every dataset, 0-15 %, refitted on the
+    intact-peptide benchmark, the tutorial run, the private noisy unimodal dataset, the
+    known-answer set, and the published Orbitrap digest: about 10 % (7-10 %) calibrates the
+    replicate errors on all four datasets with replicates, two Q-TOF groups and the Orbitrap alike
+    (robust ratio 0.82-0.94; today's constant sd 0.60-0.97), with fully deuterated K > 1 at or below
+    today's on the Q-TOF data (4.0 / 17.0 / 7.5 % against 6.1 / 21.1 / 8.6 %), undeuterated K > 1 on
+    the tutorial 3.9 against 11.6 %, and the known-answer set 82.9 against 79.6 % correct K; the
+    Orbitrap's fully deuterated K > 1 stays above today's (21.5 against 13.7 %). Replicate sets
+    include labelling-time scatter, so 10 % is an upper bound; charge sets (one injection) stay
+    under-covered (1.4-2.1) by systematic differences between charge states. 10 % is far above
+    the per-series misfit: the fixed term also covers the heavy tails and the spread between
+    series, and it dominates every bin above about b / m^2 (a few thousand counts on the Q-TOF
+    exports), so the bundle's pair curve matters only for weak bins. Not built. Scripts:
+    `noise_model/pairs` (private, README, step 1c).
+
+190. **The noise as a + z b1 I, one instrument scale per bundle, and b1 by sample (2026-10-28;
+    item 189).** The per-series noise level divided by charge is flat (benchmark 0.43-0.48 from 1+
+    to 6+), as for counting with a signal per ion that grows with charge, so the noise variance
+    was written a² + z b1 I with one scale b1 per bundle (estimated from the undeuterated controls'
+    residuals: no replicates needed), plus item 189's fixed (m I)² at 10 %. b1 does not change with
+    sample beyond its error on any dataset (benchmark, five samples: 7.0-8.6 ± 0.9-1.5 from the
+    undeuterated residuals, 5.9-8.1 ± 0.9-1.1 from the fully deuterated K = 1 residuals, including
+    a sample whose fully deuterated control the owner suspects), and a b1 per sample changes no
+    result by more than 0.5 points. Against the replicate-pair curve with the same m: equal on the
+    tutorial, better on the noisy set (labelled K > 1 13.2 against 16.2 %, fully deuterated 15.8
+    against 17.0 %, charge-set ratio 1.87 against 2.11), slightly worse on the benchmark (fully
+    deuterated 8.1 against 7.5 %), known-answer set 83.5 against 82.9 % correct K; replicate errors
+    calibrated alike (0.91-0.96). Correction to item 189: the benchmark's lower fully deuterated
+    K > 1 with the fixed m came from the suspect sample alone (20.9 to 8 %); in the other four
+    samples today's constant sd chooses K > 1 less often (5.4 against 7.4-8.1 %). Not built.
+    Scripts: `noise_model/pairs` (private, README, step 1d).
+
+191. **Per-bin noise from the controls built as an option, and checked (2026-10-28; items
+    187-190).** Built on main as `[run.fit.noise] estimate = "controls"` with `model_error` (percent,
+    default 9: the value at which item 189's sweep calibrated the replicate errors on the three Q-TOF
+    datasets, 9.1 / 8.9 / 9.0 interpolated; the Orbitrap would want about 6.7). Each bin's variance
+    is z b1 I + (m I)^2 on the bin's smoothed observed intensity (three bins), floored at (0.5 % of
+    the spectrum's top)^2; `b1` is measured once per bundle (`hxex.noise.controls_noise`, called by
+    `run.bundle_noise`) from the undeuterated controls that pass every loose screen and whose tops
+    sit below the run's distortion onset, with a standard error from 20 resamplings of the series
+    and a value per sample (`not measured` with fewer than five series or no counting term; a
+    warning when a sample differs by more than three standard errors). The fit's loss, the LM
+    polish, the screen's loss floor (weighted NNLS), the bootstrap's resampling and the population
+    test's null all take the per-bin variances; the bundle's manifest records the curve
+    (`noise_curve`) and `hxex info` prints it. Estimator details, each found by a synthetic test:
+    bins grouped by intensity within each charge (mixing charges biased b1 low); the residual's
+    expected variance through the projection of the least-squares height (the tallest peak's
+    residual is far below its noise); robust group variances standardised by their expected
+    variance and iterated (a heteroscedastic group's MAD runs low); the relative fit divides by
+    the fitted, not the observed, group variance; the floor a^2 dropped (measured about 0 on every
+    dataset, and it traded off against b1). About +5 % bias remains. Bug found by the checks: the
+    known-answer set's dimmest controls read flattened (picked noise in their small heavy-side
+    peaks), so the onset was put at 0 and no control was used; a departing band now counts only
+    above a dimmer band that matches. Checks on the step-2 bundles of item 185 (GPU; K 1-3 refits,
+    K = 1 bootstraps with n_boot 20, the population test at B = 20; today's constant sd = V0, the
+    built per-bin noise = P9; b1 tutorial 31.2 ± 20, noisy set 11.5 ± 1.3, benchmark 8.16 ± 0.49,
+    known-answer set 9.35 ± 14 from 21 controls; every sample agreed with its bundle): the screen
+    picks the same K for 100 % of spectra on all four; the slow regression comparisons and GPU parity
+    pass. K > 1, V0 against P9, undeuterated / fully deuterated controls, with the population test:
+    tutorial 8.1 / 5.0 against 0.8 / 3.3 %, noisy set 5.1 / 14.8 against 4.1 / 10.2 %, benchmark
+    4.2 / 5.4 against 3.6 / 4.4 % (without the suspect sample 3.9 / 3.4 against 3.4 / 4.3 %),
+    known-answer set 13.0 / 13.0 against 8.7 / 8.7 % (23 controls each), correct K 77.8 against
+    84.8 %. With the criterion alone: tutorial 11.6 / 6.1 against 4.3 / 4.2 %, noisy set 8.3 / 21.1
+    against 10.6 / 19.4 %, benchmark 6.0 / 8.6 against 7.0 / 8.6 % (without the suspect sample
+    fully deuterated 5.4 against 8.5 %), known-answer set 13.0 / 17.4 against 17.4 / 34.8 % (8
+    against 4 of 23), correct K 79.6 against 83.5 %; labelled spectra split more often (benchmark
+    20.2 against 24.7 %, tutorial 26.4 against 30.3 %). Replicate-set calibration (robust ratio)
+    0.60 / 0.97 / 0.82 against 0.89 / 1.04 / 1.04 (tutorial, noisy set, benchmark); charge sets
+    0.42 / 2.89 / 1.23 against 1.97 / 2.38 / 1.58 (both under-cover differences between charge
+    states). The population test took 0-36 % longer with P9 (benchmark 1,134 against 1,544 s).
+    So the option passes with the population test and is mixed with the criterion alone; it stays
+    opt-in, and the default is the owner's decision. Scripts: `noise_model/pairs` (private,
+    `built_check.py`, `built_check/summary.txt`).

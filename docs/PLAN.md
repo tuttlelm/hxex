@@ -383,7 +383,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
 - **Command line: done** (item 45): `hxex init`, `check`, `run`, `resume`, `report` and `info`,
   driven by a TOML project file (`hxex.config`).
 - **Phase 5 (validation and release):** no work recorded yet. The noise model is decided ahead
-  of it: the Gaussian loss (owner, 2026-10-13; HISTORY items 55 and 56).
+  of it: the Gaussian loss (owner, 2026-10-13; HISTORY items 55 and 56), reopened for its level
+  (2026-10-24): per-bin noise from the controls is built as an option (Next steps 13).
 - **Phase 6 (extra input): partly done, ahead of order.** The mzML reader with scan summing
   (item 33), the composition ladder in the picker (item 34), ion-type mixtures for fragments
   (item 35), fragment targets and terminal groups (item 36), the m/z screen (item 37), precursor
@@ -704,6 +705,19 @@ Planned, not built:
    undeuterated cap, `[analysis] populations = "population_test"`, residue tiers up to three and their
    figure. Open: `hxex resume` adding the test to an existing bundle; stuck K = 1 refits in the
    null; fragment series.
+13. **Per-bin noise from the controls** (owner, 2026-10-28; HISTORY 187-191). Opt-in
+   `[run.fit.noise] estimate = "controls"`: each bin's variance `z b1 I + (m I)^2`, the counting
+   scale `b1` measured once per bundle from the undeuterated controls that pass the loose
+   screens and sit below the run's distortion onset (per-sample values reported, a warning when
+   a sample differs), `model_error` m = 9 % fixed (calibrated on three Q-TOF datasets). The
+   fit, the screen's loss floor, the bootstrap and the population test's null all use it.
+   Agreed path: opt-in first, then the default once the checks pass, the Orbitrap excepted until
+   its own look (owner: start from the instrument information in the .raw files). Checks
+   (HISTORY 191): screen, regression and GPU parity pass; with the population test it lowers
+   false splits of the controls and raises correct K on the known-answer set; with the criterion
+   alone it is mixed, so it stays opt-in (default: the owner's decision). Not yet done: the
+   lost-signal zone (bins below 1-2 % of the tallest peak) and outliers in one replicate
+   (steps 2-3 of the noise plan).
 
 ## Risks and open decisions
 

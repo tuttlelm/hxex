@@ -26,7 +26,9 @@ class Measurements:
     carried into the results. ``random_id`` (default the spectrum id) is what each measurement's
     random numbers are keyed by (:meth:`random_keys`): from a picked set, what the spectrum is
     (:func:`measurement_identity`), so its random starts, bootstrap draws and null simulations do
-    not depend on the project's name, the file layout or the other spectra.
+    not depend on the project's name, the file layout or the other spectra. ``charge`` is each
+    measurement's charge (the per-bin noise grows with it, :func:`hxex.noise.bin_variances`);
+    None when not known (from plain arrays: then every measurement counts as charge 1).
     """
 
     bins: tuple[np.ndarray, ...]
@@ -39,6 +41,7 @@ class Measurements:
     time: np.ndarray
     role: np.ndarray | None = None
     random_id: np.ndarray | None = None
+    charge: np.ndarray | None = None
 
     def __post_init__(self):
         m = len(self.bins)
@@ -48,9 +51,11 @@ class Measurements:
             object.__setattr__(self, "role", np.asarray(self.role, dtype=str))
         object.__setattr__(self, "random_id", np.asarray(
             self.spectrum_id if self.random_id is None else self.random_id, dtype=str))
+        if self.charge is not None:
+            object.__setattr__(self, "charge", np.asarray(self.charge, dtype=np.float64))
         sizes = (len(self.observed), len(self.shapes), len(self.n_max), len(self.references),
                  len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role),
-                 len(self.random_id))
+                 len(self.random_id), m if self.charge is None else len(self.charge))
         if any(s != m for s in sizes):
             raise ValueError("every field needs one entry per measurement")
         for i, (b, o) in enumerate(zip(self.bins, self.observed, strict=True)):
@@ -66,6 +71,10 @@ class Measurements:
 
     def __len__(self) -> int:
         return len(self.bins)
+
+    def charges(self) -> np.ndarray:
+        """Each measurement's charge, 1 where it is not known."""
+        return np.ones(len(self)) if self.charge is None else self.charge
 
     def random_keys(self) -> np.ndarray:
         """One stable integer per measurement, from its ``random_id``: with the stage's seed it
@@ -95,6 +104,7 @@ class Measurements:
             references=tuple(refs), spectrum_id=self.spectrum_id[index],
             data_id=self.data_id[index], time=self.time[index], role=self.role[index],
             random_id=self.random_id[index],
+            charge=None if self.charge is None else self.charge[index],
         )
 
     @classmethod
@@ -110,6 +120,7 @@ class Measurements:
         time: Sequence[float] | None = None,
         role: Sequence[str] | None = None,
         random_id: Sequence[str] | None = None,
+        charge: Sequence[float] | None = None,
     ) -> Measurements:
         """Measurements from plain arrays (for tests and for data that did not come from the
         picker). Missing identifiers become ``m0, m1, ...``, series 0, time 0 and no role."""
@@ -129,6 +140,7 @@ class Measurements:
             time=np.asarray(time if time is not None else [0.0] * m, dtype=np.float64),
             role=None if role is None else np.asarray(role, dtype=str),
             random_id=None if random_id is None else np.asarray(random_id, dtype=str),
+            charge=None if charge is None else np.asarray(charge, dtype=np.float64),
         )
 
     @classmethod
@@ -197,6 +209,7 @@ class Measurements:
             references=tuple(references),
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,
             role=binned.role, random_id=measurement_identity(binned),
+            charge=np.asarray(binned.charge, dtype=np.float64),
         )
 
 

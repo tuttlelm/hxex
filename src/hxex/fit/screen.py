@@ -43,11 +43,14 @@ def loss_floor(
     shapes: Sequence[np.ndarray],
     n_max: np.ndarray,
     noise_kind: Sequence[str],
+    weights: Sequence[np.ndarray] | None = None,
 ) -> np.ndarray:
     """The Gaussian loss of the best non-negative deuterium distribution on ``0 ..
     ceil(n_max)`` convolved with each measurement's shape, against its noise-scaled spectrum
     ``scaled``: a lower bound on the loss of a mixture of any number of components. ``-inf``
-    where there is no such bound (Poisson loss, or bins that are not whole numbers)."""
+    where there is no such bound (Poisson loss, or bins that are not whole numbers).
+    ``weights``: each bin's inverse noise variance in the scaled units (per-bin noise; None:
+    1), the same weights as the fit's loss."""
     out = np.full(len(bins), -np.inf)
     not_converged = 0
     for i, (x, y, shape) in enumerate(zip(bins, scaled, shapes, strict=True)):
@@ -59,6 +62,9 @@ def loss_floor(
         diff = x.astype(np.int64)[:, None] - np.arange(int(np.ceil(n_max[i])) + 1)[None, :]
         inside = (diff >= 0) & (diff < len(d))
         design = np.where(inside, d[np.clip(diff, 0, len(d) - 1)], 0.0)
+        if weights is not None:  # weighted least squares: both sides by sqrt(weight)
+            root = np.sqrt(np.asarray(weights[i], dtype=np.float64))
+            design, y = design * root[:, None], y * root
         try:
             _, residual = nnls(design, y, maxiter=50 * design.shape[1])
         except RuntimeError:  # did not converge: the loss is still at least 0

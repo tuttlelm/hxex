@@ -44,7 +44,7 @@ from scipy.stats import gamma
 from .fit import FitConfig, FitResult, Measurements, fit_models
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, shape_weights
-from .noise import NoiseConfig
+from .noise import NoiseConfig, bin_variances
 
 log = logging.getLogger(__name__)
 
@@ -391,7 +391,9 @@ def simulate_null(
 ) -> np.ndarray:
     """``(len(rows), n_sim)`` null statistics ``2 (nll_K - nll_K+1)`` of the measurements at
     ``rows``: data drawn from their K-population fit (noise-scaled curve plus unit Gaussian
-    noise), refitted at 1 to K + 1 with the run's fit settings (no screen). Each draw is seeded
+    noise, or with per-bin noise (:attr:`FitResult.noise_curve`) each bin's own sd, the
+    simulations refitted with the same weights), refitted at 1 to K + 1 with the run's fit
+    settings (no screen). Each draw is seeded
     by ``seed``, the simulation and what the spectrum is (``random_id``), so the result does not
     depend on the other spectra or the project's name. NaN where a refit failed."""
     rows = np.asarray(rows, dtype=np.int64)
@@ -402,17 +404,24 @@ def simulate_null(
     bins = [data.bins[i] for i in rows]
     shapes = [data.shapes[i] for i in rows]
     n_max = data.n_max[rows]
+    sd = [np.ones(len(b)) for b in bins]  # noise sd of every bin, in the scaled units
+    if fit.noise_curve is not None:
+        variances = bin_variances([data.observed[i] for i in rows], data.charges()[rows],
+                                  fit.noise_curve)
+        sd = [np.sqrt(v) / fit.obs_scale[i] for v, i in zip(variances, rows, strict=True)]
     out = np.full((len(rows), n_sim), np.nan)
     for s in range(n_sim):
         check_cancel(cancel)
-        observed = [curve + np.random.default_rng([seed, 11, k, s, int(key)]).standard_normal(
-            len(curve)) for curve, key in zip(pred, keys, strict=True)]
+        observed = [curve + w * np.random.default_rng([seed, 11, k, s, int(key)]).standard_normal(
+            len(curve)) for curve, key, w in zip(pred, keys, sd, strict=True)]
         ids = [f"null{k}.{s}:{sid}" for sid in data.spectrum_id[rows]]
         rids = [f"null{k}.{s}:{rid}" for rid in data.random_id[rows]]
         sim = Measurements.from_arrays(bins, observed, shapes, n_max, spectrum_id=ids,
                                        random_id=rids)
         with _quiet_fits():
-            res = fit_models(sim, cfg, cancel=cancel)
+            res = fit_models(sim, cfg, cancel=cancel,
+                             bin_variance=None if fit.noise_curve is None else
+                             [w * w for w in sd])
         lo, hi = res.fits[k].nll, res.fits[k + 1].nll
         out[:, s] = np.where(np.isfinite(lo) & np.isfinite(hi), statistic_of(lo, hi), np.nan)
         if on_simulation is not None:

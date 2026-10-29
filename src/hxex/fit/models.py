@@ -9,7 +9,14 @@ import numpy as np
 
 from ..hooks import CancelHook, ProgressHook, report
 from ..model import aic, bic
-from ..noise import estimate_noise, noise_scale, sample_size
+from ..noise import (
+    ControlsNoise,
+    bin_variances,
+    controls_noise,
+    estimate_noise,
+    noise_scale,
+    sample_size,
+)
 from .config import FitConfig
 from .init import split_start
 from .measurements import Measurements
@@ -27,6 +34,8 @@ def fit_models(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     test_screen: bool = False,
+    noise_curve: ControlsNoise | None = None,
+    bin_variance=None,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
@@ -46,6 +55,15 @@ def fit_models(
     ``progress(done, total)`` counts optimiser restarts; ``cancel`` raises
     :class:`~hxex.hooks.Cancelled`.
 
+    With ``config.noise.estimate == 'controls'`` every bin has its own noise variance
+    (:func:`hxex.noise.bin_variances`) from ``noise_curve``, the bundle's curve
+    (:func:`hxex.noise.controls_noise`; :func:`hxex.run.run` measures it once from the
+    controls every picker screen passes, before the spectra are fitted in parts); without one
+    it is measured here from every undeuterated control in ``data``, and with too few controls
+    the noise falls back to one sd per spectrum (logged). ``bin_variance`` (one array per
+    measurement, raw units) gives the variances directly instead (the population test's null).
+    The result keeps the curve (:attr:`FitResult.noise_curve`).
+
     With ``config.screen`` each K above 1 is fitted only for the measurements that could still
     select it (:mod:`hxex.fit.screen`); the others get NaN for that K (parameters, loss and
     criteria) and an ``inf`` score. The selected K is the same as without the screen. With
@@ -58,7 +76,23 @@ def fit_models(
     scale = noise_scale(data.observed, config.noise, data.references)
     kinds = [config.noise.model] * m
     estimate = None
-    if config.noise.estimate:
+    curve = None
+    bin_var = bin_variance
+    if bin_var is None and config.noise.estimate == "controls":
+        curve = noise_curve
+        if curve is None:
+            curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
+                                   data.charges(), data.data_id,
+                                   model_error=config.noise.model_error / 100.0)
+        if curve is None:
+            log.warning("per-bin noise: too few undeuterated controls to measure the noise from "
+                        "(at least 5 series are needed); one sd per spectrum is used instead")
+        else:
+            bin_var = bin_variances(data.observed, data.charges(), curve)
+            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of I)^2, from %d "
+                     "undeuterated controls of %d series", curve.b1, 100 * curve.model_error,
+                     curve.n_controls, curve.n_series)
+    elif config.noise.estimate == "replicates":
         # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
         # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the
         # expected sum of squared residuals is the estimated one); the others keep the noise
@@ -81,7 +115,7 @@ def fit_models(
             )
     prep = prepare(
         data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
-        keys=data.random_keys(),
+        keys=data.random_keys(), bin_variance=bin_var,
     )
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
@@ -102,7 +136,8 @@ def fit_models(
 
     floor = None
     if config.screen and any(k > 1 for k in k_values):  # nothing to skip with K = 1 alone
-        floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind)
+        floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind,
+                           prep.weights)
     best = np.full(m, np.inf)  # best criterion so far (for the screen)
     fits: dict[int, KFit] = {}
     for k in k_values:
@@ -174,7 +209,7 @@ def fit_models(
         role=data.role,
         k_values=k_values, fits=fits, selected_K=selected, score=score, obs_scale=scale,
         sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
-        noise_estimate=estimate,
+        noise_estimate=estimate, noise_curve=curve,
     )
 
 

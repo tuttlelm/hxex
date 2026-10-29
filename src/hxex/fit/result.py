@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..noise import NoiseEstimate
+from ..noise import ControlsNoise, NoiseEstimate
 from .config import FitConfig
 
 
@@ -57,7 +57,9 @@ class FitResult:
     scale each spectrum was divided by, ``sample_size`` the ``N`` of the BIC penalty, ``n_max``
     the bound on ``n`` and ``noise_kind`` the noise model of each measurement. ``role`` is each
     measurement's role (``'undeut'``, ``'fulldeut'`` or ``''``, the spectra's; all ``''`` when
-    not given): the controls of a series are the measurements with a role.
+    not given): the controls of a series are the measurements with a role. ``noise_curve`` is
+    the per-bin noise the fit used (``estimate='controls'``; :class:`hxex.noise.ControlsNoise`),
+    None otherwise.
     """
 
     config: FitConfig
@@ -74,6 +76,7 @@ class FitResult:
     noise_kind: np.ndarray  # the noise model of each measurement
     noise_estimate: NoiseEstimate | None = None  # set when the noise was estimated
     role: np.ndarray | None = None
+    noise_curve: ControlsNoise | None = None
 
     def __post_init__(self):
         if self.role is None:  # built without roles: time points only
@@ -100,6 +103,8 @@ class FitResult:
         for part in parts:
             if part.config != first.config or part.k_values != first.k_values:
                 raise ValueError("the parts were fitted with different settings")
+            if part.noise_curve != first.noise_curve:
+                raise ValueError("the parts were fitted with different per-bin noise")
         order = np.argsort(positions)
 
         def cat(name: str) -> np.ndarray:
@@ -128,6 +133,7 @@ class FitResult:
             selected_K=cat("selected_K"),
             score=cat("score"), obs_scale=cat("obs_scale"), sample_size=cat("sample_size"),
             n_max=cat("n_max"), noise_kind=cat("noise_kind"), noise_estimate=estimate,
+            noise_curve=first.noise_curve,
         )
 
     def select(self, rows) -> FitResult:

@@ -31,9 +31,10 @@ def _predict(theta, b, shape_w, n_max, k, grid):
     return predict_mixture(b, theta[:, :k], n, p, shape_w[:, :, 0], grid, logit_p).T
 
 
-def _loss(pred, obs, mask, is_gaussian):
-    """Loss per measurement from ``(M, B)`` arrays; ``is_gaussian`` is ``(M,)``."""
-    per_bin = noise_loss(pred, obs, is_gaussian.unsqueeze(1))
+def _loss(pred, obs, mask, is_gaussian, weight=None):
+    """Loss per measurement from ``(M, B)`` arrays; ``is_gaussian`` is ``(M,)``; ``weight``
+    ``(M, B)``, the per-bin inverse noise variance of the Gaussian loss (None: 1)."""
+    per_bin = noise_loss(pred, obs, is_gaussian.unsqueeze(1), weight)
     return per_bin.masked_fill(~mask, 0.0).sum(dim=1)
 
 
@@ -67,7 +68,7 @@ def lm_polish(
     p_dim = theta_all.shape[1]
     eye = torch.eye(p_dim, dtype=theta_all.dtype, device=theta_all.device)
 
-    def make_fns(b, shape_w, n_max, mask, obs_m, is_gauss):
+    def make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt):
         bt = b.T  # (B, M), as the model holds it
         grid = integer_grid(bt, shape_w.shape[0])
 
@@ -91,7 +92,7 @@ def lm_polish(
             return pred, torch.stack(cols, dim=2)  # (M, B), (M, B, 3K)
 
         def loss_of(th):
-            return _loss(predict(th), obs_m, mask, is_gauss)
+            return _loss(predict(th), obs_m, mask, is_gauss, wgt)
 
         return pred_and_jac, loss_of
 
@@ -99,7 +100,8 @@ def lm_polish(
     b, mask, obs_m = model.b.T, model.mask.T, obs_all
     shape_w, n_max = model.shape_w, model.n_max
     is_gauss = model.is_gaussian
-    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss)
+    wgt = model.weight.T
+    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt)
     theta = theta_all
     with torch.no_grad():
         loss = loss_of(theta)
@@ -113,9 +115,7 @@ def lm_polish(
             pred, jac = pred_and_jac(theta)
             jac = jac * mask.unsqueeze(-1)
             r = (pred - obs_m) * mask
-            w = torch.where(
-                is_gauss.unsqueeze(1), torch.ones_like(pred), 1.0 / pred.clamp(min=1e-10)
-            )
+            w = torch.where(is_gauss.unsqueeze(1), wgt, 1.0 / pred.clamp(min=1e-10))
             g = torch.einsum("mbp,mb->mp", jac, w * r)
             h = torch.einsum("mbp,mb,mbq->mpq", jac, w, jac)
             damped = h + lam[:, None, None] * (
@@ -144,9 +144,10 @@ def lm_polish(
                         break
                     active = active[keep]
                     theta, loss, lam, loss_ref = theta[keep], loss[keep], lam[keep], loss_ref[keep]
-                    b, mask, obs_m = b[keep], mask[keep], obs_m[keep]
+                    b, mask, obs_m, wgt = b[keep], mask[keep], obs_m[keep], wgt[keep]
                     shape_w, n_max, is_gauss = shape_w[:, keep], n_max[keep], is_gauss[keep]
-                    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss)
+                    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss,
+                                                     wgt)
     with torch.no_grad():
         if len(active):
             theta_all[active] = theta

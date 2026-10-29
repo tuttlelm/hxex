@@ -382,6 +382,38 @@ _TEST_WEIGHT, _TEST_WEIGHT_STEP = 11.0, 7.0
 _BOOTSTRAP_WEIGHT = 7.0 / 3.0
 
 
+def bundle_noise(picked, meas: Measurements, config: RunConfig):
+    """The bundle's per-bin noise (``[run.fit.noise] estimate = "controls"``,
+    :func:`hxex.noise.controls_noise`) from the undeuterated controls that every picker screen
+    passes at the loose level (a control not assessed counts as passing), with ``b1`` per
+    sample; a warning names the samples whose own ``b1`` differs from the bundle's (more than
+    three standard errors), which a bundle mixing instruments or settings would show. None when
+    the setting is off or there are too few controls (the fit then uses one sd per
+    spectrum)."""
+    from .analysis.screening import THRESHOLDS
+    from .noise import controls_noise
+    noise = config.fit.noise
+    if noise.estimate != "controls":
+        return None
+    usable = np.ones(len(meas), dtype=bool)
+    for rules in THRESHOLDS["loose"].values():
+        for name, limit in rules:
+            score = getattr(picked, name, None)
+            if score is not None:
+                usable &= ~(np.asarray(score, dtype=np.float64) >= limit)
+    curve = controls_noise(meas.bins, meas.observed, meas.shapes, meas.role, meas.charges(),
+                           meas.data_id, model_error=noise.model_error / 100.0, usable=usable,
+                           sample=picked.sample)
+    if curve is None:
+        return None
+    for s in curve.disagreeing_samples():
+        log.warning("per-bin noise: sample %s's own counting scale (%.3g +- %.2g, %d series) "
+                    "differs from the bundle's (%.3g +- %.2g): are its spectra from another "
+                    "instrument or setting? (hxex info shows every sample's)", s.sample, s.b1,
+                    s.b1_se, s.n_series, curve.b1, curve.b1_se)
+    return curve
+
+
 def _warn_own_reference(meas: Measurements, picked, config: RunConfig) -> None:
     """Warn when series are fitted without an undeuterated control: each of their spectra is
     then its own noise reference, so its noise is usually set lower than its series' and the
@@ -434,7 +466,7 @@ def _d2o_fraction(config: RunConfig) -> float:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
-    fragments=(), envelope_offset=(None, None),
+    fragments=(), envelope_offset=(None, None), noise_curve=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -445,8 +477,15 @@ def _fit_part(
     ``groups``: the molecule of each series (:func:`hxex.controls.series_groups`);
     ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`);
     ``envelope_offset``: the picker's m/z check of every measurement, (offset, limit) in ppm
-    (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`)."""
+    (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`). ``noise_curve``: the bundle's per-bin
+    noise (:func:`bundle_noise`); with ``estimate = "controls"`` and none given it is measured
+    here from every undeuterated control of ``data``, once for all the chunks."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
+    if noise_curve is None and config.fit.noise.estimate == "controls":
+        from .noise import controls_noise
+        noise_curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
+                                     data.charges(), data.data_id,
+                                     model_error=config.fit.noise.model_error / 100.0)
     fits: list[FitResult] = []
     tests: list[PopulationTest] = []
     testing = config.population_test is not None
@@ -458,7 +497,7 @@ def _fit_part(
         b = lo + (hi - lo) * share * edges[j + 1]
         mid = a + (b - a) * (1.0 - plan.test_share)
         part = fit_models(sub, config.fit, progress=_Span(progress, a, mid), cancel=cancel,
-                          test_screen=testing)
+                          test_screen=testing, noise_curve=noise_curve)
         if testing:
             test = population_test(sub, part, config.population_test,
                                    d2o_fraction=_d2o_fraction(config), test_screen=True,
@@ -782,6 +821,7 @@ def run(
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )
     _warn_own_reference(measurements, picked, config)
+    noise_curve = bundle_noise(picked, measurements, config)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None
@@ -800,7 +840,8 @@ def run(
                                              charges=charges, fragments=fragments,
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
-                                                 binned.envelope_offset_limit_ppm[kept]))
+                                                 binned.envelope_offset_limit_ppm[kept]),
+                                             noise_curve=noise_curve)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
