@@ -4993,6 +4993,9 @@ CSVs or mzML if wanted.
     0.60 / 0.97 / 0.82 against 0.89 / 1.04 / 1.04 (tutorial, noisy set, benchmark); charge sets
     0.42 / 2.89 / 1.23 against 1.97 / 2.38 / 1.58 (both under-cover differences between charge
     states). The population test took 0-36 % longer with P9 (benchmark 1,134 against 1,544 s).
-    So the option passes with the population test and is mixed with the criterion alone; it stays
-    opt-in, and the default is the owner's decision. Scripts: `noise_model/pairs` (private,
+    So the option passes with the population test and is mixed with the criterion alone. Owner
+    (2026-10-28): not the default until it is more reliable; it stays opt-in. Open: more false
+    splits of controls than today with the criterion alone (two datasets' undeuterated controls,
+    the known-answer set's fully deuterated ones) and on the benchmark without its suspect sample,
+    the Orbitrap, and steps 2-3 of the noise plan (lost-signal zone, outliers in one replicate). Scripts: `noise_model/pairs` (private,
     `built_check.py`, `built_check/summary.txt`).

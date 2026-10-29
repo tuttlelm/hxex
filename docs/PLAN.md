@@ -715,7 +715,7 @@ Planned, not built:
    its own look (owner: start from the instrument information in the .raw files). Checks
    (HISTORY 191): screen, regression and GPU parity pass; with the population test it lowers
    false splits of the controls and raises correct K on the known-answer set; with the criterion
-   alone it is mixed, so it stays opt-in (default: the owner's decision). Not yet done: the
+   alone it is mixed. Owner (2026-10-28): not the default until it is more reliable. Not yet done: the
    lost-signal zone (bins below 1-2 % of the tallest peak) and outliers in one replicate
    (steps 2-3 of the noise plan).
 
