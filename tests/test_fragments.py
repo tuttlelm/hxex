@@ -60,14 +60,15 @@ def test_n_and_c_terminal_fragments_keep_their_own_terminal_group():
 def test_residues_are_tokens_and_ranges_follow_the_parent():
     parent = PeptideEntry("f", "S", "Ac-PEPacKTIDE", "21-28", 21, 28, 2)
     got = rows(fragment_entries(parent, "b:4 y:5 M"))
-    # b4 ends with the whole acK; y5 starts with it; N-terminal ions keep the acetyl
+    # b4 ends with the whole acK; y5 starts with it; N-terminal ions keep the acetyl, and
+    # C-terminal ones carry it as the parent's cap (parent_nterm)
     assert got == [("Ac-PEPacK", "21-24", 1, "ion_type:b"),
-                   ("acKTIDE", "24-28", 1, "ion_type:y parent_pos:4"),
+                   ("acKTIDE", "24-28", 1, "ion_type:y parent_pos:4 parent_nterm:Ac-"),
                    ("Ac-PEPacKTIDE", "21-28", 1, "ion_type:M"),
                    ("Ac-PEPacKTIDE", "21-28", 2, "ion_type:M")]
 
 
-def test_lengths_and_charges():
+def test_lengths_and_charges(caplog):
     p1 = PeptideEntry("f", "S", "ACDEFGHIKLMN", "1-12", 1, 12, 3)
     every = fragment_entries(p1, "c")
     assert len(every) == 11 * 2  # lengths 1-11, charges 1 and 2 (the parent's minus one)
@@ -76,7 +77,25 @@ def test_lengths_and_charges():
     assert [e.end_seq for e in fragment_entries(p1, "c:-3:1")] == [1, 2, 3]
     assert {e.charge for e in fragment_entries(p1, "c:2:4")} == {4}  # explicit charges as given
     one = PeptideEntry("f", "S", "PEPTIDE", "1-7", 1, 7, 1)
-    assert fragment_entries(one, "c") == [] and len(fragment_entries(one, "M")) == 1
+    with caplog.at_level(logging.WARNING, logger="hxex.fragments"):
+        assert fragment_entries(one, "c") == [] and len(fragment_entries(one, "M")) == 1
+    assert "no fragment charge below the parent's charge 1" in caplog.text  # said, not silent
+
+
+def test_fragments_of_a_capped_parent_count_like_their_parent():
+    """With nterm_subtract 2, a y ion of an Ac- parent holds residue 2's amide, as the parent
+    does (nothing is subtracted after the cap); its modification carries the cap."""
+    from hxex import chem
+
+    parent = PeptideEntry("f", "S", "Ac-AKLVGS", "1-6", 1, 6, 3)
+    (y5,) = [e for e in fragment_entries(parent, "y:5:1")]
+    assert y5.modification == "ion_type:y parent_pos:2 parent_nterm:Ac-"
+    sites = chem.exchangeable_sites(y5.peptide, mod=chem.parse_modification(y5.modification),
+                                    ion_type="y", nterm_subtract=2)
+    assert sites == len(fragment_amides(parent, "y:5", nterm_subtract=2)) == 5
+    free = PeptideEntry("f", "S", "AKLVGS", "1-6", 1, 6, 3)
+    assert [e.modification for e in fragment_entries(free, "y:5:1")] == [
+        "ion_type:y parent_pos:2"]  # unchanged for a free N-terminus
 
 
 def test_too_long_and_parent_modifications(caplog):

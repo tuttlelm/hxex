@@ -446,6 +446,12 @@ def test_progress_and_cancel():
     fit_models(meas, dataclasses.replace(cfg, kmeans_after_warm=False),
                progress=lambda d, t: calls.append((d, t)))
     assert calls == [(1, 4), (2, 4), (3, 4), (4, 4)]
+    # k_min = 2 with controls: their extra K = 1 warms no K, and the progress ends at its total
+    calls.clear()
+    controls = dataclasses.replace(meas, role=np.array(["undeut", ""]))
+    fit_models(controls, dataclasses.replace(cfg, k_min=2, k_max=3, adam_steps=10),
+               progress=lambda d, t: calls.append((d, t)))
+    assert calls[-1] == (7, 7)  # 2 restarts for each of K = 1, 2, 3 and K = 3's k-means start
     flags = iter([False, False, True])
     with pytest.raises(Cancelled):
         fit_models(meas, cfg, cancel=lambda: next(flags, True))
@@ -475,6 +481,19 @@ def test_all_non_finite_raises():
                     adam_steps=5, n_restarts=1)
     with pytest.raises(FitError, match="non-finite"):
         fit_models(bad, cfg)
+
+
+def test_a_reference_without_intensity_is_refused():
+    """A zero reference gives a zero noise scale: refused naming the spectrum, not fitted to
+    NaN in every restart."""
+    meas, _ = synthetic([UNIMODAL, BIMODAL])
+    obs = [meas.observed[0] * 0.0, meas.observed[1]]
+    zero = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
+                                    spectrum_id=np.array(["p:zero", "p:b"]),
+                                    references=[None, (0,)])
+    cfg = FitConfig(backend=CPU, k_max=1, adam_steps=5, n_restarts=1)
+    with pytest.raises(FitError, match="2 spectra have no noise level.*p:zero, p:b"):
+        fit_models(zero, cfg)
 
 
 def test_a_missing_reference_means_the_spectrum_itself():

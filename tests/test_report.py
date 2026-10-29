@@ -921,6 +921,7 @@ def test_k_selection_overview(results):
     d2 = k_selection_data(reviewed)
     assert d2["reviewed"] and not np.array_equal(d2["selected"], d2["effective"])
     assert "effective" in gids(plot_k_selection(reviewed))
+    assert plot_k_selection(results).axes[1].get_xlabel() == "time point"  # ticks carry units
 
 
 def test_overviews_are_written_with_the_figures(results, tmp_path):
@@ -937,6 +938,14 @@ def test_overviews_are_written_with_the_figures(results, tmp_path):
     assert [f.name for f in files][0] == "overview.pdf" and len(files) == 2
     none = write_figures(results, tmp_path / "n", PlotConfig(overview=False))
     assert none == []
+    # a file of your own named like a PNG overview is refused before anything is written
+    from hxex.io import OutputError
+
+    (tmp_path / "p").mkdir()
+    (tmp_path / "p" / "overview_quality.png").write_text("mine")
+    with pytest.raises(OutputError, match="overview_quality.png"):
+        write_figures(results, tmp_path / "p", PlotConfig(series=(), format="png", dpi=40))
+    assert (tmp_path / "p" / "overview_quality.png").read_text() == "mine"
 
 
 def test_flagged_share_grid():
@@ -1185,6 +1194,8 @@ def test_notebook_helpers_load_and_draw_a_series(written, tmp_path):
     assert len(show_series(loaded, sample, rng, k=1)) == 4  # K = 1: no populations page
     with pytest.raises(ValueError, match="no series"):
         show_series(loaded, sample, rng, charge=9)
+    with pytest.raises(ValueError, match="K = 7 was not fitted"):
+        show_series(loaded, sample, rng, k=7)  # refused before anything is drawn
     # a project file: its bundle, with its [review] rules applied
     project = tmp_path / "hxex.toml"
     project.write_text(f'project = "p"\n[analysis]\n[output]\nbundle = "{path.as_posix()}"\n'

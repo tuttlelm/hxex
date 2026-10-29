@@ -28,6 +28,7 @@ import pyarrow.parquet as pq
 
 from ..spectra import SpectrumSet
 from ._arrow import _INDEX, _INDEX_INT, _spectra_from_table, _spectra_table
+from ._json import dumps as strict_json
 from .errors import ReadError
 
 KIND = "hxex-spectra"
@@ -89,7 +90,7 @@ def save_spectra(
         _PREFIX + "content_sha256": content_digest(spectra),
     }
     if spectra.source is not None:
-        meta[_PREFIX + "source"] = json.dumps(spectra.source)
+        meta[_PREFIX + "source"] = strict_json(spectra.source)
     table = _spectra_table(spectra).replace_schema_metadata(meta)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".tmp-", dir=path.parent)
@@ -113,6 +114,17 @@ def spectra_info(path: str | Path) -> dict[str, str]:
         raise ReadError(f"cannot read {path}: {exc}") from exc
     return {k.decode()[len(_PREFIX):]: v.decode() for k, v in meta.items()
             if k.decode().startswith(_PREFIX)}
+
+
+def read_source(info: dict, path: str | Path) -> dict | None:
+    """The read record in a spectra file's metadata ``info`` (:func:`spectra_info`), or None
+    without one; a record that is not JSON raises :class:`~hxex.io.ReadError` naming ``path``."""
+    if not info.get("source"):
+        return None
+    try:
+        return json.loads(info["source"])
+    except ValueError:
+        raise ReadError(f"{path}: its read record (source) is damaged: not JSON") from None
 
 
 def load_spectra(
@@ -140,7 +152,7 @@ def load_spectra(
         missing = [c for c in _REQUIRED if c not in schema.names]
         if missing:
             raise ReadError(f"{path} is not a spectra file: missing column(s) {', '.join(missing)}")
-        source = json.loads(info["source"]) if "source" in info else None
+        source = read_source(info, path)
         if ids is not None and len(ids) == 0:
             return SpectrumSet.from_spectra([], source=source)
         filters = None if ids is None else [("spectrum_id", "in", [str(i) for i in ids])]

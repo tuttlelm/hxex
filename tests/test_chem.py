@@ -163,6 +163,32 @@ def test_n_terminal_acetyl():
         42.010565, abs=1e-5)
 
 
+def test_an_acetylated_n_terminus_keeps_residue_1s_amide():
+    """nterm_subtract applies to a free amine only: after Ac- residue 1 has an amide (as kint
+    rates it; a deliberate difference from pyHXExpress, owner 2026-10-29)."""
+    assert chem.count_amides("AKLVGS") == 5 and chem.count_amides("Ac-AKLVGS") == 6
+    assert chem.count_amides("Ac-AKLVGS", nterm_subtract=2) == 6  # none subtracted
+    assert chem.count_amides("Ac-PKLVGS") == 5  # a proline still has none
+    assert chem.amide_positions("Ac-AKLVGS") == (1, 2, 3, 4, 5, 6)
+    assert chem.amide_positions("Ac-AKLVGS", "c", 2) == (1, 2, 3)  # c holds the next N-H
+    assert chem.count_amides("Ac-AK", ion_type="c") == 3
+    # a C-terminal ion never holds residue 1; with nterm_subtract 2 it holds residue 2's amide
+    # when the parent is capped (the cap travels in its modification, parent_nterm)
+    assert chem.amide_positions("Ac-AKLVGS", "y", 2) == (5, 6)
+    assert chem.amide_positions("Ac-AKLVGS", "y", 5, nterm_subtract=2) == (2, 3, 4, 5, 6)
+    assert chem.amide_positions("AKLVGS", "y", 5, nterm_subtract=2) == (3, 4, 5, 6)
+    capped = chem.parse_modification("ion_type:y parent_pos:2 parent_nterm:Ac-")
+    assert capped.parent_nterm == "Ac-"
+    assert chem.exchangeable_sites("KLVGS", mod=capped, ion_type="y", nterm_subtract=2) == 5
+    free = chem.parse_modification("ion_type:y parent_pos:2")
+    assert chem.exchangeable_sites("KLVGS", mod=free, ion_type="y", nterm_subtract=2) == 4
+    with pytest.raises(chem.ChemistryError, match="parent_nterm"):
+        chem.parse_modification("ion_type:y parent_nterm:Me-")
+    assert chem.exchangeable_sites("Ac-AKLVGS") == 6
+    assert chem.effective_nterm_subtract("Ac-AKLV-NH2", 1) == 0
+    assert chem.effective_nterm_subtract("AKLV-NH2", 1) == 1
+
+
 @pytest.mark.parametrize(
     "mod_seq, base_seq, delta",
     [

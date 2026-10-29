@@ -339,7 +339,7 @@ def plot_k_selection(results: Results) -> Figure:
                color=COLORS[j % len(COLORS)], label=f"K={k}", gid=f"share:{k}")
         bottom += d["share"][:, j]
     a2.set_xticks(pos, d["time_labels"], rotation=45 if len(pos) > 8 else 0, fontsize=8)
-    a2.set_xlabel("time point (s)")
+    a2.set_xlabel("time point")
     a2.set_ylabel("spectra (%)")
     a2.set_title("K in effect at each time point", fontsize=9)
     a2.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
@@ -349,15 +349,29 @@ def plot_k_selection(results: Results) -> Figure:
 
 # --- all overviews ---------------------------------------------------------------------------
 
+def overview_kinds(results: Results) -> list[str]:
+    """The overviews the results allow, without drawing them: ``k_selection`` always,
+    ``controls`` and ``quality`` when the results have them."""
+    return ["k_selection", *(["controls"] if results.controls is not None else []),
+            *(["quality"] if results.quality is not None else [])]
+
+
+def overview_files(results: Results, path) -> list[str]:
+    """The names :func:`write_overview` gives the overviews at ``path``: ``path`` itself for a
+    PDF, else ``<stem>_<kind><suffix>`` per overview."""
+    from pathlib import PurePath
+
+    path = PurePath(path)
+    if path.suffix == ".pdf":
+        return [path.name]
+    return [f"{path.stem}_{kind}{path.suffix}" for kind in overview_kinds(results)]
+
+
 def overview_figures(results: Results) -> dict[str, Figure]:
-    """The overviews the results allow: ``k_selection`` always, ``controls`` and ``quality``
-    when the results have them."""
-    out = {"k_selection": plot_k_selection(results)}
-    if results.controls is not None:
-        out["controls"] = plot_controls_overview(results)
-    if results.quality is not None:
-        out["quality"] = plot_quality_overview(results)
-    return out
+    """The overviews the results allow (:func:`overview_kinds`), drawn."""
+    draw = {"k_selection": plot_k_selection, "controls": plot_controls_overview,
+            "quality": plot_quality_overview}
+    return {kind: draw[kind](results) for kind in overview_kinds(results)}
 
 
 def write_overview(results: Results, path, dpi: int = 200) -> list:
@@ -374,8 +388,8 @@ def write_overview(results: Results, path, dpi: int = 200) -> list:
                 pdf.savefig(fig, dpi=dpi)
         return [path]
     files = []
-    for kind, fig in figures.items():
-        out = path.with_name(f"{path.stem}_{kind}{path.suffix}")
+    for name, fig in zip(overview_files(results, path), figures.values(), strict=True):
+        out = path.with_name(name)
         fig.savefig(out, dpi=dpi)
         files.append(out)
     return files

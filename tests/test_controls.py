@@ -106,6 +106,8 @@ def test_series_are_separate_and_outlier_controls_are_left_out():
     assert list(c.data_id) == [0, 1] and c.n_undeut.tolist() == [2, 1]
     assert c.m0[0] == 0.0 and c.mfd.tolist() == [8.0, 6.0]
     np.testing.assert_array_equal(c.rows([1, 0, 1]), [1, 0, 1])
+    # the noise outlier is noted as a control replicate left out (owner, 2026-10-29)
+    assert c.flags[0].startswith("m0_replicate_left_out;") and "left_out" not in c.flags[1]
 
 
 def test_a_fit_without_k1_is_refused_and_amides_must_be_constant():
@@ -314,6 +316,9 @@ def test_series_rates_count_the_amides_of_parent_ions_only():
     assert set(r) == {0} and len(r[0]) == chem.count_amides("PEPTIDE")
     free = series_rates(["AAAAA"], [""], [0], cond, nterm_subtract=0)[0]
     assert np.isinf(free[0]) and np.isfinite(free[1:]).all()
+    # after Ac- residue 1 has an amide and kint's rate for it is used
+    acetyl = series_rates(["Ac-AAAAA"], [""], [0], cond)[0]
+    assert len(acetyl) == 5 and np.isfinite(acetyl).all()
 
 
 def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
@@ -680,6 +685,12 @@ def test_control_replicates_are_checked_before_their_mean():
     c = table(rows)
     assert c.flags[0] == "fd_replicate_left_out" and c.mfd[0] == pytest.approx(8.05)
     assert c.flags[1] == "" and c.mfd[1] == pytest.approx(8.0)
+    # the majority behind fd_multimodal counts the replicates used, not the one left out
+    k = [1] * len(rows)
+    k[len(rows) - 6] = k[len(rows) - 4] = 2  # the 8.0 replicate and the one left out
+    assert "fd_multimodal" not in table(rows, selected_K=k).flags[0]
+    k[len(rows) - 5] = 2  # both replicates used
+    assert "fd_multimodal" in table(rows, selected_K=k).flags[0]
     off = table(rows, ControlConfig(replicate_outlier=None))
     assert off.mfd[0] == pytest.approx((8.0 + 8.1 + 3.0) / 3)
     from hxex.report.tables import _control_notes

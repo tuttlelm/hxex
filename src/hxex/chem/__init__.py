@@ -11,6 +11,7 @@ from .amides import (
     AmideRules,
     amide_positions,
     count_amides,
+    effective_nterm_subtract,
     exchangeable_sites,
 )
 from .composition import (
@@ -50,6 +51,7 @@ __all__ = [
     "composition",
     "amide_positions",
     "count_amides",
+    "effective_nterm_subtract",
     "exchangeable_sites",
     "ion_terminus",
     "ion_types",

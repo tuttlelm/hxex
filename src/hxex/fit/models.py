@@ -20,7 +20,7 @@ from ..noise import (
 from .config import FitConfig
 from .init import split_start
 from .measurements import Measurements
-from .optimise import fit_batch, prepare
+from .optimise import FitError, fit_batch, prepare
 from .result import FitResult, KFit
 from .screen import can_exceed, can_win, loss_floor
 
@@ -116,6 +116,12 @@ def fit_models(
                 "left out of the noise estimate", int(estimate.outlier.sum()),
                 config.noise.outlier_score,
             )
+    bad = ~(np.isfinite(scale) & (scale > 0))
+    if bad.any():  # a reference without intensity: every restart would be NaN, silently
+        ids = [str(data.spectrum_id[i]) for i in np.flatnonzero(bad)[:5]]
+        raise FitError(f"{int(bad.sum())} spectra have no noise level (scale {scale[bad][0]:g}: "
+                       f"their reference spectrum has no intensity): {', '.join(ids)}"
+                       + (", ..." if bad.sum() > 5 else ""))
     prep = prepare(
         data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
         keys=data.random_keys(), bin_variance=bin_var,
@@ -128,8 +134,11 @@ def fit_models(
     control_k1 = 1 not in k_values and bool(controls.any())
     if control_k1:  # the controls' K = 1, for the back-exchange correction only
         k_values = (1, *k_values)
-    extra = len(k_values) - 1 if config.nested_init and config.kmeans_after_warm else 0
-    total = config.n_restarts * len(k_values) + extra  # the k-means start of a nested K
+    # the k-means start of a nested K: each K warmed from a K - 1 that is chosen from (not
+    # from the controls' extra K = 1)
+    extra = (sum((k - 1) in config.k_values for k in k_values)
+             if config.nested_init and config.kmeans_after_warm else 0)
+    total = config.n_restarts * len(k_values) + extra
     done = 0
 
     def tick() -> None:

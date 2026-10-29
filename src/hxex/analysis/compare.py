@@ -127,8 +127,9 @@ class PeptideComparison:
     ``start``, ``end``, ``time``, ``value_reference`` and ``value`` (the ``quantity``, ``fD`` or
     ``population``, combined over replicates and charge states) with their ``*_se``, ``delta``
     (``value - value_reference``) and ``delta_se``, ``t`` and ``p`` (Welch's test on the
-    replicate spectra, NaN with fewer than two on a side; for a population ``delta / delta_se``
-    and its normal p, the K=2 positions' error included), ``n_reference`` and ``n`` (spectra) and
+    replicates, NaN with fewer than two on a side; for a population ``delta / delta_se``
+    and its normal p, the K=2 positions' error included), ``n_reference`` and ``n`` (replicates:
+    each replicate's charge states averaged first, since HISTORY 128) and
     ``significant``; with the ``reference`` sample, ``K``, ``rank``, ``alpha`` and the global
     ``delta_crit`` (for a population, the K=1 one). ``threshold``: the threshold each row was
     judged by (``delta_crit``, or for a population ``delta_crit`` divided by the separation);
@@ -438,8 +439,9 @@ def _replicate_mean(spectra: list[dict]) -> dict | None:
 def _lever_sides(groups, choice: ChoiceConfig) -> dict:
     """Per (run, sample) and species key ``(peptide, modification, start, end, time)``: the
     lever-rule populations of the low-D component of the replicates (the charge states of each
-    replicate averaged; each replicate's K=1 value between the K=2 positions averaged over
-    them), the population's mean and standard error,
+    replicate averaged: its K=1 value over every charge state that has one, the K=2 positions
+    over those with both; each replicate's K=1 value between the K=2 positions averaged over
+    the replicates), the population's mean and standard error,
     the separation, whether a fallback control was used, and the reason it is not compared
     (empty when it is)."""
     per: dict[tuple, dict] = {}
@@ -457,10 +459,15 @@ def _lever_sides(groups, choice: ChoiceConfig) -> dict:
         for skey, replicates in species.items():
             if not any((1, 1) in s for charges in replicates.values() for s in charges.values()):
                 continue  # no K=1 value: not a species of the comparison
-            # one entry per replicate: the charge states with all three values, averaged
-            full = [_replicate_mean([s for s in charges.values() if len(s) == 3])
+            # one entry per replicate, its charge states averaged: K=1 over every charge state
+            # that has it (as compare_peptides.csv), the K=2 positions over those with both
+            ones = [_replicate_mean([{(1, 1): s[(1, 1)]} for s in charges.values()
+                                     if (1, 1) in s]) for charges in replicates.values()]
+            twos = [_replicate_mean([{kr: s[kr] for kr in ((2, 1), (2, 2))}
+                                     for s in charges.values() if (2, 1) in s and (2, 2) in s])
                     for charges in replicates.values()]
-            full = [s for s in full if s is not None]
+            ones = [s for s in ones if s is not None]
+            full = [s for s in twos if s is not None]
             fell_back = any(x[7] for charges in replicates.values() for s in charges.values()
                             for x in s.values())
             info = {"values": np.array([]), "value": np.nan, "se": np.nan, "sep": np.nan,
@@ -469,12 +476,12 @@ def _lever_sides(groups, choice: ChoiceConfig) -> dict:
             out.setdefault(side, {})[skey] = info
             if not full:
                 continue
-            avg = np.array([s[(1, 1)][0] for s in full])
+            avg = np.array([s[(1, 1)][0] for s in ones])
             low, low_se = _combine(np.array([s[(2, 1)][0] for s in full]),
                                    np.array([s[(2, 1)][1] for s in full]))
             high, high_se = _combine(np.array([s[(2, 2)][0] for s in full]),
                                      np.array([s[(2, 2)][1] for s in full]))
-            avg_mean, avg_se = _combine(avg, np.array([s[(1, 1)][1] for s in full]))
+            avg_mean, avg_se = _combine(avg, np.array([s[(1, 1)][1] for s in ones]))
             sep = high - low
             known = np.isfinite(low_se) and np.isfinite(high_se)
             pop, pop_se = lever_population(avg_mean, low, high, avg_se, low_se, high_se)

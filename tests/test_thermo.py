@@ -143,6 +143,13 @@ def test_a_raw_file_reads_as_its_mzml(fake_raw):
         with pytest.raises(ThermoError, match="no scan 99"):
             f.scan(99)
     assert opened[0].closed
+    for call in (lambda: f.scan(4), lambda: f.reader_version, lambda: f.instrument):
+        with pytest.raises(ThermoError, match="closed"):
+            call()
+    with ThermoFile(raw, thermo_dir="dlls") as g:
+        pass
+    with pytest.raises(ThermoError, match="closed"):
+        g.scans()  # never read before the close
     with pytest.raises(ThermoError, match="no such file"):
         ThermoFile(raw.with_name("missing.raw"), thermo_dir="dlls")
 

@@ -139,11 +139,21 @@ class ResidueMap:
 def exchanging_residues(peptide: str, start: int, nterm_subtract: int,
                         registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
                         ) -> np.ndarray:
-    """Residue numbers of the exchanging amides of ``peptide`` (modX) starting at ``start``."""
+    """Residue numbers of the exchanging amides of ``peptide`` (modX) starting at ``start``
+    (``nterm_subtract`` does not apply after an ``Ac-`` group)."""
     residues = chem.parse_sequence(peptide, registry)
+    nterm_subtract = chem.effective_nterm_subtract(peptide, nterm_subtract)
     return np.array([start + i for i, label in enumerate(residues)
                      if i >= nterm_subtract and registry.base_residue(label) != "P"],
                     dtype=np.int64)
+
+
+def _protein_nterm(peptides, nterm_subtract: int) -> int:
+    """How many of the protein's first residues have no amide: ``nterm_subtract``, or 0 when a
+    peptide ``(sequence, start, end)`` starting at residue 1 is acetylated (``Ac-``)."""
+    acetylated = any(start == 1 and chem.split_termini(seq)[0] == "Ac-"
+                     for seq, start, _ in peptides)
+    return 0 if acetylated else nterm_subtract
 
 
 def _sequence_letters(sequence: str, registry) -> list[str]:
@@ -381,6 +391,7 @@ def residue_map(
                                               registry)
         values, ses = _weighted(z, pep.fD[rows], pep.fD_se[rows], weight_exponent)
         linked = _linked(peptides, len(known), uptake.nterm_subtract, registry)
+        n_free = _protein_nterm(peptides, uptake.nterm_subtract)  # residues without an amide
         support = np.full(len(known), np.nan)
         if best_k is not None and k == 1:  # every covering peptide votes, by its weight
             w = np.where(z > 0, z**weight_exponent, 0.0)
@@ -407,7 +418,7 @@ def residue_map(
                 ("fD_se", ses[res]), ("redundancy", redundancy[res]),
                 ("resolution", resolution[res]), ("proline", known[res] == "P"),
                 ("covered", redundancy[res] > 0), ("control_fallback", bool(fell_back[res])),
-                ("no_amide", known[res] == "P" or res + 1 <= uptake.nterm_subtract),
+                ("no_amide", known[res] == "P" or res + 1 <= n_free),
                 ("linked_next", bool(linked[res])),
                 ("two_population_weight", float(support[res])),
                 *((name, float(levels[name][res])) for name in TEST_COLUMNS),
@@ -514,13 +525,14 @@ def coverage_table(
         known = _letters((run, sample), peptides, seq_of, registry)
         _, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
                                               registry, weights)
+        n_free = _protein_nterm(peptides, uptake.nterm_subtract)
         for res in range(len(known)):
             for name, value in (("run", run), ("sample", sample), ("residue", res + 1),
                                 ("aa", known[res]),
                                 ("redundancy", redundancy[res]), ("resolution", resolution[res]),
                                 ("proline", known[res] == "P"), ("covered", redundancy[res] > 0),
                                 ("no_amide", known[res] == "P"
-                                 or res + 1 <= uptake.nterm_subtract)):
+                                 or res + 1 <= n_free)):
                 cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
     out["residue"] = out["residue"].astype(np.int64)

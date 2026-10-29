@@ -194,7 +194,8 @@ class RunConfig:
 class RunResult:
     """What a run produced. ``binned`` is every picked spectrum (flags included); the spectra
     where ``kept`` is False were dropped and are not in ``measurements`` or ``fit``;
-    ``dropped_reason`` says why (``empty`` or ``no_signal``). ``bootstrap`` is at each
+    ``dropped_reason`` says why (``empty``, ``no_signal``, or ``no_bins``: nothing to fit, a
+    peptide without a bin). ``bootstrap`` is at each
     measurement's selected K; ``bootstrap_by_k`` (when ``BootstrapConfig.ks`` asks for it) has
     the fixed-K bootstrap of every measurement at each K requested. ``population_test`` is the
     test of every measurement (with it, ``fit.selected_K`` is the test's K).
@@ -773,13 +774,13 @@ def run(
     ``view_exclude`` (``[[review.exclude]]``) treats its spectra as rejected in the figures
     of :meth:`RunResult.write_figures` (in memory; the fits are kept). A run draws no figures.
 
-    Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``) are dropped and
-    recorded. With ``out`` the results bundle is written there (with the raw spectra if the input
-    was a :class:`SpectrumSet` and ``keep_spectra``). An existing ``out`` is refused before
-    anything is fitted unless ``overwrite`` or ``keep_previous``. With ``overwrite`` the bundle
-    there is replaced (its files; files of your own in the directory stay) and its review
-    layer carried over, with the entries this run cannot apply marked stale (see
-    :class:`~hxex.io.ReviewTable`); with ``keep_previous`` it is first moved to its next
+    Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``), and spectra without
+    a bin, are dropped and recorded. With ``out`` the results bundle is written there (with the raw
+    spectra if the input was a :class:`SpectrumSet` and ``keep_spectra``). An existing ``out`` is
+    refused before anything is fitted unless ``overwrite`` or ``keep_previous``. With
+    ``overwrite`` the bundle there is replaced (its files; files of your own in the directory
+    stay) and its review layer carried over, with the entries this run cannot apply marked
+    stale (see :class:`~hxex.io.ReviewTable`); with ``keep_previous`` it is first moved to its next
     generation (``name.N``, with its ``name_tables`` and ``name_figures`` folders; see
     :func:`hxex.io.keep_previous`) just before the new bundle is written. Either way the new
     manifest records what was replaced, what changed and the review carried (its
@@ -879,12 +880,13 @@ def run(
     drop_nosig = np.asarray(binned.no_signal, dtype=bool) & config.drop_no_signal
     has_bins = np.diff(binned.offsets) > 0
     kept = ~drop_empty & ~drop_nosig & has_bins
-    reason = np.where(drop_empty, "empty", np.where(~kept, "no_signal", "")).astype(str)
+    reason = _drop_reasons(binned, kept)
     if not kept.any():
-        raise ValueError("every spectrum was dropped (empty or without signal)")
+        raise ValueError("every spectrum was dropped (empty, without signal or without bins)")
     if (~kept).any():
-        log.warning("dropped %d of %d spectra: %d empty, %d without signal", int((~kept).sum()),
-                    len(kept), int((reason == "empty").sum()), int((reason == "no_signal").sum()))
+        log.warning("dropped %d of %d spectra: %d empty, %d without signal, %d without bins",
+                    int((~kept).sum()), len(kept), int((reason == "empty").sum()),
+                    int((reason == "no_signal").sum()), int((reason == "no_bins").sum()))
     picked = binned.select(kept)
     from .io.mzml import kinetics_spectra
 
@@ -1007,6 +1009,15 @@ def _stored_picking(raw: SpectrumSet, config: RunConfig):
     log.info("the picking stored in %s is used (the same spectra and picking settings)",
              where)
     return binned, measure, envelopes
+
+
+def _drop_reasons(binned, kept: np.ndarray) -> np.ndarray:
+    """Why each spectrum not ``kept`` was dropped: ``empty`` (nothing picked), ``no_bins`` (no
+    bin to fit: the peptide's plan has none), else ``no_signal``; empty for those kept."""
+    empty = np.asarray(binned.empty, dtype=bool)
+    no_bins = np.diff(binned.offsets) == 0
+    return np.where(kept, "", np.where(empty, "empty", np.where(no_bins, "no_bins",
+                                                                  "no_signal"))).astype(str)
 
 
 def _previous(out, replace: bool):
@@ -1156,8 +1167,7 @@ def resume_bootstrap(
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
-    reason = np.where(np.asarray(binned.empty, dtype=bool), "empty",
-                      np.where(~kept, "no_signal", "")).astype(str)
+    reason = _drop_reasons(binned, kept)
     refitted = _fit_chosen(config, measurements, fit, merge_choices(chosen_k), cancel)
     if refitted is not fit and review is not None:
         review = review.mark_stale(refitted)  # a chosen K now fitted is current again

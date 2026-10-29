@@ -116,8 +116,9 @@ def fragment_entries(
 
     Each entry keeps the parent's ``file`` and ``sample``; its ``modification`` is
     ``ion_type:ION``, plus ``parent_pos:P`` for C-terminal ions (the parent position of its first
-    residue, which places its amides: :func:`hxex.chem.count_amides`), and ``extra`` names the
-    parent (``parent_peptide``, ``parent_range``, ``parent_charge``) and the fragment
+    residue, which places its amides: :func:`hxex.chem.count_amides`; and ``parent_nterm:Ac-``
+    when the parent is acetylated, after which ``nterm_subtract`` does not apply), and ``extra``
+    names the parent (``parent_peptide``, ``parent_range``, ``parent_charge``) and the fragment
     (``fragment``, for example ``c-1:4``).
     """
     if not passable_to_fragments(parent.modification):
@@ -142,13 +143,20 @@ def fragment_entries(
             log.info("%s: no %s ions of lengths %s of %s (a cut at a proline)", spec.ion_type,
                      spec.ion_type, at_proline, parent.peptide)
         lengths = [x for x in lengths if (x < n or side == "M") and x not in at_proline]
-        for charge in _expand(spec.charges, top_charge, "charges"):
+        charges = _expand(spec.charges, top_charge, "charges")
+        if not charges:
+            log.warning("%s: no fragment charge below the parent's charge %d (limit_charge): no "
+                        "%s ions of %s", spec.ion_type, parent.charge, spec.ion_type,
+                        parent.peptide)
+        for charge in charges:
             for length in lengths:
                 modification = f"ion_type:{spec.ion_type}"
                 if side == "C":
                     first, part = n - length, residues[n - length:]
                     sequence = chem.join_termini("H-", part, cterm)
                     modification += f" parent_pos:{first + 1}"
+                    if nterm == "Ac-":  # the parent's cap: no residue subtracted
+                        modification += " parent_nterm:Ac-"
                 else:
                     first, part = 0, residues[:length]
                     sequence = chem.join_termini(nterm, part, cterm if side == "M" else "-OH")

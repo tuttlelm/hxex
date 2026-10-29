@@ -11,6 +11,7 @@ is a number of seconds, written with a unit or without one (:func:`parse_time`).
 from __future__ import annotations
 
 import math
+import numbers
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -67,7 +68,8 @@ def parse_time(value: object, where: str = "time") -> float:
     if isinstance(value, bool):
         raise ReadError(f"{where}: expected a time (seconds, or text such as \"5 min\"), got "
                         f"{value!r}")
-    if isinstance(value, (int, float)):
+    if isinstance(value, numbers.Real):  # numpy's integers and floats too
+        value = float(value)
         if not math.isfinite(value):
             raise ReadError(f"{where}: a time must be a finite number of seconds, got {value!r}")
         return float(value)
@@ -146,7 +148,7 @@ def parse_hxexpress_label(label: object) -> tuple[float, str]:
         raise ReadError(f"time label {label!r} needs a number and a unit, e.g. '5 min'")
     number, unit = parts[0], parts[-1]
     whole = number.split(".")[0]
-    return _to_seconds(number if whole == "0" else whole, unit, f"label {label!r}"), ""
+    return _to_seconds(number if whole in ("0", "") else whole, unit, f"label {label!r}"), ""
 
 
 def parse_specexport_token(token: str) -> tuple[float, str]:

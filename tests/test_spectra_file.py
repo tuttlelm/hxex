@@ -198,6 +198,16 @@ def test_unreadable_files(tmp_path):
     with pytest.raises(ReadError, match="missing column"):
         load_spectra(tmp_path / "other.parquet")
     assert spectra_info(tmp_path / "other.parquet") == {}
+    # a damaged read record names the file, here and in a project that reruns from it
+    table = pq.read_table(save_spectra(make_spectra(2), tmp_path / "s.parquet"))
+    meta = {**table.schema.metadata, b"hxex.source": b"{not json"}
+    pq.write_table(table.replace_schema_metadata(meta), tmp_path / "bad.parquet")
+    with pytest.raises(ReadError, match="bad.parquet: its read record"):
+        load_spectra(tmp_path / "bad.parquet")
+    from hxex.config import ProjectError, stored_spectra_source
+
+    with pytest.raises(ProjectError, match="read record"):
+        stored_spectra_source(tmp_path / "bad.parquet")
 
 
 def test_other_and_newer_formats(tmp_path):

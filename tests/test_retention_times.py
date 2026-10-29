@@ -66,6 +66,11 @@ def test_a_table_of_retention_times(tmp_path, caplog):
     path.write_text("peptide,rt\nAKLV,1\nAKLV,2\n")
     with pytest.raises(ReadError, match="two retention times"):
         apply_retention_times(spectra(), read_retention_times(path))
+    # different columns, the same number of them: refused, both rows named
+    path.write_text("peptide,charge,sample,rt\nAKLV,2,,1\nAKLV,,WT,2\n")
+    with pytest.raises(ReadError, match=r"\(peptide AKLV, charge 2, rt 1.*\(sample WT, "
+                                        r"peptide AKLV, rt 2.*on 2 column"):
+        apply_retention_times(spectra(), read_retention_times(path))
     for bad in ("peptide\nAKLV\n", "sample,rt\nWT,1\n"):
         path.write_text(bad)
         with pytest.raises(ReadError):

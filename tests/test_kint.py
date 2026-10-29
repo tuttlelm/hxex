@@ -77,6 +77,37 @@ def test_modified_residues_and_termini():
                                       * free.rate[-1] / amide.rate[-1], rel=0.5)
 
 
+def test_terminal_groups_take_the_published_factors():
+    """Golden case from the published factors (audit 2026-10-28 question 23): Bai et al. 1993
+    Table II for the free N-terminus (AR -1.32, BR 1.62 on residue 2); the Englander lab's
+    rate spreadsheet (HXrates, row "H3CCO-") for the acetyl group (AR 0.293, BR -0.197 on
+    residue 1, rounded here to 0.29 and -0.20; it is in no paper); no factor for a C-terminal
+    amide (the published C-terminal factor is the carboxyl's) and no N-terminal factor after
+    an acetyl group (Bai's factor was measured against an acetyl-blocked dipeptide). For
+    residues without a charged side chain each rate is alpha 10^a + beta 10^b, a and b the
+    summed acid and base factors, alpha and beta set by the conditions alone: solved here from
+    a free peptide's residues 2 and 3, then used to predict the others."""
+    cond = ExchangeConditions(5.0, 20, 0.9)
+    free = intrinsic_rates("AAAA", cond)
+    acetyl = intrinsic_rates("Ac-AAAA-NH2", cond)
+    gly = intrinsic_rates("Ac-GG-NH2", cond)
+    for rate in ("kforw", "kback"):
+        k = getattr(free, rate)
+        alpha, beta = np.linalg.solve([[10**-1.32, 10**1.62], [1.0, 1.0]], [k[1], k[2]])
+
+        def predict(a, b, alpha=alpha, beta=beta):
+            return alpha * 10**a + beta * 10**b
+
+        got = getattr(acetyl, rate)
+        assert got[0] == pytest.approx(predict(0.29, -0.20), rel=1e-9)  # the acetyl's factors
+        assert got[1] == pytest.approx(predict(0.0, 0.0), rel=1e-9)  # no N-terminal factor
+        assert got[3] == pytest.approx(predict(0.0, 0.0), rel=1e-9)  # no carboxyl factor
+        got = getattr(gly, rate)
+        assert got[0] == pytest.approx(predict(-0.22 + 0.29, -0.03 - 0.20), rel=1e-9)
+        assert got[1] == pytest.approx(predict(-0.22 + 0.22, -0.03 + 0.17), rel=1e-9)
+    assert acetyl.approximate.tolist() == [False, False, False, True]  # -NH2: the last
+
+
 def test_expected_uptake():
     cond = ExchangeConditions(2.5, 0, 0.05)
     rates = intrinsic_rates("PEPTIDEKAL", cond, start=5)

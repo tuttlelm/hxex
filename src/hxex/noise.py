@@ -486,6 +486,23 @@ class ControlsNoise:
     b1_se: float = float("nan")
     by_sample: tuple[SampleNoise, ...] = ()
 
+    def _key(self) -> tuple:
+        """The values compared by ``==``: a NaN (not measured) equals a NaN."""
+        def num(x: float) -> float | None:
+            return None if np.isnan(x) else float(x)
+
+        return (num(self.b1), num(self.model_error), num(self.onset), self.n_controls,
+                self.n_series, num(self.b1_se),
+                tuple((s.sample, num(s.b1), num(s.b1_se), s.n_series) for s in self.by_sample))
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, ControlsNoise):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
     def variance(self, intensity: np.ndarray, charge: float = 1.0) -> np.ndarray:
         i = np.clip(np.asarray(intensity, dtype=np.float64), 0.0, None)
         return charge * self.b1 * i + (self.model_error * i) ** 2

@@ -19,6 +19,14 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..chem.modifications import (
+    DEFAULT_MODIFICATIONS,
+    ModificationRegistry,
+    SequenceError,
+    join_termini,
+    parse_sequence,
+    split_termini,
+)
 from ..spectra import PeptideEntry, Spectrum, point_order_key, time_point
 from ._common import clean_spectrum, to_number
 from .entries import filter_entries, read_fasta_sequence, sort_entries
@@ -43,11 +51,14 @@ def scan_specexport(
     samples: Sequence[str] | None = None,
     peptide_ranges: Sequence[str] | None = None,
     peptide_region: Sequence[int] | None = None,
+    registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
 ) -> list[PeptideEntry]:
     """List the entries (sample, peptide range, charge) found under ``data_dir``.
 
     A sample needs both ``SAMPLE.fasta`` and a ``SAMPLE`` directory. Directories that are not
-    named ``START-END-SEQUENCE`` are skipped.
+    named ``START-END-SEQUENCE`` are skipped. The peptide is cut from the FASTA sequence by
+    residues (modX: ``acK`` is one residue, of the ``registry``), keeping a terminal group of
+    the sequence on a peptide at that end.
     """
     root = Path(data_dir)
     fasta = {p.stem: p for p in root.glob("*.fasta")}
@@ -62,13 +73,18 @@ def scan_specexport(
     entries = []
     for sample in found:
         sequence = read_fasta_sequence(fasta[sample])
+        try:
+            nterm, _, cterm = split_termini(sequence)
+            residues = parse_sequence(sequence, registry)
+        except SequenceError:  # a letter outside the registry (X, say): cut by letters
+            nterm, cterm, residues = "H-", "-OH", tuple(sequence)
         for spec_dir in sorted(p for p in (root / sample).iterdir() if p.is_dir()):
             m = _RANGE_DIR.fullmatch(spec_dir.name)
             if m is None:
                 log.debug("skipping %s: not a START-END-SEQUENCE directory", spec_dir)
                 continue
             start, end = int(m["start"]), int(m["end"])
-            if not 1 <= start <= end <= len(sequence):
+            if not 1 <= start <= end <= len(residues):
                 raise ReadError(f"{spec_dir}: range {start}-{end} is outside {sample}.fasta")
             charges = {
                 parsed[2]
@@ -80,7 +96,9 @@ def scan_specexport(
                     PeptideEntry(
                         file=spec_dir.name,
                         sample=sample,
-                        peptide=sequence[start - 1 : end],
+                        peptide=join_termini(nterm if start == 1 else "H-",
+                                             residues[start - 1 : end],
+                                             cterm if end == len(residues) else "-OH"),
                         peptide_range=f"{m['start']}-{m['end']}",
                         start_seq=start,
                         end_seq=end,
@@ -119,7 +137,10 @@ def specexport_points(spec_dir: str | Path, entry: PeptideEntry) -> list[tuple]:
     for path in spec_dir.glob("*.csv"):
         parsed = parse_specexport_filename(path.name)
         if parsed is not None and parsed[2] == entry.charge:
-            time, role = parse_specexport_token(parsed[0])
+            try:
+                time, role = parse_specexport_token(parsed[0])
+            except ReadError as exc:
+                raise ReadError(f"{path}: {exc}") from None
             found.append((time, role, parsed[1], path))
     if not found:
         raise ReadError(f"{spec_dir}: no spectrum files for charge {entry.charge}")

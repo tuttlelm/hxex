@@ -274,3 +274,19 @@ def test_info_describes_the_constant_noise_and_unmeasured_samples():
     text = _noise_curve_text(dataclasses.replace(fit, noise_curve=curve))
     assert text.endswith("b1 by sample: A 8.2 +- 0.7, B not measured (4 series)")
     assert curve.disagreeing_samples() == []
+
+
+def test_curves_with_unmeasured_values_are_equal_across_instances():
+    """b1_se or a sample's b1 not measured (NaN): two instances of one curve are equal, so
+    FitResult.merge accepts chunks that carry separate copies."""
+    from hxex.noise import ControlsNoise, SampleNoise
+
+    def curve():
+        nan = float("nan")
+        return ControlsNoise(b1=2.0, model_error=0.09, onset=float("inf"), n_controls=30,
+                             n_series=12, b1_se=nan, by_sample=(SampleNoise("S", nan, nan, 3),))
+
+    a, b = curve(), curve()
+    assert a == b and hash(a) == hash(b) and a == ControlsNoise.from_dict(a.to_dict())
+    assert a != ControlsNoise(b1=2.5, model_error=0.09, onset=float("inf"), n_controls=30,
+                              n_series=12)

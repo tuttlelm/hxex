@@ -449,6 +449,10 @@ Chemistry (HISTORY "Phase 1 status: `hxex.chem`"):
   `nterm_subtract` applies to the parent's first residues, not to a C-terminal fragment's (the
   reference subtracts a z ion's first residue by its rule, which is right for z by
   coincidence, and wrong for y and x, and for z with `Nterm_subtract` other than 1).
+- `nterm_subtract` applies to a free N-terminal amine only: after an acetylated N-terminus
+  (`Ac-`) residue 1 keeps its amide and none is subtracted, so the amide count agrees with
+  `hxex.kint`, which rates that amide (the reference subtracts `Nterm_subtract` residues
+  whatever the terminus; `docs/AUDIT_2026-10-28.md` Low, owner 2026-10-29; HISTORY 195).
 - Fragment lists stop at `n - 1` residues (a full-length c or z ion is not a fragment) and leave
   out c ions before a proline and z ions starting with one (not made by electron-based
   dissociation).
@@ -463,8 +467,10 @@ Readers (HISTORY "Phase 1 status: readers"):
 - Sample and peptide-range filters are exact matches (the reference's HX-Express peptide filter
   is a substring match); files and directories whose names do not parse are skipped with a
   message instead of stopping the scan; `.xls` is not read.
-- A label's spectrum is read from the label's own column and the next, not from column `2 * i`;
-  with several FASTA records the last is used, as in the reference, but with a warning.
+- A label's spectrum is read from the label's own column and the next, not from column `2 * i`
+  (the same for the normal layout; a sheet with spacer columns is read by its labels, kept so
+  by the owner, `docs/AUDIT_2026-10-28.md` question 27); with several FASTA records the last is
+  used, as in the reference, but with a warning.
 - Pooled matching: a class must appear in a single matching record id (the reference searched
   the `;`-joined string); `class_suffix` is not ported (tuples, not joined strings); sequences
   in pooled directory names that do not parse are skipped with a warning.
@@ -720,11 +726,13 @@ Planned, not built:
    (steps 2-3 of the noise plan).
 14. **Audit of 2026-10-28** (seven reviewers; no Critical finding, nine High, 21 Medium, about
    40 Low, 27 questions). Findings, the owner's decisions of 2026-10-29 and the agreed order
-   (Sessions A to D) are in `docs/AUDIT_2026-10-28.md`. Deliberate differences from pyHXExpress
-   decided there, to be recorded in the table above when built: an acetylated N-terminus keeps
-   its residue-1 amide (`nterm_subtract` applies to a free amine only); HX-Express spectra are
-   read from the labelled column and the one to its right, not by label position. Session A
-   done (HISTORY 192), Session B done (HISTORY 193), Session C done (HISTORY 194).
+   (Sessions A to D) are in `docs/AUDIT_2026-10-28.md`. Done: Session A (HISTORY 192), B
+   (193), C (194) and D (195); the two deliberate differences decided there (the acetylated
+   N-terminus keeps its residue-1 amide; HX-Express spectra read from the labelled column and
+   the one to its right) are in "Deliberate differences from pyHXExpress" above. The BIC's
+   sample size keeps every picked bin (tried without the end zero bins and reverted: they have
+   meaning; HISTORY 195). Open: whether to recommend `measure = "height"` for unresolved
+   envelopes (untested: the top-down example is resolved).
 
 ## Risks and open decisions
 

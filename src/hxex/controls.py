@@ -152,7 +152,8 @@ class ControlConfig:
       series' replicates of that control (three or more) is left out of its mean, flagged
       ``m0_replicate_left_out`` or ``fd_replicate_left_out`` (a warning); None turns it off. A
       control replicate whose K=1 mean is above the amide count is always left out (the same
-      flags): no deuterium level explains it (owner, 2026-10-22, HISTORY 143).
+      flags): no deuterium level explains it (owner, 2026-10-22, HISTORY 143). So is one left
+      out of the noise estimate as a noise outlier (the same flags; owner, 2026-10-29).
     - ``fd_other_charge`` (with ``combine_charges = false``): a series whose fully deuterated
       control is missing or rejected takes the mean retention of the same peptide's accepted
       measured controls at its other charge states in the same sample (flagged
@@ -543,6 +544,9 @@ def fit_controls(
     usable = np.asarray(usable, dtype=bool)
     if usable.shape != (m,):
         raise ValueError("usable must have one value per measurement")
+    # a control replicate left out as a noise outlier is noted as a replicate left out
+    noisy = ~usable & (np.asarray(fit.noise_estimate.outlier, dtype=bool)
+                       if fit.noise_estimate is not None else np.zeros(m, dtype=bool))
     screened_ids = None
     if screened is not None:
         screened = np.asarray(screened, dtype=bool) & (np.asarray(fit.role, dtype=str) != "")
@@ -628,7 +632,7 @@ def fit_controls(
             continue
         flags: list[str] = []
         for label, name in ((UNDEUT, "m0_replicate_left_out"), (FULLDEUT, "fd_replicate_left_out")):
-            if (left_out[rows] & serves[label][rows]).any():
+            if ((left_out[rows] | noisy[rows]) & serves[label][rows]).any():
                 flags.append(name)
         if n_u == 0:
             flags.append("m0_missing")
@@ -668,8 +672,8 @@ def fit_controls(
         if n_u > 0 and np.isfinite(low) and m0_meas > low + tol:
             flags.append("data_below_m0")
         for label, name in ((UNDEUT, "m0_multimodal"), (FULLDEUT, "fd_multimodal")):
-            used = rows[usable[rows] & serves[label][rows]]
-            if len(used) and 2 * multi[used].sum() > len(used):  # most replicates
+            used = rows[usable[rows] & ~left_out[rows] & serves[label][rows]]
+            if len(used) and 2 * multi[used].sum() > len(used):  # most replicates used
                 flags.append(name)
         fallback = not (m0_ok and mfd_ok)
         values = {

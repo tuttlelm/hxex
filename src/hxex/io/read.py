@@ -48,7 +48,7 @@ def scan(
                               peptide_region=peptide_region)
     if fmt == "specexport":
         return scan_specexport(data_dir, samples=samples, peptide_ranges=peptide_ranges,
-                               peptide_region=peptide_region)
+                               peptide_region=peptide_region, registry=registry)
     if fmt == "pooled":
         return scan_specexport_pooled(data_dir, sample=sample, peptide_ranges=peptide_ranges,
                                       peptide_region=peptide_region,

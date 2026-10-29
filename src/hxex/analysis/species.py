@@ -617,9 +617,10 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             add(name, stage, "series corrected", np.sum(corrected), "series")
             add(name, stage, "control spectra left out by the spectrum quality screens",
                 np.sum(screened), "spectra", "[analysis.filters] spectrum_quality_filtering")
-            add(name, stage, "a control replicate left out (far from the others, or above the "
-                "amide count)", series_with("m0_replicate_left_out", "fd_replicate_left_out"),
-                "series", "[run.controls] replicate_outlier")
+            add(name, stage, "a control replicate left out (far from the others, above the "
+                "amide count, or a noise outlier)",
+                series_with("m0_replicate_left_out", "fd_replicate_left_out"), "series",
+                "[run.controls] replicate_outlier")
             add(name, stage, "undeuterated control missing or rejected: natural abundance used",
                 series_with("m0_missing", "m0_high"), "series", "[run.controls] m0_max")
             add(name, stage, "fully deuterated control missing", series_with("fd_missing"),
@@ -769,7 +770,7 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
     with np.errstate(invalid="ignore", divide="ignore"):
         fd = fd / n_amides
     if filters.replicate_outlier is not None:
-        role = np.asarray(fit.role).astype(str)
+        role = _analysis_roles(fit, controls)
         time = np.asarray(fit.time, dtype=float)
         at_time = (role != "undeut") & (role != "fulldeut") & np.isfinite(time)
         usable = at_time & keep & ~screened & np.isfinite(fd)
@@ -844,7 +845,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
 
     # one record per spectrum and rank, then grouped by species, point (a time, or a control
     # role), K and rank
-    points = _points(fit)
+    points = _points(fit, _analysis_roles(fit, controls))
     groups: dict[tuple, list[tuple[float, float, float, float, int]]] = {}
     dropped = {"population": 0, "fD": 0, "fD_se": 0, "k1_between_ranks": 0,
                "one_population": 0, "review_one": 0}
@@ -930,9 +931,20 @@ class Point(tuple):
         return point_order_key(self.time, self.role) < point_order_key(other.time, other.role)
 
 
-def _points(fit) -> list[Point]:
-    time = np.asarray(fit.time, dtype=float)
+def _analysis_roles(fit, controls) -> np.ndarray:
+    """The control role of each spectrum as the analysis uses it: the fit's, with the time
+    points ``[analysis.controls] undeut_at``/``fulldeut_at`` promote (``controls``: the
+    analysis's control table), so a promoted point leaves the labelled time points too."""
     role = np.asarray(fit.role, dtype=str)
+    config = getattr(controls, "config", None)
+    if config is not None and (config.undeut_at is not None or config.fulldeut_at is not None):
+        role = apply_control_roles(role, fit.time, config, where="[analysis.controls]")
+    return role
+
+
+def _points(fit, role=None) -> list[Point]:
+    time = np.asarray(fit.time, dtype=float)
+    role = np.asarray(fit.role if role is None else role, dtype=str)
     return [Point((None if not np.isfinite(t) else float(t), str(r)))
             for t, r in zip(time, role, strict=True)]
 

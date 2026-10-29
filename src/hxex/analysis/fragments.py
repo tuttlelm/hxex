@@ -331,6 +331,7 @@ def ladder_steps(
     side = chem.ion_terminus(ion_type)
     if side == "M":
         raise ValueError("a ladder needs a fragment ion type, not a parent-type ion")
+    n_subtracted = chem.effective_nterm_subtract(parent.peptide, nterm_subtract)  # for the notes
     lengths = sorted({int(x) for x in lengths if 1 <= int(x) < n})
     kw = {"nterm_subtract": nterm_subtract, "rules": rules, "registry": registry}
     offset = parent.start_seq - 1
@@ -348,7 +349,7 @@ def ladder_steps(
         if new:
             span = (min(new) + offset, max(new) + offset)
             note = "" if len(res) == 1 else "block" if res else _reason(
-                residues, sorted(new), nterm_subtract, registry)
+                residues, sorted(new), n_subtracted, registry)
             steps.append(LadderStep(label, None if previous is None else
                                     f"{ion_type}:{previous}", span, res, note))
             covered |= new
@@ -356,7 +357,7 @@ def ladder_steps(
     for p in range(1, n + 1):
         if p not in covered:
             steps.append(LadderStep(None, None, (p + offset, p + offset), (),
-                                    _reason(residues, [p], nterm_subtract, registry)
+                                    _reason(residues, [p], n_subtracted, registry)
                                     or "no ion"))
     return sorted(steps, key=lambda s: s.span[0])
 
@@ -419,14 +420,16 @@ def difference_trace(uptake: FragmentUptake, larger: str, smaller: str | None,
     if smaller is None:
         return _average(uptake.time[a], uptake.mean[a], uptake.mean_se[a])
     b = np.flatnonzero(uptake.where(fragment=smaller, **conditions))
-    other = {(str(uptake.run[j]), str(uptake.sample[j]), str(uptake.condition[j]),
-              int(uptake.charge[j]), int(uptake.parent_charge[j]), int(uptake.rep[j]),
-              round(float(uptake.time[j]), 6)): j for j in b}
+
+    def key(j: int) -> tuple:  # one parent's fragments, one replicate's scans at one time
+        return (str(uptake.run[j]), str(uptake.sample[j]), str(uptake.parent[j]),
+                int(uptake.parent_start[j]), str(uptake.condition[j]), int(uptake.charge[j]),
+                int(uptake.parent_charge[j]), int(uptake.rep[j]), round(float(uptake.time[j]), 6))
+
+    other = {key(j): j for j in b}
     t, y, se = [], [], []
     for i in a:
-        j = other.get((str(uptake.run[i]), str(uptake.sample[i]), str(uptake.condition[i]),
-                       int(uptake.charge[i]), int(uptake.parent_charge[i]), int(uptake.rep[i]),
-                       round(float(uptake.time[i]), 6)))
+        j = other.get(key(i))
         if j is None:
             continue
         t.append(uptake.time[i])

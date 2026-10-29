@@ -96,8 +96,10 @@ _CHARGED = {  # (protonated, neutral) factors and pKc reference: (c in H2O, c in
     "E": ((-0.60, -0.27, 0.24, 0.39), (-0.90, 0.31, -0.11, -0.15), (-4.33, -4.93, 1083.0, 1083.0)),
     "H": ((-0.80, -0.51, 0.80, 0.83), (0.00, 0.00, -0.10, 0.14), (-7.00, -7.42, 7500.0, 7500.0)),
 }
-_NT = (-1.32, 1.62)  # (AR, BR) of a free N-terminal amine, on residue 2's amide
-_AC = (0.29, -0.20)  # (AR, BR) of an N-terminal acetyl group, on residue 1's amide
+_NT = (-1.32, 1.62)  # (AR, BR) of a free N-terminal amine, on residue 2's amide (Bai Table II)
+# (AR, BR) of an N-terminal acetyl group, on residue 1's amide: the Englander lab's HXrates
+# spreadsheet (row "H3CCO-", 0.293 and -0.197); in no paper (audit 2026-10-28 question 23)
+_AC = (0.29, -0.20)
 _CT_ACID = (0.05, 0.96)  # AL of the C-terminal carboxyl, protonated and not (pKc of Glu)
 _CT_BASE = -1.80  # BL of the C-terminal carboxyl
 

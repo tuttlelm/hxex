@@ -251,6 +251,14 @@ def test_single_scans_by_index(tmp_path, indexed):
     lo, hi = every[0].mz[3], every[0].mz[10]
     cut = f.scan(0, mz_window=(lo, hi))
     assert cut.mz.min() >= lo and cut.mz.max() <= hi and len(cut.mz) == 8
+    # several scans at once: through the index when there is one, the same scans either way
+    got = f.read_scans([len(scans) - 1, 0, 3], [(lo, hi)])
+    assert sorted(got) == [0, 3, len(scans) - 1]
+    for i, one in got.items():
+        keep = (every[i].mz >= lo) & (every[i].mz <= hi)
+        np.testing.assert_array_equal(one.mz, every[i].mz[keep])
+        np.testing.assert_array_equal(one.intensity, every[i].intensity[keep])
+        assert one.time == every[i].time and one.filter == every[i].filter
     with pytest.raises(MzmlError, match="no scan"):
         MzmlFile(write_mzml(tmp_path / "j.mzML", scans)).scan(99)
 
@@ -345,8 +353,10 @@ def test_unstated_precursor_charges_and_scan_times(tmp_path, caplog):
     untimed = write_mzml(tmp_path / "t.mzML", scans)
     with pytest.raises(MzmlError, match="1 MS1 scans have no scan start time"):
         read_mzml([MzmlRun(untimed, "WT")], [MzmlTarget(ENTRY)], project="p")
-    assert len(read_mzml([MzmlRun(untimed, "WT", time=60.0)], [MzmlTarget(ENTRY)],
-                         project="p")) == 1
+    # a run with a fixed time or a control role too (owner, 2026-10-29: never passed over)
+    for run in (MzmlRun(untimed, "WT", time=60.0), MzmlRun(untimed, "WT", role="undeut")):
+        with pytest.raises(MzmlError, match="every scan needs one"):
+            read_mzml([run], [MzmlTarget(ENTRY)], project="p")
 
 
 def test_replicates_of_one_point_are_kept_apart(tmp_path, caplog):

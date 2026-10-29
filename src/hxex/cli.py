@@ -304,7 +304,13 @@ def cmd_check(args) -> int:
         if not inp.data_dir.is_dir():
             problems.append(f"input.data_dir {inp.data_dir}: no such directory")
         if not problems:
-            entries = folder_entries(project)
+            from .io.entries import filter_entries
+
+            # as the read takes them: a peptide table's rows filtered by samples,
+            # peptide_ranges and peptide_region (scan filters by itself)
+            entries = filter_entries(folder_entries(project), samples=inp.samples,
+                                     peptide_ranges=inp.peptide_ranges,
+                                     peptide_region=inp.peptide_region)
             samples = Counter(e.sample for e in entries)
             _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
             roles = _folder_control_files(inp, entries)
@@ -382,11 +388,23 @@ def _output_lines(project) -> list[str]:
                  else "up to date" if stamp == created else "made from earlier results")
         lines.append(f"{folder.name}: {state}; {needs(command)}")
     analysis = project.analysis  # none: hxex analyse uses the default settings
-    wanted = (Path(analysis.out) if analysis is not None and analysis.out else
-              bundle.with_name(analysis_folder_name(
-                  bundle.name, analysis.reference if analysis is not None else None)))
+    reference = analysis.reference if analysis is not None else None
+    if analysis is not None and analysis.out:
+        wanted = Path(analysis.out)
+    elif analysis is not None and analysis.runs:  # as hxex analyse names it: beside the first
+        wanted = Path(next(iter(analysis.runs.values()))).with_name(
+            analysis_folder_name("runs", reference))
+    else:
+        wanted = bundle.with_name(analysis_folder_name(bundle.name, reference))
     folders = dict(analysis_states(bundle))
-    if wanted is not None and wanted not in folders and holds_output(wanted):
+    if analysis is not None and analysis.runs and not analysis.out and holds_output(wanted):
+        # an analysis of several runs records each run's results by its name
+        made = made_from(wanted) or {}
+        stamps = {name: (bundle_manifest(Path(p)) or {}).get("created", "")
+                  for name, p in analysis.runs.items()}
+        folders[wanted] = ("" if any(not made.get(n) for n in stamps) else None
+                           if all(made[n] == c for n, c in stamps.items()) else "earlier")
+    elif wanted is not None and wanted not in folders and holds_output(wanted):
         folders[wanted] = ""
     for folder, state in sorted(folders.items()):
         text = ("up to date" if state is None else "made from earlier results" if state
@@ -623,6 +641,12 @@ def cmd_run(args) -> int:
                   "(%s.N), or write to another output.bundle (the bundle and the folders "
                   "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
+    from .io.bundle import bundle_manifest
+
+    if bundle.exists() and bundle_manifest(bundle) is None:  # refused before the read
+        log.error("%s exists but is not a results bundle; it is never replaced or moved: "
+                  "write to another output.bundle", bundle)
+        return EXIT_ERROR
     from .io import prepare_output
 
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
@@ -714,7 +738,7 @@ def cmd_resume(args) -> int:
 
     bundle, extra = Path(args.bundle), {}
     tables_arg, threads = args.tables, args.threads
-    review = None
+    review = project = None
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
         from .config import check_table_choices, load_project
         from .review_table import table_choices
@@ -752,6 +776,18 @@ def cmd_resume(args) -> int:
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
         threads = threads if threads is not None else project.threads
+    from .io import holds_output, made_from, prepare_output
+
+    tables = _beside(bundle, tables_arg, "_tables")
+    # the tables of this bundle are brought up to date; a folder holding other results' tables
+    # follows the bundle's rule (refused before anything is fitted)
+    others = (tables is not None and holds_output(tables) and (made_from(tables) or {}).get("")
+              != (bundle_manifest(bundle) or {}).get("created", ""))
+    flags = {} if project is None else {"overwrite": project.output.overwrite,
+                                        "keep_previous": project.output.keep_previous}
+    if others:
+        prepare_output(tables, move=False, what="tables of other results",
+                       elsewhere="another folder with --tables DIR", **flags)
     stop = _Stop()
     with stop.installed(), _threads(threads):
         try:
@@ -764,7 +800,8 @@ def cmd_resume(args) -> int:
             _say(f"{bundle}: the bootstrap has the project's settings and every K chosen in "
                  "the review has a bootstrap: nothing to add")
             return 0
-    tables = _beside(bundle, tables_arg, "_tables")
+    if others:
+        prepare_output(tables, what="tables of other results", **flags)
     if tables is not None:
         from .report import Results, write_tables
         from .review_table import apply_view
@@ -1068,10 +1105,16 @@ def _is_bundle(path: Path) -> bool:
     return path.suffix == ".zip" or (path.is_dir() and (path / "manifest.json").is_file())
 
 
+def _named(text: str) -> bool:
+    """Whether a source argument is ``NAME=BUNDLE`` (not a path that holds ``=``)."""
+    name, sep, _ = text.partition("=")
+    return bool(sep and name) and not Path(text).exists()
+
+
 def _run_source(text: str) -> tuple[str, Path]:
     """``(name, bundle)`` of a ``NAME=BUNDLE`` or ``BUNDLE`` argument."""
-    name, sep, path = text.partition("=")
-    if sep and name and not Path(text).exists():
+    if _named(text):
+        name, _, path = text.partition("=")
         return name, Path(path)
     path = Path(text)
     return (path.name if path.is_dir() else path.stem), path
@@ -1096,7 +1139,7 @@ def cmd_analyse(args) -> int:
         if len(runs) < len(args.source):
             log.error("two runs have the same name: give NAME=BUNDLE")
             return EXIT_ERROR
-        if len(args.source) == 1 and _is_bundle(Path(args.source[0])):
+        if len(args.source) == 1 and not _named(args.source[0]):
             runs = {"": first}  # one bundle, not named: its samples keep their names
         config, base = AnalysisConfig(), Path(".")
         if args.bundle:

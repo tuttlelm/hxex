@@ -144,6 +144,12 @@ def test_cap_and_capped_flag():
     assert len(p.mz) == n_last + 1 and p.capped  # fewer than zero_filling bins left
     _, p = pick({0: 1000.0, n_last - CFG.zero_filling: 500.0})
     assert len(p.mz) == n_last + 1 and not p.capped  # fits exactly
+    # a zero threshold (noise_percent = 0, or an all-zero spectrum) makes no empty bin signal
+    zero = dataclasses.replace(CFG, noise_percent=0.0)
+    _, p = pick({0: 1000.0, 1: 500.0}, cfg=zero)
+    assert not p.capped and not p.no_signal and len(p.mz) == 2 + CFG.zero_filling
+    _, p = pick({}, cfg=zero)
+    assert p.empty and p.no_signal and not p.capped
 
 
 def test_window_edges_are_inclusive():
@@ -241,6 +247,19 @@ def test_shoulder_rejection_applies_to_windows_with_many_points():
     lenient = replace(CFG, shoulder_min_points=20)
     mz, y = profile(plan, rising)
     assert pick_spectrum(mz, y, PEPTIDE, 2, config=lenient).intensity[0] == 1000.0
+
+
+def test_nan_intensities_read_as_zero():
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    peak = np.array([100, 200, 400, 700, 1000, 900, 600, 300, 200, 150, 120, 100], float)
+    mz, y = profile(plan, peak)
+    holed = y.copy()
+    holed[1::7] = np.nan
+    for cfg in (CFG, replace(CFG, pick="window_max"), replace(CFG, pick="peak")):
+        a = pick_spectrum(mz, holed, PEPTIDE, 2, config=cfg)
+        b = pick_spectrum(mz, np.nan_to_num(holed), PEPTIDE, 2, config=cfg)
+        np.testing.assert_array_equal(a.intensity, b.intensity)
+        assert np.isfinite(a.intensity).all()
 
 
 def test_ties_resolve_to_the_first_maximum():
@@ -415,7 +434,10 @@ def test_config_round_trip_and_json():
     "kwargs",
     [{"resolution_ppm": 0}, {"zero_filling": -1}, {"zero_filling": 1.5}, {"noise_threshold": -1},
      {"noise_percent": -1}, {"env_threshold": 0}, {"env_threshold": 1.5},
-     {"nterm_subtract": -1}, {"shoulder_min_points": 0}, {"pick": "tallest"}],
+     {"nterm_subtract": -1}, {"shoulder_min_points": 0}, {"pick": "tallest"},
+     {"mass_accuracy_ppm": float("nan")}, {"resolving_power_exponent": float("nan")},
+     {"zero_filling": True}, {"nterm_subtract": True}, {"shoulder_min_points": 1.5},
+     {"shoulder_min_points": True}],
 )
 def test_config_validation(kwargs):
     with pytest.raises(ValueError):

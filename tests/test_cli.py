@@ -161,6 +161,7 @@ def test_template_lines_carry_their_meaning_and_unit():
     assert analysis.index("# protection = true") < first_table
     assert "protection_residues" not in text
     assert "exchange-clock min_time" in text  # the two clocks cross-refer
+    assert "left out are the input's" not in text  # nothing is inherited since HISTORY 101
 
 
 def test_project_files_are_checked(tmp_path):
@@ -546,6 +547,18 @@ def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
             cancel=lambda: stages[-1:] == ["bootstrap"])
     assert cli.main(["info", str(tmp_path / "b")]) == 0
     assert "pending        bootstrap" in capsys.readouterr().out
+    # a tables folder holding other results' tables is refused before the bootstrap runs
+    from hxex.io.outputs import replace_outputs
+
+    (tmp_path / "b_tables").mkdir()
+    with replace_outputs(tmp_path / "b_tables", ["uptake.csv"], made={"": "other"}) as written:
+        (tmp_path / "b_tables" / "uptake.csv").write_text("x\n")
+        written.append(tmp_path / "b_tables" / "uptake.csv")
+    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 1
+    assert "tables of other results" in capsys.readouterr().err
+    with open_bundle(tmp_path / "b") as b:
+        assert b.pending == ["bootstrap"]
+    shutil.rmtree(tmp_path / "b_tables")
     assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 0
     with open_bundle(tmp_path / "b") as b:
         assert b.pending == [] and b.bootstrap() is not None
@@ -558,6 +571,14 @@ def test_errors_are_messages_not_tracebacks(tmp_path, capsys):
     assert cli.main(["check", str(tmp_path / "missing.toml")]) == 1
     err = capsys.readouterr().err
     assert "cannot read" in err and "Traceback" not in err
+    # output.bundle naming a folder that is not a bundle: refused before the read
+    p = mzml_project(tmp_path)
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "mine.txt").write_text("x")
+    assert cli.main(["-q", "run", str(p), "--keep-previous"]) == 1
+    assert "not a results bundle" in capsys.readouterr().err
+    assert not (tmp_path / "out.1").exists() and (tmp_path / "out" / "mine.txt").is_file()
+    shutil.rmtree(tmp_path / "out")
     assert cli.main(["info", str(tmp_path)]) == 1
     p = mzml_project(tmp_path)
     (tmp_path / "run1.mzML").unlink()
@@ -649,6 +670,12 @@ def test_false_means_unset_only_where_a_setting_admits_none(tmp_path):
                 "max_mz_offset_ppm = false\n")
     assert p.run.controls.fulldeut_at is None and p.run.controls.quench is None
     assert p.run.quality.max_mz_offset_ppm is None
+    # [input]: false unsets a list key; a path the format needs stays required
+    p = project_from(tomllib.loads(head + "peptide_region = false\nsamples = false\n"), tmp_path)
+    assert p.input.peptide_region is None and p.input.samples is None
+    with pytest.raises(ProjectError, match="data_dir is needed"):
+        project_from(tomllib.loads('project = "p"\n[input]\nformat = "specexport"\n'
+                                   "data_dir = false\n"), tmp_path)
 
 
 def test_controls_are_roles_and_times_take_units(tmp_path):
@@ -798,6 +825,15 @@ def test_check_counts_the_control_files_of_a_specexport_folder(tmp_path, capsys)
     out = capsys.readouterr().out
     assert "entries        2 in" in out
     assert "  WT: 2 entries, 2 undeuterated and 1 fully deuterated control files" in out
+    # a peptide table's rows are counted as the read takes them: samples filter them
+    (tmp_path / "peptides.csv").write_text(
+        "file,sample,peptide,start_seq,end_seq,charge\n"
+        f"0001-0010-{PEPTIDE},WT,{PEPTIDE},1,10,2\n0001-0010-{PEPTIDE},MUT,{PEPTIDE},1,10,2\n")
+    path.write_text(path.read_text().replace('data_dir = "d"\n', 'data_dir = "d"\n'
+                                              'peptides = "peptides.csv"\nsamples = ["WT"]\n'))
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "entries        1 in" in out and "MUT" not in out
 
 
 def test_record_paths_are_checked_for_the_format(tmp_path):
@@ -1299,6 +1335,13 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     assert "out_tables: up to date" in info and "out_figures: made from earlier results" in info
+    # with [analysis.runs], check looks where hxex analyse writes: runs_analysis beside the first
+    path.write_text(path.read_text() + '\n[analysis.runs]\none = "out"\n')
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    assert (tmp_path / "runs_analysis" / "species_uptake.csv").is_file()
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) == 0
+    assert "runs_analysis: up to date; hxex analyse needs --overwrite" in capsys.readouterr().out
 
 
 def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):

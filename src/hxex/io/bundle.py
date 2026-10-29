@@ -65,6 +65,7 @@ from ._arrow import (
     _str,
     _strs,
 )
+from ._json import dumps as strict_json
 
 log = logging.getLogger(__name__)
 SCHEMA_VERSION = 2  # 2: a component's share is "population" (was "frac"/"fraction")
@@ -384,11 +385,11 @@ def _controls_table(c: ControlTable) -> pa.Table:
     table = pa.table(cols)
     meta = {}
     if c.fd_model is not None:  # the fitted theoretical back-exchange (fd_fallback 'kint')
-        meta[b"fd_model"] = json.dumps(dict(c.fd_model))
+        meta[b"fd_model"] = strict_json(dict(c.fd_model))
     if c.limits is not None:  # the run-relative retention limit
-        meta[b"limits"] = json.dumps(dict(c.limits))
+        meta[b"limits"] = strict_json(dict(c.limits))
     if c.screened is not None:  # the control spectra the screens left out
-        meta[b"screened"] = json.dumps(list(c.screened))
+        meta[b"screened"] = strict_json(list(c.screened))
     if meta:
         table = table.replace_schema_metadata(meta)
     return table
@@ -882,7 +883,7 @@ def write_bundle(
         from ..config import RUN_SETTINGS_FILE, run_settings_text
 
         (tmp / RUN_SETTINGS_FILE).write_text(run_settings_text(manifest), encoding="utf-8")
-        (tmp / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
+        (tmp / MANIFEST).write_text(strict_json(manifest, indent=2) + "\n")
         _publish(tmp, path, overwrite)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -900,7 +901,7 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     if path.suffix == ".zip":
         if path.exists() and not (path.is_file() and _is_bundle_zip(path)):
             raise BundleError(f"{path} exists but is not a zipped results bundle; not removing it")
-        archive = tmp.with_suffix(".zip")
+        archive = tmp.with_name(tmp.name + ".zip")  # beside the staging folder, its own name
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
             for item in sorted(tmp.iterdir()):
                 zf.write(item, item.name)
@@ -1109,6 +1110,7 @@ class Bundle:
 
     def __init__(self, path: Path, store, manifest: dict[str, Any]):
         self.path, self._store = path, store
+        self._as_read = manifest  # what set_review writes back (with its new files)
         self.manifest, self._legacy_times = modernise_manifest(manifest)
         self._cache: dict[str, Any] = {}
 
@@ -1430,11 +1432,12 @@ class Bundle:
         _check_review(review, self.fit())
         files = dict(self.manifest["files"])
         _write_table(self.path, "review", _review_table(review), files)
-        manifest = {**self.manifest, "files": files}
+        # the manifest as read, only its files updated: a legacy bundle keeps its own keys
+        self._as_read = {**self._as_read, "files": files}
         tmp = self.path / (MANIFEST + ".tmp")
-        tmp.write_text(json.dumps(manifest, indent=2) + "\n")
+        tmp.write_text(strict_json(self._as_read, indent=2) + "\n")
         os.replace(tmp, self.path / MANIFEST)
-        self.manifest = manifest
+        self.manifest = {**self.manifest, "files": files}
 
 
 LEGACY_TIME_KEYS = ("undeut_time", "fd_time", "atol")

@@ -5125,3 +5125,140 @@ CSVs or mzML if wanted.
     `correct_means` over all spectra was not needed. Medium 19: the residue comparison, overlay
     and region-bar figures raise their top to 1.05 times the highest point drawn (value plus its
     error) when that is above 1.05, as `plot_residue_profile` does; fD is not clipped at 1.
+
+195. **Audit of 2026-10-28, Session D: the Low list, the acetylated N-terminus, the kint check
+    and two measurements (2026-10-29; docs/AUDIT_2026-10-28.md).** Each change in behaviour has
+    a test.
+    - Settings and command line: `[input] data_dir = false` is refused as missing ("needed for
+      FORMAT") instead of a traceback in `hxex check`; `peptide_region = false` unsets it as
+      the other list keys do; the template's stale header clause on inherited control times is
+      gone; `hxex analyse NAME=results.zip` keeps the name `NAME` (the single-bundle shortcut is
+      for a bare path); `hxex check`'s outputs block looks for `runs_analysis[_REF]` beside the
+      first run with `[analysis.runs]`, as `hxex analyse` writes it, with its state from each
+      run's stamp; a quoted review-table note may hold a line break; a spectra file whose read
+      record is not JSON is a ReadError (ProjectError in a project) naming the file;
+      `hxex run` refuses an `output.bundle` that exists but is not a bundle before the read
+      (it was refused after it); `hxex resume --tables` applies the bundle's rule to a tables
+      folder holding other results' tables (before the bootstrap; the bundle's own tables are
+      brought up to date as before).
+    - Readers and bundles: manifests, listings and spectra-file metadata are strict JSON (a
+      non-finite number, such as `resolving_power_mz` of an unknown instrument, is written as
+      null; older files with NaN still load); a zip bundle is staged as `NAME.zip.tmp-*.zip`
+      (it was `NAME.zip.zip`, replacing a file of that name); `set_review` writes back the
+      manifest as read with its files updated (a legacy bundle keeps its control-time keys);
+      `parse_time` takes NumPy numbers (not NumPy booleans); the HX-Express label `.5 min` is
+      30 s (pyHXExpress fails on it: `float('')`), so it left the test's error cases;
+      `ThermoFile` after `close()` raises ThermoError; output listings write `/` between
+      folders on every system (and read the `\` of older Windows listings), and a path outside
+      the folder is logged and left out of the listing rather than raised from the `finally`
+      that writes it; the retention-time clash names both rows; a SpecExport time that does not
+      parse names its file.
+    - Big mzML files: a finished `spectrum` or `chromatogram` element is removed from its list
+      as well as cleared, a spectrum's metadata is parsed once (its arrays decoded only when the
+      scan is kept), and `MzmlFile.read_scans` reads through the file's index when it has one
+      (each spectrum read up to the next one's offset). Measured (private top-down files;
+      warm cache; spectra byte-identical before and after): a 1.1 GB file without an index
+      reads its scan table in 1.63 s before and 1.64 s after, 210 scans in 2.45 vs 2.46 s,
+      1,260 in 6.65 vs 6.67 s, peak memory 172 MB both (the XML parse dominates; `clear()`
+      alone already freed the content); a 149 MB indexed file reads 68 scans in 0.73 s before,
+      0.51 s after.
+    - Picking, chemistry, fragments: `PickerConfig` refuses NaN for `mass_accuracy_ppm` and
+      `resolving_power_exponent`, booleans for the integer settings and 1.5 for
+      `shoulder_min_points` (NumPy integers accepted); a zero threshold (`noise_percent = 0`,
+      or an all-zero spectrum) no longer makes empty bins signal, so `capped` is not set on
+      every spectrum and an all-zero spectrum is `no_signal` as well as `empty` (default
+      settings: unchanged; picker golden and oracle tests pass); non-finite intensities are read
+      as 0 before picking (both pick modes); a charge-1 parent whose fragment charges `ALL`
+      leave none (limit_charge) is a warning, not silence.
+    - Controls and run: the `fd_multimodal`/`m0_multimodal` majority counts the replicates
+      used (a replicate `replicate_outlier` left out no longer counts); a control replicate left
+      out as a noise outlier is noted `m0_replicate_left_out`/`fd_replicate_left_out` as the
+      owner decided (outputs.md's series.csv and noise_outlier rows say both causes); a spectrum
+      without a bin is dropped as `no_bins`, not `no_signal` (run and resume, the log line).
+    - Analysis: `difference_trace` pairs fragments of one parent only (key gains `parent`,
+      `parent_start`); the population comparison (`_lever_sides`) takes each replicate's K = 1
+      over every charge state that has one, as compare_peptides.csv does, and the K = 2
+      positions over the charge states with both (before, a charge state without a K = 2 fit
+      left the K = 1 side too, so the two tables' K = 1 could differ; population comparisons
+      change slightly where charge states differ in K); `PeptideComparison.n` is replicates
+      (docstring and outputs.md); a time point promoted by `[analysis.controls] undeut_at`/`fulldeut_at`
+      leaves the labelled points of the species and residue tables (and the replicate-outlier
+      filter's time points), not only the control fit.
+    - Report: the figures folder's pre-check lists the overviews' own names
+      (`overview_k_selection.png`, ...; `overview_files`), so a file of yours of that name is
+      refused before anything is written; the k-selection axis reads "time point";
+      `residue_comparison_figure` without a sample besides the reference raises as the overlay
+      does; `show_series(k=K)` and `series_figures` refuse an unfitted K before drawing.
+    - Engine: `fit_models`' progress total counts a k-means warm start only for a K warmed
+      from a K that is chosen from (not from the controls' extra K = 1), so it ends at its
+      total; `ControlsNoise` compares NaN as equal (and hashes so), so merging chunks with
+      separate copies works; a noise scale that is not positive and finite (a reference
+      without intensity) is a FitError naming the spectra, in `fit_models` and `prepare`,
+      instead of a fit that is NaN in every restart. GPU parity and the full regression rerun.
+    - Acetylated N-terminus (owner's decision): `nterm_subtract` applies to a free amine only.
+      After `Ac-` residue 1 keeps its amide and none is subtracted (also with `nterm_subtract`
+      2 or more), in `amide_positions`, `count_amides` (peptides and N-terminal ions), and
+      everything built on them (bins, shapes, kint's `series_rates`, which now uses kint's rate
+      for residue 1), `exchanging_residues`, the ladder notes, and the residue tables' `no_amide`
+      (residue 1 has an amide where an `Ac-` peptide starts the protein). A C-terminal fragment
+      of an `Ac-` parent carries the cap in its modification (`parent_nterm:Ac-`, beside
+      `parent_pos`; written only for such fragments, so other strings and ids are unchanged),
+      so with `nterm_subtract` 2 it holds residue 2's amide as its parent does. The evidence
+      (asked for by the owner: `nterm_subtract` is meant to leave off residues almost certainly
+      back-exchanged): kint at pH 2.5, 0 C, 5 % D2O over 2,000 random 8-mers gives residue 2
+      after a free amine a median half-life of 4 min (19 % of its D kept after 10 min), an
+      interior residue 95 min (93 %), residue 1 after `Ac-` 62 min (89 %) and residue 2 after
+      `Ac-` 98 min (93 %): the fast loss comes from the free NH3+ and goes with the cap, so
+      nothing is subtracted after it (owner agreed; values other than 1 and 2 are not used in
+      practice). PLAN.md "Deliberate differences" records it.
+    - Scans without a scan start time (owner, 2026-10-29, after Session B's question 25): refused
+      in every mzML run, not only kinetics runs; a run with a fixed time used to drop such scans
+      by its retention window (or keep them without one) without a word. Guide inputs.md says
+      so. No private project has an `Ac-` peptide, so no existing result
+      changes; the template's and settings.md's `nterm_subtract` line says it.
+    - Question 15: `hxex check` counted every row of a folder format's peptide table; it now
+      filters them by `samples`, `peptide_ranges` and `peptide_region` as the read does.
+      Question 26: SpecExport cuts each peptide from the FASTA by residues (modX), keeping a
+      terminal group of the FASTA sequence on the peptide at that end; a letter outside the
+      registry (an `X` in the FASTA, say) falls back to the cut by letters, so plain FASTA
+      reads as before. Question 27: kept; PLAN.md's reader bullet cites it, and a test reads a
+      sheet with a spacer column.
+    - Question 23, kint verified against the sources (web research, nothing sent but searches):
+      every terminal rule agrees. Bai et al. 1993 Table II gives the free N-terminus AR -1.32,
+      BR 1.62 on residue 2 (measured against an acetyl-blocked dipeptide, so leaving it out
+      after `Ac-` is right) and the C-terminal carboxyl AL 0.05 (COOH) / 0.96 (COO-) and BL
+      -1.8; the Englander lab's rate spreadsheet blends the acid factor with Glu's pKc and
+      adds both terminal factors to a dipeptide, as hxex does (pacilab and HDXrate add only one).
+      The acetyl factor is in no paper: the spreadsheet's row "H3CCO-" has AR 0.293, BR -0.197
+      as residue 1's preceding group (hxex rounds to 0.29, -0.20; 0.003 log units). No factor
+      exists for a C-terminal amide; the spreadsheet's N-methylamide row is a separate
+      reference, so "no factor, approximate" stands. hxex's Gly BL -0.03 and Asp/Glu (COO-) BL
+      0.10/-0.11 are the later (Mori 1997, Nguyen 2018) values, not Bai's. Golden test:
+      `test_terminal_groups_take_the_published_factors` solves the conditions' acid and base
+      coefficients from a free peptide and checks the acetyl, N-terminal and C-terminal-amide
+      rules on `Ac-AAAA-NH2` and `Ac-GG-NH2` to 1e-9.
+    - Question 20, measured (private top-down example file; private
+      analysis_examples/topdown_widths): the question's premise does not hold there. The file's
+      recorded resolving power is 120,000 at m/z 200 (about 53,400 at m/z 1,010), so peaks at
+      charge 20 are 2.7 FWHM apart and resolved; `peak_fwhm` reads 18.2-18.5 ppm against 18.7
+      expected, and the half-height walk crosses no valley on the tallest peaks (0 of 443 scans;
+      weak peaks 1 in 26,399 walks). `auto` chooses heights (the file has no undeuterated
+      controls; with every spectrum taken as one the width ratio is 1.02 on single scans and
+      1.09 on sums of 20, the rise from the scan-to-scan m/z scatter of weak peaks, not merging);
+      heights and areas differ by 1.5 % in envelope shape (+0.2 D centroid). Two equal peaks
+      merge at half height below about 1.4-1.5 FWHM spacing (R below about 30,000 at m/z 1,000
+      for charge 20). No change and no guide sentence: no unresolved data to test it on.
+    - Question 22, measured (private analysis_examples/bic_sample_size; 11 bundles, recomputed
+      from the stored nll, reproducing every stored BIC choice): leaving the leading and
+      trailing zero bins out of N (the trailing ones are `zero_filling`; median 0-22 % of N, q90
+      11-44 %) changes the BIC's K in 0.1-1.0 % of spectra, always upward (a smaller penalty):
+      benchmark 0.36-0.52 %, tutorial 0.08-0.15 %, noisy unimodal set 0.68 %, Orbitrap
+      0.46-1.04 %; controls 0-1.4 % (Orbitrap FD 31 of 2,228). The known-answer set gains
+      slightly (79.6 -> 80.1 % and 74.9 -> 75.7 % correct K on two bundles). Then tried in the
+      code (owner: "try it"): three projects rerun from their stored spectra with N trimmed
+      (identical fits; only the choice moves, as recomputed): labelled K > 1 known answer
+      77.6 -> 78.0 %, tutorial 26.4 -> 26.5 %, benchmark 20.2 -> 20.6 %; undeuterated controls
+      13.0 -> 13.0, 11.6 -> 11.8 and 6.0 -> 6.2 %; known-answer correct K 79.6 -> 80.1 % (2 of
+      387). REVERTED (owner, 2026-10-29): the zero bins at the ends have meaning (the fit must
+      explain them), so they count in N; the gain is within noise and the controls split
+      slightly more often.

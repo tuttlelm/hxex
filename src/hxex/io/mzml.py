@@ -278,7 +278,6 @@ def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
     :func:`merge_windows` returns them; ``groups``: the file's parameter groups)."""
     index = int(elem.get("index", -1))
     sid = elem.get("id", "")
-    where = f"scan {index} ({sid})"
     cv = _cv(elem, groups)
     ms_level = int(float(cv.get(_MS_LEVEL, ("1", ""))[0]))
     centroid = True if _CENTROID in cv else False if _PROFILE in cv else None
@@ -323,22 +322,28 @@ def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
         written = filter_stages(filt)
         if len(written) == ms_level - 1:
             stages = list(written[:ms_level - 1 - len(stages)]) + stages
-    mz = intensity = np.empty(0)
-    if read_arrays:
-        n = int(elem.get("defaultArrayLength", 0))
-        arrays = {}
-        for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
-            kind, values = _decode(bda, n, where, groups)
-            if kind:
-                arrays[kind] = values
-        if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
-            raise MzmlError(f"{where}: the m/z or the intensity array is missing")
-        mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
-        if mz_windows is not None:
-            keep = in_windows(mz, mz_windows)
-            mz, intensity = mz[keep], intensity[keep]
-    return Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, mz, intensity,
-                isolation, tuple(stages))
+    meta = Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, np.empty(0),
+                np.empty(0), isolation, tuple(stages))
+    return _with_arrays(meta, elem, mz_windows, groups) if read_arrays else meta
+
+
+def _with_arrays(meta: Scan, elem, mz_windows, groups=None) -> Scan:
+    """``meta`` (a scan read without arrays from ``elem``) with its arrays decoded (only the
+    points inside ``mz_windows``, merged, when given)."""
+    where = f"scan {meta.index} ({meta.id})"
+    n = int(elem.get("defaultArrayLength", 0))
+    arrays = {}
+    for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
+        kind, values = _decode(bda, n, where, groups)
+        if kind:
+            arrays[kind] = values
+    if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
+        raise MzmlError(f"{where}: the m/z or the intensity array is missing")
+    mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
+    if mz_windows is not None:
+        keep = in_windows(mz, mz_windows)
+        mz, intensity = mz[keep], intensity[keep]
+    return replace(meta, mz=mz, intensity=intensity)
 
 
 def iter_scans(
@@ -355,21 +360,36 @@ def iter_scans(
     path = Path(path)
     merged = None if mz_windows is None else merge_windows(mz_windows)
     groups = {}  # the parameter groups, listed before the run
+    lists = (f"{_NS}spectrumList", f"{_NS}chromatogramList")
+    parent = None  # the list being read: each finished element leaves it (memory stays flat)
     try:
-        for event, elem in ET.iterparse(path, events=("end",)):
-            if event != "end":
+        for event, elem in ET.iterparse(path, events=("start", "end")):
+            if event == "start":
+                if elem.tag in lists:
+                    parent = elem
                 continue
             if elem.tag == f"{_NS}spectrum":
-                meta = _scan_from(elem, False, None, groups)
+                meta = _scan_from(elem, False, None, groups)  # the metadata, parsed once
                 if keep is None or keep(meta):
-                    yield _scan_from(elem, read_arrays, merged, groups) if read_arrays else meta
-                elem.clear()  # the spectrum's content is no longer needed
+                    yield _with_arrays(meta, elem, merged, groups) if read_arrays else meta
+                _drop(elem, parent)
             elif elem.tag == f"{_NS}referenceableParamGroup":
                 groups[elem.get("id", "")] = _cv(elem)
             elif elem.tag == f"{_NS}chromatogram":
-                elem.clear()
+                _drop(elem, parent)
     except ET.ParseError as exc:
         raise MzmlError(f"{path}: not a readable mzML file ({exc})") from exc
+
+
+def _drop(elem, parent) -> None:
+    """Free a finished ``spectrum`` or ``chromatogram``: its content, and the element itself
+    from the list holding it."""
+    elem.clear()
+    if parent is not None:
+        try:
+            parent.remove(elem)
+        except ValueError:  # not a direct child (a file of unusual layout): content freed
+            pass
 
 
 def _parent(s: Scan) -> Stage:
@@ -556,6 +576,7 @@ class MzmlFile:
             raise MzmlError(f"{self.path}: no such file")
         self._table: ScanTable | None = None
         self._offsets: dict[int, int] | None = None
+        self._ends: dict[int, int] | None = None  # spectrum offset -> the next one's
         self._groups: dict[str, dict] | None = None
 
     def scans(self) -> ScanTable:
@@ -587,8 +608,35 @@ class MzmlFile:
         """The scans at the positions ``indices``, with their arrays (only the points inside
         ``mz_windows`` when given), by position; read in one pass through the file."""
         wanted = {int(i) for i in indices}
+        offsets = self._index_offsets()
+        if wanted and wanted <= offsets.keys():  # through the file's index: wanted scans only
+            merged = None if mz_windows is None else merge_windows(mz_windows)
+            return {i: self._indexed_scan(i, merged) for i in sorted(wanted)}
         return {s.index: s for s in iter_scans(self.path, mz_windows=mz_windows,
                                                keep=lambda m: m.index in wanted)}
+
+    def _indexed_scan(self, index: int, merged) -> Scan:
+        """The scan at ``index`` read at its offset in the file's index (``merged``: m/z windows
+        as :func:`merge_windows` returns them, or None)."""
+        offsets = self._index_offsets()
+        start = offsets[index]
+        if self._ends is None:  # each spectrum ends before the next one's offset
+            starts = sorted(offsets.values())
+            self._ends = dict(zip(starts, starts[1:], strict=False))
+        end = self._ends.get(start)
+        with self.path.open("rb") as fh:
+            fh.seek(start)
+            chunk = fh.read(end - start) if end is not None else b""
+            while b"</spectrum>" not in chunk:
+                more = fh.read(1 << 20)
+                if not more:
+                    raise MzmlError(f"{self.path}: scan {index} is cut off")
+                chunk += more
+        text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
+        text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ', 1)
+        if self._groups is None:
+            self._groups = _param_groups(self.path)
+        return _scan_from(ET.fromstring(text), True, merged, self._groups)
 
     def close(self) -> None:
         """Nothing to release (the file is opened for each read); as :class:`ThermoFile`."""
@@ -601,23 +649,9 @@ class MzmlFile:
 
     def scan(self, index: int, mz_window: tuple[float, float] | None = None) -> Scan:
         """The scan at position ``index`` (as in the scan table), with its arrays."""
-        offsets = self._index_offsets()
         windows = None if mz_window is None else [mz_window]
-        if index in offsets:
-            with self.path.open("rb") as fh:
-                fh.seek(offsets[index])
-                chunk = b""
-                while b"</spectrum>" not in chunk:
-                    more = fh.read(1 << 20)
-                    if not more:
-                        raise MzmlError(f"{self.path}: scan {index} is cut off")
-                    chunk += more
-            text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
-            text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ', 1)
-            if self._groups is None:
-                self._groups = _param_groups(self.path)
-            return _scan_from(ET.fromstring(text), True,
-                              None if windows is None else merge_windows(windows), self._groups)
+        if index in self._index_offsets():
+            return self._indexed_scan(index, None if windows is None else merge_windows(windows))
         for s in iter_scans(self.path, mz_windows=windows, keep=lambda m: m.index == index):
             return s
         raise MzmlError(f"{self.path}: no scan {index}")
@@ -1311,9 +1345,11 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     :func:`read_mzml` chooses them: the MS level and the scan conditions (the run's where it sets
     them), within the retention window for a run with a fixed time, or from ``config.min_time``
     otherwise, and from the run's ``usable_from`` (all on the acquisition clock: scan times).
-    A run without a time (kinetics) whose scans of the target's MS level lack a scan time is
-    refused. ``unstated`` (a list) collects the label of a target that found no scan only
-    because every scan it would take does not state its precursor charge."""
+    A run whose scans of the target's MS level lack a scan time is refused (every run: a
+    kinetics run takes the scan times as its exchange times, and a run with a fixed time would
+    drop or keep such scans by its retention window without saying so). ``unstated`` (a list)
+    collects the label of a target that found no scan only because every scan it would take
+    does not state its precursor charge."""
     if run.fixed:
         time_range = target.rt_window
     else:
@@ -1321,12 +1357,12 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
     if run.usable_from is not None:
         lo, hi = time_range if time_range is not None else (-np.inf, np.inf)
         time_range = (max(lo, run.usable_from), hi)
-    if not run.fixed:  # a kinetics run's scan times are its exchange times
-        untimed = (table.ms_level == target.ms_level) & np.isnan(table.time)
-        if untimed.any():
-            raise MzmlError(f"{run.path}: {int(untimed.sum())} MS{target.ms_level} scans have "
-                            "no scan start time; a run without a time (kinetics) takes each "
-                            "scan's time as its exchange time")
+    untimed = (table.ms_level == target.ms_level) & np.isnan(table.time)
+    if untimed.any():  # a file that records no time for a scan: never passed over
+        raise MzmlError(f"{run.path}: {int(untimed.sum())} MS{target.ms_level} scans have no "
+                        "scan start time; every scan needs one (a run without a time takes "
+                        "each scan's time as its exchange time, and retention windows select "
+                        "scans by it)")
     conditions = run.conditions(target)
     rows = table.select(ms_level=target.ms_level, precursor_tol=config.precursor_tol,
                         time_range=time_range, parent_mz=target.parent_mz,

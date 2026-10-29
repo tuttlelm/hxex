@@ -152,15 +152,20 @@ def _rt_row(row: dict) -> dict:
 def apply_retention_times(spectra: SpectrumSet, rows: Sequence[dict]) -> SpectrumSet:
     """``spectra`` with the retention times of ``rows`` (:func:`read_retention_times`): each
     spectrum takes the value of the row that matches it on the most columns (rows that name a
-    column it does not match are skipped); other spectra keep theirs. Two rows matching on the
-    same columns with different values are an error."""
+    column it does not match are skipped); other spectra keep theirs. Two rows that match one
+    spectrum on the same number of columns with different values are an error naming both."""
     import dataclasses
 
     values = {"sample": spectra.sample, "start_seq": spectra.start_seq,
               "end_seq": spectra.end_seq, "peptide": spectra.peptide, "charge": spectra.charge}
     rt = np.array(spectra.rt, dtype=float, copy=True)
     best = np.full(len(spectra), -1)
+    by = np.full(len(spectra), -1)  # the row each spectrum took its value from
     matched = np.zeros(len(rows), dtype=bool)
+
+    def described(row: dict) -> str:
+        return ", ".join(f"{k} {row[k]}" for k in (*_RT_KEYS, "rt") if k in row)
+
     for n, row in enumerate(rows):
         keep = np.ones(len(spectra), dtype=bool)
         for key in _RT_KEYS:
@@ -169,11 +174,15 @@ def apply_retention_times(spectra: SpectrumSet, rows: Sequence[dict]) -> Spectru
         score = sum(key in row for key in _RT_KEYS)
         clash = keep & (best == score) & ~np.isclose(rt, row["rt"])
         if clash.any():
-            raise ReadError(f"two retention times ({rt[clash][0]:g} and {row['rt']:g} min) for "
-                            f"{spectra.sample[clash][0]} {spectra.peptide[clash][0]}")
+            i = int(np.flatnonzero(clash)[0])
+            raise ReadError(
+                f"two retention times for {spectra.sample[i]} {spectra.peptide[i]}: the rows "
+                f"({described(rows[by[i]])}) and ({described(row)}) both match it on {score} "
+                "column(s); give one of them more columns, or remove one")
         take = keep & (score > best)
         rt[take] = row["rt"]
         best[take] = score
+        by[take] = n
         matched[n] = keep.any()
     if not matched.all():
         log.warning("retention times: %d row(s) match no spectrum", int((~matched).sum()))

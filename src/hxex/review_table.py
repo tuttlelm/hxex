@@ -25,6 +25,7 @@ of them without a bootstrap at it, which ``hxex resume`` (and ``hxex run``) add.
 from __future__ import annotations
 
 import csv
+import io
 import logging
 import math
 from dataclasses import dataclass, field
@@ -98,10 +99,12 @@ def read_review_table(path: str | Path) -> ReviewSheet:
         text = path.read_text(encoding="latin-1")
     except OSError as exc:
         raise ValueError(f"the review table {path} cannot be read ({exc})") from None
-    lines = text.splitlines()
-    if not lines:
+    if not text.strip():
         raise ValueError(f"the review table {path} is empty")
-    reader = csv.reader(lines, delimiter=_delimiter(lines[0]))
+    # the separator from the header line; the rows read as a whole, so a quoted note may hold
+    # line breaks (row numbers count rows, as a spreadsheet does)
+    reader = csv.reader(io.StringIO(text, newline=""),
+                        delimiter=_delimiter(text.splitlines()[0]))
     header = [h.strip() for h in next(reader)]
     where = {name: header.index(name) for name in _COLUMNS if name in header}
     if "spectrum_id" not in where:

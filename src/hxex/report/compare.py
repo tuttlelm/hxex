@@ -221,6 +221,8 @@ def residue_comparison_figure(
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
     samples = [s for s in samples if s != comparison.reference]
+    if not samples:
+        raise ValueError("no sample to compare with the reference")
     fig = Figure(figsize=(6.5, 3.0 * len(samples)), layout="constrained")
     axes = fig.subplots(len(samples), 1, squeeze=False)[:, 0]
     for n, (ax, sample) in enumerate(zip(axes, samples, strict=True)):

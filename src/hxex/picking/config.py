@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field, fields
 from typing import Any
@@ -33,6 +35,12 @@ def reference_mz(model: str | None) -> float:
     if any(name in text for name in _REFERENCE_MZ_400) and "exploris" not in text:
         return 400.0
     return 200.0
+
+
+def _whole(value) -> bool:
+    """Whether ``value`` is a whole number (an integer, or a float such as 4.0; not a bool)."""
+    return (not isinstance(value, bool) and isinstance(value, numbers.Real)
+            and math.isfinite(value) and int(value) == value)
 
 
 @dataclass(frozen=True)
@@ -135,7 +143,7 @@ class PickerConfig:
             raise ValueError("area_fwhm must be positive")
         if not self.resolution_ppm > 0:
             raise ValueError("resolution_ppm must be positive")
-        if self.zero_filling < 0 or int(self.zero_filling) != self.zero_filling:
+        if not _whole(self.zero_filling) or self.zero_filling < 0:
             raise ValueError("zero_filling must be a non-negative integer")
         if self.noise_threshold is not None and not self.noise_threshold >= 0:
             raise ValueError("noise_threshold must be None or non-negative")
@@ -143,10 +151,10 @@ class PickerConfig:
             raise ValueError("noise_percent must be non-negative")
         if not 0 < self.env_threshold <= 1:
             raise ValueError("env_threshold must be in (0, 1]")
-        if self.nterm_subtract < 0 or int(self.nterm_subtract) != self.nterm_subtract:
+        if not _whole(self.nterm_subtract) or self.nterm_subtract < 0:
             raise ValueError("nterm_subtract must be a non-negative integer")
-        if self.shoulder_min_points < 1:
-            raise ValueError("shoulder_min_points must be at least 1")
+        if not _whole(self.shoulder_min_points) or self.shoulder_min_points < 1:
+            raise ValueError("shoulder_min_points must be a whole number, at least 1")
         if self.ladder not in ("exms", "composition"):
             raise ValueError("ladder must be 'exms' or 'composition'")
         r = self.resolving_power
@@ -157,11 +165,12 @@ class PickerConfig:
             raise ValueError("resolving_power must be positive")
         if not self.resolving_power_mz > 0:
             raise ValueError("resolving_power_mz must be positive")
-        if self.resolving_power_exponent < 0:
+        exponent = self.resolving_power_exponent
+        if isinstance(exponent, bool) or not exponent >= 0:
             raise ValueError("resolving_power_exponent must be non-negative")
         if not self.window_fwhm > 0:
             raise ValueError("window_fwhm must be positive")
-        if self.mass_accuracy_ppm < 0:
+        if isinstance(self.mass_accuracy_ppm, bool) or not self.mass_accuracy_ppm >= 0:
             raise ValueError("mass_accuracy_ppm must be non-negative")
         if self.off_mz_sd is not None and (isinstance(self.off_mz_sd, bool)
                                            or not self.off_mz_sd > 0):

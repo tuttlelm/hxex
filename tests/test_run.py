@@ -97,6 +97,14 @@ def test_flagged_spectra_are_dropped_and_recorded():
     assert list(res.dropped_reason[~res.kept]) == ["empty"]
     assert len(res.binned) == len(raw)  # the picked table keeps every spectrum and its flags
     assert "proj:f1.xlsx#5" not in set(res.measurements.spectrum_id)
+    # a spectrum without a bin is not "without signal"
+    from types import SimpleNamespace
+
+    from hxex.run import _drop_reasons
+
+    binned = SimpleNamespace(empty=[True, False, False, False], offsets=np.array([0, 3, 3, 5, 8]))
+    reasons = _drop_reasons(binned, np.array([False, False, False, True]))
+    assert list(reasons) == ["empty", "no_bins", "no_signal", ""]
 
 
 def test_nothing_left_is_an_error():

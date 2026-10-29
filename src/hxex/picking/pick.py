@@ -108,6 +108,7 @@ def plan_bins(
         rules=config.amide_rules,
         registry=registry,
         parent_pos=spec.parent_pos,
+        parent_nterm=spec.parent_nterm,
     )
     if clusters is None:
         clusters = chem.isotope_clusters(
@@ -339,6 +340,8 @@ def pick_spectrum(
     )
     mz = np.asarray(mz, dtype=np.float64)
     intensity = np.asarray(intensity, dtype=np.float64)
+    if not np.isfinite(intensity).all():  # a NaN would win every window's maximum: read as 0
+        intensity = np.where(np.isfinite(intensity), intensity, 0.0)
     if len(mz) > 1 and np.any(np.diff(mz) < 0):
         order = np.argsort(mz, kind="stable")
         mz, intensity = mz[order], intensity[order]
@@ -373,7 +376,9 @@ def pick_spectrum(
     if measure is not None and measure.measure == "area":
         values = area_values(mz, intensity, where, values, charge, measure)
     n_last = len(pred) - 1
-    signal = np.flatnonzero(values >= threshold)  # False throughout if threshold is NaN
+    # bins with intensity at or above the threshold (none if it is NaN; a zero threshold, from
+    # noise_percent = 0 or an all-zero spectrum, does not make the empty bins signal)
+    signal = np.flatnonzero((values > 0) & (values >= threshold))
     last = int(signal[-1]) if len(signal) else -1
     end = min(max(last, 0) + config.zero_filling, n_last)
     picked_mz, picked_y = pred[: end + 1], values[: end + 1]

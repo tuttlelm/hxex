@@ -48,13 +48,14 @@ def test_decimal_times_are_exact():
     for token, expected in [("4.1m", 246.0), ("0.1m", 6.0), ("1.1h", 3960.0), ("0.3s", 0.3)]:
         assert hio.parse_specexport_token(token)[0] == expected
     assert hio.parse_hxexpress_label("0.7 min")[0] == 42.0
+    assert hio.parse_hxexpress_label(".5 min")[0] == 30.0  # no leading zero
     assert hio.parse_specexport_token("4.1m") == hio.parse_specexport_token("246s")
     assert hio.parse_time("4.1 min") == 246.0 == hio.parse_time("4.1m")
 
 
 @pytest.mark.parametrize(
     "label",
-    ["60", "5 x", "nan min", "inf s", "abc min", ".5 min", "", 5, None, float("nan")],
+    ["60", "5 x", "nan min", "inf s", "abc min", "", 5, None, float("nan")],
 )
 def test_hxexpress_label_errors(label):
     with pytest.raises(hio.ReadError):
@@ -70,6 +71,12 @@ def test_hxexpress_label_errors(label):
 )
 def test_parse_time(value, seconds):
     assert hio.parse_time(value) == seconds
+
+
+def test_parse_time_takes_numpy_numbers():
+    assert hio.parse_time(np.int64(3)) == 3.0 and hio.parse_time(np.float32(0.5)) == 0.5
+    with pytest.raises(hio.ReadError):
+        hio.parse_time(np.bool_(True))
 
 
 @pytest.mark.parametrize(
@@ -279,6 +286,20 @@ def test_scan_specexport(specroot):
     ]
     assert (entries[0].start_seq, entries[0].end_seq) == (2, 5)
     assert hio.scan_specexport(specroot, samples=["nope"]) == []
+
+
+def test_scan_specexport_cuts_the_fasta_by_residues(tmp_path):
+    """The FASTA is cut by residues (modX: acK is one), a terminal group kept at its end; a
+    letter the registry does not know falls back to the cut by letters."""
+    for name, fasta, folder, peptide in [
+            ("S", "Ac-MAacKLVGS", "0002-0004-AacKL", "AacKL"),
+            ("T", "Ac-MAacKLVGS", "0001-0002-MA", "Ac-MA"),
+            ("U", "MAKLVGXS", "0002-0004-AKL", "AKL")]:
+        (tmp_path / name / folder).mkdir(parents=True)
+        (tmp_path / f"{name}.fasta").write_text(f">{name}\n{fasta}\n")
+        (tmp_path / name / folder / "60s-1-z2.csv").write_text("")
+        (entry,) = hio.scan(tmp_path, "specexport", samples=[name])
+        assert entry.peptide == peptide
 
 
 def test_scan_specexport_range_outside_fasta(specroot):
@@ -874,6 +895,24 @@ def test_specexport_times_say_what_they_accept():
     for bad in ("5min", "250ms", "non", "1.5"):
         with pytest.raises(hio.ReadError, match="one letter, s, m or h"):
             hio.parse_specexport_token(bad)
+
+
+def test_hxexpress_labels_pair_with_their_own_columns(tmp_path):
+    """A sheet with a spacer column: each label reads its own column and the next (pyHXExpress
+    would read columns 2i, 2i + 1; a deliberate difference, audit 2026-10-28 question 27)."""
+    from hxex.io.hxexpress import hxexpress_columns
+
+    header = ("undeut", None, None, "1 min", None, "TD", None)
+    cols = hxexpress_columns(header, tmp_path / "f.csv")
+    assert [(c[0], c[1]) for c in cols] == [(0, "undeut"), (3, "1 min"), (5, "TD")]
+
+
+def test_a_bad_specexport_time_names_its_file(tmp_path):
+    from hxex.io.specexport import specexport_points
+
+    (tmp_path / "5min-1-z2.csv").write_text("")
+    with pytest.raises(hio.ReadError, match=r"5min-1-z2\.csv: SpecExport time '5min'"):
+        specexport_points(tmp_path, ENTRY)
 
 
 def test_peptide_range_is_optional_and_checked(tmp_path, caplog):

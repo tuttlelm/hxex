@@ -137,7 +137,9 @@ def series_figures(
     results: Results, data_id: int, config: PlotConfig = PlotConfig(),  # noqa: B008
     reference: Reference | None = None,
 ) -> dict[str, Figure]:
-    """The figures of one series asked for by ``config``, by kind (:func:`series_kinds`)."""
+    """The figures of one series asked for by ``config``, by kind (:func:`series_kinds`). A
+    ``config.k`` that was not fitted raises ValueError."""
+    _check_k(results, config)
     out: dict[str, Figure] = {}
     for kind in series_kinds(results, data_id, config):
         if kind == "spectra":
@@ -153,6 +155,13 @@ def series_figures(
                                     scale=config.scale, corrected=config.corrected,
                                     reference=reference, k=config.k)
     return out
+
+
+def _check_k(results: Results, config: PlotConfig) -> None:
+    """Refuse a ``config.k`` that was not fitted, before anything is drawn."""
+    if config.k is not None and config.k not in results.fit.k_values:
+        raise ValueError(f"K = {config.k} was not fitted (fitted: K = "
+                         f"{', '.join(str(k) for k in results.fit.k_values)})")
 
 
 def uptake_axis(results: Results, config: PlotConfig) -> str | None:
@@ -200,16 +209,17 @@ def write_figures(
     wrote there before are replaced (its listing, :func:`hxex.io.replace_outputs`), never a
     file of your own."""
     directory = Path(directory)
-    if config.k is not None and config.k not in results.fit.k_values:
-        raise ValueError(f"K = {config.k} was not fitted (the run tried K = "
-                         f"{', '.join(str(k) for k in results.fit.k_values)})")
+    _check_k(results, config)
     chosen = select_series(results, config.series)
     stems = figure_stems(results, chosen)
     if chosen and "uptake" in config.kinds and config.x == "time" and \
             results.time_scale == "order":
         log.warning("plots: x = \"time\" is drawn by index: the times only order the points "
                     "([input] time_scale = \"order\")")
-    names = [f"overview.{config.format}"] if config.overview else []
+    from .overview import overview_files
+
+    # the overviews' own names (overview.pdf, or overview_<kind>.png per overview)
+    names = overview_files(results, f"overview.{config.format}") if config.overview else []
     for data_id, stem in stems.items():  # the files a series gives, known before it is drawn
         if config.format == "pdf":
             names.append(f"{stem}.pdf")

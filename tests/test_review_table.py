@@ -27,6 +27,11 @@ def test_the_table_is_read_as_spreadsheets_write_it(tmp_path):
     assert sheet.status == ("rejected", "", "accepted") and sheet.k == (0, 2, 1)
     assert sheet.note[0] == "bad injection"
     assert sheet.describe() == "3 spectra: 1 rejected, 1 accepted, 2 with a chosen K"
+    # a quoted note may hold a line break; the rows after it are still read
+    path.write_text('spectrum_id,review_status,note\np:a,rejected,"two\nlines"\n'
+                    "p:b,accepted,\n", encoding="utf-8")
+    sheet = read_review_table(path)
+    assert sheet.spectrum_id == ("p:a", "p:b") and sheet.note[0] == "two\nlines"
     for text, message in [
         ("spectrum_id,review_K\np:a,two\n", "row 2: review_K 'two'"),
         ("spectrum_id,review_K\np:a,1.5\n", "row 2: review_K '1.5'"),

@@ -4,7 +4,10 @@
 An amide is counted by its position in the parent (the peptide or protein that was labelled):
 residue ``i`` contributes its backbone N-H unless it is a proline or one of the parent's first
 ``nterm_subtract`` residues (whose N-H is the N-terminal amine, or back-exchanges too fast to be
-kept). A fragment ion carries the N-H of the residues it contains, except at the cleavage site:
+kept). ``nterm_subtract`` applies to a free amine only: with an acetylated N-terminus (``Ac-``)
+residue 1 has a backbone amide like any other, and none is subtracted (as :mod:`hxex.kint` rates it;
+a deliberate difference from pyHXExpress, docs/PLAN.md). A fragment ion carries the N-H of the
+residues it contains, except at the cleavage site:
 
 - N-terminal ions of ``L`` residues hold residues ``1..L``; a c ion also holds the N-H of
   residue ``L + 1`` (the N-Calpha bond is cut, so the next residue's amide nitrogen goes with
@@ -44,6 +47,7 @@ from .modifications import (
     ChemistryError,
     ModificationRegistry,
     parse_sequence,
+    split_termini,
 )
 from .spec import ModificationSpec
 
@@ -99,6 +103,12 @@ class AmideRules:
 DEFAULT_AMIDE_RULES = AmideRules()
 
 
+def effective_nterm_subtract(sequence: str, nterm_subtract: int) -> int:
+    """``nterm_subtract`` for a peptide (or N-terminal ion) ``sequence``: 0 when its N-terminus
+    is acetylated (``Ac-``), whose residue 1 keeps its amide; ``nterm_subtract`` otherwise."""
+    return 0 if split_termini(sequence)[0] == "Ac-" else nterm_subtract
+
+
 def _exchanges(label: str, position: int, nterm_subtract: int,
                registry: ModificationRegistry) -> bool:
     """Whether the residue ``label`` at ``position`` (1-based) in the parent has an exchanging
@@ -120,6 +130,7 @@ def amide_positions(
     whole parent for parent-type ions. A fragment is 1 to ``n - 1`` residues long (``n`` would
     be the parent)."""
     residues = parse_sequence(parent, registry)
+    nterm_subtract = effective_nterm_subtract(parent, nterm_subtract)
     n = len(residues)
     side = ion_terminus(ion_type)
     if side == "M":
@@ -147,25 +158,30 @@ def count_amides(
     rules: AmideRules = DEFAULT_AMIDE_RULES,
     registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
     parent_pos: int | None = None,
+    parent_nterm: str = "H-",
 ) -> int:
     """Number of exchanging backbone amides of the ion ``ion_type`` whose residues are
     ``sequence``, as :func:`amide_positions` places them in the parent.
 
-    Residues are tokenised (``acK`` is one residue). For a peptide (``M``) and an N-terminal
-    ion, the sequence starts the parent: its first ``nterm_subtract`` residues and its prolines
-    do not count. A c ion also counts the next residue's N-H (not part of ``sequence``; it is
-    taken not to be a proline, at which electron-based dissociation does not cleave, so
-    :func:`hxex.fragments.fragment_entries` leaves such c ions out) unless that residue is
-    among the first ``nterm_subtract``. For a C-terminal ion, ``parent_pos`` is the position in
-    the parent of its first residue: only residues of the parent's first ``nterm_subtract``
-    are left out (None: the fragment is taken not to reach them). Then ``int(side_chain_hydrogens
-    * count_sc)`` is added (off by default; a modified residue contributes its base residue's
-    side chain).
+    Residues are tokenised (``acK`` is one residue). For a peptide (``M``) and an N-terminal ion,
+    the sequence starts the parent: its first ``nterm_subtract`` residues (none after an ``Ac-``
+    group) and its prolines do not count. A c ion also counts the next residue's N-H (not part of
+    ``sequence``; it is taken not to be a proline, at which electron-based dissociation does not
+    cleave, so :func:`hxex.fragments.fragment_entries` leaves such c ions out) unless that residue
+    is among the first ``nterm_subtract``. For a C-terminal ion, ``parent_pos`` is the position in
+    the parent of its first residue: only residues of the parent's first ``nterm_subtract`` are left
+    out (None: the fragment is taken not to reach them; none when ``parent_nterm`` is ``Ac-``).
+    Then ``int(side_chain_hydrogens * count_sc)`` is added (off by default; a modified residue
+    contributes its base residue's side chain).
     """
     residues = parse_sequence(sequence, registry)
     length = len(residues)
     side = ion_terminus(ion_type)
+    if side != "C":  # the sequence starts the parent, with its N-terminal group
+        nterm_subtract = effective_nterm_subtract(sequence, nterm_subtract)
     if side == "C":
+        if parent_nterm == "Ac-":  # the parent's N-terminus is capped: nothing subtracted
+            nterm_subtract = 0
         start = parent_pos if parent_pos is not None else nterm_subtract + 1
         first = 0 if rules.keeps_boundary(ion_type) else 1
         n = sum(_exchanges(residues[i], start + i, nterm_subtract, registry)
@@ -207,5 +223,6 @@ def exchangeable_sites(
         rules=rules,
         registry=registry,
         parent_pos=mod.parent_pos if mod is not None else None,
+        parent_nterm=mod.parent_nterm if mod is not None else "H-",
     )
     return n + (mod.hex if mod is not None else 0)

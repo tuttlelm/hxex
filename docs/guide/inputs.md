@@ -369,8 +369,14 @@ What a run holds depends on `time` and `role`:
   `time` as well, the run is a time point that also serves as the control (a long time point
   that has reached full deuteration, for example).
 - **A kinetics run** (neither given): every scan has its own time, the scan time. Used for
-  continuous infusion, where exchange runs while the instrument acquires. A file whose scans do
-  not record their time is refused. See [Experiment types](experiments.md#kinetics).
+  continuous infusion, where exchange runs while the instrument acquires. See
+  [Experiment types](experiments.md#kinetics).
+
+Every scan must record its time (its scan start time) in the file, whichever kind of run it is:
+a file with a scan without one is refused, naming the file. A kinetics run takes the scan times
+as its exchange times, and retention windows choose scans by them, so such a scan would
+otherwise be dropped or kept without notice. Converters such as ThermoRawFileParser and
+msConvert always write the time, so this points to a damaged or unusual file.
 
 The scan-condition keys are for runs acquired differently from the rest. For example, a control
 run acquired with in-source activation throughout takes `filter_excludes = false` while the

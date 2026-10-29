@@ -63,6 +63,13 @@ def test_exchanging_residues_drop_the_n_terminus_and_prolines():
     assert list(exchanging_residues("AKLPGS", 2, 1)) == [3, 4, 6, 7]  # P at 5 left out
     assert list(exchanging_residues("AKLPGS", 2, 2)) == [4, 6, 7]
     assert list(exchanging_residues("ApSK", 10, 1)) == [11, 12]  # pS is one residue
+    assert list(exchanging_residues("Ac-AKLPGS", 1, 1)) == [1, 2, 3, 5, 6]  # Ac-: residue 1
+    # the residue map: residue 1 has an amide where an Ac- peptide starts the protein
+    for peptide, no_amide in (("MAKL", True), ("Ac-MAKL", False)):
+        rm = residue_map(table([("S", peptide, 1, 4.0, 0.3, 0.02)]), sequences=SEQUENCE)
+        first = np.flatnonzero(rm.residue == 1)[0]
+        assert bool(rm.no_amide[first]) is no_amide
+        assert bool(np.isfinite(rm.fD[first])) is not no_amide
 
 
 def test_residue_values_are_the_pyhdx_weighted_mean():
@@ -614,6 +621,8 @@ def test_comparison_plots():
     rc = compare_residues(rm, "R", delta_crit=0.1)
     ann = Annotations(regions=(Region("long region name", 1, 9),), sites=(Site(5, "P5"),))
     fig = residue_comparison_figure(rc, ["V"], 4.0, annotations=ann)
+    with pytest.raises(ValueError, match="no sample to compare"):
+        residue_comparison_figure(rc, [rc.reference], 4.0)
     assert rc.significant[rc.residue == 6].all()  # significance is in the table, not drawn
     assert not any((p.get_gid() or "").startswith("significant:") for p in fig.axes[0].patches)
     pc = PeptideComparison(
@@ -1051,6 +1060,12 @@ def test_analyse_separate_runs(two_sample_bundle, tmp_path, capsys):
     assert rows[0].startswith("comparison,run,sample,")
     assert {tuple(r.split(",")[1:3]) for r in rows[1:]} == {
         ("A", "V"), ("B", "S"), ("B", "V")}  # the compared samples
+    # one bundle given a name keeps it (the single-bundle shortcut is for a bare path)
+    one = tmp_path / "one"
+    assert cli.main(["-q", "analyse", f"A={two_sample_bundle}", "--reference", "A:S",
+                     "--out", str(one), "--format", "png"]) == 0
+    rows = (one / "compare_peptides.csv").read_text().splitlines()
+    assert {r.split(",")[1] for r in rows[1:]} == {"A"}
     project = tmp_path / "hxex.toml"
     project.write_text(f"""project = "p"
 [input]
@@ -1269,6 +1284,12 @@ def test_controls_follow_the_review_and_can_be_recomputed(results, caplog):
     up = species_uptake(results, controls={"d2o_fraction": 0.8, "retention_min": 0.99})
     base = species_uptake(results)
     assert up.control_fallback.all() and not np.allclose(up.fD, base.fD)
+    # a time point promoted by [analysis.controls] leaves the labelled points of the tables
+    last = float(np.nanmax(results.fit.time))
+    assert ((base.role == "") & (base.time == last)).any()
+    promoted = species_uptake(results, controls={"fulldeut_at": last})
+    assert not ((promoted.role == "") & (promoted.time == last)).any()
+    assert (promoted.role == "fulldeut").any()
     with pytest.raises(ValueError, match="unknown control"):
         from hxex.analysis import AnalysisConfig
 
@@ -1527,6 +1548,26 @@ def test_charge_states_of_a_replicate_are_averaged_before_replicates_are_combine
     assert (pc.n_reference[0], pc.n[0]) == (3, 3)
     assert pc.value_reference[0] == pytest.approx(0.51)
     assert pc.value[0] == pytest.approx(np.mean([0.61, 0.59, 0.65]))
+
+
+def test_lever_rule_takes_k1_from_every_charge_state():
+    """A replicate's K=1 value is averaged over every charge state that has one (as in
+    compare_peptides.csv), the K=2 positions over those with both; a charge state fitted at
+    K=1 only no longer leaves the K=1 side."""
+    from hxex.analysis import ChoiceConfig
+    from hxex.analysis.compare import _lever_sides
+    from hxex.analysis.species import Point
+
+    def rec(v, z, rep):
+        return (v, 0.01, np.nan, np.nan, z, 10, rep, False, "")
+
+    key = ("", "S", "PEPTIDE", "", 1, 10, Point((60.0, "")))
+    groups = {(*key, 1, 1): [rec(v, z, r) for r in (1, 2, 3) for z, v in ((2, 0.5), (3, 0.6))],
+              (*key, 2, 1): [rec(0.3, 2, r) for r in (1, 2, 3)],
+              (*key, 2, 2): [rec(0.8, 2, r) for r in (1, 2, 3)]}
+    info = _lever_sides(groups, ChoiceConfig(max_fD_se=1))[("", "S")][
+        ("PEPTIDE", "", 1, 10, 60.0)]
+    assert info["reason"] == "" and info["value"] == pytest.approx((0.8 - 0.55) / 0.5)
 
 
 def test_fragment_series_are_not_corrected(results):

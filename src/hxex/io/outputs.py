@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ._json import dumps as strict_json
+
 log = logging.getLogger(__name__)
 
 LISTING = "hxex_listing.json"
@@ -46,8 +48,8 @@ def _listing(directory: str | Path) -> dict | None:
 
 def output_listing(directory: str | Path) -> list[str] | None:
     """The files hxex wrote into ``directory`` (its listing), or None when it has none."""
-    data = _listing(directory)
-    return None if data is None else [str(f) for f in data.get("files", [])]
+    data = _listing(directory)  # "/" between folders (older Windows listings wrote "\\")
+    return None if data is None else [str(f).replace("\\", "/") for f in data.get("files", [])]
 
 
 def made_from(directory: str | Path) -> dict[str, str] | None:
@@ -66,7 +68,7 @@ def _write_listing(directory: Path, files: Iterable[str],
             "files": sorted(set(files)),
             **({} if made is None else {"made_from": dict(made)})}
     tmp = directory / (LISTING + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(strict_json(data, indent=2) + "\n", encoding="utf-8")
     tmp.replace(directory / LISTING)
 
 
@@ -131,7 +133,7 @@ def replace_outputs(directory: str | Path, names: Iterable[str], *,
     -> the ``created`` stamp of the bundle read; :func:`made_from`) is recorded in the listing
     of an analysis folder, so a later command can tell whether it is out of date."""
     directory = Path(directory)
-    names = sorted(set(names))
+    names = sorted({Path(n).as_posix() for n in names})  # compared with the listing's form
     listed = output_listing(directory)
     owned = set(listed or ()) | {LISTING}
     clash = [n for n in names if n not in owned and (directory / n).exists()]
@@ -151,4 +153,17 @@ def replace_outputs(directory: str | Path, names: Iterable[str], *,
     try:
         yield written
     finally:
-        _write_listing(directory, (str(p.relative_to(directory)) for p in written), made)
+        _write_listing(directory, _relative(directory, written), made)
+
+
+def _relative(directory: Path, paths: Iterable[Path]) -> list[str]:
+    """``paths`` relative to ``directory``, with "/" on every system (a listing moved between
+    systems stays valid); a path outside it is logged and left out (never raised from the
+    ``finally`` that writes the listing, which would hide the error that ended the write)."""
+    out = []
+    for p in paths:
+        try:
+            out.append(Path(p).relative_to(directory).as_posix())
+        except ValueError:
+            log.warning("%s is not in %s: left out of its listing", p, directory)
+    return out

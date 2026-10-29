@@ -195,6 +195,40 @@ def test_the_manifest(written, run):
                                      "bootstrap_draws", "binned", "spectra", "components"])
 
 
+def test_a_zip_is_staged_under_its_own_name(tmp_path, run):
+    raw, binned, meas, fit, boot = run
+    mine = tmp_path / "b.zip.zip"
+    mine.write_text("my file")
+    write_bundle(tmp_path / "b.zip", measurements=meas, fit=fit)
+    assert mine.read_text() == "my file"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["b.zip", "b.zip.zip"]
+
+
+def test_files_hold_strict_json(tmp_path, run):
+    """A value that is not finite (an instrument's resolving power quoted at no m/z) is written
+    as null: no NaN token for strict JSON readers, in the manifest and the spectra file."""
+    import dataclasses
+
+    from hxex.io import save_spectra, spectra_info
+
+    raw, binned, meas, fit, boot = run
+    raw = dataclasses.replace(raw, source={"instruments": [{"resolving_power_mz": float("nan"),
+                                                            "model": "x"}]})
+
+    def strict(text):
+        return json.loads(text, parse_constant=lambda c: pytest.fail(f"{c} in JSON"))
+
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit, spectra=raw,
+                        binned=binned, picker_config=CFG)
+    manifest = strict((path / "manifest.json").read_text())
+    assert manifest["configs"]["spectra_source"]["instruments"][0]["resolving_power_mz"] is None
+    info = spectra_info(save_spectra(raw, tmp_path / "s.parquet"))
+    assert strict(info["source"])["instruments"][0]["resolving_power_mz"] is None
+    with open_bundle(path) as b:
+        b.set_review(b.review())  # rewritten by set_review too
+    strict((path / "manifest.json").read_text())
+
+
 def test_verify_detects_damage_and_loss(written):
     path = written / "fit_k.parquet"
     data = bytearray(path.read_bytes())
@@ -681,6 +715,26 @@ def test_bundles_written_before_the_roles_derive_them_from_their_control_times()
     assert list(legacy_roles(np.array([0.0, 1e6]), {})) == ["", ""]
     current = {"configs": {"controls": {"d2o_fraction": 0.9}, "run": {"controls": None}}}
     assert modernise_manifest(current) == (current, {})
+
+
+def test_a_review_leaves_a_legacy_manifest_as_written(tmp_path, run):
+    """set_review updates only the files of the manifest: the control times of a bundle
+    written before the roles stay where modernise_manifest promises to leave them."""
+    raw, binned, meas, fit, boot = run
+    path = write_bundle(tmp_path / "r", measurements=meas, fit=fit)
+    manifest = json.loads((path / "manifest.json").read_text())
+    legacy = {"undeut_time": 0.0, "fd_time": 1e6, "atol": 1e-6}
+    manifest["configs"]["controls"] = {**(manifest["configs"].get("controls") or {}), **legacy}
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    sid = str(fit.spectrum_id[0])
+    with open_bundle(path) as b:
+        assert "undeut_time" not in b.manifest["configs"]["controls"]  # modernised in memory
+        b.set_review(ReviewTable.empty().update(sid, status="rejected"))
+    after = json.loads((path / "manifest.json").read_text())
+    assert legacy.items() <= after["configs"]["controls"].items()
+    assert "review.parquet" in after["files"]
+    with open_bundle(path) as b:
+        assert b.review().status_of(b.fit())[0] == "rejected"
 
 
 def test_the_role_is_stored_in_every_per_spectrum_table(tmp_path, run):

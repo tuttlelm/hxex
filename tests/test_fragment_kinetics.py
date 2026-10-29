@@ -133,6 +133,9 @@ def test_differences_match_scans_within_their_condition():
     # without a condition, scans pair only within their own condition (both averaged)
     both = difference_trace(shifted, "c:5", "c:4")
     assert len(both) == len(TIMES) and np.allclose(both.mean, residue_d(both.time, 16))
+    # nor across parents: fragments of another parent with the other keys equal are not paired
+    shifted.parent[harsh & (shifted.fragment == "c:4")] = "OTHERPEPTIDE"
+    assert len(difference_trace(shifted, "c:5", "c:4", condition="harsh")) == 0
 
 
 def test_decay_fit_edge_cases():

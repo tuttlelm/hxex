@@ -328,15 +328,21 @@ class ThermoFile:
         self._rows: list[Scan] | None = None
         self._table: ScanTable | None = None
 
+    def _open(self):
+        """The reader; a file closed already raises :class:`ThermoError`."""
+        if self._reader is None:
+            raise ThermoError(f"{self.path}: the file is closed")
+        return self._reader
+
     @property
     def reader_version(self) -> str:
         """The RawFileReader that reads the file (recorded with the spectra)."""
-        return self._reader.version
+        return self._open().version
 
     @property
     def instrument(self) -> str:
         """The instrument model (``Orbitrap Ascend``; empty when the file does not say)."""
-        get = getattr(self._reader, "instrument", None)
+        get = getattr(self._open(), "instrument", None)
         return str(get()) if get is not None else ""
 
     @property
@@ -349,7 +355,7 @@ class ThermoFile:
 
     def _scan_rows(self) -> list[Scan]:
         if self._rows is None:
-            r = self._reader
+            r = self._open()
             self._rows = [scan_from_info(r.info(n), r.first) for n in range(r.first, r.last + 1)]
         return self._rows
 
@@ -363,13 +369,13 @@ class ThermoFile:
     ) -> dict[int, Scan]:
         """The scans at the positions ``indices``, with their arrays (only the points inside
         ``mz_windows`` when given), by position."""
-        rows = self._scan_rows()
+        rows, reader = self._scan_rows(), self._open()
         merged = None if mz_windows is None else merge_windows(mz_windows)
         out = {}
         for i in sorted({int(i) for i in indices}):
             if not 0 <= i < len(rows):
                 raise ThermoError(f"{self.path}: no scan {i}")
-            mz, y = self._reader.arrays(self._reader.first + i)
+            mz, y = reader.arrays(reader.first + i)
             if len(mz) > 1 and np.any(np.diff(mz) < 0):
                 order = np.argsort(mz, kind="stable")
                 mz, y = mz[order], y[order]

@@ -35,7 +35,8 @@ KMEANS_PSEUDO_COUNTS = 1000.0
 
 
 class FitError(RuntimeError):
-    """The fit failed for every measurement (non-finite in every restart)."""
+    """The fit failed for every measurement (non-finite in every restart), or cannot start (a
+    noise scale that is not positive)."""
 
 
 @dataclass
@@ -94,6 +95,11 @@ def prepare(
     of that measurement, so its fit does not depend on the other measurements in the batch when
     the keys come from stable ids (:func:`stable_keys`).
     """
+    scale = np.asarray(scale, dtype=np.float64)
+    if not (np.isfinite(scale) & (scale > 0)).all():
+        bad = np.flatnonzero(~(np.isfinite(scale) & (scale > 0)))
+        raise FitError(f"the noise scale must be positive and finite: measurement(s) "
+                       f"{', '.join(map(str, bad[:5]))} have {scale[bad[0]]:g}")
     scaled = [np.asarray(o, dtype=np.float64) / scale[m] for m, o in enumerate(observed)]
     weights = None
     if bin_variance is not None:

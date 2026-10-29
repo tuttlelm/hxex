@@ -48,6 +48,21 @@ def test_replace_outputs_keeps_your_files_and_replaces_its_own(tmp_path):
     with replace_outputs(out, ["d.txt"]):
         pass
     assert output_listing(out) == [] and not (out / "d.txt").exists()
+    # files in a sub-folder are listed with "/" (a listing written on Windows with "\\" is
+    # read the same); a path outside the folder is left out, not raised over the real error
+    with pytest.raises(RuntimeError, match="stopped"):
+        with replace_outputs(out, ["sub/f.txt"]) as written:
+            (out / "sub").mkdir()
+            (out / "sub" / "f.txt").write_text("f")
+            written += [out / "sub" / "f.txt", tmp_path / "elsewhere.txt"]
+            raise RuntimeError("stopped")
+    assert output_listing(out) == ["sub/f.txt"]
+    text = (out / LISTING).read_text().replace("sub/f.txt", "sub\\\\f.txt")
+    (out / LISTING).write_text(text)
+    assert output_listing(out) == ["sub/f.txt"]
+    with replace_outputs(out, ["sub/f.txt"]):
+        pass
+    assert not (out / "sub" / "f.txt").exists()
     # a folder with files but no listing (written before, or yours): only a clash is refused
     legacy = tmp_path / "legacy"
     legacy.mkdir()

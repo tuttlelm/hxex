@@ -452,6 +452,7 @@ def _ranges(value) -> tuple[str, ...] | None:
 
 def _region(value) -> tuple[int, int] | None:
     """``[input] peptide_region``: ``[first, last]``, residue numbers, first <= last."""
+    value = _none(value)
     if value is None:
         return None
     if (not isinstance(value, list) or len(value) != 2
@@ -659,7 +660,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         if extra:
             raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are for mzml and "
                                f"thermo, not {fmt}")
-        if "data_dir" not in data and not stored:
+        if _none(data.get("data_dir")) is None and not stored:
             raise ProjectError(f"input.data_dir is needed for {fmt}")
         _record_paths(data, ("path", "name"), fmt)
         return InputSettings(
@@ -966,8 +967,8 @@ def _analysis_from(data: Mapping, base: Path):
             if not isinstance(values["choice"], Mapping):
                 raise TypeError("choice must be a table")
             # the keys not given take the defaults of the populations rule
-            base = choice_defaults(values.get("populations", "best_set")).to_dict()
-            values["choice"] = {**base, **values["choice"]}
+            defaults = choice_defaults(values.get("populations", "best_set")).to_dict()
+            values["choice"] = {**defaults, **values["choice"]}
         return AnalysisConfig.from_dict(values)
     except (TypeError, ValueError, AttributeError) as exc:
         raise ProjectError(f"[analysis]: {exc}") from exc
@@ -1165,21 +1166,21 @@ def stored_spectra_source(path: str | Path) -> dict | None:
     """The read record of the raw spectra stored in ``path`` (a bundle, as a directory or
     ``.zip``, or a spectra file of :func:`hxex.io.save_spectra`), without reading the
     spectra; None when they have none. A bundle without raw spectra is an error."""
-    from .io import BundleError, open_bundle, spectra_info
+    from .io import BundleError, ReadError, open_bundle, spectra_info
+    from .io.spectra_file import read_source
 
     path = Path(path)
     if not path.exists():
         raise ProjectError(f"input.spectra: {path} does not exist")
     try:
         if _is_spectra_file(path):
-            source = spectra_info(path).get("source")
-            return None if not source else json.loads(source)
+            return read_source(spectra_info(path), path)
         with open_bundle(path) as b:
             if not b.has("spectra"):
                 raise ProjectError(f"input.spectra: the bundle {path} holds no raw spectra "
                                    "(it was written with keep_spectra = false)")
             return b.spectra_source()
-    except BundleError as exc:
+    except (BundleError, ReadError) as exc:
         raise ProjectError(f"input.spectra: {exc}") from exc
 
 
@@ -1341,7 +1342,8 @@ _COMMENTS: dict[str, str] = {
     "run.picker.env_threshold": "fraction of the tallest bin at which the envelope width is "
                                 "measured",
     "run.picker.nterm_subtract": "N-terminal residues without an exchanging amide (the amide "
-                                 "count bounds the bins)",
+                                 "count bounds the bins); none after an acetylated N-terminus "
+                                 "(Ac-), whose residue 1 keeps its amide",
     "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window) '
                        'or "window_max" (the tallest point in the window, as pyHXExpress)',
     "run.picker.measure": 'the value a picked peak gives its bin: "auto" (areas when the run\'s '
@@ -1749,9 +1751,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     run = RunConfig().to_dict()
     lines = [
         "# hxex project file (TOML). A key left out keeps its default; false stands for",
-        "# \"not set\" where a setting can be unset (a switch set to false is off). The",
-        "# control times of [run.controls] left out are the input's. Relative paths are",
-        "# relative to this file.",
+        "# \"not set\" where a setting can be unset (a switch set to false is off).",
+        "# Relative paths are relative to this file.",
         "",
         f'project = "{project}"              # prefixes every spectrum id',
         "# threads = 12                    # CPU threads (default: PyTorch's, the physical",
