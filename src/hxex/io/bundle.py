@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 
 from ..bootstrap import BootstrapConfig, BootstrapDraws, BootstrapResult, interval_table
 from ..controls import ControlConfig, ControlTable, correct_means
+from ..deamidation import Deamidation
 from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..fit.measurements import measurement_identity
 from ..noise import ControlsNoise, NoiseEstimate
@@ -390,6 +391,8 @@ def _controls_table(c: ControlTable) -> pa.Table:
         meta[b"limits"] = strict_json(dict(c.limits))
     if c.screened is not None:  # the control spectra the screens left out
         meta[b"screened"] = strict_json(list(c.screened))
+    if c.deamidation is not None:  # the fully deuterated controls' deamidation
+        meta[b"deamidation"] = strict_json(c.deamidation.to_dict())
     if meta:
         table = table.replace_schema_metadata(meta)
     return table
@@ -410,6 +413,8 @@ def _read_controls(table: pa.Table, config: dict) -> ControlTable:
             b"fd_model") else None,
         limits=json.loads(meta[b"limits"]) if meta.get(b"limits") else None,
         screened=tuple(json.loads(meta[b"screened"])) if meta.get(b"screened") else None,
+        deamidation=(Deamidation.from_dict(json.loads(meta[b"deamidation"]))
+                     if meta.get(b"deamidation") else None),
     )
 
 

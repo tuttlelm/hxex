@@ -327,6 +327,8 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `fd_other_charge` | true/false | `true` | with combine_charges = false: a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states, before fd_fallback |
 | `fd_other_sample` | true/false | `true` | a series without a good fully deuterated control at any charge takes the same peptide's retention in the run's other samples (fd_other_sample), before the retention map and fd_fallback |
 | `fd_retention_map` | true/false | `true` | next, the retention of the overlapping peptides with good controls, fitted residue by residue (fd_map), before fd_fallback; needs peptide positions |
+| `deamidation` | true/false | `false` | fully deuterated controls heated near neutral pH: where a sample's Asn-Gly peptides read deamidated (from the peaks' m/z), lower their controls by the share (fd_deamidated) |
+| `deamidation_min_share` | number | `0.25` | the deamidated share (0 to 1) from which a sample's Asn-Gly controls are corrected |
 | `replicate_outlier` | number | `6.0` | a control replicate this many typical replicate sd from its replicates' median (three or more) is left out of the control's mean (one above the amide count always is); unset: off |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
 | `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |

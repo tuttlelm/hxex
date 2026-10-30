@@ -5307,3 +5307,34 @@ CSVs or mzML if wanted.
       `stand_in_controls = "other_sample"` keeps the `fd_other_sample` series (as close as the
       peptide's charge states) and leaves out the map and the run-level stand-ins; the default
       stays "exclude". The protection fit's start is unchanged (every stand-in fits fD0).
+
+197. **Deamidated fully deuterated controls built, from the mass alone (2026-10-30; private
+     analysis_examples/rho_fd, README "Build check").**
+    - Correction to 196: the "+1-bin share 0.64 / 0.58" is not a deamidated share. A binomial of
+      n sites mixed with a share p of itself one bin up is exactly a binomial of n + 1 sites, so
+      the shift-share fit returns phi = p whenever one more site fits better (any envelope wider
+      than a binomial); the evaluation's optimiser started at p 0.6. Searching every p, the
+      built fit gives other optima (benchmark 0.12-0.19 relative share, with uniform or per-bin
+      weights). The envelope share is dropped; evaluations 1-2's share column was this artefact.
+      The mass test stands.
+    - The share from the mass: per series, the FD minus UN picked-peak offset (each relative to
+      the other peptides of its injection) over the shift of a fully deamidated copy
+      (-0.022 Da / M); per sample, the Asn-Gly series' median minus the other series'. Benchmark
+      0.33-0.49 (se 0.06-0.13), tutorial 0.37-0.57 (se 0.08-0.13), noisy set -0.10 to +0.07,
+      Orbitrap digest 0.00 (se 0.02); other series' median within 0.02 of 0 everywhere; a
+      same-size null's 99th percentile 0.02-0.23. Nested pairs (evaluation 3) with the mass
+      share removed: 20 h 0.67-0.91, none above 1 (within 0.03 of the envelope version).
+    - BUILT (owner, 2026-10-30): `hxex.deamidation`; `[run.controls] deamidation` (default
+      false) and `deamidation_min_share` (0.25); candidates Asn-Gly, or a C-terminal Asn with
+      Gly next in an overlapping peptide of the same sample (not FASTA: the run has none);
+      a deamidated sample's Asn-Gly FD control spectra are lowered by the share before every
+      check, replicate checks included (a control just above its amide count only because of
+      the deamidated share is kept), as whole bins (the fit's unit; 0.984 would leave 1.6 % of
+      the shift); flag `fd_deamidated` (a note, still measured); `series.csv`
+      `deamidated_share`; the assessment in the controls table's metadata; also in
+      `[analysis.controls]`. Not assessed: tables picked elsewhere (no offsets), samples with
+      fewer than two Asn-Gly or two other series with both controls. Dropped from the design:
+      `deamidation_min_mass` and `deamidation_not_confirmed` (one measure now). On the
+      benchmark every Asn-Gly series of the five samples is corrected (median retention 0.67
+      -> 0.65), the others unchanged except five map stand-ins (under 0.0001); tutorial 0.60
+      -> 0.58; 0.4 s per bundle.

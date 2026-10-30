@@ -17,6 +17,11 @@ passes them through), is flagged ``uncorrected`` and takes no part in the run's 
 median or theoretical fit (owner, 2026-10-21: the fragments' correction may belong at the
 parent level, still to be designed).
 
+With ``deamidation`` (opt-in), the fully deuterated controls of the Asn-Gly peptides of a
+sample whose controls read deamidated (:mod:`hxex.deamidation`) have their mean lowered by the
+deamidated share before anything is checked (flagged ``fd_deamidated``, a note): they stay the
+series' own, measured controls.
+
 Each control falls back to its theoretical value, and the series is flagged, on its own:
 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
@@ -88,6 +93,7 @@ import numpy as np
 from scipy import stats
 from scipy.stats import norm
 
+from .deamidation import Deamidation
 from .fit.result import FitResult
 from .io.times import format_time
 from .kint import ExchangeConditions
@@ -99,7 +105,7 @@ FD_FALLBACKS = ("d2o", "median", "kint")
 # flags that only warn (the control stays in use)
 CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0",
                  "fd_retention_agrees", "fd_charges_disagree", "m0_replicate_left_out",
-                 "fd_replicate_left_out", "fd_charges_agree")
+                 "fd_replicate_left_out", "fd_charges_agree", "fd_deamidated")
 
 
 @dataclass(frozen=True)
@@ -175,6 +181,11 @@ class ControlConfig:
       still ``fallback``); skipped when fewer than half of its amides are covered. Needs the
       peptides' residue positions (:func:`series_residues`). Median error 0.022-0.032 for a
       peptide measured in no sample (owner, 2026-10-30).
+    - ``deamidation`` (opt-in): the fully deuterated controls of a sample whose Asn-Gly
+      peptides read deamidated (a heated preparation near neutral pH; :mod:`hxex.deamidation`,
+      from the picked peaks' m/z) keep their own control with its mean lowered by the
+      deamidated share (flagged ``fd_deamidated``), before the checks;
+      ``deamidation_min_share``: the share from which a sample counts as deamidated.
     - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
       the analysis may change it for its own controls (``[analysis.controls]``).
     - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
@@ -207,6 +218,8 @@ class ControlConfig:
     fd_other_charge: bool = True
     fd_other_sample: bool = True
     fd_retention_map: bool = True
+    deamidation: bool = False
+    deamidation_min_share: float = 0.25
     replicate_outlier: float | None = 6.0
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
@@ -248,7 +261,10 @@ class ControlConfig:
                                  "serve as the control instead of the marked ones)")
         if not 0 < self.d2o_fraction <= 1:
             raise ValueError("d2o_fraction must be in (0, 1]")
-        for name in ("fd_other_charge", "fd_other_sample", "fd_retention_map"):
+        if (isinstance(self.deamidation_min_share, bool)
+                or not 0 < self.deamidation_min_share <= 1):
+            raise ValueError("deamidation_min_share must be a share in (0, 1]")
+        for name in ("fd_other_charge", "fd_other_sample", "fd_retention_map", "deamidation"):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be true or false")
         if not isinstance(self.combine_charges, bool):
@@ -344,7 +360,10 @@ class ControlTable:
     before it (judged by half of ``d2o_fraction``). ``screened`` is the spectrum ids of the
     control spectra the spectrum quality screens left out (the run: the loose level's
     removals; the analysis: its own level's); None when nothing was screened (bundles written
-    before the run screened its controls).
+    before the run screened its controls). ``deamidation`` is the assessment of the fully
+    deuterated controls' Asn-Gly peptides (:class:`hxex.deamidation.Deamidation`; None when
+    ``deamidation`` is off); ``mfd_measured`` is then the replicate mean less the deamidated
+    share for the series flagged ``fd_deamidated``.
     """
 
     config: ControlConfig
@@ -364,6 +383,7 @@ class ControlTable:
     fd_model: Mapping[str, Any] | None = None
     limits: Mapping[str, Any] | None = None
     screened: tuple[str, ...] | None = None
+    deamidation: Deamidation | None = None
 
     def __len__(self) -> int:
         return len(self.data_id)
@@ -524,6 +544,7 @@ def fit_controls(
     uncorrected: Collection[int] = (),
     screened: np.ndarray | None = None,
     residues: Mapping[int, tuple] | None = None,
+    deamidation: Deamidation | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -546,9 +567,13 @@ def fit_controls(
     :func:`fragment_ids`) are not corrected and take no part in the others' checks.
     ``screened`` (``(M,)`` bool) marks the control spectra the spectrum quality screens remove
     (:mod:`hxex.analysis.screening`): left out like unusable ones, and recorded by id
-    (``ControlTable.screened``).
+    (``ControlTable.screened``). ``deamidation`` (with ``config.deamidation``;
+    :func:`hxex.deamidation.deamidation_from_picked`) lowers the fully deuterated mean of the
+    Asn-Gly series of a deamidated sample by its share before the checks (``fd_deamidated``).
     """
     uncorrected = {int(d) for d in uncorrected}
+    if not config.deamidation:
+        deamidation = None
     if 1 not in fit.fits:
         raise ValueError("the controls come from the K=1 fits: fit with k_min=1")
     if config.fd_mode == "kint" and rates is None:
@@ -585,6 +610,17 @@ def fit_controls(
                               (FULLDEUT, config.fulldeut_at, config.fulldeut_marked)):
         if not marked:  # only the spectra at the given time serve (apply_control_roles)
             serves[label] &= time_point(fit.time) == time_point([at])[0]
+
+    # a deamidated share sits one bin up (hxex.deamidation): the fully deuterated control
+    # spectra of those series are lowered by it before any check, their replicates' included
+    lowered: dict[int, float] = {}
+    if deamidation is not None:
+        means = means.copy()
+        for d in np.unique(fit.data_id):
+            shift = deamidation.shift(int(d)) if int(d) not in uncorrected else 0.0
+            if shift > 0:
+                lowered[int(d)] = shift
+                means[(fit.data_id == d) & serves[FULLDEUT]] -= shift
 
     # every spectrum serving as a control needs its K = 1 fit: the run makes one for the
     # spectra with a role, but not for a time point promoted only afterwards (an
@@ -653,7 +689,7 @@ def fit_controls(
             for name, value in values.items():
                 cols[name].append(value)
             continue
-        flags: list[str] = []
+        flags: list[str] = ["fd_deamidated"] if n_f > 0 and lowered.get(int(s)) else []
         for label, name in ((UNDEUT, "m0_replicate_left_out"), (FULLDEUT, "fd_replicate_left_out")):
             if ((left_out[rows] | noisy[rows]) & serves[label][rows]).any():
                 flags.append(name)
@@ -766,7 +802,7 @@ def fit_controls(
         retention=np.array(cols["retention"], dtype=np.float64),
         fallback=np.array(cols["fallback"], dtype=bool),
         flags=np.array(cols["flags"], dtype=str),
-        fd_model=fd_model, limits=limits, screened=screened_ids,
+        fd_model=fd_model, limits=limits, screened=screened_ids, deamidation=deamidation,
     )
 
 

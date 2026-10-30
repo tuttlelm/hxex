@@ -404,9 +404,20 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
             rules=picker.amide_rules if picker is not None else None,
             registry=results.settings.run.registry if run is not None else None,
             fragments=scan_fragments)
+    deamidation = None
+    if config.deamidation:
+        if charges is None:
+            log.warning("deamidation: not assessed (the bundle has no picked table)")
+        else:
+            from ..deamidation import deamidation_from_picked
+            deamidation = deamidation_from_picked(
+                results.binned, fit.spectrum_id, fit.role, usable & ~screened, charges,
+                residues, min_share=config.deamidation_min_share,
+                registry=results.settings.run.registry if run is not None else None)
     out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
                        groups=groups, charges=charges, uncorrected=fragments,
-                       screened=screened if n_screened else None, residues=residues)
+                       screened=screened if n_screened else None, residues=residues,
+                       deamidation=deamidation)
     for k in [k for k, (ref, _) in _RECOMPUTED.items() if ref() is None]:
         del _RECOMPUTED[k]
     _RECOMPUTED[key] = (weakref.ref(results), out)

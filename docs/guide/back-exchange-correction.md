@@ -170,3 +170,54 @@ out with the reason `stand-in control (screened)`.
 
 The same control settings in `[analysis.controls]` recompute the values for an analysis of an
 existing bundle.
+
+## Deamidated fully deuterated controls
+
+Many protocols make the fully deuterated control by heating the protein with a denaturant
+(urea or guanidine) near neutral pH. Heat at that pH also *deamidates* asparagine (Asn, N):
+the Asn turns into aspartate (Asp, D), and the peptide becomes 0.984 Da heavier. That is almost
+exactly one deuteron (1.006 Da), so the deamidated molecules land one bin up in the envelope,
+and the control reads as if it held more deuterium than it does. Its retention is then too
+high, and every corrected value of that peptide too low. The undeuterated control and the
+labelled samples are not heated, so they are not affected.
+
+The fastest site by far is an Asn followed by glycine (Asn-Gly, NG): unfolded, it deamidates
+about ten times faster than an Asn followed by serine or histidine, and faster still than the
+other pairs. Heating that turns half of an Asn-Gly site would change Asn-Ser or Asn-His by
+around a tenth and the others by a few percent, so *hxex* looks at Asn-Gly only. Heat and pH
+matter far more than the denaturant: the reaction is slowest around pH 3 to 5, and phosphate
+buffer speeds it up. Heating at low pH, or for a shorter time, avoids most of it.
+
+*hxex* can measure it from the mass. Turn it on in the project file:
+
+```toml
+[run.controls]
+deamidation = true
+```
+
+The deamidated molecule is 0.022 Da lighter than a deuterated one, so the peaks of a deamidated
+control sit a few ppm lower in m/z than the undeuterated control's. For each sample, *hxex*
+compares that difference in the peptides holding an Asn-Gly site with the same difference in
+the sample's other peptides, and turns it into the deamidated share: the fraction of the
+molecules that were deamidated. When the share is at least 0.25 (`deamidation_min_share`),
+every fully deuterated control of the sample's Asn-Gly peptides is lowered by that share before
+it is checked and used. The control is still the series' own measurement, so the series is not
+marked as a stand-in; `control_notes` in `series.csv` says `fd_deamidated`, and the
+`deamidated_share` column gives the sample's share. The log names the share of every sample it
+assessed.
+
+On two datasets of one protein whose fully deuterated controls were heated at 90 °C in a pH 7.5
+phosphate buffer, the share was 0.33 to 0.57 per sample, the same in every peptide holding its
+Asn-Gly site, and close to 0 in every other peptide. Datasets whose controls were made
+otherwise read close to 0 throughout.
+
+Limits:
+
+- It needs the peaks' positions, so it works on spectra *hxex* picks itself. A table of peaks
+  picked by another program has no positions to compare, and the samples are then not
+  assessed.
+- A sample needs at least two Asn-Gly series and two other series with both controls.
+- A peptide that ends in an Asn counts when another peptide of the same sample shows that the
+  next residue in the protein is a glycine.
+- The setting is off by default. Turn it on when your fully deuterated controls were heated,
+  and look at the shares in the log: a share near 0 means nothing was changed.

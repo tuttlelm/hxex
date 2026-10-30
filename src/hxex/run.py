@@ -472,7 +472,7 @@ def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None, chosen=None,
-    residues=None,
+    residues=None, deamidation=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -488,7 +488,9 @@ def _fit_part(
     here from every undeuterated control of ``data``, once for all the chunks. ``screened``:
     the control spectra the spectrum quality screens remove at the loose level
     (:func:`hxex.analysis.screening.control_removal`), left out of the controls. ``chosen``
-    (spectrum id -> K, a review table's choices): fitted whatever the screen says."""
+    (spectrum id -> K, a review table's choices): fitted whatever the screen says.
+    ``deamidation``: the fully deuterated controls' deamidation
+    (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is None and config.fit.noise.estimate == "controls":
         from .noise import controls_noise
@@ -529,7 +531,8 @@ def _fit_part(
             n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
                                 groups=groups, charges=charges, uncorrected=fragments,
-                                screened=screened, residues=residues)
+                                screened=screened, residues=residues,
+                                deamidation=deamidation)
         if screened is not None and screened.any():
             log.info("controls: %d control spectra left out by the spectrum quality screens "
                      "(the loose level of [analysis.filters] spectrum_quality_filtering)",
@@ -916,14 +919,21 @@ def run(
                                fragments=scan_fragments)
     from .analysis.screening import control_removal
 
+    screened = control_removal(picked, fragments)
+    deamidation = None
+    if config.controls is not None and config.controls.deamidation:
+        from .deamidation import deamidation_from_picked
+        deamidation = deamidation_from_picked(
+            picked, measurements.spectrum_id, measurements.role, ~screened, charges, residues,
+            min_share=config.controls.deamidation_min_share, registry=config.registry)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality, test = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], rates,
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
                                              charges=charges, fragments=fragments,
-                                             residues=residues,
-                                             screened=control_removal(picked, fragments),
+                                             residues=residues, deamidation=deamidation,
+                                             screened=screened,
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),

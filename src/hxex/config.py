@@ -1477,6 +1477,11 @@ _COMMENTS: dict[str, str] = {
     "run.controls.fd_retention_map": "next, the retention of the overlapping peptides with good "
                                      "controls, fitted residue by residue (fd_map), before "
                                      "fd_fallback; needs peptide positions",
+    "run.controls.deamidation": "fully deuterated controls heated near neutral pH: where a "
+                                "sample's Asn-Gly peptides read deamidated (from the peaks' "
+                                "m/z), lower their controls by the share (fd_deamidated)",
+    "run.controls.deamidation_min_share": "the deamidated share (0 to 1) from which a sample's "
+                                          "Asn-Gly controls are corrected",
     "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '

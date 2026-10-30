@@ -762,7 +762,8 @@ Planned, not built:
    populations more often in their labelled spectra. Open (owner): a flag, or carrying each
    series' measured width into its fits and the population test's null, or nothing. The
    wide controls of one protein turned out to be deamidation during the heated FD preparation
-   (HISTORY 196; design in docs/ANALYSIS.md, not built), and the FD stand-ins were improved
+   (HISTORY 196; an opt-in correction from the peaks' m/z is built, HISTORY 197), and the FD
+   stand-ins were improved
    (the same peptide in other samples, a retention map; built, HISTORY 196).
 
 ## Risks and open decisions

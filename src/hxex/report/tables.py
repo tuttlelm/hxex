@@ -325,7 +325,10 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     fragment ion, or the fallback reasons; empty without controls), ``control_notes`` (the
     control flags that only warn, :data:`hxex.controls.CONTROL_NOTES`), ``retention`` (the
     deuterium retention used for the back-exchange correction, a fraction; NaN without
-    controls), ``control_fallback`` (the correction used a fallback, not the series' own
+    controls), ``deamidated_share`` (with ``[run.controls] deamidation``, for a series holding
+    an Asn-Gly site: its sample's deamidated share of the fully deuterated controls,
+    :mod:`hxex.deamidation`; NaN otherwise or when not assessed), ``control_fallback`` (the
+    correction used a fallback, not the series' own
     controls), ``noise_reference`` (what its noise level comes from: ``undeuterated control``,
     ``own spectrum`` when no undeuterated control of the series was fitted, or ``run's scans``
     for kinetics; :func:`hxex.noise.noise_reference_kinds`) and ``rt`` (the median
@@ -339,8 +342,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     multi = results.effective_K > 1
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
-        "n_rejected", "n_multi", "controls", "control_notes", "retention", "control_fallback",
-        "noise_reference", "rt")}
+        "n_rejected", "n_multi", "controls", "control_notes", "retention", "deamidated_share",
+        "control_fallback", "noise_reference", "rt")}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     uncorrected = ctrl.uncorrected if ctrl is not None else np.zeros(0, dtype=bool)
@@ -363,6 +366,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
                                               else str(ctrl.flags[r])),
             "control_notes": "" if r is None else _control_notes(str(ctrl.flags[r])),
             "retention": np.nan if r is None else float(ctrl.retention[r]),
+            "deamidated_share": _deamidated_share(ctrl, int(d)),
             "control_fallback": False if r is None else bool(ctrl.fallback[r]),
             "noise_reference": refs.get(int(d), ""),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),
@@ -451,6 +455,12 @@ def _cell(value) -> str:
     if isinstance(value, (float, np.floating)):
         return "" if np.isnan(value) else repr(float(value))  # inf stays 'inf'
     return str(value)
+
+
+def _deamidated_share(ctrl, data_id: int) -> float:
+    """The deamidated share of the series' sample when it holds an Asn-Gly site (NaN)."""
+    found = None if ctrl is None or ctrl.deamidation is None else ctrl.deamidation.of(data_id)
+    return float("nan") if found is None else float(found.share)
 
 
 def _control_notes(flags: str) -> str:
