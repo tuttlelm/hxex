@@ -1695,6 +1695,15 @@ def test_spectra_left_out_whole_and_why():
     assert (why[first] == "stand-in control").all() and not out[~first].any()
     assert not _left_out(results, SpeciesFilters(stand_in_controls="include"), one, n_am,
                          keep)[0].any()
+    # "other_sample" keeps a series that took the same peptide's control in another sample,
+    # and still leaves out the retention map and the run-level stand-ins
+    other = SpeciesFilters(stand_in_controls="other_sample")
+    for stand_in, kept in (("fd_missing;fd_other_sample", True), ("fd_missing;fd_map", False),
+                           ("fd_missing;fd_median", False)):
+        flags[0] = stand_in
+        out = _left_out(results, other, dataclasses.replace(controls, flags=flags.astype(str)),
+                        n_am, keep)[0]
+        assert out[first].any() != kept and not out[~first].any()
     every = dataclasses.replace(controls, flags=np.full(len(controls), "fd_missing;fd_median"))
     assert not _left_out(results, SpeciesFilters(), every, n_am, keep)[0].any()
     with pytest.raises(ValueError, match="stand_in_controls"):

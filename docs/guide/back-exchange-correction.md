@@ -102,13 +102,27 @@ replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_
    checked against each charge state's own time course, as a measured control is: a charge
    state whose time points it would put below keeps its own control if that passed its
    checks; one without a good control of its own is rejected (`fd_below_data`) and takes the
-   run's value (step 2) instead.
+   next value below (steps 2 to 4) instead.
 
    To correct each charge state with its own control instead, set `combine_charges = false`
    in `[run.controls]`. A charge state without one then takes the mean of the peptide's other
    charge states (`fd_other_charge`, a stand-in, checked against its time course in the same
    way), unless `fd_other_charge = false` too.
-2. A value for the whole run, chosen by `fd_fallback`:
+2. The same peptide in the run's other samples (`fd_other_sample`): the mean retention of its
+   accepted fully deuterated controls there. The samples of one run share the peptide and the
+   LC, so this is close: in three datasets it predicted a peptide's measured retention to
+   within 0.006 to 0.012 (median), against 0.040 to 0.054 for the run's median. It needs the
+   same sequence and modification, so a peptide that carries a sample's mutation has no match.
+   Set `fd_other_sample = false` in `[run.controls]` to skip this step.
+3. A retention map of the overlapping peptides (`fd_map`). *hxex* takes the peptides that
+   overlap this one, have an accepted control, and agree with its sequence where they overlap,
+   fits a retention to each residue so that every one of those peptides' retention is the mean
+   over its amides, and averages the residues of this peptide. It needs the peptides'
+   positions in the protein, and at least half of the peptide's amides covered by such
+   peptides; otherwise the next step applies. In the same three datasets it predicted a
+   peptide that had no control in any sample to within 0.022 to 0.032 (median). Set
+   `fd_retention_map = false` to skip it.
+4. A value for the whole run, chosen by `fd_fallback`:
    - Without quench conditions (the default, `"median"`): the median retention of the run's
      accepted controls (`fd_median`). When no control is accepted: the D₂O fraction of the
      labelling buffer (`d2o_fraction`), which means no back-exchange correction.
@@ -122,7 +136,7 @@ replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_
      cases out of ten, even with one bad control among them.
    - `fd_fallback = "d2o"`: the D₂O fraction.
 
-Step 2 is a stand-in, so the series is marked `control_fallback`. A value from another
+Steps 2 to 4 are stand-ins, so the series is marked `control_fallback`. A value from another
 charge state of the same peptide (step 1) is the peptide's own measurement, so it is not a
 stand-in, and the protection-factor fit treats it as measured (see
 [Protection factors](protection-factors.md)).
@@ -131,7 +145,10 @@ stand-in, and the protection-factor fit treats it as measured (see
 (`stand_in_controls = "exclude"` in `[analysis.filters]`, the default): on a large dataset
 they were the series whose corrected values most often went above full deuteration. A sample
 with no measured fully deuterated control at all keeps them, since every one of its series
-uses one. Set `stand_in_controls = "include"` to keep them everywhere. The run's own tables
+uses one. Set `stand_in_controls = "include"` to keep them everywhere, or
+`stand_in_controls = "other_sample"` to keep only those that took the same peptide's control in
+another sample of the run (step 2): that stand-in is about as close as the peptide's own charge
+states, while the map and the run-wide value are not. The run's own tables
 and uptake plots always show every series.
 
 The same setting leaves out a series whose undeuterated control was rejected as too heavy

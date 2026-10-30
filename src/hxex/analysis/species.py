@@ -70,11 +70,15 @@ class SpeciesFilters:
       deuterated control is a stand-in (the run's median retention, the kint prediction or
       ``d2o_fraction``; not one measured at the peptide's other charge states), except in a
       sample with no measured fully deuterated control at all, whose series all use one
-      (``stand-in control``); ``'include'`` keeps them. A series whose measured controls were
-      all removed by ``spectrum_quality_filtering`` says so (``stand-in control (screened)``).
-      ``'exclude'`` also leaves out the series whose undeuterated control read above
-      ``[run.controls] m0_max`` (``m0_high``: the windows hold another species, which the
-      labelled spectra share; ``stand-in control (undeuterated)``), with no exception for a
+      (``stand-in control``); ``'other_sample'`` leaves them out too but keeps the series that
+      took the same peptide's retention in the run's other samples (``fd_other_sample``, median
+      error 0.006-0.012: as close as the peptide's charge states; owner, 2026-10-30), not the
+      retention map or the run-level stand-ins; ``'include'`` keeps them all. A series whose
+      measured controls were all removed by ``spectrum_quality_filtering`` says so
+      (``stand-in control (screened)``). ``'exclude'`` (and ``'other_sample'``) also leaves
+      out the series whose undeuterated control read above ``[run.controls] m0_max``
+      (``m0_high``: the windows hold another species, which the labelled spectra share;
+      ``stand-in control (undeuterated)``), with no exception for a
       sample (a warning when a sample loses half its series or more). A missing undeuterated
       control (``m0_missing``) is not a reason: 0 stands in for it fairly.
     - ``spectrum_quality_filtering``: what the spectrum quality screens
@@ -139,7 +143,7 @@ class SpeciesFilters:
                              f"{', '.join(SCREEN_LEVELS)}")
 
 
-STAND_IN_CONTROLS = ("exclude", "include")
+STAND_IN_CONTROLS = ("exclude", "other_sample", "include")
 
 
 # a charge trend: the lowest and highest charge differ by more than this many combined standard
@@ -381,10 +385,10 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         picked = results.binned.select(keep)
         rates = control_rates(picked, dataclasses.replace(run, controls=config))
         rt = series_rt(picked.data_id, picked.rt)
-    groups = charges = None
+    groups = charges = residues = None
     fragments: set[int] = set()
     if results.binned is not None:
-        from ..controls import charge_groups, fragment_ids, series_groups
+        from ..controls import charge_groups, fragment_ids, series_groups, series_residues
         from ..io.mzml import fragment_series
 
         b = results.binned
@@ -393,9 +397,16 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         charges = charge_groups(b.sample, b.peptide, b.modification, b.charge, b.data_id,
                                 scan_fragments)
         fragments = fragment_ids(b.modification, b.data_id, scan_fragments)
+        picker = run.picker if run is not None else None
+        residues = series_residues(
+            b.peptide, b.modification, b.start_seq, b.data_id,
+            nterm_subtract=picker.nterm_subtract if picker is not None else 1,
+            rules=picker.amide_rules if picker is not None else None,
+            registry=results.settings.run.registry if run is not None else None,
+            fragments=scan_fragments)
     out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
                        groups=groups, charges=charges, uncorrected=fragments,
-                       screened=screened if n_screened else None)
+                       screened=screened if n_screened else None, residues=residues)
     for k in [k for k, (ref, _) in _RECOMPUTED.items() if ref() is None]:
         del _RECOMPUTED[k]
     _RECOMPUTED[key] = (weakref.ref(results), out)
@@ -638,7 +649,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         reasons = (np.asarray(left_out["reason"]).astype(str)[mine] if left_out is not None
                    else np.array([], dtype=str))
         listed = [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
-        if filters.stand_in_controls == "exclude":
+        if filters.stand_in_controls != "include":
             listed += ["stand-in control", "stand-in control (screened)",
                        "stand-in control (undeuterated)"]
         if filters.above_amides:
@@ -647,7 +658,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             listed.append("replicate outlier")
         listed += sorted(set(reasons) - set(listed))
         where = {"spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
-                 "stand-in control": "stand_in_controls = \"exclude\"",
+                 "stand-in control": f"stand_in_controls = \"{filters.stand_in_controls}\"",
                  "above the amide count": "above_amides = true",
                  "replicate outlier": f"replicate_outlier = {filters.replicate_outlier:g}"
                  if filters.replicate_outlier is not None else ""}
@@ -736,8 +747,11 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
         at = controls.rows(fit.data_id)
         raw = np.asarray(controls.uncorrected, dtype=bool)[at]
         n_amides = np.asarray(controls.n_amides, dtype=float)[at]
-        if filters.stand_in_controls == "exclude":
+        if filters.stand_in_controls != "include":
             measured = np.asarray(controls.fd_measured, dtype=bool)[at]
+            if filters.stand_in_controls == "other_sample":  # as close as the charge states
+                measured |= np.char.find(np.asarray(controls.flags, dtype=str)[at],
+                                         "fd_other_sample") >= 0
             stand_in = ~measured & ~raw
             # a sample without any measured fully deuterated control keeps its stand-ins
             has = {s for s in np.unique(sample) if (measured & ~raw & (sample == s)).any()}
@@ -758,9 +772,9 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                 n_heavy = len(np.unique(data_id[mine & heavy]))
                 if n_series and 2 * n_heavy >= n_series:
                     log.warning("sample %s: %d of %d series have an undeuterated control above "
-                                "m0_max and are left out (stand_in_controls = \"exclude\"); "
+                                "m0_max and are left out (stand_in_controls = \"%s\"); "
                                 "is a labelled file marked as undeuterated?", s, n_heavy,
-                                n_series)
+                                n_series, filters.stand_in_controls)
     k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
     if filters.above_amides:
         mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, "above the amide count")

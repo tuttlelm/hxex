@@ -1470,6 +1470,13 @@ _COMMENTS: dict[str, str] = {
     "run.controls.fd_other_charge": "with combine_charges = false: a series without a good "
                                     "fully deuterated control takes the retention of the same "
                                     "peptide's at its other charge states, before fd_fallback",
+    "run.controls.fd_other_sample": "a series without a good fully deuterated control at any "
+                                    "charge takes the same peptide's retention in the run's "
+                                    "other samples (fd_other_sample), before the retention map "
+                                    "and fd_fallback",
+    "run.controls.fd_retention_map": "next, the retention of the overlapping peptides with good "
+                                     "controls, fitted residue by residue (fd_map), before "
+                                     "fd_fallback; needs peptide positions",
     "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
                                  "[analysis.controls] may change it for the analysis",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
@@ -1834,6 +1841,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# above_amides = true             # leave out a K=1 mean above the amide count",
         '# stand_in_controls = "exclude"   # series without a measured fully deuterated control,',
         "#                                 # or with an undeuterated control above m0_max",
+        '#                                 # ("other_sample": keep those from another sample)',
         "# min_population = 0.05",
         "# max_fD_se = 0.25",
         "# max_fD = 1.1",

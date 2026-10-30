@@ -34,7 +34,10 @@ Each control falls back to its theoretical value, and the series is flagged, on 
   then counts as measured); without it, a series whose control is missing or rejected
   takes the mean of the other charge states' (``fd_other_charge``, still a fallback;
   ``fd_other_charge = False`` turns it off). Never for fragment ions, whose conditions are
-  never pooled. Otherwise the fallback
+  never pooled. A series still without one then takes, in this order, the same peptide's
+  retention in the run's other samples (``fd_other_sample``) or a retention map of the
+  overlapping peptides (``fd_retention_map``; :func:`series_residues`), each kept only when
+  it does not put the series below its own time course. Otherwise the fallback
   retention ``r`` is ``d2o_fraction`` (``fd_fallback='d2o'``, the deuterium fraction of the
   labelling buffer, a user setting) or the median retention of the run's accepted controls
   (``fd_fallback='median'``, the default without ``quench`` conditions; flagged ``fd_median``;
@@ -159,6 +162,19 @@ class ControlConfig:
       measured controls at its other charge states in the same sample (flagged
       ``fd_other_charge``, still ``fallback``), before ``fd_fallback``; the others keep their
       own.
+    - ``fd_other_sample`` (the default): a series still without a fully deuterated value of
+      its own or its other charges' takes the mean retention of the same peptide (sequence and
+      modification) in the run's other samples, where its control was accepted (flagged
+      ``fd_other_sample``, still ``fallback``), before the retention map and ``fd_fallback``:
+      retention belongs to the peptide and the LC, which the samples of one run share (median
+      error 0.006-0.012 against 0.040-0.054 for the run's median; owner, 2026-10-30).
+    - ``fd_retention_map`` (the default): next, the retention of the overlapping peptides with
+      an accepted control whose sequences agree with the series' over the overlap: a
+      retention per residue fitted to them (a peptide's retention is the mean over its amides;
+      neighbouring residues smoothed), averaged over the series' amides (flagged ``fd_map``,
+      still ``fallback``); skipped when fewer than half of its amides are covered. Needs the
+      peptides' residue positions (:func:`series_residues`). Median error 0.022-0.032 for a
+      peptide measured in no sample (owner, 2026-10-30).
     - ``d2o_fraction``: the deuterium atom fraction of the labelling buffer (often 0.8 to 0.9);
       the analysis may change it for its own controls (``[analysis.controls]``).
     - ``fd_fallback``: the retention used when a series' fully deuterated control is missing or
@@ -189,6 +205,8 @@ class ControlConfig:
     sample_tolerance: float = 0.1
     combine_charges: bool = True
     fd_other_charge: bool = True
+    fd_other_sample: bool = True
+    fd_retention_map: bool = True
     replicate_outlier: float | None = 6.0
     d2o_fraction: float = 0.9
     fd_fallback: str | None = None
@@ -230,8 +248,9 @@ class ControlConfig:
                                  "serve as the control instead of the marked ones)")
         if not 0 < self.d2o_fraction <= 1:
             raise ValueError("d2o_fraction must be in (0, 1]")
-        if not isinstance(self.fd_other_charge, bool):
-            raise ValueError("fd_other_charge must be true or false")
+        for name in ("fd_other_charge", "fd_other_sample", "fd_retention_map"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be true or false")
         if not isinstance(self.combine_charges, bool):
             raise ValueError("combine_charges must be true or false")
         if self.replicate_outlier is not None and (isinstance(self.replicate_outlier, bool)
@@ -504,6 +523,7 @@ def fit_controls(
     charges: Mapping[int, tuple] | None = None,
     uncorrected: Collection[int] = (),
     screened: np.ndarray | None = None,
+    residues: Mapping[int, tuple] | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -519,7 +539,10 @@ def fit_controls(
     deuterated control with the same molecule's in the other samples (``fd_disagrees``).
     ``charges`` (``data_id`` -> (the peptide in its sample, charge), :func:`charge_groups`)
     lets a series without a good fully deuterated control take its other charge states'
-    (``fd_other_charge``). The series of ``uncorrected`` (``data_id``; fragment ions,
+    (``fd_other_charge``), and the same peptide's in the run's other samples
+    (``fd_other_sample``). ``residues`` (``data_id`` -> the series' residues, first position and
+    amide positions in its protein, :func:`series_residues`) gives the retention map
+    (``fd_retention_map``). The series of ``uncorrected`` (``data_id``; fragment ions,
     :func:`fragment_ids`) are not corrected and take no part in the others' checks.
     ``screened`` (``(M,)`` bool) marks the control spectra the spectrum quality screens remove
     (:mod:`hxex.analysis.screening`): left out like unusable ones, and recorded by id
@@ -726,6 +749,8 @@ def fit_controls(
         _combine_charges(cols, series, charges, config, median)
     elif config.fd_other_charge and charges:
         _other_charge_fallback(cols, series, charges, config, median)
+    if charges and (config.fd_other_sample or config.fd_retention_map):
+        _peptide_elsewhere(cols, series, charges, residues, config)
     _flag_disagreement(cols, series, groups, config, charges)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
@@ -934,6 +959,38 @@ def charge_groups(sample, peptide, modification, charge, data_id,
     return out
 
 
+def series_residues(peptide, modification, start, data_id, *, nterm_subtract: int = 1,
+                    rules=None, registry=None, fragments=()) -> dict[int, tuple]:
+    """``data_id`` -> (residues, first position, amide positions) of each peptide series in its
+    protein, from per-spectrum arrays (a picked set's; ``start`` its ``start_seq``): the residue
+    labels (modX), the protein position of the first, and the protein positions of the amides
+    the series counts (:func:`hxex.chem.amide_positions`), for the retention map
+    (``fd_retention_map``). Left out: fragment ions (:func:`fragment_ids`), series with extra
+    ``Hex`` sites, and series without a position (``start`` below 1)."""
+    from . import chem
+
+    rules = chem.DEFAULT_AMIDE_RULES if rules is None else rules
+    registry = chem.DEFAULT_MODIFICATIONS if registry is None else registry
+    skip = fragment_ids(modification, data_id, fragments)
+    out: dict[int, tuple] = {}
+    for p, mod, s0, d in zip(np.asarray(peptide), np.asarray(modification), np.asarray(start),
+                             np.asarray(data_id), strict=True):
+        d = int(d)
+        if d in skip or d in out:
+            continue
+        try:
+            first = int(s0)
+        except (TypeError, ValueError):
+            continue
+        if first < 1 or chem.parse_modification(str(mod)).hex:
+            continue
+        labels = chem.parse_sequence(str(p), registry)
+        pos = chem.amide_positions(str(p), "M", None, nterm_subtract=nterm_subtract,
+                                   rules=rules, registry=registry)
+        out[d] = (labels, first, np.array([first + q - 1 for q in pos], dtype=np.int64))
+    return out
+
+
 # the flags of a fully deuterated control that is not used (the series falls back)
 FD_REJECTED = ("fd_missing", "retention_low", "retention_high", "fd_below_data",
                "retention_outlier", "fd_off_model")
@@ -1078,6 +1135,112 @@ def _other_charge_fallback(cols: dict, series: np.ndarray, charges: Mapping,
     if n:
         log.info("%d series without a good fully deuterated control take the same peptide's "
                  "at its other charge states (fd_other_charge)", n)
+
+
+# the retention map's smoothness between neighbouring residues and its weak pull to the donors'
+# median (scratch, 2026-10-30: 0.1 to 1 alike); its coverage need: the share of a series' amides
+# that an overlapping peptide with an accepted control covers
+MAP_SMOOTHNESS = 0.3
+MAP_PULL = 0.1
+MAP_MIN_COVERAGE = 0.5
+
+
+def _peptide_elsewhere(cols: dict, series: np.ndarray, charges: Mapping,
+                       residues: Mapping | None, config: ControlConfig) -> None:
+    """Give every series still without a fully deuterated value of its own or its other
+    charges' (a run-level stand-in: ``fd_median``, ``fd_kint`` or ``d2o_fraction``) the same
+    peptide's mean retention in the run's other samples (``fd_other_sample``), or else the
+    retention map of the overlapping peptides (``fd_retention_map``, :func:`_map_retention`),
+    each only where it does not put the series below its own time course (in ``cols``)."""
+    donors = [i for i, s in enumerate(series) if int(s) in charges and _fd_used(cols, i)]
+    by_peptide: dict[tuple, list[int]] = {}
+    for i in donors:
+        _, pep, mod = charges[int(series[i])][0]
+        by_peptide.setdefault((pep, mod), []).append(i)
+    on_map = ([(residues[int(series[j])], cols["retention"][j]) for j in donors
+               if int(series[j]) in residues] if residues else [])
+    n_sample = n_map = 0
+    for i, s in enumerate(series):
+        s = int(s)
+        tokens = [f for f in cols["flags"][i].split(";") if f]
+        if (s not in charges or cols["n_amides"][i] <= 0 or _fd_used(cols, i)
+                or "fd_other_charge" in tokens or "uncorrected" in tokens):
+            continue
+        sample, pep, mod = charges[s][0]
+        r = flag = None
+        se = 0.0
+        if config.fd_other_sample:
+            others = [j for j in by_peptide.get((pep, mod), ())
+                      if charges[int(series[j])][0][0] != sample]
+            if others:
+                cand = float(np.mean([cols["retention"][j] for j in others]))
+                if not _below_its_data(cols, i, cand):
+                    r, flag = cand, "fd_other_sample"
+                    sej = np.array([cols["mfd_se"][j] / cols["n_amides"][j] for j in others])
+                    se = (cols["n_amides"][i] * float(np.sqrt(np.sum(np.nan_to_num(sej) ** 2)))
+                          / len(others) if np.isfinite(sej).any() else float("nan"))
+        if r is None and config.fd_retention_map and residues and s in residues:
+            cand = _map_retention(residues[s], on_map)
+            if cand is not None and not _below_its_data(cols, i, cand):
+                r, flag = cand, "fd_map"
+        if r is None:
+            continue
+        n_am = cols["n_amides"][i]
+        cols["mfd"][i], cols["mfd_se"][i] = cols["m0"][i] + r * n_am, se
+        cols["retention"][i] = r
+        cols["flags"][i] = ";".join([*(f for f in tokens if f not in ("fd_median", "fd_kint")),
+                                     flag])
+        n_sample += flag == "fd_other_sample"
+        n_map += flag == "fd_map"
+    if n_sample or n_map:
+        log.info("series without a good fully deuterated control at any charge: %d take the same "
+                 "peptide's in the run's other samples (fd_other_sample), %d the retention map "
+                 "of the overlapping peptides (fd_map)", n_sample, n_map)
+
+
+def _overlap_agrees(a: tuple, b: tuple) -> bool:
+    """Whether two series' residues (:func:`series_residues`) overlap in the protein and agree
+    there (so they are the same protein's)."""
+    (ra, sa, _), (rb, sb, _) = a, b
+    lo, hi = max(sa, sb), min(sa + len(ra), sb + len(rb)) - 1
+    return lo <= hi and ra[lo - sa:hi - sa + 1] == rb[lo - sb:hi - sb + 1]
+
+
+def _map_retention(target: tuple, donors: list) -> float | None:
+    """The retention of the series ``target`` (:func:`series_residues`) from the retention
+    map of ``donors`` ((residues, retention) of the accepted controls): those overlapping it
+    and agreeing with its sequence there give a retention per residue r_i (least squares: each
+    donor's retention is the mean of r_i over its amides, neighbouring residues smoothed with
+    weight ``MAP_SMOOTHNESS``, a weak pull to the donors' median); the series' retention is the
+    mean of r_i over its amides. None when fewer than ``MAP_MIN_COVERAGE`` of its amides are
+    covered by a donor."""
+    near = [(res, r) for res, r in donors if _overlap_agrees(target, res) and len(res[2])]
+    amides = np.asarray(target[2], dtype=np.int64)
+    if not near or not len(amides):
+        return None
+    covered = set().union(*(set(np.asarray(res[2]).tolist()) for res, _ in near))
+    if np.mean([q in covered for q in amides.tolist()]) < MAP_MIN_COVERAGE:
+        return None
+    sites = sorted(covered | set(amides.tolist()))
+    at = {q: k for k, q in enumerate(sites)}
+    n = len(sites)
+    a = np.zeros((len(near) + 2 * n - 1, n))
+    y = np.zeros(a.shape[0])
+    for k, (res, r) in enumerate(near):
+        pos = np.asarray(res[2]).tolist()
+        for q in pos:
+            a[k, at[q]] = 1.0 / len(pos)
+        y[k] = r
+    k = len(near)
+    for q in range(n - 1):
+        a[k, q], a[k, q + 1] = np.sqrt(MAP_SMOOTHNESS), -np.sqrt(MAP_SMOOTHNESS)
+        k += 1
+    med = float(np.median([r for _, r in near]))
+    for q in range(n):
+        a[k, q], y[k] = MAP_PULL, MAP_PULL * med
+        k += 1
+    sol, *_ = np.linalg.lstsq(a, y, rcond=None)
+    return float(np.mean([sol[at[q]] for q in amides.tolist()]))
 
 
 def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Mapping,

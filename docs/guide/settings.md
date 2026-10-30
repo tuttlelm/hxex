@@ -325,6 +325,8 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `sample_tolerance` | number | `0.1` | a fully deuterated control whose retention differs this much from the same peptide's in the other samples is flagged fd_disagrees (still used) |
 | `combine_charges` | true/false | `true` | every charge state of a peptide (in one sample) takes the mean retention of its measured fully deuterated controls over all charge states; fd_fallback only when none is good (peptides only, not fragment ions) |
 | `fd_other_charge` | true/false | `true` | with combine_charges = false: a series without a good fully deuterated control takes the retention of the same peptide's at its other charge states, before fd_fallback |
+| `fd_other_sample` | true/false | `true` | a series without a good fully deuterated control at any charge takes the same peptide's retention in the run's other samples (fd_other_sample), before the retention map and fd_fallback |
+| `fd_retention_map` | true/false | `true` | next, the retention of the overlapping peptides with good controls, fitted residue by residue (fd_map), before fd_fallback; needs peptide positions |
 | `replicate_outlier` | number | `6.0` | a control replicate this many typical replicate sd from its replicates' median (three or more) is left out of the control's mean (one above the amide count always is); unset: off |
 | `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
 | `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |
@@ -436,7 +438,7 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
 | `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
-| `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species) |
+| `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species); "other_sample" excludes them but keeps the series that took the same peptide's control in another sample |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
 | `undeuterated_cap` | true/false | `false` | with the population test: keep the other spectra of a peptide whose undeuterated set has two populations or more at one population, in every sample (off: the peptide is only flagged, undeuterated_two) |
 

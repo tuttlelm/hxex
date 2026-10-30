@@ -655,6 +655,120 @@ the junction risk above. 3: the undeuterated rule as first designed (one sample'
 replaced by the width check and the peptide-wide cap, both flags since HISTORY 175 (the cap a
 switch, off by default). 4: the CPU cost above.
 
+### Deamidated fully deuterated controls (design, 2026-10-30; not built)
+
+**Finding (scratch, to become a HISTORY item).** A fully deuterated (FD) control made by heating
+the protein near neutral pH (one workflow: urea at 90 C in phosphate buffer, pH 7.5, before
+dilution into D2O) can deamidate its Asn-Gly sites during the heating. N -> D adds 0.984 Da, which
+falls inside one deuterium bin (1.006 Da), so a deamidated share phi puts intensity one bin up: the
+FD envelope looks wider and heavier, its mean is about phi x 0.984 Da too high, and the retention
+of every peptide containing the site is overstated (about 5 % for a 19-amide peptide at phi 0.6),
+so its corrected uptake is understated by as much. The undeuterated (UN) controls and labelled
+spectra are not heated and do not carry it. Measured on two datasets of one protein with a
+single Asn-Gly site (the intact-peptide benchmark and the tutorial data, different protocols):
+phi 0.64 and 0.58, the same for every peptide containing the site and every charge (2+ to 6+);
+peptides without it ~0; the protein's other Asn (followed by Leu) normal. Confirmed by mass,
+independently of any envelope fit: the deamidated copy is 0.022 Da lighter than a deuteron, and
+the FD controls of those peptides read 3.0 and 3.1 ppm lower than their UN controls (expected 4.3
+and 2.9 ppm at the measured shares). Two other datasets with Asn-Gly peptides (the private noisy
+unimodal dataset and the Orbitrap digest; FD preparations unknown) show no effect.
+
+**Decided (owner, 2026-10-30).** Candidates: Asn-Gly only (the fastest motif by about tenfold;
+heating that takes Asn-Gly to ~60 % would take Asn-Ser or Asn-His to ~10 % and the others to a few
+percent; the guide says so). Evidence: the shift share, pooled per sample and relative to the
+sample's other peptides, with the mass offset deciding where it is measured (revised after
+evaluations 1-2). Action: first a flag that rejects the control (the standard FD fallback);
+changed after evaluation 3 to correcting the control by the measured share (below). Opt-in.
+
+**Design (revised after evaluations 1-2, owner 2026-10-30).**
+- Settings: `[run.controls] deamidation = false` (opt-in; also in `[analysis.controls]`, as the
+  other control settings), `deamidation_min_share = 0.25` and `deamidation_min_mass = 0.5`.
+- Candidates: series whose peptide holds an Asn followed by Gly in the protein, from the residues
+  (modX tokens, base residues; an Asn at the peptide's C-terminal end counts when the protein's
+  next residue is Gly: from `[analysis] fasta` when given, else from an overlapping peptide of the
+  run, else not a candidate, logged). Parent-type (`M`) series only; fragments are uncorrected.
+- Shift share per spectrum: the control fitted as (1 - phi) E + phi E one bin up, E the natural
+  shape (UN) or the natural shape times a binomial with n fixed at the site count and p free (FD),
+  the amplitude profiled, with the fit's noise weights. Per ion (peptide, charge, sample): delta =
+  median phi of its FD controls minus median phi of its UN controls (the subtraction removes the
+  charge-linked M+1 tilt, HISTORY 186, which gives UN controls phi up to ~0.25 at 5+ and 6+).
+- Relative share per sample: the median delta of the sample's candidate ions minus the median
+  delta of its other ions (at least two candidate ions with both controls; else not assessed).
+  The shift term absorbs any way an FD envelope differs from a binomial, so delta has a baseline
+  that differs between datasets (median +0.35 in one, 0 in another); the other peptides of the
+  same sample measure it.
+- Mass offset per sample: per candidate ion, the FD minus UN picked-peak offset (`mz_offset_ppm`,
+  each relative to the other peptides of its injection), its median over the sample's candidate
+  ions, as a fraction of the expected -delta x 0.022 Da / M. Not available for pre-picked formats.
+- Decision per sample: relative share >= `deamidation_min_share` and, where the mass offset is
+  measured, mass fraction >= `deamidation_min_mass`: every candidate series of the sample keeps
+  its own FD control with its mean lowered by the relative share x 0.984 Da, flagged
+  `fd_deamidated` (owner, 2026-10-30, after evaluation 3: rejecting it for the fallback was worse
+  than doing nothing; the corrected control is then checked like any measured one). Share passing
+  and mass not: the controls are kept and noted
+  `deamidation_not_confirmed` (name and rule confirmed by the owner, 2026-10-30): the shift term
+  also fires on envelopes that are only wider (an FD envelope 6-25 % wider than a binomial reads
+  phi ~0.6 in the simulation), and width does not move the m/z. Without a mass offset the share
+  decides alone, which is weaker with few candidate peptides (the guide says so). A sample, not a
+  series, decides: phi is a property of the heated aliquot, and one spectrum pins it down poorly
+  (a true 0.64 reads 0.14-0.64 in a simulation with the benchmark's noise).
+- Outputs: `series.csv` columns `deamidated_share` (the sample's relative share),
+  `deamidation_mass` (the fraction of the expected shift) and `deamidation_ppm`; the flag or note
+  in `control_notes`; one log line per sample assessed; the guide's back-exchange page lists the
+  rejection, the Asn-X rates, and the weaker share-only case.
+
+**Evaluated (2026-10-30; scratch, to become a HISTORY item).** (1)-(2): per sample, relative
+share / mass fraction: the benchmark's five samples +0.49 to +0.54 / 0.57-0.93, the tutorial's
+three +0.39 to +0.48 / 0.98-1.10, the noisy dataset's four -0.05 to +0.15 / -0.43 to 0.21, the
+Orbitrap digest 0.00 / no shift. The first design (absolute share, threshold 0.1) would have
+flagged every sample of the noisy dataset. With four candidate ions per sample (tutorial) the
+share alone sits only at the q95 of a same-size null from the sample's other peptides; the mass
+offset is at or below the null's 1st percentile. (3) Nested pairs (a peptide with the site minus
+the same peptide without its first residues, as a share of the extra amides, which must lie in
+[0, 1]), benchmark, 4 s -> 20 h: own control 0.27-0.43 -> 0.70-0.81 (understated); the run-median
+fallback 0.69-0.95 -> 1.14-1.53 (25-75 % of values above 1: worse than doing nothing, as these
+peptides retain more than the median); own control with the measured share removed 0.45-0.54 ->
+0.86-0.94 (at most 5 % above 1). The retention map is no help here (the residues next to the site
+are covered only by peptides with it). So the action is to keep the own control and lower its
+mean by the share x 0.984 Da, flagged `fd_deamidated`, not to reject it (owner agreed,
+2026-10-30; this replaces the rejection above). The share removed is the sample's relative
+share (the detection's own number): on the pairs it gives 20 h values 0.85-0.94 with none above 1,
+against 0.86-0.94 and up to 5 % above 1 with each ion's own delta.
+
+### Fully deuterated stand-ins from the same peptide elsewhere and a retention map (built 2026-10-30, HISTORY 196)
+
+**Why (owner, 2026-10-30).** A rejected FD control without another charge state takes the run's
+median retention, but retention belongs to the peptide (its sequence sets back-exchange at quench
+pH, its elution sets the time on the column): peptides far from the median get a bias as large as
+the one the fallback replaces. Measured on the deamidated peptides: the median stand-in made their
+extra amides hold up to 1.5 deuterons each (evaluation 3 above).
+
+**Measured (scratch, leave-one-out on every accepted FD retention, peptide x sample, charges
+combined).** Median |error| (share > 0.10), benchmark / tutorial / noisy dataset: run median 0.040
+(12 %) / 0.043 (9 %) / 0.054 (28 %); the same peptide in the run's other samples 0.006 (1 %) /
+0.006 (0 %) / 0.012 (2 %); a retention map with the peptide never measured 0.023 (4 %) / 0.030
+(7 %) / 0.033 (11 %). The map's smoothness matters little (best 0.1-1).
+
+**Decided (owner, 2026-10-30): default on, each step can be switched off, this order.**
+1. The series' own control, charge states combined (as now).
+2. The same peptide (sequence and modification) in the run's other samples: the mean retention of
+   its accepted measured controls there (`[run.controls] fd_other_sample = true`, note
+   `fd_other_sample`). Within one run only (one LC setup); not across the runs of a RunSet.
+3. A retention map (`fd_retention_map = true`, note `fd_map`): per-residue retention r_i fitted to
+   the run's accepted measured controls (a peptide's retention = the mean of r_i over its amides;
+   least squares, a smoothness penalty between neighbouring residues, a weak pull to the run
+   median), then the peptide's mean over its amides. Built locally per series, from the accepted
+   peptides that overlap it and agree with its sequence over the overlap (`series_residues`):
+   a multi-protein digest numbers its proteins separately, or not at all, so a whole-run map
+   would mix proteins; the local form is as accurate (median error 0.022 / 0.032 / 0.030).
+   Needs residue positions (`start_seq`); a series whose amides are mostly covered by no
+   accepted peptide skips to the next step.
+4. kint, with quench conditions (as now).
+5. The run median (as now).
+Every stand-in is checked against the series' time course as stand-ins are now (`fd_below_data`).
+`fd_other_sample` does not count as measured for the protection fit's start (owner, 2026-10-30:
+only expand that pool if needed; may be revisited).
+
 ## Later parts
 
 - **Comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons

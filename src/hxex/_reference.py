@@ -235,7 +235,9 @@ _DESCRIPTIONS: dict[str, str] = {
                                           "deuterated control is a stand-in (a sample with "
                                           "no measured control keeps them) or whose "
                                           "undeuterated control read above [run.controls] "
-                                          "m0_max (m0_high: another species)",
+                                          'm0_max (m0_high: another species); "other_sample" '
+                                          "excludes them but keeps the series that took the "
+                                          "same peptide's control in another sample",
     "analysis.filters.undeuterated_cap": "with the population test: keep the other spectra of a "
                                          "peptide whose undeuterated set has two populations "
                                          "or more at one population, in every sample (off: "

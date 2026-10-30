@@ -733,6 +733,37 @@ Planned, not built:
    sample size keeps every picked bin (tried without the end zero bins and reverted: they have
    meaning; HISTORY 195). Open: whether to recommend `measure = "height"` for unresolved
    envelopes (untested: the top-down example is resolved).
+15. **Measure how much wider than a binomial real envelopes are** (owner, 2026-10-30; TODO,
+   scratch first). A scratch simulation (stick level, Q-TOF parameters) found that envelopes
+   wider than a binomial are read as two populations: with an intra-class correlation of 0.03
+   (deuterium sd 6-25 % wider for 5-20 amides), 58-74 % of single-population peptides with 16
+   or more amides were split, and the population test kept most of the splits (its null draws
+   binomial envelopes). At 0.01 almost nothing changed. Whether real data sit near either value
+   is unknown. The clean approach: fix n from the sequence (the exchangeable amides, without
+   prolines and the N-terminal residue, as `chem.exchangeable_sites` with `nterm_subtract`
+   gives) and fit p and rho of a beta-binomial (mean n p, variance n p (1 - p) (1 + (n - 1)
+   rho); `scipy.stats.betabinom`, no new dependency), convolved with the natural envelope like
+   the binomial. With n free, n and rho trade off (both widen the envelope), so fixing n is what
+   makes rho measurable. Fit it to the fully deuterated controls (one population, amides nearly
+   equal): uneven back-exchange between amides can only narrow an envelope, so a fitted rho > 0
+   there is a lower bound on the spread between molecules that does not depend on the
+   conformation (back-exchange spread across the elution peak, uneven labelling of the control).
+   Spread from conformations (cooperative opening, a continuum of conformers) cannot show in a
+   fully deuterated control, where every amide has exchanged; it exists only in labelled
+   spectra, where it is confounded with populations. Report rho against length and charge on a
+   Q-TOF and an Orbitrap dataset, beside a binomial with the same fixed n. Only then decide
+   whether the model or the population test's null needs a width term.
+   Measured 2026-10-30 (scratch): the method recovers rho 0, 0.01 and 0.03 on simulated
+   controls. On four Q-TOF datasets the typical fully deuterated envelope is as wide as the
+   binomial (median rho 0; upper quartile about 0.01), 5-27 % of controls (by dataset) are more
+   than 10 % wider, and the width belongs to the peptide (it repeats across replicates and
+   across charge states, and grows with charge). On an Orbitrap dataset the envelopes are
+   narrower than the binomial (median 0.85 of its sd). Peptides with wider controls read as two
+   populations more often in their labelled spectra. Open (owner): a flag, or carrying each
+   series' measured width into its fits and the population test's null, or nothing. The
+   wide controls of one protein turned out to be deamidation during the heated FD preparation
+   (HISTORY 196; design in docs/ANALYSIS.md, not built), and the FD stand-ins were improved
+   (the same peptide in other samples, a retention map; built, HISTORY 196).
 
 ## Risks and open decisions
 

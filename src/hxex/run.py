@@ -54,6 +54,7 @@ from .controls import (
     fragment_ids,
     series_groups,
     series_rates,
+    series_residues,
     series_rt,
 )
 from .fit import FitConfig, FitResult, Measurements, fit_models
@@ -471,6 +472,7 @@ def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None, chosen=None,
+    residues=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -527,7 +529,7 @@ def _fit_part(
             n_sites = np.rint(np.asarray(data.n_max, dtype=float) / config.n_max_factor)
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
                                 groups=groups, charges=charges, uncorrected=fragments,
-                                screened=screened)
+                                screened=screened, residues=residues)
         if screened is not None and screened.any():
             log.info("controls: %d control spectra left out by the spectrum quality screens "
                      "(the loose level of [analysis.filters] spectrum_quality_filtering)",
@@ -908,6 +910,10 @@ def run(
     charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
                             picked.data_id, scan_fragments)
     fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
+    residues = series_residues(picked.peptide, picked.modification, picked.start_seq,
+                               picked.data_id, nterm_subtract=config.picker.nterm_subtract,
+                               rules=config.picker.amide_rules, registry=config.registry,
+                               fragments=scan_fragments)
     from .analysis.screening import control_removal
 
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
@@ -916,6 +922,7 @@ def run(
                                              site_counts(picked, config), rt=rt,
                                              poor_envelope=poor, groups=groups,
                                              charges=charges, fragments=fragments,
+                                             residues=residues,
                                              screened=control_removal(picked, fragments),
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],

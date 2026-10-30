@@ -547,10 +547,11 @@ def test_a_missing_or_rejected_control_takes_the_other_charge_states():
     assert c.mfd_se[0] == pytest.approx(10 * 0.01 / 2)  # 4+: se 0.1 D; 5+: unreplicated
     assert not c.fallback[1:].any()
     assert c.measured.all()  # the other charges' control counts as measured (HISTORY 130)
-    # without charges, or switched off: the run's median
+    # without charges, or switched off (and the other samples' with it): the run's median
     for off in (fit_controls(fake_fit(rows), np.full(len(rows), 10.0), cfg),
                 fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
-                             ControlConfig(combine_charges=False, fd_other_charge=False),
+                             ControlConfig(combine_charges=False, fd_other_charge=False,
+                                           fd_other_sample=False),
                              charges=charges)):
         assert off.flags[0] == "fd_missing;fd_median" and not off.measured[0]
         assert off.retention[0] == pytest.approx(np.median([0.52, 0.54, 0.40, 0.70]))
@@ -568,6 +569,73 @@ def test_a_missing_or_rejected_control_takes_the_other_charge_states():
     assert not c.measured[0]
     with pytest.raises(ValueError, match="fd_other_charge"):
         ControlConfig(fd_other_charge="yes")
+
+
+def test_a_series_without_a_control_at_any_charge_takes_the_peptide_in_other_samples():
+    """fd_other_sample (the default; owner, 2026-10-30): a series with no good fully deuterated
+    control at any charge takes the mean retention of the same peptide's accepted controls in
+    the run's other samples (still a fallback, not measured), before the run's median; not
+    where it would put the series below its own time course; off: the median."""
+    from hxex.controls import charge_groups
+
+    rows = [(0, 0, 0.0), (0, 0, 0.0),  # WT PEP 3+: no fully deuterated control
+            (1, 0, 0.0), (1, 1e6, 4.0), (1, 1e6, 4.0),  # D109H PEP 3+: retention 0.40
+            (2, 0, 0.0), (2, 1e6, 4.4), (2, 1e6, 4.4),  # D109H PEP 4+: 0.44
+            (3, 0, 0.0), (3, 1e6, 7.0), (3, 1e6, 7.0)]  # WT QQQ 2+: 0.70
+    who = {0: ("WT", "PEP", 3), 1: ("D109H", "PEP", 3), 2: ("D109H", "PEP", 4),
+           3: ("WT", "QQQ", 2)}
+    ids = [r[0] for r in rows]
+    charges = charge_groups([who[d][0] for d in ids], [who[d][1] for d in ids],
+                            ["" for _ in ids], [who[d][2] for d in ids], ids)
+    c = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG, charges=charges)
+    assert c.flags[0] == "fd_missing;fd_other_sample"
+    assert c.retention[0] == pytest.approx(0.42)  # D109H's 3+ and 4+, combined
+    assert c.fallback[0] and not c.measured[0]
+    off = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
+                       ControlConfig(fd_other_sample=False), charges=charges)
+    assert off.flags[0] == "fd_missing;fd_median"
+    # a time point at 6.0 D: 0.42 would put the control below it (by more than 1 D): the median
+    late = rows[:2] + [(0, 100.0, 6.0)] + rows[2:]
+    c = fit_controls(fake_fit(late), np.full(len(late), 10.0), CFG, charges=charges)
+    assert c.flags[0] == "fd_missing;fd_median"
+    with pytest.raises(ValueError, match="fd_other_sample"):
+        ControlConfig(fd_other_sample="yes")
+
+
+def test_the_retention_map_of_overlapping_peptides():
+    """fd_retention_map (the default; owner, 2026-10-30): a series with no control of its own,
+    at its other charges or in other samples takes the retention of the overlapping peptides
+    with accepted controls, fitted residue by residue, averaged over its amides (fd_map, still
+    a fallback); a peptide whose sequence disagrees over the overlap (another protein) is not
+    used, and a series with under half of its amides covered takes the run's median."""
+    from hxex.controls import charge_groups, series_residues
+
+    peptides = {0: ("ACDEFGHIKL", 1, 0.50), 1: ("GHIKLMNQRS", 6, 0.60),
+                2: ("DEFGHIKLMN", 3, None),  # the series without a control
+                3: ("WWWWWWWWWW", 4, 0.95),  # another protein's peptide at those numbers
+                4: ("TVWYACDEF", 16, None)}  # beyond every accepted peptide
+    rows = []
+    for d, (_, _, r) in peptides.items():
+        rows += [(d, 0, 0.0), (d, 0, 0.0)]
+        if r is not None:
+            rows += [(d, 1e6, 10 * r), (d, 1e6, 10 * r)]
+    ids = [r[0] for r in rows]
+    seq = [peptides[d][0] for d in ids]
+    charges = charge_groups(["S"] * len(ids), seq, [""] * len(ids), [2] * len(ids), ids)
+    residues = series_residues(seq, [""] * len(ids), [peptides[d][1] for d in ids], ids)
+    assert residues[2][2].tolist() == list(range(4, 13))  # residue 3 has no amide (nterm 1)
+    c = fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG, charges=charges,
+                     residues=residues)
+    assert c.flags[2] == "fd_missing;fd_map" and c.fallback[2]
+    assert 0.50 < c.retention[2] < 0.60  # between its neighbours, the other protein ignored
+    assert c.flags[4] == "fd_missing;fd_median"
+    assert c.retention[4] == pytest.approx(np.median([0.50, 0.60, 0.95]))
+    off = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
+                       ControlConfig(fd_retention_map=False), charges=charges, residues=residues)
+    assert off.flags[2] == "fd_missing;fd_median"
+    # without positions: no map
+    assert fit_controls(fake_fit(rows), np.full(len(rows), 10.0), CFG,
+                        charges=charges).flags[2] == "fd_missing;fd_median"
 
 
 def test_fully_deuterated_controls_are_combined_over_charge_states():

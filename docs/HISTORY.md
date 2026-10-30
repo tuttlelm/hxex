@@ -5262,3 +5262,48 @@ CSVs or mzML if wanted.
       387). REVERTED (owner, 2026-10-29): the zero bins at the ends have meaning (the fit must
       explain them), so they count in N; the gain is within noise and the controls split
       slightly more often.
+
+196. **Fully deuterated controls: width, deamidation, and better stand-ins (2026-10-30; private
+     analysis_examples/rho_fd, README with every number; noise simulation phase 2 in
+     analysis_examples/noise_sim).**
+    - Noise-simulation phase 2 (scratch): baseline zeroing and the saturation form tried change
+      nothing; picked noise in empty bins raises false two in dim spectra under the per-bin
+      noise (5 -> 24 %); envelopes wider than a binomial are the largest effect (intra-class
+      correlation 0.03: 58-74 % of single-population peptides with 16+ amides split, the
+      population test keeping most; 0.01: almost nothing).
+    - Measured on real FD controls (PLAN 15; n fixed at the site count, p and rho fitted; the
+      method recovers rho 0 / 0.01 / 0.03 on simulated controls): the typical FD envelope is as
+      wide as the binomial (median rho 0, upper quartile ~0.01) on four Q-TOF datasets; 5-27 %
+      of controls are over 10 % wider; the width belongs to the peptide (repeats across
+      replicates and charges, grows with charge); on an Orbitrap digest the envelopes are
+      narrower (median 0.85). UN controls match their natural shape. Wider FD controls go with
+      more two-population readings in labelled spectra, at every deuteration level, so not by
+      width spread over the elution.
+    - Deamidation: in one protein (two datasets, different protocols) the wide FD controls are
+      the peptides with its single Asn-Gly site. Its FD controls are heated (urea, 90 C,
+      phosphate pH 7.5) and N -> D adds 0.984 Da, inside a deuterium bin. A +1-bin share fits
+      0.64 / 0.58 in every such peptide and charge, ~0 elsewhere; confirmed by mass (the FD
+      controls of those peptides read 3.0 / 3.1 ppm below their UN controls, expected 4.3 / 2.9);
+      the protein's other Asn (followed by Leu) normal. Their FD retention is overstated (~5 %).
+      The shift share alone is no detector (it fires on width: a merely wider envelope reads
+      0.6 in simulation; its baseline is +0.35 in another dataset). A charge-linked M+1 tilt in
+      UN controls (HISTORY 186) briefly read as stock deamidation: withdrawn. Design (opt-in,
+      relative share per sample and mass, correct the own control by the share; not built):
+      docs/ANALYSIS.md "Deamidated fully deuterated controls".
+    - The run-median stand-in overcorrects peptides that retain more than the median (nested
+      pairs: up to 1.5 D per extra amide). Leave-one-out on every accepted FD retention, median
+      |error|: run median 0.040-0.054; the same peptide in the run's other samples 0.006-0.012; a
+      retention map of overlapping peptides (sequence-checked, built locally per series)
+      0.022-0.032 for a peptide measured in no sample. BUILT (owner: default on, switchable,
+      this order): own -> other charges -> `fd_other_sample` -> `fd_retention_map` (`fd_map`)
+      -> kint -> median, each stand-in checked against the series' time course;
+      `hxex.controls.series_residues`; neither new stand-in counts as measured (owner: only
+      expand that pool if needed). Effect: benchmark 182 median stand-ins -> 71 other-sample, 98
+      map, 13 median (retention changed by 0.093 at the median); noisy set 19 -> 15 / 3 / 1;
+      tutorial none. The map's place before kint is not tested (no dataset with quench
+      conditions).
+    - Both stand-ins are still stand-ins for the analysis filter (`stand_in_controls`), so by
+      default those series stay out of the analysis. New level (owner, option 1):
+      `stand_in_controls = "other_sample"` keeps the `fd_other_sample` series (as close as the
+      peptide's charge states) and leaves out the map and the run-level stand-ins; the default
+      stays "exclude". The protection fit's start is unchanged (every stand-in fits fD0).
