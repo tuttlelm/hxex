@@ -593,7 +593,10 @@ class ResidueComparison:
     comparison was made without a choice. Rows are kept whatever the choices.
     ``delta_shared`` and ``delta_shared_se``: with :func:`judged_on_shared`, the difference and
     error the test used, from the peptides both samples measured (``z``, ``significant`` and
-    ``threshold`` are then that test's); ``None`` otherwise."""
+    ``threshold`` are then that test's); ``None`` otherwise. ``peptide_support`` and
+    ``residue_test_only``: with :func:`gated_by_peptides`, whether a covering peptide carries the
+    difference (True, False, or NaN where no peptide comparison can judge it) and whether the
+    residue test passed without that support (then not ``significant``); ``None`` otherwise."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -621,6 +624,8 @@ class ResidueComparison:
     threshold: np.ndarray | None = None
     delta_shared: np.ndarray | None = None
     delta_shared_se: np.ndarray | None = None
+    peptide_support: np.ndarray | None = None
+    residue_test_only: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback, one run
         if self.threshold is None:
@@ -720,7 +725,8 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
 def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **scalars
                         ) -> ResidueComparison:
     names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS
-             and f.name not in ("delta_shared", "delta_shared_se")  # judged_on_shared's
+             and f.name not in ("delta_shared", "delta_shared_se",  # judged_on_shared's
+                                "peptide_support", "residue_test_only")  # and the gate's
              and (with_choice or f.name not in ("two_reference", "two"))]
     scalars.update(reference=reference[1], reference_run=reference[0])
     if not rows:
@@ -830,6 +836,55 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
                  "samples at that time covers the residue", lost, n, own.quantity)
     return replace(own, z=z, significant=sig, threshold=threshold, delta_shared=d_shared,
                    delta_shared_se=se_shared)
+
+
+def gated_by_peptides(
+    comparison: ResidueComparison,
+    peptides: PeptideComparison,
+    *,
+    nterm_subtract: int = 0,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+) -> ResidueComparison:
+    """``comparison`` with a residue difference significant only where a peptide covering the
+    residue carries it (owner, 2026-10-31: a safeguard against error bars that are wrong, such
+    as from a noise model that does not fit the data; HISTORY 206): a peptide of ``peptides``
+    (the peptide comparison of the same quantity) at the same sample and time whose exchanging
+    residues (after the first ``nterm_subtract``) include the residue, that is significant, and
+    whose difference has the sign of the residue's (``delta_shared`` where present, else
+    ``delta``). ``peptide_support`` records it (NaN where no peptide comparison exists for the
+    state and time, e.g. a modified form of the reference: such rows are left as they are);
+    ``residue_test_only`` marks the rows the residue test called but no peptide supports, which
+    are then not significant. Several nearly significant peptides can make a residue
+    significant on their own: those are the ``residue_test_only`` rows, kept visible."""
+    from .residues import modified_state
+
+    by_state: dict[tuple[str, str, float], list[int]] = {}
+    for j in range(len(peptides)):
+        sites = modified_state(str(peptides.peptide[j]), int(peptides.start[j]),
+                               str(peptides.modification[j]), registry)
+        state = f"{peptides.sample[j]} {sites}" if sites else str(peptides.sample[j])
+        by_state.setdefault((str(peptides.run[j]), state, float(peptides.time[j])), []).append(j)
+    start = np.asarray(peptides.start, dtype=np.int64) + nterm_subtract
+    end = np.asarray(peptides.end, dtype=np.int64)
+    passed = np.asarray(peptides.significant, dtype=bool)
+    sign = np.sign(np.asarray(peptides.delta, dtype=float))
+    diff = np.asarray(comparison.delta_shared if comparison.delta_shared is not None
+                      else comparison.delta, dtype=float)
+    n = len(comparison)
+    support = np.full(n, np.nan, dtype=object)
+    for i in range(n):
+        rows = by_state.get((str(comparison.run[i]), str(comparison.sample[i]),
+                             float(comparison.time[i])))
+        if rows is None:
+            continue
+        rows = np.asarray(rows)
+        r = int(comparison.residue[i])
+        support[i] = bool(np.any((start[rows] <= r) & (end[rows] >= r) & passed[rows]
+                                 & (sign[rows] == np.sign(diff[i]))))
+    called = np.asarray(comparison.significant, dtype=bool)
+    unsupported = np.array([s is False for s in support], dtype=bool)
+    return replace(comparison, significant=called & ~unsupported, peptide_support=support,
+                   residue_test_only=called & unsupported)
 
 
 def compare_residues(

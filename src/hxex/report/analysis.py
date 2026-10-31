@@ -59,6 +59,7 @@ from ..analysis import (
     compare_settings,
     concat_tables,
     coverage_table,
+    gated_by_peptides,
     judged_on_shared,
     left_out_spectra,
     left_out_summary,
@@ -327,11 +328,15 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         pair_choice = ({s: choose_populations(m, config.choice_limits,
                                               tiers=config.populations == "population_test")
                         for s, m in pairs.items()} if choice is not None else {})
-        res_cmp = judged_on_shared(
+        # and only where a covering peptide carries it: a safeguard against wrong error bars;
+        # the residue test's other calls stay visible as residue_test_only (HISTORY 206)
+        nterm = up.nterm_subtract
+        res_cmp = gated_by_peptides(judged_on_shared(
             compare_residues(residues, ref, alpha=config.alpha, delta_crit=crit, choice=choice),
             concat_tables([compare_residues(m, ref, alpha=config.alpha, delta_crit=crit,
                                             choice=pair_choice.get(s))
-                           for s, m in pairs.items()]))
+                           for s, m in pairs.items()])), comparisons["K=1 fD"],
+            nterm_subtract=nterm)
         tables["compare_residues"] = res_cmp.columns()
         if choice is not None:
             # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
@@ -343,6 +348,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit),
                 concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
                                                    delta_crit=crit) for s in pairs]))
+            if k2_tested:
+                pop_cmp = gated_by_peptides(
+                    pop_cmp, comparisons["K=2 rank 1 (low D) population"], nterm_subtract=nterm)
             pop_cols = pop_cmp.columns()
             if not k2_tested:
                 pop_cols["z"] = np.full(len(pop_cmp), np.nan)
@@ -358,14 +366,15 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 k2_positions = {}
                 for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
                     k2_crit = comparisons[title].delta_crit
-                    k2_positions[rank] = judged_on_shared(
+                    k2_positions[rank] = gated_by_peptides(judged_on_shared(
                         compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
                                          delta_crit=k2_crit, choice=choice),
                         concat_tables([compare_residues(m, ref, K=2, rank=rank,
                                                         alpha=config.alpha,
                                                         delta_crit=k2_crit,
                                                         choice=pair_choice[s])
-                                       for s, m in pairs.items()]))
+                                       for s, m in pairs.items()])), comparisons[title],
+                        nterm_subtract=nterm)
                 tables["compare_residues_K2"] = _ranked(k2_positions)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
         res_cmp = _display(res_cmp, labels, reference)

@@ -2152,3 +2152,37 @@ def test_residue_significance_map_at_k2():
         plot_residue_significance_k2(ChoiceComparison(**{
             f: np.array([]) for f in ("run", "sample", "time", "residue", "two_reference", "two",
                                       "reason_reference", "reason", "agree")}))
+
+
+def test_a_residue_difference_needs_a_covering_peptide_to_carry_it():
+    """The gate (HISTORY 206): significant only where a peptide covering the residue (its
+    exchanging part) is significant with the same sign; the residue test's other calls are
+    residue_test_only; no peptide comparison for the state: left as is."""
+    from hxex.analysis import PeptideComparison, ResidueComparison, gated_by_peptides
+    from hxex.report.significance import significance_classes
+
+    n = 5  # residues 1-5 of sample V at 4 s; residue 5 of a modified state without peptides
+    rc = ResidueComparison(
+        sample=np.array(["V"] * 4 + ["V pS7"]), time=np.full(n, 4.0),
+        residue=np.array([2, 3, 6, 9, 5]), value_reference=np.full(n, 0.3),
+        value_reference_se=np.full(n, 0.01), value=np.full(n, 0.5), value_se=np.full(n, 0.01),
+        delta=np.array([0.2, 0.2, -0.2, 0.2, 0.2]), delta_se=np.full(n, 0.01),
+        z=np.full(n, 20.0), significant=np.ones(n, dtype=bool), reference="R", delta_crit=0.1)
+    pc = PeptideComparison(
+        sample=np.array(["V", "V"]), peptide=np.array(["AKLPGSTV", "TVEDRW"]),
+        modification=np.array(["", ""]), start=np.array([2, 8]), end=np.array([9, 13]),
+        time=np.array([4.0, 4.0]), value_reference=np.array([0.3, 0.3]),
+        value_reference_se=np.array([0.01, 0.01]), value=np.array([0.5, 0.5]),
+        value_se=np.array([0.01, 0.01]), delta=np.array([0.2, 0.2]),
+        delta_se=np.array([0.01, 0.01]), t=np.array([5.0, 5.0]), p=np.array([0.001, 0.2]),
+        n_reference=np.array([3, 3]), n=np.array([3, 3]),
+        significant=np.array([True, False]), reference="R", delta_crit=0.1)
+    gated = gated_by_peptides(rc, pc, nterm_subtract=1)
+    # residue 2: AKLPGSTV's first residue (no amide counted); 3: carried; 6: opposite sign;
+    # 9: AKLPGSTV's last residue (TVEDRW covers it too but is not significant)
+    assert list(gated.peptide_support[:4]) == [False, True, False, True]
+    assert list(gated.significant) == [False, True, False, True, True]
+    assert list(gated.residue_test_only) == [True, False, True, False, False]
+    assert np.isnan(gated.peptide_support[4])  # V pS7: no peptide comparison, left as it was
+    assert list(significance_classes(gated)[:3]) == [-2, 5, -2]  # 0.2 = 2x: 2-4x
+    assert {"peptide_support", "residue_test_only"} <= set(gated.columns())

@@ -435,14 +435,27 @@ difference the test used is in `delta_shared` (with `delta_shared_se`); where it
 smaller than `delta`, the samples' peptides differ there. A residue that only such peptides
 cover is not tested (`delta_shared` empty); `hxex analyse` says how many.
 
+A residue's difference also counts as significant only where at least one peptide covering it
+shows the difference itself: that peptide is significant in `compare_peptides.csv`, at the same
+time, in the same direction (`peptide_support` true). This is a safeguard. The residue test
+divides each difference by its error, and if those errors are too small (for example when the
+noise model does not suit the data) it calls differences that are not there; the peptide test
+uses the replicates instead. The residue test can also add up several overlapping peptides that
+each fall just short, so a residue it calls without any single peptide carrying the difference is
+kept visible rather than dropped: `residue_test_only` is true, `significant` is false, and the
+significance maps draw it grey with dots. Look at those residues with that in mind: with suitable
+error bars some are real small differences that only the combination finds; with error bars that
+are too small most are not. In the K = 2 tables the same rule uses the K = 2 peptide comparisons.
+
 **Reading the residue significance map.** `residue_significance` shows, for every sample and
 time, which residues differ significantly from the reference, laid out like `population_tiers`:
 one row per sample and time, one cell per residue. A significant residue is red where the sample
 holds more deuterium than the reference and blue where it holds less, in three shades by the
 size of the difference: 1 to 2, 2 to 4, or more than 4 times the threshold (`delta_crit`). The
 size is the difference the test judged (`delta_shared`), so the colour and the decision come from
-the same comparison. Grey cells were compared and are not significant; cross-hatched cells could
-not be tested, because no peptide measured in both samples covers them; white cells were not
+the same comparison. Grey cells were compared and are not significant; grey cells with dots
+passed the residue test but no single peptide carries the difference (`residue_test_only`, see
+above), so they are not counted as significant; cross-hatched cells could not be tested, because no peptide measured in both samples covers them; white cells were not
 compared (a residue not covered in one of the samples, a proline, or the first residue of the
 protein). The shades show size, not how sure the test is: the residue errors come from the fits,
 and grading by them would give the deepest colours where the errors are most understated.

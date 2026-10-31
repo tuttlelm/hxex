@@ -206,6 +206,11 @@ in the published work; where it matters, a component is named by its rank.
   `delta_shared`, `delta_shared_se`; owner, 2026-10-31, HISTORY 202): a peptide only one sample
   has, left out by a filter or not measured there, would otherwise make a residue difference
   out of which peptides were averaged. A residue no shared peptide covers is not tested. A
+  residue difference is significant only where a covering peptide (its exchanging part) is
+  significant at that time with the same sign (`gated_by_peptides`, `peptide_support`; at K = 2
+  by the K = 2 peptide comparisons): a safeguard against residue errors that are too small, e.g.
+  from a noise model that does not suit the data; calls without that support stay visible as
+  `residue_test_only` (owner, 2026-10-31, HISTORY 206). A
   region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
   region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to

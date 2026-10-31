@@ -5573,3 +5573,47 @@ CSVs or mzML if wanted.
     intact-peptide benchmark, the simulation's B_V4 arm) and the unbootstrapped benchmark.
     Not changed: the peptide-level population comparison (Woods K = 2 page) still tests without
     a bootstrap.
+
+205. **Correlated peptide errors in the residue test: measured, not adopted (owner, 2026-10-31:
+    "the effect seems so small I'm not sure it's a justified addition").** The residue error
+    combines the covering peptides as independent (`sqrt(sum w^2 se^2)`), so overlapping
+    peptides that are each nearly significant add up (owner's question). Their replicate errors
+    are not independent: per sample and time, two peptides' replicate deviations correlate
+    +0.20 (overlapping) and +0.15 (far apart) on the tutorial data, +0.14 and +0.10 on the
+    intact-peptide benchmark: mostly a shared per-replicate effect (exposure timing per tube),
+    so with four peptides at z = 1.5 the combined z is about 2.4, not 3.0. Residue values per
+    replicate (errors from their scatter) were set aside: replicate numbers are consistent across
+    peptides only by construction for scan files (SpecExport probably, HX-Express sheets not), and
+    peptides left out per replicate would bring back the mismatch of item 202 within a sample.
+    Tried: a fixed rho in the residue test, `var = (1 - rho) sum w^2 se^2 + rho (sum w se)^2`
+    (private residue_gate/scripts/rho_eval.py, out/rho_eval.txt). At rho 0.2: real data 0 to 3
+    calls of 1,500 change; simulation (its noise independent, so the worst case for the cost)
+    false calls when nothing differs 20.6 -> 17.6 % (constant-noise fit of intensity-dependent
+    noise), 7.5 -> 6.3 % (matching fit), 1.5 -> 1.0 % (constant noise), small real differences
+    found 87.5 -> 85.5 % and 47.4 % unchanged. Too small to justify a fixed constant; the
+    wrong-error case it does not reach (dim spectra's errors too small) is the gate's (step 1).
+
+206. **A residue difference needs a covering peptide to carry it; the rest stay visible (owner,
+    2026-10-31: "try gate with a visible 'residue test only' flag. My motivation for the gate
+    would be to try to have safeguards against noise model mismatch").** The residue test
+    divides by errors from the fits (shrunk by combining overlapping peptides) and has no
+    replicate check; the peptide test (Welch on replicates and `delta_crit`) does. Built:
+    `gated_by_peptides` (`hxex.analysis`): a residue difference is significant only where a
+    peptide covering it (exchanging part, after `nterm_subtract`) is significant at the same
+    sample and time with the same sign as the residue's shared difference
+    (`peptide_support`); the residue test's other calls are `residue_test_only` and not
+    significant; where no peptide comparison exists for the state and time (a modified form of
+    the reference) nothing changes (`peptide_support` empty). Applied to `compare_residues.csv`
+    (K = 1 peptide comparison), and with a bootstrap at K = 2 to `compare_residues_K2.csv` (each
+    rank's peptide comparison) and `compare_populations.csv` (the peptide population
+    comparison). Maps: `residue_test_only` grey with dots. Evaluated first (private
+    residue_gate README, out/gate_variants.txt): a gate on the peptides' replicate test alone
+    (Welch, the size judged at the residue) recovered none of the combined-evidence differences
+    and let more false calls through, so the full peptide test is used. Built check (private
+    residue_gate/gate, out/gate_built.txt): simulation, nothing differing, constant-noise fit of
+    intensity-dependent noise: significant 20.6 -> 6.2 % of residues, residue test only 14.3 %;
+    constant noise with its matching fit: small real differences found 47.4 -> 40.8 %, the other
+    6.6 % flagged residue test only. Real data (K = 1): benchmark 309 / 107 / 206 / 44
+    significant plus 6 / 0 / 13 / 0 flagged (samples A to D), tutorial run 420 / 381 plus 0 / 2;
+    with the bootstrap at K = 2 more K = 2 calls move to the flag (tutorial: positions 19 + 11,
+    population share 36 + 13).

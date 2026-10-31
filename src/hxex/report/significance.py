@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The residue significance maps (owner, 2026-10-31; HISTORY 203-204): one row per compared
+"""The residue significance maps (owner, 2026-10-31; HISTORY 203, 204, 206): one row per compared
 sample and time, one cell per residue, laid out as the population tier map
 (:mod:`hxex.report.tiers`).
 
@@ -20,6 +20,8 @@ called do not reproduce the bootstrapped ones (HISTORY 204), so they are not tes
 Colours: a diverging red (more deuterium than the reference) and blue (less), three steps each,
 and a grey for "not significant", every pair apart under simulated colour-vision deficiency
 (OKLab difference at least 10); residues not tested (no shared peptide) are cross-hatched,
+residues the residue test calls but no covering peptide carries
+(:func:`hxex.analysis.gated_by_peptides`; not significant, HISTORY 206) are grey with dots,
 uncovered ones white. Functions return figures and never show them.
 """
 
@@ -41,6 +43,7 @@ STEPS = (2.0, 4.0)  # the size steps, in multiples of the threshold: 1-2, 2-4, a
 SIGNIFICANCE_COLOURS = ("#d4d4d4", "#86b9dc", "#2f7bbf", "#08306b", "#fb9d7d", "#de3a27",
                         "#7f0010")
 NOT_TESTED_HATCH = "xxxx"
+RESIDUE_ONLY_HATCH = "...."  # the residue test called it, no single peptide carries it
 SAMPLE_ONLY_HATCH = "////"  # two populations in the sample only
 REFERENCE_ONLY_HATCH = "\\\\\\\\"  # two populations in the reference only
 _EDGE = "0.45"
@@ -51,7 +54,8 @@ def significance_classes(comparison: ResidueComparison, *, more_d_positive: bool
                          ) -> np.ndarray:
     """Each row's class: 0 not significant, 1-3 less deuterium than the reference and 4-6 more
     (by the shared difference over the threshold: below 2, 2 to 4, above 4), -1 not tested
-    (no peptide measured in both samples covers the residue: ``delta_shared`` NaN). Without
+    (no peptide measured in both samples covers the residue: ``delta_shared`` NaN), -2 the
+    residue test only (``residue_test_only``: no covering peptide carries it). Without
     ``delta_shared`` (a comparison not judged on shared peptides) the row's own ``delta``.
     ``more_d_positive``: a positive difference means more deuterium (an fD); False for the
     low-D population's share, where more of it means less deuterium."""
@@ -66,6 +70,8 @@ def significance_classes(comparison: ResidueComparison, *, more_d_positive: bool
     step = 1 + (ratio >= STEPS[0]).astype(int) + (ratio >= STEPS[1]).astype(int)
     more = (shared > 0) if more_d_positive else (shared < 0)
     out[sig] = np.where(more[sig], 3 + step[sig], step[sig])
+    if comparison.residue_test_only is not None:
+        out[np.asarray(comparison.residue_test_only, dtype=bool)] = -2
     return out
 
 
@@ -132,8 +138,9 @@ def _draw(sections, n: int, legend: list, title: str) -> Figure:
                     start = r
                     while r < n and where[r]:
                         r += 1
+                    face = SIGNIFICANCE_COLOURS[0] if hatch == RESIDUE_ONLY_HATCH else "white"
                     ax.add_patch(Rectangle((start + 0.5, y - 0.5), r - start, 1.0,
-                                           facecolor="white", edgecolor=_EDGE, hatch=hatch,
+                                           facecolor=face, edgecolor=_EDGE, hatch=hatch,
                                            lw=0.0, gid=f"{hatch}:{labels[y]}:{start + 1}-{r}"))
                 r += 1
     ticks = [y for y, name in enumerate(labels) if name]
@@ -165,13 +172,21 @@ def _graded_legend(more: str, less: str) -> list:
 
 
 def _hatch_patch(hatch: str, label: str) -> Patch:
-    return Patch(facecolor="white", edgecolor=_EDGE, hatch=hatch, label=label)
+    face = SIGNIFICANCE_COLOURS[0] if hatch == RESIDUE_ONLY_HATCH else "white"
+    return Patch(facecolor=face, edgecolor=_EDGE, hatch=hatch, label=label)
+
+
+RESIDUE_ONLY_LABEL = "residue test only (no single peptide carries it): not significant"
+
+
+def _code(c: int):
+    """A class (:func:`significance_classes`) as a cell code or hatch."""
+    return NOT_TESTED_HATCH if c == -1 else RESIDUE_ONLY_HATCH if c == -2 else int(c)
 
 
 def _graded(comparison: ResidueComparison, samples, n, time_scale, more_d_positive=True):
     classes = significance_classes(comparison, more_d_positive=more_d_positive)
-    return _cells(comparison, samples, n,
-                  lambda i: NOT_TESTED_HATCH if classes[i] < 0 else int(classes[i]), time_scale)
+    return _cells(comparison, samples, n, lambda i: _code(classes[i]), time_scale)
 
 
 def _samples(table, samples):
@@ -198,6 +213,7 @@ def plot_residue_significance(
         raise ValueError(f"no comparison of {', '.join(samples)}")
     legend = _graded_legend("more D", "less D") + [
         Patch(color=SIGNIFICANCE_COLOURS[0], label="not significant"),
+        _hatch_patch(RESIDUE_ONLY_HATCH, RESIDUE_ONLY_LABEL),
         _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)"),
         Patch(facecolor="white", edgecolor="0.6", label="not compared")]
     reference = comparison.reference or "the reference"
@@ -246,8 +262,7 @@ def plot_residue_significance_k2(
             return REFERENCE_ONLY_HATCH
         if not two[i]:
             return None
-        c = pop_class.get((choices.sample[i], choices.time[i], choices.residue[i]), 0)
-        return NOT_TESTED_HATCH if c < 0 else int(c)
+        return _code(pop_class.get((choices.sample[i], choices.time[i], choices.residue[i]), 0))
 
     heading = ("populations: red = a smaller low-D share than the reference (so more D), "
                "blue = a larger one" if population is not None else "populations")
@@ -260,8 +275,7 @@ def plot_residue_significance_k2(
             classes = significance_classes(comparison)
             sections.append((name, *_cells(
                 comparison, samples, n,
-                lambda i, c=classes, b=both: (None if not b[i] else NOT_TESTED_HATCH
-                                              if c[i] < 0 else int(c[i])), time_scale)))
+                lambda i, c=classes, b=both: None if not b[i] else _code(c[i]), time_scale)))
     legend = [_hatch_patch(SAMPLE_ONLY_HATCH, "two populations in the sample only"),
               _hatch_patch(REFERENCE_ONLY_HATCH, "two populations in the reference only"),
               Patch(facecolor="white", edgecolor="0.6", label="one population in both")]
@@ -269,6 +283,7 @@ def plot_residue_significance_k2(
     if tested:
         legend += _graded_legend("more D than the reference", "less D than the reference")
         legend += [Patch(color=SIGNIFICANCE_COLOURS[0], label="two in both, not significant"),
+                   _hatch_patch(RESIDUE_ONLY_HATCH, RESIDUE_ONLY_LABEL),
                    _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)")]
     else:
         legend.append(Patch(color=SIGNIFICANCE_COLOURS[0], label="two populations in both"))
