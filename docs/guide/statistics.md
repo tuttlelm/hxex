@@ -65,6 +65,16 @@ What it lacks:
   holds more or less of the low-deuterium population than the reference. Its test uses the
   errors of both population positions, so without the bootstrap it cannot be made for most
   peptides.
+- **The residue-level comparisons at K = 2** (`compare_populations.csv`, `compare_residues_K2.csv`,
+  and the coloured parts of `residue_significance_K2`): whether a sample differs from the
+  reference in the share of the low-deuterium population or in the positions of the two
+  populations. Without a bootstrap at K = 2 these tests have no error for half or more of the
+  residues (a residue whose peptides have one two-population replicate has no scatter to use),
+  and the few differences they call are not the ones the bootstrapped analysis calls (0 to 63 %
+  agree, against 59 to 96 % at K = 1), so *hxex* does not test these differences at all: the `significant`
+  column of `compare_populations.csv` is left empty, `compare_residues_K2.csv` is not written,
+  and `residue_significance_K2` shows only where the number of populations differs. Bootstrap
+  both numbers of populations (below) to get them.
 - **The precision check** above, and the other way of choosing one or two populations,
   `populations = "bootstrap"` in `[analysis]`, which decides from the population positions and
   their errors.

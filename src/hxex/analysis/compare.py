@@ -22,23 +22,29 @@ separation, so the K=1 standard carries over, where a pooled threshold would be 
 separated peptides. Per residue, where the replicates are already combined, a difference is
 significant when ``|delta| / se`` exceeds the normal quantile of the same ``alpha`` and ``|delta|``
 exceeds the threshold (the peptides' K=1 ``delta_crit``, divided by the residue's separation for a
-population).
+population). ``hxex analyse`` reports each sample's own residue values and judges whether a
+residue difference is significant from the peptides both samples measured
+(:func:`paired_residue_maps`, :func:`judged_on_shared`; HISTORY 202).
 
 Regions and sites are protein-specific and user-defined (:class:`Annotations`), never derived.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 from scipy import stats
 
+from .. import chem
 from .populations import ChoiceConfig, lever_population
-from .residues import ResidueMap
+from .residues import ResidueMap, residue_map, separate_modified
 from .runs import resolve_sample
 from .species import SpeciesFilters, _by_replicate, _combine, _records
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -584,7 +590,10 @@ class ResidueComparison:
     ``two_reference`` and ``two``: whether each side's one-or-two choice
     (:func:`hxex.analysis.choose_populations`) keeps two populations at the residue, so that a
     difference is read beside whether each side supports two populations; ``None`` when the
-    comparison was made without a choice. Rows are kept whatever the choices."""
+    comparison was made without a choice. Rows are kept whatever the choices.
+    ``delta_shared`` and ``delta_shared_se``: with :func:`judged_on_shared`, the difference and
+    error the test used, from the peptides both samples measured (``z``, ``significant`` and
+    ``threshold`` are then that test's); ``None`` otherwise."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -610,6 +619,8 @@ class ResidueComparison:
     run: np.ndarray | None = None
     reference_run: str = ""
     threshold: np.ndarray | None = None
+    delta_shared: np.ndarray | None = None
+    delta_shared_se: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback, one run
         if self.threshold is None:
@@ -709,6 +720,7 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
 def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **scalars
                         ) -> ResidueComparison:
     names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS
+             and f.name not in ("delta_shared", "delta_shared_se")  # judged_on_shared's
              and (with_choice or f.name not in ("two_reference", "two"))]
     scalars.update(reference=reference[1], reference_run=reference[0])
     if not rows:
@@ -716,6 +728,108 @@ def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **s
     cols = {name: np.array([r[name] for r in rows]) for name in names}
     cols["run"] = cols["run"].astype(object)
     return ResidueComparison(**cols, **scalars)
+
+
+def paired_residue_maps(
+    uptake,
+    reference: str,
+    *,
+    match: str = "range",
+    modified: str = "separate",
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    **residue_kw,
+) -> dict[tuple[str, str], ResidueMap]:
+    """The residue maps of every state of ``uptake`` (a :class:`hxex.analysis.SpeciesUptake`)
+    paired with ``reference``, each built from the peptides measured in both, so that a
+    residue's difference between them is not judged on a difference in which peptides were
+    averaged (owner, 2026-10-31; HISTORY 202): ``(run, state)`` -> a map holding that state's
+    rows and the reference's, at each labelling time from the peptide ranges both have a K=1
+    value for then (paired as :func:`compare_peptides` pairs them, by ``match``), at every K
+    and rank. A modified form kept as a state of its own (``modified='separate'``) is paired
+    as the map names it; the controls keep every peptide. Each state's own map
+    (:func:`hxex.analysis.residue_map`) keeps all its peptides and gives the values; these
+    maps only judge whether a difference is significant (:func:`judged_on_shared`).
+    ``residue_kw`` goes to :func:`hxex.analysis.residue_map` (``sequences``,
+    ``weight_exponent``, ...)."""
+    if match not in MATCHES:
+        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
+    pep = uptake.select(uptake.kind == "peptide")
+    named, base = separate_modified(pep, registry) if modified == "separate" else (pep, {})
+    present = list(dict.fromkeys(zip((str(u) for u in named.run),
+                                     (str(s) for s in named.sample), strict=True)))
+    reference = resolve_sample([s[0] for s in present], [s[1] for s in present], reference,
+                               "reference sample")
+    valued = ((named.K == 1) & (named.rank == 1) & (named.role == "")
+              & np.isfinite(np.asarray(named.fD, dtype=float)))
+    keys: dict[tuple[str, str], set] = {}
+    for i in np.flatnonzero(valued):
+        keys.setdefault((str(named.run[i]), str(named.sample[i])), set()).add(
+            (str(named.peptide[i]), str(named.modification[i]), int(named.start[i]),
+             int(named.end[i]), float(named.time[i])))
+    states = list(zip(uptake.run.astype(str), uptake.sample.astype(str), strict=True))
+    out = {}
+    for state in present:
+        if state == reference:
+            continue
+        only: dict[tuple[str, str, float], set] = {}
+        for side in (reference, state):  # a time either side has: no shared peptide, no rows
+            for key in keys.get(side, ()):
+                only.setdefault((*side, key[4]), set())
+        for rkey, key in _pairs(keys.get(reference, set()), keys.get(state, set()), match):
+            only[(*reference, rkey[4])].add(rkey[2:4])
+            only[(*state, key[4])].add(key[2:4])
+        sides = {(s[0], base.get(s, s[1])) for s in (reference, state)}
+        rows = np.array([s in sides for s in states], dtype=bool)
+        both = residue_map(uptake.select(rows), modified=modified, registry=registry,
+                           only=only, **residue_kw)
+        keep = np.array([(str(u), str(s)) in (reference, state)
+                         for u, s in zip(both.run, both.sample, strict=True)], dtype=bool)
+        out[state] = replace(both, **{f.name: getattr(both, f.name)[keep] for f in fields(both)
+                                      if getattr(both, f.name) is not None})
+    return out
+
+
+def concat_tables(tables: Sequence):
+    """One table from several of the same kind (a comparison per pair of samples, for
+    example): every column joined, the other fields (reference, thresholds, ...) from the
+    first; None for none."""
+    tables = list(tables)
+    if not tables:
+        return None
+    first = tables[0]
+    return replace(first, **{f.name: np.concatenate([getattr(t, f.name) for t in tables])
+                             for f in fields(first)
+                             if isinstance(getattr(first, f.name), np.ndarray)})
+
+
+def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
+                     ) -> ResidueComparison:
+    """``own`` (a residue comparison of the samples' own residue values) with whether each
+    difference is significant judged from ``shared``, the same comparison made from the
+    peptides both samples measured (:func:`paired_residue_maps`; owner, 2026-10-31, HISTORY
+    202): the values and ``delta`` stay each sample's own, ``z``, ``significant`` and
+    ``threshold`` are the shared test's, and ``delta_shared`` and ``delta_shared_se`` are the
+    difference and error it used. A residue no shared peptide covers keeps its values and is
+    not significant (``delta_shared`` NaN); how many is logged."""
+    n = len(own)
+    z, sig = np.full(n, np.nan), np.zeros(n, dtype=bool)
+    d_shared, se_shared = np.full(n, np.nan), np.full(n, np.nan)
+    threshold = np.asarray(own.threshold, dtype=float).copy()
+    index = ({} if shared is None else
+             {key: j for j, key in enumerate(zip(shared.run, shared.sample, shared.time,
+                                                  shared.residue, strict=True))})
+    for i, key in enumerate(zip(own.run, own.sample, own.time, own.residue, strict=True)):
+        j = index.get(key)
+        if j is not None:
+            z[i], sig[i] = shared.z[j], bool(shared.significant[j])
+            d_shared[i], se_shared[i] = shared.delta[j], shared.delta_se[j]
+            threshold[i] = shared.threshold[j]
+    lost = int(np.sum(np.isnan(d_shared)))
+    if lost:
+        log.info("%d of %d residue differences (%s) not tested: no peptide measured in both "
+                 "samples at that time covers the residue", lost, n, own.quantity)
+    return replace(own, z=z, significant=sig, threshold=threshold, delta_shared=d_shared,
+                   delta_shared_se=se_shared)
 
 
 def compare_residues(

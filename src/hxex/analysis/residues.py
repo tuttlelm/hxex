@@ -22,7 +22,7 @@ Only peptides are used (``kind == 'peptide'``); fragments are analysed different
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, fields
 
 import numpy as np
@@ -318,6 +318,7 @@ def residue_map(
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
     two_population_peptides: bool | None = None,
     population_test: bool | None = None,
+    only: Mapping[tuple[str, str, float], Collection[tuple[int, int]]] | None = None,
 ) -> ResidueMap:
     """The residue-level values of every sample, time, K and rank of ``uptake`` (peptides only).
 
@@ -353,6 +354,13 @@ def residue_map(
     1 to the last covered one and are known only where a peptide covers them. Redundancy and
     resolution are those of the peptides measured at that time (:func:`coverage_table` gives
     them over all times).
+
+    ``only`` restricts the peptides of a state at a labelling time: ``(run, state, time)`` (the
+    state as the map names it, a modified form's included) -> the ``(start, end)`` ranges
+    to use, at every K and rank; a state and time it does not name keep every peptide, one
+    left without a peptide has no rows, and the controls are never restricted.
+    :func:`hxex.analysis.paired_residue_maps` uses it to build both sides of a comparison from
+    the same peptides.
     """
     if weight_exponent < 0:
         raise ValueError("weight_exponent must be >= 0")
@@ -385,6 +393,11 @@ def residue_map(
         rows = np.flatnonzero(pep.where(run=run, sample=sample, K=k, rank=rank)
                               & (points == key))
         time, role = float(pep.time[rows[0]]), str(pep.role[rows[0]])
+        if only is not None and not role and (run, sample, time) in only:
+            ranges = only[(run, sample, time)]
+            rows = rows[[(int(pep.start[i]), int(pep.end[i])) in ranges for i in rows]]
+            if not len(rows):
+                continue
         peptides = [(str(pep.peptide[i]), int(pep.start[i]), int(pep.end[i])) for i in rows]
         known = _letters((run, sample), peptides, seq_of, registry)
         z, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,

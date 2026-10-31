@@ -15,10 +15,13 @@ Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<ti
 ``profile_<sample>_<time>`` without K=2), ``population_tiers`` (with the population test: the
 residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
 ``compare_residues_<time>`` (the values of ``config.overlay``,
-:func:`hxex.report.residue_overlay_figure`),
-``compare_populations_<time>``, ``woods_<sample>_<time>`` (K=1, and where the number of
-populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
-``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
+:func:`hxex.report.residue_overlay_figure`), ``compare_populations_<time>``,
+``residue_significance`` (which residues differ from the reference,
+:func:`hxex.report.plot_residue_significance`), ``residue_significance_K2``
+(:func:`hxex.report.plot_residue_significance_k2`), ``woods_<sample>_<time>`` (K=1, and where the
+number of populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons),
+``butterfly_<sample>`` and ``regions_<time>``. For a run with fragment series
+(:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
 ``ladder_residues.csv``, ``closure.csv`` and per parent
 ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
@@ -54,9 +57,12 @@ from ..analysis import (
     compare_populations,
     compare_residues,
     compare_settings,
+    concat_tables,
     coverage_table,
+    judged_on_shared,
     left_out_spectra,
     left_out_summary,
+    paired_residue_maps,
     region_summary,
     residue_map,
     set_pvalues,
@@ -83,6 +89,7 @@ from .protection import (
     protection_figure,
 )
 from .residues import plot_population_choice, plot_residue_profile
+from .significance import plot_residue_significance, plot_residue_significance_k2
 from .tables import write_csv
 from .tiers import plot_population_tiers
 
@@ -123,6 +130,18 @@ def _time_label(time: float, scale: str = "seconds") -> str:
 def _stem(name: str) -> str:
     """``name`` as a file name on every system."""
     return re.sub(r'[<>:"/\\|?*\s]', "_", name)
+
+
+def _ranked(by_rank: dict) -> dict[str, np.ndarray]:
+    """One table of residue comparisons at K = 2 (rank -> comparison), with a ``rank``
+    column (1: the low-D population's position, 2: the high-D one) after ``residue``."""
+    out: dict[str, list] = {}
+    for rank, comparison in by_rank.items():
+        for name, values in comparison.columns().items():
+            out.setdefault(name, []).append(values)
+            if name == "residue":
+                out.setdefault("rank", []).append(np.full(len(comparison), rank))
+    return {name: np.concatenate(values) for name, values in out.items()}
 
 
 def _has_overlay(residues, sample: str, time: float, show, choice=None) -> bool:
@@ -258,6 +277,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = counts_d = None
+    choices_cmp = k2_positions = None
+    k2_tested = False
     if config.reference:
         ref = ref_name
         best = best_sets(up)  # each species' number of populations (best_set_K)
@@ -294,15 +315,66 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                **(test_p or {}))
             tables["compare_population_counts"] = counts.columns()
             counts_d = _display(counts, labels, reference)
-        res_cmp = compare_residues(residues, ref, alpha=config.alpha,
-                                   delta_crit=comparisons["K=1 fD"].delta_crit, choice=choice)
+        # each sample's own values; whether a difference is significant is judged from the
+        # peptides both samples measured at that time (owner, 2026-10-31; HISTORY 202), so a
+        # peptide only one of them has cannot make one
+        crit = comparisons["K=1 fD"].delta_crit
+        pairs = paired_residue_maps(
+            up, ref, match=config.peptide_match, sequences=sequences,
+            weight_exponent=config.weight_exponent, modified=config.modified_peptides,
+            two_population_peptides=gate and 2 in config.ks,
+            population_test=config.populations == "population_test")
+        pair_choice = ({s: choose_populations(m, config.choice_limits,
+                                              tiers=config.populations == "population_test")
+                        for s, m in pairs.items()} if choice is not None else {})
+        res_cmp = judged_on_shared(
+            compare_residues(residues, ref, alpha=config.alpha, delta_crit=crit, choice=choice),
+            concat_tables([compare_residues(m, ref, alpha=config.alpha, delta_crit=crit,
+                                            choice=pair_choice.get(s))
+                           for s, m in pairs.items()]))
         tables["compare_residues"] = res_cmp.columns()
         if choice is not None:
-            pop_cmp = compare_populations(  # the K=1 threshold, divided by each separation
-                choice, ref, alpha=config.alpha, delta_crit=comparisons["K=1 fD"].delta_crit)
-            tables["compare_populations"] = pop_cmp.columns()
-            tables["compare_choices"] = compare_choices(choice, ref).columns()
+            # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
+            # every run: without one most residues have no error and the few calls do not
+            # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
+            k2_tested = all(r.bootstrap_by_k.get(2) is not None for r in (
+                results.runs.values() if isinstance(results, RunSet) else [results]))
+            pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
+                compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit),
+                concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
+                                                   delta_crit=crit) for s in pairs]))
+            pop_cols = pop_cmp.columns()
+            if not k2_tested:
+                pop_cols["z"] = np.full(len(pop_cmp), np.nan)
+                pop_cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
+                log.info("K=2 differences between samples (population share, positions) not "
+                         "tested: no bootstrap at K=2 ([run.bootstrap] ks = [1, 2], or hxex "
+                         "resume); residue_significance_K2 shows where the number of "
+                         "populations differs")
+            tables["compare_populations"] = pop_cols
+            choices_cmp = compare_choices(choice, ref)
+            tables["compare_choices"] = choices_cmp.columns()
+            if k2_tested:  # the two positions, each with its own K=2 threshold
+                k2_positions = {}
+                for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
+                    k2_crit = comparisons[title].delta_crit
+                    k2_positions[rank] = judged_on_shared(
+                        compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
+                                         delta_crit=k2_crit, choice=choice),
+                        concat_tables([compare_residues(m, ref, K=2, rank=rank,
+                                                        alpha=config.alpha,
+                                                        delta_crit=k2_crit,
+                                                        choice=pair_choice[s])
+                                       for s, m in pairs.items()]))
+                tables["compare_residues_K2"] = _ranked(k2_positions)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
+        res_cmp = _display(res_cmp, labels, reference)
+        if choices_cmp is not None:
+            choices_cmp = _display(choices_cmp, labels, reference)
+            pop_cmp = _display(pop_cmp, labels, reference) if k2_tested else None
+            if k2_positions is not None:
+                k2_positions = {r: _display(c, labels, reference)
+                                for r, c in k2_positions.items()}
     protection = prot_cmp = None
     if config.protection:
         if scale == "order":
@@ -397,6 +469,19 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                         k2_stack, s, t, annotations=ann, length=length,
                         note=("compared where both samples have two populations" if gate
                               else "every K=2 description compared"), **when)))
+        # which residues differ from the reference, judged on the shared peptides (HISTORY 203)
+        compared = [s for s in residue_others if res_cmp.where(sample=s).any()]
+        if compared:
+            jobs.append(("residue_significance", lambda compared=compared:
+                         plot_residue_significance(res_cmp, compared, length=length, **when)))
+        with_two = [s for s in residue_others
+                    if choices_cmp is not None and choices_cmp.where(sample=s).any()]
+        if with_two:
+            positions = k2_positions or {}
+            jobs.append(("residue_significance_K2", lambda with_two=with_two, positions=positions:
+                         plot_residue_significance_k2(
+                             choices_cmp, pop_cmp, positions.get(1), positions.get(2),
+                             with_two, length=length, **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
         for s in others:

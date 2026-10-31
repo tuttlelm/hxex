@@ -5494,3 +5494,82 @@ CSVs or mzML if wanted.
     31 of 555. Only one dataset: "automatic" stays opt-in until a second (ideally a Q-TOF LC-MS
     run as mzML) agrees. Also: `SeriesOffsets.calibration` (the per-run lines) and
     `mz_check.limit_ppm`.
+
+202. **A residue difference is judged from the peptides both samples measured (owner,
+    2026-10-31).** The noise simulation called residues different far more
+    often than peptides (seed 1, nothing differing: 20.6 % of residues against 4.7 % of
+    peptides with a constant-noise fit of intensity-dependent noise; 7.5 % against 4.2 % with
+    the matching fit). Every such residue sat under a peptide outside its own error, and each
+    peptide reaches about eight residues; the residue test has no replicate check and its error
+    is the fits' error, shrunk by combining overlapping peptides (a peptide gate, proposed for
+    that, is the next step). Evaluating the gate on real data showed a separate fault: on the
+    intact-peptide benchmark, 52 to 79 % of residue comparisons rested on different peptide sets
+    in the two samples (each sample had 5 to 15 peptides the other lacked at a time: left out by
+    `stand_in_controls = "exclude"` or the spectrum screens, or not in that sample's data), and
+    13 to 25 residue differences per sample were larger than every covering peptide's
+    difference, some of the opposite sign, which a weighted mean of the same peptides cannot
+    give. The tutorial data and the simulation have the same peptides in every sample. Built
+    (owner: "I don't think the per sample values should change, what should change is whether
+    we can say one sample versus another is a significant difference"; a first build that
+    also drew and reported the rebuilt values was withdrawn): every value, difference and
+    figure stays each sample's own; `z`, `significant` and the threshold of
+    `compare_residues.csv` and `compare_populations.csv` come from both samples rebuilt from the
+    peptide ranges both have a K=1 value for at that time (`paired_residue_maps`, paired as
+    `compare_peptides` pairs them; modified forms kept apart are paired as states of their own;
+    controls unrestricted; `residue_map(..., only=...)`, `concat_tables`, `judged_on_shared`),
+    with the difference and error the test used in the new columns `delta_shared` and
+    `delta_shared_se`; a residue no shared peptide covers is not tested (logged).
+    `compare_choices.csv` keeps the own choices. Benchmark (samples A to D against E): calls
+    310 / 112 / 179 / 60 -> 315 / 107 / 219 / 44; no residue lost its test; calls no covering
+    peptide supports 11 / 13 / 26 / 15 -> 6 / 0 / 13 / 0. Tutorial: D109H 421 -> 429 (4 peptides
+    unmatched), R120G unchanged. Simulation (OBVIOUS, 6 peptides unmatched): the 25 calls lost
+    were all on truly unchanged residues, none of the found differences lost. Leaving out
+    peptides longer than 30 residues on top changed 0 to 7 calls anywhere (owner asked): not
+    needed; the 1 / length weight already keeps them small.
+
+203. **A residue significance map (owner, 2026-10-31: "a heatmap significance similar to the
+    tiered plot", graded "by size of shared difference").** `residue_significance` (`hxex
+    analyse`, with a reference; `hxex.report.plot_residue_significance`, `significance_classes`,
+    `SIGNIFICANCE_COLOURS`): laid out as the population tier map, one row per compared sample
+    and time, one cell per residue. Significant residues (the shared-peptide test of item 202)
+    in red (more deuterium than the reference) or blue (less), three shades by the shared
+    difference over the threshold (1-2, 2-4, over 4); grey compared but not significant;
+    cross-hatched not tested (no shared peptide); white not compared. Graded by size, not z:
+    the residue errors come from the fits, shrunk by combining overlapping peptides (item 202),
+    so z would give the deepest colours where they are most understated; grading by p can follow
+    once residue errors are replicate-based (step 2 of the residue plan). Palette checked with
+    the dataviz validator: every pair at least 10.2 apart (OKLab x 100) under simulated
+    colour-vision deficiency; by colour alone no grey stayed apart from all six shades and white,
+    so "not tested" is a texture and the grey (#d4d4d4) is 13.0 from white under normal vision,
+    the closest pair. K=1 fD only for now (populations and K=2 not drawn).
+
+204. **K = 2 at the residue level: the number of populations always, the differences with a
+    bootstrap at K = 2 only (owner, 2026-10-31: "reasonable for K=2 to require bootstrap", and
+    "yes" to splitting the map).** The K = 1 residue test already works without a bootstrap (its
+    error is the replicate scatter, which a bootstrap can only widen: `_combine` takes the larger).
+    At K = 2 it does not (measured after the build, owner asked, since the peptide-level Woods
+    K = 2 positions had been identical with and without the bootstrap, item 159; my first reason,
+    that positions trading off within a fit make replicate scatter no error, was item 128's
+    finding about the population share, not the positions). Three bundles with a fixed-K
+    bootstrap at K = 1 and 2 (the tutorial run, the intact-peptide benchmark, the simulation's
+    B_V4 arm), each analysed with and without it (private residue_gate/scripts/
+    k2_without_bootstrap.py, out/k2_without_bootstrap.txt), share of the residue rows either
+    analysis calls that both call: K = 1 96 / 74 / 59 % (all rows 97.5 / 91.4 / 86.1 %); K = 2
+    low-D position 38 / 56 / 29 % (calls with/without 10/12, 9/5, 7/2), high-D 63 / 40 / 0 %
+    (20/32, 5/2, 4/3), population share 60 / 44 / 49 % (49/47, 50/51, 133/76); without the
+    bootstrap 40 to 73 % of the K = 2 residue rows have no error at all (one two-population
+    replicate per side). The peptide-level Woods K = 2 positions stay as they are (Welch on
+    replicate values, item 159). Built: `residue_significance_K2` (`plot_residue_significance_k2`): section
+    *populations* from `compare_choices` (two in the sample only, two in the reference only:
+    textures, no bootstrap needed; grey where both keep two), and, with a fixed-K bootstrap at
+    K = 2 in every run (`bootstrap_by_k[2]`; a bootstrap at the selected K alone covers only the
+    spectra that chose two), the population share's significant differences (blue: more of the
+    low-D population) and sections *low-D position* and *high-D position* from the new
+    `compare_residues_K2.csv` (K = 2 ranks 1 and 2, each with its peptide comparison's
+    `delta_crit`, judged on shared peptides, `rank` column). Without that bootstrap,
+    `compare_populations.csv` keeps its values with `z` and `significant` empty (a behaviour
+    change: it reported significance before), `compare_residues_K2.csv` is not written, and one
+    log line names the setting. Checked on three bootstrapped bundles (the tutorial run, the
+    intact-peptide benchmark, the simulation's B_V4 arm) and the unbootstrapped benchmark.
+    Not changed: the peptide-level population comparison (Woods K = 2 page) still tests without
+    a bootstrap.

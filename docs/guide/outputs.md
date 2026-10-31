@@ -334,9 +334,10 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 | File | Holds |
 |---|---|
 | `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; `n_reference` and `n`, the replicates on each side (a replicate's charge states count once); for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart) |
-| `compare_residues.csv` | per residue and time: difference, error, z, `significant` (at K=2, only where both samples keep two populations), and whether each side keeps two (`two_reference`, `two`) |
+| `compare_residues.csv` | per residue and time: difference, error, z, `significant` (at K=2, only where both samples keep two populations), and whether each side keeps two (`two_reference`, `two`); the values and `delta` are each sample's own, while `z` and `significant` come from the peptides measured in both samples at that time, whose difference and error are `delta_shared` and `delta_shared_se` (see *Reading the residue comparison* below) |
 | `compare_population_counts.csv` | per peptide and time: whether each side is best described by one or two populations (`K_reference`, `K`), the evidence (`delta_criterion`: negative favours two), `differs`, and `borderline` (a difference with weak evidence); with the [population test](population-test.md), `p` and `p_reference` (each side's p-value where they differ), which then decide `borderline` |
-| `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` |
+| `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` (judged from the peptides measured in both samples, `delta_shared`; empty without a bootstrap at K = 2, see [the statistics page](statistics.md#what-the-bootstrap-adds)) |
+| `compare_residues_K2.csv` | with a bootstrap at K = 2 only: per residue, time, and `rank` (1 the low-D population's position, 2 the high-D one), the difference from the reference where both keep two populations, laid out as `compare_residues.csv` |
 | `compare_choices.csv` | per residue: whether each side keeps two populations, and whether they agree |
 
 **Runs** (several bundles): `run_settings.csv` (settings that differ between the runs, and
@@ -364,6 +365,8 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `choice_<sample>_<time>` | the residue profile: K=1, the K=2 ranks, the chosen description and the population (`profile_...` when there is no K=2) |
 | `population_tiers` | with the [population test](population-test.md): the residue tiers, one row per sample and time point (the controls first) |
 | `compare_residues_<time>`, `compare_populations_<time>` | each sample against the reference, by residue (see *Reading the residue comparison* below) |
+| `residue_significance` | which residues differ significantly from the reference: one row per sample and time, one cell per residue (see *Reading the residue significance map* below) |
+| `residue_significance_K2` | the same at K = 2: where the number of populations differs, and, with a bootstrap at K = 2, the differences in the population share and in the two populations' positions |
 | `woods_<sample>_<time>` | peptide differences from the reference at K=1, and where the number of populations differs (see *Reading the Woods plot* below) |
 | `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
 | `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath |
@@ -421,6 +424,37 @@ average runs in steps: the width of a step is the resolution the peptides allow.
 (`pop_low`) as up triangles: each sample where it has two populations, whether or not the other
 sample has. The by-residue figure can show any of these values (`overlay` in `[analysis]`:
 `low`, `high`, `avg`, `pop_low`, `pop_high`).
+
+The values in these figures are each sample's own. Whether a residue's difference is
+significant (`significant` in `compare_residues.csv` and `compare_populations.csv`) is judged
+differently: from both samples' values rebuilt from only the peptides measured in both samples
+at that time. A peptide that only one sample has, because a filter left it out of the other or
+because the other never measured it, changes that sample's values alone, so the difference
+would partly show which peptides were averaged rather than a change in exchange. The
+difference the test used is in `delta_shared` (with `delta_shared_se`); where it is much
+smaller than `delta`, the samples' peptides differ there. A residue that only such peptides
+cover is not tested (`delta_shared` empty); `hxex analyse` says how many.
+
+**Reading the residue significance map.** `residue_significance` shows, for every sample and
+time, which residues differ significantly from the reference, laid out like `population_tiers`:
+one row per sample and time, one cell per residue. A significant residue is red where the sample
+holds more deuterium than the reference and blue where it holds less, in three shades by the
+size of the difference: 1 to 2, 2 to 4, or more than 4 times the threshold (`delta_crit`). The
+size is the difference the test judged (`delta_shared`), so the colour and the decision come from
+the same comparison. Grey cells were compared and are not significant; cross-hatched cells could
+not be tested, because no peptide measured in both samples covers them; white cells were not
+compared (a residue not covered in one of the samples, a proline, or the first residue of the
+protein). The shades show size, not how sure the test is: the residue errors come from the fits,
+and grading by them would give the deepest colours where the errors are most understated.
+
+`residue_significance_K2` does the same at K = 2, in up to three sections. The first,
+*populations*, shows where only the sample keeps two populations (hatched one way) or only the
+reference does (hatched the other way); white means one population in both. Where both keep two,
+the cell is grey, or, with a bootstrap at K = 2, coloured when the share of the low-D population
+differs significantly: blue where the sample holds more of the low-D population (so less
+deuterium overall), red where it holds less. The other two sections, drawn only with a bootstrap
+at K = 2, show whether the low-D and the high-D population each sit at a different deuterium
+level from the reference's, coloured as above.
 
 ## The settings used
 

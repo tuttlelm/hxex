@@ -66,6 +66,11 @@ from .series import (
     series_info,
     uptake_data,
 )
+from .significance import (
+    SIGNIFICANCE_COLOURS,
+    plot_residue_significance,
+    plot_residue_significance_k2,
+)
 from .spectrum import plot_spectrum, spectrum_data
 from .tables import (
     components_table,
@@ -100,6 +105,9 @@ __all__ = [
     "plot_population_choice",
     "plot_population_tiers",
     "TIER_COLOURS",
+    "plot_residue_significance",
+    "plot_residue_significance_k2",
+    "SIGNIFICANCE_COLOURS",
     "plot_residue_profile",
     "FD_CMAP",
     "autowrap",

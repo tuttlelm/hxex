@@ -199,7 +199,14 @@ in the published work; where it matters, a component is named by its rank.
   intact-peptide benchmark; the typical scatter is the same at every exposure time there, so
   one threshold serves all times); `n` the typical replicate count; replicates, their charge
   states averaged); per residue,
-  `|delta| / se` above the normal quantile and `|delta|` above the peptides' `delta_crit`. A region's value is the mean of its residues and its error
+  `|delta| / se` above the normal quantile and `|delta|` above the peptides' `delta_crit`. The
+  values and differences reported are each sample's own (every figure and table), but the test
+  uses both samples' residue values rebuilt from the peptides measured in both at that time
+  (`paired_residue_maps`, paired as the peptide comparison pairs them; `judged_on_shared`;
+  `delta_shared`, `delta_shared_se`; owner, 2026-10-31, HISTORY 202): a peptide only one sample
+  has, left out by a filter or not measured there, would otherwise make a residue difference
+  out of which peptides were averaged. A residue no shared peptide covers is not tested. A
+  region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
   region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to
   see whether a sample shifts the balance between the populations rather than their

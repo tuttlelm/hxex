@@ -6,7 +6,9 @@ species (peptide or fragment), time and rank at a fixed K, replicates and charge
 combined; :func:`residue_map` turns the peptides into residue-level values, and
 :func:`coverage_table` gives each sample's redundancy and resolution per residue;
 :func:`choose_populations` decides per residue whether two populations are supported;
-:func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples;
+:func:`compare_peptides`, :func:`compare_residues` and :func:`region_summary` compare samples
+(a residue difference judged from the peptides both samples measured: :func:`paired_residue_maps`,
+:func:`judged_on_shared`);
 :func:`fragment_uptake`, :func:`ladder_steps`, :func:`difference_trace`, :func:`fit_decay` and
 :func:`fit_residues` give fragment-ion kinetics and simple ladder values (one amide per step),
 and :func:`closure_table` checks that complementary fragments add up to the precursor;
@@ -28,6 +30,9 @@ from .compare import (
     compare_population_counts,
     compare_populations,
     compare_residues,
+    concat_tables,
+    judged_on_shared,
+    paired_residue_maps,
     region_summary,
 )
 from .fragments import (
@@ -146,6 +151,9 @@ __all__ = [
     "compare_population_counts",
     "compare_populations",
     "compare_residues",
+    "concat_tables",
+    "judged_on_shared",
+    "paired_residue_maps",
     "region_summary",
     "ChoiceConfig",
     "CoverageTable",

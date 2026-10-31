@@ -601,6 +601,58 @@ def test_residue_comparison_and_regions():
     assert np.isnan(regions.fD[(regions.sample == "V") & (regions.region == "C")][0])
 
 
+def test_a_residue_difference_is_judged_from_the_peptides_both_samples_measured():
+    """A peptide only one sample has (left out in the other, or not measured there) changes
+    that sample's own residue values, which the comparison keeps, but cannot make a difference
+    significant: the test uses the peptides both measured (owner, HISTORY 202). A residue
+    only such peptides cover keeps its values and is not tested."""
+    from hxex.analysis import (
+        compare_residues,
+        concat_tables,
+        judged_on_shared,
+        paired_residue_maps,
+    )
+
+    up = table([("R", "AKLPGSTV", 2, 4.0, 0.30, 0.01), ("V", "AKLPGSTV", 2, 4.0, 0.30, 0.01),
+                ("V", "GSTV", 6, 4.0, 0.90, 0.01), ("R", "TVEDRW", 8, 4.0, 0.50, 0.01),
+                ("V", "EDRWQ", 10, 4.0, 0.50, 0.01)])
+    own = compare_residues(residue_map(up, sequences=SEQUENCE), "R", delta_crit=0.1)
+    assert own.significant[own.residue == 8].all()  # V's own map averages GSTV in
+    pairs = paired_residue_maps(up, "R", sequences=SEQUENCE)
+    assert set(pairs) == {("", "V")}
+    both = pairs[("", "V")]
+    assert set(both.sample) == {"R", "V"}
+    shared = concat_tables([compare_residues(m, "R", delta_crit=0.1) for m in pairs.values()])
+    assert not shared.significant.any() and np.allclose(shared.delta, 0.0)
+    rc = judged_on_shared(own, shared)
+    assert np.array_equal(rc.value, own.value) and np.array_equal(rc.delta, own.delta)
+    eight = rc.residue == 8
+    assert rc.delta[eight][0] > 0.1 and not rc.significant[eight][0]
+    assert rc.delta_shared[eight][0] == pytest.approx(0.0)
+    # residue 11: each sample has a value, from peptides the other did not measure
+    eleven = rc.residue == 11
+    assert eleven.any() and not rc.significant[eleven].any()
+    assert np.isnan(rc.delta_shared[eleven]).all() and np.isfinite(rc.delta[eleven]).all()
+    assert {"delta_shared", "delta_shared_se"} <= set(rc.columns())
+    assert "delta_shared" not in own.columns()
+    with pytest.raises(ValueError, match="match must be"):
+        paired_residue_maps(up, "R", match="nearest")
+
+
+def test_a_modified_form_is_paired_with_the_reference_as_a_state_of_its_own():
+    import dataclasses
+
+    from hxex.analysis import paired_residue_maps
+
+    up = table([("R", "AKLPGSTV", 2, 4.0, 0.30, 0.01), ("R", "AKLPGpSTV", 2, 4.0, 0.40, 0.01),
+                ("V", "AKLPGSTV", 2, 4.0, 0.35, 0.01)])
+    up = dataclasses.replace(up, end=np.array([9, 9, 9]))  # the helper counts characters
+    pairs = paired_residue_maps(up, "R", sequences=SEQUENCE)
+    assert set(pairs) == {("", "V"), ("", "R pS7")}
+    assert set(pairs[("", "R pS7")].sample) == {"R", "R pS7"}
+    assert "R pS7" not in set(pairs[("", "V")].sample)
+
+
 def test_comparison_plots():
     from hxex.analysis import (
         Annotations,
@@ -2032,3 +2084,71 @@ def test_the_runs_controls_leave_out_the_screened_controls(tmp_path):
     out.write(tmp_path / "r")
     with open_bundle(tmp_path / "r") as bundle:
         assert bundle.controls().screened == ("a", "b")
+
+
+def test_residue_significance_map():
+    """Each residue's class: significant on the shared peptides, by direction and the shared
+    difference over the threshold; not tested where no shared peptide covers it (hatched)."""
+    from hxex.analysis import ResidueComparison
+    from hxex.report import SIGNIFICANCE_COLOURS, plot_residue_significance
+    from hxex.report.significance import significance_classes
+
+    n = 7
+    delta_shared = np.array([0.0, -0.15, -0.3, 0.15, 0.3, 0.5, np.nan])
+    rc = ResidueComparison(
+        sample=np.array(["V"] * n), time=np.full(n, 4.0), residue=np.arange(1, n + 1),
+        value_reference=np.full(n, 0.3), value_reference_se=np.full(n, 0.01),
+        value=np.full(n, 0.5), value_se=np.full(n, 0.01), delta=np.full(n, 0.2),
+        delta_se=np.full(n, 0.01), z=np.full(n, 20.0),
+        significant=np.array([False, True, True, True, True, True, False]),
+        reference="R", delta_crit=0.1, delta_shared=delta_shared,
+        delta_shared_se=np.full(n, 0.01))
+    assert list(significance_classes(rc)) == [0, 1, 2, 4, 5, 6, -1]
+    fig = plot_residue_significance(rc)
+    ax = fig.axes[0]
+    assert [p.get_gid() for p in ax.patches] == ["xxxx:V  4 s:7-7"]
+    assert len(SIGNIFICANCE_COLOURS) == 7
+    with pytest.raises(ValueError, match="empty"):
+        plot_residue_significance(ResidueComparison(**{
+            name: np.array([]) for name in ("sample", "time", "residue", "value_reference",
+                                            "value_reference_se", "value", "value_se",
+                                            "delta", "delta_se", "z", "significant")}))
+
+
+def test_residue_significance_map_at_k2():
+    """Where only one side has two populations: textures (no bootstrap needed); where both have
+    two, the population share's difference (with a bootstrap at K = 2: blue for more of the
+    low-D population), else grey; position sections only where both keep two."""
+    from hxex.analysis import ChoiceComparison, ResidueComparison
+    from hxex.report import plot_residue_significance_k2
+
+    n = 5
+    choices = ChoiceComparison(
+        run=np.array([""] * n, dtype=object), sample=np.array(["V"] * n),
+        time=np.full(n, 4.0), residue=np.arange(1, n + 1),
+        two_reference=np.array([True, False, True, True, False]),
+        two=np.array([False, True, True, True, False]),
+        reason_reference=np.array([""] * n), reason=np.array([""] * n),
+        agree=np.array([False, False, True, True, True]), reference="R")
+    untested = plot_residue_significance_k2(choices)
+    gids = sorted(p.get_gid().split(":")[0] for p in untested.axes[0].patches)
+    assert gids == ["////", "\\\\\\\\"]  # sample only (residue 2), reference only (residue 1)
+    assert "need a bootstrap" in untested.texts[0].get_text()
+    keep = np.array([2, 3])  # residues 3 and 4: two in both
+    pop = ResidueComparison(
+        sample=np.array(["V", "V"]), time=np.full(2, 4.0), residue=keep + 1,
+        value_reference=np.full(2, 0.5), value_reference_se=np.full(2, 0.02),
+        value=np.array([0.8, 0.52]), value_se=np.full(2, 0.02), delta=np.array([0.3, 0.02]),
+        delta_se=np.full(2, 0.03), z=np.array([10.0, 0.7]), significant=np.array([True, False]),
+        reference="R", delta_crit=0.1, quantity="population",
+        delta_shared=np.array([0.3, 0.02]), delta_shared_se=np.full(2, 0.03))
+    tested = plot_residue_significance_k2(choices, pop, pop, pop)
+    image = tested.axes[0].images[0].get_array()
+    # row 1 is the populations section's first sample row (row 0 its heading)
+    assert image[1, 2] == 2  # more of the low-D share: less D, 2-4x (blue)
+    assert image[1, 3] == 0  # not significant
+    assert np.ma.is_masked(image[1, 4])  # one population in both: white
+    with pytest.raises(ValueError, match="empty"):
+        plot_residue_significance_k2(ChoiceComparison(**{
+            f: np.array([]) for f in ("run", "sample", "time", "residue", "two_reference", "two",
+                                      "reason_reference", "reason", "agree")}))
