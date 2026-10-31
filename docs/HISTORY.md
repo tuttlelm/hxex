@@ -5617,3 +5617,28 @@ CSVs or mzML if wanted.
     significant plus 6 / 0 / 13 / 0 flagged (samples A to D), tutorial run 420 / 381 plus 0 / 2;
     with the bootstrap at K = 2 more K = 2 calls move to the flag (tutorial: positions 19 + 11,
     population share 36 + 13).
+
+207. **Residue blocks outlined; the K = 2 map's one-or-two on the shared peptides (owner,
+    2026-10-31: "black outline the minimum residue blocks ... to highlight the resolution
+    limit"; then "dark grey", "a true gap between samples", a yellow triangle where the own
+    peptide sets decide differently, "tier yellow").** `residue_map` keeps each residue's block
+    (`block_start`, `block_end`: the stretch between consecutive peptide boundaries, whose
+    length is `resolution`), carried into the residue comparisons from the shared peptides
+    (`judged_on_shared`). Both significance maps outline every block in each row (dark grey,
+    `BLOCK_OUTLINE`, `block_outline=None` leaves them out; outlines unclipped, so the last
+    block closes) and leave a true gap between samples (drawn with `pcolormesh` on uneven rows
+    instead of white lines over the boundaries, which hid the boxes' edges). Seen on the K = 2
+    map: inside one shared block a residue could read "two in both" next to "one", because the
+    one-or-two choice came from each sample's own peptides (at 144: a WT peptide 144-157 the
+    sample lacked). The map now takes it from the peptides both measured (the choices made on
+    `paired_residue_maps`), as its test and outlines do; a yellow triangle (the tier map's
+    "undecided" `#e8b928`, black edge) marks the blocks where each sample's own peptides decide
+    differently (a diagonal stroke and a white triangle were tried first: the stroke read like
+    the hatches, white vanished on white). `compare_choices.csv`, the `choice_` figures and
+    the tier map keep each sample's own choice. Benchmark (samples A to D, residue-time rows
+    "two in one sample only", own -> shared peptides): 19 / 39 / 88 / 85 -> 17 / 39 / 87 / 70
+    in the sample, 55 / 29 / 24 / 15 -> 54 / 22 / 22 / 21 in the reference, 10-35 % of them
+    decided differently (private residue_gate out/choices_shared.txt); tutorial data unchanged
+    (the samples share their peptides). At 4 s, 59 of 76 peptides that differed between WT and a
+    sample were left out by a filter in one of them, 17 were not in its data (9 of those over a
+    mutated residue).

@@ -2143,7 +2143,7 @@ def test_residue_significance_map_at_k2():
         reference="R", delta_crit=0.1, quantity="population",
         delta_shared=np.array([0.3, 0.02]), delta_shared_se=np.full(2, 0.03))
     tested = plot_residue_significance_k2(choices, pop, pop, pop)
-    image = tested.axes[0].images[0].get_array()
+    image = tested.axes[0].collections[0].get_array().reshape(-1, 5)
     # row 1 is the populations section's first sample row (row 0 its heading)
     assert image[1, 2] == 2  # more of the low-D share: less D, 2-4x (blue)
     assert image[1, 3] == 0  # not significant
@@ -2186,3 +2186,62 @@ def test_a_residue_difference_needs_a_covering_peptide_to_carry_it():
     assert np.isnan(gated.peptide_support[4])  # V pS7: no peptide comparison, left as it was
     assert list(significance_classes(gated)[:3]) == [-2, 5, -2]  # 0.2 = 2x: 2-4x
     assert {"peptide_support", "residue_test_only"} <= set(gated.columns())
+
+
+def test_residue_blocks_are_kept_and_outlined():
+    """The block each residue lies in (the stretch between peptide boundaries: the resolution)
+    is in the residue map, carried into the residue comparison from the shared peptides, and
+    outlined on the significance map (HISTORY 207)."""
+    from hxex.analysis import (
+        compare_residues,
+        concat_tables,
+        judged_on_shared,
+        paired_residue_maps,
+    )
+    from hxex.report import plot_residue_significance
+
+    up = table([("R", "AKLPGSTV", 2, 4.0, 0.30, 0.01), ("R", "GSTV", 6, 4.0, 0.50, 0.01),
+                ("V", "AKLPGSTV", 2, 4.0, 0.60, 0.01), ("V", "GSTV", 6, 4.0, 0.80, 0.01)])
+    rm = residue_map(up, sequences=SEQUENCE)
+    v = rm.where(sample="V", K=1) & np.isin(rm.residue, [3, 4, 6, 7, 9])
+    assert [(int(a), int(b)) for a, b in zip(rm.block_start[v], rm.block_end[v], strict=True)] == [
+        (3, 6), (3, 6), (3, 6), (7, 9), (7, 9)]
+    assert np.isnan(rm.block_start[rm.where(sample="V", K=1) & (rm.residue == 12)]).all()
+    pairs = paired_residue_maps(up, "R", sequences=SEQUENCE)
+    rc = judged_on_shared(compare_residues(rm, "R", delta_crit=0.1),
+                          concat_tables([compare_residues(m, "R", delta_crit=0.1)
+                                         for m in pairs.values()]))
+    shared_blocks = zip(rc.block_start, rc.block_end, strict=True)
+    assert {(int(a), int(b)) for a, b in shared_blocks} == {(3, 6), (7, 9)}
+    assert {"block_start", "block_end"} <= set(rc.columns())
+    fig = plot_residue_significance(rc)
+    blocks = sorted(p.get_gid() for p in fig.axes[0].patches
+                    if (p.get_gid() or "").startswith("block:"))
+    assert blocks == ["block:V  4 s:3-6", "block:V  4 s:7-9"]
+    plain = plot_residue_significance(rc, block_outline=None)
+    assert not any((p.get_gid() or "").startswith("block:") for p in plain.axes[0].patches)
+
+
+def test_k2_map_marks_where_the_own_peptides_decide_differently():
+    """The K = 2 map decides one or two on the shared peptides; a yellow triangle marks the
+    residues each sample's own peptides decide differently (HISTORY 207)."""
+    from hxex.analysis import ChoiceComparison
+    from hxex.report import plot_residue_significance_k2
+
+    def choices(two_ref, two):
+        n = len(two)
+        return ChoiceComparison(
+            run=np.array([""] * n, dtype=object), sample=np.array(["V"] * n),
+            time=np.full(n, 4.0), residue=np.arange(1, n + 1),
+            two_reference=np.array(two_ref), two=np.array(two),
+            reason_reference=np.array([""] * n), reason=np.array([""] * n),
+            agree=np.array(two_ref) == np.array(two), reference="R")
+
+    shared = choices([False, False, True], [False, False, True])
+    own = choices([False, False, True], [False, True, True])  # residue 2: two in V's own
+    fig = plot_residue_significance_k2(shared, own_choices=own)
+    gids = [p.get_gid() for p in fig.axes[0].patches if p.get_gid()]
+    assert [g for g in gids if g.startswith("differs:")] == ["differs:V  4 s:2-2"]
+    assert not any(g.startswith("////") for g in gids)  # the texture follows the shared choice
+    texts = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert any("decided differently" in t for t in texts)

@@ -278,7 +278,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = counts_d = None
-    choices_cmp = k2_positions = None
+    choices_cmp = shared_choices = k2_positions = None
     k2_tested = False
     if config.reference:
         ref = ref_name
@@ -362,6 +362,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             tables["compare_populations"] = pop_cols
             choices_cmp = compare_choices(choice, ref)
             tables["compare_choices"] = choices_cmp.columns()
+            # the K = 2 map decides one or two on the shared peptides too, as its test does
+            shared_choices = concat_tables([compare_choices(pair_choice[s], ref) for s in pairs])
             if k2_tested:  # the two positions, each with its own K=2 threshold
                 k2_positions = {}
                 for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
@@ -380,6 +382,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         res_cmp = _display(res_cmp, labels, reference)
         if choices_cmp is not None:
             choices_cmp = _display(choices_cmp, labels, reference)
+            if shared_choices is not None:
+                shared_choices = _display(shared_choices, labels, reference)
             pop_cmp = _display(pop_cmp, labels, reference) if k2_tested else None
             if k2_positions is not None:
                 k2_positions = {r: _display(c, labels, reference)
@@ -484,13 +488,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             jobs.append(("residue_significance", lambda compared=compared:
                          plot_residue_significance(res_cmp, compared, length=length, **when)))
         with_two = [s for s in residue_others
-                    if choices_cmp is not None and choices_cmp.where(sample=s).any()]
+                    if shared_choices is not None and shared_choices.where(sample=s).any()]
         if with_two:
             positions = k2_positions or {}
             jobs.append(("residue_significance_K2", lambda with_two=with_two, positions=positions:
                          plot_residue_significance_k2(
-                             choices_cmp, pop_cmp, positions.get(1), positions.get(2),
-                             with_two, length=length, **when)))
+                             shared_choices, pop_cmp, positions.get(1), positions.get(2),
+                             with_two, length=length, blocks=res_cmp, own_choices=choices_cmp,
+                             **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
         for s in others:

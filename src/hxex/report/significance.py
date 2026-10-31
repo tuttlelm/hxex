@@ -32,7 +32,7 @@ from collections.abc import Sequence
 import numpy as np
 from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
-from matplotlib.patches import Patch, Rectangle
+from matplotlib.patches import Patch, Polygon, Rectangle
 from matplotlib.ticker import MultipleLocator
 
 from ..analysis import ChoiceComparison, ResidueComparison
@@ -44,6 +44,14 @@ SIGNIFICANCE_COLOURS = ("#d4d4d4", "#86b9dc", "#2f7bbf", "#08306b", "#fb9d7d", "
                         "#7f0010")
 NOT_TESTED_HATCH = "xxxx"
 RESIDUE_ONLY_HATCH = "...."  # the residue test called it, no single peptide carries it
+BLOCK_OUTLINE = "0.15"  # the residue blocks the peptides resolve (HISTORY 207)
+BLOCK_LINE_WIDTH = 0.6
+SAMPLE_GAP = 0.35  # the empty space between samples, in rows
+DIFFERS = "differs"  # the samples' own peptides decide one or two differently (a triangle)
+DIFFERS_COLOUR = "black"  # the triangle's edge
+DIFFERS_FILL = "#e8b928"  # the tier map's "undecided" yellow (hxex.report.tiers)
+TRIANGLE_WIDTH = 1.8  # residues
+TRIANGLE_HEIGHT = 0.55  # of a row
 SAMPLE_ONLY_HATCH = "////"  # two populations in the sample only
 REFERENCE_ONLY_HATCH = "\\\\\\\\"  # two populations in the reference only
 _EDGE = "0.45"
@@ -79,11 +87,27 @@ def _when(t: float, time_scale: str) -> str:
     return f"point {format_time(t, time_scale)}" if time_scale == "order" else format_time(t)
 
 
-def _cells(table, samples, n, code_of, time_scale):
+def _blocks_of(table) -> dict:
+    """``(sample, time)`` -> the ``(first, last)`` residue blocks of a comparison (its
+    ``block_start``, ``block_end``; empty without them)."""
+    out: dict[tuple, set] = {}
+    starts = getattr(table, "block_start", None)
+    if starts is None:
+        return out
+    for s, t, b0, b1 in zip(table.sample, table.time, starts, table.block_end, strict=True):
+        if np.isfinite(b0) and np.isfinite(b1):
+            out.setdefault((str(s), float(t)), set()).add((int(b0), int(b1)))
+    return out
+
+
+def _cells(table, samples, n, code_of, time_scale, blocks=None, mark_of=None):
     """One grid row per sample and time of ``table``: (labels, first-of-sample flags, codes
-    (NaN: white), and per hatch the residues to hatch), ``code_of(i)`` giving row ``i``'s code
-    (a number) or hatch (a string), or None for white."""
-    labels, first, rows, hatches = [], [], [], []
+    (NaN: white), per hatch the residues to hatch, and the residue blocks to outline),
+    ``code_of(i)`` giving row ``i``'s code (a number) or hatch (a string), or None for white;
+    ``blocks`` (:func:`_blocks_of`) default the table's own; ``mark_of(i)`` True marks row
+    ``i``'s residue with the :data:`DIFFERS` stroke."""
+    blocks = _blocks_of(table) if blocks is None else blocks
+    labels, first, rows, hatches, outlines = [], [], [], [], []
     for s in samples:
         here = table.sample == s
         for j, t in enumerate(sorted({float(t) for t in table.time[here]})):
@@ -91,6 +115,8 @@ def _cells(table, samples, n, code_of, time_scale):
             marks: dict[str, np.ndarray] = {}
             for i in np.flatnonzero(here & (table.time == t)):
                 r = int(table.residue[i])
+                if mark_of is not None and 1 <= r <= n and mark_of(i):
+                    marks.setdefault(DIFFERS, np.zeros(n, dtype=bool))[r - 1] = True
                 code = code_of(i)
                 if not 1 <= r <= n or code is None:
                     continue
@@ -102,34 +128,59 @@ def _cells(table, samples, n, code_of, time_scale):
             first.append(j == 0)
             rows.append(line)
             hatches.append(marks)
-    return labels, first, rows, hatches
+            drawn = np.isfinite(line)
+            for where in marks.values():  # a stroke over a white cell is boxed too
+                drawn |= where
+            outlines.append(sorted(b for b in blocks.get((str(s), t), ())
+                                   if drawn[max(b[0], 1) - 1:min(b[1], n)].any()))
+    return labels, first, rows, hatches, outlines
 
 
-def _draw(sections, n: int, legend: list, title: str) -> Figure:
-    """The map: ``sections`` is a list of (heading or '', labels, first flags, rows, hatches),
-    stacked, each heading on an empty row of its own above its section."""
-    labels, first, rows, hatches, headings = [], [], [], [], []
-    for heading, lab, fir, row, hat in sections:
+def _split(first: int, last: int, blocks) -> list[tuple[int, int]]:
+    """Residues ``first`` to ``last`` cut at the edges of ``blocks`` (``(first, last)`` pairs):
+    the pieces, each inside one block (or outside every block)."""
+    cuts = sorted({b0 for b0, _ in blocks if first < b0 <= last}
+                  | {b1 + 1 for _, b1 in blocks if first <= b1 < last})
+    starts = [first, *cuts]
+    ends = [c - 1 for c in cuts] + [last]
+    return list(zip(starts, ends, strict=True))
+
+
+def _draw(sections, n: int, legend: list, title: str, block_outline: str | None = BLOCK_OUTLINE
+          ) -> Figure:
+    """The map: ``sections`` is a list of (heading or '', labels, first flags, rows, hatches,
+    block outlines), stacked, each heading on a row of its own above its section and an empty
+    gap between samples; each row's residue blocks outlined in ``block_outline`` (None: not
+    drawn)."""
+    labels, rows, hatches, outlines, headings, heights = [], [], [], [], [], []
+
+    def add(label, row, hatch, outline, height):
+        labels.append(label)
+        rows.append(row)
+        hatches.append(hatch)
+        outlines.append(outline)
+        heights.append(height)
+
+    empty = np.full(n, np.nan)
+    for heading, lab, fir, row, hat, out in sections:
         if not row:
             continue
         if heading:
             headings.append((len(rows), heading))
-            labels.append("")
-            first.append(False)
-            rows.append(np.full(n, np.nan))
-            hatches.append({})
-        labels += lab
-        first += fir
-        rows += row
-        hatches += hat
+            add("", empty, {}, [], 1.0)
+        for k in range(len(row)):
+            if fir[k] and k:  # a true gap between samples, so every block is outlined whole
+                add("", empty, {}, [], SAMPLE_GAP)
+            add(lab[k], row[k], hat[k], out[k], 1.0)
     if not rows:
         raise ValueError("nothing to draw")
+    edges = np.concatenate([[0.0], np.cumsum(heights)])  # row k spans edges[k] to edges[k + 1]
     image = np.ma.masked_invalid(np.array(rows))
     cmap = ListedColormap(list(SIGNIFICANCE_COLOURS)).with_extremes(bad="white")
-    fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), 0.2 * len(rows) + 1.9))
+    fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), 0.2 * edges[-1] + 1.9))
     ax = fig.add_subplot()
-    ax.imshow(image, aspect="auto", cmap=cmap, vmin=-0.5, vmax=len(SIGNIFICANCE_COLOURS) - 0.5,
-              interpolation="nearest", extent=(0.5, n + 0.5, len(rows) - 0.5, -0.5))
+    ax.pcolormesh(np.arange(n + 1) + 0.5, edges, image, cmap=cmap, vmin=-0.5,
+                  vmax=len(SIGNIFICANCE_COLOURS) - 0.5, shading="flat")
     for y, marks in enumerate(hatches):  # runs of hatched residues
         for hatch, where in marks.items():
             r = 0
@@ -138,27 +189,46 @@ def _draw(sections, n: int, legend: list, title: str) -> Figure:
                     start = r
                     while r < n and where[r]:
                         r += 1
+                    if hatch == DIFFERS:  # a corner triangle in each block of the run
+                        for a, b in _split(start + 1, r, outlines[y]):
+                            right, top = b + 0.5, edges[y]
+                            width = min(TRIANGLE_WIDTH, b - a + 1.0)
+                            ax.add_patch(Polygon(
+                                [(right, top), (right - width, top),
+                                 (right, top + TRIANGLE_HEIGHT * heights[y])],
+                                closed=True, facecolor=DIFFERS_FILL, edgecolor=DIFFERS_COLOUR,
+                                lw=0.6, zorder=4, gid=f"{DIFFERS}:{labels[y]}:{a}-{b}"))
+                        r += 1
+                        continue
                     face = SIGNIFICANCE_COLOURS[0] if hatch == RESIDUE_ONLY_HATCH else "white"
-                    ax.add_patch(Rectangle((start + 0.5, y - 0.5), r - start, 1.0,
+                    ax.add_patch(Rectangle((start + 0.5, edges[y]), r - start, heights[y],
                                            facecolor=face, edgecolor=_EDGE, hatch=hatch,
                                            lw=0.0, gid=f"{hatch}:{labels[y]}:{start + 1}-{r}"))
                 r += 1
+    if block_outline is not None:  # the resolution: the blocks the peptides can tell apart
+        for y, blocks in enumerate(outlines):
+            for b0, b1 in blocks:
+                ax.add_patch(Rectangle((b0 - 0.5, edges[y]), b1 - b0 + 1, heights[y],
+                                       fill=False, edgecolor=block_outline,
+                                       lw=BLOCK_LINE_WIDTH, zorder=3,
+                                       clip_on=False,  # the edges on the plot's border too
+                                       gid=f"block:{labels[y]}:{b0}-{b1}"))
+    centres = 0.5 * (edges[:-1] + edges[1:])
     ticks = [y for y, name in enumerate(labels) if name]
-    ax.set_yticks(ticks)
+    ax.set_yticks(centres[ticks])
     ax.set_yticklabels([labels[y] for y in ticks], fontsize=7)
     ax.tick_params(axis="y", length=2)
-    for j in range(1, len(rows)):
-        if first[j]:
-            ax.axhline(j - 0.5, color="white", lw=3)
     for y, heading in headings:
-        ax.text(1.0, y, heading, fontsize=7, fontweight="bold", va="center", ha="left")
+        ax.text(1.0, centres[y], heading, fontsize=7, fontweight="bold", va="center", ha="left")
+    ax.set_ylim(edges[-1], 0.0)
     ax.set_xlim(0.5, n + 0.5)
     ax.xaxis.set_major_locator(MultipleLocator(10))
     ax.xaxis.set_minor_locator(MultipleLocator(5))
     ax.set_xlabel("residue")
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    fig.legend(handles=legend, frameon=False, loc="lower center", ncol=3, fontsize=7)
+    fig.legend(handles=legend, frameon=False, loc="lower center", ncol=3, fontsize=7,
+               handler_map={_TriangleHandle: _TriangleHandler()})
     fig.suptitle(title, fontsize=8, x=0.01, ha="left")
     fig.tight_layout(rect=(0, 0.1, 1, 0.97))
     return fig
@@ -177,6 +247,32 @@ def _hatch_patch(hatch: str, label: str) -> Patch:
 
 
 RESIDUE_ONLY_LABEL = "residue test only (no single peptide carries it): not significant"
+
+
+class _TriangleHandle(Patch):
+    """A legend entry drawn as the corner triangle."""
+
+    def __init__(self, label: str):
+        super().__init__(facecolor=DIFFERS_FILL, edgecolor=DIFFERS_COLOUR, lw=0.6, label=label)
+
+
+class _TriangleHandler:
+    def legend_artist(self, legend, orig_handle, fontsize, handlebox):
+        x0, y0 = handlebox.xdescent, handlebox.ydescent
+        w, h = handlebox.width, handlebox.height
+        box = Rectangle((x0, y0), w, h, facecolor=SIGNIFICANCE_COLOURS[0], edgecolor="none",
+                        transform=handlebox.get_transform())
+        tri = Polygon([(x0 + w, y0 + h), (x0 + w - 0.45 * w, y0 + h), (x0 + w, y0 + 0.35 * h)],
+                      closed=True, facecolor=DIFFERS_FILL, edgecolor=DIFFERS_COLOUR, lw=0.6,
+                      transform=handlebox.get_transform())
+        handlebox.add_artist(box)
+        handlebox.add_artist(tri)
+        return tri
+
+
+def _block_patch(colour: str) -> Patch:
+    return Patch(fill=False, edgecolor=colour, lw=BLOCK_LINE_WIDTH,
+                 label="a block the peptides cannot divide (resolution)")
 
 
 def _code(c: int):
@@ -199,29 +295,34 @@ def plot_residue_significance(
     *,
     length: int | None = None,
     time_scale: str = "seconds",
+    block_outline: str | None = BLOCK_OUTLINE,
 ) -> Figure:
     """The K = 1 significance map of ``comparison`` (a residue comparison, usually from
     :func:`hxex.analysis.judged_on_shared`) for ``samples`` (default: all, in table order): one
     row per sample and time, one cell per residue (see the module docstring). White cells: a
-    residue not compared (uncovered in either sample, or without an amide)."""
+    residue not compared (uncovered in either sample, or without an amide). Each row's residue
+    blocks (``block_start``, ``block_end``: the stretches the shared peptides cannot divide, the
+    resolution) are outlined in ``block_outline`` (a colour; None: not drawn)."""
     if not len(comparison):
         raise ValueError("the residue comparison is empty")
     samples = _samples(comparison, samples)
     n = int(length if length is not None else comparison.residue.max())
-    labels, first, rows, hatches = _graded(comparison, samples, n, time_scale)
-    if not rows:
+    section = _graded(comparison, samples, n, time_scale)
+    if not section[2]:
         raise ValueError(f"no comparison of {', '.join(samples)}")
     legend = _graded_legend("more D", "less D") + [
         Patch(color=SIGNIFICANCE_COLOURS[0], label="not significant"),
         _hatch_patch(RESIDUE_ONLY_HATCH, RESIDUE_ONLY_LABEL),
         _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)"),
         Patch(facecolor="white", edgecolor="0.6", label="not compared")]
+    if block_outline is not None:
+        legend.append(_block_patch(block_outline))
     reference = comparison.reference or "the reference"
     quantity = "fD" if comparison.quantity == "fD" else "low-D population"
-    return _draw([("", labels, first, rows, hatches)], n, legend,
+    return _draw([("", *section)], n, legend,
                  f"Residues different from {reference} ({quantity}): significant on the "
                  "peptides both samples measured; colour = direction and size of that "
-                 "difference in multiples of the threshold")
+                 "difference in multiples of the threshold", block_outline)
 
 
 def plot_residue_significance_k2(
@@ -233,16 +334,24 @@ def plot_residue_significance_k2(
     *,
     length: int | None = None,
     time_scale: str = "seconds",
+    blocks: ResidueComparison | None = None,
+    block_outline: str | None = BLOCK_OUTLINE,
+    own_choices: ChoiceComparison | None = None,
 ) -> Figure:
-    """The K = 2 significance map: section 1 from ``choices``
-    (:func:`hxex.analysis.compare_choices`): where only the sample or only the reference keeps
+    """The K = 2 significance map: section 1 from ``choices`` (:func:`hxex.analysis.compare_choices`
+    of the choices made on the peptides both samples measured, so that they agree with the test
+    and the blocks; ``own_choices``, the same from each sample's own peptides, marks with a
+    stroke the residues they decide differently): where only the sample or only the reference keeps
     two populations (textures); with ``population`` (:func:`hxex.analysis.compare_populations`,
     judged on shared peptides; given only with a bootstrap at K = 2), where both keep two, the
     significant differences in the low-D population's share (blue: more of the low-D
     population, so less deuterium; red: less of it), else grey. Sections 2 and 3 (with ``low``
     and ``high``, the K = 2 rank 1 and rank 2 residue comparisons judged on shared peptides):
     the significant differences in the low-D and high-D positions, as at K = 1, drawn where
-    both samples keep two populations. White: one population in both, or not compared."""
+    both samples keep two populations (by ``choices``). White: one population in both, or not
+    compared. Residue
+    blocks are outlined as in :func:`plot_residue_significance`: the position sections' own, the
+    populations section's from ``blocks`` (the K = 1 comparison; none without it)."""
     if not len(choices):
         raise ValueError("the choice comparison is empty")
     samples = _samples(choices, samples)
@@ -254,6 +363,16 @@ def plot_residue_significance_k2(
         pop_class = dict(zip(keys, classes, strict=True))
     two_ref = np.asarray(choices.two_reference, dtype=bool)
     two = np.asarray(choices.two, dtype=bool)
+    keys = list(zip(choices.sample, choices.time, choices.residue, strict=True))
+    shared_both = {k: bool(a and b) for k, a, b in zip(keys, two_ref, two, strict=True)}
+    own = ({} if own_choices is None else
+           {k: (bool(a), bool(b)) for k, a, b in zip(
+               zip(own_choices.sample, own_choices.time, own_choices.residue, strict=True),
+               own_choices.two_reference, own_choices.two, strict=True)})
+
+    def differs(i):
+        mine = own.get(keys[i])
+        return mine is not None and mine != (bool(two_ref[i]), bool(two[i]))
 
     def counts(i):
         if two[i] and not two_ref[i]:
@@ -266,12 +385,13 @@ def plot_residue_significance_k2(
 
     heading = ("populations: red = a smaller low-D share than the reference (so more D), "
                "blue = a larger one" if population is not None else "populations")
-    sections = [(heading, *_cells(choices, samples, n, counts, time_scale))]
+    sections = [(heading, *_cells(choices, samples, n, counts, time_scale,
+                                  blocks=_blocks_of(blocks) if blocks is not None else {},
+                                  mark_of=differs if own else None))]
     for name, comparison in (("low-D position", low), ("high-D position", high)):
         if comparison is not None and len(comparison):
-            both = (np.ones(len(comparison), dtype=bool) if comparison.two is None else
-                    np.asarray(comparison.two_reference, dtype=bool)
-                    & np.asarray(comparison.two, dtype=bool))
+            both = np.array([shared_both.get(k, False) for k in zip(
+                comparison.sample, comparison.time, comparison.residue, strict=True)], dtype=bool)
             classes = significance_classes(comparison)
             sections.append((name, *_cells(
                 comparison, samples, n,
@@ -287,10 +407,15 @@ def plot_residue_significance_k2(
                    _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)")]
     else:
         legend.append(Patch(color=SIGNIFICANCE_COLOURS[0], label="two populations in both"))
+    if own:
+        legend.append(_TriangleHandle(label="one or two decided differently on each sample's "
+                                            "own peptides"))
+    if block_outline is not None:
+        legend.append(_block_patch(block_outline))
     reference = choices.reference or "the reference"
     title = (f"Two populations against {reference}: "
              + ("significant differences on the peptides both samples measured; colour = "
                 "direction and size in multiples of the threshold" if tested else
                 "where the number differs (differences in share and position need a bootstrap "
                 "at K = 2: [run.bootstrap] ks = [1, 2])"))
-    return _draw(sections, n, legend, title)
+    return _draw(sections, n, legend, title, block_outline)

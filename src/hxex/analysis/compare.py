@@ -596,7 +596,10 @@ class ResidueComparison:
     ``threshold`` are then that test's); ``None`` otherwise. ``peptide_support`` and
     ``residue_test_only``: with :func:`gated_by_peptides`, whether a covering peptide carries the
     difference (True, False, or NaN where no peptide comparison can judge it) and whether the
-    residue test passed without that support (then not ``significant``); ``None`` otherwise."""
+    residue test passed without that support (then not ``significant``); ``None`` otherwise.
+    ``block_start`` and ``block_end``: the block of the sample's residue map the residue lies in
+    (:class:`ResidueMap`; with :func:`judged_on_shared`, the block of the shared peptides the
+    test used); NaN where unknown, ``None`` for a population comparison."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -626,6 +629,8 @@ class ResidueComparison:
     delta_shared_se: np.ndarray | None = None
     peptide_support: np.ndarray | None = None
     residue_test_only: np.ndarray | None = None
+    block_start: np.ndarray | None = None
+    block_end: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback, one run
         if self.threshold is None:
@@ -693,10 +698,10 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
     is ``delta_crit`` divided by the mean of the two sides' separations."""
     z_crit = float(stats.norm.ppf(1 - alpha / 2))
     rows = []
-    for (run, sample, time, res), (v, e, fb) in sorted(value.items()):
+    for (run, sample, time, res), (v, e, fb, *block) in sorted(value.items()):
         if (run, sample) == reference or (*reference, time, res) not in value:
             continue
-        rv, re_, rfb = value[(*reference, time, res)]
+        rv, re_, rfb, *_ = value[(*reference, time, res)]
         if not (np.isfinite(v) and np.isfinite(rv)):
             continue
         delta = v - rv
@@ -716,6 +721,8 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
                      "value_se": e, "delta": delta, "delta_se": se, "z": z, "significant": sig,
                      "control_fallback_reference": rfb, "control_fallback": fb,
                      "threshold": threshold})
+        if block:
+            rows[-1]["block_start"], rows[-1]["block_end"] = block
         if two is not None:
             rows[-1]["two_reference"] = two.get((*reference, time, res), False)
             rows[-1]["two"] = two.get((run, sample, time, res), False)
@@ -727,7 +734,9 @@ def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **s
     names = [f.name for f in fields(ResidueComparison) if f.name not in _SCALAR_FIELDS
              and f.name not in ("delta_shared", "delta_shared_se",  # judged_on_shared's
                                 "peptide_support", "residue_test_only")  # and the gate's
-             and (with_choice or f.name not in ("two_reference", "two"))]
+             and (with_choice or f.name not in ("two_reference", "two"))
+             and (not rows or f.name not in ("block_start", "block_end")
+                  or "block_start" in rows[0])]
     scalars.update(reference=reference[1], reference_run=reference[0])
     if not rows:
         return ResidueComparison(**{name: np.array([]) for name in names}, **scalars)
@@ -820,6 +829,7 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
     n = len(own)
     z, sig = np.full(n, np.nan), np.zeros(n, dtype=bool)
     d_shared, se_shared = np.full(n, np.nan), np.full(n, np.nan)
+    blocks = np.full((n, 2), np.nan)
     threshold = np.asarray(own.threshold, dtype=float).copy()
     index = ({} if shared is None else
              {key: j for j, key in enumerate(zip(shared.run, shared.sample, shared.time,
@@ -830,12 +840,17 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
             z[i], sig[i] = shared.z[j], bool(shared.significant[j])
             d_shared[i], se_shared[i] = shared.delta[j], shared.delta_se[j]
             threshold[i] = shared.threshold[j]
+            if shared.block_start is not None:
+                blocks[i] = shared.block_start[j], shared.block_end[j]
     lost = int(np.sum(np.isnan(d_shared)))
     if lost:
         log.info("%d of %d residue differences (%s) not tested: no peptide measured in both "
                  "samples at that time covers the residue", lost, n, own.quantity)
+    with_blocks = shared is not None and shared.block_start is not None
     return replace(own, z=z, significant=sig, threshold=threshold, delta_shared=d_shared,
-                   delta_shared_se=se_shared)
+                   delta_shared_se=se_shared,
+                   block_start=blocks[:, 0] if with_blocks else own.block_start,
+                   block_end=blocks[:, 1] if with_blocks else own.block_end)
 
 
 def gated_by_peptides(
@@ -907,11 +922,13 @@ def compare_residues(
         raise ValueError("alpha must be in (0, 1)")
     residues = residues.time_points()
     sel = (residues.K == K) & (residues.rank == rank)
-    value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb))
-             for u, s, t, r, v, e, fb in zip(
+    value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb), float(b0),
+                                                  float(b1))
+             for u, s, t, r, v, e, fb, b0, b1 in zip(
                  residues.run[sel], residues.sample[sel], residues.time[sel],
                  residues.residue[sel], residues.fD[sel], residues.fD_se[sel],
-                 residues.control_fallback[sel], strict=True)}
+                 residues.control_fallback[sel], residues.block_start[sel],
+                 residues.block_end[sel], strict=True)}
     try:
         reference = resolve_sample([k[0] for k in value], [k[1] for k in value], reference,
                                    "reference sample")

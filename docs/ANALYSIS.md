@@ -210,7 +210,10 @@ in the published work; where it matters, a component is named by its rank.
   significant at that time with the same sign (`gated_by_peptides`, `peptide_support`; at K = 2
   by the K = 2 peptide comparisons): a safeguard against residue errors that are too small, e.g.
   from a noise model that does not suit the data; calls without that support stay visible as
-  `residue_test_only` (owner, 2026-10-31, HISTORY 206). A
+  `residue_test_only` (owner, 2026-10-31, HISTORY 206). The significance maps outline each
+  residue block of the shared peptides (`block_start`, `block_end`), and the K = 2 map decides
+  one or two on the shared peptides too, a yellow triangle marking where the samples' own
+  peptides decide differently (HISTORY 207). A
   region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
   region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to

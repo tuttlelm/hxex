@@ -38,23 +38,25 @@ class SequenceMismatch(ValueError):
 
 @dataclass(frozen=True)
 class ResidueMap:
-    """One row per run, sample, time, ``K``, ``rank`` and residue (columns of equal length):
-    ``run`` and ``sample`` as in the species table (``run`` '' for one run or a merged sample),
+    """One row per run, sample, time, ``K``, ``rank`` and residue (columns of equal length): ``run``
+    and ``sample`` as in the species table (``run`` '' for one run or a merged sample),
     ``residue`` (number on the protein), ``aa`` (its letter, '' if unknown), ``fD`` and
     ``fD_se`` (NaN where no peptide covers the residue's amide, or no covering peptide has a
     value; ``fD_se`` also where a contributing peptide's error is unknown), ``redundancy``,
-    ``resolution`` (NaN where uncovered), ``proline``, ``covered``, ``control_fallback`` (a
-    peptide covering the residue was corrected with a fallback control) and ``no_amide`` (the
-    residue has no exchanging amide: a proline, or the first residue(s) of the protein, which
-    no peptide can measure; its row is empty whatever the coverage). ``role`` is the point's
-    (``'undeut'``, ``'fulldeut'`` or ``''``; a control's ``time`` is NaN unless it was also a
-    time point). ``linked_next``: one peptide measures both this residue and the next (a
-    proline or another residue without an amide between them included), so a line may join
-    them. ``two_population_weight`` (K=1 rows, with ``two_population_peptides``): the share of
-    the residue's weight carried by peptides whose set is best described by two populations
+    ``resolution`` (NaN where uncovered), ``block_start`` and ``block_end`` (the first and last
+    residue of the block the residue lies in: the stretch between consecutive peptide boundaries
+    whose length is ``resolution``; NaN where uncovered), ``proline``, ``covered``,
+    ``control_fallback`` (a peptide covering the residue was corrected with a fallback control)
+    and ``no_amide`` (the residue has no exchanging amide: a proline, or the first residue(s) of
+    the protein, which no peptide can measure; its row is empty whatever the coverage). ``role``
+    is the point's (``'undeut'``, ``'fulldeut'`` or ``''``; a control's ``time`` is NaN unless
+    it was also a time point). ``linked_next``: one peptide measures both this residue and the
+    next (a proline or another residue without an amide between them included), so a line may
+    join them. ``two_population_weight`` (K=1 rows, with ``two_population_peptides``): the share
+    of the residue's weight carried by peptides whose set is best described by two populations
     (``best_set_K = 2``); NaN otherwise. With the population test (``population_test``, K=1
-    rows): ``test_strength_2`` and ``test_agreement_2`` (two populations or more: the
-    combined p-value of the covering sets and the share of their weight that has two or more),
+    rows): ``test_strength_2`` and ``test_agreement_2`` (two populations or more: the combined
+    p-value of the covering sets and the share of their weight that has two or more),
     ``test_strength_3`` and ``test_agreement_3`` (three or more), and ``population_tier``
     (:func:`population_tiers`); NaN and '' otherwise."""
 
@@ -81,6 +83,8 @@ class ResidueMap:
     test_strength_3: np.ndarray | None = None
     test_agreement_3: np.ndarray | None = None
     population_tier: np.ndarray | None = None
+    block_start: np.ndarray | None = None
+    block_end: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback; prolines only; time points
         for name in TEST_COLUMNS:
@@ -94,6 +98,9 @@ class ResidueMap:
         if self.two_population_weight is None:
             object.__setattr__(self, "two_population_weight",
                                np.full(len(self.sample), np.nan))
+        for name in ("block_start", "block_end"):  # built without them: unknown
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.sample), np.nan))
         if self.run is None:
             object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
         else:
@@ -400,7 +407,8 @@ def residue_map(
                 continue
         peptides = [(str(pep.peptide[i]), int(pep.start[i]), int(pep.end[i])) for i in rows]
         known = _letters((run, sample), peptides, seq_of, registry)
-        z, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
+        z, redundancy, resolution, blocks = _coverage(peptides, len(known),
+                                                      uptake.nterm_subtract,
                                               registry)
         values, ses = _weighted(z, pep.fD[rows], pep.fD_se[rows], weight_exponent)
         linked = _linked(peptides, len(known), uptake.nterm_subtract, registry)
@@ -434,6 +442,7 @@ def residue_map(
                 ("no_amide", known[res] == "P" or res + 1 <= n_free),
                 ("linked_next", bool(linked[res])),
                 ("two_population_weight", float(support[res])),
+                ("block_start", float(blocks[res, 0])), ("block_end", float(blocks[res, 1])),
                 *((name, float(levels[name][res])) for name in TEST_COLUMNS),
                 ("population_tier", str(tier[res])),
             ):
@@ -441,7 +450,8 @@ def residue_map(
     out = {name: np.array(values) for name, values in cols.items()}
     for name in ("K", "rank", "residue", "redundancy"):
         out[name] = out[name].astype(np.int64)
-    for name in ("time", "fD", "fD_se", "resolution", "two_population_weight", *TEST_COLUMNS):
+    for name in ("time", "fD", "fD_se", "resolution", "two_population_weight", "block_start",
+                 "block_end", *TEST_COLUMNS):
         out[name] = out[name].astype(np.float64)
     for name in ("proline", "covered", "control_fallback", "no_amide", "linked_next"):
         out[name] = out[name].astype(bool)
@@ -536,7 +546,7 @@ def coverage_table(
         peptides = [k[:3] for k in spectra]
         weights = [spectra[k] if count == "spectra" else 1 for k in spectra]
         known = _letters((run, sample), peptides, seq_of, registry)
-        _, redundancy, resolution = _coverage(peptides, len(known), uptake.nterm_subtract,
+        _, redundancy, resolution, _ = _coverage(peptides, len(known), uptake.nterm_subtract,
                                               registry, weights)
         n_free = _protein_nterm(peptides, uptake.nterm_subtract)
         for res in range(len(known)):
@@ -560,7 +570,8 @@ def coverage_table(
 def _coverage(peptides, n_res: int, nterm: int, registry, weights=None):
     """For peptides ``(sequence, start, end)``: the coefficient matrix ``z`` (``1 / exchanging
     residues`` where a peptide's amide exchanges), redundancy (``weights`` per peptide, 1 by
-    default) and resolution of residues 1..n_res."""
+    default), resolution and the bounds of each residue's block (``(first, last)`` residue,
+    NaN where uncovered) of residues 1..n_res."""
     z = np.zeros((len(peptides), n_res))
     bounds: set[int] = set()
     for a, (seq, start, _) in enumerate(peptides):
@@ -573,13 +584,15 @@ def _coverage(peptides, n_res: int, nterm: int, registry, weights=None):
     w = np.ones(len(peptides)) if weights is None else np.asarray(weights, dtype=float)
     redundancy = ((z > 0) * w[:, None]).sum(axis=0).astype(np.int64)
     resolution = np.full(n_res, np.nan)
+    blocks = np.full((n_res, 2), np.nan)
     edges = sorted(bounds)
     for lo, hi in zip(edges[:-1], edges[1:], strict=True):
         block = np.arange(lo, hi)  # residue numbers in [lo, hi)
         inside = block[(block >= 1) & (block <= n_res)]
         inside = inside[redundancy[inside - 1] > 0]
         resolution[inside - 1] = len(block)
-    return z, redundancy, resolution
+        blocks[inside - 1] = (lo, hi - 1)
+    return z, redundancy, resolution, blocks
 
 
 def _linked(peptides, n_res: int, nterm: int, registry) -> np.ndarray:
