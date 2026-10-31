@@ -7,7 +7,7 @@ spacing is an option and also gives the first pass that estimates the deuteratio
 bin takes the tallest peak whose apex lies inside a +/- ppm window (or, as pyHXExpress, the
 tallest point in it; docs/PEAK_PICKING.md), its height or its area as the bin's value
 (:mod:`hxex.picking.measure`), the window moved onto the
-undeuterated envelope's peaks for a series off its m/z (:mod:`hxex.picking.recentre`). Picking
+undeuterated envelope's peaks for a series off its m/z (:mod:`hxex.picking.mz_check`). Picking
 covers every bin up to a limit set by the amide count and ends ``zero_filling`` bins after the
 last bin that reaches the noise threshold, so a valley inside a multimodal envelope never ends
 picking early.
@@ -29,7 +29,7 @@ from ..spectra import SpectrumSet
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .measure import PeakMeasure, area_values, choose_measure
-from .recentre import series_offsets
+from .mz_check import series_offsets
 from .screen import RAW_SCORES, STICK_POINTS, off_position_scores, raw_scores
 
 log = logging.getLogger(__name__)
@@ -429,8 +429,8 @@ def pick_spectra(
     ``clusters`` gives the isotope clusters of some series (``data_id``), for example an
     ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones.
     With ``config.off_mz_sd`` set, the series of peptide ions with undeuterated controls are
-    checked for an envelope off its m/z first (:mod:`hxex.picking.recentre`), and with
-    ``config.recentre`` the windows of those off it are moved onto their envelope."""
+    checked for an envelope off its m/z first (:mod:`hxex.picking.mz_check`; flagged, the
+    windows stay on the prediction)."""
     clusters = clusters or {}
     if measure is None:
         measure = choose_measure(spectra, config, registry=registry)
@@ -438,7 +438,7 @@ def pick_spectra(
     plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
     n = len(spectra)
-    off_rel, off_limit, shift = np.full(n, np.nan), np.full(n, np.nan), np.zeros(n)
+    off_rel, off_limit = np.full(n, np.nan), np.full(n, np.nan)
     if config.off_mz_sd is not None and n:
         from ..controls import fragment_ids
         from ..io.mzml import fragment_series
@@ -447,14 +447,14 @@ def pick_spectra(
                             fragment_series(spectra.source))
         checked = series_offsets(spectra, config, registry=registry, skip=skip,
                                  clusters=clusters)
-        off_rel, off_limit, shift = checked.per_spectrum(spectra.data_id, config.recentre)
+        off_rel, off_limit = checked.per_spectrum(spectra.data_id)
         n_off = int(checked.off.sum())
         if n_off:
             log.warning("%d of %d series sit off their m/z in their undeuterated controls "
-                        "(beyond %g times the run's scatter; flagged off_mz)%s", n_off,
-                        len(checked.data_id), config.off_mz_sd,
-                        ": their windows were moved onto their envelope" if config.recentre
-                        else "")
+                        "(beyond %g times the run's scatter; flagged off_mz): most likely "
+                        "another species, left out of the analysis ([analysis.filters] off_mz); "
+                        "check their retention times", n_off, len(checked.data_id),
+                        config.off_mz_sd)
     if config.uses_recorded:
         missing = int((~np.isfinite(spectra.resolving_power)).sum())
         if missing:
@@ -476,8 +476,7 @@ def pick_spectra(
             pick_spectrum(
                 mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
                 plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
-                resolving_power_mz=float(spectra.resolving_power_mz[i]),
-                window_shift_ppm=float(shift[i]), measure=measure,
+                resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=measure,
             )
         )
         report(progress, i + 1, len(spectra))
@@ -485,7 +484,7 @@ def pick_spectra(
     return dataclasses.replace(
         binned, screen_off_position=off_position_scores(
             binned, config, spectra.resolving_power, spectra.resolving_power_mz),
-        envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit, window_shift_ppm=shift)
+        envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit)
 
 
 def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:

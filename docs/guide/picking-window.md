@@ -175,7 +175,9 @@ to a number instead.
 ```toml
 [run.picker]
 off_mz_sd = 6.0   # how far from the run's calibration counts as off, in multiples of its scatter
-recentre = true   # move the windows of such a series onto its peaks
+
+[analysis.filters]
+off_mz = true     # leave such series out of the analysis
 ```
 
 Before picking, *hxex* looks at the undeuterated controls. In each one it finds where the tops
@@ -186,12 +188,13 @@ calibration, give or take a little scatter. On an Orbitrap the calibration is th
 the m/z range; on a Q-TOF it drifts by about 1 ppm per 100 m/z, so *hxex* fits a straight line
 in m/z for each injection.
 
-A few series sit much further from that line, 10 to 40 ppm, by the same amount in every
-control. A peptide does not move that far by itself. Most likely another peptide of almost the
-same mass comes off the column at the same time, and the instrument cannot tell the two apart:
-what it records is one merged peak whose top lies between them. A narrow window centred on the
-predicted m/z then catches only the side of that peak, and a side catches a different share of
-each peak, which distorts the envelope.
+A few series sit much further from that line, 10 to 50 ppm, by the same amount in every
+control. A peptide does not move that far by itself: the envelope there belongs to another
+species. On the Orbitrap digest we checked against the dataset's own identification runs, most
+such series had a retention time in the peptide table that pointed at another peptide of almost
+the same mass; the peptide itself came off the column 0.3 to 2 minutes away, at exactly its
+predicted m/z. In the rest, another peptide comes off at the same time and its peaks merge with
+the peptide's.
 
 *hxex* calls such a series **off its m/z** when its controls sit further from the line than
 `off_mz_sd` times the injection's scatter (and at least 3 ppm). An injection with fewer than ten
@@ -202,38 +205,44 @@ dataset 2 to 3 ppm.
 What happens to a series off its m/z:
 
 - every one of its spectra is flagged `off_mz` in `spectra.csv`, and `hxex run` says how many
-  series were flagged. Nothing is removed;
-- with `recentre = true` (the default), all its windows, in the controls and in the labelled
-  spectra, move by the series' measured offset, so each bin reads the top of the merged peak
-  instead of its side. On the Orbitrap digest (a ±10 ppm window) this brought the flagged
-  peptides' uptake much closer to the expected values: 82 % of their time points within 0.1 of
-  the prediction, against 73 % before. With a wide window (±50 ppm on a Q-TOF) the tops are
-  already inside it, and moving it changes nothing.
+  series were flagged;
+- its windows stay on the predicted m/z, so its bins hold the side of the other species' peaks,
+  or nothing;
+- `hxex analyse` leaves all its spectra out, its controls included, and lists them in
+  `left_out_spectra.csv` with the reason `off its m/z`. Its fully deuterated control then does
+  not stand in for other series either.
 
-Moving the window does not take the other peptide out of the spectrum, which is why the flag
-stays. Look at a flagged series' spectra. If its uptake disagrees with the same peptide at
-another charge, or with its replicates, consider [leaving it out](excluding-spectra.md).
+What to do about a flagged series: check its retention time.
+If your peptide list came from an identification run, look there for where the peptide was identified, and whether a modification
+differs between that sample and the HDX samples (cysteines alkylated in one but not the other,
+for example). Correct the time in your peptide table and run again. If you have checked a series
+and want it kept, set its `review_status` to `accepted` in the review table.
 
-`spectra.csv` shows the check in three columns: `envelope_offset_ppm` (how far the series'
-undeuterated peaks sit from the injection's calibration), `envelope_offset_limit_ppm` (the limit
-it was compared with), and `window_shift_ppm` (how far its windows moved; 0 when they did not).
-Fragment ions are not checked (their own ion-type mixtures move their peaks), nor series without
-an undeuterated control; the `mz_shift` flag looks after those.
+Earlier versions moved the windows of such a series onto the envelope they found (`recentre`).
+That setting has been removed: on the Orbitrap digest the envelope it moved onto was another
+peptide in most series, and its uptake can look perfectly plausible, so nothing in the results
+showed it.
+
+`spectra.csv` shows the check in two columns: `envelope_offset_ppm` (how far the series'
+undeuterated peaks sit from the injection's calibration) and `envelope_offset_limit_ppm` (the
+limit it was compared with). A third, `window_shift_ppm`, is 0 except in results made with
+`recentre`. Fragment ions are not checked (their own ion-type mixtures move their peaks), nor
+series without an undeuterated control; the `mz_shift` flag looks after those.
 
 ### Changing these settings
 
 | Setting | What changes |
 |---|---|
-| `off_mz_sd` lower (4, say) | more series are flagged and moved: those only a little further from the calibration than the rest. On the Orbitrap digest 74 of 527 series instead of 66; on the Q-TOF dataset 22 of 1,320 instead of 4 |
+| `off_mz_sd` lower (4, say) | more series are flagged: those only a little further from the calibration than the rest. On the Orbitrap digest 74 of 527 series instead of 66; on the Q-TOF dataset 22 of 1,320 instead of 4 |
 | `off_mz_sd` higher (10, say) | only the series furthest away: 59 and 1 on the same datasets |
-| `off_mz_sd = false` | no check: no `off_mz` flag, no window moved, and the three columns are empty; `mz_shift` judges every series instead |
-| `recentre = false` | the series are still checked and flagged, but every window stays on the predicted m/z: the picked peaks are the same as with `off_mz_sd = false` |
+| `off_mz_sd = false` | no check: no `off_mz` flag, and the columns are empty; `mz_shift` judges every series instead |
+| `[analysis.filters] off_mz = false` | the flagged series stay in the analysis, controls included |
 
-Only the flagged series change; every other series is picked exactly as before. The settings
-act when *hxex* picks the spectra, so they take effect in `hxex run` only (not in `hxex
-report`, `hxex resume`, or `hxex analyse`). To apply a change to results you already have,
-change the setting in `hxex.toml` and run again from the spectra stored in the bundle, which
-does not read the raw files again, into a new folder:
+No setting changes how any series is picked. `off_mz_sd` acts when *hxex* picks the spectra,
+so it takes effect in `hxex run` only (not in `hxex report`, `hxex resume`, or `hxex analyse`);
+`off_mz` acts in `hxex analyse`. To apply a change of `off_mz_sd` to results you already
+have, change the setting in `hxex.toml` and run again from the spectra stored in the bundle,
+which does not read the raw files again, into a new folder:
 
 ```bash
 hxex run hxex.toml --spectra results --bundle results_offmz4

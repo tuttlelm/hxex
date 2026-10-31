@@ -143,7 +143,10 @@ in the published work; where it matters, a component is named by its rank.
   time (three or more; the typical sd is the run's own, robust), a K=1 mean above the amide
   count before correction (`above_amides`), and, with `stand_in_controls = "exclude"` (the
   default), every series whose fully deuterated control is a stand-in (median, kint or
-  `d2o_fraction`; kept in a sample with no measured control at all). Before those, the
+  `d2o_fraction`; kept in a sample with no measured control at all). Before those, every
+  spectrum of a series the picker's m/z check flags `off_mz` (`[analysis.filters] off_mz`, on
+  by default; controls included, which leave the back-exchange correction; HISTORY 200: on an
+  Orbitrap digest such series were mostly another peptide at a wrong retention time), and the
   spectrum quality screens (`spectrum_quality_filtering`, loose by default; HISTORY 149-152,
   `hxex.analysis.screening`) leave out spectra showing another species (a control also leaves
   the back-exchange correction, recomputed without it; a series whose measured fully

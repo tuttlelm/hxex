@@ -5403,3 +5403,51 @@ CSVs or mzML if wanted.
       followed their envelope's flank consistently, the new one finds nothing real at the
       prediction. Which species a series follows is the identity question (a fragment-ion check
       on the dataset's DDA runs proposed).
+
+200. **Series off their m/z are other species: `recentre` removed, flagged series left out
+    (owner, 2026-10-30/31; private notes in the reference-run folder's README, sections "Identity
+    check from the DDA runs" and "Rerun with the DDA retention times").** On the Orbitrap digest
+    (MassIVE MSV000094510) the m/z check (item 166) flags 66 of 563 series; recentring moved
+    their windows 10-50 ppm onto the envelope found. The owner could not tell by eye whether the
+    moved envelopes were the peptides (consistent through the time course in many, not in
+    others). Identity check against the dataset's two DDA identification runs (Q Exactive HF):
+    per series, the MS2 scans whose isolation window covers its m/z, b2.. and y2.. fragments
+    within 15 ppm against a reversed decoy (C-terminal residue kept) in the same scan.
+    - Separation: of 1,107 series with a covering scan, target - decoy >= 5 matched fragments in
+      856, the reverse in none. Every identified cysteine peptide (32) matched only
+      carbamidomethylated: the DDA sample was alkylated, the HDX samples were not, so cysteine
+      peptides' table retention times cannot apply to the HDX runs.
+    - The table's retention times follow the DDA runs (DDA rt = 0.987 x table + 0.10 min, sd
+      0.095 min, 88 % within 0.5 min).
+    - Of 77 questioned series (the 66 moved and 11 others), 50 were identified ELSEWHERE than the
+      table's time, and the covering scans at the table's time do not match the peptide; the
+      precursor the instrument selected there sits at the series' HDX offset (for example -37.5
+      ppm against a measured -35.5): another species. 21 were identified at the table's time
+      (some with the off species co-eluting); 6 not identified. So recentring mostly read other
+      peptides, and item 166's gain (flagged peptides within 0.1 of the predicted uptake 73 -> 82
+      %) came from other species whose intrinsic-rate uptake resembles the peptide's.
+    - Rerun with the identified retention time for the 40 cysteine-free series identified
+      elsewhere: every one sits at its exact m/z (moved 34 -> 0; off m/z 66 -> 34 in the run;
+      empty spectra in those series 99 -> 23 of 1,800; the other 523 series unchanged). Agreement
+      with the predicted uptake does not improve overall (> 0.1 off 20.5 -> 23.8 %): better for
+      about 7 series (three from 33-86 % off to 0 %), worse mostly where the true peptide loses
+      its own fully deuterated control at its true retention time (a species just below the
+      monoisotopic peak in the FD runs, screen_below_mono 0.12-0.33; replicates disagreeing) and
+      falls back to the median stand-in. The prediction is a weak yardstick for identity; the
+      m/z is not.
+    Built (owner: "on sounds dangerous"; "yes", 2026-10-31): `[run.picker] recentre` removed
+    (`true` in a project file is refused with the reason, `false` accepted with a note; a
+    bundle's record of it still loads); the module is renamed `hxex.picking.mz_check`; new
+    windows are never moved (`window_shift_ppm` 0; older bundles keep theirs and their figures
+    draw them). `[analysis.filters] off_mz` (default true): every spectrum of a flagged series
+    is left out, controls included (reason `off its m/z` in left_out_spectra.csv, rows in
+    left_out_summary.csv; `accepted` in the review keeps a spectrum), and the controls leave the
+    back-exchange correction, so they no longer feed the run's stand-ins; the run's controls
+    leave them out as the default analysis does (`control_removal`). With the windows on the
+    prediction, a series more than the window's half-width off is mostly empty under pick =
+    "peak". Not moving and not leaving out would still fit another species (item 166's 73 %
+    came from the flank of the same species), so the flag alone was not enough. Also fixed:
+    left_out_summary.csv lacked a 0-count row for `screen_beyond_reach` removals (item 199).
+    Proposed next (PLAN Next steps 16): `[input.scans] find_retention_time = "off" | "suggest" |
+    "automatic"`, searching the undeuterated controls for a flagged series' exact m/z;
+    prototype and evaluation first.

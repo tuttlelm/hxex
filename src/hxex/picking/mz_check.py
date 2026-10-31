@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Series whose undeuterated envelope sits away from its m/z, and windows moved onto it.
+"""Series whose undeuterated envelope sits away from its m/z.
 
 An undeuterated control's isotope peaks sit where the composition puts them, up to the
 instrument's calibration, which a run shares. A series whose controls' peaks sit further from
-the run's calibration than the run's other series, by the same amount in every control, most
-likely shares its peaks with another, near-isobaric species that the resolving power cannot
-separate from it: the picker's window, centred on the prediction, then reads the flank of the
-merged peak, a share of the intensity that changes from bin to bin (docs/HISTORY.md item 166).
+the run's calibration than the run's other series, by the same amount in every control, is
+most likely reading another species: on the Orbitrap digest of HISTORY 200 the peptide table's
+retention time pointed at another, near-isobaric peptide for most such series (the peptide
+itself eluted elsewhere, at its exact m/z), and the rest share their peaks with one. The
+picker's window, centred on the prediction, then reads the other species or its flank
+(docs/HISTORY.md items 166, 200). The windows are not moved: the analysis leaves the series
+out (``[analysis.filters] off_mz``).
 
 - The offset of one undeuterated spectrum: for M, M+1 and M+2, the top of the peak nearest the
   prediction (from the profile point nearest it, uphill through evenly spaced points, refined to
@@ -24,8 +27,7 @@ merged peak, a share of the intensity that changes from bin to bin (docs/HISTORY
 - A series' offset is the median over its controls of (offset minus the run's calibration at
   the control's monoisotopic m/z);
   the series is off its m/z when that is beyond ``off_mz_sd`` times its runs' scatter, and at
-  least ``MIN_LIMIT_PPM``. Its windows are then moved by its measured offset (the median of
-  its controls' offsets, calibration included) when ``recentre`` is on.
+  least ``MIN_LIMIT_PPM``.
 
 Not assessed: fragment ions (an ion-type mixture moves their peaks; ``poor_envelope`` and the
 fit-stage ``mz_shift`` cover them) and series without an undeuterated control with an offset.
@@ -35,7 +37,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.stats import theilslopes
@@ -117,36 +119,38 @@ class SeriesOffsets:
     ``offset_ppm`` (the median of its controls' offsets, the run's calibration included: how
     far its windows move when it is off), ``relative_ppm`` (the median of its controls' offsets
     minus their runs' calibration), ``limit_ppm`` (what that was compared with) and
-    ``n_controls``."""
+    ``n_controls``; ``calibration``: per run (sample, rep), the line's intercept (ppm), slope
+    (ppm per m/z) and the scatter about it (ppm)."""
 
     data_id: np.ndarray
     offset_ppm: np.ndarray
     relative_ppm: np.ndarray
     limit_ppm: np.ndarray
     n_controls: np.ndarray
+    calibration: Mapping[tuple[str, str], tuple[float, float, float]] = field(
+        default_factory=dict)
 
     @property
     def off(self) -> np.ndarray:
         """Whether each series is off its m/z."""
         return np.abs(self.relative_ppm) > self.limit_ppm
 
-    def per_spectrum(self, data_id: np.ndarray, recentre: bool
-                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """``(relative offset, limit, window shift)`` for spectra of the series ``data_id``:
-        NaN, NaN, 0 for a series not assessed; the shift is the series' offset where it is off
-        and ``recentre`` is on, else 0."""
+    def per_spectrum(self, data_id: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``(relative offset, limit)`` for spectra of the series ``data_id``: NaN, NaN for a
+        series not assessed."""
         data_id = np.asarray(data_id)
         rel = np.full(len(data_id), np.nan)
         lim = np.full(len(data_id), np.nan)
-        shift = np.zeros(len(data_id))
-        off = self.off
         for j, d in enumerate(self.data_id):
             rows = data_id == d
             rel[rows] = self.relative_ppm[j]
             lim[rows] = self.limit_ppm[j]
-            if recentre and off[j]:
-                shift[rows] = self.offset_ppm[j]
-        return rel, lim, shift
+        return rel, lim
+
+
+def limit_ppm(scatter: float, off_mz_sd: float) -> float:
+    """The limit (ppm) a series of a run with this ``scatter`` (ppm) is compared with."""
+    return max(float(off_mz_sd) * float(np.nan_to_num(scatter)), MIN_LIMIT_PPM)
 
 
 def series_offsets(spectra, config: PickerConfig, *,
@@ -216,4 +220,5 @@ def series_offsets(spectra, config: PickerConfig, *,
         data_id=ids, offset_ppm=take(0), relative_ppm=take(1),
         limit_ppm=np.maximum(float(config.off_mz_sd) * np.nan_to_num(scatter), MIN_LIMIT_PPM),
         n_controls=np.array([len(by_series[d]) for d in ids], dtype=np.int64),
+        calibration=runs,
     )

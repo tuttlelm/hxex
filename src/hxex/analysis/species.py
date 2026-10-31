@@ -42,7 +42,7 @@ from ..controls import ControlConfig, apply_control_roles, correct_means, fit_co
 from ..io.times import format_time
 from ..spectra import point_order_key
 from .screening import LEVELS as SCREEN_LEVELS
-from .screening import Screening, screening, spectra_source
+from .screening import OFF_MZ_REASON, Screening, screening, spectra_source
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,10 @@ class SpeciesFilters:
       correction too), one with a separate cluster between the isotope positions keeps only
       its K = 1 description, and intensity beyond the reachable range is a warning.
       ``'none'`` turns it off. Fragment series are not screened.
+    - ``off_mz``: leave out every spectrum, controls included, of a series the picker's m/z
+      check flags ``off_mz`` (``off its m/z``): its undeuterated envelope sits away from the
+      peptide's m/z, so it most likely reads another species (HISTORY 200). The controls of
+      such series leave the back-exchange correction (and the stand-ins made from it) too.
     - ``undeuterated_cap``: with the population test (``[analysis] populations =
       "population_test"``), keep the labelled and fully deuterated spectra of a peptide whose
       undeuterated set has two populations or more, in any sample of the run, at one population
@@ -121,6 +125,7 @@ class SpeciesFilters:
     above_amides: bool = True
     stand_in_controls: str = "exclude"
     spectrum_quality_filtering: str = "loose"
+    off_mz: bool = True
     undeuterated_cap: bool = False
 
     def __post_init__(self):
@@ -530,7 +535,7 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
     if filters is None:
         out, why, fd = np.zeros(len(fit), dtype=bool), np.full(len(fit), "", dtype=object), None
     else:
-        screen = screening(results, filters.spectrum_quality_filtering)
+        screen = screening(results, filters.spectrum_quality_filtering, filters.off_mz)
         ctl, unscreened = _screened_controls(results, controls, screen, keep, quiet=True)
         out, why, fd = _left_out(results, filters, ctl, n_amides, keep, values=True,
                                  screen=screen, unscreened=unscreened)
@@ -556,7 +561,8 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
 _FD_REJECTED = ("retention_low", "retention_high", "retention_outlier", "fd_below_data",
                 "fd_off_model")
 # the reasons the spectrum quality screens remove a spectrum, in the order of the summary
-_SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between")
+_SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
+                  "screen_beyond_reach")
 
 
 def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
@@ -620,7 +626,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             add(name, stage, "flagged by a quality check (exclude_flagged)",
                 np.sum(~keep & (status != "rejected")), "spectra", "[analysis] exclude_flagged")
         level = filters.spectrum_quality_filtering if filters is not None else "none"
-        screen = screening(r, level) if filters is not None else Screening.nothing(len(fit))
+        screen = (screening(r, level, filters.off_mz) if filters is not None
+                  else Screening.nothing(len(fit)))
         ctl, _ = _screened_controls(r, controls, screen, keep, quiet=True)
         stage = "controls"
         if ctl is None:
@@ -637,8 +644,13 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             role = np.asarray(fit.role, dtype=str)
             screened = (screen.remove & keep & (status != "accepted") & (role != ""))
             add(name, stage, "series corrected", np.sum(corrected), "series")
+            off = np.asarray(screen.reason) == OFF_MZ_REASON
             add(name, stage, "control spectra left out by the spectrum quality screens",
-                np.sum(screened), "spectra", "[analysis.filters] spectrum_quality_filtering")
+                np.sum(screened & ~off), "spectra",
+                "[analysis.filters] spectrum_quality_filtering")
+            if filters is not None and filters.off_mz:
+                add(name, stage, "control spectra left out: their series is off its m/z",
+                    np.sum(screened & off), "spectra", "[analysis.filters] off_mz")
             add(name, stage, "a control replicate left out (far from the others, above the "
                 "amide count, or a noise outlier)",
                 series_with("m0_replicate_left_out", "fd_replicate_left_out"), "series",
@@ -659,7 +671,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         mine = (np.asarray(left_out["run"]).astype(str) == name) if left_out is not None else []
         reasons = (np.asarray(left_out["reason"]).astype(str)[mine] if left_out is not None
                    else np.array([], dtype=str))
-        listed = [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
+        listed = [OFF_MZ_REASON] if filters.off_mz else []
+        listed += [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
         if filters.stand_in_controls != "include":
             listed += ["stand-in control", "stand-in control (screened)",
                        "stand-in control (undeuterated)"]
@@ -668,7 +681,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         if filters.replicate_outlier is not None:
             listed.append("replicate outlier")
         listed += sorted(set(reasons) - set(listed))
-        where = {"spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
+        where = {OFF_MZ_REASON: "off_mz = true",
+                 "spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
                  "stand-in control": f"stand_in_controls = \"{filters.stand_in_controls}\"",
                  "above the amide count": "above_amides = true",
                  "replicate outlier": f"replicate_outlier = {filters.replicate_outlier:g}"
@@ -839,7 +853,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
     keep = _kept(results, exclude_flagged)
-    screen = (screening(results, filters.spectrum_quality_filtering) if filters is not None
+    screen = (screening(results, filters.spectrum_quality_filtering, filters.off_mz)
+              if filters is not None
               else Screening.nothing(len(fit)))
     controls, unscreened = _screened_controls(results, controls_changes, screen, keep, quiet)
     n_amides = _site_counts(results)

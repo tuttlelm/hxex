@@ -1933,6 +1933,60 @@ def test_spectrum_quality_filtering(caplog):
     assert not screening(fake, "loose").remove[point] and screening(fake, "loose").remove[undeut]
 
 
+def test_series_off_their_mz_are_left_out():
+    """[analysis.filters] off_mz (HISTORY 200): every spectrum of a series the m/z check flags
+    off_mz is left out, controls included, so its fully deuterated control leaves the
+    back-exchange correction; off_mz = false keeps it; the run's controls leave its controls
+    out as the default analysis does; accepted spectra stay."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from hxex.analysis import left_out_spectra, left_out_summary
+    from hxex.analysis.screening import control_removal, screening
+    from hxex.analysis.species import SpeciesFilters, analysis_controls
+
+    results = Results.from_run(run(raw_spectra(n_series=3), config()))
+    fit, b = results.fit, results.binned
+    off_series = np.asarray(b.data_id) == 2
+    flagged = dataclasses.replace(results, binned=dataclasses.replace(
+        b, envelope_offset_ppm=np.where(off_series, 20.0, 0.5),
+        envelope_offset_limit_ppm=np.full(len(b), 3.0),
+        # another peptide (L -> I), so that its controls cannot stand in from the others
+        peptide=np.where(off_series, "RDKVQKEYAI", np.asarray(b.peptide))))
+    mine = np.asarray(fit.data_id) == 2
+    gone = screening(flagged, "none")
+    assert np.array_equal(gone.remove, mine) and set(gone.reason[mine]) == {"off its m/z"}
+    assert not screening(flagged, "none", off_mz=False).remove.any()
+    assert not screening(results, "loose").remove.any()  # not assessed: never removed
+
+    left = left_out_spectra(flagged)
+    assert set(left["spectrum_id"]) == set(np.asarray(fit.spectrum_id)[mine].astype(str))
+    assert set(left["reason"]) == {"off its m/z"}
+    assert not len(left_out_spectra(flagged, SpeciesFilters(off_mz=False))["spectrum_id"])
+    summary = left_out_summary(flagged, ks=(1,))
+    what = dict(zip(summary["what"], summary["count"], strict=True))
+    assert what["left out: off its m/z"] == mine.sum()
+    role = np.asarray(fit.role).astype(str)
+    assert what["control spectra left out: their series is off its m/z"] == (
+        mine & (role != "")).sum()
+
+    # its controls leave the correction (the run's too)
+    before = analysis_controls(flagged, None, quiet=True)
+    after = analysis_controls(flagged, None, quiet=True, screened=gone.remove)
+    i = before.rows(np.array([2]))[0]
+    assert before.fd_measured[i] and not after.fd_measured[i]
+    removal = control_removal(flagged.binned, fragments=())
+    assert set(np.flatnonzero(removal)) == set(np.flatnonzero(
+        off_series & (np.asarray(b.role).astype(str) != "")))
+
+    # accepted spectra stay
+    status = np.asarray(results.review_status).copy()
+    status[np.flatnonzero(mine)[0]] = "accepted"
+    fake = SimpleNamespace(fit=fit, binned=flagged.binned, review_status=status,
+                           spectra_source=None)
+    assert screening(fake, "none").remove.sum() == mine.sum() - 1
+
+
 def test_the_runs_controls_leave_out_the_screened_controls(tmp_path):
     """Audit 2026-10-28 question 9: the run's controls leave out the control spectra the loose
     level removes (recorded by id), so series.csv shows the state the default analysis uses;

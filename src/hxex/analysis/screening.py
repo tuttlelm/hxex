@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What the analysis does with the spectrum quality screens (``[analysis.filters]
-spectrum_quality_filtering``; HISTORY 149, 152).
+spectrum_quality_filtering``; HISTORY 149, 152) and the picker's m/z check (``[analysis.filters]
+off_mz``; HISTORY 200).
 
 The scores (:mod:`hxex.picking.screen`) are measured at picking; here a level turns them into
 one of three actions per spectrum, at thresholds agreed with the owner from fit evidence
@@ -15,10 +16,15 @@ one of three actions per spectrum, at thresholds agreed with the owner from fit 
 - warn (logged; kept): ``screen_beyond_reach`` below its removal level (no measurable effect
   on the fits at low values).
 
+Every spectrum of a series the m/z check flags ``off_mz`` (:mod:`hxex.picking.mz_check`) is
+removed too (``off its m/z``), controls included: its undeuterated envelope sits away from the
+peptide's m/z, so the series most likely reads another species (on the Orbitrap digest of
+HISTORY 200 the retention time pointed at another peptide in most such series).
+
 A removed control counts as rejected: the back-exchange correction is recomputed without it
 (:func:`hxex.analysis.species.analysis_controls`). The run's controls already leave out those
-the loose level removes (:func:`control_removal`; audit 2026-10-28), so the stored controls are
-the default analysis's. A spectrum the review accepted is never
+the loose level and ``off_mz`` remove (:func:`control_removal`; audit 2026-10-28), so the stored
+controls are the default analysis's. A spectrum the review accepted is never
 touched; neither are fragment series (the levels were set on intact peptides) nor spectra
 that were not assessed (NaN scores).
 """
@@ -30,6 +36,7 @@ from dataclasses import dataclass
 import numpy as np
 
 LEVELS = ("none", "loose", "strict")
+OFF_MZ_REASON = "off its m/z"
 
 # level -> action -> ((score, threshold), ...); a spectrum at or above a threshold takes the
 # action (the first removing score names the reason)
@@ -75,13 +82,14 @@ def spectra_source(results) -> dict | None:
     return source
 
 
-def screening(results, level: str) -> Screening:
-    """The action the level ``level`` (:data:`LEVELS`) takes on every spectrum of the fit."""
+def screening(results, level: str, off_mz: bool = True) -> Screening:
+    """The action the level ``level`` (:data:`LEVELS`) takes on every spectrum of the fit, and
+    with ``off_mz`` the removal of the series off their m/z."""
     if level not in LEVELS:
         raise ValueError(f"spectrum_quality_filtering must be one of {', '.join(LEVELS)}")
     fit, binned = results.fit, results.binned
     n = len(fit.spectrum_id)
-    if level == "none" or binned is None:
+    if (level == "none" and not off_mz) or binned is None:
         return Screening.nothing(n)
     from ..controls import fragment_ids
     from ..io.mzml import fragment_series
@@ -92,23 +100,33 @@ def screening(results, level: str) -> Screening:
                              fragment_series(spectra_source(results)))
     eligible = ~np.isin(np.asarray(fit.data_id), list(fragments))
     eligible &= np.asarray(results.review_status) != "accepted"
-    return _actions(binned, rows, eligible, level)
+    return _actions(binned, rows, eligible, level, off_mz)
 
 
 def control_removal(picked, fragments) -> np.ndarray:
     """``(M,)`` for every spectrum of ``picked`` (a :class:`hxex.picking.BinnedSet`): whether it
-    is a control the loose level removes (the run's controls leave those out, so that
-    series.csv shows the state the default analysis uses; fragment series, ``fragments``
-    (data_id), are not screened)."""
+    is a control the default analysis removes (the loose level and ``off_mz``; the run's
+    controls leave those out, so that series.csv shows the state the default analysis uses;
+    fragment series, ``fragments`` (data_id), are not screened)."""
     n = len(picked.spectrum_id)
     eligible = np.asarray(picked.role, dtype=str) != ""
     eligible &= ~np.isin(np.asarray(picked.data_id), list(fragments))
-    return _actions(picked, np.arange(n), eligible, "loose").remove
+    return _actions(picked, np.arange(n), eligible, "loose", True).remove
 
 
-def _actions(binned, rows: np.ndarray, eligible: np.ndarray, level: str) -> Screening:
-    """The actions of ``level`` on the rows ``rows`` of ``binned`` (``eligible``: those that
-    may be screened)."""
+def off_mz_spectra(binned) -> np.ndarray:
+    """``(M,)`` for every spectrum of ``binned``: whether the m/z check flagged its series
+    ``off_mz`` (False where not assessed, or in a bundle without the check)."""
+    offset = np.asarray(binned.envelope_offset_ppm, dtype=float)
+    limit = np.asarray(binned.envelope_offset_limit_ppm, dtype=float)
+    with np.errstate(invalid="ignore"):
+        return np.abs(offset) > limit  # NaN (not assessed) never is
+
+
+def _actions(binned, rows: np.ndarray, eligible: np.ndarray, level: str,
+             off_mz: bool = False) -> Screening:
+    """The actions of ``level`` (and with ``off_mz`` the removal of the series off their m/z)
+    on the rows ``rows`` of ``binned`` (``eligible``: those that may be removed)."""
     n = len(rows)
 
     def over(score: str, threshold: float) -> np.ndarray:
@@ -116,9 +134,12 @@ def _actions(binned, rows: np.ndarray, eligible: np.ndarray, level: str) -> Scre
         with np.errstate(invalid="ignore"):
             return eligible & (values >= threshold)  # NaN (not assessed) never is
 
-    rules = THRESHOLDS[level]
+    rules = THRESHOLDS.get(level, {"remove": (), "one_population": (), "warn": ()})
     remove = np.zeros(n, dtype=bool)
     reason = np.full(n, "", dtype=object)
+    if off_mz:
+        remove = eligible & off_mz_spectra(binned)[rows]
+        reason[remove] = OFF_MZ_REASON
     for score, threshold in rules["remove"]:
         hit = over(score, threshold) & ~remove
         reason[hit] = f"spectrum quality ({score})"

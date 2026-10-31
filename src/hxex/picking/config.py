@@ -96,13 +96,13 @@ class PickerConfig:
     - ``mass_accuracy_ppm``: the half-width is never below this (the calibration error a very
       high R would otherwise fall under).
 
-    Series whose undeuterated envelope sits away from its m/z (:mod:`hxex.picking.recentre`):
+    Series whose undeuterated envelope sits away from its m/z (:mod:`hxex.picking.mz_check`):
 
     - ``off_mz_sd``: a series is off its m/z when its undeuterated controls' peaks sit further
       than this many times the run's scatter from the run's calibration (at least 3 ppm): most
-      likely another, near-isobaric species shares its peaks. None: not checked.
-    - ``recentre``: the windows of such a series are moved onto its undeuterated envelope's
-      peaks (its measured offset), in every spectrum of the series; False: flagged only.
+      likely another species, which the analysis then leaves out (``[analysis.filters]
+      off_mz``). None: not checked. The windows stay on the predicted m/z: moving them onto the
+      envelope found (``recentre``, removed) read another peptide in most series (HISTORY 200).
 
     Either way the half-width is never above half the isotope spacing, ``1.00235 / (2 z)``, so
     the windows of neighbouring bins do not overlap: at high charge an uncapped ppm window
@@ -129,7 +129,6 @@ class PickerConfig:
     window_fwhm: float = 1.0
     mass_accuracy_ppm: float = 10.0
     off_mz_sd: float | None = 6.0
-    recentre: bool = True
     noise: InitVar[float | None] = None  # the former name of noise_threshold
 
     def __post_init__(self, noise):
@@ -186,8 +185,6 @@ class PickerConfig:
         if self.off_mz_sd is not None and (isinstance(self.off_mz_sd, bool)
                                            or not self.off_mz_sd > 0):
             raise ValueError("off_mz_sd must be positive (or None: not checked)")
-        if not isinstance(self.recentre, bool):
-            raise ValueError("recentre must be true or false")
 
     @property
     def uses_recorded(self) -> bool:
@@ -247,6 +244,7 @@ class PickerConfig:
             if old is not None and old is not False:
                 log.info("picker: noise is the former name of noise_threshold")
                 values["noise"] = old
+        values.pop("recentre", None)  # removed (HISTORY 200); a bundle's record of it stays there
         if "pick" not in values and values.get("resolving_power") not in (None, False):
             values["pick"] = "window_max"  # written before pick existed, so picked that way
         known = {f.name for f in fields(cls)}

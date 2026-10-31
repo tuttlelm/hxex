@@ -109,8 +109,8 @@ def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> 
         gone = set(map(str, left_out_spectra(r, filters, exclude_flagged=exclude_flagged,
                                              controls=controls)["spectrum_id"]))
         use &= np.array([str(s) not in gone for s in fit.spectrum_id], dtype=bool)
-    screen = (screening(r, filters.spectrum_quality_filtering) if filters is not None
-              else Screening.nothing(len(fit)))
+    screen = (screening(r, filters.spectrum_quality_filtering, filters.off_mz)
+              if filters is not None else Screening.nothing(len(fit)))
     one = screen.one_population | review_one(r)
     index = {str(s): j for j, s in enumerate(b.spectrum_id)}
     rows = [index[str(s)] for s in fit.spectrum_id]
@@ -138,7 +138,7 @@ def above_max_fd(r, filters, controls=None, screen=None, use=None) -> np.ndarray
 
     fit, test = r.fit, r.population_test
     if screen is None:
-        screen = screening(r, filters.spectrum_quality_filtering)
+        screen = screening(r, filters.spectrum_quality_filtering, filters.off_mz)
     if use is None:
         use = _kept(r, False)
     ctl, _ = _screened_controls(r, controls, screen, use, quiet=True)

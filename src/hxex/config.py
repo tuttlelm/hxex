@@ -218,6 +218,18 @@ def run_config_from(data: Mapping) -> RunConfig:
     merged = RunConfig().to_dict()
     if "plots" in data:
         raise ProjectError(f"[run.plots]: {FIGURES_MOVED}. Rename [run.plots] to [figures]")
+    picker = data.get("picker")
+    if isinstance(picker, Mapping) and "recentre" in picker:
+        if picker["recentre"] is not False:
+            raise ProjectError(
+                "[run.picker] recentre: removed. Moving the windows of a series off its m/z "
+                "onto the envelope found there read another peptide in most series: the "
+                "retention time pointed at another species, and the peptide eluted elsewhere "
+                "at its exact m/z. Such series are flagged off_mz and left out of the analysis "
+                "([analysis.filters] off_mz); check their retention times. Delete the setting")
+        log.info("[run.picker] recentre = false is no longer needed (the windows are never "
+                 "moved): it can be deleted")
+        data = {**data, "picker": {k: v for k, v in picker.items() if k != "recentre"}}
     if "undeut_time" in data:
         raise ProjectError("[run] undeut_time: the controls are no longer identified by a time; "
                            "the undeuterated controls (the noise references) are the spectra "
@@ -1371,10 +1383,9 @@ _COMMENTS: dict[str, str] = {
     "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
     "run.picker.off_mz_sd": "off_mz: a series whose undeuterated controls put its envelope "
                             "further than this many times the run's scatter from the run's "
-                            "calibration (at least 3 ppm; peptide ions only; false: not "
-                            "checked)",
-    "run.picker.recentre": "move the windows of an off_mz series onto its undeuterated "
-                           "envelope's peaks (false: flag only)",
+                            "calibration (at least 3 ppm; peptide ions only; most likely "
+                            "another species, left out by [analysis.filters] off_mz; false: "
+                            "not checked)",
     "run.fit.k_min": "fewest populations tried (must be 1 with screen; the controls are also "
                      "fitted at K = 1 for the back-exchange correction, whatever k_min)",
     "run.fit.k_max": "most populations tried (equal to k_min: that number only, no choice)",
@@ -1843,6 +1854,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.filters]              # which spectra and K=2 descriptions are kept",
         '# spectrum_quality_filtering = "loose"  # or "strict", "none": spectra showing another',
         "#                                 # species (spectra.csv screen_* columns)",
+        "# off_mz = true                   # leave out the series flagged off_mz (another",
+        "#                                 # species: check their retention times)",
         "# replicate_outlier = 6           # typical replicate sd from the other replicates",
         "# above_amides = true             # leave out a K=1 mean above the amide count",
         '# stand_in_controls = "exclude"   # series without a measured fully deuterated control,',

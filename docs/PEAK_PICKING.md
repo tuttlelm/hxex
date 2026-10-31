@@ -248,12 +248,12 @@ is more than `max_mz_offset_ppm` (15) from the median over all series. Measured 
 | The same z ions with a wrong C-terminus (`-NH2` on an acid; 0.984 Da instead of one isotope step) | -23 to -41 ppm |
 | Intact peptides (SpecExport, 3,000 spectra) | median +5.5 ppm (calibration); 90 % of spectra from -5 to +14.5 ppm; 2 % of series beyond 15 ppm from the run median, mostly consistent within the series |
 
-## A series off its m/z: the windows moved
+## A series off its m/z
 
 `mz_offset_ppm` is measured inside the window, so it cannot see an envelope further away than
 the window's half-width: with a +/- 10 ppm window on an Orbitrap, `mz_shift` (15 ppm) can never
 fire. Before picking, the picker therefore checks every peptide-ion series with undeuterated
-controls (`hxex.picking.recentre`; HISTORY item 166):
+controls (`hxex.picking.mz_check`; HISTORY item 166):
 
 - In each undeuterated control, the tops of the M, M+1 and M+2 peaks nearest their predictions
   (from the profile point nearest the prediction, uphill through evenly spaced points, refined to
@@ -266,23 +266,26 @@ controls (`hxex.picking.recentre`; HISTORY item 166):
   of the offsets about the line. A run with fewer than 10 offsets takes the line and scatter of
   all the controls.
 - A series is off its m/z (quality flag `off_mz`) when the median over its controls of (offset
-  minus the calibration) is beyond `off_mz_sd` (6) times the scatter, and at least 3 ppm. With
-  `recentre` (on by default) every window of the series, controls and labelled spectra alike,
-  is moved by the series' measured offset (the median of its controls' offsets); `mz` stays the
-  predicted m/z, `peak_mz` and `mz_offset_ppm` are still measured from it, and
-  `window_shift_ppm` records the move.
+  minus the calibration) is beyond `off_mz_sd` (6) times the scatter, and at least 3 ppm. The
+  windows stay on the predicted m/z; the analysis leaves every spectrum of the series out,
+  controls included (`[analysis.filters] off_mz`, reason `off its m/z`), and the run's controls
+  leave its controls out as the default analysis does.
 
-A whole envelope 10 to 40 ppm away, the same in every control and every run, is not the
-calibration: most likely a near-isobaric species elutes with the peptide and merges with its
-peaks. A window centred on the prediction then reads the flank of the merged peak, a share of
-the intensity that differs from bin to bin. Moving the window reads the merged peak's top; it
-does not separate the other species, which is why the series is flagged. Measured (HISTORY 166):
+A whole envelope 10 to 50 ppm away, the same in every control and every run, is not the
+calibration. On the Orbitrap digest the dataset's identification (DDA) runs showed what it is
+(HISTORY 200): for 50 of 77 questioned series the peptide table's retention time pointed at
+another, near-isobaric species, and the peptide eluted 0.3 to 1.9 min away at its exact m/z; in
+others a near-isobaric species co-elutes and merges with the peptide's peaks. Until HISTORY 200
+the windows of such a series were moved onto the envelope found (`recentre`, on by default):
+that read the other species in most series, and its uptake resembled the prediction well enough
+(flagged peptides within 0.1 of the predicted uptake 73 % -> 82 %, HISTORY 166) to hide it.
+Measured (HISTORY 166):
 
-| Data | Scatter | Flagged at 4 / 6 / 8 / 10 sd | Effect of moving the windows |
-|---|---|---|---|
-| Orbitrap digest (MassIVE MSV000094510, 45,000, +/- 10 ppm window) | 0.7 ppm | 74 / 66 / 61 / 59 of 527 | flagged peptides within 0.1 of the predicted uptake 73 % -> 82 % (HDExaminer 86 %); the others unchanged |
-| Q-TOF intact-peptide benchmark (+/- 50 ppm window) | 2.2-2.8 ppm | 22 / 4 / 2 / 1 of 1,320 | none (a 50 ppm window already holds the peaks' tops); the flagged series with other charge states disagree with them by 1.1-1.5 D (typical 0.08 D) |
-| Known-answer bimodal set | 8 ppm (pooled) | none | none |
+| Data | Scatter | Flagged at 4 / 6 / 8 / 10 sd |
+|---|---|---|
+| Orbitrap digest (MassIVE MSV000094510, 45,000, +/- 10 ppm window) | 0.7 ppm | 74 / 66 / 61 / 59 of 527 |
+| Q-TOF intact-peptide benchmark (+/- 50 ppm window) | 2.2-2.8 ppm | 22 / 4 / 2 / 1 of 1,320 (the flagged series with other charge states disagree with them by 1.1-1.5 D, typical 0.08 D) |
+| Known-answer bimodal set | 8 ppm (pooled) | none |
 
 Fragment ions are not checked (an ion-type mixture moves their peaks; `mz_shift` and
 `poor_envelope` stay theirs), nor series without undeuterated controls.
@@ -349,7 +352,7 @@ changes nothing measurable, and it does not change fit accuracy there.
 | What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"` as pyHXExpress) |
 | A bin's value | the height | the area when the run's weak peaks are wider than its tallest (`measure = "auto"`), else the height; `"height"` as pyHXExpress |
 | Threshold, predicted m/z reported | as here | unchanged |
-| A series whose undeuterated envelope sits off its m/z | not checked | flagged `off_mz`, windows moved onto its envelope (`off_mz_sd`, `recentre`) |
+| A series whose undeuterated envelope sits off its m/z | not checked | flagged `off_mz` (`off_mz_sd`) and left out of the analysis (`[analysis.filters] off_mz`) |
 
 With `ladder="exms"`, `pick="window_max"` and `measure="height"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
 (every bin both pickers produce identical in m/z and intensity); the cap never binds on peptide
@@ -396,7 +399,6 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 | `window_fwhm` | 1.0 | half width as a multiple of the peak width at half maximum |
 | `mass_accuracy_ppm` | 10 | floor of the resolving-power window |
 | `off_mz_sd` | 6 | a series is off its m/z beyond this many times the run's scatter (at least 3 ppm); None: not checked |
-| `recentre` | true | move the windows of a series off its m/z onto its envelope (false: flag only) |
 | `noise_threshold` | None | absolute threshold; None or 0 uses `noise_percent` (`noise` is its former name) |
 | `noise_percent` | 1.0 | threshold as a percent of the spectrum's maximum |
 | `zero_filling` | 4 | bins picked after the last bin above the threshold |

@@ -74,8 +74,8 @@ def _layers(show: Sequence[str]) -> tuple[str, ...]:
 
 def _picked(spectrum_id: str, results: Results | None, binned: BinnedSet | None):
     """(m/z of the windows or None, n_deut bins, intensity) of the picked spectrum, or None.
-    The windows sit at the predicted m/z, moved by ``window_shift_ppm`` for a series off its
-    m/z (:mod:`hxex.picking.recentre`)."""
+    The windows sit at the predicted m/z, moved by ``window_shift_ppm`` where a bundle picked
+    with the former ``recentre`` moved them (:mod:`hxex.picking.mz_check`)."""
     binned = binned if binned is not None else (results.binned if results else None)
     if binned is not None:
         try:

@@ -214,8 +214,8 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     check left the spectrum at fewer populations); then the spectrum quality screens' scores
     (``screen_*``, :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of
     the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
-    ``window_shift_ppm``, :mod:`hxex.picking.recentre`; the first two empty where not
-    assessed)."""
+    ``window_shift_ppm``, :mod:`hxex.picking.mz_check`; the first two empty where not
+    assessed, the last 0 except in bundles picked with the former ``recentre``)."""
     out = dict(_index_columns(results))
     ks = results.effective_K
     k_max = int(ks.max())

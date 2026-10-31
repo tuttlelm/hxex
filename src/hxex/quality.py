@@ -34,9 +34,10 @@ signal never reach the fit and are handled before it.
   the picker's offsets are measured inside its window, which a narrow window clips).
 - ``off_mz``: the series' undeuterated controls put its envelope further from the run's
   calibration than ``[run.picker] off_mz_sd`` times the run's scatter
-  (:mod:`hxex.picking.recentre`): most likely another, near-isobaric species shares its
-  peaks. The statistic is ``envelope_offset`` (ppm). Peptide ions with undeuterated controls
-  only; with ``recentre`` the picker moved the series' windows onto its envelope.
+  (:mod:`hxex.picking.mz_check`): most likely the series reads another species (the
+  retention time points at another peptide, or one shares its peaks). The statistic is
+  ``envelope_offset`` (ppm). Peptide ions with undeuterated controls only; the analysis leaves
+  such series out (``[analysis.filters] off_mz``).
 - ``poor_envelope``: the series' ion-type envelope (``mixed`` or ``infer``) was not measured
   well (:attr:`hxex.picking.EnvelopeTable.poor`): left with the theory of one ion type for want
   of usable reference spectra, not describing the spectra it was fitted to, or, shared between

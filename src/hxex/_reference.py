@@ -247,6 +247,9 @@ _DESCRIPTIONS: dict[str, str] = {
                                                    "spectra showing another species, keep one "
                                                    "population only, or warn (fragments are "
                                                    "not screened)",
+    "analysis.filters.off_mz": "leave out every spectrum, controls included, of a series "
+                               "flagged off_mz (its undeuterated envelope sits away from its "
+                               "m/z: most likely another species; [run.picker] off_mz_sd)",
     "analysis.choice.confidence": "a fraction (0.5: 50 %): the interval that must separate the "
                                   "two K=2 values; default 0.5 with populations = "
                                   '"best_set", 0.95 with "bootstrap"',

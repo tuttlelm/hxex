@@ -69,8 +69,9 @@ dataset, or adding more, changes them:
   significant in one analysis and not in another.
 - **The m/z check and the picking window.** *hxex* checks each series' undeuterated envelope
   against the m/z calibration of its injection, worked out from all the peptides in it (or from
-  the whole project when an injection has fewer than 10). With `recentre` (on by default), a
-  series flagged `off_mz` has its windows moved, which changes its picked spectra.
+  the whole project when an injection has fewer than 10). A series flagged `off_mz` is left
+  out of the analysis, so whether a borderline series is flagged depends on the other peptides
+  in the project.
 - **Heights or areas.** With `measure = "auto"` (the default), *hxex* decides whether the bins
   take the peaks' heights or their areas from all the project's undeuterated controls, and needs
   at least 20 of them; a project with fewer keeps heights. The peak width used for areas is

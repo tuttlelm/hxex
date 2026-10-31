@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The picker's m/z check (hxex.picking.recentre): a series whose undeuterated envelope sits off
-its m/z, compared with its run, is flagged off_mz and its windows are moved onto its envelope.
+"""The picker's m/z check (hxex.picking.mz_check): a series whose undeuterated envelope sits off
+its m/z, compared with its run, is flagged off_mz (the windows stay; the analysis leaves it out).
 Synthetic profile spectra: one run of twelve series, one of them 20 ppm off, picked with a
 +-10 ppm window (which an offset of 20 ppm puts on the flank of the peaks)."""
 
@@ -10,12 +10,14 @@ import numpy as np
 import pytest
 
 from hxex import load_results
+from hxex.analysis import SpeciesFilters, left_out_spectra
+from hxex.config import ProjectError, run_config_from
 from hxex.fit import FitConfig
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import BinnedSet, PickerConfig, pick_spectra, plan_bins
 from hxex.picking.binned import MZ_CHECK_COLUMNS
-from hxex.picking.recentre import MIN_LIMIT_PPM, envelope_offset, series_offsets
+from hxex.picking.mz_check import MIN_LIMIT_PPM, envelope_offset, series_offsets
 from hxex.run import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_screen import PLAN, envelope, profile
@@ -78,50 +80,40 @@ def test_an_envelope_whose_peaks_disagree_has_no_offset():
     assert np.isnan(envelope_offset(*profile((pos, h)), PLAN.pred_mz, Z, 10.0))
 
 
-def test_a_series_off_its_mz_is_flagged_and_its_windows_moved():
+def test_a_series_off_its_mz_is_flagged_and_its_windows_stay():
     raw = spectra_set()
-    moved = pick_spectra(raw, NARROW)
-    off = series_rows(moved, 0)
-    rest = np.flatnonzero(np.asarray(moved.data_id) != 0)
-    assert moved.envelope_offset_ppm[off] == pytest.approx(OFF, abs=1.0)  # calibration out
-    assert np.all(np.abs(moved.envelope_offset_ppm[rest]) < moved.envelope_offset_limit_ppm[rest])
-    assert np.all(moved.envelope_offset_limit_ppm >= MIN_LIMIT_PPM)
-    assert moved.window_shift_ppm[off] == pytest.approx(OFF + CALIBRATION, abs=1.0)
-    assert np.all(moved.window_shift_ppm[rest] == 0)
-    # the peaks' offset is still measured from the predicted m/z
-    assert moved.mz_offset_ppm[off[0]] == pytest.approx(OFF + CALIBRATION, abs=1.5)
-    # with the windows on the peaks, the off series reads its peaks' tops, as the others do
-    flank = pick_spectra(raw, dataclasses.replace(NARROW, recentre=False))
-    m_moved, m_flank = moved.spectrum(off[0])[1][0], flank.spectrum(off[0])[1][0]
-    m_other = moved.spectrum(rest[0])[1][0]
-    assert m_moved == pytest.approx(m_other, rel=0.02)
-    assert m_flank < 0.9 * m_moved  # the window edge on the flank of a 50 ppm wide peak
-    # only the off series changed
-    assert np.array_equal(moved.intensity[moved.offsets[rest[0]]:moved.offsets[rest[0] + 1]],
-                          flank.intensity[flank.offsets[rest[0]]:flank.offsets[rest[0] + 1]])
+    b = pick_spectra(raw, NARROW)
+    off = series_rows(b, 0)
+    rest = np.flatnonzero(np.asarray(b.data_id) != 0)
+    assert b.envelope_offset_ppm[off] == pytest.approx(OFF, abs=1.0)  # calibration out
+    assert np.all(np.abs(b.envelope_offset_ppm[off]) > b.envelope_offset_limit_ppm[off])
+    assert np.all(np.abs(b.envelope_offset_ppm[rest]) < b.envelope_offset_limit_ppm[rest])
+    assert np.all(b.envelope_offset_limit_ppm >= MIN_LIMIT_PPM)
+    assert np.all(b.window_shift_ppm == 0)  # the windows stay on the prediction
+    # the check changes no pick: the off series' apexes lie outside its windows (nothing
+    # picked), and with the tallest point of each window it reads the flank of its peaks
+    unchecked = pick_spectra(raw, dataclasses.replace(NARROW, off_mz_sd=None))
+    assert np.array_equal(unchecked.intensity, b.intensity)
+    assert np.all(b.empty[off])
+    tallest = pick_spectra(raw, dataclasses.replace(NARROW, pick="window_max"))
+    assert tallest.spectrum(off[0])[1][0] < 0.9 * tallest.spectrum(rest[0])[1][0]
 
 
-def test_recentre_false_flags_only_and_off_mz_sd_false_checks_nothing():
+def test_off_mz_sd_false_checks_nothing():
     raw = spectra_set()
-    moved = pick_spectra(raw, NARROW)
-    flagged = pick_spectra(raw, dataclasses.replace(NARROW, recentre=False))
-    assert np.array_equal(flagged.envelope_offset_ppm, moved.envelope_offset_ppm)
-    assert np.all(flagged.window_shift_ppm == 0)
     unchecked = pick_spectra(raw, dataclasses.replace(NARROW, off_mz_sd=None))
     assert np.isnan(unchecked.envelope_offset_ppm).all()
     assert np.isnan(unchecked.envelope_offset_limit_ppm).all()
-    assert np.all(unchecked.window_shift_ppm == 0)
-    assert np.array_equal(unchecked.intensity, flagged.intensity)
     # a larger multiple of the scatter lets the off series pass
     loose = pick_spectra(raw, dataclasses.replace(NARROW, off_mz_sd=1e3))
-    assert np.all(loose.window_shift_ppm == 0)
+    assert np.all(np.abs(loose.envelope_offset_ppm) < loose.envelope_offset_limit_ppm)
 
 
 def test_a_run_with_few_controls_takes_the_scatter_of_every_control():
     b = pick_spectra(spectra_set(samples=True), NARROW)  # every run has one control
-    shift = b.window_shift_ppm
-    assert shift[series_rows(b, 0)] == pytest.approx(OFF + CALIBRATION, abs=1.0)
-    assert np.all(shift[np.asarray(b.data_id) != 0] == 0)
+    off = np.abs(b.envelope_offset_ppm) > b.envelope_offset_limit_ppm
+    assert np.all(off[series_rows(b, 0)])
+    assert not np.any(off[np.asarray(b.data_id) != 0])
 
 
 def test_series_without_controls_and_skipped_series_are_not_assessed():
@@ -138,7 +130,7 @@ def test_series_without_controls_and_skipped_series_are_not_assessed():
 def test_the_check_follows_select_and_older_sets_are_not_assessed():
     b = pick_spectra(spectra_set(), NARROW)
     one = b.select(np.asarray(b.data_id) == 0)
-    assert np.all(one.window_shift_ppm > 0)
+    assert one.envelope_offset_ppm == pytest.approx(OFF, abs=1.0)
     older = dataclasses.replace(b, **{name: None for name in MZ_CHECK_COLUMNS})
     assert np.isnan(older.envelope_offset_ppm).all() and np.all(older.window_shift_ppm == 0)
 
@@ -146,24 +138,33 @@ def test_the_check_follows_select_and_older_sets_are_not_assessed():
 def test_settings_are_checked():
     with pytest.raises(ValueError, match="off_mz_sd"):
         PickerConfig(off_mz_sd=0)
-    with pytest.raises(ValueError, match="recentre"):
-        PickerConfig(recentre="yes")
-    cfg = PickerConfig(off_mz_sd=4.0, recentre=False)
+    cfg = PickerConfig(off_mz_sd=4.0)
     assert PickerConfig.from_dict(cfg.to_dict()) == cfg
+    # removed (HISTORY 200): a bundle's record of it still loads; a project file refuses true
+    assert PickerConfig.from_dict({**cfg.to_dict(), "recentre": True}) == cfg
+    with pytest.raises(ProjectError, match="recentre: removed"):
+        run_config_from({"picker": {"recentre": True}})
+    assert run_config_from({"picker": {"recentre": False}}).picker == PickerConfig()
 
 
 def test_the_run_flags_off_mz_and_the_bundle_keeps_the_check(tmp_path):
     cpu = Backend("cpu", "float64")
     fit = FitConfig(k_max=1, adam_steps=60, n_restarts=1, backend=cpu,
                     noise=NoiseConfig("gaussian", percent=3.0))
-    result = run(spectra_set(), RunConfig(picker=NARROW, fit=fit), out=tmp_path / "b")
+    # 7 ppm off: beyond the run's limit (3 ppm here), but inside the +-10 ppm windows
+    result = run(spectra_set(off=7.0), RunConfig(picker=NARROW, fit=fit), out=tmp_path / "b")
     q = result.quality
     by_series = np.asarray(result.fit.data_id)
     assert np.all(q.off_mz[by_series == 0]) and not np.any(q.off_mz[by_series != 0])
-    assert q.envelope_offset[by_series == 0] == pytest.approx(OFF, abs=1.0)
+    assert q.envelope_offset[by_series == 0] == pytest.approx(7.0, abs=1.0)
     assert not np.any(q.mz_shift)  # a checked series is not also judged by mz_shift
     loaded = load_results(tmp_path / "b")
     assert np.array_equal(loaded.quality.off_mz, q.off_mz)
     assert np.allclose(loaded.binned.window_shift_ppm, result.binned.window_shift_ppm)
     assert np.array_equal(np.isnan(loaded.binned.envelope_offset_ppm),
                           np.isnan(result.binned.envelope_offset_ppm))
+    # the analysis leaves the off series out, control included, unless told not to
+    gone = left_out_spectra(loaded)
+    assert set(gone["spectrum_id"]) == {"0:0.0", "0:2.0"}
+    assert set(gone["reason"]) == {"off its m/z"}
+    assert len(left_out_spectra(loaded, SpeciesFilters(off_mz=False))["spectrum_id"]) == 0

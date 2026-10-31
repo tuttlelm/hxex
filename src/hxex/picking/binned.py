@@ -12,7 +12,7 @@ from ..spectra import _check_mask, ragged_mask, time_index
 from .screen import SCREEN_SCORES
 
 _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
-# the m/z check of each spectrum's series (hxex.picking.recentre)
+# the m/z check of each spectrum's series (hxex.picking.mz_check)
 MZ_CHECK_COLUMNS = ("envelope_offset_ppm", "envelope_offset_limit_ppm", "window_shift_ppm")
 
 
@@ -32,11 +32,12 @@ class BinnedSet:
     the usual reason to drop a SpecExport spectrum), ``no_signal`` (no bin
     reaches the threshold) and ``capped`` (the bin limit cut the zero filling short). The
     ``screen_*`` scores (:mod:`hxex.picking.screen`) measure another species in the raw spectrum
-    (NaN: not assessed). The m/z check of the spectrum's series (:mod:`hxex.picking.recentre`):
+    (NaN: not assessed). The m/z check of the spectrum's series (:mod:`hxex.picking.mz_check`):
     ``envelope_offset_ppm``, the series' undeuterated envelope offset from its runs'
     calibration, ``envelope_offset_limit_ppm``, the limit it was compared with (both NaN: not
     assessed), and ``window_shift_ppm``, how far the picker's windows were moved from the
-    predicted m/z (0: not moved).
+    predicted m/z (0: not moved; only bundles picked with the former ``recentre``, removed in
+    HISTORY 200, have others).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """

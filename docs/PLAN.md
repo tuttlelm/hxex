@@ -516,12 +516,11 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   "peak"` (items 98 and 198).
 - A peptide-ion series whose undeuterated controls put its envelope off the run's calibration
   (a Theil-Sen line in m/z per undeuterated injection; beyond `off_mz_sd` = 6 times the
-  injection's robust scatter, at least 3 ppm) is flagged `off_mz`, and with `recentre` (on by
-  default) its windows are moved onto its envelope in every spectrum of the series;
-  pyHXExpress always centres the window on the prediction. Most such series share their peaks
-  with a near-isobaric species; reading the merged peak's top instead of its flank brought an
-  Orbitrap digest's flagged peptides from 73 % to 82 % of time points within 0.1 of the
-  predicted uptake, and changes nothing with a ±50 ppm window (item 166).
+  injection's robust scatter, at least 3 ppm) is flagged `off_mz` and left out of the analysis,
+  controls included (`[analysis.filters] off_mz`); pyHXExpress does not check. On an Orbitrap
+  digest most such series were another peptide at a wrong retention time, the peptide itself
+  eluting elsewhere at its exact m/z (items 166, 200; moving the windows onto the envelope
+  found, `recentre`, was removed for that reason).
 
 Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status"):
 
@@ -695,12 +694,15 @@ Planned, not built:
    half-maximum width: a third fewer artefactual populations, uptake unchanged; the ambiguity
    rule needs rethinking (it flagged half the spectra of a crowded digest).
 11. **The remaining interference: near-isobaric species** (owner, 2026-10-25; HISTORY 166).
-   Built: the picker's m/z check (`[run.picker] off_mz_sd`, `recentre`; quality flag
-   `off_mz`; `spectra.csv` `envelope_offset_ppm`, `envelope_offset_limit_ppm`,
-   `window_shift_ppm`). Tried and not adopted: a per-bin apex rule (a bin whose window holds
-   only a flank set to 0 or left out of the fit: uptake worse either way), a fixed ppm limit
-   (removed 30 % of the known-answer series), leaving flagged series out by default (cost more
-   good values than bad ones), recentring every series (nothing gained). Open: the series whose
+   Built: the picker's m/z check (`[run.picker] off_mz_sd`; quality flag `off_mz`;
+   `spectra.csv` `envelope_offset_ppm`, `envelope_offset_limit_ppm`). Tried and not adopted: a
+   per-bin apex rule (a bin whose window holds only a flank set to 0 or left out of the fit:
+   uptake worse either way), a fixed ppm limit (removed 30 % of the known-answer series),
+   recentring every series (nothing gained). Recentring the flagged series (`recentre`, on by
+   default from item 166) was REMOVED in item 200: the DDA identification runs showed it read
+   another peptide in most series; the flagged series are now left out of the analysis by
+   default (`[analysis.filters] off_mz`; item 166's "costs good values" counted values of other
+   species as good). Open: the series whose
    undeuterated envelopes are inconsistent (M, M+1, M+2 tops disagree: 32 % of their time
    points off on the Orbitrap digest, no worse than the rest on a Q-TOF); then the set test
    (HISTORY 162). The gap to HDExaminer (item 167): mostly series whose undeuterated control is

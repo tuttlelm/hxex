@@ -217,8 +217,7 @@ Peak picking: the spectra become sticks at the predicted isotope positions (hxex
 | `resolving_power_exponent` | number | `0.5` | R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR |
 | `window_fwhm` | number | `1.0` | half-width as a multiple of the peak width at half maximum, m/R(m); never below mass_accuracy_ppm, never above half the isotope spacing |
 | `mass_accuracy_ppm` | number | `10.0` | floor (ppm) of the resolving-power window |
-| `off_mz_sd` | number | `6.0` | off_mz: a series whose undeuterated controls put its envelope further than this many times the run's scatter from the run's calibration (at least 3 ppm; peptide ions only; false: not checked) |
-| `recentre` | true/false | `true` | move the windows of an off_mz series onto its undeuterated envelope's peaks (false: flag only) |
+| `off_mz_sd` | number | `6.0` | off_mz: a series whose undeuterated controls put its envelope further than this many times the run's scatter from the run's calibration (at least 3 ppm; peptide ions only; most likely another species, left out by [analysis.filters] off_mz; false: not checked) |
 
 ## `[run.picker.amide_rules]`
 
@@ -442,6 +441,7 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
 | `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species); "other_sample" excludes them but keeps the series that took the same peptide's control in another sample |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
+| `off_mz` | true/false | `true` | leave out every spectrum, controls included, of a series flagged off_mz (its undeuterated envelope sits away from its m/z: most likely another species; [run.picker] off_mz_sd) |
 | `undeuterated_cap` | true/false | `false` | with the population test: keep the other spectra of a peptide whose undeuterated set has two populations or more at one population, in every sample (off: the peptide is only flagged, undeuterated_two) |
 
 ## `[analysis.choice]`
