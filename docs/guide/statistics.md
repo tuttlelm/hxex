@@ -57,7 +57,7 @@ What it lacks:
 ## What the bootstrap adds
 
 - **Error bars** on every value: the uptake plots, the Woods plots, and the residue plots.
-- **The residue comparisons** (`compare_residues.csv` and its figures): a residue's difference
+- **The residue comparisons** (`compare_residues.csv` and `residue_significance`): a residue's difference
   is significant when it is large compared with its error, so the error must be right. Without
   the bootstrap, 97.5 % of the tutorial's residue calls agreed with the full analysis, but only
   89 % on the larger dataset.

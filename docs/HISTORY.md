@@ -5642,3 +5642,14 @@ CSVs or mzML if wanted.
     (the samples share their peptides). At 4 s, 59 of 76 peptides that differed between WT and a
     sample were left out by a filter in one of them, 17 were not in its data (9 of those over a
     mutated residue).
+
+208. **"compare" for statistics, "overlay" for values drawn together (owner, 2026-10-31).** The
+    figures `compare_residues_<time>` and `compare_populations_<time>` show each sample's residue
+    values over the reference's, with no test; they are now `overlay_residues_<time>` and
+    `overlay_populations_<time>`, matching the `[analysis] overlay` setting that chooses their
+    values and `residue_overlay_figure`. Every `compare_*.csv` table keeps its name (each holds a
+    test or a comparison decision); significance at the residue level is drawn by
+    `residue_significance` and `residue_significance_K2`. An analysis folder written before
+    loses its old figures at the next `hxex analyse` into it (they are in its listing). The
+    tutorial notebook and `make_tutorial.py` name the new file, so the download changes (to
+    replace on `tutorial-data-1`).

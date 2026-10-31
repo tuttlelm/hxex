@@ -387,10 +387,10 @@ Peptides that contain the mutation are compared too, with WT's peptide over the 
 (they are marked `same_sequence = false` in `compare_peptides.csv`); to compare only identical
 sequences, set `peptide_match = "sequence"` in `[analysis]`.
 
-**The residue comparison** (`compare_residues_1min.png`) goes residue by residue: the average
+**The residue overlay** (`overlay_residues_1min.png`) goes residue by residue: the average
 deuteration as small circles on a line with its error band, and, where a sample has two
 populations, the low-D and high-D populations as up and down triangles
-([Reading the residue comparison](outputs.md#figures-from-hxex-analyse)):
+([Reading the residue overlay](outputs.md#figures-from-hxex-analyse)):
 
 ![Residue-level comparison at 1 min](../images/tutorial_residues.png)
 

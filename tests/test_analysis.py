@@ -830,7 +830,8 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     header = (tmp_path / "a" / "compare_residues.csv").read_text().splitlines()[0].split(",")
     assert {"two_reference", "two"} <= set(header)
     assert any(n.startswith("choice_V_") for n in names)
-    assert any(n.startswith("compare_residues_") for n in names)
+    assert any(n.startswith("overlay_residues_") for n in names)
+    assert not any(n.startswith("compare_residues_") and n.endswith(".png") for n in names)
     assert seen[-1][0] == seen[-1][1] == len(written)
     assert all(p.stat().st_size > 0 for p in written)
     with open_bundle(two_sample_bundle) as b, pytest.raises(ValueError, match="no reference"):

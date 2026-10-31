@@ -14,8 +14,8 @@ reference's), with regions ``regions.csv``, and for several runs (a
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
 ``profile_<sample>_<time>`` without K=2), ``population_tiers`` (with the population test: the
 residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
-``compare_residues_<time>`` (the values of ``config.overlay``,
-:func:`hxex.report.residue_overlay_figure`), ``compare_populations_<time>``,
+``overlay_residues_<time>`` (the values of ``config.overlay``,
+:func:`hxex.report.residue_overlay_figure`), ``overlay_populations_<time>``,
 ``residue_significance`` (which residues differ from the reference,
 :func:`hxex.report.plot_residue_significance`), ``residue_significance_K2``
 (:func:`hxex.report.plot_residue_significance_k2`), ``woods_<sample>_<time>`` (K=1, and where the
@@ -453,7 +453,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             shown = [s for s in residue_others
                      if _has_overlay(residues, s, t, config.overlay, only)]
             if shown and _has_overlay(residues, reference, t, config.overlay, only):
-                jobs.append((f"compare_residues_{when_}", lambda t=t, shown=shown, only=only:
+                jobs.append((f"overlay_residues_{when_}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, reference, shown, t, show=config.overlay,
                                  choice=only, annotations=ann, length=length, **when)))
@@ -463,7 +463,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             with_pop = [s for s in residue_others if choice is not None and (
                 ref_pop or _has_overlay(residues, s, t, ("pop_low",), choice))]
             if with_pop:
-                jobs.append((f"compare_populations_{when_}",
+                jobs.append((f"overlay_populations_{when_}",
                              lambda t=t, with_pop=with_pop: residue_overlay_figure(
                                  residues, reference, with_pop, t, show=("pop_low",),
                                  choice=choice, annotations=ann, length=length, **when)))
