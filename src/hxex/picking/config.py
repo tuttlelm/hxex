@@ -79,7 +79,11 @@ class PickerConfig:
     - ``amide_rules``: per fragment ion type, whether it keeps the amide at its cleavage site
       (:class:`hxex.chem.AmideRules`).
 
-    The window can instead follow the instrument's resolving power (:meth:`half_width`):
+    With ``pick = 'window_max'`` the window can instead follow the instrument's resolving power
+    (:meth:`half_width`). With ``pick = 'peak'`` the window is always ``resolution_ppm``: it
+    only accepts or rejects a peak's apex, and apexes scatter from their predicted m/z by a
+    few ppm whatever the m/z or the peak width (calibration and signal, not resolution), so a
+    window from R would only let in neighbouring peaks (HISTORY 198):
 
     - ``resolving_power``: R quoted at ``resolving_power_mz`` (200 by default, Thermo's
       convention since the Q Exactive), or ``'recorded'`` to take each spectrum's value from
@@ -168,6 +172,13 @@ class PickerConfig:
         exponent = self.resolving_power_exponent
         if isinstance(exponent, bool) or not exponent >= 0:
             raise ValueError("resolving_power_exponent must be non-negative")
+        if r is not None and self.pick == "peak":
+            raise ValueError(
+                "resolving_power sets the window for pick = 'window_max' only; with pick = "
+                "'peak' (the default) the window is resolution_ppm, a mass tolerance: a peak's "
+                "apex sits within a few ppm of its predicted m/z whatever the resolving power, "
+                "and a window as wide as the peak takes in neighbouring peaks. Remove "
+                "resolving_power, or set pick = 'window_max'")
         if not self.window_fwhm > 0:
             raise ValueError("window_fwhm must be positive")
         if isinstance(self.mass_accuracy_ppm, bool) or not self.mass_accuracy_ppm >= 0:
@@ -236,6 +247,8 @@ class PickerConfig:
             if old is not None and old is not False:
                 log.info("picker: noise is the former name of noise_threshold")
                 values["noise"] = old
+        if "pick" not in values and values.get("resolving_power") not in (None, False):
+            values["pick"] = "window_max"  # written before pick existed, so picked that way
         known = {f.name for f in fields(cls)}
         unknown = set(values) - known - {"noise"}
         if unknown:

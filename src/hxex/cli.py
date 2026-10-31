@@ -492,7 +492,8 @@ def _instrument_text(record: dict, picker) -> str:
             f"{v if isinstance(v, str) else f'{v:g}'} at MS{level}" for level, v in powers.items())
             + at_text)
         if picker.resolving_power is None:
-            parts.append('[run.picker] resolving_power = "recorded" would use it')
+            parts.append('[run.picker] resolving_power = "recorded" would use it with '
+                         'pick = "window_max" (pick = "peak" keeps the resolution_ppm window)')
     return "; ".join(parts)
 
 

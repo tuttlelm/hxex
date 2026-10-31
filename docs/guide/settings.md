@@ -212,7 +212,7 @@ Peak picking: the spectra become sticks at the predicted isotope positions (hxex
 | `nterm_subtract` | integer | `1` | N-terminal residues without an exchanging amide (the amide count bounds the bins); none after an acetylated N-terminus (Ac-), whose residue 1 keeps its amide |
 | `shoulder_min_points` | integer | `10` | with pick = "window_max": points in a window from which a maximum at its edge counts as a neighbour's shoulder (bin 0) |
 | `ladder` | text | `"composition"` | bin positions: "composition" (isotope clusters of the composition) or "exms" (pyHXExpress's fixed steps) |
-| `resolving_power` | number or text | unset | window from the instrument instead of resolution_ppm: R quoted at resolving_power_mz, or "recorded" (each spectrum's value from Thermo raw files; hxex check shows them); false: the resolution_ppm window |
+| `resolving_power` | number or text | unset | with pick = "window_max" only: window from the instrument instead of resolution_ppm: R quoted at resolving_power_mz, or "recorded" (each spectrum's value from Thermo raw files; hxex check shows them); false: the resolution_ppm window (always so with pick = "peak") |
 | `resolving_power_mz` | number | `200.0` | m/z the resolving power is quoted at (Thermo: 200; 400 on the first Orbitrap generation) |
 | `resolving_power_exponent` | number | `0.5` | R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR |
 | `window_fwhm` | number | `1.0` | half-width as a multiple of the peak width at half maximum, m/R(m); never below mass_accuracy_ppm, never above half the isotope spacing |

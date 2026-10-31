@@ -556,8 +556,8 @@ population fell by about a third against a fixed window (HISTORY 164).
   RawFileReader is under Thermo's own license.
 
 The raw files also record each scan's resolving power and the instrument model. `hxex check`
-prints them, and `[run.picker] resolving_power = "recorded"` sizes the picking window from them
-(see [The picking window](picking-window.md)). mzML files carry no resolving power.
+prints them, and with `pick = "window_max"`, `[run.picker] resolving_power = "recorded"` sizes
+the picking window from them (see [The picking window](picking-window.md)). mzML files carry no resolving power.
 
 ### What `hxex check` shows for scan formats
 

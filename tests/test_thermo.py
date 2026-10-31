@@ -212,7 +212,8 @@ def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeyp
     text = _instrument_text(record, PickerConfig())
     assert "instrument Orbitrap Fake" in text and "120000 at MS1, 30000 at MS2" in text
     assert "quoted at m/z 200" in text and 'resolving_power = "recorded"' in text
-    assert "recorded" not in _instrument_text(record, PickerConfig(resolving_power=60000.0))
+    set_r = PickerConfig(pick="window_max", resolving_power=60000.0)
+    assert "recorded" not in _instrument_text(record, set_r)
     a = read_thermo([MzmlRun(raw, "WT")], targets, project="p", thermo_dir="dlls")
     ms1 = a.data_id == 0
     assert set(a.resolving_power[ms1]) == {120000.0} and set(a.resolving_power[~ms1]) == {30000.0}

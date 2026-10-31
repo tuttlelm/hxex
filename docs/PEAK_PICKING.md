@@ -200,7 +200,9 @@ its centre by about 9 bins (HISTORY item 99). The cap binds only where m/z times
 about 10,000 at 50 ppm, which no peptide dataset reaches, so bottom-up results are unchanged;
 pyHXExpress has no cap (a deliberate difference, `docs/PLAN.md`).
 
-**A window from the resolving power (optional).** With `resolving_power` set (R quoted at
+**A window from the resolving power (optional, `pick = "window_max"` only; refused with `pick =
+"peak"`, where the window is the mass tolerance `resolution_ppm`: HISTORY item 198).** With
+`resolving_power` set (R quoted at
 `resolving_power_mz`, 200 by default, falling with m/z as `(m0 / m) ** resolving_power_exponent`,
 0.5 for an Orbitrap) the half-width is
 `window_fwhm` peak widths `m / R(m)`, never below `mass_accuracy_ppm` (the calibration error; 10
@@ -343,7 +345,7 @@ changes nothing measurable, and it does not change fit accuracy there.
 | Bin positions | ExMS ladder | composition ladder (ExMS as an option) |
 | End of picking | after a running count of below-threshold bins | `zero_filling` bins after the last bin above the threshold |
 | Empty or signal-less spectra | dropped silently | flagged, dropped by the run and recorded |
-| Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or from the resolving power (`resolving_power`, a value or `"recorded"`) |
+| Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or, with `pick = "window_max"`, from the resolving power (`resolving_power`, a value or `"recorded"`) |
 | What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"` as pyHXExpress) |
 | A bin's value | the height | the area when the run's weak peaks are wider than its tallest (`measure = "auto"`), else the height; `"height"` as pyHXExpress |
 | Threshold, predicted m/z reported | as here | unchanged |
@@ -388,7 +390,7 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 | `area_fwhm` | 1.5 | the area's half-range, in peak widths |
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
 | `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z, capped at half the isotope spacing |
-| `resolving_power` | None | R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
+| `resolving_power` | None | with `pick = "window_max"` only: R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
 | `resolving_power_mz` | 200 | m/z the resolving power is quoted at |
 | `resolving_power_exponent` | 0.5 | R falls as `(m0 / m) ** e` (Orbitrap 0.5, TOF 0, FT-ICR 1) |
 | `window_fwhm` | 1.0 | half width as a multiple of the peak width at half maximum |

@@ -5338,3 +5338,38 @@ CSVs or mzML if wanted.
       benchmark every Asn-Gly series of the five samples is corrected (median retention 0.67
       -> 0.65), the others unchanged except five map stand-ins (under 0.0001); tutorial 0.60
       -> 0.58; 0.4 s per bundle.
+
+198. **`pick = "peak"` keeps the ppm window; a resolving power goes with `window_max` only
+     (2026-10-30; private reference_runs/48abc2c, README "Orbitrap: recorded window").**
+    - The rerun of the Orbitrap digest with `resolving_power = "recorded"` (R 45,000 at m/z 200)
+      against `resolution_ppm = 10`: empty spectra 167 -> 18, but undeuterated controls with
+      K > 1 21 -> 48 %, labelled spectra 13 -> 27 %, K = 3 2.3 -> 6.9 %; K = 1 uptake against
+      the predicted values r 0.902 -> 0.802, more than 0.1 off 11.6 -> 13.5 %.
+    - The arithmetic is right (R read per scan, m/z 200 for the model, FWHM m / R(m), square-root
+      scaling). Two things are not what a user who knows R would expect. The recorded R is the
+      acquisition setting: 735 tall undeuterated peaks were 1.52-1.54 times narrower than it
+      implies at every m/z (21.5 ppm at m/z 300-500 to 34.0 ppm at 1000-1400); the run's own
+      width measurement (`peak_measure`, 32.8 ppm at m/z 1000) agrees with the peaks. And
+      `window_fwhm = 1` is a half-width of one FWHM, a window two FWHM wide: with the nominal R,
+      tops up to 1.5 real peak widths away were accepted, which are resolved neighbouring peaks.
+    - One FWHM (item 98) was sized for `window_max`, which needs the window to cover the peak.
+      With `pick = "peak"` (item 172) the window only accepts or rejects an apex, so it is a
+      mass tolerance. The apex scatter about the predicted m/z, after each file's median offset,
+      does not follow m/z: robust sd for peaks at 30-100 % of the tallest, Orbitrap 2.3-2.8 ppm
+      undeuterated and 1.6-2.3 labelled, Q-TOF 6.0-6.9 and 5.7-7.0, flat from m/z 300 to 1600
+      although the Orbitrap's FWHM grows by half; peaks at 5-30 % scatter 8-20 ppm (part of it
+      neighbours caught by the wide windows). On the Q-TOF most of the 6 ppm is the series' own
+      offset (within an envelope 1.5-3 ppm), which the m/z check (item 166) handles.
+    - BUILT: `PickerConfig` refuses `resolving_power` with `pick = "peak"` (the message names
+      `window_max`); a stored record without `pick` that sets a resolving power reads as
+      `window_max` (records before item 172 were picked that way; one with neither still reads
+      as the defaults); `hxex check`'s hint and the template comment name `window_max`.
+      Unchanged: the window of `pick = "peak"` and of every result made without a resolving
+      power. Guide picking-window.md (the ppm window is the peak pick's window, with the
+      measured scatter; the resolving-power sections marked `window_max` only, with the
+      reasons), experiments.md (top-down: the cap is enough with `peak`), install.md, inputs.md;
+      PEAK_PICKING.md, PLAN. A bundle made with the combination (the private recorded-window
+      rerun) no longer loads.
+    - Open: whether the m/z check's M/M+1/M+2 agreement tolerance (5 ppm) should follow the
+      measured peak width, so the 18 Orbitrap peptides left empty by the ±10 ppm window
+      (15-40 ppm off) are recentred.

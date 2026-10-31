@@ -172,12 +172,15 @@ def test_window_from_the_resolving_power(caplog):
 
     from hxex.picking import reference_mz
 
-    cfg = PickerConfig(resolving_power=60000.0)  # at m/z 200, Orbitrap scaling
+    wm = "window_max"  # the only pick a resolving-power window goes with
+    cfg = PickerConfig(pick=wm, resolving_power=60000.0)  # at m/z 200, Orbitrap scaling
     ppm = cfg.half_width([600.0, 1500.0], 1) / np.array([600.0, 1500.0]) * 1e6
     np.testing.assert_allclose(ppm, [28.87, 45.64], atol=0.01)
     assert cfg.half_width([1000.0], 20)[0] == pytest.approx(1.00235 / 40)  # the cap
-    assert PickerConfig(resolving_power=1e6).half_width([1000.0], 1)[0] == pytest.approx(0.01)
-    tof = PickerConfig(resolving_power=30000.0, resolving_power_exponent=0.0, window_fwhm=2.0)
+    high = PickerConfig(pick=wm, resolving_power=1e6)
+    assert high.half_width([1000.0], 1)[0] == pytest.approx(0.01)
+    tof = PickerConfig(pick=wm, resolving_power=30000.0, resolving_power_exponent=0.0,
+                       window_fwhm=2.0)
     assert tof.half_width([900.0], 1)[0] == pytest.approx(2 * 900.0 / 30000.0)
     # the default window is unchanged, edges computed as before, except that it too is capped
     lo, hi = CFG.window_edges(np.array([500.0]), 2)
@@ -215,7 +218,22 @@ def test_window_from_the_resolving_power(caplog):
     for bad in ({"resolving_power": "auto"}, {"resolving_power": 0}, {"resolving_power_mz": 0},
                 {"resolving_power_exponent": -1}, {"window_fwhm": 0}, {"mass_accuracy_ppm": -1}):
         with pytest.raises(ValueError):
-            PickerConfig(**bad)
+            PickerConfig(pick="window_max", **bad)
+
+
+def test_a_peak_pick_keeps_the_ppm_window():
+    """With pick = 'peak' the window is resolution_ppm: a resolving power is refused with the
+    reason, and a record written before pick existed (picked by the window maximum) reads back
+    as window_max, so its resolving power still loads."""
+    for r in (60000.0, "recorded"):
+        with pytest.raises(ValueError, match="window_max' only"):
+            PickerConfig(resolving_power=r)
+    assert PickerConfig(pick="window_max", resolving_power="recorded").uses_recorded
+    old = PickerConfig(pick="window_max", resolving_power="recorded").to_dict()
+    del old["pick"]
+    assert PickerConfig.from_dict(old).pick == "window_max"
+    assert PickerConfig.from_dict(PickerConfig().to_dict()).pick == "peak"
+    assert PickerConfig.from_dict({}).pick == "peak"
 
 
 def test_resolution_ppm():

@@ -640,7 +640,7 @@ def test_picked_bins_are_drawn_as_the_pickers_window(results, written):
     import dataclasses
 
     configs = results.settings.configs
-    picker = {**configs["run"]["picker"], "resolving_power": 60000.0}
+    picker = {**configs["run"]["picker"], "pick": "window_max", "resolving_power": 60000.0}
     settings = dataclasses.replace(results.settings, configs={
         **configs, "run": {**configs["run"], "picker": picker}})
     wide = dataclasses.replace(results, settings=settings)

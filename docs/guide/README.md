@@ -38,8 +38,9 @@ a short text file.
   what replaces a missing or rejected one, step by step.
 - [Excluding spectra](excluding-spectra.md): leaving out bad spectra, before or after fitting, without
   deleting anything.
-- [The peak-picking window](picking-window.md): the ppm window, or one from the instrument's
-  resolving power, and whether a bin takes a peak's height or its area.
+- [The peak-picking window](picking-window.md): the ppm window (or, with `pick = "window_max"`,
+  one from the instrument's resolving power), and whether a bin takes a peak's height or its
+  area.
 - [Comparing separate runs](comparing-runs.md): several bundles in one analysis, pooled or side
   by side.
 - [Analysing part of a dataset](part-of-a-dataset.md): which results can change when you fit

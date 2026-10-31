@@ -1357,10 +1357,11 @@ _COMMENTS: dict[str, str] = {
                                       "(bin 0)",
     "run.picker.ladder": 'bin positions: "composition" (isotope clusters of the composition) '
                          'or "exms" (pyHXExpress\'s fixed steps)',
-    "run.picker.resolving_power": "window from the instrument instead of resolution_ppm: R "
-                                  'quoted at resolving_power_mz, or "recorded" (each '
-                                  "spectrum's value from Thermo raw files; hxex check shows "
-                                  "them); false: the resolution_ppm window",
+    "run.picker.resolving_power": 'with pick = "window_max" only: window from the instrument '
+                                  "instead of resolution_ppm: R quoted at resolving_power_mz, "
+                                  'or "recorded" (each spectrum\'s value from Thermo raw '
+                                  "files; hxex check shows them); false: the resolution_ppm "
+                                  'window (always so with pick = "peak")',
     "run.picker.resolving_power_mz": "m/z the resolving power is quoted at (Thermo: 200; 400 "
                                      "on the first Orbitrap generation)",
     "run.picker.resolving_power_exponent": "R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR",

@@ -123,10 +123,9 @@ under `[run.fit.backend]` in the project file. GPU runs on macOS are not current
 Microsoft (see [Input formats](inputs.md#thermo-raw-files)). The alternative is to convert the
 files to mzML first, with the free
 [ThermoRawFileParser](https://github.com/compomics/ThermoRawFileParser), and read the mzML
-files. Converted files lose the resolving power the instrument recorded for each scan, so the
-picking window then comes from a value you give, `resolving_power` in `[run.picker]`, or from
-the ppm window (see [The picking window](picking-window.md)). For peptides the ppm window is
-usually enough; for intact proteins at high charge, read the `.raw` files or give the resolving
-power.
+files. Converted files lose the resolving power the instrument recorded for each scan. That
+matters only with `pick = "window_max"`, where the window can follow it; with the default
+`pick = "peak"` the window is the ppm tolerance either way (see [The picking
+window](picking-window.md)).
 
 Next: [Your first project](first-project.md).

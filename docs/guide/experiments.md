@@ -86,10 +86,14 @@ of scans (`[input.scans] group = "every"`, `every = 20`) gives spectra with enou
 **The picking window.** At high charge the isotope peaks are close together, and a fixed ppm
 window can be wider than half their spacing. *hxex* caps every window at half the spacing,
 which matters only here: on a top-down example at charge 20, the uncapped window had zeroed
-more than a quarter of the envelope's bins and moved its centre by about 9 bins. Better still, size the window from the instrument's resolving power:
+more than a quarter of the envelope's bins and moved its centre by about 9 bins. With the
+default `pick = "peak"`, the capped ppm window is all you need. With `pick = "window_max"`, the
+tallest point in the window as pyHXExpress picks, you can size the window from the instrument's
+resolving power instead:
 
 ```toml
 [run.picker]
+pick = "window_max"
 resolving_power = "recorded"     # Thermo raw files: the value each scan records
 # resolving_power = 120000       # or a value quoted at resolving_power_mz (200 for Orbitraps)
 ```

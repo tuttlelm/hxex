@@ -510,9 +510,10 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   the envelope's flanks (a third of the bins and a 9-bin centre shift on a top-down example at
   charge 20; no peptide dataset reaches the cap) (items 99 and 100).
 - Opt-in picking window from the instrument's resolving power (`resolving_power`, a value or
-  `"recorded"` from Thermo raw files): the half-width is `window_fwhm` peak widths `m / R(m)`,
-  floored at `mass_accuracy_ppm`; pyHXExpress has only the constant ppm window, which hxex
-  keeps as the default (item 98).
+  `"recorded"` from Thermo raw files), with `pick = "window_max"` only: the half-width is
+  `window_fwhm` peak widths `m / R(m)`, floored at `mass_accuracy_ppm`; pyHXExpress has only
+  the constant ppm window, which hxex keeps as the default and the only window of `pick =
+  "peak"` (items 98 and 198).
 - A peptide-ion series whose undeuterated controls put its envelope off the run's calibration
   (a Theil-Sen line in m/z per undeuterated injection; beyond `off_mz_sd` = 6 times the
   injection's robust scatter, at least 3 ppm) is flagged `off_mz`, and with `recentre` (on by
