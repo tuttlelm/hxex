@@ -5373,3 +5373,33 @@ CSVs or mzML if wanted.
     - Open: whether the m/z check's M/M+1/M+2 agreement tolerance (5 ppm) should follow the
       measured peak width, so the 18 Orbitrap peptides left empty by the ±10 ppm window
       (15-40 ppm off) are recentred.
+
+199. **A high `screen_beyond_reach` removes the spectrum (owner: "try the build", 2026-10-30;
+     private reference_runs/48abc2c, README "screen_beyond_reach (R4): sizing a removal
+     level").** Until now R4 (picked intensity beyond the peptide's reach) only warned (0.10 at
+     both levels, item 152: no measurable effect on the benchmark's fits). The owner's review of
+     an Orbitrap digest's time courses found series whose late spectra and fully deuterated
+     control are mostly another species (R4 0.71-0.79), kept with a warning, the control still
+     setting the series' correction.
+    - Share of spectra: benchmark >= 0.3 0.5 %, >= 0.5 0.1 %; tutorial 0.2 / 0.1 %; noisy set and
+      known-answer set 0; Orbitrap digest 4.1 / 2.2 % (>= 0.7 1.2 %).
+    - High values go with wrong numbers. Benchmark labelled spectra, centroid more than 1 D from
+      the median of its replicates: R4 < 0.1 1.5 %, 0.3-0.5 20 %, 0.5-0.7 58 % (n 12), >= 0.7
+      78 % (n 9). Orbitrap, corrected K = 1 more than 0.2 of FD off the paper's predicted uptake:
+      2.9 %, 10.9 %, 13.6 %, 40.2 % (n 17,573 / 385 / 199 / 239); replicates there do not show it
+      (the other species co-elutes in every replicate). The tutorial has too few high values.
+    - BUILT: `screen_beyond_reach` removes at 0.5 (`loose`) and 0.3 (`strict`), the warning from
+      0.10 kept below that. A removed control is rejected (stand-in), and `hxex run` leaves out
+      the controls loose removes, as for the other scores; existing bundles take it in the
+      analysis (the screened controls differ from the stored set, so the correction is
+      recomputed). Removed at loose: benchmark 26 spectra (0.10 %, 3 controls), tutorial 4,
+      noisy and known-answer none, Orbitrap 514 (2.05 %, 74 controls); strict 105 / 6 / 0 / 0 /
+      735. Guide outputs.md (table and paragraph), ANALYSIS.md, PLAN.
+    - Also measured that day (not kept): find_peak's retention trace from peak tops in the
+      window (as `pick = "peak"`) instead of the tallest point. It fixes a series whose runs
+      flipped between two co-eluting species 40 ppm apart (every run then takes the one at the
+      prediction), but runs agree less overall (series whose chosen retention spans more than
+      0.3 min across 45 runs 7 -> 25), mostly series the m/z check moves 10-36 ppm: the old trace
+      followed their envelope's flank consistently, the new one finds nothing real at the
+      prediction. Which species a series follows is the identity question (a fragment-ion check
+      on the dataset's DDA runs proposed).

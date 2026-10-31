@@ -665,7 +665,8 @@ Planned, not built:
    in the bundle and `spectra.csv`), and `[analysis.filters] spectrum_quality_filtering`
    (none / loose / strict, default loose) that removes (controls leave the correction too),
    keeps at K = 1 only, or warns; `accepted` in the review keeps a spectrum; fragments are not
-   screened. Later the same setting holds the weak-spectrum rule (after the noise model), and
+   screened. Since HISTORY 199 a high `screen_beyond_reach` also removes (loose 0.5, strict
+   0.3). Later the same setting holds the weak-spectrum rule (after the noise model), and
    fragment levels if fragment data are ever scored.
 10. **Retention windows from the data** (owner, 2026-10-24; built 2026-10-24, HISTORY 165:
    `[input.scans] find_peak`, the peptide table's `run` column, `rt_start`/`rt_end` per spectrum;

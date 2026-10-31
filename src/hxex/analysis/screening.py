@@ -7,10 +7,13 @@ one of three actions per spectrum, at thresholds agreed with the owner from fit 
 (counterfactual refits with the interference taken out, and replicate agreement):
 
 - remove (the spectrum is left out whole, at every K): ``screen_below_mono`` (biases the K = 1
-  mean), ``screen_off_position`` and ``screen_between`` (heavy replicate tails);
+  mean), ``screen_off_position`` and ``screen_between`` (heavy replicate tails), and a high
+  ``screen_beyond_reach`` (most of the picked intensity cannot be the peptide; such spectra
+  disagree with their replicates or the predicted uptake, HISTORY 199);
 - one population only (its K >= 2 descriptions are left out; the K = 1 mean is unharmed):
   ``screen_between_separate`` (creates false populations);
-- warn (logged; kept): ``screen_beyond_reach`` (no measurable effect on the fits).
+- warn (logged; kept): ``screen_beyond_reach`` below its removal level (no measurable effect
+  on the fits at low values).
 
 A removed control counts as rejected: the back-exchange correction is recomputed without it
 (:func:`hxex.analysis.species.analysis_controls`). The run's controls already leave out those
@@ -33,13 +36,13 @@ LEVELS = ("none", "loose", "strict")
 THRESHOLDS: dict[str, dict[str, tuple[tuple[str, float], ...]]] = {
     "loose": {
         "remove": (("screen_below_mono", 0.10), ("screen_off_position", 0.20),
-                   ("screen_between", 0.40)),
+                   ("screen_between", 0.40), ("screen_beyond_reach", 0.50)),
         "one_population": (("screen_between_separate", 0.20),),
         "warn": (("screen_beyond_reach", 0.10),),
     },
     "strict": {
         "remove": (("screen_below_mono", 0.05), ("screen_off_position", 0.10),
-                   ("screen_between", 0.20)),
+                   ("screen_between", 0.20), ("screen_beyond_reach", 0.30)),
         "one_population": (("screen_between_separate", 0.10),),
         "warn": (("screen_beyond_reach", 0.10),),
     },

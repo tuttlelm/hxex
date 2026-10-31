@@ -1884,6 +1884,14 @@ def test_spectrum_quality_filtering(caplog):
     assert list(np.flatnonzero(loose.one_population)) == [two]
     assert list(np.flatnonzero(loose.warn)) == [beyond]
     assert screening(screened, "strict").remove[mild] and not loose.remove[mild]
+    # beyond reach: a warning at loose below 0.5, removed at strict from 0.3 and at loose from
+    # 0.5 (HISTORY 199)
+    strict = screening(screened, "strict")
+    assert strict.remove[beyond] and strict.reason[beyond] == (
+        "spectrum quality (screen_beyond_reach)")
+    high = {**scores, "screen_beyond_reach": scores["screen_beyond_reach"] * 2}
+    far = screening(dataclasses.replace(results, binned=dataclasses.replace(b, **high)), "loose")
+    assert far.remove[beyond] and not far.warn[beyond]
     assert not screening(screened, "none").remove.any()
     assert not screening(results, "loose").remove.any()  # clean synthetic data
     with pytest.raises(ValueError, match="spectrum_quality_filtering"):

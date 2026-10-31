@@ -149,7 +149,8 @@ in the published work; where it matters, a component is named by its rank.
   the back-exchange correction, recomputed without it; a series whose measured fully
   deuterated controls all go is a `stand-in control (screened)`), keep spectra with a separate
   cluster between the isotope positions at K=1 only (their K >= 2 records dropped), and warn
-  about intensity beyond the reachable range; fragment series are not screened, and screened
+  about intensity beyond the reachable range (leaving the spectrum out where it is high:
+  `screen_beyond_reach` at least 0.5 at loose, 0.3 at strict; HISTORY 199); fragment series are not screened, and screened
   spectra do not count in the replicate-outlier scatter. A fixed fD range (the
   owner's earlier practice, 0.1 to 1.1) was tried and not adopted: on the intact-peptide
   benchmark most values it removed agreed with their replicates. On the

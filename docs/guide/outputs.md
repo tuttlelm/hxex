@@ -267,8 +267,12 @@ population only.
 
 **`screen_beyond_reach`: intensity past the peptide's reach.** The share of the picked intensity
 beyond the heaviest the peptide can be (every amide deuterated, plus its natural isotope
-envelope). Those peaks belong to something else, but they made no measurable difference to the
-fits, so `hxex analyse` keeps the spectrum and only warns, with a count.
+envelope). Those peaks belong to something else. A little of it made no measurable difference
+to the fits, so `hxex analyse` keeps such a spectrum and only warns, with a count. When most of
+the picked intensity lies there, the spectrum is mostly another species: on a Q-TOF dataset
+more than half of those spectra sat over a deuteron away from their replicates, and on a
+crowded Orbitrap digest, where the other species comes back in every replicate, many sat far
+from the expected uptake. `hxex analyse` leaves those out.
 
 What `hxex analyse` does is set by `spectrum_quality_filtering` in `[analysis.filters]`:
 `"loose"` (the default), `"strict"`, or `"none"` (the scores are still in `spectra.csv`, but
@@ -282,6 +286,7 @@ the interference taken out, and how well replicates agree.
 | `screen_between` | 0.40 | 0.20 | left out |
 | `screen_between_separate` | 0.20 | 0.10 | one population only |
 | `screen_beyond_reach` | 0.10 | 0.10 | warning |
+| `screen_beyond_reach` | 0.50 | 0.30 | left out |
 
 A spectrum left out is listed in `left_out_spectra.csv` with the score that caught it (for
 example `spectrum quality (screen_below_mono)`). On a large intact-peptide dataset `loose` left out
