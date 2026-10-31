@@ -38,6 +38,10 @@ signal never reach the fit and are handled before it.
   retention time points at another peptide, or one shares its peaks). The statistic is
   ``envelope_offset`` (ppm). Peptide ions with undeuterated controls only; the analysis leaves
   such series out (``[analysis.filters] off_mz``).
+- ``rt_found``: the series was read at the retention time found for its exact m/z in the
+  undeuterated controls, not the peptide table's (``[input.scans] find_retention_time =
+  "automatic"``, :mod:`hxex.io.retention_search`): check the time
+  (``retention_suggestions.csv``) and correct the table.
 - ``poor_envelope``: the series' ion-type envelope (``mixed`` or ``infer``) was not measured
   well (:attr:`hxex.picking.EnvelopeTable.poor`): left with the theory of one ion type for want
   of usable reference spectra, not describing the spectra it was fitted to, or, shared between
@@ -77,7 +81,7 @@ from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
 from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
-              "poor_envelope", "saturated", "tails_low", "bright")
+              "poor_envelope", "saturated", "tails_low", "bright", "rt_found")
 
 
 @dataclass(frozen=True)
@@ -168,12 +172,14 @@ class QualityFlags:
     bright: np.ndarray | None = None
     envelope_offset: np.ndarray | None = None
     off_mz: np.ndarray | None = None
+    rt_found: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset"):  # or a flag
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
-        for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright"):
+        for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
+                     "rt_found"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -328,6 +334,7 @@ def assess_quality(
     poor_envelope_series: np.ndarray | None = None,
     envelope_offset_ppm: np.ndarray | None = None,
     envelope_offset_limit_ppm: np.ndarray | None = None,
+    rt_found_series: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -335,7 +342,8 @@ def assess_quality(
     ``envelope_offset_limit_ppm`` are the picker's m/z check of every measurement's series
     (:attr:`~hxex.picking.BinnedSet.envelope_offset_ppm`; NaN or None: not assessed).
     ``poor_envelope_series`` lists the series (``data_id``) whose envelope is poor
-    (:attr:`hxex.picking.EnvelopeTable.poor`)."""
+    (:attr:`hxex.picking.EnvelopeTable.poor`); ``rt_found_series`` those read at the
+    retention time found for their exact m/z (:mod:`hxex.io.retention_search`)."""
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
         raise ValueError("the measurements and the fit must be for the same spectra")
     m = len(fit)
@@ -398,5 +406,7 @@ def assess_quality(
         misfit=misfit, misfit_rel=misfit_rel,
         poor_envelope=np.isin(fit.data_id, np.asarray(
             [] if poor_envelope_series is None else poor_envelope_series, dtype=np.int64)),
+        rt_found=np.isin(fit.data_id, np.asarray(
+            [] if rt_found_series is None else rt_found_series, dtype=np.int64)),
         **brightness,
     )

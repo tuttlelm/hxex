@@ -128,6 +128,7 @@ delete every folder whose name starts with `results`, or use `--overwrite` or
 | `components.csv` | spectrum and population | K, rank, mean, mean_se, corrected mean, population and their errors |
 | `uptake.csv` | series, time (or control), K and rank | the replicates averaged (only spectra at the same K are averaged together): `n_replicates`, `mean` (back-exchange corrected for a series the controls correct; as measured for one they leave uncorrected, such as a fragment ion), `replicate_sd`, population. Rejected spectra are left out |
 | `review.csv` | reviewed spectrum (only when there are any) | status, the number of populations chosen (`review_K`), note, date, stale, and source: the `review table` (`user_review_table.csv`), an `exclusion rule` of the project file, or a `review` decision stored in the bundle |
+| `retention_suggestions.csv` | series searched (only for scan files read with `find_peak`) | where the peptide's exact m/z elutes in the undeuterated controls, for each series that sits off its m/z or has no undeuterated envelope: `searched_because`, the peptide table's `table_rt`, the time it was read at (`read_rt`), the `verdict` (`here`, `elsewhere`, `uncertain`, `ambiguous`, or `not found`), the `proposed_rt` (minutes), whether it was `applied`, and every candidate time with its height ([details](inputs.md#when-the-peptide-tables-time-is-wrong)) |
 
 ## Figures from `hxex report --figures`
 
@@ -176,6 +177,7 @@ Flags mark spectra for review; nothing is dropped. They appear in the `flags` co
 | `noise_outlier` | a replicate the replicate-based noise estimate left out; a control replicate is also left out of its control's average (its series gets `m0_replicate_left_out` or `fd_replicate_left_out`) |
 | `mz_shift` | the series sits off its predicted m/z: a wrong sequence, modification, terminus or ion type (series that `off_mz` does not check: fragment ions, and series without an undeuterated control) |
 | `off_mz` | the series' undeuterated controls put its peaks further from the run's calibration than the run's other series: most likely another species (often the retention time points at another peptide of almost the same mass); the analysis leaves the series out ([details](picking-window.md#a-series-whose-peaks-sit-off-its-mz)) |
+| `rt_found` | the series was read at the retention time found for its exact m/z, not the peptide table's (`find_retention_time = "automatic"`; [details](inputs.md#when-the-peptide-tables-time-is-wrong)) |
 | `poor_envelope` | the fragment envelope could not be measured well |
 | `saturated` | an undeuterated control whose peaks beside the tallest one read higher than natural abundance predicts: the tallest peak reads low, the usual sign of detector saturation |
 | `tails_low` | an undeuterated control whose small isotope peaks read lower than natural abundance predicts; seen in bright spectra, cause unknown |

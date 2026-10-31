@@ -770,6 +770,13 @@ Planned, not built:
    stand-ins were improved
    (the same peptide in other samples, a retention map; built, HISTORY 196).
 
+16. **Finding a series' retention time from its exact m/z** (owner, 2026-10-31; HISTORY 200,
+   201). Built: `[input.scans] find_retention_time = "off" | "suggest" (default) |
+   "automatic"`, `rt_search_ppm`, `rt_search_tolerance` (both measured by default), module
+   `hxex.io.retention_search`, `retention_suggestions.csv`, flag `rt_found`. Scan formats with
+   find_peak only. Open: a second dataset (a Q-TOF LC-MS run as mzML would test the measured
+   m/z tolerance on another instrument) before `automatic` could become the default.
+
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are not corrected for now

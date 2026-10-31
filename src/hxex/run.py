@@ -472,7 +472,7 @@ def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None, chosen=None,
-    residues=None, deamidation=None,
+    residues=None, deamidation=None, rt_found=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -542,7 +542,8 @@ def _fit_part(
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
-                                 envelope_offset_limit_ppm=envelope_offset[1])
+                                 envelope_offset_limit_ppm=envelope_offset[1],
+                                 rt_found_series=rt_found)
     return fits, fit, controls, quality, test
 
 
@@ -908,6 +909,7 @@ def run(
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None
     groups = series_groups(picked.peptide, picked.modification, picked.charge, picked.data_id)
     from .io.mzml import fragment_series
+    from .io.retention_search import moved_series
 
     scan_fragments = fragment_series(None if raw is None else raw.source)
     charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
@@ -938,7 +940,10 @@ def run(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),
                                              noise_curve=noise_curve,
-                                             chosen=merge_choices(chosen_k))
+                                             chosen=merge_choices(chosen_k),
+                                             rt_found=moved_series(
+                                                 None if raw is None or raw.source is None
+                                                 else raw.source.get("retention_search")))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,

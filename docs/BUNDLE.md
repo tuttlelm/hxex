@@ -115,7 +115,13 @@ run's file `name`, `size`, `checksum` and `algorithm`: the indexed mzML file's o
 it has one, else SHA-256), and `samples_tie_targets` (true: each target was read from the runs
 of its entry's sample, or from every run when the entry has none; a record without it, from
 before 2026-10-19, read every target from every run and is repeated so); `read_thermo` records the same with `reader` `thermo`, the
-RawFileReader version as `thermo_reader`, and each `.raw` file's SHA-256.
+RawFileReader version as `thermo_reader`, and each `.raw` file's SHA-256. A scan-file read
+with `find_retention_time` (`hxex.io.retention_search`) also records `retention_search`: the
+`mode`, the retention tolerance and peak width (s), per undeuterated file its m/z tolerance,
+limit and calibration, and per searched series its sample, target position, `data_id`, table
+and read times, why it was searched, the verdict, the proposed time, the candidates and
+whether it was `applied` (the tables' `retention_suggestions.csv`; `applied` series are
+flagged `rt_found`).
 `hxex.io.read_mzml_source` (or `read_thermo_source`) reads it again, finding the files by
 path, relative to a data root, or by name in a directory; a file whose size or checksum
 differs is read with a warning, or refused with `on_change="error"`, and its new entry in

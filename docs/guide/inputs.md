@@ -417,6 +417,9 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 | `peak_search` | 30 s | how far either side of `rt` the peak is looked for |
 | `peak_smoothing` | (measured) | the chromatogram's smoothing, in seconds; left out, half the run's typical peak width |
 | `peak_width` | 0.5 | the window: the peak's apex plus and minus this many peak widths at half height |
+| `find_retention_time` | `"suggest"` | with `find_peak`: look for where a peptide's exact m/z elutes when its peptide-table time looks wrong (`"suggest"`, `"automatic"`, or `"off"`; see [When the peptide table's time is wrong](#when-the-peptide-tables-time-is-wrong)) |
+| `rt_search_ppm` | (measured) | how far a peak top may sit from the peptide's m/z in that search |
+| `rt_search_tolerance` | (measured) | how far apart, in seconds, the undeuterated injections may put the peptide's peak |
 
 Profile and centroided scans are both read. Summed profile scans are put on a common m/z grid;
 centroided scans are merged peak by peak. Profile data is recommended: when converting Thermo
@@ -540,6 +543,73 @@ has neither. Fragment ions keep their windows.
 On a whole-cell digest measured on an Orbitrap (563 peptides, 45 runs), the peaks found were
 a median of 0.8 seconds from those HDExaminer used, and the spectra that wrongly needed a second
 population fell by about a third against a fixed window (HISTORY 164).
+
+### When the peptide table's time is wrong
+
+`find_peak` trusts the `rt` in your peptide table: it takes the peak nearest that time. If the
+time is wrong, it finds whatever elutes there. On a whole-cell digest we checked against the
+dataset's own identification runs, 50 of the 77 series in question were read at a time where
+another peptide of almost the same mass elutes; the peptide itself came off the column 0.3 to 2
+minutes away. Such a series usually shows up as [off its m/z](picking-window.md#a-series-whose-peaks-sit-off-its-mz).
+
+With `find_peak` on, *hxex* therefore looks for each such series' exact m/z in the undeuterated
+controls:
+
+```toml
+[input.scans]
+find_peak = true
+find_retention_time = "suggest"   # the default; or "automatic", or "off"
+```
+
+It looks at every series that sits off its m/z, that has no undeuterated envelope *hxex* could
+place, or that has no undeuterated spectrum at all. In every scan of each undeuterated control
+it notes the peaks whose tops sit at the peptide's predicted M-1, M, M+1, and M+2 (a top, not
+just intensity nearby: the side of another species' peak does not count). A peak in time counts
+as the peptide when:
+
+- every undeuterated injection of the sample shows it at about the same time;
+- its isotope peaks have roughly the heights the peptide's composition predicts, and there is no
+  tall peak one isotope step below it (which would make it another species' second isotope);
+- its m/z sits as close to the peptide's as the run's other peptides sit to theirs.
+
+The verdict for each series is one of:
+
+| Verdict | Meaning |
+|---|---|
+| `here` | the peptide elutes where *hxex* read it; something else shares its m/z |
+| `elsewhere` | the peptide elutes clearly at another time: `proposed_rt` |
+| `uncertain` | one peak elsewhere, but weaker than the signal at the peptide's m/z where it was read |
+| `ambiguous` | several peaks fit, none at least three times taller than the others; all are listed |
+| `not found` | nothing fits (often a peptide merged with another, or a modification that differs between your identification sample and the HDX samples) |
+
+With `"suggest"`, nothing changes in the results: the verdicts go into
+`retention_suggestions.csv` beside the other tables, and `hxex run` says how many series were
+found elsewhere. Check those times (in your identification results, for example) and correct the
+`rt` column of your peptide table. With `"automatic"`, *hxex* also reads every `elsewhere` series
+at the time it found, in every run, and flags it `rt_found`; it does this only when at least two
+undeuterated injections agree.
+
+Two tolerances come from the run itself, so they suit any instrument and gradient:
+
+- **m/z** (`rt_search_ppm`): a top counts within 1.25 times the limit of the
+  [m/z check](picking-window.md#a-series-whose-peaks-sit-off-its-mz) for that injection, which
+  follows how closely the run's peptides sit to their m/z. On an Orbitrap digest this was 5.1
+  ppm. The run log reports it for each injection.
+- **Time** (`rt_search_tolerance`): the injections must agree within the run's typical peak
+  width at half height, or, if larger, within the spread that 99 % of the peptides show between
+  the undeuterated injections. On the same digest this was 6.5 seconds.
+
+Set either one to fix it instead. The search reads every MS1 scan of the undeuterated controls
+once more, a few seconds per file.
+
+On that digest (two undeuterated injections), 102 series were searched. Of the 40 whose true time
+was known from the identification runs, 33 were found at that time, 3 were ambiguous (the right
+time among the candidates), 3 were not found, and 1 was found on the same peak as the
+identification but 0.2 minutes from its scan. Of all 52 proposals elsewhere, 44 matched the identification runs within
+0.2 minutes, 6 had no identification to compare with, and 2 did not match: one 0.22 minutes off
+against a weak identification, and one cysteine peptide, which the identification sample had
+alkylated and the HDX samples had not. Only one Orbitrap dataset has been checked so far, so
+`"automatic"` is not the default.
 
 ### Thermo raw files
 

@@ -756,7 +756,8 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
     if not isinstance(scans, Mapping):
         raise ProjectError(f"[input] scans = {_toml_value(scans)}: expected a table")
     scans = _false_to_none(scans, MzmlConfig)
-    scans = _times_in(scans, ("min_time", "peak_search", "peak_smoothing"), "input.scans")
+    scans = _times_in(scans, ("min_time", "peak_search", "peak_smoothing", "rt_search_tolerance"),
+                      "input.scans")
     if isinstance(scans.get("windows"), list):
         scans["windows"] = [_window(w, "input.scans.windows") for w in scans["windows"]]
     _check_types(scans, MzmlConfig, "input.scans")
@@ -1337,6 +1338,19 @@ _COMMENTS: dict[str, str] = {
     "input.scans.peak_smoothing": "s: the chromatogram's running mean (false: half the run's "
                                   "typical peak width, measured)",
     "input.scans.peak_width": "the window: the apex +- this many peak widths at half maximum",
+    "input.scans.find_retention_time": 'with find_peak: "suggest" (look in the undeuterated '
+                                       "controls for where the exact m/z of a series off its "
+                                       "m/z, or without an undeuterated envelope, elutes: "
+                                       'retention_suggestions.csv), "automatic" (also read a '
+                                       "series found clearly elsewhere at that time, flagged "
+                                       'rt_found) or "off"',
+    "input.scans.rt_search_ppm": "how far (ppm) a peak top may sit from the calibrated m/z "
+                                 "in the retention search (false: 1.25 times the m/z check's "
+                                 "limit, measured)",
+    "input.scans.rt_search_tolerance": "s: how far apart the undeuterated injections may put "
+                                       "a peak in the retention search (false: the larger of "
+                                       "the run's peak width and the injections' 99th "
+                                       "percentile disagreement, measured)",
     "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
                                   "series' undeuterated controls are missing or poor (false: "
                                   "none)",

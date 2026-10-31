@@ -212,7 +212,9 @@ What happens to a series off its m/z:
   `left_out_spectra.csv` with the reason `off its m/z`. Its fully deuterated control then does
   not stand in for other series either.
 
-What to do about a flagged series: check its retention time.
+What to do about a flagged series: check its retention time. With scan files and `find_peak`,
+*hxex* looks for where the peptide's exact m/z elutes and lists what it found in
+`retention_suggestions.csv` ([When the peptide table's time is wrong](inputs.md#when-the-peptide-tables-time-is-wrong)).
 If your peptide list came from an identification run, look there for where the peptide was identified, and whether a modification
 differs between that sample and the HDX samples (cysteines alkylated in one but not the other,
 for example). Correct the time in your peptide table and run again. If you have checked a series

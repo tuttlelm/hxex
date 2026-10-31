@@ -5451,3 +5451,46 @@ CSVs or mzML if wanted.
     Proposed next (PLAN Next steps 16): `[input.scans] find_retention_time = "off" | "suggest" |
     "automatic"`, searching the undeuterated controls for a flagged series' exact m/z;
     prototype and evaluation first.
+
+201. **Finding a series' retention time from its exact m/z (owner, 2026-10-31: "consider
+    find_retention_time: off, suggest, automatic"; tolerances measured from the run, "agreed";
+    private notes in the reference-run folder's `rt_search/` README).** A prototype (scratch)
+    searched the two undeuterated injections of the Orbitrap digest for each flagged series'
+    exact m/z: per MS1 scan the profile's peak tops (a top, not the tallest point in a window,
+    so a species 10-50 ppm away never counts) at M-1, M, M+1, M+2 within a tolerance of the
+    calibrated prediction; candidate elution peaks of the M trace; a candidate counts when both
+    injections show it within the retention tolerance and the summed top scans have M+1/M and
+    M+2/M near the natural-abundance prediction, M+1 in most top scans, M-1/M at most 0.5 and
+    a median M offset within the m/z check's limit; "clear" when one counts or the tallest is
+    3x the next. Measured at the digest's true peaks: M+1/M 0.72-1.31 and M+2/M 0.29-1.79 of the
+    prediction (q02-q99), per-scan apex scatter 0.67 ppm (robust sd), injections' apex
+    difference q99 0.069 min, peak FWHM 0.103 min. A search window of +-2 min is too narrow
+    (known answers up to 1.9 min away); 3 ppm loses 8 of the 40 known series, 8 ppm lets the
+    other species' flank count; no M+2 lower bound let one wrong species win. Negative control
+    (486 series the check passes): 438 confirmed at the read time, 3 false suggestions (0.6 %:
+    a same-m/z species 3-5x taller elsewhere, or 0.21 min off); 4 of the 7 elsewhere were table
+    errors the DDA confirms (3 of them series the m/z check could not assess).
+    Built: `[input.scans] find_retention_time` = "suggest" (default; nothing read differently,
+    the verdicts in the read record and `retention_suggestions.csv`) | "automatic" (every
+    `elsewhere` series found in two injections or more is read at its found time in every run,
+    the undeuterated controls first, and flagged `rt_found`) | "off"; scan formats with
+    find_peak only (refused for "automatic" without it). Searched: series the m/z check flags
+    off_mz, cannot assess, or that have no undeuterated spectrum. Tolerances from the run: per
+    scan `rt_search_ppm` = 1.25 times the m/z check's limit for the injection (5.1 ppm on the
+    digest; 1.5 gave 6.1 ppm and 5 of the 40 known series ambiguous instead of 3), the median
+    offset within the limit itself; `rt_search_tolerance` = the larger of the run's typical peak
+    width (find_peak's, now always measured) and the q99 of the undeuterated injections'
+    disagreement over the series the check passes (6.5 s on the digest). Verdicts `here`,
+    `elsewhere`, `uncertain` (elsewhere, more than two tolerances away and weaker than the
+    exact-m/z signal where read), `ambiguous`, `not found`. Built check on the digest (two
+    undeuterated injections; read 28 s): 102 series searched (66 off_mz, 36 without an
+    undeuterated offset): 12 here, 52 elsewhere, 7 ambiguous, 31 not found. The 40 known: 33
+    right, 3 ambiguous (the right time among the candidates), 3 not found, 1 on the right peak
+    0.20 min from the DDA scan (the same as the prototype). The 52 elsewhere against the DDA
+    identifications: 44 within 0.2 min, 6 without a confident identification, 2 not matching
+    (0.22 min off against a weak identification; a cysteine peptide, whose DDA time is that of
+    the alkylated form). With "automatic" the 52 are read at their found times; afterwards 50
+    sit at their m/z, 2 are not assessed, none off, and the run's off_mz series fall from 66 to
+    31 of 555. Only one dataset: "automatic" stays opt-in until a second (ideally a Q-TOF LC-MS
+    run as mzML) agrees. Also: `SeriesOffsets.calibration` (the per-run lines) and
+    `mz_check.limit_ppm`.

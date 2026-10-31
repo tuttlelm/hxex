@@ -169,6 +169,9 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `peak_search` | number | `30.0` | s either side of a peptide's rt that its peak is looked for in |
 | `peak_smoothing` | number | unset | s: the chromatogram's running mean (false: half the run's typical peak width, measured) |
 | `peak_width` | number | `0.5` | the window: the apex +- this many peak widths at half maximum |
+| `find_retention_time` | text | `"suggest"` | with find_peak: "suggest" (look in the undeuterated controls for where the exact m/z of a series off its m/z, or without an undeuterated envelope, elutes: retention_suggestions.csv), "automatic" (also read a series found clearly elsewhere at that time, flagged rt_found) or "off" |
+| `rt_search_ppm` | number | unset | how far (ppm) a peak top may sit from the calibrated m/z in the retention search (false: 1.25 times the m/z check's limit, measured) |
+| `rt_search_tolerance` | number | unset | s: how far apart the undeuterated injections may put a peak in the retention search (false: the larger of the run's peak width and the injections' 99th percentile disagreement, measured) |
 
 ## `[output]`
 

@@ -484,12 +484,30 @@ def _control_notes(flags: str) -> str:
     return ";".join(notes)
 
 
+def retention_suggestions_table(results: Results) -> dict | None:
+    """The retention-time search of the read (:mod:`hxex.io.retention_search`), one row per
+    series searched: ``sample``, ``peptide_range``, ``peptide``, ``charge``, ``modification``,
+    why it was searched (``off_mz``, ``no undeuterated offset``, ``no undeuterated
+    spectrum``), the peptide table's ``table_rt`` and the time it was read at (``read_rt``,
+    minutes), the ``verdict`` (``here``, ``elsewhere``, ``uncertain``, ``ambiguous``, ``not
+    found``), the ``proposed_rt``, whether it was ``applied`` (``automatic``), the number of
+    undeuterated injections searched and every ``candidates`` time with its height; None
+    when the read did not search."""
+    from ..analysis.screening import spectra_source
+    from ..io.retention_search import suggestions_table
+
+    source = spectra_source(results)
+    return suggestions_table(None if source is None else source.get("retention_search"))
+
+
 def write_tables(results: Results, directory: str | Path, *, created: str | None = None
                  ) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
-    ``directory``, and ``review.csv`` when the review layer (or an exclusion rule) has entries,
-    replacing the tables hxex wrote there before (its listing, :func:`hxex.io.replace_outputs`:
-    a ``review.csv`` with nothing left to list goes) and never a file of your own. The listing
+    ``directory``, ``review.csv`` when the review layer (or an exclusion rule) has entries and
+    ``retention_suggestions.csv`` when the read searched for retention times
+    (:func:`retention_suggestions_table`), replacing the tables hxex wrote there before (its
+    listing, :func:`hxex.io.replace_outputs`: a ``review.csv`` with nothing left to list goes)
+    and never a file of your own. The listing
     records the results they were made from (``created``, the bundle's stamp; default the
     results' own), so ``hxex info`` can tell when they are out of date."""
     directory = Path(directory)
@@ -497,6 +515,8 @@ def write_tables(results: Results, directory: str | Path, *, created: str | None
               "components.csv": components_table, "uptake.csv": uptake_table}
     if results.review is not None and len(results.review):
         tables["review.csv"] = review_table
+    if retention_suggestions_table(results) is not None:
+        tables["retention_suggestions.csv"] = retention_suggestions_table
     made = {"": created if created is not None else results.settings.created
             if results.settings is not None else ""}
     with replace_outputs(directory, tables, made=made) as written:

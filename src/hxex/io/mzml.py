@@ -911,6 +911,16 @@ class MzmlConfig:
       width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
     - ``peak_width``: the window is the apex +- this many widths at half maximum (ended at the
       valleys either side).
+    - ``find_retention_time``: with ``find_peak``, look in the undeuterated controls for where
+      the exact m/z of a series elutes when the m/z check flags it ``off_mz``, cannot assess it,
+      or it has no undeuterated spectrum (:mod:`hxex.io.retention_search`): ``'suggest'``
+      records what was found (``retention_suggestions.csv``), ``'automatic'`` also reads a series
+      found clearly elsewhere at the time found (flagged ``rt_found``), ``'off'`` does not look.
+    - ``rt_search_ppm``: how far (ppm) a peak top may sit from the calibrated prediction; None:
+      1.25 times the m/z check's limit for the injection.
+    - ``rt_search_tolerance`` (s): how far apart the undeuterated injections may put a peak;
+      None: the larger of the run's typical peak width and the 99th percentile of the
+      injections' disagreement over the series the m/z check passes.
     """
 
     group: str = "each"
@@ -926,8 +936,22 @@ class MzmlConfig:
     peak_search: float = 30.0
     peak_smoothing: float | None = None
     peak_width: float = 0.5
+    find_retention_time: str = "suggest"
+    rt_search_ppm: float | None = None
+    rt_search_tolerance: float | None = None
 
     def __post_init__(self):
+        from .retention_search import MODES
+
+        if self.find_retention_time not in MODES:
+            raise ValueError(f"find_retention_time must be one of {', '.join(MODES)}")
+        if self.find_retention_time == "automatic" and not self.find_peak:
+            raise ValueError("find_retention_time = 'automatic' needs find_peak (the elution "
+                             "peaks are found near each peptide's rt)")
+        for name in ("rt_search_ppm", "rt_search_tolerance"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not value > 0):
+                raise ValueError(f"{name} must be positive (or unset: measured)")
         if self.peak_search <= 0 or self.peak_width <= 0 or (
                 self.peak_smoothing is not None and self.peak_smoothing <= 0):
             raise ValueError("need peak_search > 0, peak_width > 0 and peak_smoothing > 0 (or "
@@ -1190,20 +1214,68 @@ def _read_runs(
         raise fmt.error(str(exc)) from None
     windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
     series: dict[tuple[str, int], int] = {}
-    spectra: list[Spectrum] = []
-    origin: list[int] = []  # the run (position) of each spectrum
+    per_run: list[list[Spectrum]] = [[] for _ in runs]
     extra: dict = {}
-    instruments: list = []  # per file: the instrument and where it quotes its resolving power
-    for n_run, run in enumerate(runs):
+    instruments: list = [None] * len(runs)  # per file: the instrument, where it quotes its R
+    common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry)
+    # finding retention times from the exact m/z (find_retention_time): the undeuterated
+    # controls are searched while they are open; "automatic" reads them first, so that the
+    # other runs read a series found elsewhere at its found time
+    from .retention_search import RetentionSearch, with_rt
+
+    search = RetentionSearch.start(config, picker, registry, targets, runs, tie)
+    automatic = search is not None and search.mode == "automatic"
+    order = list(range(len(runs)))
+    if automatic:
+        order.sort(key=lambda n: not search.reads(runs[n]))
+    moved: dict[tuple[str, int], float] = {}
+    decided = search is None
+
+    def targets_of(run):
+        return [with_rt(t, moved[(run.sample, i)]) if (run.sample, i) in moved else t
+                for i, t in enumerate(targets)]
+
+    def decide():
+        undeut = [s for n, run in enumerate(runs) if search.reads(run) for s in per_run[n]]
+        return search.decide(undeut, series)
+
+    def reread(found):
+        """Read the undeuterated controls' series in ``found`` again at their found time."""
+        of_data = {d: key for key, d in series.items()}
+        for n, run in enumerate(runs):
+            mine = {i for (sample, i) in found if sample == run.sample}
+            if not search.reads(run) or not mine:
+                continue
+            with fmt.open(opened[n]) as f:
+                again: list[Spectrum] = []
+                _read_run(f, run, targets_of(run), windows, series, again, only=mine, **common)
+            per_run[n] = [s for s in per_run[n]
+                          if of_data.get(int(s.data_id), (None, -1))[1] not in mine
+                          or of_data[int(s.data_id)][0] != run.sample] + again
+
+    for k, n_run in enumerate(order):
+        run = runs[n_run]
         check_cancel(cancel)
+        if not decided and not search.reads(run):  # automatic: every control has been read
+            moved = decide()
+            decided = True
+            if moved:
+                reread(moved)
         with fmt.open(opened[n_run]) as f:
             if fmt.extra is not None and not extra:
                 extra = fmt.extra(f)
-            instruments.append(instrument_record(f))
-            _read_run(f, run, targets, windows, series, spectra, project=project,
-                      config=config, tie=tie, picker=picker, registry=registry)
-        origin.extend([n_run] * (len(spectra) - len(origin)))
-        report(progress, n_run + 1, len(runs))
+            instruments[n_run] = instrument_record(f)
+            width = _read_run(f, run, targets_of(run), windows, series, per_run[n_run],
+                              **common)
+            if search is not None and search.reads(run):
+                search.add_file(f, run, per_run[n_run], width, cancel)
+        report(progress, k + 1, len(runs))
+    if not decided:
+        moved = decide()
+        if moved:
+            reread(moved)
+    spectra = [s for part in per_run for s in part]
+    origin = [n for n, part in enumerate(per_run) for _ in part]  # the run of each spectrum
     if not spectra:
         raise fmt.error("no spectra: no scan matched any target in any run")
     _check_unique_ids(fmt, spectra, origin, runs, opened)
@@ -1225,6 +1297,11 @@ def _read_runs(
         **({SAMPLES_TIE: True} if tie else {}),
         **extra,
     }
+    if search is not None and search.record is not None:
+        for row in search.record["series"]:  # a series first read at its found time
+            if row["data_id"] is None:
+                row["data_id"] = series.get((row["sample"], row["target"]))
+        source["retention_search"] = search.record
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
 
@@ -1449,9 +1526,11 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
 
 def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
               tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
-              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS) -> None:
-    """Add the spectra of every target of this run (:func:`target_applies`) in the open file
-    ``f`` to ``spectra``."""
+              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+              only: set[int] | None = None) -> float:
+    """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
+    those of the targets at these positions) in the open file ``f`` to ``spectra``. Returns the
+    run's typical peak width (s) when find_peak measured it, else NaN."""
     table = f.scans()
     # the targets whose peak is found (find_peak): planned over their search range first
     find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
@@ -1460,11 +1539,15 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     # the scans of every spectrum, per target, before anything is read (so that sampling a
     # large file reads only the scans it keeps)
     applies, plans = _plans(table, run, planned, config, tie)
+    if only is not None:
+        applies = [a and i in only for i, a in enumerate(applies)]
+        plans = [p if i in only else None for i, p in enumerate(plans)]
     needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
               for i in g}
     if not needed:
-        log.warning("%s: no scan matches any target", f.path.name)
-        return
+        if only is None:
+            log.warning("%s: no scan matches any target", f.path.name)
+        return float("nan")
     missing = [_target_label(t) for t, p, a in zip(targets, plans, applies, strict=True)
                if a and p is None]
     if missing:
@@ -1474,9 +1557,10 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         for label in missing:
             log.debug("%s: no scan for target %s", f.path.name, label)
     by_index = f.read_scans(sorted(needed), windows)
+    width = float("nan")
     if any(find):
-        plans = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
-                           registry)
+        plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
+                                  registry)
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
@@ -1540,6 +1624,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 rt_start=float(scan_times.min()) if run.fixed else np.nan,
                 rt_end=float(scan_times.max()) if run.fixed else np.nan,
             ))
+    return width
 
 
 def _finds_peak(target: MzmlTarget) -> bool:
@@ -1618,7 +1703,8 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
     peptide (its charge states share one chromatogram, the sum of theirs: retention belongs to
     the peptide), the scans of the window :func:`_peak` finds near its ``rt``, smoothed over
     ``peak_smoothing`` (or half the run's typical half-maximum width). A peptide without signal
-    gets no spectrum in this run. Logs the run's peak width and smoothing."""
+    gets no spectrum in this run. Logs the run's peak width and smoothing. Returns the plans and
+    the run's typical width at half maximum (s; NaN when there is nothing to measure)."""
     plans = list(plans)
     chroms: dict[tuple, list] = {}  # peptide -> [(target position, order, chromatogram)]
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
@@ -1639,7 +1725,7 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         key = (e.peptide, e.modification, e.start_seq, e.end_seq)
         chroms.setdefault(key, []).append((t_i, order, _chromatogram(scans, pred, half)))
     if not chroms:
-        return plans
+        return plans, float("nan")
     groups = []  # (target positions, order, summed chromatogram, given rt in s)
     for members in chroms.values():
         by_order: dict[bytes, list] = {}
@@ -1650,16 +1736,16 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
                            60.0 * entry_rt(targets[same[0][0]].entry)))
     all_times = np.concatenate([table.time[g[1]] for g in groups])
     spacing = float(np.median(np.diff(np.unique(all_times)))) if len(all_times) > 1 else 1.0
+    # the run's typical width at half maximum (its tallest chromatograms, raw)
+    widths = []
+    for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:
+        if c.max() > 0 and len(c) > 2:
+            lo, hi = _half_max_span(c, int(np.argmax(c)))
+            widths.append(float(table.time[order][hi] - table.time[order][lo]))
+    run_width = float(np.median(widths)) if widths else 3.0 * spacing
     if config.peak_smoothing is not None:
         n_smooth = max(1, int(round(config.peak_smoothing / spacing)))
-        run_width = float("nan")
-    else:  # half the run's typical width at half maximum (its tallest chromatograms, raw)
-        widths = []
-        for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:
-            if c.max() > 0 and len(c) > 2:
-                lo, hi = _half_max_span(c, int(np.argmax(c)))
-                widths.append(float(table.time[order][hi] - table.time[order][lo]))
-        run_width = float(np.median(widths)) if widths else 3.0 * spacing
+    else:  # half the run's typical width
         n_smooth = max(3, int(round(0.5 * run_width / spacing)))
     missing = 0
     for members, order, c, given in groups:
@@ -1675,13 +1761,11 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         inside = np.flatnonzero((times >= start - 1e-9) & (times <= end + 1e-9))
         for t_i in members:
             plans[t_i] = (order, [inside]) if len(inside) else None
-    log.info("%s: peaks found for %d peptides%s; typical peak width %s, smoothing over %d "
+    log.info("%s: peaks found for %d peptides%s; typical peak width %.1f s, smoothing over %d "
              "scans (%.1f s)", Path(f.path).name, len(groups) - missing,
-             f" ({missing} without signal: no spectrum)" if missing else "",
-             f"{run_width:.1f} s" if np.isfinite(run_width)
-             else "not measured (peak_smoothing set)",
+             f" ({missing} without signal: no spectrum)" if missing else "", run_width,
              n_smooth, n_smooth * spacing)
-    return plans
+    return plans, run_width
 
 
 def instrument_record(f) -> dict | None:
