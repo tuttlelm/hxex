@@ -174,7 +174,7 @@ def test_settings_are_checked_and_round_trip():
     with pytest.raises(ValueError, match="k_max of 2"):
         RunConfig(fit=FitConfig(k_max=1), population_test=TEST)
     with pytest.raises(ValueError, match="Gaussian"):
-        RunConfig(fit=FitConfig(k_max=2, noise=NoiseConfig("poisson", percent=3.0)),
+        RunConfig(fit=FitConfig(k_max=2, noise=NoiseConfig("poisson", percent=3.0, estimate=None)),
                   population_test=TEST)
     with pytest.raises(ValueError, match="null must be"):
         PopulationTestConfig(null="exact")

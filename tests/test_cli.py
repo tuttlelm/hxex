@@ -170,7 +170,8 @@ def test_project_files_are_checked(tmp_path):
 
     p = project('[input]\nformat = "specexport"\ndata_dir = "d"\n'
                 "[run.bootstrap]\nn_boot = 7\n[run]\nquality = false\nmax_chunk = 5\n"
-                '[run.fit.noise]\nmodel = "poisson"\n[output]\nbundle = "res"\nfigures = false\n'
+                '[run.fit.noise]\nmodel = "poisson"\nestimate = false\n'
+                '[output]\nbundle = "res"\nfigures = false\n'
                 '[figures]\nseries = "all"\nk = 2\n')
     assert p.input.data_dir == tmp_path / "d"
     assert p.run.bootstrap.n_boot == 7 and p.run.bootstrap.n_restarts == 3  # the rest default

@@ -926,10 +926,12 @@ def _noise_curve_text(fit) -> str:
     return text
 
 
-def _noise_reference_text(meas) -> str:
+def _noise_reference_text(meas, fit) -> str:
     """What the series' noise levels come from, counted (``hxex info``)."""
     from .noise import noise_reference_kinds
 
+    if fit.noise_curve is not None:
+        return "none needed: every bin has its own noise (see noise)"
     kinds = Counter(noise_reference_kinds(meas.data_id, meas.references, meas.role).values())
     parts = [f"{kinds[k]} series {name}" for k, name in (
         ("undeuterated control", "from their undeuterated controls"),
@@ -999,7 +1001,7 @@ def cmd_info(args) -> int:
             ("controls", ("yes" if b.has("controls") else "no")
              + _promotion_text(run_config.get("controls"))),
             ("roles", _role_counts_text(fit)),
-            ("noise reference", _noise_reference_text(b.measurements())),
+            ("noise reference", _noise_reference_text(b.measurements(), fit)),
             ("noise", _noise_curve_text(fit)),
             ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
              else "order: the times only order the points"),

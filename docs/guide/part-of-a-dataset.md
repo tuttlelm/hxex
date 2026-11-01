@@ -28,15 +28,20 @@ any project with the same seeds. The seeds used are written in the bundle's
 
 These are expected: keep each series together with its controls.
 
-- **The undeuterated control sets the noise level of its series.** *hxex* judges how well a
-  spectrum is fitted against the noise of its series, which it takes from that series'
-  undeuterated control. If the control is missing from the project, each spectrum is judged
-  against itself instead. A labelled spectrum is usually dimmer than its undeuterated control,
-  so its noise is then set lower, and the fit chooses two or three populations more often than
-  it should. `hxex run` warns when this happens and names the series, the `noise_reference`
-  column of `series.csv` says for every series where its noise level came from (`undeuterated
-  control` or `own spectrum`), and `hxex info` counts them. Keep every peptide and charge state
-  you fit together with its undeuterated control in the same project.
+- **With one noise level per spectrum, the undeuterated control sets the noise level of its
+  series.** This applies when per-bin noise is switched off (`estimate = false`,
+  [The noise model](noise-model.md)) or a run has too few controls to measure it. *hxex* then
+  judges how well a spectrum is fitted against the noise of its series, which it takes from
+  that series' undeuterated control. If the control is missing from the project, each spectrum
+  is judged against itself instead. A labelled spectrum is usually dimmer than its undeuterated
+  control, so its noise is then set lower, and the fit chooses two or three populations more
+  often than it should. `hxex run` warns when this happens and names the series, the
+  `noise_reference` column of `series.csv` says for every series where its noise level came
+  from (`undeuterated control` or `own spectrum`), and `hxex info` counts them. With per-bin
+  noise (the default) each bin's noise comes from its own intensity, so a series without its
+  undeuterated control is fitted as it would be with it. Keep every peptide and charge state
+  you fit together with its undeuterated control in the same project all the same: the
+  control is also the zero of its series' uptake.
 - **The fully deuterated control sets the scale of the correction** (see
   [Back-exchange correction](back-exchange-correction.md)).
 - **The charge states of a peptide share their fully deuterated controls.** With
@@ -77,6 +82,11 @@ dataset, or adding more, changes them:
   at least 20 of them; a project with fewer keeps heights. The peak width used for areas is
   measured from the same controls. Set `measure = "height"` or `"area"` in `[run.picker]` to fix
   the choice ([A peak's height or its area](picking-window.md#a-peaks-height-or-its-area)).
+- **The noise per bin.** By default the counting scale of the noise (`b1`,
+  [The noise model](noise-model.md)) is measured once from all the project's usable
+  undeuterated controls, and needs at least five series of them; a project with fewer uses one
+  noise level per spectrum instead. A project holding part of a dataset measures a slightly
+  different `b1`, and every fit changes a little with it.
 - **Some quality flags.** `saturated` and `tails_low` are judged only on the brighter half of the
   project's undeuterated controls, and `mz_shift` compares a series with the project's typical
   offset.

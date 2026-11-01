@@ -95,7 +95,8 @@ def test_config_defaults_roundtrip_and_k_values():
     assert FitConfig(k_min=2, k_max=2).k_values == (2,)
     assert [FitConfig(k1_adam_steps=200).adam_steps_for(k) for k in (1, 2)] == [200, 400]
     assert FitConfig().adam_steps_for(1) == 400
-    full = FitConfig(k_min=2, seed=5, noise=NoiseConfig("poisson", n_eff=500.0, percent=None),
+    full = FitConfig(k_min=2, seed=5,
+                     noise=NoiseConfig("poisson", n_eff=500.0, percent=None, estimate=None),
                      backend=Backend("cpu", "float32"))
     assert FitConfig.from_dict(json.loads(json.dumps(full.to_dict()))) == full
     with pytest.raises(ValueError, match="unknown fit setting"):
@@ -425,7 +426,7 @@ def test_float32_agrees_with_float64():
 
 def test_poisson_noise_model_runs():
     meas, _ = synthetic([BIMODAL], amplitude=2e3, rel_noise=0.0)
-    cfg = FitConfig(noise=NoiseConfig("poisson", n_eff=2000.0, percent=None),
+    cfg = FitConfig(noise=NoiseConfig("poisson", n_eff=2000.0, percent=None, estimate=None),
                     backend=CPU, k_max=2, **FAST)
     meas = Measurements.from_arrays(meas.bins, meas.observed, meas.shapes, meas.n_max,
                                     references=[(0,)], spectrum_id=meas.spectrum_id)

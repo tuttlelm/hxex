@@ -28,9 +28,10 @@ REFS = [(0,), (0,), (0,), (3, 4), (3, 4), None]
         ("noise_gauss_sd_scalar", NoiseConfig("gaussian", sd=123.0, percent=None), None),
         ("noise_gauss_sd_array", NoiseConfig("gaussian", sd=tuple(np.arange(1.0, 7.0)),
                                              percent=None), None),
-        ("noise_poisson_neff", NoiseConfig("poisson", n_eff=500.0, percent=None), REFS),
-        ("noise_poisson_pct", NoiseConfig("poisson", percent=5.0), REFS),
-        ("noise_poisson_none", NoiseConfig("poisson", percent=None), None),
+        ("noise_poisson_neff",
+         NoiseConfig("poisson", n_eff=500.0, percent=None, estimate=None), REFS),
+        ("noise_poisson_pct", NoiseConfig("poisson", percent=5.0, estimate=None), REFS),
+        ("noise_poisson_none", NoiseConfig("poisson", percent=None, estimate=None), None),
     ],
 )
 def test_noise_scale_matches_the_prototype(key, config, refs):
@@ -41,7 +42,7 @@ def test_noise_scale_by_hand():
     obs = [np.array([1.0, 4.0]), np.array([2.0, 10.0]), np.array([3.0, 3.0])]
     cfg = NoiseConfig("gaussian", percent=10.0)
     np.testing.assert_allclose(noise_scale(obs, cfg, [(0, 1), (0, 1), None]), [0.7, 0.7, 0.3])
-    pois = NoiseConfig("poisson", percent=10.0)
+    pois = NoiseConfig("poisson", percent=10.0, estimate=None)
     np.testing.assert_allclose(noise_scale(obs, pois, [(0, 1), (0, 1), None]),
                                [0.01 * 7.0, 0.01 * 7.0, 0.01 * 3.0])
 
@@ -63,9 +64,9 @@ def test_reference_is_required_when_the_scale_comes_from_one():
         {"model": "gaussian", "sd": 5.0},  # both
         {"model": "gaussian", "sd": -1.0, "percent": None},
         {"model": "gaussian", "n_eff": 100.0, "percent": None, "sd": 5.0},
-        {"model": "poisson", "sd": 5.0, "percent": None},
-        {"model": "poisson", "n_eff": 100.0, "percent": 3.0},
-        {"model": "poisson", "n_eff": 0.0, "percent": None},
+        {"model": "poisson", "sd": 5.0, "percent": None, "estimate": None},
+        {"model": "poisson", "n_eff": 100.0, "percent": 3.0, "estimate": None},
+        {"model": "poisson", "n_eff": 0.0, "percent": None, "estimate": None},
         {"model": "gaussian", "percent": 0.0},
     ],
 )
@@ -78,9 +79,9 @@ def test_noise_config_defaults_roundtrip_and_flags():
     assert NoiseConfig() == NoiseConfig("gaussian", percent=3.0)
     assert NoiseConfig().needs_reference
     assert not NoiseConfig("gaussian", sd=5.0, percent=None).needs_reference
-    assert not NoiseConfig("poisson", percent=None).needs_reference
+    assert not NoiseConfig("poisson", percent=None, estimate=None).needs_reference
     for cfg in (NoiseConfig(), NoiseConfig("gaussian", sd=(1.0, 2.0), percent=None),
-                NoiseConfig("poisson", n_eff=300.0, percent=None)):
+                NoiseConfig("poisson", n_eff=300.0, percent=None, estimate=None)):
         data = json.loads(json.dumps(cfg.to_dict()))
         assert NoiseConfig.from_dict(data) == cfg
     with pytest.raises(ValueError, match="unknown noise setting"):
@@ -118,5 +119,5 @@ def test_sample_size():
     scaled = [np.array([1.0, 2.0, 3.0]), np.array([4.0, 4.0])]
     np.testing.assert_array_equal(sample_size(scaled, NoiseConfig()), [3.0, 2.0])
     np.testing.assert_array_equal(
-        sample_size(scaled, NoiseConfig("poisson", percent=None)), [6.0, 8.0]
+        sample_size(scaled, NoiseConfig("poisson", percent=None, estimate=None)), [6.0, 8.0]
     )

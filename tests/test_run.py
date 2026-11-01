@@ -219,7 +219,7 @@ def test_a_series_without_its_undeuterated_control_is_warned_about(tmp_path, cap
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="hxex.run"):  # a fixed sd needs no reference
         run(raw.select(keep), config(bootstrap=None, fit=dataclasses.replace(
-            config().fit, noise=NoiseConfig("gaussian", sd=100.0, percent=None))))
+            config().fit, noise=NoiseConfig("gaussian", sd=100.0, percent=None, estimate=None))))
     assert "undeuterated control" not in caplog.text
     assert noise_reference_kinds([0, 0, 1, 2], [(0,), (0,), None, (3,)],
                                  ["undeut", "", "", ""]) == {

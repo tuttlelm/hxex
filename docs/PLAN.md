@@ -384,7 +384,7 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   driven by a TOML project file (`hxex.config`).
 - **Phase 5 (validation and release):** no work recorded yet. The noise model is decided ahead
   of it: the Gaussian loss (owner, 2026-10-13; HISTORY items 55 and 56), reopened for its level
-  (2026-10-24): per-bin noise from the controls is built as an option (Next steps 13).
+  (2026-10-24): per-bin noise from the controls, the default since 2026-10-31 (Next steps 13).
 - **Phase 6 (extra input): partly done, ahead of order.** The mzML reader with scan summing
   (item 33), the composition ladder in the picker (item 34), ion-type mixtures for fragments
   (item 35), fragment targets and terminal groups (item 36), the m/z screen (item 37), precursor
@@ -537,6 +537,11 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
   (or the spectrum's own when there is none; kinetics runs: HISTORY 77), not of the average of
   the undeuterated and fully deuterated controls' maxima as in `run_hdx_fits` (`Y_ERR`).
   Confirmed by the owner (HISTORY 78).
+- By default every bin has its own noise variance, `z b1 I + (m I)^2`, with the counting scale
+  `b1` measured from the run's undeuterated controls and a fixed model error `m` (9 %)
+  (`[run.fit.noise] estimate = "controls"`; HISTORY 191 and 213); pyHXExpress gives every bin
+  of a spectrum the same sd. `estimate = false` restores one sd per spectrum, which is also
+  what a run with too few controls falls back to.
 - Bootstrap resamples add unit Gaussian noise (in noise-scaled units) to every bin, including
   bins that are zero; pyHXExpress's `fit_bootstrap` leaves zero bins unchanged and clips the
   resample to `[0, 2y]`. Confirmed by the owner (HISTORY 78).
@@ -715,7 +720,8 @@ Planned, not built:
    undeuterated cap, `[analysis] populations = "population_test"`, residue tiers up to three and their
    figure. Open: `hxex resume` adding the test to an existing bundle; stuck K = 1 refits in the
    null; fragment series.
-13. **Per-bin noise from the controls** (owner, 2026-10-28; HISTORY 187-191). Opt-in
+13. **Per-bin noise from the controls** (owner, 2026-10-28; HISTORY 187-191; the default since
+   2026-10-31, HISTORY 213; `estimate = false` for one sd per spectrum).
    `[run.fit.noise] estimate = "controls"`: each bin's variance `z b1 I + (m I)^2`, the counting
    scale `b1` measured once per bundle from the undeuterated controls that pass the loose
    screens and sit below the run's distortion onset (per-sample values reported, a warning when
@@ -725,7 +731,9 @@ Planned, not built:
    its own look (owner: start from the instrument information in the .raw files). Checks
    (HISTORY 191): screen, regression and GPU parity pass; with the population test it lowers
    false splits of the controls and raises correct K on the known-answer set; with the criterion
-   alone it is mixed. Owner (2026-10-28): not the default until it is more reliable. Not yet done: the
+   alone it is mixed. Owner (2026-10-28): not the default until it is more reliable; owner
+   (2026-10-31), after the per-bin refits of the tutorial data and the benchmark and a split-half
+   null check (HISTORY 213): the default for every run. Not yet done: the
    lost-signal zone (bins below 1-2 % of the tallest peak) and outliers in one replicate
    (steps 2-3 of the noise plan).
 14. **Audit of 2026-10-28** (seven reviewers; no Critical finding, nine High, 21 Medium, about

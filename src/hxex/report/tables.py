@@ -331,7 +331,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     correction used a fallback, not the series' own
     controls), ``noise_reference`` (what its noise level comes from: ``undeuterated control``,
     ``own spectrum`` when no undeuterated control of the series was fitted, or ``run's scans``
-    for kinetics; :func:`hxex.noise.noise_reference_kinds`) and ``rt`` (the median
+    for kinetics; :func:`hxex.noise.noise_reference_kinds`; ``per bin`` with per-bin noise,
+    where the reference only sets the units) and ``rt`` (the median
     chromatographic retention time of its spectra, minutes; NaN: unknown)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
@@ -349,6 +350,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     uncorrected = ctrl.uncorrected if ctrl is not None else np.zeros(0, dtype=bool)
     meas = results.measurements
     refs = noise_reference_kinds(meas.data_id, meas.references, meas.role)
+    if fit.noise_curve is not None:  # each bin's own noise: the reference only sets the units
+        refs = dict.fromkeys(refs, "per bin")
     for d in ids:
         members = np.flatnonzero(fit.data_id == d)
         j = where.get(str(fit.spectrum_id[members[0]]))

@@ -3,47 +3,47 @@
 Every fit needs to know how much of a spectrum is noise: a spectrum that departs from a
 one-population envelope by more than its noise is fitted with two or three populations, and the
 error bars of every value grow with the noise. This page describes the two noise models *hxex*
-offers, how to switch to the newer one, and what its one setting does.
+offers, how to switch back to the older one, and what the default's one setting does.
 
 ## The two models
 
-- **One noise level per spectrum (the default).** Every bin of a spectrum gets the same noise,
-  3 % of the tallest peak of its series' undeuterated control (`[run.fit.noise] percent`). This
-  is the setting *hxex* has always used. It is simple, but the level was never measured: it gives
-  weak bins far more noise than they have, and bright bins of a strong spectrum less.
-- **Noise per bin, measured from your controls (opt-in).** Each bin gets its own noise, from two
-  parts:
+- **Noise per bin, measured from your controls (the default).** Each bin gets its own noise,
+  from two parts:
   - **Counting noise**, which grows with the bin's intensity and with the ion's charge. *hxex*
     measures its size once for the whole run from the undeuterated controls (`b1`, the
     instrument's counting scale), so it needs no information about the instrument.
   - **Model error**, a fixed share of each bin's intensity (`model_error`, 9 % by default): an
     allowance for the ways real envelopes depart from the model's binomial populations, which
     repeat from one replicate to the next and so are not noise in the usual sense.
+- **One noise level per spectrum (the older default).** Every bin of a spectrum gets the same
+  noise, 3 % of the tallest peak of its series' undeuterated control (`[run.fit.noise]
+  percent`). This is what *hxex* used until 31 October 2026, and what pyHXExpress uses. It is
+  simple, but the level was never measured: it gives weak bins far more noise than they have,
+  and bright bins of a strong spectrum less.
 
 On three Q-TOF datasets the per-bin model gave error bars that matched the scatter between
-replicates (within about 10 %; with the default they were up to 1.7 times too large). It works
-best together with the [population test](population-test.md): there it fitted undeuterated and
-fully deuterated controls, which should hold one population, with two less often than the
-default on every dataset tried but one (that dataset's fully deuterated controls: 4.3 against
+replicates (within about 10 %; with one level per spectrum they were up to 1.7 times too
+large). It works best together with the [population test](population-test.md): there it fitted
+undeuterated and fully deuterated controls, which should hold one population, with two less
+often than one level per spectrum on every dataset tried but one (that dataset's fully deuterated controls: 4.3 against
 3.4 %), and chose the right number of populations more often on a test set with known answers
 (85 % against 78 %). Without the population test the picture is mixed: on two datasets more
 undeuterated controls were split (for example 10.6 against 8.3 %), and spectra in general were
 split slightly more often. Neither model fully covers the differences between charge states of
 one injection. It has not yet been checked on Orbitrap data, where on the one dataset tried it
-chose two populations more often than the default; use it there with care.
+chose two populations more often than one level per spectrum; use it there with care.
 
-## Switching it on
+**Comparing samples.** Because the per-bin model fits the replicates of a sample more
+consistently, the scatter between replicates is smaller, and so is the smallest difference that
+counts (`delta_crit`, [Statistics](statistics.md)). More differences between samples are then
+found: on the tutorial data and on a larger Q-TOF dataset, about 20 % and 70 % more residues
+differed from the reference. A check that compares two replicates of a sample with its other two,
+where every difference found is false, found false differences in about 1 % of peptides and
+residues with either model, so the extra differences are real gains in sensitivity, not noise.
 
-In the project file:
+## What `hxex info` shows
 
-```toml
-[run.fit.noise]
-estimate = "controls"
-model_error = 9          # percent; the default
-```
-
-Then run `hxex run` as usual (with `--overwrite` or `--keep-previous` if the run's results
-already exist: every fit changes). `hxex info` shows what was measured, for example:
+`hxex info` shows what was measured, for example:
 
 ```text
 noise     per bin, z x b1 x I + (9 % of I)^2 with b1 = 8.16 +- 0.49 (from 2683 undeuterated
@@ -55,7 +55,8 @@ Which controls are used: the undeuterated controls that every spectrum quality s
 (at the `loose` level, [Outputs](outputs.md)), and only those below the brightness where the
 run's controls stop matching their natural isotope envelope (detector compression or a similar
 distortion; *hxex* finds this brightness from the controls themselves and reports it). At least
-five series need such controls; with fewer, *hxex* says so and uses the default noise instead.
+five series need such controls; with fewer, *hxex* says so and uses one noise level per spectrum
+instead.
 
 **Samples measured differently.** *hxex* also measures `b1` from each sample's controls alone.
 When a sample's own value differs from the run's by more than three standard errors, `hxex run`
@@ -93,3 +94,17 @@ datasets. That scatter includes small differences in labelling time between repl
 at the upper end of what the model's own error needs; it was chosen over the known-answer set's
 5 to 7 % because the known-answer set holds mostly multi-population spectra. Use the same value
 for every run you intend to compare.
+
+## Switching back to one level per spectrum
+
+In the project file:
+
+```toml
+[run.fit.noise]
+estimate = false
+```
+
+This is also needed with `model = "poisson"`, which has no per-bin form. Results made before 31
+October 2026 were fitted with one level per spectrum; `hxex info` says which noise a run used.
+Run them again (with `--overwrite` or `--keep-previous`: every fit changes) to use the per-bin
+noise, and compare only runs made with the same noise model.

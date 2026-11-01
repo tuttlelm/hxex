@@ -52,7 +52,7 @@ def series_data(n_series=2, times=(0.0, 60.0, 300.0, 1e6), reps=3, gain=GAIN, se
 def test_estimate_settings_validation_and_roundtrip():
     cfg = NoiseConfig(estimate="replicates", min_replicated=4, min_share=0.01, outlier_score=6.0)
     assert NoiseConfig.from_dict(json.loads(json.dumps(cfg.to_dict()))) == cfg
-    assert NoiseConfig().estimate is None  # off by default: nothing changes
+    assert NoiseConfig().estimate == "controls"  # the default since HISTORY 213
     for bad in ({"estimate": "residuals"}, {"min_replicated": 0}, {"min_share": 0.0},
                 {"min_share": 1.0}, {"outlier_score": 0.0}):
         with pytest.raises(ValueError):

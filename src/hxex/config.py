@@ -1431,10 +1431,11 @@ _COMMENTS: dict[str, str] = {
     "run.fit.noise.percent": "sd (or poisson scale) as percent of the tallest peak of the "
                              "series' undeuterated reference spectrum",
     "run.fit.noise.n_eff": "poisson: effective counts in the tallest peak (false: percent)",
-    "run.fit.noise.estimate": '"controls": every bin its own noise, measured from the '
-                              "undeuterated controls, plus model_error (opt-in; guide: The "
+    "run.fit.noise.estimate": '"controls" (the default): every bin its own noise, measured '
+                              "from the undeuterated controls, plus model_error (guide: The "
                               'noise model); "replicates": estimate each series\' noise from '
-                              "its replicate spectra (false: the level above)",
+                              "its replicate spectra; false: one sd per spectrum, the level "
+                              'above (needed with model = "poisson")',
     "run.fit.noise.min_replicated": "estimate: fewest time points with two or more replicates",
     "run.fit.noise.min_share": "estimate: smallest share of a spectrum's intensity a bin needs",
     "run.fit.noise.outlier_score": "estimate: a replicate scoring above this is left out and "
@@ -1587,8 +1588,9 @@ _SECTION_COMMENTS: dict[str, str] = {
                "the criterion; with k_min and k_max equal, that number only "
                "(hxex.fit.FitConfig).",
     "run.fit.noise": "Noise model and level of the fit (hxex.noise.NoiseConfig). The level "
-                     "sets the loss scale and the model selection. Today's default is one sd "
-                     'per spectrum; estimate = "controls" gives every bin its own noise.',
+                     'sets the loss scale and the model selection. By default (estimate = '
+                     '"controls") every bin has its own noise; estimate = false gives one sd '
+                     "per spectrum, as before 2026-10-31.",
     "run.fit.backend": "Where the fit runs (hxex.model.Backend); nothing is set globally.",
     "run.bootstrap": "Standard errors and intervals from resampled refits of every "
                      "measurement (hxex.bootstrap.BootstrapConfig). Slow: most of a run's time.",

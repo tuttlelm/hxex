@@ -419,13 +419,16 @@ def bundle_noise(picked, meas: Measurements, config: RunConfig):
     return curve
 
 
-def _warn_own_reference(meas: Measurements, picked, config: RunConfig) -> None:
+def _warn_own_reference(meas: Measurements, picked, config: RunConfig,
+                        noise_curve=None) -> None:
     """Warn when series are fitted without an undeuterated control: each of their spectra is
     then its own noise reference, so its noise is usually set lower than its series' and the
-    number of populations can be over-estimated (guide: Analysing part of a dataset)."""
+    number of populations can be over-estimated (guide: Analysing part of a dataset). Not with
+    per-bin noise (``noise_curve``): each bin's variance is in raw units, so the reference only
+    sets the units and cancels from the loss."""
     from .noise import noise_reference_kinds
 
-    if config.fit.noise.sd is not None:  # a fixed sd: the reference is not used
+    if config.fit.noise.sd is not None or noise_curve is not None:  # the reference is not used
         return
     kinds = noise_reference_kinds(meas.data_id, meas.references, meas.role)
     own = sorted(s for s, k in kinds.items() if k == "own spectrum")
@@ -902,8 +905,8 @@ def run(
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )
-    _warn_own_reference(measurements, picked, config)
     noise_curve = bundle_noise(picked, measurements, config)
+    _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     rates = control_rates(picked, config)
     rt = series_rt(picked.data_id, picked.rt) if rates is not None else None

@@ -5759,3 +5759,35 @@ CSVs or mzML if wanted.
     remove two thirds of the false twos and a quarter to a third of the real ones, at 2 still
     13-16 % of the real ones, against under 1 point for the fixed 0.10. Later, if needed: a
     detection limit by a power calculation (PLAN Next steps 17).
+
+213. **Per-bin noise from the controls becomes the default (owner, 2026-10-31: "the results look
+    sensible to me, all the checks are in, per-bin should be default"; "always the default",
+    also without the population test).** `[run.fit.noise] estimate` now defaults to `"controls"`
+    (item 191); `estimate = false` gives one sd per spectrum as before, and the poisson model
+    needs it (its message says so). With fewer than five series of usable undeuterated controls
+    the fit falls back to one sd per spectrum, as before (logged). Bundles keep their recorded
+    setting (their manifests hold `estimate: null`); a record without the key, written before the
+    setting existed, reads as `None`. The population test's null fits set `estimate=None`
+    explicitly (they take the per-bin variances directly). With per-bin noise the series'
+    reference spectrum only sets the units (each bin's variance is in raw units and the loss is
+    r^2 / v), so a series without its undeuterated control is fitted as with it: `hxex run` no
+    longer warns about such series when the curve was measured (item 183's warning stays for
+    one sd per spectrum), series.csv `noise_reference` reads `per bin`, and `hxex info`'s noise
+    reference line says none is needed. The evidence beyond item 191, on the
+    tutorial data and the intact-peptide benchmark refitted with per-bin noise, K = 1 and 2
+    bootstraps and the population test (private noise_model/perbin_runs, comparison.txt;
+    against the constant-noise bundles of item 176): sets read as two, undeuterated / fully
+    deuterated controls, tutorial 9.6 / 3.2 -> 0.0 / 1.1 %, benchmark 2.5 / 8.6 -> 0.9 / 3.3 %;
+    labelled sets 30.3 -> 24.1 % and 27.9 -> 18.6 %. The K = 1 values of replicate spectra agree
+    better, so `delta_crit` falls (0.026 -> 0.015, 0.027 -> 0.017) and more differences between
+    samples are found: residue-times significant, without a bootstrap on either side, tutorial
+    724 -> 864 and benchmark 589 -> 984 (with the per-bin bundles' bootstraps 928 and 1,265: a
+    bootstrap gives errors to residue-times that have none without it, at the same false rate).
+    Split-half null (split_half/README.md: two replicates of each sample against its other two,
+    all three pairings, labelled spectra only, controls shared; every call false): peptides
+    falsely significant 0.8 -> 1.2 % (tutorial) and 1.0 -> 0.7 % (benchmark); residue-times per
+    testable 0.2 -> 1.1 % and 1.5 -> 1.4 %. The extra differences are sensitivity, not false
+    calls. Known limits (item 191): without the population test the controls' false splits were
+    mixed (two datasets' undeuterated controls and the known-answer set's fully deuterated ones
+    split more often); not checked on Orbitrap data beyond one dataset, where it split more often.
+    Not checked: why about half the residue-times have no error without a bootstrap.

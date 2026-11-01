@@ -183,7 +183,7 @@ def test_a_curve_with_the_constant_sd_reproduces_that_fit():
     data = spectra()
     sd = 500.0
     variances = [np.full(len(o), sd ** 2) for o in data.observed]
-    plain = fit_models(data, fit_config(sd=sd, percent=None))
+    plain = fit_models(data, fit_config(sd=sd, percent=None, estimate=None))
     per_bin = fit_models(data, fit_config(estimate="controls"), bin_variance=variances)
     np.testing.assert_array_equal(plain.selected_K, per_bin.selected_K)
     for k in (1, 2):
@@ -261,9 +261,43 @@ def test_a_run_measures_the_curve_once_and_the_bundle_keeps_it(tmp_path):
         assert text.startswith("per bin, z x b1 x I + (9 % of I)^2") and "S " in text
 
 
+def test_per_bin_noise_is_the_default_and_needs_no_noise_reference(tmp_path, caplog):
+    """The default (HISTORY 213): a series without its undeuterated control is fitted as with
+    it, since each bin's variance is in raw units, so the run does not warn about it and
+    series.csv says every series' noise is per bin."""
+    import logging
+
+    from hxex import load_results
+    from hxex.cli import _noise_reference_text
+    from hxex.report import series_table
+
+    assert NoiseConfig().estimate == "controls" and FitConfig().noise.estimate == "controls"
+    raw = raw_with_counting_noise(n_series=7)
+    raw = raw.select(~((raw.data_id == 6) & (raw.role == "undeut")))
+    cfg = RunConfig(picker=PICK, fit=FitConfig(k_max=2, adam_steps=60, n_restarts=2,
+                                               backend=CPU), bootstrap=None, controls=None)
+    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+        res = run(raw, cfg, out=tmp_path / "b")
+    assert res.fit.noise_curve is not None and res.fit.noise_curve.n_series == 6
+    assert "no undeuterated control" not in caplog.text
+    loaded = load_results(tmp_path / "b")
+    assert set(series_table(loaded)["noise_reference"]) == {"per bin"}
+    assert _noise_reference_text(loaded.measurements, loaded.fit).startswith("none needed")
+
+
+def test_records_without_the_setting_read_as_one_sd_per_spectrum():
+    """Bundles written before the setting existed were fitted without an estimate."""
+    old = {"model": "gaussian", "sd": None, "percent": 3.0, "n_eff": None, "min_replicated": 3,
+           "min_share": 0.005, "outlier_score": 4.0}
+    assert NoiseConfig.from_dict(old).estimate is None
+    assert NoiseConfig.from_dict({**old, "estimate": "controls"}).estimate == "controls"
+    with pytest.raises(ValueError, match="estimate=None"):
+        NoiseConfig("poisson", percent=3.0)
+
+
 def test_info_describes_the_constant_noise_and_unmeasured_samples():
     data = spectra(n=4)
-    fit = fit_models(data, fit_config(percent=3.0))
+    fit = fit_models(data, fit_config(percent=3.0, estimate=None))
     assert _noise_curve_text(fit) == "one sd per spectrum, 3 % of its reference's tallest peak"
     few = fit_models(data, fit_config(estimate="controls"))  # four series: too few
     assert few.noise_curve is None

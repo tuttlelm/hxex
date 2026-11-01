@@ -19,7 +19,7 @@ overconfident for mass-spectrometry data and tends to over-select K).
 A reference is given per measurement as the indices of its reference spectra (replicates are
 averaged), or None for the measurement's own spectrum.
 
-``estimate='controls'`` (opt-in) gives every bin its own noise variance instead of one sd per
+``estimate='controls'`` (the default) gives every bin its own noise variance instead of one sd per
 spectrum: ``z b1 I + (m I)^2`` at a bin of intensity ``I`` in a spectrum of charge ``z``
 (:class:`ControlsNoise`), at least (0.5 % of the spectrum's tallest bin)^2. ``b1`` (the counting
 noise of the instrument, which grows with the ion's charge) is measured once per bundle from the
@@ -47,8 +47,10 @@ ESTIMATES = (None, "controls", "replicates")
 @dataclass(frozen=True)
 class NoiseConfig:
     """Noise model and level of the fit (the ``[run.fit.noise]`` table): the loss scale, which
-    also sets the model selection. The default is Gaussian at 3 % of the tallest peak of the
-    series' reference spectrum, the setting of the regression baseline, not a recommendation.
+    also sets the model selection. The default is per-bin noise from the controls
+    (``estimate='controls'``, docs/HISTORY.md item 213); without enough controls, and with
+    ``estimate=None``, Gaussian at 3 % of the tallest peak of the series' reference spectrum
+    (the regression baseline's setting, and the default until 2026-10-31).
 
     - ``model``: ``'gaussian'`` or ``'poisson'``.
     - ``sd``: the Gaussian sd in intensity units, one value or one per measurement; exactly one
@@ -68,7 +70,8 @@ class NoiseConfig:
       its mean bin intensity)``. A series with fewer than ``min_replicated`` time points of two
       or more replicates falls back to the level above. ``min_share`` is the smallest share of a
       spectrum's total intensity a bin must have to be used, and a replicate whose score exceeds
-      ``outlier_score`` is left out of the estimate and flagged ``noise_outlier``.
+      ``outlier_score`` is left out of the estimate and flagged ``noise_outlier``. ``None``:
+      one sd per spectrum (``sd`` or ``percent``); the poisson model needs it.
     - ``model_error``: with ``estimate='controls'``, the allowance for model error as percent of
       each bin's intensity (default 9: the value that calibrated the errors on three Q-TOF
       datasets, docs/HISTORY.md item 191). Lower: errors smaller and more spectra split into
@@ -80,7 +83,7 @@ class NoiseConfig:
     sd: float | tuple[float, ...] | None = None
     percent: float | None = 3.0
     n_eff: float | None = None
-    estimate: str | None = None
+    estimate: str | None = "controls"
     min_replicated: int = 3
     min_share: float = 0.005
     outlier_score: float = 4.0
@@ -110,8 +113,9 @@ class NoiseConfig:
         if self.estimate not in ESTIMATES:
             raise ValueError("estimate must be None, 'controls' or 'replicates'")
         if self.estimate and self.model != "gaussian":
-            raise ValueError(f"estimate={self.estimate!r} sets a Gaussian noise level: use the "
-                             "gaussian model")
+            raise ValueError(f"estimate={self.estimate!r} (the default is 'controls') sets a "
+                             "Gaussian noise level: use the gaussian model, or estimate=None "
+                             "(estimate = false in a project file) for the poisson model")
         if not (np.isfinite(self.model_error) and self.model_error >= 0):
             raise ValueError("model_error must be 0 or more (percent)")
         if self.min_replicated < 1:
@@ -140,7 +144,9 @@ class NoiseConfig:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"unknown noise setting(s): {', '.join(sorted(unknown))}")
-        return cls(**data)
+        # records written before the setting existed were fitted without an estimate (the
+        # default became 'controls' later, HISTORY 213)
+        return cls(**{"estimate": None, **data})
 
 
 Reference = Sequence[int] | None

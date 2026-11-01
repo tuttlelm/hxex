@@ -405,7 +405,8 @@ def simulate_null(
     depend on the other spectra or the project's name. NaN where a refit failed."""
     rows = np.asarray(rows, dtype=np.int64)
     cfg = dataclasses.replace(fit.config, k_min=1, k_max=k + 1, screen=False,
-                              noise=NoiseConfig(model="gaussian", sd=1.0, percent=None))
+                              noise=NoiseConfig(model="gaussian", sd=1.0, percent=None,
+                                                    estimate=None))
     pred = scaled_prediction(data, fit, rows, k)
     keys = data.random_keys()[rows]
     bins = [data.bins[i] for i in rows]

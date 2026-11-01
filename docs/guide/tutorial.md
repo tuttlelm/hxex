@@ -170,17 +170,22 @@ spectra, picks the isotope peaks of the remaining 3,877, and fits every one of t
 prints its progress, and takes about two minutes on a laptop:
 
 ```
-15:53:24 [[input.exclude]]: 1384 of 5261 spectra left out (stored, not fitted)
-15:53:27 dropped 3 of 3877 spectra: 3 empty, 0 without signal
-15:53:27 fitting K=1 for 3874 measurements
-15:53:46 fitting K=2 for 3874 measurements
-15:54:09 fitting K=3 for 3874 measurements
-15:54:38 done in 1m 14s
-3874 measurements; selected K: 1: 2912, 2: 839, 3: 123
+07:15:14 [[input.exclude]]: 1384 of 5261 spectra left out (stored, not fitted)
+07:15:15 2 of 193 series sit off their m/z in their undeuterated controls (beyond 6 times the run's scatter; flagged off_mz): ...
+07:15:20 dropped 3 of 3877 spectra: 3 empty, 0 without signal, 0 without bins
+07:15:20 per-bin noise: variance = z x 31.2 x I + (9 % of I)^2, from 270 undeuterated controls of 115 series
+07:15:20 fitting K=1 for 3874 measurements
+07:15:40 fitting K=2 for 3874 measurements
+07:16:04 fitting K=3 for 3874 measurements
+07:16:33 done in 1m 19s
+3874 measurements; selected K: 1: 2983, 2: 875, 3: 16
 ```
 
-Three spectra were empty and are dropped. Most spectra are best described by one population
-(K = 1), but 839 need two and 123 three.
+Three spectra were empty and are dropped. Two series have their peaks away from where the
+peptide's should be, most likely another species; they are kept in the results but left out of
+the analysis of step 10. The `per-bin noise` line is the noise *hxex* measured from the
+undeuterated controls ([The noise model](noise-model.md)). Most spectra are best described by
+one population (K = 1), but 875 need two and 16 three.
 
 The run wrote two folders: `results`, the *bundle*, which holds everything in *hxex*'s own
 format (you do not open it yourself; the other commands read it), and `results_tables`, the
@@ -240,49 +245,44 @@ envelope moves to the right (more deuterium) with time:
 
 **Two populations.** In `WT_0042_0054_TSLSPFYLRPPSF_z_2.pdf` the 4 s and 1 min spectra are too
 broad for one envelope: the fit uses two (the dashed lines), a slow one that has taken up
-little deuterium and a fast one that has taken up much more. By 20 h they have merged into one.
-The undeuterated (UN) and fully deuterated (FD) controls have one population each, as they
-should. (The figure here was drawn after the review of step 9; in yours, two of the 30 min
-spectra still have a small second population.)
+little deuterium and a fast one that has taken up much more. At 30 min only a small share of
+the slow one is left, and by 20 h they have merged into one. The undeuterated (UN) and fully
+deuterated (FD) controls have one population each, as they should.
 
-![The spectra of WT 42-54: two populations at 4 s and 1 min, one at 20 h](../images/tutorial_two_populations.png)
+![The spectra of WT 42-54: two populations at 4 s and 1 min, a small second one at 30 min, one at 20 h](../images/tutorial_two_populations.png)
 
 The uptake page shows the deuterium of every population of every spectrum against time,
-coloured by replicate: two levels at 4 s and 1 min, one from 30 min on (this figure was drawn
-after the review of step 9):
+coloured by replicate: two levels at 4 s and 1 min, the slow one with a small share at 30 min,
+and one level at 20 h (this figure was drawn after step 10, which adds the error bars):
 
 ![The uptake of WT 42-54, by population](../images/tutorial_uptake.png)
 
 **The overview.** `overview.pdf` summarises the whole run. Its controls page shows the
 retention of every fully deuterated control: the share of the label it still held when
 measured. Here it is about 0.5, much below the 0.85 of the buffer, because deuterium exchanges
-back during the quench, digestion, and LC. All 194 measured controls were accepted (the
-dashed lines are the limits they were judged by); the one peptide and charge without a fully
-deuterated control takes the control of the same peptide at its other charge. The bars below
-`both measured` count controls that are used but carry a note: here, controls whose replicates
-were best fitted with two populations, which happens for a few peptides with broad envelopes,
-and, for most of those, that their retention agrees with the same peptide's in the other
-samples, so the correction is sound.
+back during the quench, digestion, and LC. The controls of 192 of the 195 series were measured
+and accepted (the dashed lines are the limits they were judged by). Of the other three, two
+have no controls of their own and take the fully deuterated control of the same peptide in
+another sample, and one has an undeuterated control too heavy to be the peptide alone
+(`m0_high`, most likely another species), so the analysis leaves it out. The bars marked
+`(flag only)` count controls that are used but carry a note: controls whose replicates were
+best fitted with two populations, which happens for a few peptides with broad envelopes;
+controls with one replicate left out as an outlier; and controls whose retention agrees with
+the same peptide's in the other samples, so the correction is sound.
 
 ![The controls page of the overview](../images/tutorial_controls.png)
 
 ## Step 9: review
 
-Two things in these figures deserve a decision:
+One spectrum in these figures deserves a decision: in WT 68-75, the 30 min replicate 2 is far
+weaker than the others, and `spectra.csv` gives it the `low_intensity` flag. It is better left
+out.
 
-- In WT 42-54, the 30 min replicates 1 and 3 were fitted with two populations, but one of
-  them is tiny. One population describes them as well as it does replicates 2 and 4.
-- In WT 68-75, the 30 min replicate 2 is far weaker than the others; `spectra.csv` gives it
-  the `low_intensity` flag. It is better left out.
-
-Decisions like these go in a *review table*: your own copy of `spectra.csv` in which you fill
-in three columns. Copy `results_tables/spectra.csv` into the project folder, next to
-`hxex.toml`, and rename the copy `user_review_table.csv`. Open it, and:
-
-1. In the rows of `WT`, `0042-0054`, time `1800` (30 min), replicates (`rep`) 1 and 3, type
-   `1` in the `review_K` column, and in the `note` column `second population too small`.
-2. In the row of `WT`, `0068-0075`, time `1800`, replicate 2, type `rejected` in the
-   `review_status` column, and `weak spectrum` in `note`.
+Decisions like this go in a *review table*: your own copy of `spectra.csv` in which you fill
+in three columns, `review_status`, `review_K`, and `note`. Copy `results_tables/spectra.csv`
+into the project folder, next to `hxex.toml`, and rename the copy `user_review_table.csv`. Open
+it, and in the row of `WT`, `0068-0075`, time `1800` (30 min), replicate (`rep`) 2, type
+`rejected` in the `review_status` column, and `weak spectrum` in `note`.
 
 Save it, keeping the CSV format. Then tell *hxex* about it: in `hxex.toml`, find the
 switched-off `# [review]` part, and switch on its first two lines:
@@ -292,7 +292,7 @@ switched-off `# [review]` part, and switch on its first two lines:
 table = "user_review_table.csv"
 ```
 
-Check that *hxex* reads your three decisions, and draw the figures again:
+Check that *hxex* reads your decision, and draw the figures again:
 
 ```bash
 hxex check hxex.toml
@@ -300,11 +300,21 @@ hxex report hxex.toml --figures --overwrite
 ```
 
 `--overwrite` replaces the figures drawn before; without it, *hxex* stops rather than write
-over them. `check` now has the line `review table ... 3 spectra: 1 rejected, 0 accepted, 2 with a chosen
-K`. In the new figures the rejected spectrum is drawn hollow and grey, and the two 30 min
-spectra of WT 42-54 have one population. The tables changed too. The fits themselves are not
-touched: delete a row's entries, or the `[review]` lines, and report again to undo.
-[The user review table](project-file.md#the-user-review-table) has the details.
+over them. `check` now has the line `review table ... 1 spectra: 1 rejected, 0 accepted, 0 with a chosen
+K`. In the new figures the rejected spectrum is drawn hollow and grey. The tables changed too.
+The fits themselves are not touched: delete a row's entries, or the `[review]` lines, and
+report again to undo. [The user review table](project-file.md#the-user-review-table) has the
+details.
+
+**What to leave alone.** The 30 min spectra of WT 42-54 have a second population too, a small
+one: 6 to 10 % in each replicate. One spectrum alone cannot pin down so small a share (the
+bootstrap of step 10 gives each share an error of 4 to 13 points, about as large as the
+share), but together they can: all four replicates find it, it continues the shrinking of the
+slow population from 4 s and 1 min, and no such population is found at 20 h or in the
+controls. Step 11 judges all the
+spectra of a peptide and time together, and finds two populations here. Setting these spectra
+to one population (the `review_K` column) would throw that away: keep `review_K` for a second
+population you know is wrong, for example one that belongs to another species.
 
 ## Step 10: add the uncertainties
 
@@ -369,8 +379,8 @@ deuterium than WT over the first 80 residues, most at the early times:
 difference at one time, one bar per peptide over the residues it covers, coloured where the
 difference is significant (red higher, blue lower than WT). Below it, *Two Populations
 Selected* shows the peptides whose spectra are best described by two populations in R120G only,
-in WT only, or in both. Many peptides of the first 90 residues have two populations in WT but
-only one in R120G:
+in WT only, or in both (an outline marks a borderline case). Most peptides of the first 90
+residues have two populations in both samples, a few in WT only:
 
 ![Woods plot of R120G against WT at 1 min](../images/tutorial_woods.png)
 
@@ -378,8 +388,9 @@ The second figure (`woods_K2_R120G_1min.png`) compares the two populations, only
 peptides that have two in both samples: the positions of the two populations, and the change in
 the share of the low-D population, multiplied by the distance between the two populations, so
 that it is in the same units as the panels above and judged against the same kind of dashed line
-([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here the positions hardly
-differ, but R120G has less of the low-D population: the same two states, populated differently.
+([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here R120G has less of the
+low-D population over most of the first 80 residues, and some of the positions differ too: much
+the same two states, populated differently.
 
 ![The two populations of R120G against WT at 1 min](../images/tutorial_woods_k2.png)
 
@@ -397,7 +408,8 @@ populations, the low-D and high-D populations as up and down triangles
 The tables hold the same values: `compare_peptides.csv` per peptide, `compare_residues.csv` per
 residue, with the differences, their errors, and whether they are significant.
 `species_uptake.csv` gives, for every peptide and time, the number of populations best
-supported by all of its spectra together (`best_set_K`). [Outputs](outputs.md) and
+supported by all of its spectra together (`best_set_K`): for WT 42-54 at 30 min it is 2, the
+small population of step 9, with a share of 8.5 ± 4 % from all four replicates together. [Outputs](outputs.md) and
 [Analysis methods](../ANALYSIS.md) describe them.
 
 ## What you did

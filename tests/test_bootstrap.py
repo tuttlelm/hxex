@@ -178,8 +178,8 @@ def test_poisson_noise_model_resamples_counts():
     meas, _ = synthetic([BIMODAL], amplitude=3e3, rel_noise=0.0)
     meas = Measurements.from_arrays(meas.bins, meas.observed, meas.shapes, meas.n_max,
                                     references=[(0,)], spectrum_id=meas.spectrum_id)
-    res = fit_models(meas, FitConfig(noise=NoiseConfig("poisson", n_eff=3000.0, percent=None),
-                                     backend=CPU, k_max=2, **LIGHT))
+    noise = NoiseConfig("poisson", n_eff=3000.0, percent=None, estimate=None)
+    res = fit_models(meas, FitConfig(noise=noise, backend=CPU, k_max=2, **LIGHT))
     b = bootstrap(meas, res, BOOT)
     assert b.n_success[0] == 10 and np.all(b.mean_se[0] > 0)
 
