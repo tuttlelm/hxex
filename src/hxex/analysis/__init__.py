@@ -95,10 +95,12 @@ from .runs import (
 )
 from .settings import AnalysisConfig
 from .species import (
+    K2_AVERAGE_SEPARATION,
     SpeciesFilters,
     SpeciesUptake,
     analysis_controls,
     best_sets,
+    k2_average_sets,
     left_out_spectra,
     left_out_summary,
     set_pvalues,
@@ -175,6 +177,8 @@ __all__ = [
     "residue_map",
     "species_uptake",
     "best_sets",
+    "k2_average_sets",
+    "K2_AVERAGE_SEPARATION",
     "set_pvalues",
     "left_out_spectra",
     "left_out_summary",

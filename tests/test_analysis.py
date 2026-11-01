@@ -2292,3 +2292,45 @@ def test_regions_are_compared_from_their_residues_with_the_same_gate():
     assert [t.get_text() for t in fig.axes[0].get_xticklabels()] == [
         "N (2-6)", "wide (2-11)", "C (7-11)", "far (15-19)"]
     assert any((p.get_gid() or "").startswith("xxxx:") for p in fig.axes[0].patches)
+
+
+def test_two_populations_far_apart_take_their_average_from_k2():
+    """Where a set has two populations at least K2_AVERAGE_SEPARATION deuterons apart, the K = 1
+    fit settles on one of them: the set's average is the K = 2 population-weighted mean, each
+    spectrum's own (HISTORY 210)."""
+    from hxex.analysis.species import (
+        K2_AVERAGE_SEPARATION,
+        Point,
+        _k2_average_keys,
+        _k2_average_records,
+    )
+
+    assert K2_AVERAGE_SEPARATION == 2.0
+    point = Point((60.0, ""))
+    base = ("", "V", "AKLPGSTVED", "", 2, 11, point)
+
+    def rec(value, se, population, rep):  # the record layout of species._records
+        return (value, se, population, 0.01, 2, 9.0, rep, False, "", False, False)
+
+    groups = {base + (1, 1): [rec(0.05, 0.01, 1.0, 1), rec(0.90, 0.01, 1.0, 2)],  # one mode each
+              base + (2, 1): [rec(0.0, 0.02, 0.5, 1), rec(0.1, 0.02, 0.4, 2)],
+              base + (2, 2): [rec(1.0, 0.02, 0.5, 1), rec(0.9, 0.02, 0.6, 2)]}
+    key = ("", "V", "AKLPGSTVED", "", 2, 11, 60.0)
+    out = _k2_average_records(groups, {key})
+    values = [r[0] for r in out[base + (1, 1)]]
+    assert values == pytest.approx([0.5, 0.4 * 0.1 + 0.6 * 0.9])
+    se = out[base + (1, 1)][0][1]
+    assert se == pytest.approx(np.sqrt((0.5 * 0.02) ** 2 + (0.5 * 0.02) ** 2))
+    assert out[base + (2, 1)] is groups[base + (2, 1)]  # the K = 2 records stay as they are
+    assert _k2_average_records(groups, set()) is groups
+    cols = {"run": np.array(["", "", ""]), "sample": np.array(["V"] * 3),
+            "peptide": np.array(["AKLPGSTVED"] * 3), "modification": np.array([""] * 3),
+            "start": np.array([2] * 3), "end": np.array([11] * 3), "time": np.array([60.0] * 3),
+            "role": np.array([""] * 3), "K": np.array([1, 2, 2]), "rank": np.array([1, 1, 2]),
+            "fD": np.array([0.45, 0.05, 0.95]), "n_amides": np.array([9.0] * 3),
+            "best_set_K": np.array([2, 2, 2])}
+    assert _k2_average_keys(cols) == {key}  # 0.9 fD x 9 amides = 8.1 D apart
+    near = dict(cols, fD=np.array([0.45, 0.40, 0.55]))  # 1.35 D apart
+    assert _k2_average_keys(near) == set()
+    one = dict(cols, best_set_K=np.array([1, 1, 1]))
+    assert _k2_average_keys(one) == set()

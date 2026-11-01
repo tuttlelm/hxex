@@ -5676,3 +5676,39 @@ CSVs or mzML if wanted.
     differs. K = 1 only. The unconfirmed calls (residue, region, and K = 2 maps) are now grey with
     dots in the colour of their direction, labelled "significance not confirmed at peptide level"
     (owner, 2026-10-31; was dotted grey "residue test only").
+
+210. **Two populations far apart: the average from K = 2 (owner, 2026-10-31: "this situation
+    needs some flag and different treatment since it breaks the assumption driving fDavg being
+    represented by the unimodal fit"; "Use 1. option 2 centroid is a garbage collector").** Found
+    behind the simulation's false region calls at 20-31 (nothing differing): peptide 19-23 lies
+    over a stretch with two equal populations a whole amide count apart; its K = 1 value jumped
+    between them (0.88 / 0.02 / 1.20 fD between identical samples), the replicate filter left one
+    replicate per side, and the short peptide dominated residues 20-23. Average estimates scored
+    against the simulation's truth per spectrum (private residue_gate/scripts/average_estimates.py):
+    the K = 1 mean is best for one population (median error 0.04 D) but misses separated twos
+    (0.29 D at 2-4 D apart, 0.67 D at 4-8 D); the K = 2 population-weighted mean fixes those
+    (0.10-0.13 D) and is noisier for one population (0.12 D); the envelope centroid is close to
+    the better of the two in clean simulated spectra but takes up whatever extra signal the window
+    holds (rejected by the owner). Built: `species_uptake` replaces the K = 1 values of a set
+    whose decision is two populations (`best_set_K`, the population test's when it ran) at least
+    `K2_AVERAGE_SEPARATION` = 2 D apart by each spectrum's K = 2 population-weighted mean (error
+    `sqrt(p1^2 s1^2 + p2^2 s2^2)`), and marks every row of the set `average_from_k2`;
+    `compare_peptides(..., k2_averages=k2_average_sets(up))` uses the same values for the K = 1
+    comparison and the lever rule (whose average they are; owner: in these cases the K = 2
+    shares are reliable, so HISTORY 128's preference for the K = 1 value does not apply);
+    residue values and comparisons follow from the species table. The threshold barely matters
+    (1, 2 or 3 D switch nearly the same sets). Effects: real data switched 594 of 3,139
+    species-times (benchmark, with bootstrap) and 199 of 756 (tutorial run), changing fD by 0.02
+    in the median (> 0.1 in 0-2 %); simulation, switched sets' error 0.066 -> 0.013 fD, species
+    table 90th percentile 0.108 -> 0.033 (wrong-noise arm). Residue calls before -> after:
+    nothing differing, false 0.6 -> 0.2 / 4.4 -> 3.5 / 6.2 -> 4.4 % (constant noise; intensity
+    noise, matching fit; constant-noise fit); small real differences found 40.8 -> 46.7 / 86.8 ->
+    79.6 / 86.8 -> 71.1 %, their false calls 3.5 -> 5.2 / 14.3 -> 13.8 / 22.2 -> 15.5 %; obvious
+    found 95.9 -> 92.3 / 98.8 / 97.0 % (unchanged in the last two). Regions (wrong-noise arm):
+    false calls 3 -> 2 (nothing differing), 5 -> 1 and 3 -> 1 of 30 (changed samples), real ones
+    12 / 11 -> 12 / 10 of 12. The lost sensitivity comes from the error: the switched residues'
+    errors were 2.4 times larger (0.008 -> 0.020), the positions' errors being combined as if
+    independent though positions and shares trade off within a fit; the replicate scatter instead
+    recovered small differences partly (76 %) but lost obvious ones (85 %). Owner: document the
+    loss (guide statistics.md "Two populations far apart"); the exact error, the weighted mean in
+    each bootstrap resample, needs the run stage to keep it: a follow-up.

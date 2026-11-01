@@ -32,7 +32,7 @@ Regions and sites are protein-specific and user-defined (:class:`Annotations`), 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
@@ -42,7 +42,7 @@ from .. import chem
 from .populations import ChoiceConfig, lever_population
 from .residues import ResidueMap, residue_map, separate_modified
 from .runs import resolve_sample
-from .species import SpeciesFilters, _by_replicate, _combine, _records
+from .species import SpeciesFilters, _by_replicate, _combine, _k2_average_records, _records
 
 log = logging.getLogger(__name__)
 
@@ -287,6 +287,7 @@ def compare_peptides(
     best_sets: Mapping[tuple, tuple[int, float]] | None = None,
     two_population_sets: bool | None = None,
     populations: str | None = None,
+    k2_averages: Collection[tuple] | None = None,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
@@ -321,7 +322,12 @@ def compare_peptides(
     is computed from the results with the same settings and the ``populations`` rule (None:
     the results', as ``hxex analyse`` takes it, :func:`hxex.analysis.settings.population_rule`).
     ``two_population_sets=False`` turns this off (the default with ``populations =
-    "bootstrap"``): every K=2 description is compared."""
+    "bootstrap"``): every K=2 description is compared.
+
+    ``k2_averages`` (:func:`hxex.analysis.species.k2_average_sets` of the species table) names
+    the sets whose average is the K = 2 description's population-weighted mean, each replicate
+    spectrum's own (two populations far apart, where the K = 1 fit settles on one; HISTORY
+    210): their K = 1 values, and the average of the lever rule, are taken from it."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if match not in MATCHES:
@@ -348,12 +354,14 @@ def compare_peptides(
     if quantity == "population":
         return _compare_populations_peptides(results, reference, samples, rank, alpha,
                                              exclude_flagged, filters, match, controls, choice,
-                                             best_sets)
+                                             best_sets, k2_averages)
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
-    ks = (1, K) if K != 1 else (1,)
+    ks = (1, K) if K != 1 else ((1, 2) if k2_averages else (1,))
     # quiet: species_uptake reports what the filters left out
     groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
+    if K == 1:
+        groups = _k2_average_records(groups, k2_averages)
     by_sample: dict[tuple[str, str], dict[tuple, np.ndarray]] = {}
     ses: dict[tuple, np.ndarray] = {}
     fell_back: dict[tuple, bool] = {}
@@ -513,11 +521,12 @@ def _one_population(best_sets: Mapping, state, key, reference, rkey) -> str:
 
 
 def _compare_populations_peptides(results, reference, samples, rank, alpha, exclude_flagged,
-                                  filters, match, controls, choice, best_sets
+                                  filters, match, controls, choice, best_sets, k2_averages=None
                                   ) -> PeptideComparison:
     """:func:`compare_peptides` with ``quantity='population'``."""
     groups, *_ = _records(results, (1, 2), exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
+    groups = _k2_average_records(groups, k2_averages)
     k1 = (_by_replicate(recs)[0] for key, recs in groups.items()
           if key[7:] == (1, 1) and not key[6].role)
     delta_crit = _delta_crit(k1, alpha)  # the K=1 threshold, carried over by the separation

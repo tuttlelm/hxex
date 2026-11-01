@@ -189,7 +189,12 @@ class SpeciesUptake:
     ``set_p_2``, two against three, NaN without the test; ``set_test_K`` is the test's own
     number, which ``best_set_K`` can only follow up to the largest K analysed; 0 without the
     test; ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in
-    some sample of the run, has two populations or more by the test: another species); ``rt``:
+    some sample of the run, has two populations or more by the test: another species);
+    ``average_from_k2`` (every row of a species and time): its K=1 values are the K = 2
+    description's population-weighted mean, not the K = 1 fit, because its set has two
+    populations at least :data:`K2_AVERAGE_SEPARATION` deuterons apart, where the
+    one-population fit settles on one of them instead of their average
+    (:func:`k2_average_sets`); ``rt``:
     the median
     retention time of its
     spectra (minutes; NaN: unknown); ``role``: ``'undeut'`` or ``'fulldeut'`` for a control
@@ -236,6 +241,7 @@ class SpeciesUptake:
     set_p_2: np.ndarray | None = None
     set_test_K: np.ndarray | None = None
     undeuterated_two: np.ndarray | None = None
+    average_from_k2: np.ndarray | None = None
     nterm_subtract: int = 1
     populations: str = "best_set"
 
@@ -261,7 +267,8 @@ class SpeciesUptake:
                             ("set_delta_criterion", np.full(n, np.nan)),
                             ("set_p_1", np.full(n, np.nan)), ("set_p_2", np.full(n, np.nan)),
                             ("set_test_K", np.zeros(n, dtype=np.int64)),
-                            ("undeuterated_two", np.zeros(n, dtype=bool))):
+                            ("undeuterated_two", np.zeros(n, dtype=bool)),
+                            ("average_from_k2", np.zeros(n, dtype=bool))):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, empty)
 
@@ -1081,7 +1088,7 @@ def species_uptake(
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake)
                              if f.name not in _SCALARS
                              and f.name not in ("set_p_1", "set_p_2", "set_test_K",
-                                                "undeuterated_two")}
+                                                "undeuterated_two", "average_from_k2")}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
@@ -1164,7 +1171,94 @@ def species_uptake(
                           controls=controls,
                           undeuterated_cap=filters is not None and filters.undeuterated_cap)
         out.update(test_set(out, tests))
+    # where the set has two populations far apart, the K = 1 fit settles on one of them: its
+    # average comes from the K = 2 description (owner, 2026-10-31; HISTORY 210)
+    out["average_from_k2"] = np.zeros(len(out["sample"]), dtype=bool)
+    switched = _k2_average_keys(out)
+    if switched:
+        averaged = _k2_average_records(groups, switched)
+        k1 = {(*key[:6], key[6].time): recs for key, recs in averaged.items()
+              if key[7:] == (1, 1) and not key[6].role}
+        key_of = list(zip(out["run"], out["sample"], out["peptide"], out["modification"],
+                          out["start"], out["end"], out["time"], out["role"], strict=True))
+        for i, (u, s, p, m, a, b, t, r) in enumerate(key_of):
+            set_key = (str(u), str(s), str(p), str(m), int(a), int(b), float(t))
+            if r or set_key not in switched:
+                continue
+            out["average_from_k2"][i] = True
+            if out["K"][i] != 1 or set_key not in k1:
+                continue
+            d, d_se = _combine_replicates(k1[set_key], 0)
+            out["fD"][i], out["fD_se"][i] = d, d_se
+            out["mean"][i], out["mean_se"][i] = d * out["n_amides"][i], d_se * out["n_amides"][i]
+        log.info("%d species and times have two populations at least %g D apart: their average "
+                 "is the K = 2 description's population-weighted mean (average_from_k2)",
+                 len(switched), K2_AVERAGE_SEPARATION)
     return SpeciesUptake(**out, nterm_subtract=nterm, populations=populations)
+
+
+K2_AVERAGE_SEPARATION = 2.0  # deuterons (HISTORY 210)
+
+
+def _k2_average_keys(cols: Mapping[str, np.ndarray]) -> set[tuple]:
+    """The sets ``(run, sample, peptide, modification, start, end, time)`` of a species table
+    (its columns) whose average comes from the K = 2 description: two populations by the set's
+    decision (``best_set_K``: the population test's when it ran) whose K = 2 positions lie at
+    least :data:`K2_AVERAGE_SEPARATION` deuterons apart."""
+    rows: dict[tuple, dict[int, int]] = {}
+    for i in range(len(cols["sample"])):
+        if cols["role"][i] or int(cols["K"][i]) != 2:
+            continue
+        key = (str(cols["run"][i]), str(cols["sample"][i]), str(cols["peptide"][i]),
+               str(cols["modification"][i]), int(cols["start"][i]), int(cols["end"][i]),
+               float(cols["time"][i]))
+        rows.setdefault(key, {})[int(cols["rank"][i])] = i
+    out = set()
+    for key, ranks in rows.items():
+        if 1 not in ranks or 2 not in ranks or int(cols["best_set_K"][ranks[1]]) < 2:
+            continue
+        lo, hi = ranks[1], ranks[2]
+        separation = (cols["fD"][hi] - cols["fD"][lo]) * cols["n_amides"][lo]
+        if np.isfinite(separation) and separation >= K2_AVERAGE_SEPARATION:
+            out.add(key)
+    return out
+
+
+def k2_average_sets(uptake: SpeciesUptake) -> set[tuple]:
+    """The sets ``(run, sample, peptide, modification, start, end, time)`` of a species table
+    whose K = 1 values are the K = 2 description's population-weighted mean
+    (``average_from_k2``), for :func:`hxex.analysis.compare_peptides` to use the same values."""
+    m = np.asarray(uptake.average_from_k2, dtype=bool) & (np.asarray(uptake.role) == "")
+    return {(str(u), str(s), str(p), str(md), int(a), int(b), float(t)) for u, s, p, md, a, b, t
+            in zip(uptake.run[m], uptake.sample[m], uptake.peptide[m], uptake.modification[m],
+                   uptake.start[m], uptake.end[m], uptake.time[m], strict=True)}
+
+
+def _k2_average_records(groups: dict, sets) -> dict:
+    """``groups`` (:func:`_records`) with the K = 1 records of every set in ``sets`` (keys as
+    :func:`k2_average_sets`) replaced by each spectrum's K = 2 population-weighted mean
+    (``p1 f1 + p2 f2``, standard error ``sqrt(p1^2 s1^2 + p2^2 s2^2)``), the spectra being those
+    with a K = 2 description (the rank 1 and rank 2 records of a spectrum are in the same
+    order); a set without both ranks keeps its K = 1 records."""
+    if not sets:
+        return groups
+    out = dict(groups)
+    for key in groups:
+        run, sample, peptide, mod, start, end, point, k, rank = key
+        if (k, rank) != (1, 1) or point.role or (
+                run, sample, peptide, mod, start, end, point.time) not in sets:
+            continue
+        low, high = groups.get(key[:7] + (2, 1)), groups.get(key[:7] + (2, 2))
+        if not low or not high or len(low) != len(high):
+            continue
+        new = []
+        for a, b in zip(low, high, strict=True):
+            p1, p2 = a[2], b[2]
+            value = p1 * a[0] + p2 * b[0]
+            se = float(np.sqrt((p1 * a[1]) ** 2 + (p2 * b[1]) ** 2))
+            new.append((value, se, 1.0, 0.0, *a[4:]))
+        out[key] = new
+    return out
 
 
 def _set_key(run, sample, peptide, mod, start, end, time, role) -> tuple:

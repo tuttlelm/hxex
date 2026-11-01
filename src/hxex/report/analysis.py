@@ -63,6 +63,7 @@ from ..analysis import (
     coverage_table,
     gated_by_peptides,
     judged_on_shared,
+    k2_average_sets,
     left_out_spectra,
     left_out_summary,
     paired_residue_maps,
@@ -292,7 +293,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         kw = {"exclude_flagged": config.exclude_flagged, "filters": config.filters,
               "alpha": config.alpha, "samples": [label(*s) for s in wanted],
               "match": config.peptide_match, "controls": config.controls, "best_sets": best,
-              "two_population_sets": gate}
+              "two_population_sets": gate,
+              # the averages of sets with two populations far apart (HISTORY 210)
+              "k2_averages": k2_average_sets(up)}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,

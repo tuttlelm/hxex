@@ -79,6 +79,31 @@ What it lacks:
   `populations = "bootstrap"` in `[analysis]`, which decides from the population positions and
   their errors.
 
+## Two populations far apart
+
+Every deuteration value at K = 1 (the uptake plots, the Woods plots, the residue values)
+assumes that a fit with one population lands on the envelope's average. That holds for one
+population, and for two that lie close together. It fails when two populations are far apart:
+the one-population fit then settles on one of them, and which one can change from replicate to
+replicate. On simulated data with two equal populations a whole amide count apart, the K = 1
+value missed the true average by a third to two thirds of a deuteron.
+
+So where a peptide's spectra at a time are best described by two populations (`best_set_K = 2`,
+or the population test's decision) and the two lie at least 2 deuterons apart, *hxex* takes that
+peptide's average from the two populations instead: the share-weighted mean of their positions,
+for each spectrum. Those rows are marked `average_from_k2` in `species_uptake.csv`, and the
+values feed everything built on the K = 1 values, including the comparisons and the residue
+values. The populations' shares are reliable in exactly these cases, because the two are far
+enough apart to be fitted well. On simulated data this brought the averages of such peptides
+five times closer to the truth; on two real datasets it switched a fifth to a quarter of the peptides and
+times, changing their values by 0.02 fD in the median.
+
+One cost: the error of that average is taken from the two positions' errors as if they were
+independent, although within one fit the positions and the shares trade off. The error is
+therefore somewhat too large, and a small real difference between samples in such a peptide is
+more often missed (on simulated data, 7 to 16 percentage points fewer small differences
+found in the two-population regions under intensity-dependent noise). A bootstrap does not change this yet.
+
 **Which numbers of populations to bootstrap.** The analysis uses each peptide's K = 1 and K = 2
 values, whatever number its spectra chose, so bootstrap both for every spectrum:
 
