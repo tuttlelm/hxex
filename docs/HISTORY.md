@@ -5653,3 +5653,26 @@ CSVs or mzML if wanted.
     loses its old figures at the next `hxex analyse` into it (they are in its listing). The
     tutorial notebook and `make_tutorial.py` name the new file, so the download changes (to
     replace on `tutorial-data-1`).
+
+209. **Regions compared (owner, 2026-10-31: "let's give it a go"; "one column per region").**
+    `regions.csv` had no test. Built: `compare_regions` (`hxex.analysis`, `RegionComparison`,
+    `compare_regions.csv`): per sample, time and region, the mean of its residues' shared
+    differences (`delta_shared`) and of their errors (`delta_shared_se`, not shrunk: residues
+    share peptides), `z`, significant with the residue rule (normal quantile of alpha and the
+    residues' `delta_crit`) and the gate of item 206 adapted to regions (a significant peptide of
+    the same sign with at least half of its exchanging residues inside the region:
+    `peptide_support`; otherwise `region_test_only`), `n_residues` and `coverage`; `delta` the
+    mean of the residues' own differences. Figure `region_significance`
+    (`plot_region_significance`): one row per sample and time, one boxed column per region (in
+    order of start), coloured as the residue map. Evaluated first on the noise simulation's
+    truth (private residue_gate/scripts/region_eval.py, out/region_eval.txt): 10-residue
+    windows, nothing differing, false calls 0.0 / 3.7 / 7.4 % (constant noise; intensity noise
+    with the matching fit; with a constant-noise fit), against 0.0 / 5.6 / 21.3 % without the
+    peptide condition; truly different windows found 35-94 %, unchanged by the condition; the
+    rule "some residue in the region is significant" found more but called 25-38 % of the
+    unchanged windows of samples with real changes (spill through shared peptides). Built check
+    on the simulation (private residue_gate/regions/sim_B_V4): the two truly changed regions
+    called at every time in both changed samples; 3 of 42 region-times called when nothing
+    differs. K = 1 only. The unconfirmed calls (residue, region, and K = 2 maps) are now grey with
+    dots in the colour of their direction, labelled "significance not confirmed at peptide level"
+    (owner, 2026-10-31; was dotted grey "residue test only").

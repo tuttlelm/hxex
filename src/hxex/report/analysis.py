@@ -8,7 +8,7 @@ choice between one and two populations; with K=2), and with a reference sample
 ``compare_peptides.csv`` (K=1 fD, and with K=2 each rank's fD and the rank-1 population),
 ``compare_residues.csv``, ``compare_populations.csv``, ``compare_choices.csv`` and
 ``compare_population_counts.csv`` (each sample's number of populations against the
-reference's), with regions ``regions.csv``, and for several runs (a
+reference's), with regions ``regions.csv`` and ``compare_regions.csv``, and for several runs (a
 :class:`hxex.analysis.RunSet`) ``run_settings.csv``
 (where their settings differ) and ``run_identity.csv`` (species whose identity differs).
 Figures: ``coverage_<sample>``, ``redundancy_resolution``, ``choice_<sample>_<time>`` (or
@@ -17,7 +17,8 @@ residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
 ``overlay_residues_<time>`` (the values of ``config.overlay``,
 :func:`hxex.report.residue_overlay_figure`), ``overlay_populations_<time>``,
 ``residue_significance`` (which residues differ from the reference,
-:func:`hxex.report.plot_residue_significance`), ``residue_significance_K2``
+:func:`hxex.report.plot_residue_significance`), ``region_significance`` (with regions,
+:func:`hxex.report.plot_region_significance`), ``residue_significance_K2``
 (:func:`hxex.report.plot_residue_significance_k2`), ``woods_<sample>_<time>`` (K=1, and where the
 number of populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons),
 ``butterfly_<sample>`` and ``regions_<time>``. For a run with fragment series
@@ -55,6 +56,7 @@ from ..analysis import (
     compare_peptides,
     compare_population_counts,
     compare_populations,
+    compare_regions,
     compare_residues,
     compare_settings,
     concat_tables,
@@ -90,7 +92,11 @@ from .protection import (
     protection_figure,
 )
 from .residues import plot_population_choice, plot_residue_profile
-from .significance import plot_residue_significance, plot_residue_significance_k2
+from .significance import (
+    plot_region_significance,
+    plot_residue_significance,
+    plot_residue_significance_k2,
+)
 from .tables import write_csv
 from .tiers import plot_population_tiers
 
@@ -278,7 +284,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     pop_cmp = counts_d = None
-    choices_cmp = shared_choices = k2_positions = None
+    choices_cmp = shared_choices = k2_positions = reg_cmp = None
     k2_tested = False
     if config.reference:
         ref = ref_name
@@ -338,6 +344,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                            for s, m in pairs.items()])), comparisons["K=1 fD"],
             nterm_subtract=nterm)
         tables["compare_residues"] = res_cmp.columns()
+        if ann.regions:  # the regions compared from their residues, with the same gate
+            reg_cmp = compare_regions(res_cmp, ann, comparisons["K=1 fD"], nterm_subtract=nterm)
+            tables["compare_regions"] = reg_cmp.columns()
         if choice is not None:
             # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
             # every run: without one most residues have no error and the few calls do not
@@ -380,6 +389,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 tables["compare_residues_K2"] = _ranked(k2_positions)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
         res_cmp = _display(res_cmp, labels, reference)
+        if reg_cmp is not None:
+            reg_cmp = _display(reg_cmp, labels, reference)
         if choices_cmp is not None:
             choices_cmp = _display(choices_cmp, labels, reference)
             if shared_choices is not None:
@@ -487,6 +498,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         if compared:
             jobs.append(("residue_significance", lambda compared=compared:
                          plot_residue_significance(res_cmp, compared, length=length, **when)))
+        if reg_cmp is not None and len(reg_cmp):
+            in_regions = [s for s in residue_others if reg_cmp.where(sample=s).any()]
+            jobs.append(("region_significance", lambda in_regions=in_regions:
+                         plot_region_significance(reg_cmp, in_regions, **when)))
         with_two = [s for s in residue_others
                     if shared_choices is not None and shared_choices.where(sample=s).any()]
         if with_two:

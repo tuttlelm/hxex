@@ -35,7 +35,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch, Polygon, Rectangle
 from matplotlib.ticker import MultipleLocator
 
-from ..analysis import ChoiceComparison, ResidueComparison
+from ..analysis import ChoiceComparison, RegionComparison, ResidueComparison
 from ..io.times import format_time
 
 STEPS = (2.0, 4.0)  # the size steps, in multiples of the threshold: 1-2, 2-4, above 4
@@ -43,7 +43,11 @@ STEPS = (2.0, 4.0)  # the size steps, in multiples of the threshold: 1-2, 2-4, a
 SIGNIFICANCE_COLOURS = ("#d4d4d4", "#86b9dc", "#2f7bbf", "#08306b", "#fb9d7d", "#de3a27",
                         "#7f0010")
 NOT_TESTED_HATCH = "xxxx"
-RESIDUE_ONLY_HATCH = "...."  # the residue test called it, no single peptide carries it
+# the residue (or region) test called it, but no significant peptide confirms it: dots in the
+# colour of its direction on grey (not significant)
+UNCONFIRMED_MORE = "more...."
+UNCONFIRMED_LESS = "less...."
+UNCONFIRMED_LABEL = "significance not confirmed at peptide level"
 BLOCK_OUTLINE = "0.15"  # the residue blocks the peptides resolve (HISTORY 207)
 BLOCK_LINE_WIDTH = 0.6
 SAMPLE_GAP = 0.35  # the empty space between samples, in rows
@@ -62,8 +66,9 @@ def significance_classes(comparison: ResidueComparison, *, more_d_positive: bool
                          ) -> np.ndarray:
     """Each row's class: 0 not significant, 1-3 less deuterium than the reference and 4-6 more
     (by the shared difference over the threshold: below 2, 2 to 4, above 4), -1 not tested
-    (no peptide measured in both samples covers the residue: ``delta_shared`` NaN), -2 the
-    residue test only (``residue_test_only``: no covering peptide carries it). Without
+    (no peptide measured in both samples covers the residue: ``delta_shared`` NaN), -2 and -3
+    the residue test only (``residue_test_only``: no significant peptide confirms it), more and
+    less deuterium than the reference. Without
     ``delta_shared`` (a comparison not judged on shared peptides) the row's own ``delta``.
     ``more_d_positive``: a positive difference means more deuterium (an fD); False for the
     low-D population's share, where more of it means less deuterium."""
@@ -79,7 +84,8 @@ def significance_classes(comparison: ResidueComparison, *, more_d_positive: bool
     more = (shared > 0) if more_d_positive else (shared < 0)
     out[sig] = np.where(more[sig], 3 + step[sig], step[sig])
     if comparison.residue_test_only is not None:
-        out[np.asarray(comparison.residue_test_only, dtype=bool)] = -2
+        only = np.asarray(comparison.residue_test_only, dtype=bool) & np.isfinite(shared)
+        out[only] = np.where(more[only], -2, -3)
     return out
 
 
@@ -146,8 +152,8 @@ def _split(first: int, last: int, blocks) -> list[tuple[int, int]]:
     return list(zip(starts, ends, strict=True))
 
 
-def _draw(sections, n: int, legend: list, title: str, block_outline: str | None = BLOCK_OUTLINE
-          ) -> Figure:
+def _draw(sections, n: int, legend: list, title: str, block_outline: str | None = BLOCK_OUTLINE,
+          columns: Sequence[str] | None = None) -> Figure:
     """The map: ``sections`` is a list of (heading or '', labels, first flags, rows, hatches,
     block outlines), stacked, each heading on a row of its own above its section and an empty
     gap between samples; each row's residue blocks outlined in ``block_outline`` (None: not
@@ -177,7 +183,9 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
     edges = np.concatenate([[0.0], np.cumsum(heights)])  # row k spans edges[k] to edges[k + 1]
     image = np.ma.masked_invalid(np.array(rows))
     cmap = ListedColormap(list(SIGNIFICANCE_COLOURS)).with_extremes(bad="white")
-    fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), 0.2 * edges[-1] + 1.9))
+    width = (max(8.0, min(16.0, 0.06 * n + 3.0)) if columns is None
+             else max(6.0, min(16.0, 0.32 * n + 3.0)))
+    fig = Figure(figsize=(width, 0.2 * edges[-1] + (1.9 if columns is None else 2.6)))
     ax = fig.add_subplot()
     ax.pcolormesh(np.arange(n + 1) + 0.5, edges, image, cmap=cmap, vmin=-0.5,
                   vmax=len(SIGNIFICANCE_COLOURS) - 0.5, shading="flat")
@@ -200,9 +208,9 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
                                 lw=0.6, zorder=4, gid=f"{DIFFERS}:{labels[y]}:{a}-{b}"))
                         r += 1
                         continue
-                    face = SIGNIFICANCE_COLOURS[0] if hatch == RESIDUE_ONLY_HATCH else "white"
+                    pattern, face, edge = _hatch_style(hatch)
                     ax.add_patch(Rectangle((start + 0.5, edges[y]), r - start, heights[y],
-                                           facecolor=face, edgecolor=_EDGE, hatch=hatch,
+                                           facecolor=face, edgecolor=edge, hatch=pattern,
                                            lw=0.0, gid=f"{hatch}:{labels[y]}:{start + 1}-{r}"))
                 r += 1
     if block_outline is not None:  # the resolution: the blocks the peptides can tell apart
@@ -222,9 +230,14 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
         ax.text(1.0, centres[y], heading, fontsize=7, fontweight="bold", va="center", ha="left")
     ax.set_ylim(edges[-1], 0.0)
     ax.set_xlim(0.5, n + 0.5)
-    ax.xaxis.set_major_locator(MultipleLocator(10))
-    ax.xaxis.set_minor_locator(MultipleLocator(5))
-    ax.set_xlabel("residue")
+    if columns is None:  # residues
+        ax.xaxis.set_major_locator(MultipleLocator(10))
+        ax.xaxis.set_minor_locator(MultipleLocator(5))
+        ax.set_xlabel("residue")
+    else:  # one named column each (regions)
+        ax.set_xticks(np.arange(1, n + 1))
+        ax.set_xticklabels(columns, rotation=45, ha="right", fontsize=7)
+        ax.set_xlabel("region")
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     fig.legend(handles=legend, frameon=False, loc="lower center", ncol=3, fontsize=7,
@@ -241,12 +254,24 @@ def _graded_legend(more: str, less: str) -> list:
                for j in range(3)])
 
 
+def _hatch_style(key: str) -> tuple[str, str, str]:
+    """A mark's (hatch pattern, face, edge): the unconfirmed differences are dots in the colour
+    of their direction on grey; the others grey hatching on white."""
+    if key == UNCONFIRMED_MORE:
+        return "....", SIGNIFICANCE_COLOURS[0], SIGNIFICANCE_COLOURS[5]
+    if key == UNCONFIRMED_LESS:
+        return "....", SIGNIFICANCE_COLOURS[0], SIGNIFICANCE_COLOURS[2]
+    return key, "white", _EDGE
+
+
 def _hatch_patch(hatch: str, label: str) -> Patch:
-    face = SIGNIFICANCE_COLOURS[0] if hatch == RESIDUE_ONLY_HATCH else "white"
-    return Patch(facecolor=face, edgecolor=_EDGE, hatch=hatch, label=label)
+    pattern, face, edge = _hatch_style(hatch)
+    return Patch(facecolor=face, edgecolor=edge, hatch=pattern, label=label)
 
 
-RESIDUE_ONLY_LABEL = "residue test only (no single peptide carries it): not significant"
+def _unconfirmed_legend(more: str = "more D", less: str = "less D") -> list:
+    return [_hatch_patch(UNCONFIRMED_MORE, f"{more}: {UNCONFIRMED_LABEL}"),
+            _hatch_patch(UNCONFIRMED_LESS, f"{less}: {UNCONFIRMED_LABEL}")]
 
 
 class _TriangleHandle(Patch):
@@ -277,7 +302,7 @@ def _block_patch(colour: str) -> Patch:
 
 def _code(c: int):
     """A class (:func:`significance_classes`) as a cell code or hatch."""
-    return NOT_TESTED_HATCH if c == -1 else RESIDUE_ONLY_HATCH if c == -2 else int(c)
+    return {-1: NOT_TESTED_HATCH, -2: UNCONFIRMED_MORE, -3: UNCONFIRMED_LESS}.get(c, int(c))
 
 
 def _graded(comparison: ResidueComparison, samples, n, time_scale, more_d_positive=True):
@@ -312,7 +337,7 @@ def plot_residue_significance(
         raise ValueError(f"no comparison of {', '.join(samples)}")
     legend = _graded_legend("more D", "less D") + [
         Patch(color=SIGNIFICANCE_COLOURS[0], label="not significant"),
-        _hatch_patch(RESIDUE_ONLY_HATCH, RESIDUE_ONLY_LABEL),
+        *_unconfirmed_legend(),
         _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)"),
         Patch(facecolor="white", edgecolor="0.6", label="not compared")]
     if block_outline is not None:
@@ -403,7 +428,7 @@ def plot_residue_significance_k2(
     if tested:
         legend += _graded_legend("more D than the reference", "less D than the reference")
         legend += [Patch(color=SIGNIFICANCE_COLOURS[0], label="two in both, not significant"),
-                   _hatch_patch(RESIDUE_ONLY_HATCH, RESIDUE_ONLY_LABEL),
+                   *_unconfirmed_legend("more D than the reference", "less D than the reference"),
                    _hatch_patch(NOT_TESTED_HATCH, "not tested (no shared peptide)")]
     else:
         legend.append(Patch(color=SIGNIFICANCE_COLOURS[0], label="two populations in both"))
@@ -419,3 +444,66 @@ def plot_residue_significance_k2(
                 "where the number differs (differences in share and position need a bootstrap "
                 "at K = 2: [run.bootstrap] ks = [1, 2])"))
     return _draw(sections, n, legend, title, block_outline)
+
+
+def plot_region_significance(
+    comparison: RegionComparison,
+    samples: Sequence[str] | None = None,
+    *,
+    time_scale: str = "seconds",
+) -> Figure:
+    """The region significance map of ``comparison`` (:func:`hxex.analysis.compare_regions`):
+    one row per sample and time, one column per region (in order of their start), coloured as
+    the residue map (:func:`plot_residue_significance`) by the region's shared difference over
+    the threshold where it is significant; grey not significant, grey with dots the region test
+    only (no peptide inside the region carries the difference), cross-hatched not tested (no
+    residue of the region compared)."""
+    if not len(comparison):
+        raise ValueError("the region comparison is empty")
+    samples = _samples(comparison, samples)
+    order = sorted({(int(a), int(b), str(r)) for a, b, r in zip(
+        comparison.start, comparison.end, comparison.region, strict=True)})
+    column = {r: k for k, (_, _, r) in enumerate(order)}
+    n = len(order)
+    shared = np.asarray(comparison.delta_shared, dtype=float)
+    threshold = np.asarray(comparison.threshold, dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.abs(shared) / np.where(threshold > 0, threshold, np.nan)
+    step = 1 + (ratio >= STEPS[0]).astype(int) + (ratio >= STEPS[1]).astype(int)
+    sig = np.asarray(comparison.significant, dtype=bool) & np.isfinite(shared)
+    only = np.asarray(comparison.region_test_only, dtype=bool)
+    labels, first, rows, hatches, outlines = [], [], [], [], []
+    for s in samples:
+        here = comparison.sample == s
+        for j, t in enumerate(sorted({float(t) for t in comparison.time[here]})):
+            line = np.full(n, np.nan)
+            marks = {h: np.zeros(n, dtype=bool)
+                     for h in (NOT_TESTED_HATCH, UNCONFIRMED_MORE, UNCONFIRMED_LESS)}
+            for i in np.flatnonzero(here & (comparison.time == t)):
+                k = column[str(comparison.region[i])]
+                if not np.isfinite(shared[i]):
+                    marks[NOT_TESTED_HATCH][k] = True
+                elif only[i]:
+                    marks[UNCONFIRMED_MORE if shared[i] > 0 else UNCONFIRMED_LESS][k] = True
+                elif sig[i]:
+                    line[k] = 3 + step[i] if shared[i] > 0 else step[i]
+                else:
+                    line[k] = 0
+            labels.append(f"{s}  {_when(t, time_scale)}")
+            first.append(j == 0)
+            rows.append(line)
+            hatches.append({h: m for h, m in marks.items() if m.any()})
+            outlines.append([(k + 1, k + 1) for k in range(n)])  # every region boxed
+    if not rows:
+        raise ValueError(f"no comparison of {', '.join(samples)}")
+    legend = _graded_legend("more D", "less D") + [
+        Patch(color=SIGNIFICANCE_COLOURS[0], label="not significant"),
+        *_unconfirmed_legend(),
+        _hatch_patch(NOT_TESTED_HATCH, "not tested (no residue of the region compared)")]
+    reference = comparison.reference or "the reference"
+    names = [f"{r} ({a}-{b})" for a, b, r in order]
+    return _draw([("", labels, first, rows, hatches, outlines)], n, legend,
+                 f"Regions different from {reference} (fD): the mean of their residues on the "
+                 "peptides both samples measured; colour = direction and size in multiples of "
+                 "the threshold", columns=names)
+

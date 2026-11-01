@@ -216,7 +216,12 @@ in the published work; where it matters, a component is named by its rank.
   peptides decide differently (HISTORY 207). A
   region's value is the mean of its residues and its error
   the mean of their errors (residues share peptides, so the error does not shrink with the
-  region's length). Regions may overlap. Populations are compared too (owner, 2026-10-13), to
+  region's length). Regions may overlap. A region differs from the reference
+  (`compare_regions`, `compare_regions.csv`, figure `region_significance`; owner, 2026-10-31,
+  HISTORY 209) when the mean of its residues' shared differences passes the residue rule
+  (`|delta| / se` with that error, and `delta_crit`) and a significant peptide of the same
+  sign has at least half of its exchanging residues inside it; otherwise `region_test_only`.
+  Populations are compared too (owner, 2026-10-13), to
   see whether a sample shifts the balance between the populations rather than their
   deuteration, by the lever rule at both levels (owner, 2026-10-20; HISTORY 128): the low-D
   population is `(fD_high - fD_avg) / (fD_high - fD_low)`, the K=1 value standing for the

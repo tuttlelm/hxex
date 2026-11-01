@@ -328,6 +328,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `populations.csv` | per residue and labelling time (the controls take no part): the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
 | `regions.csv` | per region and labelling time (the controls take no part): fD over the region's residues |
+| `compare_regions.csv` | with regions and a reference: per region and time, whether each sample differs from the reference there: `delta` (the mean of its residues' own differences), `delta_shared` and `delta_shared_se` (the difference and error the test used), `z`, `significant`, `peptide_support`, `region_test_only`, `n_residues` and `coverage` (the region's residues compared), and `delta_crit` (see *Reading the region significance map* below) |
 
 **Comparisons** (with a `reference`)
 
@@ -371,6 +372,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
 | `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath |
 | `regions_<time>` | the regions' fD |
+| `region_significance` | with regions: which regions differ significantly from the reference, one row per sample and time, one column per region (see *Reading the region significance map* below) |
 | `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
 | `ladder_<parent>_<ion>_z<charge>` | the precursor, then for every ladder step the two fragments and their difference with its fit |
 | `closure_<parent>_<n ion>+<c ion>` | the closure miss over time per split |
@@ -443,7 +445,8 @@ noise model does not suit the data) it calls differences that are not there; the
 uses the replicates instead. The residue test can also add up several overlapping peptides that
 each fall just short, so a residue it calls without any single peptide carrying the difference is
 kept visible rather than dropped: `residue_test_only` is true, `significant` is false, and the
-significance maps draw it grey with dots. Look at those residues with that in mind: with suitable
+significance maps draw it grey with dots in the colour of its direction (red for more deuterium
+than the reference, blue for less), labelled "significance not confirmed at peptide level". Look at those residues with that in mind: with suitable
 error bars some are real small differences that only the combination finds; with error bars that
 are too small most are not. In the K = 2 tables the same rule uses the K = 2 peptide comparisons.
 
@@ -453,9 +456,10 @@ one row per sample and time, one cell per residue. A significant residue is red 
 holds more deuterium than the reference and blue where it holds less, in three shades by the
 size of the difference: 1 to 2, 2 to 4, or more than 4 times the threshold (`delta_crit`). The
 size is the difference the test judged (`delta_shared`), so the colour and the decision come from
-the same comparison. Grey cells were compared and are not significant; grey cells with dots
-passed the residue test but no single peptide carries the difference (`residue_test_only`, see
-above), so they are not counted as significant; cross-hatched cells could not be tested, because no peptide measured in both samples covers them; white cells were not
+the same comparison. Grey cells were compared and are not significant; grey cells with red or
+blue dots passed the residue test, but no significant peptide confirms the difference
+(`residue_test_only`, see above: "significance not confirmed at peptide level"), so they are not
+counted as significant, and the dots' colour gives the direction; cross-hatched cells could not be tested, because no peptide measured in both samples covers them; white cells were not
 compared (a residue not covered in one of the samples, a proline, or the first residue of the
 protein). The shades show size, not how sure the test is: the residue errors come from the fits,
 and grading by them would give the deepest colours where the errors are most understated.
@@ -476,12 +480,46 @@ deuterium overall), red where it holds less. The other two sections, drawn only 
 at K = 2, show whether the low-D and the high-D population each sit at a different deuterium
 level from the reference's, coloured as above.
 
-On this map the choice between one and two populations is made from the peptides both samples
-measured, as the test and the outlines are, so every block reads as one. A sample's own choice
-(`compare_choices.csv`, the `choice_` figures, `population_tiers`) uses all of its peptides and
-can differ where one sample has a peptide the other lacks; a yellow triangle in a block's corner
-marks where it does. Read those blocks with care: whether a sample has two populations there
-depends on which peptides you count.
+**Which peptides decide one or two populations on this map.** Each sample's own results
+(`compare_choices.csv`, the `choice_` figures, and `population_tiers`) decide one or two
+populations from all of that sample's peptides. This map decides it again for each pair of
+samples, from only the peptides both samples measured at that time, the same peptides its test
+and its outlines use. The two can disagree when one sample has a peptide the other lacks (one
+left out by a filter, or not measured): that extra peptide counts in the sample's own decision
+but not on the map.
+
+A yellow triangle in a block's corner marks a block where they disagree. The block's colour or
+texture is always the map's decision, from the shared peptides; the triangle says that at
+least one sample's own peptides decide differently there. For example:
+
+- **Grey with a triangle:** on the shared peptides both samples have two populations, and their
+  shares do not differ significantly. But one sample has an extra peptide there that reads one
+  population, so its own result (its `choice_` figure) shows one population, and
+  `compare_choices.csv` lists two populations in the other sample only.
+- **Hatched with a triangle:** on the shared peptides only one sample has two populations, but
+  the own peptides decide otherwise: both, or neither, or the other sample.
+- **White with a triangle:** on the shared peptides neither sample has two populations, but an
+  extra peptide gives one of them two in its own result.
+
+To see what the own peptides decided at a triangle, look up that residue and time in
+`compare_choices.csv` (`two_reference` and `two`) or in each sample's `choice_` figure. A block
+with a triangle is one where the answer depends on which peptides you count: treat the
+difference in the number of populations there as uncertain.
+
+**Reading the region significance map.** With regions defined (`[[analysis.regions]]`),
+`region_significance` shows whether each sample differs from the reference over each region:
+one row per sample and time, one column per region, in order of where the regions start. A
+region's difference is the mean of its residues' differences on the peptides both samples
+measured, and its error the mean of their errors (the residues share peptides, so averaging them
+does not make the region more precise than its residues). It is significant when the difference
+is large compared with that error and larger than the threshold (`delta_crit`), and when a
+significant peptide in the same direction lies at least half inside the region. The colours are
+those of the residue map: red for more deuterium than the reference, blue for less, in three
+shades by size; grey not significant; grey with red or blue dots where the region test passed
+but no significant peptide lying mostly inside the region confirms it (`region_test_only`:
+"significance not confirmed at peptide level", the dots' colour giving the direction); cross-hatched where none of the region's residues could be
+compared. A region is not called different just because one residue in it is: tried on simulated
+data, that rule called about a third of the regions next to a real change different.
 
 ## The settings used
 

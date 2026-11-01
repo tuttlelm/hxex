@@ -68,6 +68,7 @@ from .series import (
 )
 from .significance import (
     SIGNIFICANCE_COLOURS,
+    plot_region_significance,
     plot_residue_significance,
     plot_residue_significance_k2,
 )
@@ -105,6 +106,7 @@ __all__ = [
     "plot_population_choice",
     "plot_population_tiers",
     "TIER_COLOURS",
+    "plot_region_significance",
     "plot_residue_significance",
     "plot_residue_significance_k2",
     "SIGNIFICANCE_COLOURS",

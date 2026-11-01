@@ -2185,7 +2185,7 @@ def test_a_residue_difference_needs_a_covering_peptide_to_carry_it():
     assert list(gated.significant) == [False, True, False, True, True]
     assert list(gated.residue_test_only) == [True, False, True, False, False]
     assert np.isnan(gated.peptide_support[4])  # V pS7: no peptide comparison, left as it was
-    assert list(significance_classes(gated)[:3]) == [-2, 5, -2]  # 0.2 = 2x: 2-4x
+    assert list(significance_classes(gated)[:3]) == [-2, 5, -3]  # 0.2 = 2x: 2-4x
     assert {"peptide_support", "residue_test_only"} <= set(gated.columns())
 
 
@@ -2246,3 +2246,49 @@ def test_k2_map_marks_where_the_own_peptides_decide_differently():
     assert not any(g.startswith("////") for g in gids)  # the texture follows the shared choice
     texts = [t.get_text() for t in fig.legends[0].get_texts()]
     assert any("decided differently" in t for t in texts)
+
+
+def test_regions_are_compared_from_their_residues_with_the_same_gate():
+    """compare_regions (HISTORY 209): the mean of the region's shared residue differences and of
+    their errors, z and delta_crit, and a significant peptide of the same sign mostly inside the
+    region; the map draws one column per region."""
+    import dataclasses
+
+    from hxex.analysis import PeptideComparison, Region, ResidueComparison, compare_regions
+    from hxex.report import plot_region_significance
+
+    res = np.arange(2, 12)  # residues 2-11 of V at 4 s
+    n = len(res)
+    delta = np.where(res <= 6, 0.3, 0.02)
+    rc = ResidueComparison(
+        sample=np.array(["V"] * n), time=np.full(n, 4.0), residue=res,
+        value_reference=np.full(n, 0.3), value_reference_se=np.full(n, 0.01),
+        value=0.3 + delta, value_se=np.full(n, 0.01), delta=delta, delta_se=np.full(n, 0.02),
+        z=delta / 0.02, significant=delta > 0.1, reference="R", delta_crit=0.1,
+        delta_shared=delta, delta_shared_se=np.full(n, 0.02))
+    pc = PeptideComparison(
+        sample=np.array(["V"]), peptide=np.array(["AKLPG"]), modification=np.array([""]),
+        start=np.array([2]), end=np.array([6]), time=np.array([4.0]),
+        value_reference=np.array([0.3]), value_reference_se=np.array([0.01]),
+        value=np.array([0.6]), value_se=np.array([0.01]), delta=np.array([0.3]),
+        delta_se=np.array([0.01]), t=np.array([20.0]), p=np.array([0.001]),
+        n_reference=np.array([3]), n=np.array([3]), significant=np.array([True]),
+        reference="R", delta_crit=0.1)
+    regions = [Region("N", 2, 6), Region("C", 7, 11), Region("wide", 2, 11),
+               Region("far", 15, 19)]
+    cmp = compare_regions(rc, regions, pc, nterm_subtract=1)
+    by = {r: i for i, r in enumerate(cmp.region)}
+    assert cmp.significant[by["N"]] and cmp.delta_shared[by["N"]] == pytest.approx(0.3)
+    assert cmp.n_residues[by["N"]] == 5 and cmp.coverage[by["N"]] == pytest.approx(1.0)
+    assert not cmp.significant[by["C"]] and not cmp.region_test_only[by["C"]]  # too small
+    # "wide": mean 0.16 > delta_crit, z 8; the peptide 3-6 (exchanging) has 4 of 4 inside
+    assert cmp.significant[by["wide"]]
+    assert cmp.n_residues[by["far"]] == 0 and np.isnan(cmp.delta_shared[by["far"]])
+    gated = compare_regions(rc, [Region("N", 2, 6)], dataclasses.replace(
+        pc, significant=np.array([False])), nterm_subtract=1)
+    assert gated.region_test_only[0] and not gated.significant[0]
+    assert "delta_crit" in cmp.columns() and "threshold" not in cmp.columns()
+    fig = plot_region_significance(cmp)
+    assert [t.get_text() for t in fig.axes[0].get_xticklabels()] == [
+        "N (2-6)", "wide (2-11)", "C (7-11)", "far (15-19)"]
+    assert any((p.get_gid() or "").startswith("xxxx:") for p in fig.axes[0].patches)

@@ -1145,6 +1145,149 @@ class RegionTable:
                                     if f.name not in ("K", "rank", "run")}}
 
 
+@dataclass(frozen=True)
+class RegionComparison:
+    """One row per run, sample (not the reference), time and region: ``region``, ``start``,
+    ``end``, ``n_residues`` (the region's residues compared on the shared peptides) and
+    ``coverage`` (their share of the region), ``delta`` (the mean of its residues' own
+    differences), ``delta_shared`` and ``delta_shared_se`` (the mean of their shared
+    differences and of their errors: residues share peptides, so the error is not shrunk),
+    ``z``, ``significant``, ``peptide_support`` (a significant peptide of the same sign with at
+    least half of its exchanging residues inside the region; NaN where no peptide comparison
+    exists for the state) and ``region_test_only`` (the test passed without that support: not
+    significant), ``threshold`` (the ``delta_crit`` applied). The reference is
+    ``(reference_run, reference)``."""
+
+    sample: np.ndarray
+    time: np.ndarray
+    region: np.ndarray
+    start: np.ndarray
+    end: np.ndarray
+    n_residues: np.ndarray
+    coverage: np.ndarray
+    delta: np.ndarray
+    delta_shared: np.ndarray
+    delta_shared_se: np.ndarray
+    z: np.ndarray
+    significant: np.ndarray
+    peptide_support: np.ndarray
+    region_test_only: np.ndarray
+    threshold: np.ndarray
+    run: np.ndarray | None = None
+    reference: str = ""
+    reference_run: str = ""
+    alpha: float = 0.05
+
+    def __post_init__(self):
+        if self.run is None:
+            object.__setattr__(self, "run", np.full(len(self.sample), "", dtype=object))
+        else:
+            object.__setattr__(self, "run", np.asarray(self.run, dtype=object))
+
+    def __len__(self) -> int:
+        return len(self.sample)
+
+    def columns(self) -> dict[str, np.ndarray]:
+        """The table's columns; ``threshold`` is written as ``delta_crit``."""
+        out = {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
+                                   if f.name not in ("run", "reference", "reference_run",
+                                                     "alpha", "threshold")}}
+        out["delta_crit"] = self.threshold
+        return out
+
+    def where(self, *, sample=None, time=None, run=None) -> np.ndarray:
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in (("run", run), ("sample", sample), ("time", time)):
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
+                keep &= np.isin(getattr(self, name), values)
+        return keep
+
+
+def compare_regions(
+    comparison: ResidueComparison,
+    regions: Sequence[Region] | Annotations,
+    peptides: PeptideComparison,
+    *,
+    nterm_subtract: int = 0,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+) -> RegionComparison:
+    """Each sample against the reference per region and time (owner, 2026-10-31; HISTORY 209),
+    from ``comparison`` (the K = 1 residue comparison judged on shared peptides,
+    :func:`judged_on_shared`): the region's difference is the mean of its residues' shared
+    differences and its error the mean of their errors (not shrunk: residues share peptides);
+    significant when ``|delta| / se`` exceeds the normal quantile of ``alpha`` and ``|delta|``
+    the residues' threshold, and (the gate of :func:`gated_by_peptides`) a significant peptide of
+    ``peptides`` at that sample and time, of the same sign, has at least half of its exchanging
+    residues (after ``nterm_subtract``) inside the region; the test's other calls are
+    ``region_test_only``. A region without a compared residue is not tested (NaN). Evaluated on
+    the noise simulation's truth before building (private residue_gate README)."""
+    from .residues import modified_state
+
+    regions = regions.regions if isinstance(regions, Annotations) else tuple(regions)
+    if not regions:
+        raise ValueError("no regions given")
+    z_crit = float(stats.norm.ppf(1 - comparison.alpha / 2))
+    by_state: dict[tuple[str, str, float], list[int]] = {}
+    for j in range(len(peptides)):
+        sites = modified_state(str(peptides.peptide[j]), int(peptides.start[j]),
+                               str(peptides.modification[j]), registry)
+        state = f"{peptides.sample[j]} {sites}" if sites else str(peptides.sample[j])
+        by_state.setdefault((str(peptides.run[j]), state, float(peptides.time[j])), []).append(j)
+    p_start = np.asarray(peptides.start, dtype=np.int64) + nterm_subtract
+    p_end = np.asarray(peptides.end, dtype=np.int64)
+    passed = np.asarray(peptides.significant, dtype=bool)
+    p_sign = np.sign(np.asarray(peptides.delta, dtype=float))
+    shared = np.asarray(comparison.delta_shared if comparison.delta_shared is not None
+                        else comparison.delta, dtype=float)
+    shared_se = np.asarray(comparison.delta_shared_se if comparison.delta_shared_se is not None
+                           else comparison.delta_se, dtype=float)
+    rows = []
+    for run, sample, time in sorted({(str(u), str(s), float(t)) for u, s, t in zip(
+            comparison.run, comparison.sample, comparison.time, strict=True)}):
+        here = ((comparison.run == run) & (comparison.sample == sample)
+                & (comparison.time == time))
+        res = np.asarray(comparison.residue)[here]
+        own = np.asarray(comparison.delta, dtype=float)[here]
+        d_sh, se_sh = shared[here], shared_se[here]
+        crit = np.asarray(comparison.threshold, dtype=float)[here]
+        peps = np.asarray(by_state.get((run, sample, time), []), dtype=np.int64)
+        for region in regions:
+            inside = (res >= region.start) & (res <= region.end)
+            tested = inside & np.isfinite(d_sh) & np.isfinite(se_sh)
+            n = int(tested.sum())
+            delta = float(np.nanmean(own[inside])) if inside.any() else np.nan
+            d = float(d_sh[tested].mean()) if n else np.nan
+            se = float(se_sh[tested].mean()) if n else np.nan
+            threshold = float(crit[tested][0]) if n else np.nan
+            z = d / se if n and se > 0 else np.nan
+            called = bool(np.isfinite(z) and abs(z) > z_crit and abs(d) > threshold)
+            support: object = np.nan
+            if len(peps):
+                length = np.maximum(p_end[peps] - p_start[peps] + 1, 1)
+                overlap = np.clip(np.minimum(p_end[peps], region.end)
+                                  - np.maximum(p_start[peps], region.start) + 1, 0, None)
+                support = bool(np.any(passed[peps] & (p_sign[peps] == np.sign(d))
+                                      & (overlap >= 0.5 * length)))
+            unsupported = support is False
+            rows.append({"run": run, "sample": sample, "time": time, "region": region.name,
+                         "start": region.start, "end": region.end, "n_residues": n,
+                         "coverage": n / (region.end - region.start + 1), "delta": delta,
+                         "delta_shared": d, "delta_shared_se": se, "z": z,
+                         "significant": called and not unsupported,
+                         "peptide_support": support, "region_test_only": called and unsupported,
+                         "threshold": threshold})
+    names = [f.name for f in fields(RegionComparison)
+             if f.name not in ("reference", "reference_run", "alpha")]
+    cols = {name: np.array([r[name] for r in rows], dtype=object if name in (
+        "run", "peptide_support", "region") else None) for name in names} if rows else {
+        name: np.array([]) for name in names}
+    for name in ("significant", "region_test_only"):
+        cols[name] = np.asarray(cols[name], dtype=bool)
+    return RegionComparison(**cols, reference=comparison.reference,
+                            reference_run=comparison.reference_run, alpha=comparison.alpha)
+
+
 def region_summary(
     residues: ResidueMap,
     regions: Sequence[Region] | Annotations,
