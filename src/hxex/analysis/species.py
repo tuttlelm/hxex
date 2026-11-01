@@ -472,7 +472,9 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
              counts=None, evidence=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
-    n_amides, rep, control_fallback, run, not_measured, uncorrected)`` (run: '' for one run, the
+    n_amides, rep, control_fallback, run, not_measured, uncorrected, average_se)``
+    (``average_se``: at K >= 2, the bootstrap's error of the spectrum's population-weighted mean
+    fD, NaN without it; run: '' for one run, the
     run's name in a
     :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
@@ -905,11 +907,14 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
         fracs = np.take_along_axis(kf.populations, order, axis=1)
         mean_se = np.full_like(means, np.nan)
         frac_se = np.full_like(means, np.nan)
+        average_se = np.full(len(fit), np.nan)  # of the population-weighted mean (HISTORY 211)
         for i in range(len(fit)):
             boot = results.bootstrap_for(i, k)
             if boot is not None:
                 mean_se[i] = boot.mean_se[i, :k][order[i]]
                 frac_se[i] = boot.population_se[i, :k][order[i]]
+                if k >= 2 and boot.average_se is not None:
+                    average_se[i] = boot.average_se[i]
         fitted = fit.fitted(k)
         if not quiet and (keep & ~fitted).any():
             log.info("K=%d was not fitted for %d spectra (the screen showed it cannot be "
@@ -921,6 +926,11 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                         "choice between one and two populations (bootstrap at K=1 and K=2: "
                         "[run.bootstrap] ks = [1, 2])", k, no_boot, int((keep & fitted).sum()))
         if controls is not None:
+            if k >= 2:  # the average's error, corrected as the means are
+                with np.errstate(invalid="ignore"):
+                    average = np.nansum(fracs * means, axis=1)
+                average_se = correct_means(controls, fit.data_id, average[:, None],
+                                           se=average_se[:, None]).se[:, 0]
             c = correct_means(controls, fit.data_id, means, se=mean_se)
             means, mean_se = c.mean, c.se
         usable = keep & fitted
@@ -949,7 +959,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     means[i, r] / n_amides[i], mean_se[i, r] / n_amides[i], fracs[i, r],
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
                     int(binned.rep[j]), bool(fell_back[i]), "", bool(not_measured[i]),
-                    bool(raw[i]),
+                    bool(raw[i]), average_se[i] / n_amides[i],
                 ))
 
     if evidence is not None:
@@ -1237,7 +1247,8 @@ def k2_average_sets(uptake: SpeciesUptake) -> set[tuple]:
 def _k2_average_records(groups: dict, sets) -> dict:
     """``groups`` (:func:`_records`) with the K = 1 records of every set in ``sets`` (keys as
     :func:`k2_average_sets`) replaced by each spectrum's K = 2 population-weighted mean
-    (``p1 f1 + p2 f2``, standard error ``sqrt(p1^2 s1^2 + p2^2 s2^2)``), the spectra being those
+    (``p1 f1 + p2 f2``; its standard error the bootstrap's of the weighted mean where the
+    bootstrap stored it, else ``sqrt(p1^2 s1^2 + p2^2 s2^2)``), the spectra being those
     with a K = 2 description (the rank 1 and rank 2 records of a spectrum are in the same
     order); a set without both ranks keeps its K = 1 records."""
     if not sets:
@@ -1255,7 +1266,10 @@ def _k2_average_records(groups: dict, sets) -> dict:
         for a, b in zip(low, high, strict=True):
             p1, p2 = a[2], b[2]
             value = p1 * a[0] + p2 * b[0]
-            se = float(np.sqrt((p1 * a[1]) ** 2 + (p2 * b[1]) ** 2))
+            # the bootstrap's own error of the weighted mean where it was stored (HISTORY 211),
+            # else the positions' errors combined as if independent (an overestimate)
+            se = (a[11] if len(a) > 11 and np.isfinite(a[11])
+                  else float(np.sqrt((p1 * a[1]) ** 2 + (p2 * b[1]) ** 2)))
             new.append((value, se, 1.0, 0.0, *a[4:]))
         out[key] = new
     return out

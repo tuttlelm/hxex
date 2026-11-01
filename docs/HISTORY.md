@@ -5712,3 +5712,50 @@ CSVs or mzML if wanted.
     recovered small differences partly (76 %) but lost obvious ones (85 %). Owner: document the
     loss (guide statistics.md "Two populations far apart"); the exact error, the weighted mean in
     each bootstrap resample, needs the run stage to keep it: a follow-up.
+
+211. **The K = 2 average's error from the bootstrap (owner, 2026-10-31).** Item 210 combined the
+    two positions' errors as if independent, `sqrt(p1^2 s1^2 + p2^2 s2^2)`, but within a fit the
+    positions and the shares trade off, so the average is better determined than its parts; the
+    switched sets' errors came out about 2.4 times too large and small real differences were
+    missed. The bootstrap already puts each resample's components in the order of the original
+    fit and takes the scatter of each (owner: "I thought we sorted by the mean of each underlying
+    fit and applied errors to those groups"); it now also takes the scatter of each resample's
+    population-weighted mean (`BootstrapResult.average_se`, stored in the bundle's bootstrap
+    tables as `average_se`; absent in older bundles), and the analysis uses it for the K = 2
+    average (corrected for back-exchange as the means are), falling back to the combined formula
+    for older bootstraps. Evaluated on the noise simulation (bootstraps redone on the GPU, about
+    7.3 minutes per arm; private residue_gate/scripts/exact_error_eval.py,
+    out/exact_error_eval.txt), small real differences found: constant noise 40.8 (before item
+    210) / 46.7 (combined error) / 51.3 % (bootstrap error); intensity noise, matching fit 86.8
+    / 79.6 / 86.2 %; constant-noise fit 86.8 / 71.1 / 79.6 %; false calls when nothing differs
+    0.6 / 0.2 / 0.6, 4.4 / 3.5 / 3.5, 6.2 / 4.4 / 4.8 %; error calibration (robust spread of
+    (measured - true) / error, 1 is right) 0.92 / 0.76 / 0.97, 0.88 / 0.72 / 0.84, 1.08 / 0.70 /
+    0.86. With a matching noise model the loss of item 210 is gone; with a mismatched one about
+    half of it. The bootstrap does not cure a noise-model mismatch (its resamples use the fit's
+    noise model): it fixes the errors' structure, not their scale. Real bundles benefit once
+    their bootstrap is redone (`hxex resume`).
+
+212. **`min_population` = 0.10 justified (owner, 2026-10-31: "the min_population was
+    empirically chosen by me, can we justify the value?").** The population test's set-level
+    step one (one against two) re-applied offline with the cut at 0 to 0.20, significance 0.01
+    (private residue_gate/scripts/min_population_eval.py, out/min_population_eval.txt). Noise
+    simulation, constant noise with its matching fit: false twos in control sets 2.4 / 2.1 / 1.3
+    / 0.7 / 0.4 % (cut 0 / 0.05 / 0.10 / 0.15 / 0.20), in labelled sets that are truly one 3.0 /
+    3.0 / 2.3 / 1.8 / 1.3 %, real twos found 58.3 / 58.3 / 57.7 / 51.5 / 45.2 %, those with a
+    15-30 % minor population 50.6 / 50.6 / 49.8 / 33.9 / 19.2 %; intensity noise with its
+    matching fit: false twos 0.3 % up to 0.10, real twos 51.3 / 51.3 / 50.6 / 44.0 / 38.6 %.
+    So 0.10 is the knee: the largest cut that costs under a point of real twos while halving the
+    false ones under constant noise; above it real minor populations are lost fast. Real
+    controls (truly one population): false twos 8.5 / 8.2 / 7.4 / 5.6 / 4.4 % (intact-peptide
+    benchmark) and 9.4 / 9.4 / 7.7 / 5.2 / 3.9 % (tutorial data); their added shares are not
+    small (median 0.16-0.20), so the cut only trims them: they come from misfit the simulation
+    lacks (envelope shape, brightness), the noise-model question, not the share limit. Caveats:
+    one seed; the simulation's true minor shares are mostly 15-50 % (46-48 sets below 15 %, found
+    20-33 % of the time whatever the cut). Tried and not adopted: an adaptive floor, the share
+    at least c times its own error. Owner: "the per spectra population_se values can be quite
+    high as it is the mean that is better constrained"; measured (bootstrap errors, spectra the
+    test calls two): real twos' minor share 0.31 with error 0.063-0.065 (share/error >= 3 in
+    68-75 %), false twos' 0.11-0.20 with error 0.080-0.095 (>= 3 in 36 %); a cut at 3 would
+    remove two thirds of the false twos and a quarter to a third of the real ones, at 2 still
+    13-16 % of the real ones, against under 1 point for the fixed 0.10. Later, if needed: a
+    detection limit by a power calculation (PLAN Next steps 17).

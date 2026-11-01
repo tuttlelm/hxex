@@ -548,7 +548,10 @@ simulations it agrees with 100 on 97-99 % of sets on a Q-TOF and an Orbitrap dat
 least K + 1 populations when `p < significance` (0.01) and the added population's mean share
 (the smallest share of the K + 1 fits, averaged over the set) is at least `min_population`
 (0.10); the steps run from 1 to `k_max - 1` and stop at the first that does not reject.
-Calibration on simulated single populations: about 1 % called two (HISTORY 139).
+Calibration on simulated single populations: about 1 % called two (HISTORY 139). The 0.10 was
+the owner's choice; HISTORY 212 justifies it on the noise simulation (the knee: false twos
+halved, real twos down by under 1 point; above it real 15-30 % minor populations are lost) and
+records why the real controls' false twos are not share artefacts.
 
 **The width check (per spectrum): a flag (owner, 2026-10-26: not yet justified as a rule;
 HISTORY 175).** A deuterated population of mean mu D whose amides each hold at most the

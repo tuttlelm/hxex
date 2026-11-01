@@ -241,6 +241,8 @@ def _bootstrap_tables(b: BootstrapResult, k: int | None = None) -> dict[str, pa.
     for name in ("A", "n", "p", "mean", "population"):
         cols[f"{name}_se"] = _ragged(_rows(getattr(b, f"{name}_se")), pa.float64())
         cols[f"{name}_ci"] = _ragged(_rows(getattr(b, f"{name}_ci")), pa.float64())
+    if b.average_se is not None:
+        cols["average_se"] = pa.array(np.asarray(b.average_se, dtype=np.float64))
     cols["curve_lo"] = _flat_ragged(b.curve_lo, b.curve_offsets, pa.float64())
     cols["curve_hi"] = _flat_ragged(b.curve_hi, b.curve_offsets, pa.float64())
     if b.component_lo is not None:
@@ -1294,11 +1296,14 @@ class Bundle:
                 p=_matrix(d, "p", cfg.n_boot * k_max).reshape(m, cfg.n_boot, k_max),
                 ok=_matrix(d, "ok", cfg.n_boot, dtype=bool),
             )
+        # absent in bundles written before it was stored (HISTORY 211)
+        average = (np.asarray(_col(t, "average_se"), dtype=np.float64)
+                   if "average_se" in t.column_names else None)
         result = BootstrapResult(
             config=cfg, selected_K=np.asarray(_col(t, "selected_K"), dtype=np.int64),
             n_success=np.asarray(_col(t, "n_success"), dtype=np.int64),
             curve_lo=np.asarray(lo, dtype=np.float64), curve_hi=np.asarray(hi, dtype=np.float64),
-            curve_offsets=offsets, draws=draws, **comp, **arrays,
+            curve_offsets=offsets, draws=draws, **comp, **arrays, average_se=average,
         )
         self._cache[name, k] = result
         return result

@@ -135,7 +135,9 @@ class BootstrapResult:
     band for each population separately (None in results made before they were stored): for
     spectrum ``i`` the slice ``component_offsets[i]:component_offsets[i + 1]`` holds ``K`` curves
     of ``len(bins)`` values each, population by population in the order of the original fit (see
-    :meth:`curve_components`)."""
+    :meth:`curve_components`). ``average_se`` (``(M,)``; None in results made before it was
+    stored, HISTORY 211): the standard error of each measurement's population-weighted mean
+    deuteration (``sum`` of share times position over the populations) across the resamples."""
 
     config: BootstrapConfig
     selected_K: np.ndarray
@@ -157,6 +159,7 @@ class BootstrapResult:
     component_lo: np.ndarray | None = None
     component_hi: np.ndarray | None = None
     component_offsets: np.ndarray | None = None
+    average_se: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.selected_K)
@@ -203,10 +206,13 @@ class BootstrapResult:
         comp = _splice_components(parts, where)
         names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
                  "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")
+        average = (cat("average_se") if all(p.average_se is not None for p in parts)
+                   else None)
         return cls(
             config=parts[0].config, **{name: cat(name) for name in names},
             curve_lo=np.concatenate(lo), curve_hi=np.concatenate(hi),
             curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
+            average_se=average,
         )
 
     def curve_components(self, i: int) -> tuple[np.ndarray, np.ndarray] | None:
@@ -248,6 +254,7 @@ class BootstrapResult:
             curve_lo=np.concatenate(lo) if lo else np.empty(0),
             curve_hi=np.concatenate(hi) if hi else np.empty(0),
             curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
+            average_se=None if self.average_se is None else self.average_se[rows],
         )
 
     def covers(self, i: int) -> bool:
@@ -460,6 +467,13 @@ def bootstrap(
     frac_d = draw_a / np.maximum(np.nansum(draw_a, axis=2, keepdims=True), 1e-10)
     stats = {name: _nan_stats(x, ok, config.ci) for name, x in
              (("A", draw_a), ("n", draw_n), ("p", draw_p), ("mean", mean_d), ("frac", frac_d))}
+    # the population-weighted mean of every draw: its scatter is the error of the average the
+    # analysis takes from K = 2 where the populations are far apart; positions and shares trade
+    # off within a draw, so this is smaller than their errors combined (HISTORY 211)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        average_d = np.nansum(frac_d * mean_d, axis=2, keepdims=True)
+    average_se = _nan_stats(average_d, ok, config.ci)[0][:, 0]
 
     curve_lo, curve_hi, offsets, comp_lo, comp_hi, comp_offsets = _curve_band(
         data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale
@@ -467,6 +481,7 @@ def bootstrap(
     draws = BootstrapDraws(draw_a, draw_n, draw_p, ok) if config.keep_draws else None
     return BootstrapResult(
         config=config, selected_K=fit.selected_K.copy(), n_success=ok.sum(axis=1),
+        average_se=average_se,
         A_se=stats["A"][0], n_se=stats["n"][0], p_se=stats["p"][0], mean_se=stats["mean"][0],
         population_se=stats["frac"][0], A_ci=stats["A"][1], n_ci=stats["n"][1], p_ci=stats["p"][1],
         mean_ci=stats["mean"][1], population_ci=stats["frac"][1], curve_lo=curve_lo,
@@ -584,6 +599,7 @@ def _empty_like(part: BootstrapResult, n: int, k: int) -> BootstrapResult:
             "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")},
         curve_lo=np.empty(0), curve_hi=np.empty(0),
         curve_offsets=np.zeros(n + 1, dtype=np.int64), draws=draws, **comp,
+        average_se=None if part.average_se is None else np.full(n, np.nan),
     )
 
 

@@ -98,11 +98,15 @@ enough apart to be fitted well. On simulated data this brought the averages of s
 five times closer to the truth; on two real datasets it switched a fifth to a quarter of the peptides and
 times, changing their values by 0.02 fD in the median.
 
-One cost: the error of that average is taken from the two positions' errors as if they were
-independent, although within one fit the positions and the shares trade off. The error is
-therefore somewhat too large, and a small real difference between samples in such a peptide is
-more often missed (on simulated data, 7 to 16 percentage points fewer small differences
-found in the two-population regions under intensity-dependent noise). A bootstrap does not change this yet.
+The error of that average comes from the bootstrap, which measures how much the average itself
+varies over its resamples: within one fit the positions and the shares trade off, and the
+average is the part the spectrum pins down best. Without a bootstrap the error is the scatter
+of the replicates, as for any value. A bundle whose bootstrap was made before this (before
+*hxex* stored that error) gets an error built from the two positions' errors as if they were
+independent, which is too large: small real differences in such peptides are then missed more
+often (on simulated data 7 to 16 percentage points fewer); run its bootstrap again (`hxex
+resume`) to use the right error. On simulated data with the right error, these peptides' small
+differences were found as often as before the switch, with no more false ones.
 
 **Which numbers of populations to bootstrap.** The analysis uses each peptide's K = 1 and K = 2
 values, whatever number its spectra chose, so bootstrap both for every spectrum:

@@ -24,7 +24,10 @@ hundred times.
    replicates and charge states, are tested together: their improvements and their yardsticks
    are added up. A peptide has two populations at that time when the chance of seeing its
    improvement with only one population is below 1 in 100 (`significance = 0.01`), and the
-   second population holds at least 10 % of the molecules (`min_population = 0.10`).
+   second population holds at least 10 % of the molecules (`min_population = 0.10`). That
+   limit was checked on simulated data: up to 10 % it removes about half of the false second
+   populations and loses almost no real ones (under 1 percentage point); a higher limit starts
+   to discard real minor populations of 15 to 30 %.
 3. **Each residue.** Every residue is covered by several peptides. *hxex* combines their
    results into two numbers: how *strong* the evidence of the covering peptides is together,
    and how much of their *weight agrees* that there are two populations. Together they place

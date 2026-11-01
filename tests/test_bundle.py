@@ -127,7 +127,7 @@ def test_everything_round_trips_exactly(written, run):
         assert got_b.config == boot.config
         for name in ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
                      "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci", "curve_lo", "curve_hi",
-                     "curve_offsets"):
+                     "curve_offsets", "average_se"):
             assert_arrays_equal(getattr(got_b, name), getattr(boot, name))
         for name in ("A", "n", "p", "ok"):
             assert_arrays_equal(getattr(got_b.draws, name), getattr(boot.draws, name))

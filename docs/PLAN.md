@@ -777,6 +777,15 @@ Planned, not built:
    find_peak only. Open: a second dataset (a Q-TOF LC-MS run as mzML would test the measured
    m/z tolerance on another instrument) before `automatic` could become the default.
 
+17. **A detection limit for a second population** (owner, 2026-10-31: "something to consider in
+   the future if needed"; HISTORY 212). Per set, the smallest share (at a stated separation) or
+   the smallest separation (at a stated share) the population test could detect, by a power
+   calculation: simulate each spectrum with an added minor population, refit, and combine the
+   set's statistics as the test does. It would say what a "one population" result could have
+   missed, and could serve as an adaptive floor in place of the fixed `min_population`
+   (adaptive floors from the share's own error were tried and lose too many real populations,
+   HISTORY 212). Not started; evaluate against the noise simulation's known populations first.
+
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are not corrected for now

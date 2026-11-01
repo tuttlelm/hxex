@@ -126,6 +126,18 @@ def test_draws_are_consistent_with_the_summaries(small):
     assert b.draws is not None and BootstrapConfig().keep_draws is False
 
 
+def test_the_average_error_is_the_scatter_of_each_draws_weighted_mean(small):
+    """average_se (HISTORY 211): the standard error of the population-weighted mean deuteration
+    over the draws (each draw's shares times its positions), kept through select."""
+    _, _, b = small
+    d = b.draws
+    frac = d.A / np.nansum(d.A, axis=2, keepdims=True)
+    average = np.nansum(frac * d.n * d.p, axis=2)
+    np.testing.assert_allclose(b.average_se, np.nanstd(average, axis=1, ddof=1))
+    one = b.select([0])
+    assert one.average_se.shape == (1,) and one.average_se[0] == b.average_se[0]
+
+
 def test_without_draws_and_without_the_band():
     meas, res, _ = fitted([BIMODAL])
     b = bootstrap(meas, res, BootstrapConfig(**{**BOOT.to_dict(), "curve_band": False}))
