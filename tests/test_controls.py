@@ -430,6 +430,19 @@ def test_the_marked_controls_can_be_replaced_by_a_time_point():
         ControlConfig(undeut_marked=False)
 
 
+def test_a_run_without_undeuterated_controls_says_what_m0_was_taken_as(caplog):
+    """No undeuterated control anywhere: one warning that every series' undeuterated end is
+    0 D (as the fully deuterated case has its own); some series without one: an info line."""
+    with caplog.at_level("INFO"):
+        table([(0, 5, 3.0), (0, 1e6, 8.0), (1, 5, 3.0)])
+    assert "no undeuterated control in this run" in caplog.text
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        table([(0, 0, 0.1), (0, 5, 3.0), (1, 5, 3.0)])
+    assert "no undeuterated control in this run" not in caplog.text
+    assert "1 of 2 series have no undeuterated control" in caplog.text
+
+
 def test_the_median_fallback_without_an_accepted_control_is_the_buffer_fraction(caplog):
     # a control below its own data (rejected) and none
     rows = [(0, 0, 0.0), (0, 1e6, 1.0), (0, 5, 5.0), (1, 0, 0.0)]

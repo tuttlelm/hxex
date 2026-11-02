@@ -75,7 +75,8 @@ def scan_hxexpress(
     """List the entries for the ``.xlsx`` and ``.csv`` files in ``data_dir`` named in the
     HX-Express way (the suffix in any case).
 
-    Files whose names do not parse are skipped with a warning.
+    Files whose names do not parse are skipped with a warning, as is a sample of ``samples``
+    that no file name has.
     """
     entries = []
     for path in sorted(Path(data_dir).iterdir()):
@@ -87,6 +88,14 @@ def scan_hxexpress(
             entries.append(parse_hxexpress_filename(path.name))
         except ReadError as exc:
             log.warning("skipping %s: %s", path.name, exc)
+    if samples is not None:
+        names = sorted({e.sample for e in entries})
+        for missing in sorted(set(samples) - set(names)):
+            case = ("; names are case-sensitive" if any(n.lower() == missing.lower()
+                                                        for n in names) else "")
+            log.warning("samples: no file of sample %s in %s (the samples found, the start of "
+                        "the file names, are %s%s)", missing, data_dir,
+                        ", ".join(names) or "none", case)
     return sort_entries(filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
                                        peptide_region=peptide_region))
 

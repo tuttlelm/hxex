@@ -51,7 +51,11 @@ composition it adds). `hxex check` reports any peptide it cannot read, with the 
   `"0001-0010"` mean the same peptide, from residue 1 to residue 10.
 - `peptide_region = [1, 50]`: only the peptides that lie wholly within residues 1 to 50.
 
-With both `peptide_ranges` and `peptide_region`, a peptide that matches either is read.
+With both `peptide_ranges` and `peptide_region`, a peptide that matches either is read. Sample
+names are case-sensitive. A sample in `samples` that is not in the data is named in a warning,
+and when nothing is left to read (the folder holds no data of its format, or the filters match
+none of what was found) the read stops with an error that says which, listing the samples
+found or the residues the peptides found cover.
 
 **Tables (CSV).** The peptide table and the retention-time table are CSV files with a header
 row. The columns are separated by commas: a table saved with semicolons (Excel's setting in
@@ -185,12 +189,40 @@ SpecExport/
 ```
 
 - **A sample** is a folder with a FASTA file of the same name beside it (`WT/` and `WT.fasta`).
-  A folder without its FASTA, or a FASTA without its folder, is ignored. Only `.fasta` is looked
-  for. If the FASTA has several records, the last is used (with a warning).
+  A folder without its FASTA, or a FASTA without its folder, is not read, with a warning that
+  names it. The names are case-sensitive (`wt.fasta` does not pair with `WT/`), the FASTA sits
+  beside its folder, not inside it, and `data_dir` is the folder that holds the samples, not a
+  sample folder itself. Only `.fasta` is looked for. If the FASTA has several records, the last
+  is used (with a warning). A sequence written wholly in lower case is read in capitals.
 - **A peptide** is a folder named `START-END-...`. Its sequence is cut from the sample's FASTA by
-  the range; the sequence in the folder name is not used. Other folders (for example an
-  `analysis` folder) are ignored. A range outside the FASTA sequence is an error that names the
-  folder.
+  the range, and the sequence in the folder name is checked against the FASTA (the residues
+  only: modified residues and terminal groups are not compared). Other folders (for example an
+  `analysis` folder) are ignored.
+- **When the folders and the FASTA disagree.** HDExaminer names a mutant's folders from the
+  reference sequence, so a mutant's folders and its FASTA differ at the mutated residues: when
+  they differ at a few residues only (a third of those the folders cover at most), the FASTA's
+  residues are used and a warning names each residue (`D109H.fasta differs from the names of 5
+  of its peptide folders at residue 109 (D in the folder names, H in the FASTA) ...`): check
+  that these are the sample's substitutions. A difference that every sample shares is not a
+  mutation (a mutation is in its own sample only): the FASTA files and the sequence HDExaminer
+  searched against disagree there, and the warning says so, naming the residues, so that you
+  can check which is right. `hxex check` shows these warnings too. When they differ more, or a range lies outside the
+  FASTA, nothing is read: the error lists the folders, with the folder's sequence and the
+  FASTA's at those residues. The usual cause is a FASTA that holds more than the protein
+  HDExaminer numbered, such as an expression tag or a signal peptide, so that its numbering
+  differs; the error then gives the header line that fixes it (below). Otherwise the FASTA is
+  that of another construct: give each sample the FASTA its data were searched against.
+- **Numbering the FASTA.** The FASTA's first residue is residue 1, unless its header line gives
+  the numbers of its first and last residues, Pfam-style, after a `/` at the end of the name:
+
+  ```
+  >WT/-2-175 the construct with its tag
+  GSHMDIAIHHPWIRR...
+  ```
+
+  Here the tag `GSH` is residues -2 to 0, the protein's first residue `M` is residue 1, and the
+  sequence's last residue is 175. The two numbers must span as many residues as the sequence
+  has (here 178), or the FASTA is refused. The results keep the folders' residue numbers.
 - **Modifications.** A sequence cut from the FASTA has no modified residues or terminal groups.
   For modified peptides, [list the peptide folders in a table](#listing-the-files-in-a-table):
   its `peptide` column takes the full sequence, for example `Ac-PEPacKTIDE-NH2`, in place of
@@ -299,7 +331,16 @@ Other columns are kept but not used.
 
 The table replaces the search of the folder: only the files it lists are read, so list every
 peptide, modified or not. `samples` and `peptide_ranges` still select from it. `hxex check`
-reports any sequence it cannot read.
+reports any sequence it cannot read. A row listed twice (the same file, sample, peptide,
+residues, charge, and modification) is refused, naming both lines.
+
+For SpecExport and pooled folders, the table is read as it says: where its `peptide` or its
+`start_seq` and `end_seq` differ from the folder's name (`START-END-SEQUENCE`), the table's
+values are used, with a warning that names the folder (modified residues and terminal groups
+are not compared, so `Ac-PEPacKTIDE` agrees with a folder named `...-PEPKTIDE`; a mutant's
+sequence agrees when it is the one the sample's FASTA gives there). `hxex check` counts each
+such row as a problem, since a wrong sequence or a shifted range in the table changes the fit
+or the residue numbers without a word in the results.
 
 ---
 

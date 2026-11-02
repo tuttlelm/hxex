@@ -438,7 +438,9 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry):
     labels: dict[tuple[str, str], dict[int, str]] = {}
     for state in states(pep):
         seq = setting_of(sequences, state)
-        labels[state] = ({j + 1: lab for j, lab in enumerate(chem.parse_sequence(seq, registry))}
+        first = getattr(seq, "first", 1)  # a FASTA numbered by its header
+        labels[state] = ({j + first: lab
+                          for j, lab in enumerate(chem.parse_sequence(seq, registry))}
                          if seq else _known_residues(pep, state, registry))
     rates: dict[tuple, tuple | None] = {}
     skipped: dict[tuple, int] = {}
@@ -450,7 +452,7 @@ def _prepare(uptake, conditions, sequences, exclude_times, registry):
         spec = chem.parse_modification(mod)
         if spec.ion_type == "M" and not spec.hex:
             seq = setting_of(sequences, state)
-            last = bool(seq) and end == len(labels[state])
+            last = bool(seq) and end == getattr(seq, "first", 1) + len(labels[state]) - 1
             cond = setting_of(conditions, state)
             k, eq, approx = _peptide_exchange(peptide, start, cond,
                                               before=labels[state].get(start - 1),

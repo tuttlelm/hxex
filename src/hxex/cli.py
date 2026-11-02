@@ -307,10 +307,11 @@ def cmd_check(args) -> int:
     )
 
     project = _project(args, analysis_only=True)
-    for key, value in describe(project).items():
+    lines = describe(project)
+    problems: list[str] = _check_review_ids(project, lines)
+    for key, value in lines.items():
         _say(f"{key:14s} {value}")
     inp = project.input
-    problems: list[str] = []
     if inp is None:
         _say(f"{'input':14s} none (a project file for hxex analyse)")
     elif inp.spectra is not None:
@@ -323,17 +324,23 @@ def cmd_check(args) -> int:
                  f"{source.get('reader', 'unknown')}, project {source.get('project', 'unknown')}"
                  "); the input files are not read")
     elif inp.format in FOLDER_FORMATS:
+        from .io import ReadError
+        from .io.entries import filter_entries
+
+        before = len(problems)
         if inp.peptides is not None and not inp.peptides.is_file():
             problems.append(f"input.peptides {inp.peptides}: no such file")
         if not inp.data_dir.is_dir():
             problems.append(f"input.data_dir {inp.data_dir}: no such directory")
-        if not problems:
-            from .io.entries import filter_entries
-
+        if len(problems) == before:
             # as the read takes them: a peptide table's rows filtered by samples,
             # peptide_ranges and peptide_region (scan filters by itself)
-            found = folder_entries(project if not inp.samples else dataclasses.replace(
-                project, input=dataclasses.replace(inp, samples=None)))
+            try:
+                found = folder_entries(project if not inp.samples else dataclasses.replace(
+                    project, input=dataclasses.replace(inp, samples=None)))
+            except ReadError as exc:  # the FASTA against the folder names, a repeated row
+                problems.append(str(exc))
+        if len(problems) == before:
             entries = filter_entries(found, samples=inp.samples,
                                      peptide_ranges=inp.peptide_ranges,
                                      peptide_region=inp.peptide_region)
@@ -353,8 +360,10 @@ def cmd_check(args) -> int:
                 problems.append(f"no spectra of format {inp.format} in {inp.data_dir}"
                                 + _format_hint(project))
             problems += _check_peptides(project, entries)
-            if not problems and _has_rules(project):
-                from .io import ReadError, spectrum_index
+            problems += _check_folder_files(project, entries)
+            problems += _check_controls_present(project, roles)
+            if len(problems) == before and _has_rules(project):
+                from .io import spectrum_index
 
                 try:
                     index = spectrum_index(
@@ -367,13 +376,16 @@ def cmd_check(args) -> int:
                     problems += _check_exclusions(project, index, inp.format)
     else:
         rows: list[dict] = []
+        before = len(problems)
         problems += _check_scan_files(project, rows)
-        if not problems and _has_rules(project):
+        problems += _check_controls_present(project, None)
+        if len(problems) == before and _has_rules(project):
             from .exclusions import SpectrumIndex
 
             problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
+    problems += _check_ks(project)
     for n, line in enumerate(_output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")
     if problems:  # after the status block, and the verdict last, whatever the terminal buffers
@@ -517,6 +529,137 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
                 "each key matches some spectrum, but no spectrum matches them all")
             problems.append(f"{text} matches no spectrum: {why}")
     return problems
+
+
+def _choices_not_fitted(chosen, bundle: Path) -> str | None:
+    """Why ``hxex resume`` cannot bootstrap review-table choices (``chosen``) of a K the bundle
+    was not fitted with (the project file may try it now; only ``hxex run`` fits it), or
+    None."""
+    from .fit import FitConfig
+    from .io.bundle import bundle_manifest
+    from .review_table import choices_outside
+
+    held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("fit")
+    if not chosen or held is None:
+        return None
+    fitted = FitConfig.from_dict(held).k_values
+    if not (outside := choices_outside(chosen, fitted)):
+        return None
+    return (f"the review table chooses a K that {bundle} was not fitted with for "
+            f"{len(outside)} spectra ({', '.join(outside[:3])}); the bundle was fitted with "
+            f"K = {', '.join(map(str, fitted))} and resume fits no new K: run again with "
+            "hxex run --overwrite (the review table is applied to the new fits)")
+
+
+def _check_review_ids(project, lines: dict) -> list[str]:
+    """A problem when the project's review table names spectra the results in its bundle do not
+    have (``hxex report`` and the analysis would skip those rows), and the ``review table`` line
+    of ``lines`` counting only the rows they have; nothing without a review table or a bundle
+    (a table that cannot be read is :func:`hxex.config.describe`'s problem)."""
+    import dataclasses
+
+    from .io import open_bundle
+    from .io.bundle import bundle_manifest
+    from .review_table import read_review_table, table_choices
+
+    review, bundle = project.review, project.output.bundle
+    if (review is None or not review.table or bundle is None or not bundle.exists()
+            or bundle_manifest(bundle) is None):
+        return []
+    problems = [p for p in [_choices_not_fitted(table_choices(review), bundle)] if p]
+    sheet = read_review_table(review.table)
+    with open_bundle(bundle) as b:
+        known = set(map(str, b.spectrum_ids()))
+    keep = [i for i, sid in enumerate(sheet.spectrum_id) if sid in known]
+    unknown = [sid for sid in sheet.spectrum_id if sid not in known]
+    if not unknown:
+        return problems
+    matched = dataclasses.replace(sheet, **{name: tuple(getattr(sheet, name)[i] for i in keep)
+                                            for name in ("spectrum_id", "status", "k", "note")})
+    lines["review table"] = (f"{review.table}: {matched.describe()} (and {len(unknown)} row(s) "
+                             f"naming spectra {bundle.name} does not have)")
+    more = f", and {len(unknown) - 3} more" if len(unknown) > 3 else ""
+    return problems + [
+        f"[review] table {review.table}: {len(unknown)} row(s) name spectra the results in "
+        f"{bundle.name} do not have ({', '.join(unknown[:3])}{more}); those rows would be "
+        "skipped: copy each spectrum_id from spectra.csv, or delete the rows"]
+
+
+def _check_folder_files(project, entries) -> list[str]:
+    """One problem per entry of a SpecExport or pooled folder that the read would refuse from
+    its file names (no file of the entry's charge, two files for one point; no file is
+    opened), and one per peptide-table row whose sequence or residues differ from its folder's
+    name (the run uses the table's and warns)."""
+    inp = project.input
+    if inp.format == "hxexpress":
+        return []
+    from .io import ReadError
+    from .io.read import _input_path, folder_name_disagreements
+    from .io.specexport import specexport_points
+
+    problems = []
+    for entry in entries:
+        folder = inp.data_dir / _input_path(inp.format, entry)
+        if not folder.is_dir():
+            problems.append(f"{folder} not found (the peptide table's file column names the "
+                            "peptide folder)")
+            continue
+        try:
+            specexport_points(folder, entry)
+        except ReadError as exc:
+            problems.append(str(exc))
+    if inp.peptides is not None:
+        problems += folder_name_disagreements(entries, inp.format,
+                                              registry=project.run.registry,
+                                              data_dir=inp.data_dir)
+    return problems
+
+
+def _check_controls_present(project, roles: dict | None) -> list[str]:
+    """A problem when ``[run.controls]`` is on but the input has no control of either kind:
+    no control file counted (``roles``, SpecExport and pooled; None for the others), no run
+    with a role (mzML and Thermo), and neither ``undeut_at`` nor ``fulldeut_at`` set. The run
+    would take 0 D and d2o_fraction as every series' ends: no correction worth the name.
+    HX-Express sheets (their labels are inside) and stored spectra are not assessed."""
+    controls, inp = project.run.controls, project.input
+    if controls is None or inp.spectra is not None or inp.format == "hxexpress":
+        return []
+    if controls.undeut_at is not None or controls.fulldeut_at is not None:
+        return []
+    if roles is not None:
+        if any(roles.values()):
+            return []
+        where = "no Non- or Full- spectrum file was found"
+    else:
+        if any(run.role for run in inp.runs):
+            return []
+        where = "no [[input.runs]] has a role"
+    return [f"[run.controls] is on, but the input has no control: {where}, and neither "
+            "undeut_at nor fulldeut_at is set; every series would take 0 D and d2o_fraction "
+            "as its ends (no back-exchange correction). Mark the control runs (role = "
+            "\"undeut\" or \"fulldeut\"), set undeut_at / fulldeut_at, or delete "
+            "[run.controls]"]
+
+
+def _check_ks(project) -> list[str]:
+    """A problem when ``[analysis] ks`` sets a K that ``[run.fit]`` does not try (``hxex
+    analyse`` would refuse); left at its default, the analysis uses the Ks the run fits, which
+    is said in a line."""
+    from .analysis import AnalysisConfig
+
+    analysis = project.analysis
+    if analysis is None or project.input is None:
+        return []
+    tried = project.run.fit.k_values
+    missing = [k for k in analysis.ks if k not in tried]
+    if not missing:
+        return []
+    if analysis.ks == AnalysisConfig().ks:
+        _say(f"{'analysis':14s} K = {', '.join(str(k) for k in analysis.ks if k in tried)} "
+             f"(the run tries K up to {max(tried)})")
+        return []
+    return [f"[analysis] ks = {list(analysis.ks)}: K = {missing} are not tried by the run "
+            f"([run.fit] k_max = {project.run.fit.k_max}): remove them from ks, or raise k_max"]
 
 
 def _check_peptides(project, entries) -> list[str]:
@@ -818,6 +961,9 @@ def cmd_resume(args) -> int:
             return EXIT_ERROR
         chosen = table_choices(project.review)
         check_table_choices(chosen, project.run.fit.k_values)
+        if problem := _choices_not_fitted(chosen, project.output.bundle):
+            log.error("%s", problem)
+            return EXIT_ERROR
         if project.run.bootstrap is None and project.run.population_test is None and not chosen:
             log.error("%s has no [run.bootstrap] or [run.population_test] table: add one with "
                       "its settings", bundle)

@@ -9,6 +9,7 @@ files the same way by :mod:`hxex.io.thermo` (with Thermo's RawFileReader, not pa
 from .entries import (
     apply_retention_times,
     filter_entries,
+    read_fasta_numbered,
     read_fasta_records,
     read_fasta_sequence,
     read_peptide_table,
@@ -50,6 +51,7 @@ from .outputs import (
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
 from .read import (
     check_data_dir,
+    folder_name_disagreements,
     read_source,
     read_spectra,
     read_spectra_source,
@@ -121,6 +123,7 @@ __all__ = [
     "format_time",
     "TIME_SCALES",
     "match_candidates",
+    "read_fasta_numbered",
     "read_fasta_records",
     "read_fasta_sequence",
     "read_hxexpress_file",
@@ -133,6 +136,7 @@ __all__ = [
     "spectrum_index",
     "read_spectra_source",
     "check_data_dir",
+    "folder_name_disagreements",
     "scan",
     "scan_hxexpress",
     "scan_specexport",

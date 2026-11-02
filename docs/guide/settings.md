@@ -413,8 +413,8 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
-| `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed) |
-| `fasta` | text or table | unset | one sequence file for every sample, or a table of sample = file (a run's own under its name); unset: the sequence comes from the peptides |
+| `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |
+| `fasta` | text or table | unset | one sequence file for every sample, or a table of sample = file (a run's own under its name; a header >NAME/START-END numbers its first residue START); unset: the sequence comes from the peptides |
 | `coverage_times` | text or list | `"undeuterated"` | "undeuterated" (judged on the undeuterated controls), "all", or a list of times |
 | `redundancy` | text | `"peptides"` | what the redundancy counts: "peptides" or "spectra" |
 | `weight_exponent` | number | `1.0` | exponent of the residue averaging's weights |

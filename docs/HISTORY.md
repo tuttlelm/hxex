@@ -5863,3 +5863,54 @@ CSVs or mzML if wanted.
     that own those files: sequence errors naming a lowercase letter or a space (chem), the wrong
     charge message (reader), review-table row numbers (review_table.py), the filter lines before
     an analysis error (report/analysis.py).
+
+216. **Third audit, Session B: inputs checked against the data (2026-11-02; decisions in
+    docs/AUDIT_2026-11-01.md).** The data's own labels are now checked against the user's
+    inputs, and `hxex check` runs the validations the later commands would. SpecExport (High
+    3): each peptide folder's sequence (`START-END-SEQUENCE`) is compared with the residues cut
+    from its sample's FASTA (base residues: modX labels and termini aside). The FASTA's own
+    numbering comes from a Pfam-style header, `>NAME/START-END` (START may be zero or negative,
+    for a tag before residue 1; the span must equal the residue count), per the owner's
+    decision; `hxex.io.read_fasta_numbered` reads it, the read cuts by it, `[analysis] fasta`
+    honours it (residue letters padded or trimmed, protection factors numbered from it), and the
+    results keep the folders' numbers. A disagreement is refused, listing the folders; when every
+    folder's sequence is found at one numbering, the error gives the header line to write.
+    Found while checking real data, and built as an exception to the refusal (owner to
+    confirm): HDExaminer names a mutant's folders from the reference sequence, so in every
+    mutant sample of the tutorial data, the benchmark and the noisy set the folder names differ
+    from the FASTA at the mutated residues (1 to 3 of 100 to 200 covered). Folder names that
+    differ at no more than a third of the residues covered (and are as long as their ranges)
+    are taken as substitutions: the FASTA is used and a warning per sample names each residue
+    (owner: a warning, not an info line, so that -q does not hide it). A difference every
+    sample shares is worded apart, in one warning: not a mutation (that is in its own sample
+    only) but a disagreement between the FASTA files and the sequence HDExaminer searched
+    against. The strict rule would have refused every mutant sample; a shifted or wrong FASTA
+    differs at most residues. Not caught: a wrong mutant's FASTA beside a sample (the names are
+    the reference's either way). Side finding (private noisy set): in every sample the FASTA and
+    the one folder covering residues 69-95 have N and S swapped at residues 70 and 78; the
+    composition, m/z and amide count are the same either way, so the fits are unaffected (only
+    intrinsic rates or protection factors at those residues would be); the owner to check which
+    sequence is right. Peptide tables against folder names (Part 2 B4): a row whose sequence or
+    residues differ from its folder's name is used as written with a warning, and is a problem
+    in `hxex check`; a mutant's sequence agrees when it is what the sample's FASTA gives there.
+    Readers: an exact repeated row of a folder-format table is refused (10); `hxex check` finds a
+    table row whose charge has no files, naming the charges present (12); an empty read is
+    refused with its cause (samples matching none found, listed; filters matching none of the
+    peptides) instead of "every spectrum was dropped" (13); folders and FASTA files that do not
+    pair up are named (case, a FASTA inside its folder, data_dir pointing at a sample folder)
+    (14); a lower-case FASTA is read in capitals, and the fallback to cutting by letters warns
+    (15). Settings: `hxex analyse` on a run fitted with `k_max = 1` drops the unfitted K when
+    `[analysis] ks` is at its default (and the K = 2 values of a default `overlay`); an
+    explicit `ks` with an unfitted K is refused naming `k_max`, and `hxex check` says so (2);
+    `hxex resume` and `hxex check` refuse a review table choosing a K the bundle was not
+    fitted with, naming `hxex run --overwrite` (was "nothing to add") (3); `hxex check` fails a
+    `[run.controls]` table with no control in the data (no Non-/Full- file, no run role, no
+    `*_at` time) (6). Part 2: a run without any undeuterated control says once that m0 was taken
+    as 0 D (M5); `hxex check` matches the review table against the bundle (`Bundle.spectrum_ids`)
+    and counts rows naming spectra it does not have as a problem, leaving them out of the counts
+    (M7). Real-data scans: none of seven SpecExport and pooled datasets is refused; `hxex check`
+    of the tutorial project says `ok`. Guide: inputs.md (the folder check, numbering the FASTA,
+    pairing, repeated rows, table against folders), project-file.md, controls.md,
+    back-exchange-correction.md; settings.md regenerated. Tests: tests/test_input_checks.py (18)
+    and 6 more in test_cli, test_controls and test_analysis. Not done: `*.FASTA` with a capital
+    suffix is still not found; pooled folders get no pairing warnings.

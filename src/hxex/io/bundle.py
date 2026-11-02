@@ -1196,6 +1196,11 @@ class Bundle:
             )
         return self._cache["measurements"]
 
+    def spectrum_ids(self) -> np.ndarray:
+        """The ids of the measurements, read without the rest of the table (``hxex check``
+        matches a review table against them)."""
+        return _strs(self._table("measurements", columns=["spectrum_id"]), "spectrum_id")
+
     def fit(self) -> FitResult:
         if "fit" not in self._cache:
             t = self._table("fit")

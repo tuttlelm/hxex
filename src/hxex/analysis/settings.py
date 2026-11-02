@@ -55,6 +55,18 @@ OVERLAY_VALUES = {"low": (2, 1), "high": (2, 2), "avg": (1, 1), "pop_low": (2, 1
                   "pop_high": (2, 2)}
 
 
+class NumberedSequence(str):
+    """A protein sequence whose first residue is residue ``first`` (a FASTA numbered by its
+    header, ``>NAME/START-END``), not residue 1."""
+
+    first: int
+
+    def __new__(cls, sequence: str, first: int):
+        obj = super().__new__(cls, sequence)
+        obj.first = int(first)
+        return obj
+
+
 @dataclass(frozen=True)
 class AnalysisConfig:
     """What :func:`hxex.report.write_analysis` computes and draws (the ``[analysis]`` table).
@@ -67,7 +79,9 @@ class AnalysisConfig:
     - ``times`` (s, or text with a unit such as ``"5 min"``): the time points of the per-time
       figures (empty: all); ``exclude_times``: time points left out of the whole analysis
       (unreliable ones; the fits in the bundle are kept; the controls are not times).
-    - ``ks``: the fixed K values analysed (1 is needed: the average, and the choice).
+    - ``ks``: the fixed K values analysed (1 is needed: the average, and the choice). Left
+      at the default, :func:`hxex.report.write_analysis` drops a K the runs did not fit (and
+      the K = 2 values from a default ``overlay``); set, such a K is refused.
     - ``exclude_flagged``: leave out spectra with a quality flag.
     - ``filters``: which K=2 descriptions are kept (:class:`SpeciesFilters`; None: all).
     - ``controls``: control settings to change for the analysis (``{'d2o_fraction': 0.85}``;
@@ -250,12 +264,15 @@ class AnalysisConfig:
 
     def sequences(self, base: str | Path = ".") -> str | dict | None:
         """The protein sequence(s) of ``fasta`` (relative paths from ``base``): one, or by
-        sample with a run's own under its name (:func:`hxex.analysis.sample_setting`)."""
-        from ..io import read_fasta_sequence
+        sample with a run's own under its name (:func:`hxex.analysis.sample_setting`). A FASTA
+        numbered by its header (``>NAME/START-END``, :func:`hxex.io.read_fasta_numbered`)
+        gives a :class:`NumberedSequence`."""
+        from ..io import read_fasta_numbered
 
         def read(path: str) -> str:
             p = Path(path).expanduser()
-            return read_fasta_sequence(p if p.is_absolute() else Path(base) / p)
+            sequence, first = read_fasta_numbered(p if p.is_absolute() else Path(base) / p)
+            return sequence if first == 1 else NumberedSequence(sequence, first)
 
         if self.fasta is None:
             return None

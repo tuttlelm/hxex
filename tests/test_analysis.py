@@ -2340,3 +2340,25 @@ def test_two_populations_far_apart_take_their_average_from_k2():
     assert _k2_average_keys(near) == set()
     one = dict(cols, best_set_K=np.array([1, 1, 1]))
     assert _k2_average_keys(one) == set()
+
+
+def test_a_fasta_numbered_by_its_header_keeps_the_datas_residue_numbers(tmp_path):
+    """[analysis] fasta with a header >NAME/START-END numbers its first residue START (a tag
+    before residue 1, or a fragment of the protein), as the SpecExport read does: the residue
+    letters by number are padded or trimmed so that a peptide at residues 2-4 is checked
+    against residues 2-4 of the protein."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.analysis.residues import check_sequence, protein_letters
+    from hxex.chem import DEFAULT_MODIFICATIONS as reg
+
+    (tmp_path / "tag.fasta").write_text(">P/-2-5\nGGGMKVLA\n")  # GGG before residue 1
+    (tmp_path / "part.fasta").write_text(">P/3-6\nVLAE\n")  # residues 3 to 6 only
+    (tmp_path / "plain.fasta").write_text(">P\nMKVLA\n")
+    tag = AnalysisConfig(fasta="tag.fasta").sequences(tmp_path)
+    assert tag.first == -2 and protein_letters(tag, reg) == list("MKVLA")
+    part = AnalysisConfig(fasta="part.fasta").sequences(tmp_path)
+    assert protein_letters(part, reg) == ["", ""] + list("VLAE")
+    check_sequence("KVL", 2, protein_letters(tag, reg), reg)
+    check_sequence("VLA", 3, protein_letters(part, reg), reg)
+    plain = AnalysisConfig(fasta="plain.fasta").sequences(tmp_path)
+    assert type(plain) is str and protein_letters(plain, reg) == list("MKVLA")

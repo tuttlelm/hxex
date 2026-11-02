@@ -201,6 +201,29 @@ def _without_times(results, times):
     return RunSet(out, merge=results.merge) if isinstance(results, RunSet) else out[""]
 
 
+def _fitted_ks(config: AnalysisConfig, runs: Mapping) -> AnalysisConfig:
+    """``config`` with ``ks`` cut to the Ks every run fitted, when ``ks`` is left at its
+    default (a run fitted with ``[run.fit] k_max = 1`` is analysed at K = 1, and a default
+    ``overlay`` keeps only the K = 1 average); a K set in ``ks`` that a run did not fit is
+    refused, naming the settings."""
+    fitted = set.intersection(*(set(r.fit.fits) for r in runs.values()))
+    missing = [k for k in config.ks if k not in fitted]
+    if not missing:
+        return config
+    default = AnalysisConfig()
+    most = max(fitted) if fitted else 0
+    if config.ks != default.ks:
+        raise ValueError(f"[analysis] ks = {list(config.ks)}: K = {missing} were not fitted "
+                         f"(the run tried K up to {most}, [run.fit] k_max): leave ks out, "
+                         "remove those Ks, or run again with a larger k_max")
+    ks = tuple(k for k in config.ks if k in fitted)
+    overlay = (tuple(v for v in config.overlay if OVERLAY_VALUES[v][0] in ks)
+               if config.overlay == default.overlay else config.overlay)
+    log.info("the run tried K up to %d ([run.fit] k_max), so the analysis uses K = %s",
+             most, ", ".join(map(str, ks)))
+    return dataclasses.replace(config, ks=ks, overlay=overlay)
+
+
 def _fragment_series(results) -> tuple[set[int], bool]:
     """The series (``data_id``) read from fragment lists (the precursor M read with them
     included), and whether every series is one."""
@@ -592,6 +615,7 @@ def write_analysis(
             results = view(results)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
+    config = _fitted_ks(config, results.runs if isinstance(results, RunSet) else {"": results})
     rule = population_rule(config.populations, results)
     if config.populations is None:
         log.info("the number of populations: %s", "the population test of the sets"

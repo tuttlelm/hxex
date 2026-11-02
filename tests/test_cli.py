@@ -1675,3 +1675,97 @@ def test_resume_with_an_analysis_only_file_keeps_the_bundles_input_record(tmp_pa
     assert "[input]" in used and 'format = "mzml"' in used and "none (the run took" not in used
     with open_bundle(tmp_path / "out") as b:
         assert b.population_test() is not None
+
+
+def test_a_one_population_run_is_analysed_and_its_review_table_checked(tmp_path, capsys):
+    """A run fitted with k_max = 1 is analysed at K = 1 when [analysis] ks is left at its
+    default (and refused, naming the settings, when ks sets a K the run did not fit; hxex check
+    says so first). A review table is matched against the bundle by hxex check: rows naming
+    spectra the results do not have are a problem, and a K chosen that the bundle was not
+    fitted with is refused by resume with the way to fit it."""
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["analyse", str(path)]) == 0
+    assert "the analysis uses K = 1" in capsys.readouterr().err
+    text = path.read_text()
+    path.write_text(text + "\n[analysis]\nks = [1, 2, 3]\n")
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "[analysis] ks = [1, 2, 3]: K = [2, 3] are not tried by the run" in err
+    assert cli.main(["analyse", str(path), "--overwrite"]) == 1
+    assert "K = [2, 3] were not fitted" in capsys.readouterr().err
+    # the review table: one real spectrum, one that is not in the results
+    with open_bundle(tmp_path / "out") as b:
+        real = str(b.fit().spectrum_id[2])
+    (tmp_path / "review.csv").write_text(
+        f"spectrum_id,review_status,review_K,note\n{real},rejected,,\ncli:nothere,rejected,,\n")
+    path.write_text(text + '\n[review]\ntable = "review.csv"\n')
+    assert cli.main(["check", str(path)]) == 1
+    captured = capsys.readouterr()
+    assert "1 spectra: 1 rejected" in captured.out and "(and 1 row(s) naming" in captured.out
+    assert "1 row(s) name spectra the results in out do not have (cli:nothere)" in captured.err
+    # a K the project now tries but the bundle was not fitted with
+    (tmp_path / "review.csv").write_text(
+        f"spectrum_id,review_status,review_K,note\n{real},,2,\n")
+    path.write_text(text.replace("k_max = 1", "k_max = 2") + '\n[review]\ntable = "review.csv"\n')
+    assert cli.main(["check", str(path)]) == 1
+    assert "was not fitted with" in capsys.readouterr().err
+    assert cli.main(["resume", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "the bundle was fitted with K = 1" in err and "hxex run --overwrite" in err
+
+
+def test_check_finds_what_the_read_of_a_specexport_folder_would_refuse(tmp_path, capsys):
+    """hxex check opens no spectrum but finds what the run would refuse or get wrong: a table
+    row whose charge has no files, a [run.controls] table with no control in the data, and
+    a table row whose sequence differs from its folder's name."""
+    data = tmp_path / "d"
+    folder = data / "WT" / f"0001-0010-{PEPTIDE}"
+    folder.mkdir(parents=True)
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    for name in ("60s-1-z2.csv", "300s-1-z2.csv"):
+        (folder / name).write_text("")
+    (tmp_path / "peptides.csv").write_text(
+        "file,sample,peptide,start_seq,end_seq,charge\n"
+        f"0001-0010-{PEPTIDE},WT,{PEPTIDE},1,10,3\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    'peptides = "peptides.csv"\n[output]\nbundle = "out"\n'
+                    "[run.controls]\n")
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "no spectrum files for charge 3" in err
+    assert "[run.controls] is on, but the input has no control" in err
+    other = PEPTIDE[:-1] + ("G" if PEPTIDE[-1] != "G" else "A")
+    (tmp_path / "peptides.csv").write_text(
+        "file,sample,peptide,start_seq,end_seq,charge\n"
+        f"0001-0010-{PEPTIDE},WT,{other},1,10,2\n")
+    (folder / "Non-D-1-z2.csv").write_text("")
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "[run.controls] is on" not in err and "no spectrum files" not in err
+    assert "differs from the folder" in err
+
+
+def test_a_mutants_table_sequence_agrees_with_its_fasta_not_the_folder_name(tmp_path, capsys):
+    """HDExaminer names a mutant's folders from the reference sequence: a peptide-table row
+    giving the mutant's sequence (the one its FASTA gives there) is not a disagreement, one
+    that agrees with neither is."""
+    data = tmp_path / "d"
+    folder = data / "MUT" / f"0001-0010-{PEPTIDE}"
+    folder.mkdir(parents=True)
+    swap = "G" if PEPTIDE[4] != "G" else "A"
+    mutant = PEPTIDE[:4] + swap + PEPTIDE[5:]
+    (data / "MUT.fasta").write_text(f">MUT\n{mutant}\n")
+    for name in ("Non-D-1-z2.csv", "60s-1-z2.csv"):
+        (folder / name).write_text("")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    'peptides = "peptides.csv"\n[output]\nbundle = "out"\n')
+    for peptide, ok in ((mutant, True), (PEPTIDE[:-1] + swap, False)):
+        (tmp_path / "peptides.csv").write_text(
+            "file,sample,peptide,start_seq,end_seq,charge\n"
+            f"0001-0010-{PEPTIDE},MUT,{peptide},1,10,2\n")
+        assert cli.main(["check", str(path)]) == (0 if ok else 1)
+        assert ("differs from the folder" in capsys.readouterr().err) is not ok

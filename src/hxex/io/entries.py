@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..chem.modifications import SequenceError, split_termini
 from ..spectra import PeptideEntry, SpectrumSet, entry_rt, entry_rt_window
 from ._common import not_text_error, open_text
 from .errors import ReadError
@@ -97,7 +98,9 @@ def read_peptide_table(path: str | Path, *,
     and ``rt_end`` (the peptide's retention window in minutes: for mzML and Thermo runs with a
     fixed time, the scans summed for it and its fragments). The ``Index``
     column is ignored and any other column is kept in ``extra``. Values are text
-    (``peptide_range`` keeps its leading zeros).
+    (``peptide_range`` keeps its leading zeros). In a folder table (``required`` the default),
+    a row equal to an earlier one in every column of the entry is refused, naming both lines;
+    rows that differ in their modification only are two series.
     """
     path = Path(path)
     try:
@@ -108,11 +111,24 @@ def read_peptide_table(path: str | Path, *,
                 raise ReadError(f"{path}: missing column(s) {', '.join(missing)}; "
                                 f"{_columns_found(reader)}")
             entries = []
+            # a folder table's row listed twice (a copy in Excel) would read the same spectra
+            # as two series; rows that differ in their modification are two series by design
+            folder_table = tuple(required) == _REQUIRED
+            seen: dict[tuple, int] = {}
             for line, row in _rows(reader, path):
                 try:
                     entry = _entry_from_row(row)
                 except (ValueError, TypeError) as exc:
                     raise ReadError(f"{path} line {line}: {exc}") from exc
+                if folder_table:
+                    key = (entry.file, entry.sample, entry.peptide, entry.start_seq,
+                           entry.end_seq, entry.charge, entry.modification)
+                    if key in seen:
+                        raise ReadError(
+                            f"{path} line {line}: listed again (the same file, sample, "
+                            f"peptide, residues, charge and modification as line {seen[key]}); "
+                            "delete one of the two lines")
+                    seen[key] = line
                 m = _RANGE.fullmatch(entry.peptide_range)
                 if m is None or (int(m[1]), int(m[2])) != (entry.start_seq, entry.end_seq):
                     log.warning("%s line %d: peptide_range %r does not match start_seq %d and "
@@ -283,13 +299,69 @@ def read_fasta_records(path: str | Path) -> list[tuple[str, str]]:
 
 
 def read_fasta_sequence(path: str | Path) -> str:
-    """The sequence of a FASTA file. With several records the last is used, as pyHXExpress does."""
+    """The sequence of a FASTA file. With several records the last is used, as pyHXExpress does;
+    a sequence written wholly in lower case is upper-cased (plain FASTA is case-insensitive)."""
+    return _last_record(path)[1]
+
+
+# a Pfam-style record id, ``NAME/START-END``: the residue numbers of the sequence's first and
+# last residues (START may be zero or negative when a tag precedes residue 1)
+_NUMBERED_ID = re.compile(r"/(-?\d+)-(-?\d+)$")
+
+
+def read_fasta_numbered(path: str | Path) -> tuple[str, int]:
+    """The sequence of a FASTA file (as :func:`read_fasta_sequence`) and the residue number of
+    its first residue.
+
+    The number comes from a Pfam-style header, ``>NAME/START-END`` (the record id ends in
+    ``/START-END``): the first residue is residue START, so that a FASTA holding a tag or a
+    signal peptide can be numbered as the data were (START may be zero or negative). Without
+    such a header the first residue is residue 1. A header whose range does not have as many
+    residues as the sequence (counted as modX residues, terminal groups left out) is refused.
+    """
+    name, sequence = _last_record(path)
+    m = _NUMBERED_ID.search(name)
+    if m is None:
+        return sequence, 1
+    first, last = int(m[1]), int(m[2])
+    count = fasta_residue_count(sequence)
+    if last - first + 1 != count:
+        raise ReadError(
+            f"{path}: the header numbers the residues {first} to {last} ({last - first + 1} "
+            f"residues), but the sequence has {count}; correct the numbers after the '/' of "
+            f"the header line (>{fasta_name(name) or 'NAME'}/FIRST-LAST, the numbers of the "
+            "first and last residues)")
+    return sequence, first
+
+
+def fasta_name(record_id: str) -> str:
+    """A FASTA record id without its Pfam-style residue numbers (``/START-END``)."""
+    return _NUMBERED_ID.sub("", record_id)
+
+
+def fasta_residue_count(sequence: str) -> int:
+    """The residues of a FASTA sequence: its capital letters, terminal groups left out (a modX
+    label such as ``acK`` is one residue), so that no registry is needed to count them."""
+    try:
+        core = split_termini(sequence)[1]
+    except SequenceError:
+        core = sequence
+    return sum(c.isupper() for c in core)
+
+
+def _last_record(path: str | Path) -> tuple[str, str]:
+    """``(id, sequence)`` of a FASTA file's last record (a warning when it has several), its
+    sequence upper-cased when it is written wholly in lower case."""
     records = read_fasta_records(path)
     if not records:
         raise ReadError(f"{path}: no sequence found")
     if len(records) > 1:
         log.warning("%s has %d records; using the last", path, len(records))
-    return records[-1][1]
+    name, sequence = records[-1]
+    if sequence.islower():
+        log.info("%s: the sequence is in lower case; read in capitals", path)
+        sequence = sequence.upper()
+    return name, sequence
 
 
 def parse_range(text: str) -> tuple[int, int]:

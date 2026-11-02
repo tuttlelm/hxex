@@ -22,7 +22,11 @@ hxex analyse hxex.toml                       # post-fitting analysis ([analysis]
 2. **`hxex check`** reads the file, checks every value's type and range, and lists what would be
    read: entries and control files per sample for the folder formats, each run's role, time and
    matching scans for the scan formats, and the resolving power recorded in Thermo files. It
-   exits with an error if it finds a problem, and fits nothing.
+   checks what the later commands would refuse or get wrong without a word: folder names
+   against the FASTA and the peptide table, a table row whose charge has no spectrum files, a
+   `[run.controls]` table with no control in the data, `[analysis] ks` beyond `k_max`, and a
+   review table against the results already in the bundle. It exits with an error if it finds a
+   problem, and fits nothing.
 3. **`hxex run`** reads the spectra, picks them, fits each number of populations from `k_min` to
    `k_max` (`[run.fit]`, default 1 to 3) to each and chooses the best, runs the bootstrap and the
    controls if they are on, and writes the bundle and the CSV tables. Progress
@@ -269,7 +273,11 @@ bootstraps exactly those spectra (nothing else is redone), after which `hxex rep
 When the table is in place before a run, `hxex run` does this itself.
 
 **Checking it.** `hxex check hxex.toml` reads the table and says how many spectra it rejects,
-accepts, and gives a number of populations, or which row has a value it cannot read. `review.csv`
+accepts, and gives a number of populations, or which row has a value it cannot read. Once the
+bundle exists it also matches every row against the results: a `spectrum_id` the results do not
+have (a typing slip, or a table from an earlier run) is a problem, since `hxex report` and the
+analysis would skip that row, and so is a `review_K` the bundle was not fitted with (raising
+`k_max` takes effect only with `hxex run --overwrite`; `hxex resume` fits no new K). `review.csv`
 in the tables folder lists every decision in effect, with `source` saying where it came from
 (`review table`, `exclusion rule`, or `review`).
 

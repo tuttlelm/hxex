@@ -770,6 +770,15 @@ def fit_controls(
                      and "fd_kint" not in cols["flags"][i].split(";"))
     accepted = [cols["retention"][i] for i in candidates
                 if not set(cols["flags"][i].split(";")) & set(FD_REJECTED)]
+    corrected = [f.split(";") for f in cols["flags"] if "uncorrected" not in f.split(";")]
+    missing = [f for f in corrected if "m0_missing" in f]
+    if missing and len(missing) == len(corrected):
+        log.warning("no undeuterated control in this run, so the undeuterated end of every "
+                    "series is taken as 0 D beyond natural abundance (m0_missing): "
+                    "mean_corrected then assumes no undeuterated background")
+    elif missing:
+        log.info("%d of %d series have no undeuterated control: their undeuterated end is "
+                 "taken as 0 D (m0_missing)", len(missing), len(corrected))
     if pending and not accepted:
         log.warning("no fully deuterated control was accepted, so the %d series without one "
                     "take d2o_fraction (%g) as their retention: no back-exchange correction",

@@ -87,7 +87,9 @@ replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_
 **The undeuterated value**
 
 1. The series' own undeuterated control (its replicates averaged), if it is accepted.
-2. Otherwise 0, natural abundance (flagged `m0_missing` or `m0_high`).
+2. Otherwise 0, natural abundance (flagged `m0_missing` or `m0_high`). When no series of the
+   run has an undeuterated control, the run says so once: `mean_corrected` then assumes no
+   undeuterated background.
 
 **The fully deuterated value**
 

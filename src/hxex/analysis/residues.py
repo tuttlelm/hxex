@@ -167,6 +167,15 @@ def _sequence_letters(sequence: str, registry) -> list[str]:
     return [registry.base_residue(label) for label in chem.parse_sequence(sequence, registry)]
 
 
+def protein_letters(sequence: str, registry) -> list[str]:
+    """The base residues of a protein ``sequence`` by residue number (index 0 is residue 1):
+    a sequence numbered from another first residue (``first``, a FASTA numbered by its
+    header) is padded with '' (unknown) before it, or loses its residues before residue 1."""
+    letters = _sequence_letters(sequence, registry)
+    first = getattr(sequence, "first", 1)
+    return [""] * (first - 1) + letters if first >= 1 else letters[1 - first:]
+
+
 def check_sequence(peptide: str, start: int, letters: list[str], registry) -> None:
     """Raise :class:`SequenceMismatch` if ``peptide`` is not ``letters`` at ``start`` (base
     residues compared, so ``pS`` matches ``S``)."""
@@ -205,7 +214,7 @@ def _sequences(pep: SpeciesUptake, sequences, registry, base: Mapping | None = N
         sample = base.get(state, state[1]) if base else state[1]
         seq = sample_setting(sequences, state[0], sample)
         if seq is not None:
-            seq_of[state] = _sequence_letters(seq, registry)
+            seq_of[state] = protein_letters(seq, registry)
     return seq_of
 
 

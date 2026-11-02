@@ -168,9 +168,11 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "
                               "the fits are kept)",
-    "analysis.ks": "the fixed K values analysed (1 is needed)",
+    "analysis.ks": ("the fixed K values analysed (1 is needed); left at the default, a K "
+                    "the run did not fit is dropped (a k_max = 1 run is analysed at K = 1)"),
     "analysis.fasta": "one sequence file for every sample, or a table of sample = file (a "
-                      "run's own under its name); unset: the sequence comes from the peptides",
+                      "run's own under its name; a header >NAME/START-END numbers its first "
+                      "residue START); unset: the sequence comes from the peptides",
     "analysis.coverage_times": '"undeuterated" (judged on the undeuterated controls), "all", '
                                "or a list of times",
     "analysis.redundancy": 'what the redundancy counts: "peptides" or "spectra"',

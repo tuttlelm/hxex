@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
-from ..chem import DEFAULT_MODIFICATIONS, ModificationRegistry
+from ..chem import DEFAULT_MODIFICATIONS, ModificationRegistry, SequenceError, parse_sequence
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import PeptideEntry, Spectrum, SpectrumSet, check_role, qualify_spectrum_id
 from .entries import filter_entries
@@ -96,7 +97,10 @@ def read_spectra(
     ``peptide_ranges``, so ids stay stable when a filter is applied). The control labels
     (``undeut``/``Non`` and ``TD``/``Full``) give their spectra the role ``undeut`` or
     ``fulldeut`` and no time (:mod:`hxex.io.times`). Raises
-    :class:`~hxex.hooks.Cancelled` if ``cancel`` returns True between entries.
+    :class:`~hxex.hooks.Cancelled` if ``cancel`` returns True between entries. An empty read is
+    refused with its cause (:class:`ReadError`): no entries, or ``samples``, ``peptide_ranges``
+    or ``peptide_region`` matching none of them. A peptide table that contradicts the folder
+    names is read as it says, with a warning (:func:`folder_name_disagreements`).
 
     The spectra's ``source`` records the read (the format, ``project``, the data directory, the
     entries and the filters) and the identity of every entry's input (its
@@ -137,8 +141,8 @@ def spectrum_index(
     from .specexport import specexport_points
 
     root = Path(data_dir)
-    kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
-                          peptide_region=peptide_region)
+    kept = _to_read(entries, root, fmt, samples=samples, peptide_ranges=peptide_ranges,
+                    peptide_region=peptide_region)
     wanted = {id(e) for e in kept}
     shared = _shared_inputs(entries, fmt)
     rows = []
@@ -199,12 +203,116 @@ def _input_path(fmt: str, entry: PeptideEntry) -> str:
     return f"{entry.sample}/{entry.file}"
 
 
+_WHAT = {
+    "specexport": "samples (a SAMPLE.fasta beside a SAMPLE folder of START-END-SEQUENCE "
+                  "folders)",
+    "pooled": "peptide folders (START-END-SEQUENCE)",
+    "hxexpress": "HX-Express files (SAMPLE_START-END-PEPTIDE-zCHARGE-text.xlsx or .csv)",
+}
+_SAMPLES_ARE = {
+    "specexport": "the FASTA files with their folders",
+    "pooled": "the pooled folder's one sample label, [input] sample",
+    "hxexpress": "the start of the file names",
+}
+
+
+def _to_read(entries: Sequence[PeptideEntry], root: Path, fmt: str, *, samples,
+             peptide_ranges, peptide_region) -> list[PeptideEntry]:
+    """The entries the filters keep; a :class:`ReadError` with the cause when they keep none
+    (nothing found, or a filter that matches nothing), so that an empty read is never taken
+    for spectra that were all dropped."""
+    if not entries:
+        raise ReadError(f"nothing to read: no {_WHAT[fmt]} in {root} (or a peptide table "
+                        "without rows); check input.data_dir and input.format")
+    by_sample = filter_entries(entries, samples=samples)
+    if not by_sample:
+        found = sorted({e.sample for e in entries})
+        case = ("; names are case-sensitive"
+                if {s.lower() for s in samples} & {f.lower() for f in found} else "")
+        raise ReadError(f"nothing to read: samples = {list(samples)} matches none of the samples "
+                        f"found ({', '.join(repr(f) for f in found)}: {_SAMPLES_ARE[fmt]}"
+                        f"{case}); correct input.samples or leave it out to read every sample")
+    kept = filter_entries(by_sample, peptide_ranges=peptide_ranges,
+                          peptide_region=peptide_region)
+    if not kept:
+        ranges = sorted({(e.start_seq, e.end_seq) for e in by_sample})
+        given = " and ".join(
+            f"{name} = {value}" for name, value in (("peptide_ranges", peptide_ranges),
+                                                    ("peptide_region", peptide_region))
+            if value is not None)
+        raise ReadError(
+            f"nothing to read: {given} matches none of the {len(ranges)} peptides found "
+            f"(residues {min(r[0] for r in ranges)} to {max(r[1] for r in ranges)}); correct "
+            "it, or leave it out to read every peptide")
+    return kept
+
+
+_FOLDER_NAME = re.compile(r"(?P<start>\d+)-(?P<end>\d+)-(?P<seq>.+)")
+
+
+def folder_name_disagreements(entries: Sequence[PeptideEntry], fmt: str, *,
+                              registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
+                              data_dir: str | Path | None = None) -> list[str]:
+    """Where a peptide table contradicts the folder names of SpecExport and pooled data: an
+    entry whose folder (``file``, ``START-END-SEQUENCE``) names other residue numbers than its
+    ``start_seq`` and ``end_seq``, or other residues than its ``peptide`` (compared as base
+    residues: modX labels and terminal groups aside). One message per sample, folder and
+    peptide; none for HX-Express, or a folder or peptide whose sequence cannot be read (other
+    checks name that). The read uses the table's values: these are the warnings it logs.
+    Entries found by scanning always agree, since they come from the folder names.
+
+    With ``data_dir`` (SpecExport), a sequence that differs from the folder's name but is the
+    one the sample's FASTA gives there is not a disagreement: HDExaminer names a mutant's
+    folders from the reference sequence (:func:`~hxex.io.specexport.scan_specexport`)."""
+    if fmt not in ("specexport", "pooled"):
+        return []
+    cut: dict | None = None
+
+    def from_fasta(e: PeptideEntry) -> str | None:
+        nonlocal cut
+        if cut is None:
+            try:
+                found = scan_specexport(data_dir, registry=registry) if (
+                    data_dir is not None and fmt == "specexport") else []
+            except ReadError:  # a FASTA the scan refuses: no sequence to agree with
+                found = []
+            cut = {(f.sample, f.file): base(f.peptide) for f in found}
+        return cut.get((e.sample, e.file))
+
+    def base(text: str) -> str | None:
+        try:
+            return "".join(registry.base_residue(r) for r in parse_sequence(text, registry))
+        except SequenceError:
+            return None
+
+    out = []
+    seen = set()
+    for e in entries:
+        key = (e.sample, e.file, e.peptide, e.start_seq, e.end_seq)
+        m = _FOLDER_NAME.fullmatch(e.file)
+        if key in seen or m is None:
+            continue
+        seen.add(key)
+        where = _input_path(fmt, e)
+        start, end = int(m["start"]), int(m["end"])
+        if (start, end) != (e.start_seq, e.end_seq):
+            out.append(f"{where}: the peptide table's residues {e.start_seq}-{e.end_seq} differ "
+                       f"from the folder's name ({start}-{end}): the table's residues are used")
+        own, table = base(m["seq"]), base(e.peptide)
+        if own is not None and table is not None and own != table and table != from_fasta(e):
+            out.append(f"{where}: the peptide table's sequence {e.peptide} differs from the "
+                       "folder's name: the table's sequence is used")
+    return out
+
+
 def _read(entries, root: Path, fmt: str, *, project, samples,
           peptide_ranges, recorded_dir: str, record_paths: str, known: Mapping | None,
           peptide_region=None,
           on_change: str, progress, cancel) -> SpectrumSet:
-    kept = filter_entries(entries, samples=samples, peptide_ranges=peptide_ranges,
-                          peptide_region=peptide_region)
+    kept = _to_read(entries, root, fmt, samples=samples, peptide_ranges=peptide_ranges,
+                    peptide_region=peptide_region)
+    for text in folder_name_disagreements(kept, fmt, data_dir=root):
+        log.warning("%s", text)
     wanted = {id(e) for e in kept}
     jobs = [(i, e) for i, e in enumerate(entries) if id(e) in wanted]
     shared = _shared_inputs(entries, fmt)
