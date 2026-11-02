@@ -364,9 +364,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 pop_cmp = gated_by_peptides(
                     pop_cmp, comparisons["K=2 rank 1 (low D) population"], nterm_subtract=nterm)
             pop_cols = pop_cmp.columns()
-            if not k2_tested:
+            if not k2_tested:  # the same columns as the tested case, empty
                 pop_cols["z"] = np.full(len(pop_cmp), np.nan)
                 pop_cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
+                pop_cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
+                pop_cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
                 log.info("K=2 differences between samples (population share, positions) not "
                          "tested: no bootstrap at K=2 ([run.bootstrap] ks = [1, 2], or hxex "
                          "resume); residue_significance_K2 shows where the number of "

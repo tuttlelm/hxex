@@ -210,7 +210,8 @@ class AnalysisConfig:
         if self.format not in FORMATS:
             raise ValueError(f"format must be one of {', '.join(FORMATS)}")
         if not 0 < self.alpha < 1:
-            raise ValueError("alpha must be in (0, 1)")
+            raise ValueError(f"alpha = {self.alpha}: write the significance level as a number "
+                             "between 0 and 1 (5 % is 0.05)")
         if self.weight_exponent < 0:
             raise ValueError("weight_exponent must be >= 0")
         if self.merge is not None:

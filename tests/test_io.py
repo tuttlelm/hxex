@@ -66,8 +66,7 @@ def test_hxexpress_label_errors(label):
     "value, seconds",
     [(60, 60.0), (0.5, 0.5), ("60", 60.0), ("60 s", 60.0), ("5 min", 300.0), ("5min", 300.0),
      ("20 h", 72000.0), ("250 ms", 0.25), ("1.5 min", 90.0), ("1h21m", 4860.0),
-     ("10m30s", 630.0), ("2 hours", 7200.0), ("15 SEC", 15.0), (" 3 min ", 180.0),
-     ("-1", -1.0)],
+     ("10m30s", 630.0), ("2 hours", 7200.0), ("15 SEC", 15.0), (" 3 min ", 180.0)],
 )
 def test_parse_time(value, seconds):
     assert hio.parse_time(value) == seconds
@@ -80,11 +79,21 @@ def test_parse_time_takes_numpy_numbers():
 
 
 @pytest.mark.parametrize(
-    "value", ["", "5 x", "nan", "inf s", "abc min", "undeut", "5 min 3", True, None, [60]],
+    "value", ["", "5 x", "nan", "inf s", "abc min", "undeut", "5 min 3", True, None, [60],
+              "-1", -5, "-5 min"],
 )
 def test_parse_time_errors(value):
     with pytest.raises(hio.ReadError, match="setting"):
         hio.parse_time(value, "setting")
+
+
+def test_negative_times_only_when_asked():
+    """A time cannot be negative (a run at -5 s is a mistake), unless the caller allows it."""
+    for value in ("-5", -5, np.float64(-0.5)):
+        with pytest.raises(hio.ReadError, match="time: a time cannot be negative"):
+            hio.parse_time(value, "time")
+    assert hio.parse_time("-5", "time", allow_negative=True) == -5.0
+    assert hio.parse_time(-5, "time", allow_negative=True) == -5.0
 
 
 @pytest.mark.parametrize(
@@ -882,7 +891,8 @@ def test_a_pooled_folder_takes_the_projects_modified_residues(pooldir):
     write_spec(pooldir / "0050-0052-AmeKA" / "60s-1-z2.csv", [(100.0, 1.0)])
     project = project_from(tomllib.loads(
         f'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "{pooldir.as_posix()}"\n'
-        '[[run.registry.residues]]\nlabel = "meK"\nbase = "K"\ndelta = { C = 1, H = 2 }\n'),
+        'sample = "pool"\n[[run.registry.residues]]\nlabel = "meK"\nbase = "K"\n'
+        'delta = { C = 1, H = 2 }\n'),
         pooldir)
     assert "AmeKA" in {e.peptide for e in folder_entries(project)}
     assert "AmeKA" not in {e.peptide for e in hio.scan(pooldir, "pooled")}
@@ -982,3 +992,202 @@ def test_the_spectrum_index_is_what_the_read_makes(hxdir, specroot):
     write_spec(specroot / "S1" / "0002-0005-KVLA" / "1m-1-z2.csv", [(300.5, 7)])
     with pytest.raises(hio.ReadError, match="both replicate 1"):
         hio.spectrum_index(entries, specroot, "specexport", project="proj")
+
+
+# --- audit 2026-11-01, Session A: tables and folder readers say what is wrong ----------------
+
+HEAD = "file,sample,peptide,start_seq,end_seq,charge\n"
+
+
+def test_table_cells_with_spaces_are_stripped(tmp_path):
+    """A trailing space in a cell (invisible in Excel) is not part of the value (Readers 11)."""
+    p = tmp_path / "t.csv"
+    p.write_text("file,sample,peptide,start_seq,end_seq,charge,rt,run\n"
+                 " a.xlsx ,WT ,LKDVEHFKVSS , 1, 11 ,2 , 3.5 , D_60s.raw \n")
+    (e,) = hio.read_peptide_table(p)
+    assert (e.file, e.sample, e.peptide, e.charge) == ("a.xlsx", "WT", "LKDVEHFKVSS", 2)
+    assert e.extra == {"rt": "3.5", "run": "D_60s.raw"}
+    rt = tmp_path / "rt.csv"
+    rt.write_text("sample,peptide,rt\nWT , PEP , 4.5 \n")
+    assert hio.read_retention_times(rt) == [{"sample": "WT", "peptide": "PEP", "rt": 4.5}]
+
+
+def test_table_row_shapes_are_named(tmp_path, caplog):
+    """Rows of empty cells (Excel's ``,,,,,``, a blank line) are skipped and counted; a short
+    row, an empty number and a charge written ``2+`` or ``2,0`` name the line and the column
+    (Readers 16)."""
+    p = tmp_path / "t.csv"
+    p.write_text(HEAD + "a,S,AB,1,2,1\n,,,,,\n   \n\nb,S,CD,3,4,2\n")
+    with caplog.at_level(logging.INFO):
+        entries = hio.read_peptide_table(p)
+    assert [e.file for e in entries] == ["a", "b"]
+    assert "2 empty row(s) skipped" in caplog.text
+    for row, message in [
+        ("a,S,AB,1,2\n", "line 2: fewer cells than the header has columns"),
+        ("a,S,AB,1,2,1,extra\n", "line 2: more cells than the header has columns"),
+        ("a,S,AB,1,2,2+\n", r"line 2: charge must be a whole number, not '2\+'"),
+        ("a,S,AB,1,2,\"2,0\"\n", "line 2: charge must be a whole number, not '2,0': use a "
+                                "decimal point"),
+        ("a,S,AB,,2,2\n", "line 2: start_seq is empty"),
+        ("a,S,,1,2,2\n", "line 2: peptide is empty"),
+    ]:
+        p.write_text(HEAD + row)
+        with pytest.raises(hio.ReadError, match=message):
+            hio.read_peptide_table(p)
+    rt = tmp_path / "rt.csv"
+    for row, message in [("S,\n", "line 2: rt is empty"),
+                         ("S,abc\n", "line 2: rt 'abc' is not a number of minutes"),
+                         ("S\n", "line 2: fewer cells")]:
+        rt.write_text("peptide,rt\n" + row)
+        with pytest.raises(hio.ReadError, match=message):
+            hio.read_retention_times(rt)
+
+
+def test_table_headers_in_any_case_and_other_separators(tmp_path):
+    """Header names are matched without regard to case or surrounding spaces (Excel
+    capitalises); a table saved with semicolons or tabs is refused saying so, and a missing
+    column is reported with the columns found (Readers 17)."""
+    p = tmp_path / "t.csv"
+    p.write_text("File,Sample ,PEPTIDE, start_seq,End_Seq,Charge,Index,Notes\n"
+                 "a,S,AB,1,2,2,0,hello\n")
+    (e,) = hio.read_peptide_table(p)
+    assert (e.file, e.sample, e.peptide, e.charge) == ("a", "S", "AB", 2)
+    assert e.extra == {"Notes": "hello"}  # an unknown column keeps its name; Index is dropped
+    p.write_text("file;sample;peptide;start_seq;end_seq;charge\na;S;AB;1;2;2\n")
+    with pytest.raises(hio.ReadError, match="separated by ';' .*save the table as CSV with "
+                                            "commas"):
+        hio.read_peptide_table(p)
+    p.write_text("file\tsample\tpeptide\tstart_seq\tend_seq\tcharge\na\tS\tAB\t1\t2\t2\n")
+    with pytest.raises(hio.ReadError, match="separated by tabs"):
+        hio.read_peptide_table(p)
+    p.write_text("file,sample,peptide,start seq,end_seq,charge\na,S,AB,1,2,2\n")
+    with pytest.raises(hio.ReadError, match="missing column\\(s\\) start_seq; the columns found "
+                                            "are file, sample, peptide, start seq, end_seq, "
+                                            "charge"):
+        hio.read_peptide_table(p)
+    rt = tmp_path / "rt.csv"
+    rt.write_text("Peptide;RT\nAB;3.5\n")
+    with pytest.raises(hio.ReadError, match="separated by ';'"):
+        hio.read_retention_times(rt)
+    rt.write_text("Peptide,RT\nAB,3.5\n")
+    assert hio.read_retention_times(rt) == [{"peptide": "AB", "rt": 3.5}]
+    # a SpecExport file saved with semicolons says so too
+    pep = tmp_path / "S" / "0001-0002-AB"
+    pep.mkdir(parents=True)
+    (pep / "60s-1-z2.csv").write_text("300.5;7\n300.6;8\n")
+    entry = PeptideEntry("0001-0002-AB", "S", "AB", "0001-0002", 1, 2, 2)
+    with pytest.raises(hio.ReadError, match="line 1: expected two columns.*separated by ';'"):
+        hio.read_specexport_dir(pep, entry)
+
+
+def test_tables_that_are_not_utf8(tmp_path):
+    """A Latin-1 table says it is not UTF-8 and how to save it; Excel's "Unicode text"
+    (UTF-16 with a byte-order mark) is read (Readers 31)."""
+    p = tmp_path / "t.csv"
+    p.write_bytes(HEAD.encode() + b"a,S\xe9,AB,1,2,2\n")
+    with pytest.raises(hio.ReadError, match="t.csv: the file is not UTF-8 text .*CSV UTF-8"):
+        hio.read_peptide_table(p)
+    for encoding in ("utf-16", "utf-16-le", "utf-16-be"):
+        text = HEAD + "a,Sé,AB,1,2,2\n"
+        p.write_bytes(text.encode(encoding) if encoding == "utf-16"
+                      else (b"\xff\xfe" if encoding.endswith("le") else b"\xfe\xff")
+                      + text.encode(encoding))
+        (e,) = hio.read_peptide_table(p)
+        assert e.sample == "Sé", encoding
+    fasta = tmp_path / "s.fasta"
+    fasta.write_bytes(">s\nMKV\n".encode("utf-16"))
+    assert hio.read_fasta_sequence(fasta) == "MKV"
+    fasta.write_bytes(b">s\xe9\nMKV\n")
+    with pytest.raises(hio.ReadError, match="not UTF-8"):
+        hio.read_fasta_sequence(fasta)
+    hx = tmp_path / "A_0001-0005-ABCDE-z1-x.csv"
+    hx.write_bytes("undeut,\n500.1,2\n".encode("utf-16"))
+    assert len(hio.read_hxexpress_file(hx, ENTRY)) == 1
+
+
+def test_a_missing_data_dir_is_named(tmp_path):
+    """A data directory that does not exist (or is a file) is refused naming it, before any
+    file is opened, by the scan and the read of every folder format (Readers 25)."""
+    for fmt in ("hxexpress", "specexport", "pooled"):
+        with pytest.raises(hio.ReadError, match="input.data_dir .*nowhere: no such directory"):
+            hio.scan(tmp_path / "nowhere", fmt)
+        with pytest.raises(hio.ReadError, match="no such directory"):
+            hio.read_spectra([ENTRY], tmp_path / "nowhere", fmt, project="p")
+    (tmp_path / "afile").write_text("x")
+    with pytest.raises(hio.ReadError, match="a file, not a directory"):
+        hio.scan(tmp_path / "afile", "specexport")
+
+
+def test_record_paths_name_of_the_working_directory(tmp_path, monkeypatch, hxdir):
+    """``record_paths = "name"`` with ``data_dir = "."`` records the directory's real name,
+    not an empty string (Readers 30)."""
+    monkeypatch.chdir(hxdir)
+    s = hio.read_spectra(hio.scan(".", "hxexpress"), ".", "hxexpress", project="p",
+                         record_paths="name")
+    assert s.source["data_dir"] == hxdir.name
+
+
+@pytest.mark.parametrize("name, message", [
+    ("Angio_2_HI.xlsx", "expected at least five '-' separated fields, found 1"),
+    ("S1-8-PEP-z2-text.xlsx", "the first field 'S1' needs SAMPLE_START"),
+    ("S_Ac-8-PEP-z2-text.xlsx", "START 'Ac' is not a residue number"),
+    ("S_1-x-PEP-z2-text.xlsx", "END 'x' is not a residue number"),
+    ("S_1-8-PEP-2-text.xlsx", "the charge field '2' must be 'z' and the charge"),
+    ("S_1-8-PEP-z2-run-1.xlsx", "the last field \\(free text\\) cannot contain '-'"),
+    ("S_1-8--z2-text.xlsx", "the PEPTIDE field is empty"),
+])
+def test_hxexpress_filename_errors_name_the_field(name, message):
+    """Each field of an HX-Express file name is tested and the wrong one named (Readers 26)."""
+    with pytest.raises(hio.ReadError, match=f"file name {name!r}.*{message}"):
+        hio.parse_hxexpress_filename(name)
+
+
+@pytest.mark.parametrize("label", ["FD", "Full", "60s", 60, 60.0])
+def test_hxexpress_labels_name_the_control_words(label):
+    """A label that is not a time names the control words, so a user who wrote FD learns to
+    write TD (Readers 27)."""
+    with pytest.raises(hio.ReadError, match="controls are labelled undeut and TD"):
+        hio.parse_hxexpress_label(label)
+
+
+def test_a_note_below_the_data_of_a_sheet_is_ignored(tmp_path, caplog):
+    """Text under the columns (a remark at the bottom of the sheet) ends the data; text with
+    numbers below it is still refused (Readers 28)."""
+    header = ["undeut", None, "60 s", None]
+    body = [[500.1, 10.0, 500.1, 5.0], [500.2, 20.0, 500.2, 15.0], [None, None, None, None],
+            ["end of data", None, None, None], [None, "see notes", None, None]]
+    write_xlsx(tmp_path / "n.xlsx", header=header, body=body)
+    with caplog.at_level(logging.DEBUG, logger="hxex.io.hxexpress"):
+        sp = hio.read_hxexpress_file(tmp_path / "n.xlsx", ENTRY)
+    assert [len(s.mz) for s in sp] == [2, 2]
+    assert "the text from row 5 down is ignored" in caplog.text
+    write_hx_csv(tmp_path / "n.csv", header=header, body=body)
+    assert [len(s.mz) for s in hio.read_hxexpress_file(tmp_path / "n.csv", ENTRY)] == [2, 2]
+    inside = [[500.1, 10.0, 500.1, 5.0], ["oops", 20.0, 500.2, 15.0], [500.3, 30.0, None, None]]
+    write_xlsx(tmp_path / "i.xlsx", header=header, body=inside)
+    with pytest.raises(hio.ReadError, match="'oops' is not a number"):
+        hio.read_hxexpress_file(tmp_path / "i.xlsx", ENTRY)
+    first = [["text", None, None, None], [500.1, 10.0, 500.1, 5.0]]  # text above the numbers
+    write_xlsx(tmp_path / "f.xlsx", header=header, body=first)
+    with pytest.raises(hio.ReadError, match="'text' is not a number"):
+        hio.read_hxexpress_file(tmp_path / "f.xlsx", ENTRY)
+
+
+def test_data_on_a_second_worksheet_are_pointed_out(tmp_path):
+    """An empty first sheet with the data on another says so (Readers 29); an empty workbook
+    still says it is empty."""
+    wb = Workbook()
+    wb.active.title = "Cover"
+    data = wb.create_sheet("Data")
+    data.append(["undeut", None])
+    data.append([500.1, 10.0])
+    wb.save(tmp_path / "s.xlsx")
+    with pytest.raises(hio.ReadError, match="first worksheet is empty and 'Data' holds data"):
+        hio.read_hxexpress_file(tmp_path / "s.xlsx", ENTRY)
+    from hxex.io.hxexpress import read_hxexpress_header
+
+    with pytest.raises(hio.ReadError, match="first worksheet is empty"):
+        read_hxexpress_header(tmp_path / "s.xlsx")
+    Workbook().save(tmp_path / "e.xlsx")
+    with pytest.raises(hio.ReadError, match="no time labels|file is empty"):
+        hio.read_hxexpress_file(tmp_path / "e.xlsx", ENTRY)

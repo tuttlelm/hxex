@@ -115,10 +115,12 @@ def prepare_output(directory: str | Path, *, overwrite: bool = False,
     if overwrite:
         return None
     raise OutputError(
-        f"{directory} holds the {what} written before: --overwrite replaces them, "
-        f"--keep-previous moves the folder to {directory.name}.N first, or write to "
-        f"{elsewhere}. In a project file, [output] overwrite = true or keep_previous = true "
-        "does either for every command")
+        f"{directory} holds the {what} written before. To go on:\n"
+        f"  --overwrite replaces them;\n"
+        f"  --keep-previous moves the folder to {directory.name}.N first;\n"
+        f"  or write to {elsewhere}.\n"
+        "In a project file, [output] overwrite = true or keep_previous = true does either for "
+        "every command")
 
 
 @contextmanager

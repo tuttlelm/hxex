@@ -115,7 +115,8 @@ def select_series(results: Results, which: str | Sequence[int] = "flagged") -> l
     if not isinstance(which, str):
         missing = [int(d) for d in which if int(d) not in every]
         if missing:
-            raise KeyError(missing)
+            raise ValueError(f"[figures] series names data_id {missing} that the results do "
+                             "not have (series.csv lists them)")
         return [int(d) for d in which]
     if which == "all":
         return every
@@ -140,6 +141,7 @@ def series_figures(
     """The figures of one series asked for by ``config``, by kind (:func:`series_kinds`). A
     ``config.k`` that was not fitted raises ValueError."""
     _check_k(results, config)
+    _check_corrected(results, config)
     out: dict[str, Figure] = {}
     for kind in series_kinds(results, data_id, config):
         if kind == "spectra":
@@ -162,6 +164,14 @@ def _check_k(results: Results, config: PlotConfig) -> None:
     if config.k is not None and config.k not in results.fit.k_values:
         raise ValueError(f"K = {config.k} was not fitted (fitted: K = "
                          f"{', '.join(str(k) for k in results.fit.k_values)})")
+
+
+def _check_corrected(results: Results, config: PlotConfig) -> None:
+    """Refuse ``corrected = true`` for results without controls, before anything is drawn."""
+    if config.corrected and results.controls is None:
+        raise ValueError("[figures] corrected = true: the results have no controls (the run had "
+                         "no [run.controls] table), so there are no corrected values to draw; "
+                         "delete the setting, or set corrected = false")
 
 
 def uptake_axis(results: Results, config: PlotConfig) -> str | None:
@@ -210,7 +220,11 @@ def write_figures(
     file of your own."""
     directory = Path(directory)
     _check_k(results, config)
+    _check_corrected(results, config)
     chosen = select_series(results, config.series)
+    if not chosen and config.series == "flagged":
+        log.warning("no series is flagged, so only the overview is drawn: series = \"all\" in "
+                    "[figures] (or --series all) draws them all")
     stems = figure_stems(results, chosen)
     if chosen and "uptake" in config.kinds and config.x == "time" and \
             results.time_scale == "order":

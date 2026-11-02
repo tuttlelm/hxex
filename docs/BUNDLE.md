@@ -88,7 +88,7 @@ analyse` or `hxex report --figures` runs again. `hxex info` lists the generation
 `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
 `n_measurements`, `pending` (the stages the run has still to add: `["bootstrap"]` for the
 bundle a run writes as soon as its fits are done, which it rewrites complete at the end, or
-`hxex.run.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
+`hxex.pipeline.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
 when complete), `provenance` (null for a bundle written where there was none; for one that
 replaced a bundle: `replaced` (its path), `replaced_created` and `replaced_hxex` (its stamp
 and version), `at`, `moved_to` (the generation it was moved to with `keep_previous`, else

@@ -28,7 +28,7 @@ from ..chem.modifications import (
     split_termini,
 )
 from ..spectra import PeptideEntry, Spectrum, point_order_key, time_point
-from ._common import clean_spectrum, to_number
+from ._common import clean_spectrum, not_text_error, open_text, to_number
 from .entries import filter_entries, read_fasta_sequence, sort_entries
 from .errors import ReadError
 from .times import format_time, parse_specexport_token
@@ -113,18 +113,28 @@ def _read_two_columns(path: Path) -> tuple[list[float | None], list[float | None
     mz: list[float | None] = []
     intensity: list[float | None] = []
     try:
-        with path.open(newline="", encoding="utf-8-sig") as fh:
+        with open_text(path, newline="") as fh:
             for line, row in enumerate(csv.reader(fh), start=1):
                 if not row:
                     continue
                 if len(row) < 2:
-                    raise ReadError(f"{path}, line {line}: expected two columns")
+                    raise ReadError(f"{path}, line {line}: expected two columns (m/z and "
+                                    f"intensity, separated by a comma){_separator_hint(row[0])}")
                 where = f"{path.name} line {line}"
                 mz.append(to_number(row[0], where))
                 intensity.append(to_number(row[1], where))
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
     return mz, intensity
+
+
+def _separator_hint(cell: str) -> str:
+    """Why a line has one cell: its values are separated by semicolons or tabs."""
+    if ";" in cell:
+        return "; the values are separated by ';' (Excel's regional setting), not commas"
+    if "\t" in cell:
+        return "; the values are separated by tabs, not commas"
+    return ""
 
 
 def specexport_points(spec_dir: str | Path, entry: PeptideEntry) -> list[tuple]:

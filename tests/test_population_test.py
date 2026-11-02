@@ -13,6 +13,7 @@ from hxex.fit.result import KFit
 from hxex.io import open_bundle
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
+from hxex.pipeline import RunConfig, resume_bootstrap, run
 from hxex.population_test import (
     CHI_SQUARE,
     SCREENED,
@@ -24,7 +25,6 @@ from hxex.population_test import (
     population_test,
     steps_K,
 )
-from hxex.run import RunConfig, resume_bootstrap, run
 
 CPU = Backend("cpu", "float64")
 FIT = FitConfig(k_max=2, adam_steps=300, n_restarts=4, backend=CPU,

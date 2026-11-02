@@ -58,11 +58,11 @@ class BootstrapConfig:
     - ``keep_draws``: keep the individual fits of the selected K (``A``, ``n`` and ``p`` of
       every successful resample) in the bundle.
     - ``curve_band``: also compute the band of the total uptake curve.
-    - ``ks``: at which K a run bootstraps (:func:`hxex.run.run`; :func:`bootstrap` itself always
-      uses the selected K): ``'selected'`` (each measurement at its own selected K), ``'all'``
-      (also every K that was fitted, for every measurement, as a fixed-K analysis) or a list of K
-      values (those, for every measurement; the analysis' choice between one and two populations
-      wants 1 and 2). The cost grows with the number of Ks.
+    - ``ks``: at which K a run bootstraps (:func:`hxex.pipeline.run`; :func:`bootstrap` itself
+      always uses the selected K): ``'selected'`` (each measurement at its own selected K),
+      ``'all'`` (also every K that was fitted, for every measurement, as a fixed-K analysis) or a
+      list of K values (those, for every measurement; the analysis' choice between one and two
+      populations wants 1 and 2). The cost grows with the number of Ks.
     """
 
     n_boot: int = 20

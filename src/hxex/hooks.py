@@ -4,7 +4,7 @@
 A progress hook is called as ``progress(done, total)``. A cancel hook is polled between units of
 work and returns True to stop; the operation then raises :class:`Cancelled`.
 
-An operation made of stages (such as :func:`hxex.run.run`: pick, fit, bootstrap) also names
+An operation made of stages (such as :func:`hxex.pipeline.run`: pick, fit, bootstrap) also names
 them: :func:`start_stage` tells a hook that has a ``start_stage(name, start, end)`` method that
 the units from ``start`` to ``end`` are that stage (plain functions are not told).
 :class:`ProgressLog` is such a hook: it logs the stage, how far it is and the time it has left.

@@ -135,13 +135,14 @@ wrong, it says what and where, for example:
 
 ```
 input.data_dir C:/Users/me/Data/SpecExprt: no such directory
-1 problem(s) found
+not ok: 1 problem(s) found (listed above)
 ```
 
 Here the folder name is misspelt (`SpecExprt` for `SpecExport`). The start of the message,
 `input.data_dir`, says where to look: the `data_dir` line under `[input]` in `hxex.toml`. Correct
-the folder name there, save the file, and run `hxex check hxex.toml` again. Repeat until it says
-`ok`.
+the folder name there, save the file, and run `hxex check hxex.toml` again. Repeat until the
+last line says `ok`. (The problems are printed after the summary of the settings, and the last
+line is always the verdict, `ok` or `not ok`.)
 
 ## Step 6: run it
 
@@ -152,7 +153,7 @@ hxex run hxex.toml
 *hxex* reads every spectrum, fits it, and writes the results. It prints a line every half minute
 to show how far it has got. A few hundred peptides take minutes to an hour, depending on the
 computer and the settings. To stop it, press Ctrl + C. (Once the fits are done and the
-bootstrap has begun, they are kept, and `hxex resume results` finishes the run later; stopped
+bootstrap has begun, they are kept, and `hxex resume hxex.toml` finishes the run later; stopped
 earlier, the run starts again from the beginning.)
 
 When it has finished, the project folder holds:

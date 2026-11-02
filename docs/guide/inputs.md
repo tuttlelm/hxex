@@ -29,7 +29,7 @@ full list of `[input]` keys is in the [settings reference](settings.md#input).
 **Times** are stored in seconds. The way they are written depends on where they come from, and
 the formats differ (see each format below). In the project file, a time can be a number of
 seconds or text with a unit: `60`, `"60 s"`, `"5 min"`, `"20 h"` (`s`, `sec`, `m`, `min`, `h`,
-`hr`, `ms` and their long forms).
+`hr`, `ms` and their long forms). A negative time is refused.
 
 **Controls** are identified by a *role*, not by a time: `undeut` (the undeuterated control) or
 `fulldeut` (the fully deuterated control). The folder formats take the role from a label
@@ -52,6 +52,16 @@ composition it adds). `hxex check` reports any peptide it cannot read, with the 
 - `peptide_region = [1, 50]`: only the peptides that lie wholly within residues 1 to 50.
 
 With both `peptide_ranges` and `peptide_region`, a peptide that matches either is read.
+
+**Tables (CSV).** The peptide table and the retention-time table are CSV files with a header
+row. The columns are separated by commas: a table saved with semicolons (Excel's setting in
+some countries) or tabs is refused, saying so; save it again as CSV with commas. Column names
+are matched whatever their case or surrounding spaces (`Peptide`, `charge `), so Excel's
+capitals do no harm; a missing column is named together with the columns found. Spaces at the
+ends of a cell are ignored, rows of empty cells are skipped, and a row with fewer or more cells
+than the header has columns, an empty number, or a charge written `2+` or `2,0` is refused
+naming the line and the column. The file must be UTF-8 (Excel's **CSV UTF-8**) or Excel's
+**Unicode text** (UTF-16); any other encoding is refused with that advice.
 
 **Retention times** (minutes) can be given for any format in a separate table,
 `[input] retention_times = "rt.csv"`: a column `rt` and any of `sample`, `start_seq` and `end_seq`
@@ -123,9 +133,12 @@ names, [list the files in a table](#listing-the-files-in-a-table).
 
 ### Contents
 
-Only the first worksheet is read, with formulas read as their saved values. Row 1 holds a label
-above each spectrum. The spectrum is the label's column (m/z) and the next column (intensity),
-from row 2 down. Empty cells are skipped.
+Only the first worksheet is read, with formulas read as their saved values (a workbook whose
+first sheet is empty while another holds the data is refused, saying so: move the data to the
+first sheet). Row 1 holds a label above each spectrum. The spectrum is the label's column
+(m/z) and the next column (intensity), from row 2 down. Empty cells are skipped, and a note
+written below the data (text with no numbers under it) ends the spectrum; text between the
+numbers is refused.
 
 | Label | Meaning |
 |---|---|
@@ -135,7 +148,8 @@ from row 2 down. Empty cells are skipped.
 | `1 min`, `1.2 min` | two replicates of 1 min (see below) |
 
 Units are `ms`, `s`, `sec`, `m`, `min`, `h`, `hr` and their long forms. The space is needed:
-`60s` is refused. `FD` and `Full` are not control labels here.
+`60s` is refused. `FD` and `Full` are not control labels here; a label that is neither a time
+nor a control word is refused with the control words named.
 
 **Replicates.** Spectra with the same label are numbered as replicates in column order. As in
 HX-Express, digits after the decimal point of a time of 1 or more mark a replicate, not a
@@ -255,8 +269,9 @@ peptides = "files.csv"          # the table of the files
 ```
 
 The table is a CSV file, with one row per peptide and charge. Excel can save one (**File > Save
-As**, then **CSV**); check that the columns are separated by commas, as in the example below,
-since in some countries Excel uses semicolons instead.
+As**, then **CSV UTF-8**); the columns are separated by commas, as in the example below (a
+table saved with semicolons, as Excel does in some countries, is refused saying so; see
+[Tables](#things-every-format-shares) above for the other rules).
 
 ```
 file,sample,peptide,start_seq,end_seq,charge
@@ -315,9 +330,17 @@ and reads only those stretches of the matching scans. It needs two things: a **p
 that says what to look for, and one **`[[input.runs]]`** table per file that says what the file
 is.
 
+An indexed mzML file is read through its index, which is fast. A file changed after it was
+converted (line endings converted by an editor or by git, a text-mode transfer, an edit by
+hand) has an index that no longer matches its contents: *hxex* then reads through the whole file
+instead, with a warning naming it; converting the file again makes it fast again. A scan whose
+start time or MS level is empty is refused naming the scan: the file is damaged, so convert it
+again.
+
 ### The peptide table
 
-A CSV file (UTF-8). Required columns:
+A CSV file (UTF-8; the rules under [Tables](#things-every-format-shares) apply). Required
+columns:
 
 | Column | Meaning |
 |---|---|
@@ -358,7 +381,7 @@ own `[[input.runs]]` table, which names the file and says what was measured in i
 | `rep` | replicate number. Left out, the runs of one sample at one time (or one control role, or the kinetics runs of a sample) are numbered 1, 2, ... in the order they are listed. The same `rep` given to two runs of one sample at one time or control role is refused; kinetics runs may share one (a time course split over files) |
 | `time` | the labelling time of the whole file (`"60 s"`, `"5 min"`) |
 | `role` | `"undeut"` or `"fulldeut"`: a control run |
-| `time_offset`, `usable_from` | for kinetics runs (below) |
+| `time_offset`, `usable_from` | for kinetics runs (below); `time_offset` is refused on a run with a `time` or a `role` (it would be ignored there) |
 | `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes` | replace one scan condition of every target for this run only (`false` removes it) |
 
 What a run holds depends on `time` and `role`:

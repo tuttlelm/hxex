@@ -43,6 +43,9 @@ def scan(
     the label given to its entries (the other formats take sample names from the data), and
     ``registry`` the modified residues its folder names may hold.
     """
+    if fmt not in ("hxexpress", "specexport", "pooled"):
+        raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
+    check_data_dir(data_dir)
     if fmt == "hxexpress":
         return scan_hxexpress(data_dir, samples=samples, peptide_ranges=peptide_ranges,
                               peptide_region=peptide_region)
@@ -54,6 +57,18 @@ def scan(
                                       peptide_region=peptide_region,
                                       registry=registry)
     raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
+
+
+def check_data_dir(data_dir: str | Path) -> Path:
+    """``data_dir`` as a path; a :class:`ReadError` naming it when it is not a directory
+    (``hxex check`` and the folder formats' scan and read say so before opening anything)."""
+    root = Path(data_dir)
+    if root.is_file():
+        raise ReadError(f"input.data_dir {root}: a file, not a directory (give the folder "
+                        "that holds the data)")
+    if not root.is_dir():
+        raise ReadError(f"input.data_dir {root}: no such directory")
+    return root
 
 
 PATH_MODES = ("path", "name")
@@ -95,10 +110,10 @@ def read_spectra(
     if record_paths not in PATH_MODES:
         raise ValueError(f"record_paths must be one of {', '.join(PATH_MODES)}")
     qualify_spectrum_id(project, "")  # validate the name before any reading
-    root = Path(data_dir)
+    root = check_data_dir(data_dir)
     return _read(entries, root, fmt, project=project, samples=samples,
                  peptide_ranges=peptide_ranges, peptide_region=peptide_region,
-                 recorded_dir=str(root) if record_paths == "path" else root.name,
+                 recorded_dir=str(root) if record_paths == "path" else root.resolve().name,
                  record_paths=record_paths, known=None, on_change="warn", progress=progress,
                  cancel=cancel)
 

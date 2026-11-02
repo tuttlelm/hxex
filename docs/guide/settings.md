@@ -188,7 +188,7 @@ Where results go. The bundle and the folders named after it (<bundle>_tables, <b
 
 ## `[run]`
 
-Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The bootstrap, the population test, and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap, run.population_test, or run.controls table below to use it; a stage's "name = false" turns it off.
+Run settings (hxex.pipeline.RunConfig); times are in s, as the measurement times. The bootstrap, the population test, and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap, run.population_test, or run.controls table below to use it; a stage's "name = false" turns it off.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

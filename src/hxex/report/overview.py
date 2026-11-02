@@ -275,11 +275,14 @@ def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 
     n_both = 0 if g is None else int(g["count"].sum())
     a2.set_title(f"fit against intensity ({n_both:,} spectra with both); colour: share\n"
                  f"flagged; sparse cells as points (grey: kept, open: flagged)", fontsize=9)
-    labels = [s or "all" for s in d["samples"]]
+    import textwrap
+
+    labels = [textwrap.shorten(s or "all", 24, placeholder="...") for s in d["samples"]]
     a3.bar(labels, 100 * d["flagged_share"], color=FIT_COLOR, gid="samples")
     a3.set_ylabel("flagged spectra (%)")
     a3.set_title("flagged share per sample", fontsize=9)
-    a3.tick_params(axis="x", rotation=45 if len(labels) > 6 else 0)
+    a3.tick_params(axis="x", rotation=45 if len(labels) > 6 or any(
+        len(s) > 10 for s in labels) else 0)
     fig.tight_layout()
     return fig
 
@@ -293,19 +296,22 @@ def k_selection_data(results: Results) -> dict:
     fit = results.fit
     ks = tuple(fit.k_values)
     eff = results.effective_K
+    kept = np.asarray(results.review_status) != "rejected"  # the analysis uses only these
     points = time_point(fit.time, fit.role)
     order = {}
     for i, key in enumerate(points):  # the undeuterated control first, the fully deuterated last
         order.setdefault(key, (point_order_key(float(fit.time[i]), str(fit.role[i])), i))
     keys = sorted(order, key=lambda key: order[key][0])
     times = np.array([float(fit.time[order[key][1]]) for key in keys])
-    share = np.array([[np.mean(eff[points == key] == k) for k in ks] for key in keys])
+    share = np.array([[np.mean(eff[(points == key) & kept] == k) if (
+        (points == key) & kept).any() else 0.0 for k in ks] for key in keys])
     labels = [_control_role(fit.role[order[key][1]])
               or format_time(fit.time[order[key][1]], results.time_scale) for key in keys]
     return {
         "k_values": ks,
         "selected": np.array([int((fit.selected_K == k).sum()) for k in ks]),
-        "effective": np.array([int((eff == k).sum()) for k in ks]),
+        "effective": np.array([int(((eff == k) & kept).sum()) for k in ks]),
+        "rejected": int((~kept).sum()),
         "times": times, "time_labels": labels, "share": share,
         "reviewed": bool(results.review is not None and len(results.review)),
     }
@@ -325,7 +331,8 @@ def plot_k_selection(results: Results) -> Figure:
     if d["reviewed"]:
         a1.bar(x + width / 2, d["effective"], width, color="none",
                edgecolor=[COLORS[i % len(COLORS)] for i in range(len(x))], hatch="//",
-               label="after review", gid="effective")
+               label="after review" + (f" ({d['rejected']} rejected left out)"
+                                       if d["rejected"] else ""), gid="effective")
         a1.legend(fontsize=7, frameon=False)
     for xi, n in zip(x, d["selected"], strict=True):
         a1.text(xi, n, f"{n:,}", ha="center", va="bottom", fontsize=8)
@@ -341,7 +348,8 @@ def plot_k_selection(results: Results) -> Figure:
     a2.set_xticks(pos, d["time_labels"], rotation=45 if len(pos) > 8 else 0, fontsize=8)
     a2.set_xlabel("time point")
     a2.set_ylabel("spectra (%)")
-    a2.set_title("K in effect at each time point", fontsize=9)
+    a2.set_title("K in effect at each time point"
+                 + (" (rejected spectra left out)" if d["rejected"] else ""), fontsize=9)
     a2.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     fig.tight_layout()
     return fig

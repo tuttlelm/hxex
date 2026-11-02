@@ -5828,3 +5828,38 @@ CSVs or mzML if wanted.
     with the test (3,874 spectra: K, test, fits, bootstrap errors and quality flags bit-equal;
     260 spectra changed K, all taken from the fixed-K bootstrap). Times: run with the test
     1,383 s; run without it 406 s, then the resume 968 s.
+
+215. **Third audit, Session A: messages and crashes (audit of 2026-11-01, Sessions A to F agreed
+    with the owner on 2026-11-02; decisions in docs/AUDIT_2026-11-01.md).** The audit (seven code
+    reviewers and two new-user evaluators) found 6 High, 44 Medium and 81 Low items and, as a new
+    user, 7 Blocking and 19 Major pain points; no Critical, nothing regressed from the earlier
+    audits. Session A built the message and crash items. Settings: a mistyped `[run.SECTION]`
+    heading or a top-level table written as `false` was a Python traceback; both are now
+    refused in words, with the closest name suggested for any unknown key or table (High 1, 2).
+    `_dispatch` catches every remaining exception once ("hxex stopped with an internal error
+    (TYPE: text); please report it ... run with -v"), so a user never sees a traceback; the
+    specific cases keep their own sentences: a bundle missing a manifest-listed file (was a bare
+    path), a project file that is not UTF-8, `[output] tables` or `[analysis] out` resolving to
+    the bundle folder (refused), an existing non-bundle folder (refused first), `[figures]
+    corrected` without controls and `[figures] series` naming an unknown data_id (were
+    KeyErrors). `hxex check` prints its problems after the status block and ends with `ok` or
+    `not ok: N problem(s) found`; commands given the wrong kind of file or run too early name the
+    right step; range errors are in words; the 19 Low items of the settings list and 10 of the
+    report list done as the audit recommends. Readers: a stale index in an indexed mzML falls
+    back to reading the file through with a warning (was an XML traceback); table cells are
+    stripped and header names are case-insensitive for the known columns; empty rows are
+    skipped; row-shape mistakes name the column and line; a semicolon- or tab-separated table is
+    refused with the cause; UTF-16 tables read; negative times refused everywhere; the readers'
+    Low list (Windows run names on POSIX, activation with spaces, summed scans without a type,
+    `time_offset` on a fixed run, a missing data_dir named, HX-Express file-name and label
+    messages pointing at `undeut`/`TD`, notes under the data ignored, a second worksheet pointed
+    out, `record_paths = "name"` with `data_dir = "."`, damaged scan times named, Thermo
+    trailer values written as decimals); a pooled project with no `[input] sample` refused.
+    The Python entry point: the module `hxex.run` is renamed `hxex.pipeline`, so `hxex.run(...)`
+    is always the function (the submodule used to shadow it once `load_project` had imported it,
+    and the guide's first snippet failed; Part 2 B2, option (a)). Guide: inputs.md ("Tables
+    (CSV)", HX-Express contents, stale indexes), first-project.md (the verdict line), outputs.md,
+    commands.md regenerated. 52 tests added. Still open from Session A's list, for the sessions
+    that own those files: sequence errors naming a lowercase letter or a space (chem), the wrong
+    charge message (reader), review-table row numbers (review_table.py), the filter lines before
+    an analysis error (report/analysis.py).

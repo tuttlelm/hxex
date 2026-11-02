@@ -76,12 +76,18 @@ class FitConfig:
     backend: Backend = field(default_factory=Backend)
 
     def __post_init__(self):
-        if self.k_min < 1 or self.k_max < self.k_min:
-            raise ValueError("need 1 <= k_min <= k_max")
+        if self.k_min < 1:
+            raise ValueError(f"k_min = {self.k_min}: k_min is the fewest populations tried, "
+                             "at least 1")
+        if self.k_max < self.k_min:
+            raise ValueError(f"k_min ({self.k_min}) is larger than k_max ({self.k_max}): "
+                             "k_min is the fewest populations tried and k_max the most")
         if self.criterion not in CRITERIA:
             raise ValueError(f"criterion must be one of {CRITERIA}")
         if not 0.0 <= self.min_population < 1.0:
-            raise ValueError("min_population must be in [0, 1)")
+            raise ValueError(f"min_population = {self.min_population}: write the smallest "
+                             "population share as a number from 0 up to (not including) 1 "
+                             "(5 % is 0.05)")
         if self.n_restarts < 1:
             raise ValueError("n_restarts must be at least 1")
         if self.k1_adam_steps is not None and self.k1_adam_steps < 0:

@@ -1086,7 +1086,7 @@ def run(
     except BaseException:
         if checkpoint:
             log.warning("the bootstrap did not finish: the fits are in %s; 'hxex resume' (or "
-                        "hxex.run.resume_bootstrap) adds the bootstrap to them", out)
+                        "hxex.pipeline.resume_bootstrap) adds the bootstrap to them", out)
         raise
     by_k = _chosen_part(config, measurements, fit, by_k,
                         merge_choices(_review_choices(review), chosen_k), progress, cancel)

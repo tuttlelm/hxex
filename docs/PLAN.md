@@ -624,7 +624,7 @@ Planned, not built:
    it matters for the reported means.
 2. **Phase 4 (reports and plots): done except the sequence-coverage map**, which moves to the
    post-fitting analysis below (item 31; the large-dataset benchmark, item 32, met the Phase 4
-   target). **Run stage** (`hxex.run`): done (item 29). HX-Express-style output of the run is
+   target). **Run stage** (`hxex.pipeline`): done (item 29). HX-Express-style output of the run is
    still open.
 3. **Post-fitting analysis (designed 2026-10-13; phases 1 to 5 of its peptide branch built,
    including comparisons between runs): see `docs/ANALYSIS.md`.**

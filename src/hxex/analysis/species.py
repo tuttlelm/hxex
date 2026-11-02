@@ -391,7 +391,7 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
             raise ValueError("fd_fallback 'kint' needs the run's picked spectra and settings "
                              "(the bundle's binned table)")
         from ..controls import series_rt
-        from ..run import control_rates
+        from ..pipeline import control_rates
 
         keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
         picked = results.binned.select(keep)
@@ -447,7 +447,8 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
 
 def _site_counts(results) -> np.ndarray:
     """The exchangeable sites of every measurement: from the stored controls, else counted on
-    the picked table (:func:`hxex.run.site_counts`), else read back from ``n_max`` (rounded)."""
+    the picked table (:func:`hxex.pipeline.site_counts`), else read back from ``n_max``
+    (rounded)."""
     fit = results.fit
     if results.controls is not None:
         try:
@@ -457,7 +458,7 @@ def _site_counts(results) -> np.ndarray:
             pass
     run = results.settings.run if results.settings is not None else None
     if results.binned is not None and run is not None:
-        from ..run import site_counts
+        from ..pipeline import site_counts
 
         keep = np.isin(results.binned.spectrum_id, fit.spectrum_id)
         sub = results.binned.select(keep)

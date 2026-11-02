@@ -171,8 +171,8 @@ def test_a_run_records_the_assessment_and_the_analysis_recomputes_it(tmp_path):
     [analysis.controls] deamidation recomputes it from the picked table."""
     import hxex
     from hxex.analysis import analysis_controls
+    from hxex.pipeline import run
     from hxex.report.tables import series_table
-    from hxex.run import run
     from test_run import config, raw_spectra
 
     res = run(raw_spectra(n_series=2), config(controls=ON, bootstrap=None), out=tmp_path / "b")

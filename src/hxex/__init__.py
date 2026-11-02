@@ -34,8 +34,8 @@ except PackageNotFoundError:  # running from a source tree that is not installed
 _ENTRY_POINTS = {
     "load_project": "hxex.config", "read_input": "hxex.config", "template": "hxex.config",
     "Project": "hxex.config", "ProjectError": "hxex.config",
-    "run": "hxex.run", "resume_bootstrap": "hxex.run", "RunConfig": "hxex.run",
-    "RunResult": "hxex.run",
+    "run": "hxex.pipeline", "resume_bootstrap": "hxex.pipeline", "RunConfig": "hxex.pipeline",
+    "RunResult": "hxex.pipeline",
     "open_bundle": "hxex.io", "write_bundle": "hxex.io", "Bundle": "hxex.io",
     "read_spectra": "hxex.io", "read_mzml": "hxex.io", "read_thermo": "hxex.io",
     "scan": "hxex.io", "read_peptide_table": "hxex.io",

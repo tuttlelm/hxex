@@ -319,3 +319,14 @@ def test_opening_releases_the_file_when_a_call_fails(tmp_path, monkeypatch, raw,
     assert raw.IncludeReferenceAndExceptionData
     reader.close()
     assert raw.disposed
+
+
+def test_trailer_values_written_as_decimals():
+    """A trailer ``Charge State:`` written ``2.0`` reads as 2, not as the default 0
+    (Readers 35)."""
+    from hxex.io.thermo import trailer_value
+
+    assert trailer_value("2.0", 0) == 2 and trailer_value("2", 0) == 2
+    assert trailer_value(2.0, 0) == 2 and trailer_value("", 0) == 0
+    assert trailer_value("abc", 0) == 0 and trailer_value(None, 0) == 0
+    assert trailer_value("523.25", 0.0) == 523.25 and trailer_value("", 0.0) == 0.0

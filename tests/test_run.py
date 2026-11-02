@@ -18,8 +18,8 @@ from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import PickerConfig, pick_spectra, plan_bins
 from hxex.picking.screen import SCREEN_SCORES
+from hxex.pipeline import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
 from hxex.quality import QualityConfig
-from hxex.run import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_bundle import envelope, natural
 from test_picking import sticks
@@ -100,7 +100,7 @@ def test_flagged_spectra_are_dropped_and_recorded():
     # a spectrum without a bin is not "without signal"
     from types import SimpleNamespace
 
-    from hxex.run import _drop_reasons
+    from hxex.pipeline import _drop_reasons
 
     binned = SimpleNamespace(empty=[True, False, False, False], offsets=np.array([0, 3, 3, 5, 8]))
     reasons = _drop_reasons(binned, np.array([False, False, False, True]))
@@ -154,7 +154,7 @@ def test_plan_chunks_cover_whole_series_within_the_budget():
 def test_a_series_over_the_budget_is_its_own_chunk_with_a_warning(caplog):
     raw = raw_spectra(n_series=2)
     meas = measurements(raw)
-    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"):
         chunks = plan_chunks(meas, 2, 8, budget=1.0)
     assert len(chunks) == 2 and "cannot be split" in caplog.text
 
@@ -210,14 +210,14 @@ def test_a_series_without_its_undeuterated_control_is_warned_about(tmp_path, cap
 
     raw = raw_spectra(n_series=2)
     keep = ~((raw.data_id == 1) & (raw.role == "undeut"))
-    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"):
         run(raw.select(keep), config(bootstrap=None), out=tmp_path / "b")
     assert "1 of 2 series have no undeuterated control" in caplog.text
     assert "S 0001-0010 2+" in caplog.text
     table = series_table(load_results(tmp_path / "b"))
     assert list(table["noise_reference"]) == ["undeuterated control", "own spectrum"]
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="hxex.run"):  # a fixed sd needs no reference
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"):  # a fixed sd needs no reference
         run(raw.select(keep), config(bootstrap=None, fit=dataclasses.replace(
             config().fit, noise=NoiseConfig("gaussian", sd=100.0, percent=None, estimate=None))))
     assert "undeuterated control" not in caplog.text
@@ -410,7 +410,7 @@ def test_the_fits_are_written_before_the_bootstrap_and_resumed(tmp_path, whole, 
             pass
 
     hook = StopInBootstrap()
-    with caplog.at_level(logging.WARNING, logger="hxex.run"), pytest.raises(Cancelled):
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"), pytest.raises(Cancelled):
         run(raw, config(), out=out, progress=hook,
             cancel=lambda: bool(in_bootstrap) and in_bootstrap[-1])
     assert "resume_bootstrap" in caplog.text
@@ -464,7 +464,7 @@ def test_controls_can_fall_back_to_theoretical_back_exchange(tmp_path):
 
 
 def test_site_counts_add_hex_sites_and_give_zero_for_an_ion_without_any():
-    from hxex.run import site_counts
+    from hxex.pipeline import site_counts
 
     binned = pick_spectra(raw_spectra(n_series=1), PICK)
     cfg = config()
@@ -484,7 +484,7 @@ def test_an_existing_output_is_refused_before_anything_is_fitted(tmp_path, monke
     raw = raw_spectra(n_series=1)
     path = tmp_path / "taken"
     path.write_text("not a bundle")
-    monkeypatch.setattr("hxex.run.pick_spectra", lambda *a, **k: pytest.fail("picked anyway"))
+    monkeypatch.setattr("hxex.pipeline.pick_spectra", lambda *a, **k: pytest.fail("picked anyway"))
     with pytest.raises(BundleError, match="exists"):
         run(raw, config(bootstrap=None), out=path)
 
@@ -505,7 +505,7 @@ def test_overwriting_a_reviewed_bundle_keeps_its_review(tmp_path, caplog):
     with pytest.raises(BundleError, match="exists"):
         run(raw_spectra(n_series=1), cfg, out=path)
     # the new run drops spectrum 6 (empty): its entry is carried but stale, the other current
-    with caplog.at_level(logging.INFO, logger="hxex.run"):
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
         again = run(raw_spectra(n_series=1, empty=(0, 5)), cfg, out=path, overwrite=True)
     assert dropped in again.dropped_ids
     assert "carrying 2 review entries over to the new bundle, 1 stale" in caplog.text
@@ -580,7 +580,7 @@ def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tm
     raw, res = whole
     cfg = config(fit=dataclasses.replace(config().fit, screen=True),
                  bootstrap=dataclasses.replace(config().bootstrap, ks=(1, 2)))
-    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"):
         screened = run(raw, cfg, out=tmp_path / "s")
     np.testing.assert_array_equal(screened.fit.selected_K, res.fit.selected_K)
     skipped = ~screened.fit.fitted(2)
@@ -599,7 +599,7 @@ def test_a_k_chosen_in_review_survives_the_screen(whole, tmp_path, caplog):
     as the run would have fitted it; a carried-over bundle review choosing it is marked stale
     (no crash at write, with the bootstrap's checkpoint)."""
     from hxex.io import ReviewTable
-    from hxex.run import resume_bootstrap
+    from hxex.pipeline import resume_bootstrap
 
     raw, res = whole
     cfg = config(fit=dataclasses.replace(config().fit, screen=True))
@@ -628,7 +628,7 @@ def test_a_k_chosen_in_review_survives_the_screen(whole, tmp_path, caplog):
     run(raw, config(), out=tmp_path / "r")
     with open_bundle(tmp_path / "r") as bundle:
         bundle.set_review(ReviewTable.empty().update(b, k_override=2, note="two?"))
-    with caplog.at_level(logging.INFO, logger="hxex.run"):
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
         again = run(raw, cfg, out=tmp_path / "r", overwrite=True)
     assert "1 stale" in caplog.text
     assert again.review.get(b)["stale"] and again.review.get(b)["note"] == "two?"
@@ -674,7 +674,7 @@ def test_a_rerun_from_stored_spectra_reuses_their_picking(whole, tmp_path, caplo
     cfg = config(bootstrap=None)
     first = run(raw, cfg, out=tmp_path / "b")
     stored = load_stored_spectra(tmp_path / "b")
-    with caplog.at_level(logging.INFO, logger="hxex.run"):
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
         again = run(stored, cfg)
     assert "the picking stored in" in caplog.text
     for a, b in zip(again.binned.intensity, first.binned.intensity, strict=True):
@@ -683,11 +683,11 @@ def test_a_rerun_from_stored_spectra_reuses_their_picking(whole, tmp_path, caplo
     np.testing.assert_allclose(again.fit.fits[1].nll, first.fit.fits[1].nll)
     caplog.clear()
     wider = dataclasses.replace(cfg, picker=dataclasses.replace(cfg.picker, resolution_ppm=40.0))
-    with caplog.at_level(logging.INFO, logger="hxex.run"):
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
         run(stored, wider)
     assert "picking the stored spectra again: [run.picker] differ(s)" in caplog.text
     caplog.clear()
-    with caplog.at_level(logging.INFO, logger="hxex.run"):
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
         run(stored, config(controls=ControlConfig(fulldeut_at=60.0), bootstrap=None))
     assert "the control roles" in caplog.text
 

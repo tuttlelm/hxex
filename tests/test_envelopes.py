@@ -21,8 +21,8 @@ from hxex.picking import (
     series_envelopes,
 )
 from hxex.picking.pick import composition_mz
+from hxex.pipeline import RunConfig, run
 from hxex.quality import QualityConfig
-from hxex.run import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE, CHARGE, ION = "RDKVQKEYAL", 2, "c-1"

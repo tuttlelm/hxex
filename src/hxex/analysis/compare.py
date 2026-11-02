@@ -57,7 +57,8 @@ class Region:
 
     def __post_init__(self):
         if self.end < self.start or self.start < 1:
-            raise ValueError(f"region {self.name!r}: need 1 <= start <= end")
+            raise ValueError(f"region {self.name!r}: start ({self.start}) and end ({self.end}) "
+                             "are residue numbers, start at least 1 and end not before start")
 
 
 @dataclass(frozen=True)

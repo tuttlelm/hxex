@@ -89,6 +89,11 @@ def series_rows(results: Results, data_id: int) -> np.ndarray:
 
 
 def _reps(results: Results) -> np.ndarray:
+    """Replicate number of every spectrum (:attr:`Results.replicates`, computed once)."""
+    return results.replicates
+
+
+def replicate_numbers(results: Results) -> np.ndarray:
     """Replicate number of every spectrum (from the picked table; else 1, 2, ... within a time)."""
     fit = results.fit
     if results.binned is not None:
@@ -367,7 +372,8 @@ def population_data(
     data_id = int(results.fit.data_id[i])
     row = _control_row(results, data_id)
     if corrected and row is None and not _uncorrected(results, data_id):
-        raise KeyError(f"no controls for series {data_id} (spectrum {spectrum_id})")
+        raise ValueError(f"no controls for series {data_id} (spectrum {spectrum_id}), so no "
+                         "corrected values: leave corrected unset (or false)")
     use = row is not None and (corrected is None or bool(corrected))
     n_amides = None
     if use:

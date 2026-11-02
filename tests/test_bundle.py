@@ -236,14 +236,17 @@ def test_verify_detects_damage_and_loss(written):
     path.write_bytes(bytes(data))
     with open_bundle(written) as b, pytest.raises(BundleError, match="checksum"):
         b.verify()
-    path.unlink()
-    with open_bundle(written) as b, pytest.raises(BundleError, match="missing"):
-        b.verify()
+    path.unlink()  # a damaged copy is refused when opened, with the file named
+    with pytest.raises(BundleError, match="not a complete bundle: fit_k.parquet.* missing"):
+        open_bundle(written)
 
 
 def test_unreadable_and_newer_bundles(tmp_path, written):
-    with pytest.raises(BundleError, match="not a bundle"):
+    with pytest.raises(BundleError, match="no results bundle at"):
         open_bundle(tmp_path / "nothing")
+    (tmp_path / "plain").mkdir()
+    with pytest.raises(BundleError, match="not a results bundle .it has no manifest.json"):
+        open_bundle(tmp_path / "plain")
     (tmp_path / "junk").mkdir()
     (tmp_path / "junk" / "manifest.json").write_text("{not json")
     with pytest.raises(BundleError, match="cannot read the manifest"):

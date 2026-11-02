@@ -456,7 +456,7 @@ def test_mzml_spectra_run_end_to_end(tmp_path):
     from hxex.model import Backend
     from hxex.noise import NoiseConfig
     from hxex.picking import PickerConfig
-    from hxex.run import RunConfig, run
+    from hxex.pipeline import RunConfig, run
 
     path = write_mzml(tmp_path / "e2e.mzML", time_course(n=6))
     spectra = read_mzml([MzmlRun(path, "WT")], [MzmlTarget(ENTRY)], project="p")
@@ -490,7 +490,7 @@ def test_the_read_is_recorded_and_repeated(tmp_path):
     from hxex.model import Backend
     from hxex.noise import NoiseConfig
     from hxex.picking import PickerConfig
-    from hxex.run import RunConfig, run
+    from hxex.pipeline import RunConfig, run
 
     path = write_mzml(tmp_path / "a.mzML", time_course(n=6))
     picker = PickerConfig(zero_filling=3, noise_threshold=100.0)
@@ -729,8 +729,8 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
     from hxex.model import Backend
     from hxex.noise import NoiseConfig
     from hxex.picking import PickerConfig
+    from hxex.pipeline import RunConfig, run
     from hxex.report import Results, spectra_table
-    from hxex.run import RunConfig, run
 
     path = write_mzml(tmp_path / "f.mzML", time_course(n=6, ms2_every=2))
     frag = MzmlTarget(dataclasses.replace(ENTRY, extra={"fragment": "c:10"}), ms_level=2,
@@ -1172,3 +1172,134 @@ def test_find_peak_width_smoothing_and_no_signal(tmp_path, caplog):
     # a target without rt (and without its own window) cannot be searched for
     with pytest.raises(MzmlError, match="no rt"):
         read_mzml([run], [MzmlTarget(ENTRY)], project="p", config=MzmlConfig(find_peak=True))
+
+
+# --- audit 2026-11-01, Session A: damaged or edited files, run settings --------------------
+
+def test_a_stale_index_falls_back_to_reading_through(tmp_path, caplog):
+    """An indexed file whose bytes shifted after it was indexed (an editor's line endings, a
+    text-mode transfer) is read through the file with a warning, not a traceback
+    (Readers 9)."""
+    scans = time_course(n=4)
+    path = write_mzml(tmp_path / "i.mzML", scans, indexed=True)
+    raw = path.read_bytes()
+    path.write_bytes(raw.replace(b"?>", b"?>\r\n<!-- edited by hand -->\r\n", 1))
+    f = MzmlFile(path)
+    assert f._index_offsets()  # the index is still there
+    every = list(iter_scans(path))
+    with caplog.at_level(logging.WARNING):
+        got = f.read_scans([0, 2])
+    assert "does not point at a spectrum" in caplog.text and "convert it again" in caplog.text
+    assert sorted(got) == [0, 2]
+    np.testing.assert_array_equal(got[2].mz, every[2].mz)
+    assert not f._index_offsets()  # given up: later reads go through the file at once
+    caplog.clear()
+    one = f.scan(3)
+    assert one.index == 3 and caplog.text == ""
+    # a spectrum removed by hand: the offsets land on other spectra (the index list's own
+    # offset kept right, as an editor that rewrites the index would)
+    path = write_mzml(tmp_path / "j.mzML", scans, indexed=True)
+    raw = path.read_bytes()
+    first = raw.index(b"<spectrum ")
+    second = raw.index(b"<spectrum ", first + 1)
+    raw = raw[:first] + raw[second:]
+    import re
+
+    old = re.search(rb"<indexListOffset>(\d+)</indexListOffset>", raw).group(1)
+    raw = raw.replace(b"<indexListOffset>" + old,
+                      b"<indexListOffset>%d" % raw.index(b"<indexList "))
+    path.write_bytes(raw)
+    g = MzmlFile(path)
+    assert g._index_offsets()
+    with caplog.at_level(logging.WARNING):
+        got = g.read_scans([0, 1])
+    assert "the index points at scan 1" in caplog.text
+    assert sorted(got) == [1] and list(got[1].mz) == list(every[1].mz)  # scan 0 is gone
+    # a stale index list offset: no index is found, the file is read through at once
+    path = write_mzml(tmp_path / "k.mzML", scans, indexed=True)
+    raw = path.read_bytes()
+    path.write_bytes(raw[:first] + raw[second:])
+    assert not MzmlFile(path)._index_offsets()
+    assert sorted(MzmlFile(path).read_scans([0, 1])) == [1]
+
+
+def test_run_names_from_windows_paths(tmp_path):
+    """A run recorded on Windows is named by its file name on any system, so the peptide
+    table's run column still finds it (Readers 20)."""
+    from hxex.io.mzml import run_name, target_applies
+
+    run = MzmlRun(r"C:\data\hdx\D_60s_01.raw", "WT", time=60.0)
+    assert run_name(run) == "D_60s_01.raw"
+    own = MzmlTarget(dataclasses.replace(ENTRY, extra={"run": "D_60s_01.raw"}))
+    assert target_applies(own, run)
+    other = MzmlTarget(dataclasses.replace(ENTRY, extra={"not_runs": "D_60s_01.raw"}))
+    assert not target_applies(other, run)
+
+
+def test_activation_with_spaces_matches(tmp_path):
+    """``activation = "ETD "`` (a space in the setting) selects the ETD scans (Readers 21)."""
+    etd = ("MS:1000598", "electron transfer dissociation")
+    mz, y = profile_envelope(2, 1.0, 1e4)
+    scans = time_course(n=1) + [{"mz": mz, "intensity": y, "time": 2.0, "ms_level": 2,
+                                 "precursor": (777.4, 2, *etd)}]
+    t = MzmlFile(write_mzml(tmp_path / "a.mzML", scans)).scans()
+    assert list(t.select(activation=" ETD ")) == list(t.select(activation="ETD")) == [1]
+    assert list(t.select(activation=" transfer ")) == [1]
+
+
+def test_scans_without_a_spectrum_type_are_warned_about(tmp_path, caplog):
+    """Scans that do not say whether they are centroided or profile are summed as profile,
+    with one warning per file (Readers 22)."""
+    path = write_mzml(tmp_path / "u.mzML", time_course(n=4))
+    text = path.read_text()
+    assert text.count('name="spectrum type"') == 4
+    import re
+
+    path.write_text(re.sub(r'<cvParam cvRef="MS" accession="MS:10001\d\d" name="spectrum type" '
+                           r'value=""/>', "", text))
+    t = MzmlFile(path).scans()
+    assert list(t.centroid) == [-1] * 4
+    run = MzmlRun(path, "WT", time=60.0)
+    with caplog.at_level(logging.WARNING):
+        got = read_mzml([run], [MzmlTarget(ENTRY, rt_window=(0.0, 1e4))], project="p")
+    assert len(got) == 1
+    assert caplog.text.count("do not say whether they are centroided") == 1
+
+
+def test_time_offset_is_refused_on_a_fixed_run(tmp_path):
+    """``time_offset`` moves the exchange clock of a kinetics run; on a run with a time or a
+    role it would be ignored, so it is refused (Readers 23)."""
+    with pytest.raises(ValueError, match="time_offset is for kinetics runs"):
+        MzmlRun("a.mzML", "WT", time=60.0, time_offset=5.0)
+    with pytest.raises(ValueError, match="time_offset is for kinetics runs"):
+        MzmlRun("a.mzML", "WT", role="undeut", time_offset=5.0)
+    assert MzmlRun("a.mzML", "WT", time=60.0, time_offset=0.0).fixed  # records write 0.0
+    assert MzmlRun("a.mzML", "WT", time_offset=5.0).time_offset == 5.0
+
+
+def test_a_record_short_of_file_entries_is_read(tmp_path):
+    """A read record whose ``files`` list is shorter than its runs (edited by hand) is read
+    with the missing identities taken as unknown, not a zip error (Readers 33)."""
+    from hxex.io import read_mzml_source
+
+    a = write_mzml(tmp_path / "a.mzML", time_course(n=2))
+    b = write_mzml(tmp_path / "b.mzML", time_course(n=2))
+    s = read_mzml([MzmlRun(a, "WT"), MzmlRun(b, "WT", rep=2)], [MzmlTarget(ENTRY)], project="p")
+    src = json.loads(json.dumps(s.source))
+    src["files"] = src["files"][:1]
+    again = read_mzml_source(src)
+    assert len(again) == len(s) and len(again.source["files"]) == 2
+
+
+def test_an_empty_scan_time_or_ms_level_names_the_scan(tmp_path):
+    """A damaged file with an empty scan start time or ms level is an MzmlError naming the
+    scan, not a ValueError from float() (Readers 34)."""
+    path = write_mzml(tmp_path / "d.mzML", time_course(n=2))
+    text = path.read_text()
+    path.write_text(text.replace('name="scan start time" value="1.0"',
+                                 'name="scan start time" value=""', 1))
+    with pytest.raises(MzmlError, match=r"scan 1 \(scan=2\): its scan start time is ''"):
+        MzmlFile(path).scans()
+    path.write_text(text.replace('name="ms level" value="1"', 'name="ms level" value=""', 1))
+    with pytest.raises(MzmlError, match="scan 0 .*its ms level is ''"):
+        MzmlFile(path).scans()

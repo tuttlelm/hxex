@@ -48,7 +48,14 @@ from .outputs import (
     replace_outputs,
 )
 from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
-from .read import read_source, read_spectra, read_spectra_source, scan, spectrum_index
+from .read import (
+    check_data_dir,
+    read_source,
+    read_spectra,
+    read_spectra_source,
+    scan,
+    spectrum_index,
+)
 from .specexport import (
     parse_specexport_filename,
     read_specexport_dir,
@@ -125,6 +132,7 @@ __all__ = [
     "read_spectra",
     "spectrum_index",
     "read_spectra_source",
+    "check_data_dir",
     "scan",
     "scan_hxexpress",
     "scan_specexport",

@@ -775,7 +775,7 @@ def write_bundle(
     :attr:`~hxex.spectra.SpectrumSet.source`; by default that of ``spectra``) is recorded in the
     manifest whether or not the spectra are stored. ``pending`` names the stages the run has
     still to add (``'bootstrap'`` for the bundle a run writes before its bootstrap, see
-    :func:`hxex.run.resume_bootstrap`). ``provenance`` is recorded as given (see
+    :func:`hxex.pipeline.resume_bootstrap`). ``provenance`` is recorded as given (see
     :func:`provenance_of`: the bundle this one replaces, what changed, the review carried), and
     ``excluded`` too (the run-level exclusions: :func:`hxex.exclusions.exclusion_record`).
     ``population_test`` (:mod:`hxex.population_test`) is stored with its steps and the D2O
@@ -1139,7 +1139,8 @@ class Bundle:
     @property
     def pending(self) -> list[str]:
         """The stages the run has still to add (``['bootstrap']`` for a bundle written before
-        the bootstrap, which :func:`hxex.run.resume_bootstrap` completes); empty when complete."""
+        the bootstrap, which :func:`hxex.pipeline.resume_bootstrap` completes); empty when
+        complete."""
         return list(self.manifest.get("pending", []))
 
     def has(self, table: str) -> bool:
@@ -1508,6 +1509,11 @@ def open_bundle(path: str | Path) -> Bundle:
     if path.is_dir() and not (path / MANIFEST).exists() and (path / REPLACING).exists():
         raise BundleError(f"{path}: writing it was interrupted (it holds {REPLACING}); write the "
                           f"bundle again")
+    if not path.exists():
+        raise BundleError(f"no results bundle at {path} (hxex run writes one)")
+    if path.is_dir() and not (path / MANIFEST).is_file():
+        raise BundleError(f"{path} is not a results bundle (it has no {MANIFEST}): a bundle is "
+                          "the whole folder hxex run wrote")
     try:
         if path.is_dir():
             store: Any = _DirStore(path)
@@ -1518,11 +1524,23 @@ def open_bundle(path: str | Path) -> Bundle:
         manifest = json.loads(store.read(MANIFEST).decode())
     except (OSError, KeyError, ValueError) as exc:
         raise BundleError(f"cannot read the manifest of {path}: {exc}") from exc
-    if manifest.get("kind") != KIND:
+    if not isinstance(manifest, dict) or manifest.get("kind") != KIND:
         raise BundleError(f"{path} is not an hxex results bundle")
     if int(manifest.get("schema_version", 0)) > SCHEMA_VERSION:
         raise BundleError(
             f"{path} has schema version {manifest['schema_version']}; this hxex reads up to "
             f"{SCHEMA_VERSION}. Upgrade hxex to open it."
         )
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise BundleError(f"{path}: its {MANIFEST} lists no files: the bundle is damaged")
+    missing = [name for name in files if not store.exists(name)]
+    if missing:
+        store.close()
+        raise BundleError(
+            f"{path} is not a complete bundle: {', '.join(missing[:3])}"
+            f"{', ...' if len(missing) > 3 else ''} {'is' if len(missing) == 1 else 'are'} "
+            "listed in its manifest but missing (a "
+            "bundle is the whole folder hxex run wrote: copy the whole folder, or run again "
+            "with --overwrite)")
     return Bundle(path, store, manifest)

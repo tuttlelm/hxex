@@ -21,6 +21,7 @@ from hxex.analysis import (
 from hxex.analysis.species import _combine, _is_trend
 from hxex.io.bundle import ReviewTable
 from hxex.picking.screen import SCREEN_SCORES
+from hxex.pipeline import run
 from hxex.report import Results, plot_residue_profile
 from hxex.report.coverage import (
     FD_CMAP,
@@ -29,7 +30,6 @@ from hxex.report.coverage import (
     plot_coverage,
     plot_redundancy_resolution,
 )
-from hxex.run import run
 from test_run import config, raw_spectra  # noqa: I001
 
 SEQUENCE = "MAKLPGSTVEDRWQAFKLT"  # residue 1 is M; a proline at 5
@@ -1072,6 +1072,8 @@ def test_differing_population_choices_are_reported():
 
 
 def test_butterfly_plot():
+    import dataclasses
+
     from hxex.analysis import PeptideComparison
     from hxex.report import plot_butterfly
 
@@ -1095,6 +1097,10 @@ def test_butterfly_plot():
     np.testing.assert_allclose(lines["butterfly:60:sample"].get_ydata(), [-0.5, -0.7])
     assert [t.get_text() for t in bottom.get_xticklabels()] == ["2-9", "6-11"]
     assert len(plot_butterfly(pc, "B:S", times=[60.0]).axes[0].get_legend().texts) == 1
+    # the frame follows the values: a value at max_fD (1.1) does not sit on it
+    top_wide = plot_butterfly(dataclasses.replace(pc, value=np.array([1.1, 0.2, 0.7, 0.5])),
+                              "B:S").axes[0]
+    assert top_wide.get_ylim()[1] > 1.1 and top.get_ylim()[1] == pytest.approx(1.05 * 1.05)
     with pytest.raises(ValueError, match="no comparison"):
         plot_butterfly(pc, "C:S")
 

@@ -10,7 +10,7 @@
     format = "specexport"       # specexport, hxexpress, pooled, mzml or thermo
     ...
 
-    [run]                       # the run settings (hxex.run.RunConfig), section by section
+    [run]                       # the run settings (hxex.pipeline.RunConfig), section by section
     [run.fit]
     k_max = 3
     [run.bootstrap]             # a section turns its stage on; "bootstrap = false" turns it off
@@ -54,7 +54,7 @@ from .hooks import CancelHook, ProgressHook
 from .io.errors import ReadError
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget, _run_file_name, number_replicates
 from .io.times import TIME_SCALES, parse_time
-from .run import RunConfig
+from .pipeline import RunConfig
 from .spectra import SpectrumSet, check_role
 
 log = logging.getLogger(__name__)
@@ -73,10 +73,37 @@ class ProjectError(ValueError):
     """A project file that cannot be used."""
 
 
-def _check_keys(data: Mapping, allowed, where: str) -> None:
-    unknown = set(data) - set(allowed)
-    if unknown:
-        raise ProjectError(f"unknown key(s) in {where}: {', '.join(sorted(unknown))}")
+def _did_you_mean(key: str, allowed) -> str:
+    """`` (did you mean X?)`` for a key close to one of ``allowed``, else empty."""
+    import difflib
+
+    names = sorted(allowed)
+    close = difflib.get_close_matches(key, names, n=1, cutoff=0.6)
+    if not close and len(key) >= 2:  # a key cut short (ph for ph_read)
+        close = [n for n in names if n.startswith(key.lower())]
+    return f" (did you mean {close[0]}?)" if close else ""
+
+
+def _check_keys(data: Mapping, allowed, where: str, tables=None) -> None:
+    """Every key of ``data`` is one of ``allowed``, else a :class:`ProjectError` naming the
+    unknown ones with the closest known name. An unknown key whose value is a table is named
+    as a table (``[run.contrls]``), with ``tables`` (the names of ``allowed`` that are tables)
+    listed when given."""
+    unknown = sorted(set(data) - set(allowed))
+    if not unknown:
+        return
+    prefix = where.strip("[]") + "." if where.startswith("[") else ""
+    wrong_tables = [k for k in unknown if isinstance(data[k], Mapping)]
+    if wrong_tables:
+        named = ", ".join(f"[{prefix}{k}]" for k in wrong_tables)
+        close = _did_you_mean(wrong_tables[0], tables if tables is not None else allowed)
+        if close:
+            close = f" (did you mean [{prefix}{close[15:-2]}]?)"
+        listed = ("; the tables of " + where + " are "
+                  + ", ".join(f"[{prefix}{k}]" for k in tables) if tables else "")
+        raise ProjectError(f"unknown table {named} in {where}{close}{listed}")
+    raise ProjectError(f"unknown key(s) in {where}: {', '.join(unknown)}"
+                       f"{_did_you_mean(unknown[0], allowed)}")
 
 
 def _items(value) -> list:
@@ -213,7 +240,7 @@ def _section_defaults(name: str) -> dict:
 
 
 def run_config_from(data: Mapping) -> RunConfig:
-    """The :class:`~hxex.run.RunConfig` of a project file's ``[run]`` table (``false`` as None
+    """The :class:`~hxex.pipeline.RunConfig` of a project file's ``[run]`` table (``false`` as None
     where a setting admits it; see the module docstring)."""
     merged = RunConfig().to_dict()
     if "plots" in data:
@@ -235,6 +262,9 @@ def run_config_from(data: Mapping) -> RunConfig:
                            "the undeuterated controls (the noise references) are the spectra "
                            "with the role undeut (the control labels, or role in "
                            "[[input.runs]])")
+    hints = _hints(RunConfig)
+    _check_keys(data, set(hints), "[run]",
+                tables=[k for k, h in hints.items() if _config_class(h) is not None])
     if isinstance(data.get("controls"), Mapping):
         _refuse_control_times(data["controls"], "[run.controls]",
                               "the controls are the spectra with a role (the control labels, "
@@ -375,7 +405,7 @@ class OutputSettings:
     True for the bundle's name plus ``_tables``). The bundle and the folders named after it
     (its tables, figures and analyses, and their earlier generations, ``name.N``) are hxex's: a
     later command replaces them (``overwrite``) or moves them first (``keep_previous``: the
-    bundle with its folders to ``name.N``, see :func:`hxex.run.run`; a figures, tables or
+    bundle with its folders to ``name.N``, see :func:`hxex.pipeline.run`; a figures, tables or
     analysis folder written alone to its own ``NAME.N``, :func:`hxex.io.prepare_output`), for
     ``hxex run``, ``report`` and ``analyse`` alike. A run draws no figures (``hxex report``
     does, into ``name_figures``)."""
@@ -424,6 +454,9 @@ def _path(base: Path, value, where: str) -> Path | None:
         return None
     if not isinstance(value, str):
         raise ProjectError(f"{where} must be a path (text)")
+    if not value.strip():
+        raise ProjectError(f"{where} = \"\": give a file or folder name, or leave the setting "
+                           "out")
     p = Path(value).expanduser()
     return p if p.is_absolute() else base / p
 
@@ -665,7 +698,11 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
     stored spectra and are not used to read) the paths the read needs may be left out."""
     fmt = data.get("format")
     if fmt not in FORMATS:
-        raise ProjectError(f"input.format must be one of {', '.join(FORMATS)}")
+        shown = f" = {_toml_value(fmt)}" if fmt is not None else ""
+        raise ProjectError(f"input.format{shown}: must be one of {', '.join(FORMATS)} (lower "
+                           "case; specexport is HDExaminer's export, hxexpress the HX-Express "
+                           "spreadsheets, pooled a folder of spectra, mzml and thermo scan "
+                           "files)")
     if fmt in FOLDER_FORMATS:
         extra = set(data) & {"runs", "parents", "target", "fragments", "scans", "data_root",
                              "thermo_dir"}
@@ -674,6 +711,9 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
                                f"thermo, not {fmt}")
         if _none(data.get("data_dir")) is None and not stored:
             raise ProjectError(f"input.data_dir is needed for {fmt}")
+        if fmt == "pooled" and not str(_none(data.get("sample")) or "").strip() and not stored:
+            raise ProjectError("input.sample is needed for pooled (the label of every "
+                               "spectrum's sample; the template shows sample = \"pool\")")
         _record_paths(data, ("path", "name"), fmt)
         return InputSettings(
             format=fmt, data_dir=_path(base, data.get("data_dir"), "input.data_dir"),
@@ -700,9 +740,15 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
     run_names = {f.name for f in fields(MzmlRun)}
     parsed_runs = []
     for i, r in enumerate(runs, start=1):
+        if not isinstance(r, Mapping):
+            raise ProjectError(f"input.runs #{i} must be a table (path, sample, ...)")
         where = f"input.runs #{i}" + (f" ({r['path']})" if isinstance(r.get("path"), str)
                                       else "")
         _check_keys(r, run_names, where)
+        needed = [k for k in ("path", "sample") if k not in r]
+        if needed:
+            raise ProjectError(f"{where}: needs {' and '.join(needed)} (the file, and the "
+                               "sample it belongs to)")
         r = dict(r)
         time = r.get("time")
         if isinstance(time, str) and time.strip().lower() in CONTROL_WORDS:
@@ -796,13 +842,19 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
         value = data.get(key, default)
         return value if isinstance(value, bool) else _path(base, value, f"output.{key}")
 
-    return OutputSettings(
+    out = OutputSettings(
         bundle=_path(base, data.get("bundle"), "output.bundle"),
         overwrite=bool(data.get("overwrite", False)),
         keep_previous=bool(data.get("keep_previous", False)),
         keep_spectra=bool(data.get("keep_spectra", True)),
         tables=where("tables", True), notes=str(data.get("notes", "")),
     )
+    if (isinstance(out.tables, Path) and out.bundle is not None
+            and _same_path(out.tables, out.bundle)):
+        raise ProjectError(f"[output] tables = {_toml_value(data['tables'])} names the results "
+                           "bundle itself: the tables go in a folder of their own (leave tables "
+                           "out for one beside the bundle, NAME_tables)")
+    return out
 
 
 def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None, *,
@@ -816,8 +868,24 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if spectra is not None:
         data = {**data, "input": {**data.get("input", {}),
                                   "spectra": str(Path(spectra).resolve())}}
-    _check_keys(data, {"project", "threads", "input", "run", "output", "analysis", "figures",
-                       "review"}, "the project file")
+    tables = ("input", "run", "output", "analysis", "figures", "review")
+    _check_keys(data, {"project", "threads", *tables}, "the project file", tables=tables)
+    if isinstance(data.get("analysis"), list):
+        raise ProjectError(
+            "[[analysis]]: a project has one [analysis] table (single brackets). To compare "
+            "with another reference too, run hxex analyse --reference NAME: each reference "
+            "gets a folder of its own (results_analysis_NAME)")
+    for key in tables:  # false does not turn a table off: the template's false rule is for settings
+        if key in data and not isinstance(data[key], Mapping):
+            off = {"analysis": "to run no analysis", "review": "to review nothing",
+                   "figures": "for the default figures", "run": "for the default run settings",
+                   "output": "for the default output"}.get(key)
+            raise ProjectError(f"[{key}] must be a table (a heading with its settings under it)"
+                               + (f"; {off}, delete the table" if off else ""))
+    if "input" not in data and not (analysis_only and "analysis" in data):
+        raise ProjectError("the project file needs an [input] table" + (
+            " (or, for hxex analyse only, an [analysis] table)" if analysis_only else
+            "; a file with only an [analysis] table is for hxex analyse"))
     data, review_data = _review_moved(data)
     only_analysis = analysis_only and "input" not in data and "analysis" in data
     name = data.get("project", "" if only_analysis else None)
@@ -825,14 +893,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         raise ProjectError("project must be a name (non-empty text without ':')"
                            + ("; a file with only an [analysis] table may leave it out"
                               if analysis_only else ""))
-    if "input" not in data and not (analysis_only and "analysis" in data):
-        raise ProjectError("the project file needs an [input] table" + (
-            " (or, for hxex analyse only, an [analysis] table)" if analysis_only else
-            "; a file with only an [analysis] table is for hxex analyse"))
-    run_table = data.get("run", {})
-    if not isinstance(run_table, Mapping):
-        raise ProjectError("[run] must be a table")
-    run = run_config_from(run_table)
+    run = run_config_from(data.get("run", {}))
     inp = None
     if "input" in data:
         inp = _input_from(data["input"], base)
@@ -843,13 +904,22 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
                                 or threads < 1):
         raise ProjectError("threads must be a whole number of at least 1")
-    if isinstance(data.get("analysis"), list):
-        raise ProjectError(
-            "[[analysis]]: a project has one [analysis] table (single brackets). To compare "
-            "with another reference too, run hxex analyse --reference NAME: each reference "
-            "gets a folder of its own (results_analysis_NAME)")
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
+    if analysis is not None and analysis.out and output.bundle is not None and _same_path(
+            analysis.out, output.bundle):
+        raise ProjectError(f"[analysis] out = {_toml_value(str(data['analysis']['out']))} "
+                           "names the results bundle itself ([output] bundle): the analysis "
+                           "goes in a folder of its own (leave out unset for one beside "
+                           "the bundle)")
     return Project(name, inp, run, output, path, threads, analysis, figures, review)
+
+
+def _same_path(a, b) -> bool:
+    """Whether two paths name one folder (resolved; a folder that does not exist yet too)."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return Path(a) == Path(b)
 
 
 def _review_moved(data: Mapping) -> tuple[Mapping, Mapping | None]:
@@ -881,6 +951,9 @@ def _review_from(data: Mapping, base: Path):
     table = data.get("table")
     if table is not None and table is not False and not isinstance(table, str):
         raise ProjectError("[review] table must be the review table's file name (text)")
+    if isinstance(table, str) and not table.strip():
+        raise ProjectError("[review] table = \"\": give the review table's file name "
+                           "(user_review_table.csv), or leave the setting out")
     try:
         rules = read_exclusions(data.get("exclude"), "review.exclude")
     except ValueError as exc:
@@ -946,10 +1019,25 @@ def _analysis_from(data: Mapping, base: Path):
                             AnalysisConfig)
     if values.get("labelling") is False:  # typed Any: the helper cannot tell
         values["labelling"] = None
+    _check_conditions(values.get("labelling"), "[analysis.labelling]")
+    if isinstance(values.get("fragments"), Mapping):
+        _check_conditions(values["fragments"].get("exchange"), "[analysis.fragments.exchange]")
     if isinstance(values.get("controls"), Mapping):  # changes to [run.controls]: its false rule
         from .controls import ControlConfig
 
         values["controls"] = _false_to_none(values["controls"], ControlConfig)
+    if isinstance(values.get("filters"), Mapping):
+        from .analysis import SpeciesFilters
+
+        _check_keys(values["filters"], {f.name for f in fields(SpeciesFilters)},
+                    "[analysis.filters]")
+    if values.get("choice") is None:
+        values.pop("choice", None)  # false, or unset: the defaults of the populations rule
+    elif isinstance(values["choice"], Mapping):
+        from .analysis.populations import ChoiceConfig
+
+        _check_keys(values["choice"], {f.name for f in fields(ChoiceConfig)},
+                    "[analysis.choice]")
     _check_types(values, AnalysisConfig, "analysis")
     fasta = values.get("fasta")
     if isinstance(fasta, str):
@@ -967,8 +1055,8 @@ def _analysis_from(data: Mapping, base: Path):
             raise ProjectError("[analysis.runs] must be a table of run name = bundle")
         values["runs"] = {str(k): str(_path(base, v, f"analysis.runs.{k}"))
                           for k, v in values["runs"].items()}
-    values["annotations"] = {"regions": list(_items(data.get("regions"))),
-                             "sites": list(_items(data.get("sites")))}
+    values["annotations"] = {"regions": _annotation_items(data.get("regions"), "regions"),
+                             "sites": _annotation_items(data.get("sites"), "sites")}
     try:
         if isinstance(values.get("filters"), Mapping):
             from .analysis import SpeciesFilters
@@ -977,14 +1065,51 @@ def _analysis_from(data: Mapping, base: Path):
         if "choice" in values:
             from .analysis.settings import choice_defaults
 
-            if not isinstance(values["choice"], Mapping):
-                raise TypeError("choice must be a table")
             # the keys not given take the defaults of the populations rule
             defaults = choice_defaults(values.get("populations", "best_set")).to_dict()
             values["choice"] = {**defaults, **values["choice"]}
         return AnalysisConfig.from_dict(values)
     except (TypeError, ValueError, AttributeError) as exc:
         raise ProjectError(f"[analysis]: {exc}") from exc
+
+
+_CONDITION_KEYS = ("ph_read", "temperature", "d2o_fraction", "reference", "factors",
+                   "initial_fraction")
+
+
+def _check_conditions(data, where: str) -> None:
+    """A table of exchange conditions (one set, or one per sample or run) whose keys are
+    neither conditions nor tables is a mistyped condition, named with the closest one."""
+    if not isinstance(data, Mapping) or "ph_read" in data:
+        return
+    for key, value in data.items():
+        if not isinstance(value, Mapping) and key not in _CONDITION_KEYS:
+            raise ProjectError(f"{where} {key} = {_toml_value(value)}: unknown key {key}"
+                               f"{_did_you_mean(key, _CONDITION_KEYS)}; the conditions are "
+                               "ph_read, temperature and d2o_fraction (one table, or one per "
+                               "sample)")
+
+
+def _annotation_items(value, what: str) -> list:
+    """The items of ``[[analysis.regions]]`` or ``[[analysis.sites]]`` (false: none), each
+    with the keys and value forms of :class:`hxex.analysis.Region` or ``Site``."""
+    from .analysis.compare import Region, Site
+
+    cls, needed = (Region, ("name", "start", "end")) if what == "regions" else (Site,
+                                                                                 ("residue",))
+    items = _items(_none(value))
+    if not isinstance(items, list):
+        raise ProjectError(f"[[analysis.{what}]] must be tables (one per item), or false")
+    for n, item in enumerate(items, start=1):
+        where = f"[[analysis.{what}]] #{n}"
+        if not isinstance(item, Mapping):
+            raise ProjectError(f"{where} must be a table")
+        _check_keys(item, {f.name for f in fields(cls)}, where)
+        missing = [k for k in needed if k not in item]
+        if missing:
+            raise ProjectError(f"{where} needs {', '.join(missing)}")
+        _check_types(item, cls, f"analysis.{what}")
+    return list(items)
 
 
 # the tables that hold a list of items (``[[name]]``; a single ``[name]`` is read as one item)
@@ -997,13 +1122,12 @@ def _toml_hint(text: str, exc: Exception) -> str:
     between double quotes, where a backslash starts an escape ("C:\\Users" is an error), and
     a heading in single brackets written twice (several items of a list need double
     brackets; any other table's settings go under one heading)."""
-    import re
-
     found = re.search(r"at line (\d+)", str(exc))
     lines = text.splitlines()
     if found is None or not 0 < int(found[1]) <= len(lines):
         return ""
-    line = lines[int(found[1]) - 1]
+    number = int(found[1])
+    line = lines[number - 1]
     twice = re.search(r"Cannot declare \(([^)]*)\) twice", str(exc))
     if twice:
         name = ".".join(p for part in twice[1].split(",") if (p := part.strip(" '\"")))
@@ -1011,10 +1135,19 @@ def _toml_hint(text: str, exc: Exception) -> str:
             return (f"; a heading in single brackets, [{name}], may appear only once: for "
                     f"several items, write each under [[{name}]], with double brackets")
         return f"; [{name}] may appear only once: put all its settings under one heading"
+    if "Cannot overwrite a value" in str(exc):
+        key = re.match(r"\s*([\w.\"']+)\s*=", line)
+        return (f"; the setting {key[1] if key else ''} at line {number} appears twice in its "
+                "table: delete one of the two lines")
     if re.search(r'"[^"]*\\[^"]*"', line):
         return ("; a backslash between double quotes starts an escape: write the path with "
                 "forward slashes (\"C:/Users/me/data\") or between single quotes "
                 "('C:\\Users\\me\\data')")
+    unquoted = re.match(r"\s*([\w.]+)\s*=\s*([A-Za-z_][\w./\\:-]*)\s*(#.*)?$", line)
+    if unquoted and "Invalid value" in str(exc) and unquoted[2] not in ("true", "false",
+                                                                         "inf", "nan"):
+        return (f"; a value with letters or / needs quotes: {unquoted[1]} = "
+                f"\"{unquoted[2]}\" (line {number})")
     return ""
 
 
@@ -1024,13 +1157,27 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
     ``[analysis]`` table, for :func:`hxex.report.write_analysis`; ``spectra``: stored raw
     spectra in place of the input, :func:`project_from`)."""
     path = Path(path)
+    if not path.exists():
+        if path.suffix == ".toml" and not path.is_absolute() and path.parent == Path():
+            raise ProjectError(f"no {path.name} in {Path.cwd()}: open the terminal in the "
+                               "project folder, or run hxex init to write one")
+        raise ProjectError(f"no such project file: {path}")
     try:
         text = path.read_text(encoding="utf-8-sig")  # a byte-order mark is not TOML
-        data = tomllib.loads(text)
+    except UnicodeDecodeError as exc:
+        raise ProjectError(f"{path} is not UTF-8 text (byte {exc.object[exc.start]:#x} at "
+                           f"offset {exc.start}): save it as UTF-8 (in Notepad, Save as, "
+                           "Encoding UTF-8)") from exc
     except OSError as exc:
         raise ProjectError(f"cannot read {path}: {exc}") from exc
+    try:
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ProjectError(f"{path}: not valid TOML ({exc}){_toml_hint(text, exc)}") from exc
+        wrong_kind = ("" if path.suffix == ".toml" else
+                      f"hxex needs the project file (hxex.toml, written by hxex init); "
+                      f"{path.name} is not one: ")
+        raise ProjectError(f"{wrong_kind}{path}: not valid TOML ({exc})"
+                           f"{_toml_hint(text, exc)}") from exc
     return project_from(data, path.resolve().parent, path, analysis_only=analysis_only,
                         spectra=spectra)
 
@@ -1530,6 +1677,9 @@ _COMMENTS: dict[str, str] = {
                         "uptake drawn by index, kinetics and protection analyses refuse)",
     "run.controls.kint_tolerance": "kint: a measured control this far (D per amide) from the "
                                    "prediction is rejected",
+    "run.controls.quench": "pH read, degrees Celsius and D fraction of the quench and LC "
+                           "({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for "
+                           'fd_fallback "kint" (unset: none)',
     "run.controls.kint_min_series": "kint: fewest usable controls to fit the prediction to "
                                     "(fewer: every series takes the median)",
     "run.quality.poor_fit_factor": "poor_fit: misfit this many times the series' median",
@@ -1575,7 +1725,7 @@ _COMMENTS: dict[str, str] = {
 
 # comment lines written before a table's header
 _SECTION_COMMENTS: dict[str, str] = {
-    "run": "Run settings (hxex.run.RunConfig); times are in s, as the measurement times. The "
+    "run": "Run settings (hxex.pipeline.RunConfig); times are in s, as the measurement times. The "
            "bootstrap, the population test, and the controls are stages that their table "
            "turns on: uncomment the commented-out run.bootstrap, run.population_test, or "
            "run.controls table below to use it; a stage's \"name = false\" turns it off.",
@@ -1814,7 +1964,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# Keep your own files elsewhere (files of yours inside them are kept, but one named",
         "# like an hxex file stops the command).",
         'bundle = "results"               # name of the folder (or .zip archive) hxex creates',
-        "#                                 # for the results: it must not exist yet",
+        "#                                 # for the results (an existing one is replaced or",
+        "#                                 # moved only with overwrite or keep_previous below)",
         "overwrite = false                # replace earlier results in the bundle (its review",
         "#                                 # is carried over), tables, figures and analysis",
         "keep_previous = false            # move earlier results first: the bundle with its",
@@ -2128,7 +2279,7 @@ def run_settings_text(manifest: Mapping) -> str:
                 for k, v in run.items()}
         table = _toml_table("run", _falsified(data, defaults), cls=RunConfig)
         intro = textwrap.wrap(  # the template's says how to turn the stages on
-            "Run settings (hxex.run.RunConfig); times are in s. A stage written \"name = "
+            "Run settings (hxex.pipeline.RunConfig); times are in s. A stage written \"name = "
             "false\" (bootstrap, population_test, controls, quality) was off.", _LINE_WIDTH,
             initial_indent="# ", subsequent_indent="# ")
         lines += [""] + intro + table[len(_section_comment("run")):]
@@ -2227,11 +2378,21 @@ def describe(project: Project) -> dict[str, Any]:
     """A short summary of a project's settings (for ``hxex check``)."""
     run = project.run
     inp = project.input
+    if inp is None:  # a file for hxex analyse: no run settings to describe
+        return {
+            "project": project.project or "(none)",
+            "format": "(none: analysis only)",
+            "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
+            **_exclusion_lines("excluded later", () if project.review is None
+                               else project.review.exclude,
+                               "treated as rejected in the tables, figures and analysis"),
+            **_review_table_line(project.review, project.run.fit.k_values),
+        }
     return {
         "project": project.project,
-        "format": "(none: analysis only)" if inp is None else inp.format + (
-            "" if inp.spectra is None else f" (stored in {inp.spectra})"),
-        "K": f"{run.fit.k_min} to {run.fit.k_max}",
+        "format": inp.format + ("" if inp.spectra is None else f" (stored in {inp.spectra})"),
+        "K": (f"{run.fit.k_min} to {run.fit.k_max}" if run.fit.k_max > run.fit.k_min
+              else str(run.fit.k_min)),
         "device": run.fit.backend.device,
         "bootstrap": ("off: no standard errors or intervals (a [run.bootstrap] table turns "
                       "it on)" if run.bootstrap is None
@@ -2245,11 +2406,11 @@ def describe(project: Project) -> dict[str, Any]:
                      "[run.controls] table turns it on)" if run.controls is None
                      else "on" + _promotions(run.controls)),
         "quality flags": "off (quality = false)" if run.quality is None else "on",
-        "times": ("seconds" if inp is None or inp.time_scale == "seconds"
+        "times": ("seconds" if inp.time_scale == "seconds"
                   else "order: the times only order the points (uptake drawn by index; the "
                        "kinetics and protection analyses refuse)"),
         "bundle": str(project.output.bundle) if project.output.bundle else "(none)",
-        **_exclusion_lines("excluded", () if inp is None else inp.exclude,
+        **_exclusion_lines("excluded", inp.exclude,
                            "left out before fitting (stored, not fitted)"),
         **_exclusion_lines("excluded later", () if project.review is None
                            else project.review.exclude,

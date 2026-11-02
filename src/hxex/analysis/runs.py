@@ -238,9 +238,9 @@ def _flatten(data, prefix: str = "") -> dict[str, str]:
 @dataclass(frozen=True)
 class SettingsComparison:
     """The run settings that differ between runs: one row per ``setting`` (dotted, as in
-    :class:`hxex.run.RunConfig`), with ``matters`` (whether the difference matters for comparing
-    the runs, :data:`MATTERS`) and the value in each run (``values``, one column per run of
-    ``runs``; :data:`ABSENT` where a run does not have the setting or section)."""
+    :class:`hxex.pipeline.RunConfig`), with ``matters`` (whether the difference matters for
+    comparing the runs, :data:`MATTERS`) and the value in each run (``values``, one column per
+    run of ``runs``; :data:`ABSENT` where a run does not have the setting or section)."""
 
     runs: tuple[str, ...]
     setting: np.ndarray

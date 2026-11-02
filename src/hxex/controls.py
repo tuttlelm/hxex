@@ -260,7 +260,8 @@ class ControlConfig:
                 raise ValueError(f"{name}_marked = false needs {name}_at (the spectra that "
                                  "serve as the control instead of the marked ones)")
         if not 0 < self.d2o_fraction <= 1:
-            raise ValueError("d2o_fraction must be in (0, 1]")
+            raise ValueError(f"d2o_fraction = {self.d2o_fraction}: write the D2O fraction as "
+                             "a number above 0 and up to 1 (85 % is 0.85)")
         if (isinstance(self.deamidation_min_share, bool)
                 or not 0 < self.deamidation_min_share <= 1):
             raise ValueError("deamidation_min_share must be a share in (0, 1]")

@@ -696,7 +696,9 @@ def plot_butterfly(
                                 & comparison.corrected_differently)
     n_diff = _corrected_differently(top, [position[key(i)] for i in drawn_rows], note=False)
     top.axhline(0, color="#000000", linewidth=0.8)
-    top.set_ylim(-1.1, 1.1)
+    drawn = np.concatenate([comparison.value_reference[rows], comparison.value[rows]])
+    span = 1.05 * max(1.05, float(np.nanmax(np.abs(drawn))) if np.isfinite(drawn).any() else 0)
+    top.set_ylim(-span, span)
     top.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(v):g}"))
     top.set_ylabel(_label(comparison.quantity))
     top.text(0.005, 0.98, comparison.reference, transform=top.transAxes, ha="left", va="top",

@@ -59,7 +59,7 @@ def fit_models(
 
     With ``config.noise.estimate == 'controls'`` every bin has its own noise variance
     (:func:`hxex.noise.bin_variances`) from ``noise_curve``, the bundle's curve
-    (:func:`hxex.noise.controls_noise`; :func:`hxex.run.run` measures it once from the
+    (:func:`hxex.noise.controls_noise`; :func:`hxex.pipeline.run` measures it once from the
     controls every picker screen passes, before the spectra are fitted in parts); without one
     it is measured here from every undeuterated control in ``data``, and with too few controls
     the noise falls back to one sd per spectrum (logged). ``bin_variance`` (one array per

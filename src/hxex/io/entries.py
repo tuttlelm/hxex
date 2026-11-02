@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from ..spectra import PeptideEntry, SpectrumSet, entry_rt, entry_rt_window
+from ._common import not_text_error, open_text
 from .errors import ReadError
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,58 @@ _REQUIRED = ("file", "sample", "peptide", "start_seq", "end_seq", "charge")
 # sample means every run
 SCAN_REQUIRED = ("peptide", "start_seq", "end_seq", "charge")
 _RANGE = re.compile(r"\s*0*(\d+)\s*-\s*0*(\d+)\s*")
+# the column names a table is read by: a header cell is matched to them without regard to case
+# or surrounding spaces (Excel capitalises; a user adds a space); other columns keep their
+# names, stripped
+KNOWN_COLUMNS = frozenset((*_REQUIRED, "peptide_range", "modification", "index", "rt",
+                           "rt_start", "rt_end", "run", "not_runs"))
+_SEPARATORS = {";": "';' (Excel's regional setting)", "\t": "tabs"}
+
+
+def _table_reader(fh, path: Path) -> csv.DictReader:
+    """A CSV reader of a table with a header row, its column names normalised
+    (:data:`KNOWN_COLUMNS`); a table whose columns are separated by semicolons or tabs is
+    refused, saying so."""
+    reader = csv.DictReader(fh)
+    names = reader.fieldnames or []
+    if len(names) == 1:
+        for sep, text in _SEPARATORS.items():
+            if sep in names[0]:
+                raise ReadError(f"{path}: the columns are separated by {text}, not commas: "
+                                "save the table as CSV with commas")
+    reader.fieldnames = [_column_name(n) for n in names]
+    return reader
+
+
+def _column_name(name: str | None) -> str:
+    text = (name or "").strip()
+    return text.lower() if text.lower() in KNOWN_COLUMNS else text
+
+
+def _columns_found(reader: csv.DictReader) -> str:
+    names = [n for n in (reader.fieldnames or []) if n]
+    return f"the columns found are {', '.join(names)}" if names else "the header row is empty"
+
+
+def _rows(reader: csv.DictReader, path: Path):
+    """``(line, row)`` of each row of ``reader`` that has a cell, every cell stripped; rows of
+    empty cells (``,,,,`` left by Excel, a blank line) are skipped and counted in the log; a row
+    with fewer or more cells than the header has columns is refused, naming the line."""
+    skipped = 0
+    for line, row in enumerate(reader, start=2):
+        cells = {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
+        if all(not v for k, v in cells.items() if k is not None) and not cells.get(None):
+            skipped += 1
+            continue
+        if None in cells.values():
+            raise ReadError(f"{path} line {line}: fewer cells than the header has columns "
+                            f"({len(reader.fieldnames or [])})")
+        if cells.get(None):
+            raise ReadError(f"{path} line {line}: more cells than the header has columns "
+                            f"({len(reader.fieldnames or [])})")
+        yield line, cells
+    if skipped:
+        log.info("%s: %d empty row(s) skipped", path, skipped)
 
 
 def peptide_range_text(start: int, end: int) -> str:
@@ -48,13 +101,14 @@ def read_peptide_table(path: str | Path, *,
     """
     path = Path(path)
     try:
-        with path.open(newline="", encoding="utf-8-sig") as fh:
-            reader = csv.DictReader(fh)
+        with open_text(path, newline="") as fh:
+            reader = _table_reader(fh, path)
             missing = [c for c in required if c not in (reader.fieldnames or [])]
             if missing:
-                raise ReadError(f"{path}: missing column(s) {', '.join(missing)}")
+                raise ReadError(f"{path}: missing column(s) {', '.join(missing)}; "
+                                f"{_columns_found(reader)}")
             entries = []
-            for line, row in enumerate(reader, start=2):
+            for line, row in _rows(reader, path):
                 try:
                     entry = _entry_from_row(row)
                 except (ValueError, TypeError) as exc:
@@ -67,31 +121,43 @@ def read_peptide_table(path: str | Path, *,
                                 entry.end_seq, entry.start_seq, entry.end_seq)
                 entries.append(entry)
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
     return entries
 
 
-def _whole(value: str, name: str) -> int:
-    """An integer column value (``2`` or ``2.0``; a fraction or a non-number is an error)."""
-    number = float(value)
+def _whole(value: str | None, name: str) -> int:
+    """An integer column value (``2`` or ``2.0``; empty, a fraction or a non-number is an error
+    naming the column)."""
+    text = (value or "").strip()
+    if not text:
+        raise ValueError(f"{name} is empty")
+    try:
+        number = float(text)
+    except ValueError:
+        hint = ": use a decimal point" if "," in text else ""
+        raise ValueError(f"{name} must be a whole number, not {text!r}{hint}") from None
     if not number.is_integer():
-        raise ValueError(f"{name} must be a whole number, not {value!r}")
+        raise ValueError(f"{name} must be a whole number, not {text!r}")
     return int(number)
 
 
 def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
-    known = set(_REQUIRED) | {"peptide_range", "modification", "Index"}
+    """The entry of one table row (its cells already stripped, :func:`_rows`)."""
+    known = set(_REQUIRED) | {"peptide_range", "modification", "index"}
     start, end = _whole(row["start_seq"], "start_seq"), _whole(row["end_seq"], "end_seq")
+    peptide = (row.get("peptide") or "").strip()
+    if not peptide:
+        raise ValueError("peptide is empty")
     entry = PeptideEntry(
-        file=row.get("file") or "",
-        sample=row.get("sample") or "",
-        peptide=row["peptide"],
+        file=(row.get("file") or "").strip(),
+        sample=(row.get("sample") or "").strip(),
+        peptide=peptide,
         peptide_range=(row.get("peptide_range") or "").strip() or peptide_range_text(start, end),
         start_seq=start,
         end_seq=end,
         charge=_whole(row["charge"], "charge"),
         modification=(row.get("modification") or "").strip(),
-        extra={k: v for k, v in row.items() if k not in known and k is not None},
+        extra={k: (v or "").strip() for k, v in row.items() if k not in known and k is not None},
     )
     entry_rt(entry)  # a retention time must be a number
     entry_rt_window(entry)  # and a window both ends, in order
@@ -111,30 +177,34 @@ def read_retention_times(path: str | Path) -> list[dict]:
     path = Path(path)
     rows = []
     try:
-        with path.open(newline="", encoding="utf-8-sig") as fh:
-            reader = csv.DictReader(fh)
+        with open_text(path, newline="") as fh:
+            reader = _table_reader(fh, path)
             names = reader.fieldnames or []
             if "rt" not in names:
-                raise ReadError(f"{path}: no rt column (retention time, minutes)")
+                raise ReadError(f"{path}: no rt column (retention time, minutes); "
+                                f"{_columns_found(reader)}")
             if not set(names) & {"start_seq", "peptide_range", "peptide"}:
                 raise ReadError(f"{path}: name the peptides (start_seq and end_seq, "
-                                "peptide_range or peptide)")
-            for line, row in enumerate(reader, start=2):
+                                f"peptide_range or peptide); {_columns_found(reader)}")
+            for line, row in _rows(reader, path):
                 try:
                     rows.append(_rt_row(row))
                 except ValueError as exc:
                     raise ReadError(f"{path} line {line}: {exc}") from exc
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
     return rows
 
 
 def _rt_row(row: dict) -> dict:
-    if None in row.values():
-        raise ValueError("fewer cells than the header has columns")
-    if row.get(None):
-        raise ValueError("more cells than the header has columns")
-    out: dict = {"rt": float(row["rt"])}
+    """The retention time and the columns naming its spectra of one row (cells stripped)."""
+    rt = (row.get("rt") or "").strip()
+    if not rt:
+        raise ValueError("rt is empty")
+    try:
+        out: dict = {"rt": float(rt)}
+    except ValueError:
+        raise ValueError(f"rt {rt!r} is not a number of minutes") from None
     rng = (row.get("peptide_range") or "").strip()
     if rng and not (row.get("start_seq") or "").strip():
         first, _, last = rng.partition("-")
@@ -199,7 +269,7 @@ def read_fasta_records(path: str | Path) -> list[tuple[str, str]]:
     """
     records: list[tuple[str, list[str]]] = []
     try:
-        with Path(path).open(encoding="utf-8-sig") as fh:
+        with open_text(path) as fh:
             for line in fh:
                 line = line.strip()
                 if line.startswith(">"):
@@ -208,7 +278,7 @@ def read_fasta_records(path: str | Path) -> list[tuple[str, str]]:
                 elif line and records:
                     records[-1][1].append("".join(line.split()))
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
     return [(name, "".join(parts)) for name, parts in records if parts]
 
 

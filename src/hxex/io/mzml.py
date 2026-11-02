@@ -98,6 +98,17 @@ ACTIVATIONS = {
 }
 
 
+class StaleIndexError(ReadError):
+    """An indexed mzML file whose index no longer matches its contents (the file was changed
+    after it was indexed); the readers fall back to reading through the file."""
+
+    def __init__(self, path, index: int, why: str):
+        self.path, self.index, self.why = Path(path), int(index), why
+        super().__init__(f"{path}: the file's index does not match its contents at scan "
+                         f"{index} ({why}): the file was changed after it was converted; "
+                         "convert it again")
+
+
 class MzmlError(ReadError):
     """An mzML file that cannot be read."""
 
@@ -273,13 +284,23 @@ def in_windows(mz: np.ndarray, merged: tuple[np.ndarray, np.ndarray]) -> np.ndar
     return (j >= 0) & (mz <= highs[np.maximum(j, 0)])
 
 
+def _number(value: str, what: str, index: int, sid: str) -> float:
+    """A scan's cvParam value as a number; an empty or unreadable one (a damaged file) is an
+    :class:`MzmlError` naming the scan."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise MzmlError(f"scan {index} ({sid}): its {what} is {value!r}, not a number (the "
+                        "file is damaged or unusual: convert it again)") from None
+
+
 def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
     """A :class:`Scan` from a ``spectrum`` element (``mz_windows`` merged, as
     :func:`merge_windows` returns them; ``groups``: the file's parameter groups)."""
     index = int(elem.get("index", -1))
     sid = elem.get("id", "")
     cv = _cv(elem, groups)
-    ms_level = int(float(cv.get(_MS_LEVEL, ("1", ""))[0]))
+    ms_level = int(_number(cv.get(_MS_LEVEL, ("1", ""))[0], "ms level", index, sid))
     centroid = True if _CENTROID in cv else False if _PROFILE in cv else None
     time, filt = np.nan, ""
     scan = elem.find(f"{_NS}scanList/{_NS}scan")
@@ -287,7 +308,8 @@ def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
         scv = _cv(scan, groups)
         if _SCAN_TIME in scv:
             value, unit = scv[_SCAN_TIME]
-            time = float(value) * _TIME_UNITS.get(unit, 60.0)  # mzML's default unit: minutes
+            # mzML's default unit: minutes
+            time = _number(value, "scan start time", index, sid) * _TIME_UNITS.get(unit, 60.0)
         filt = scv.get(_FILTER, ("", ""))[0] or _user_param(scan, "filter string")
     if not filt:
         filt = _user_param(elem, "filter string")  # OpenMS writes it on the spectrum
@@ -559,6 +581,7 @@ def _activation_match(column: np.ndarray, activation: str) -> np.ndarray:
     """Which rows of an activation column (names joined with ``;``) match ``activation`` (see
     :meth:`ScanTable.select`)."""
     names = [set(filter(None, str(a).split(";"))) for a in column]
+    activation = activation.strip()
     exact = ACTIVATIONS.get(activation.upper())
     if exact is not None:  # the scan's activation is exactly that method
         return np.array([any(n == e for e in exact) for n in names], dtype=bool)
@@ -611,13 +634,25 @@ class MzmlFile:
         offsets = self._index_offsets()
         if wanted and wanted <= offsets.keys():  # through the file's index: wanted scans only
             merged = None if mz_windows is None else merge_windows(mz_windows)
-            return {i: self._indexed_scan(i, merged) for i in sorted(wanted)}
+            try:
+                return {i: self._indexed_scan(i, merged) for i in sorted(wanted)}
+            except StaleIndexError as exc:
+                self._stale_index(exc)
         return {s.index: s for s in iter_scans(self.path, mz_windows=mz_windows,
                                                keep=lambda m: m.index in wanted)}
 
+    def _stale_index(self, exc: StaleIndexError) -> None:
+        """Give up the file's index (its offsets no longer point at its spectra) and read
+        through the file instead, warning once per file."""
+        log.warning("%s: %s; the file is read through instead of by its index (convert it "
+                    "again to make it faster)", self.path, exc.why)
+        self._offsets, self._ends = {}, None
+
     def _indexed_scan(self, index: int, merged) -> Scan:
         """The scan at ``index`` read at its offset in the file's index (``merged``: m/z windows
-        as :func:`merge_windows` returns them, or None)."""
+        as :func:`merge_windows` returns them, or None). :class:`StaleIndexError` when the
+        bytes at the offset are not that spectrum (the file was changed after it was indexed:
+        a line-ending conversion, a text-mode transfer, an edit by hand)."""
         offsets = self._index_offsets()
         start = offsets[index]
         if self._ends is None:  # each spectrum ends before the next one's offset
@@ -627,16 +662,27 @@ class MzmlFile:
         with self.path.open("rb") as fh:
             fh.seek(start)
             chunk = fh.read(end - start) if end is not None else b""
+            if not chunk.startswith((b"<spectrum ", b"<spectrum>")):
+                raise StaleIndexError(self.path, index, "the index does not point at a spectrum")
             while b"</spectrum>" not in chunk:
                 more = fh.read(1 << 20)
                 if not more:
                     raise MzmlError(f"{self.path}: scan {index} is cut off")
                 chunk += more
-        text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
-        text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ', 1)
+        try:
+            text = chunk[: chunk.index(b"</spectrum>") + len(b"</spectrum>")].decode("utf-8")
+            text = text.replace("<spectrum ", '<spectrum xmlns="http://psi.hupo.org/ms/mzml" ',
+                                1)
+            elem = ET.fromstring(text)
+        except (UnicodeDecodeError, ET.ParseError) as exc:
+            raise StaleIndexError(self.path, index, f"the spectrum at the indexed offset "
+                                  f"cannot be parsed ({exc})") from None
+        if elem.get("index") not in (None, str(index)):
+            raise StaleIndexError(self.path, index, f"the index points at scan "
+                                  f"{elem.get('index')}")
         if self._groups is None:
             self._groups = _param_groups(self.path)
-        return _scan_from(ET.fromstring(text), True, merged, self._groups)
+        return _scan_from(elem, True, merged, self._groups)
 
     def close(self) -> None:
         """Nothing to release (the file is opened for each read); as :class:`ThermoFile`."""
@@ -651,7 +697,11 @@ class MzmlFile:
         """The scan at position ``index`` (as in the scan table), with its arrays."""
         windows = None if mz_window is None else [mz_window]
         if index in self._index_offsets():
-            return self._indexed_scan(index, None if windows is None else merge_windows(windows))
+            try:
+                return self._indexed_scan(index,
+                                          None if windows is None else merge_windows(windows))
+            except StaleIndexError as exc:
+                self._stale_index(exc)
         for s in iter_scans(self.path, mz_windows=windows, keep=lambda m: m.index == index):
             return s
         raise MzmlError(f"{self.path}: no scan {index}")
@@ -794,6 +844,10 @@ class MzmlRun:
             if isinstance(getattr(self, name), str) and getattr(self, name) != TARGET:
                 raise ValueError(f"{name} must be a number, None or {TARGET!r}")
         object.__setattr__(self, "role", check_role(self.role))
+        if self.fixed and self.time_offset:
+            raise ValueError("time_offset is for kinetics runs (every scan its own time): a run "
+                             "with a time or a role is one spectrum at that time, so leave "
+                             "time_offset out")
 
     @property
     def fixed(self) -> bool:
@@ -1141,8 +1195,9 @@ def target_applies(target: MzmlTarget, run: MzmlRun, tie: bool = True) -> bool:
 
 
 def run_name(run: MzmlRun) -> str:
-    """The name a peptide table's ``run`` column gives a run by: its file name."""
-    return Path(str(run.path)).name
+    """The name a peptide table's ``run`` column gives a run by: its file name (of a path
+    recorded on any system: a Windows path read on POSIX still ends in its file name)."""
+    return _run_file_name(run.path)
 
 
 def _run_paths(runs: Sequence[MzmlRun], data_root, record_paths: str):
@@ -1562,6 +1617,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
                                   registry)
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
+    no_spectrum_type: set[Path] = set()  # files warned about scans without a spectrum type
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
             continue
@@ -1576,6 +1632,11 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             for s in scans:
                 inside = (s.mz >= lo) & (s.mz <= hi)
                 parts.append((s.mz[inside], s.intensity[inside]))
+            if any(s.centroid is None for s in scans) and f.path not in no_spectrum_type:
+                no_spectrum_type.add(f.path)
+                log.warning("%s: its scans do not say whether they are centroided or profile "
+                            "(no spectrum type); several scans are summed as profile data",
+                            f.path)
             centroid = all(s.centroid for s in scans)
             if len(parts) == 1:
                 mz, y = parts[0]
@@ -1875,7 +1936,8 @@ def _repeat_read(
     if on_change not in CHANGE_ACTIONS:
         raise ValueError(f"on_change must be one of {', '.join(CHANGE_ACTIONS)}")
     runs = [MzmlRun.from_dict(r) for r in source["runs"]]  # "series" is derived, not an input
-    files = source.get("files") or [None] * len(runs)
+    files = list(source.get("files") or [])[:len(runs)]
+    files += [None] * (len(runs) - len(files))  # a record (edited by hand) short of entries
     root = None if data_root is None else Path(data_root)
     opened, identities = [], []
     for r, known in zip(runs, files, strict=True):

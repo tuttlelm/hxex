@@ -20,7 +20,7 @@ SUBMODULES = [
     "hxex.noise",
     "hxex.controls",
     "hxex.bootstrap",
-    "hxex.run",
+    "hxex.pipeline",
     "hxex.cli",
     "hxex.config",
 ]
@@ -64,3 +64,13 @@ def test_torch_runs_on_cpu():
     x = torch.arange(6, dtype=torch.float64, device="cpu").reshape(2, 3)
     # rows [0, 1, 2] and [3, 4, 5]: x @ x.T = [[5, 14], [14, 50]], whose sum is 83
     assert float((x @ x.T).sum()) == pytest.approx(83.0)
+
+
+def test_run_is_the_entry_point_after_the_pipeline_module_is_imported(tmp_path):
+    """``hxex.run`` is always the function, also after a call that imports ``hxex.pipeline``
+    (audit 2026-11-01, Part 2 B2: the module used to be ``hxex.run`` and shadowed it)."""
+    import hxex.pipeline
+
+    assert callable(hxex.run)
+    assert hxex.run is hxex.pipeline.run
+    assert hxex.RunConfig is hxex.pipeline.RunConfig

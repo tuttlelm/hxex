@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     noise = parser.add_mutually_exclusive_group()
     noise.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
     noise.add_argument("-v", "--verbose", action="store_true", help="more messages")
-    parser.add_argument("--progress-every", type=float, default=30.0, metavar="SECONDS",
+    parser.add_argument("--progress-every", type=_seconds, default=30.0, metavar="SECONDS",
                         help="seconds between progress lines (default 30)")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
@@ -64,12 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="replace an existing file (without it, init refuses to write over one)")
 
     p = sub.add_parser("check", help="check a project file and show what would be read")
-    p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
+    p.add_argument("project_file", metavar="hxex.toml",
+                   help="the project file (hxex.toml, written by hxex init)")
     _spectra_option(p)
 
     p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write the "
                                    "bundle and tables (figures: hxex report)")
-    p.add_argument("project_file", metavar="PROJECT", help="the project file (TOML)")
+    p.add_argument("project_file", metavar="hxex.toml",
+                   help="the project file (hxex.toml, written by hxex init)")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
     p.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle (and its tables), carrying its review "
@@ -164,9 +166,23 @@ def _threads_option(p) -> None:
 
 
 def _positive_int(text: str) -> int:
-    value = int(text)
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a whole number of at least 1, not "
+                                         f"'{text}'") from None
     if value < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
+
+def _seconds(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a number of seconds, not '{text}'") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
     return value
 
 
@@ -249,6 +265,9 @@ def _beside(bundle: Path, value, suffix: str) -> Path | None:
 def cmd_init(args) -> int:
     from .config import template
 
+    if not args.project or ":" in args.project:
+        log.error("--project must be a name (non-empty text without ':'), not %r", args.project)
+        return EXIT_ERROR
     text = template(args.format, args.project)
     if args.output == "-":
         sys.stdout.write(text)
@@ -277,6 +296,8 @@ def _project(args, *, analysis_only: bool = False):
 def cmd_check(args) -> int:
     """Print what the project would read, then every problem found (each a line; the exit
     status says whether there were any)."""
+    import dataclasses
+
     from .config import (
         FOLDER_FORMATS,
         ProjectError,
@@ -311,7 +332,9 @@ def cmd_check(args) -> int:
 
             # as the read takes them: a peptide table's rows filtered by samples,
             # peptide_ranges and peptide_region (scan filters by itself)
-            entries = filter_entries(folder_entries(project), samples=inp.samples,
+            found = folder_entries(project if not inp.samples else dataclasses.replace(
+                project, input=dataclasses.replace(inp, samples=None)))
+            entries = filter_entries(found, samples=inp.samples,
                                      peptide_ranges=inp.peptide_ranges,
                                      peptide_region=inp.peptide_region)
             samples = Counter(e.sample for e in entries)
@@ -321,8 +344,14 @@ def cmd_check(args) -> int:
                 _say(f"  {s or '(no sample)'}: {n}" + _control_file_text(roles, s))
             if roles is None:
                 _say(f"{'controls':14s} the column labels of each sheet mark them (undeut, TD)")
+            have = sorted({e.sample for e in found if e.sample})
+            for s in inp.samples or ():
+                if s not in have:  # a misspelt sample is otherwise silently absent
+                    problems.append(f"[input] samples: no sample {s!r} in {inp.data_dir} "
+                                    f"(samples found: {', '.join(have) or 'none'})")
             if not entries:
-                problems.append(f"no spectra of format {inp.format} in {inp.data_dir}")
+                problems.append(f"no spectra of format {inp.format} in {inp.data_dir}"
+                                + _format_hint(project))
             problems += _check_peptides(project, entries)
             if not problems and _has_rules(project):
                 from .io import ReadError, spectrum_index
@@ -347,13 +376,39 @@ def cmd_check(args) -> int:
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     for n, line in enumerate(_output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")
-    if problems:
+    if problems:  # after the status block, and the verdict last, whatever the terminal buffers
+        sys.stdout.flush()
         for p in problems:
             log.error("%s", p)
-        log.warning("%d problem(s) found", len(problems))
+        sys.stderr.flush()
+        _say(f"not ok: {len(problems)} problem(s) found (listed above)")
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _format_hint(project) -> str:
+    """When a folder format finds nothing, whether another folder format's layout fits the
+    folder: ``; the folder holds ... (format = "specexport"?)``, else empty."""
+    import dataclasses
+
+    from .config import FOLDER_FORMATS, folder_entries
+
+    layouts = {"specexport": "sample folders with peptide folders",
+               "hxexpress": "HX-Express spreadsheets", "pooled": "spectra of one sample"}
+    for other in FOLDER_FORMATS:
+        if other == project.input.format:
+            continue
+        try:
+            n = len(folder_entries(dataclasses.replace(
+                project, input=dataclasses.replace(project.input, format=other,
+                                                   peptides=None))))
+        except Exception:  # noqa: BLE001 - a layout that does not fit: no hint
+            continue
+        if n:
+            return (f" (the folder holds {layouts[other]}, {n} spectra: format = "
+                    f"\"{other}\"?)")
+    return ""
 
 
 def _output_lines(project) -> list[str]:
@@ -372,8 +427,8 @@ def _output_lines(project) -> list[str]:
              "[output] keep_previous moves it to NAME.N first" if out.keep_previous else "")
 
     def needs(command: str) -> str:
-        verb = "need" if " and " in command else "needs"
-        return flags or f"{command} {verb} --overwrite or --keep-previous"
+        verb = "write" if " and " in command else "writes"
+        return flags or f"{command} {verb} it again with --overwrite or --keep-previous"
 
     created = (bundle_manifest(bundle) or {}).get("created", "") if bundle.exists() else ""
     lines = []
@@ -619,8 +674,8 @@ def cmd_run(args) -> int:
     from .config import check_table_choices, project_record, read_input
     from .hooks import ProgressLog
     from .model import Backend
+    from .pipeline import run
     from .review_table import table_choices
-    from .run import run
 
     project = _project(args)
     out = project.output
@@ -639,21 +694,25 @@ def cmd_run(args) -> int:
         stored_spectra_source(stored)  # a path that cannot be read: refused before anything
     overwrite = args.overwrite or out.overwrite
     keep_previous = args.keep_previous or out.keep_previous
-    if bundle.exists() and not (overwrite or keep_previous):
-        log.error("%s exists: --overwrite replaces it (and its tables, carrying its review "
-                  "over), --keep-previous moves it to the next generation first "
-                  "(%s.N), or write to another output.bundle (the bundle and the folders "
-                  "named after it are hxex's)", bundle, bundle.name)
-        return EXIT_ERROR
     from .io.bundle import bundle_manifest
 
     if bundle.exists() and bundle_manifest(bundle) is None:  # refused before the read
         log.error("%s exists but is not a results bundle; it is never replaced or moved: "
                   "write to another output.bundle", bundle)
         return EXIT_ERROR
+    if bundle.exists() and not (overwrite or keep_previous):
+        log.error("%s exists: --overwrite replaces it (and its tables, carrying its review "
+                  "over), --keep-previous moves it to the next generation first "
+                  "(%s.N), or write to another output.bundle (the bundle and the folders "
+                  "named after it are hxex's)", bundle, bundle.name)
+        return EXIT_ERROR
     from .io import prepare_output
 
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
+    if tables is not None and _same_folder(tables, bundle):
+        log.error("[output] tables (%s) is the results bundle itself (--bundle %s): the tables "
+                  "go in a folder of their own", tables, bundle)
+        return EXIT_ERROR
     # the tables folder follows the bundle's rule (refused before anything is fitted); a
     # bundle kept as its previous generation takes its own tables folder along
     moves_along = (keep_previous and bundle.exists() and tables is not None
@@ -738,11 +797,14 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
 def cmd_resume(args) -> int:
     from .hooks import ProgressLog
     from .io.bundle import bundle_manifest
-    from .run import NothingToResume, resume_bootstrap
+    from .pipeline import NothingToResume, resume_bootstrap
 
     bundle, extra = Path(args.bundle), {}
     tables_arg, threads = args.tables, args.threads
     review = project = None
+    if problem := _bundle_problem(bundle, "resume"):
+        log.error("%s", problem)
+        return EXIT_ERROR
     # a project file: add or redo a bootstrap or the population test
     if bundle.suffix == ".toml" and bundle.is_file():
         import dataclasses
@@ -766,8 +828,13 @@ def cmd_resume(args) -> int:
         if isinstance(test, int):
             return test
         if test is not None:
-            extra.update(population_test=test, project_file=project_record(
-                dataclasses.replace(project, threads=threads)))
+            record = project_record(dataclasses.replace(project, threads=threads))
+            if project.input is None:  # a file for the analysis: the bundle's input stays
+                held_file = ((bundle_manifest(bundle) or {}).get("configs") or {}).get(
+                    "project_file") or {}
+                if held_file.get("input"):
+                    record["input"] = held_file["input"]
+            extra.update(population_test=test, project_file=record)
         held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
         # the bootstrap there is kept when it has the project's settings: only what the
         # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
@@ -834,7 +901,7 @@ def _test_to_resume(project, bundle):
     the project's ``[run.fit]``: run again). The other ``[run]`` settings that differ from the
     bundle's are named in the log, and are not applied."""
     from .io.bundle import bundle_manifest, settings_changed
-    from .run import RunConfig
+    from .pipeline import RunConfig
 
     stored = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("run")
     if stored is None:
@@ -878,6 +945,9 @@ def cmd_report(args) -> int:
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
     overwrite, keep_previous = args.overwrite, args.keep_previous
     own_tables: Path | bool = True  # the tables folder when neither --tables nor --figures
+    if problem := _bundle_problem(bundle, "report"):
+        log.error("%s", problem)
+        return EXIT_ERROR
     if bundle.suffix == ".toml" and bundle.is_file():  # a project file: its bundle, rules, figures
         from .config import load_project
 
@@ -890,6 +960,9 @@ def cmd_report(args) -> int:
         overwrite = overwrite or project.output.overwrite
         keep_previous = keep_previous or project.output.keep_previous
         own_tables = project.output.tables
+        if problem := _bundle_problem(bundle, "report"):  # the bundle itself, before its folders
+            log.error("%s", problem)
+            return EXIT_ERROR
     tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
     if tables is None and figures is None:
@@ -901,6 +974,11 @@ def cmd_report(args) -> int:
     outputs = [(folder, what, option) for folder, what, option in (
         (tables, "tables", "--tables DIR"), (figures, "figures", "--figures DIR"))
         if folder is not None]
+    for folder, what, option in outputs:
+        if _same_folder(folder, bundle):
+            log.error("%s is the results bundle itself: the %s go in a folder of their own "
+                      "(%s)", folder, what, option)
+            return EXIT_ERROR
     for folder, what, option in outputs:  # the bundle's rule, before anything is opened
         prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous, move=False,
                        what=what, elsewhere=f"another folder with {option}")
@@ -926,7 +1004,7 @@ def cmd_report(args) -> int:
                 prepare_output(folder, keep_previous=True)
         if tables is not None:
             written = write_tables(results, tables, created=b.manifest.get("created", ""))
-            _say(f"{len(written)} table(s) in {tables}")
+            _say(f"{len(written)} table(s) in {tables}{_review_text(results)}")
         if figures is not None:
             if args.k is not None:
                 plots = dataclasses.replace(plots, k=args.k)
@@ -940,6 +1018,57 @@ def cmd_report(args) -> int:
                                     cancel=stop)
             _say(f"{len(written)} figure file(s) in {figures}")
     return 0
+
+
+def _review_text(results) -> str:
+    """`` (review: 1 rejected, 2 with a chosen K)`` for the closing line of a report, or empty
+    without review decisions."""
+    review = results.review
+    if review is None or not len(review):
+        return ""
+    rejected = int((np.asarray(results.review_status) == "rejected").sum())
+    chosen = sum(int(k) > 0 and not stale for k, stale in zip(review.k_override, review.stale,
+                                                               strict=True))
+    parts = [f"{rejected} rejected"] if rejected else []
+    parts += [f"{chosen} with a chosen K"] if chosen else []
+    return f" (review: {', '.join(parts)})" if parts else ""
+
+
+def _bundle_problem(path: Path, command: str) -> str | None:
+    """Why ``path`` cannot be the results ``command`` reads, before anything is opened: a
+    project file that does not exist (or, for ``hxex info``, one at all), no results yet, or a
+    folder that is not a bundle. None when it may be one (or is a project file to read)."""
+    if path.suffix == ".toml":
+        if not path.is_file():
+            return f"no such project file: {path}"
+        if command == "info":
+            from .config import ProjectError, load_project
+
+            try:
+                bundle = load_project(path, analysis_only=True).output.bundle
+            except ProjectError:
+                bundle = None
+            return (f"hxex info takes the results folder, not the project file: hxex info "
+                    f"{bundle.name if bundle is not None else 'results'}")
+        return None
+    if not path.exists():
+        return (f"no results yet at {path}: run 'hxex run hxex.toml' first (it writes the "
+                f"bundle this command reads)")
+    if path.is_dir() and not (path / "manifest.json").is_file():
+        from .io.bundle import REPLACING
+
+        if (path / REPLACING).exists():
+            return None  # open_bundle says that its writing was interrupted
+        return (f"{path} is not a results bundle (it has no manifest.json): a bundle is the "
+                "whole folder hxex run wrote")
+    return None
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return Path(a) == Path(b)
 
 
 def _peak_measure_text(measure) -> str:
@@ -1029,6 +1158,9 @@ def _promotion_text(controls: dict | None) -> str:
 def cmd_info(args) -> int:
     from .io import generations, open_bundle
 
+    if problem := _bundle_problem(Path(args.bundle), "info"):
+        log.error("%s", problem)
+        return EXIT_ERROR
     with open_bundle(args.bundle) as b:
         m = b.manifest
         fit = b.fit()
@@ -1196,6 +1328,10 @@ def cmd_analyse(args) -> int:
     review = None  # the project's [review] decisions
     overwrite, keep_previous = args.overwrite, args.keep_previous
     first = Path(_run_source(args.source[0])[1])
+    if len(args.source) == 1 and first.suffix != ".toml" and (
+            problem := _bundle_problem(first, "analyse")):
+        log.error("%s", problem)
+        return EXIT_ERROR
     if len(args.source) > 1 or _is_bundle(first):
         runs = dict(_run_source(s) for s in args.source)
         if len(runs) < len(args.source):
@@ -1246,6 +1382,14 @@ def cmd_analyse(args) -> int:
         analysis_folder_name("runs" if several else lead.name, config.reference))
     from .io import prepare_output
 
+    for name, path in runs.items():
+        if problem := _bundle_problem(Path(path), "analyse"):
+            log.error("%s", problem)
+            return EXIT_ERROR
+        if _same_folder(out, path):
+            log.error("%s is the results bundle itself%s: the analysis goes in a folder of its "
+                      "own (--out DIR, or [analysis] out)", out, f" ({name})" if name else "")
+            return EXIT_ERROR
     prepare_output(out, overwrite=overwrite, keep_previous=keep_previous, what="analysis",
                    elsewhere="another folder with --out DIR (or [analysis] out)", move=False)
     stop = _Stop()
@@ -1309,4 +1453,10 @@ def _dispatch(args) -> int:
             log.exception("failed")
         else:
             log.error("%s", exc)
+        return EXIT_ERROR
+    except Exception as exc:  # noqa: BLE001 - the boundary: the user never sees a traceback
+        log.debug("internal error", exc_info=True)  # the traceback, shown with -v
+        log.error("hxex stopped with an internal error (%s: %s); please report it with the "
+                  "messages above and the output of the same command run with -v (which shows "
+                  "where it stopped)", type(exc).__name__, exc)
         return EXIT_ERROR

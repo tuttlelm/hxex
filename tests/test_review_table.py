@@ -49,6 +49,7 @@ def test_review_k_zero_clears_a_chosen_k(tmp_path):
     """review_K = 0 clears a K chosen before in the bundle's review layer (an empty cell keeps
     it); inf and nan are refused with their row."""
     from hxex.io.bundle import ReviewTable
+    from hxex.pipeline import run
     from hxex.report import Results
     from hxex.review_table import (
         CLEARED,
@@ -57,7 +58,6 @@ def test_review_k_zero_clears_a_chosen_k(tmp_path):
         merge_choices,
         table_choices,
     )
-    from hxex.run import run
     from test_run import config, raw_spectra
 
     results = Results.from_run(run(raw_spectra(n_series=1), config()))
@@ -163,8 +163,8 @@ def test_spectra_csv_has_the_columns_the_review_table_reads(tmp_path):
     """A copy of spectra.csv is the user review table: it carries every column read back,
     and a note given in the review comes back in it."""
     from hxex.io.bundle import ReviewTable
+    from hxex.pipeline import run
     from hxex.report import Results, spectra_table
-    from hxex.run import run
     from test_run import config, raw_spectra
 
     res = run(raw_spectra(n_series=1), config())

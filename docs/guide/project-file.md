@@ -58,8 +58,8 @@ These three commands make the results, and each makes a different kind:
 - **`hxex report` shows the fits as they are:** for each peptide, its spectra with the fitted
   populations, how the populations change over time, and its uptake. This is where you check
   whether the fits are good. It also writes the tables again (on its own, `hxex report
-  hxex.toml` writes only the tables; add `--figures` for the figures), for example after you
-  have added an exclusion rule.
+  hxex.toml` writes only the tables and prints where, with the review's decisions applied; add
+  `--figures` for the figures), for example after you have added an exclusion rule.
 - **`hxex analyse` goes further than the fits:** it combines replicates, charge states, and
   overlapping peptides into values per residue, decides residue by residue whether one or two
   populations describe the data, and compares each sample with the reference. These are the

@@ -23,8 +23,8 @@ from hxex.noise import (
     distortion_onset,
 )
 from hxex.picking import PickerConfig, plan_bins
+from hxex.pipeline import RunConfig, run
 from hxex.population_test import simulate_null
-from hxex.run import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_picking import sticks
 
@@ -276,7 +276,7 @@ def test_per_bin_noise_is_the_default_and_needs_no_noise_reference(tmp_path, cap
     raw = raw.select(~((raw.data_id == 6) & (raw.role == "undeut")))
     cfg = RunConfig(picker=PICK, fit=FitConfig(k_max=2, adam_steps=60, n_restarts=2,
                                                backend=CPU), bootstrap=None, controls=None)
-    with caplog.at_level(logging.WARNING, logger="hxex.run"):
+    with caplog.at_level(logging.WARNING, logger="hxex.pipeline"):
         res = run(raw, cfg, out=tmp_path / "b")
     assert res.fit.noise_curve is not None and res.fit.noise_curve.n_series == 6
     assert "no undeuterated control" not in caplog.text

@@ -56,12 +56,10 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     cols["review_status"] = np.asarray(results.review_status).astype(str)
     cols["review_K"] = _review_k(results)
     cols["note"] = _review_note(results)
-    if results.quality is not None:
-        q = results.quality
-        cols["flags"] = np.array([
-            ";".join(n for n in FLAG_NAMES
-                     if getattr(q, n)[i]) for i in range(m)
-        ])
+    q = results.quality
+    cols["flags"] = np.array([  # empty without quality flags, so the columns never change
+        ";".join(n for n in FLAG_NAMES if getattr(q, n)[i]) if q is not None else ""
+        for i in range(m)])
     return cols
 
 
@@ -224,18 +222,21 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     centroid = np.full(m, np.nan)
     centroid_cor = np.full(m, np.nan)
     wide = {f"{n}_{r}": np.full(m, np.nan) for r in range(1, k_max + 1)
-            for n in ("mean", "mean_corrected", "population", "population_se")}
+            for n in ("mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
+                      "population_se")}
     for i, k in enumerate(ks):
-        mean, frac, _, population_se, cor, _ = _populations(results, i, int(k))
+        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, i, int(k))
         centroid[i] = (mean * frac).sum()
         if cor is not None:
             centroid_cor[i] = (cor * frac).sum()
         for c in range(int(k)):
             r = c + 1
             wide[f"mean_{r}"][i], wide[f"population_{r}"][i] = mean[c], frac[c]
+            wide[f"mean_se_{r}"][i] = mean_se[c]
             wide[f"population_se_{r}"][i] = population_se[c]
             if cor is not None:
                 wide[f"mean_corrected_{r}"][i] = cor[c]
+                wide[f"mean_corrected_se_{r}"][i] = cor_se[c]
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
     out.update(wide)
     out.update(_test_columns(results))

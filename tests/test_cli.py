@@ -15,7 +15,7 @@ from hxex import cli
 from hxex.config import FORMATS, ProjectError, load_project, project_from, template
 from hxex.hooks import Cancelled
 from hxex.io import ReadError, open_bundle
-from hxex.run import RunConfig, run
+from hxex.pipeline import RunConfig, run
 from test_mzml import PEPTIDE, time_course, write_mzml  # noqa: I001
 from test_run import config as run_config  # noqa: I001
 from test_run import raw_spectra
@@ -97,7 +97,9 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
         ("[figures]\nseries = 3\n", "[figures] series = 3: expected text or a list"),
         ("[figures]\nk = 0\n", "[figures]: k must be a whole number"),
         ("[run]\nbootstrap = 3\n", "[run] bootstrap = 3: expected a table, true or false"),
-        ("[run.fit]\nk_min = 0\n", "[run.fit]: need 1 <= k_min"),
+        ("[run.fit]\nk_min = 0\n", "[run.fit]: k_min = 0: k_min is the fewest populations"),
+        ("[run.fit]\nk_min = 3\nk_max = 2\n", "k_min (3) is larger than k_max (2)"),
+        ("[run.controls]\nd2o_fraction = 85\n", "d2o_fraction = 85: write the D2O fraction"),
         ("[run.bootstrap]\nci = 0.95\n", "[run.bootstrap]: ci is a percentage"),
         ('[analysis]\nalpha = "x"\n', '[analysis] alpha = "x": expected a number'),
         ('[analysis.filters]\nmin_population = "a"\n',
@@ -134,12 +136,17 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
     only = tmp_path / "only.toml"
     only.write_text('[analysis]\nreference = "WT"\n[output]\nbundle = "res"\n')
     assert load_project(only, analysis_only=True).project == ""
-    with pytest.raises(ProjectError, match="project must be a name"):
+    with pytest.raises(ProjectError, match=r"needs an \[input\] table"):
         load_project(only)
-    # hxex check says what a stage being off means
+    # hxex check says what a stage being off means; a file for the analysis only has no run
+    # settings to describe
     assert cli.main(["check", str(only)]) == 0
     out = capsys.readouterr().out
+    assert "controls" not in out and "K " not in out and "analysis only" in out
+    assert cli.main(["check", str(mzml_project(tmp_path))]) == 0
+    out = capsys.readouterr().out
     assert "controls       off: no back-exchange correction" in out and "[run.controls]" in out
+    assert "K              1\n" in out  # k_min = k_max
 
 
 def test_template_lines_carry_their_meaning_and_unit():
@@ -238,7 +245,8 @@ def test_false_unsets_the_analysis_tables(tmp_path):
     assert a.filters is None and a.fragments is None and a.controls is None
     assert a.merge is None and a.labelling is None and a.runs is None and a.fasta is None
     assert project("").analysis.filters is not None
-    for bad in ("choice = false\n", "filters = 3\n", "fragments = 1\n", "choice = [1]\n"):
+    assert project("choice = false\n").analysis.choice == project("").analysis.choice
+    for bad in ("filters = 3\n", "fragments = 1\n", "choice = [1]\n"):
         with pytest.raises(ProjectError, match=r"\[analysis\]"):
             project(bad)
 
@@ -303,10 +311,10 @@ def test_peptides_with_a_modification_and_fragments_are_refused(tmp_path, capsys
     path = mzml_project(tmp_path, extra_input='[[input.fragments]]\nions = "c:2-3:1"\n')
     (tmp_path / "peptides.csv").write_text(head + rows)
     assert cli.main(["check", str(path)]) == 1
-    err = capsys.readouterr().err
+    out, err = capsys.readouterr()
     assert "line 3: " in err and "(charge 3) has modification 'undeut_mz:400.2'" in err
     assert "line 4: " in err and "line 2: " not in err
-    assert "at MS1 either" in err and "parents = false" in err and "2 problem(s)" in err
+    assert "at MS1 either" in err and "parents = false" in err and "2 problem(s)" in out
     assert cli.main(["run", str(path)]) == 1
     err = capsys.readouterr().err
     assert "line 3: " in err and "line 4: " in err and "at MS1 either" in err
@@ -327,10 +335,11 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
-    assert "outputs        out exists: hxex run needs --overwrite or --keep-previous" in out
-    assert ("out_tables: up to date; hxex run and hxex report need --overwrite or "
+    assert ("outputs        out exists: hxex run writes it again with --overwrite or "
             "--keep-previous") in out
-    assert "out_analysis: up to date; hxex analyse needs --overwrite" in out
+    assert ("out_tables: up to date; hxex run and hxex report write it again with --overwrite "
+            "or --keep-previous") in out
+    assert "out_analysis: up to date; hxex analyse writes it again with --overwrite" in out
     assert out.strip().endswith("ok")
     path = mzml_project(tmp_path, output="keep_previous = true")
     assert cli.main(["check", str(path)]) == 0
@@ -346,14 +355,15 @@ def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
     assert cli.main(["check", str(path)]) == 1
     out, err = capsys.readouterr()
     assert "project        cli" in out and "input.peptides" in err and "gone" not in err
-    assert "peptides.csv: no such file" in err and "1 problem(s)" in err
+    assert "peptides.csv: no such file" in err
+    assert out.rstrip().endswith("not ok: 1 problem(s) found (listed above)")  # the verdict last
     (tmp_path / "peptides.csv").write_text(
         "file,sample,peptide,peptide_range,start_seq,end_seq,charge\n"
         f"x,,{PEPTIDE},0001-0010,1,10,2\nx,,AC(ox)DE,0001-0005,1,5,2\n")
     assert cli.main(["check", str(path)]) == 1
-    err = capsys.readouterr().err
+    out, err = capsys.readouterr()
     assert "peptides.csv line 3: peptide 'AC(ox)DE'" in err and "modX" in err
-    assert "1 problem(s)" in err
+    assert "not ok: 1 problem(s)" in out
     (tmp_path / "out").mkdir()
     folder = tmp_path / "folder.toml"
     folder.write_text('project = "f"\n[input]\nformat = "specexport"\ndata_dir = "nowhere"\n'
@@ -362,7 +372,7 @@ def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
     out, err = capsys.readouterr()
     assert "format         specexport" in out
     assert "nowhere: no such directory" in err and "rt.csv: no such file" in err
-    assert "2 problem(s)" in err and "outputs        out exists" in out
+    assert "not ok: 2 problem(s)" in out and "outputs        out exists" in out
 
 
 def test_run_info_and_report(tmp_path, capsys):
@@ -401,7 +411,7 @@ def test_run_info_and_report(tmp_path, capsys):
     capsys.readouterr()
     # drawing again into a folder with figures is refused, as a run into a bundle is
     assert cli.main(["-q", "report", str(path), "--figures"]) == 1
-    assert "out_figures holds the figures written before: --overwrite" in capsys.readouterr().err
+    assert "out_figures holds the figures written before" in capsys.readouterr().err
     assert cli.main(["-q", "report", str(path), "--figures", "--overwrite", "--k", "4"]) == 1
     assert "K = 4 was not fitted" in capsys.readouterr().err
     assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
@@ -572,7 +582,7 @@ def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
 def test_errors_are_messages_not_tracebacks(tmp_path, capsys):
     assert cli.main(["check", str(tmp_path / "missing.toml")]) == 1
     err = capsys.readouterr().err
-    assert "cannot read" in err and "Traceback" not in err
+    assert "no such project file" in err and "Traceback" not in err
     # output.bundle naming a folder that is not a bundle: refused before the read
     p = mzml_project(tmp_path)
     (tmp_path / "out").mkdir()
@@ -1396,7 +1406,7 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert (tmp_path / "runs_analysis" / "species_uptake.csv").is_file()
     capsys.readouterr()
     assert cli.main(["check", str(path)]) == 0
-    assert "runs_analysis: up to date; hxex analyse needs --overwrite" in capsys.readouterr().out
+    assert "runs_analysis: up to date; hxex analyse writes it again" in capsys.readouterr().out
 
 
 def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):
@@ -1454,3 +1464,214 @@ bundle = "out"
         "peptide,start_seq,end_seq,charge,rt,run\n" f"{PEPTIDE},1,10,2,0.5,c.mzML\n")
     assert cli.main(["check", str(path)]) != 0
     assert "run 'c.mzML' is not the file of any [[input.runs]]" in capsys.readouterr().err
+
+
+def test_project_file_mistakes_are_named_with_the_fix(tmp_path):
+    """Audit 2026-11-01, Session A: a mistyped table or key is named with the closest known
+    one, a table written as false is refused in words, the items of regions and sites and the
+    runs are checked, empty paths and the bundle's own folder are refused, a file that is not
+    UTF-8 or has a common TOML mistake says what to change, and range errors are in words."""
+    head = 'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+
+    def project(text, full=False):
+        return project_from(tomllib.loads(text if full else head + text), tmp_path)
+
+    for text, message in [
+        ("[run.contrls]\nd2o_fraction = 0.9\n",
+         "unknown table [run.contrls] in [run] (did you mean [run.controls]?); the tables of "
+         "[run] are [run.picker], [run.fit]"),
+        ("[run.fitt]\nk_max = 2\n", "unknown table [run.fitt] in [run] (did you mean [run.fit]?)"),
+        ("[run]\nn_max_factr = 2\n", "unknown key(s) in [run]: n_max_factr (did you mean "
+                                     "n_max_factor?)"),
+        ("[run.fit]\nk_mx = 2\n", "unknown fit setting(s): k_mx"),
+        ("[imput]\nformat = \"mzml\"\n", "unknown table [imput] in the project file (did you "
+                                         "mean [input]?); the tables of the project file are "
+                                         "[input], [run], [output], [analysis], [figures], "
+                                         "[review]"),
+        ("[output]\nbundel = \"x\"\n", "unknown key(s) in [output]: bundel (did you mean "
+                                       "bundle?)"),
+        ("analysis = false\n" + head, "[analysis] must be a table (a heading with its settings "
+                                      "under it); to run no analysis, delete the table"),
+        ("review = false\n" + head, "[review] must be a table"),
+        ("[analysis]\nregions = 3\n", "[[analysis.regions]] must be tables"),
+        ("[[analysis.regions]]\nname = \"a\"\nstart = \"1\"\nend = 5\n",
+         '[analysis.regions] start = "1": expected a whole number'),
+        ("[[analysis.regions]]\nname = \"a\"\nstart = 1\n", "[[analysis.regions]] #1 needs end"),
+        ("[[analysis.sites]]\nresidue = 3\nlabl = \"x\"\n",
+         "unknown key(s) in [[analysis.sites]] #1: labl (did you mean label?)"),
+        ("[analysis.filters]\nmax_fd = 1\n", "unknown key(s) in [analysis.filters]: max_fd (did "
+                                             "you mean max_fD?)"),
+        ("[analysis.choice]\nconfidenc = 0.5\n", "unknown key(s) in [analysis.choice]: "
+                                                 "confidenc (did you mean confidence?)"),
+        ("[analysis.labelling]\nph = 7\n", "[analysis.labelling] ph = 7: unknown key ph (did "
+                                           "you mean ph_read?); the conditions are ph_read, "
+                                           "temperature and d2o_fraction"),
+        ("[output]\nbundle = \"out\"\ntables = \"out\"\n",
+         '[output] tables = "out" names the results bundle itself'),
+        ("[output]\nbundle = \"out\"\n[analysis]\nout = \"out\"\n",
+         '[analysis] out = "out" names the results bundle itself'),
+        ("[review]\ntable = \"\"\n", '[review] table = "": give the review table\'s file name'),
+        ('project = "p"\n[input]\nformat = "specexport"\ndata_dir = ""\n',
+         'input.data_dir = "": give a file or folder name'),
+        ('project = "p"\n[input]\nformat = "SpecExport"\ndata_dir = "d"\n',
+         'input.format = "SpecExport": must be one of specexport, hxexpress, pooled, mzml, '
+         'thermo (lower case; specexport is HDExaminer\'s export'),
+        ('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n[[input.runs]]\n'
+         'sample = "WT"\n', "input.runs #1: needs path (the file, and the sample"),
+        ('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n[[input.runs]]\n'
+         'path = "a.mzML"\n', "input.runs #1 (a.mzML): needs sample"),
+        ('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "d"\n',
+         "input.sample is needed for pooled (the label of every spectrum's sample; the "
+         'template shows sample = "pool")'),
+        ('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "d"\nsample = " "\n',
+         "input.sample is needed for pooled"),
+        ('[analysis]\nreference = "WT"\n', "the project file needs an [input] table; a file "
+                                          "with only an [analysis] table is for hxex analyse"),
+    ]:
+        full = text.startswith(("project", "analysis", "review", "[analysis]\nreference"))
+        with pytest.raises(ProjectError) as info:
+            project(text, full=full)
+        assert message in str(info.value), (text, str(info.value))
+    # regions and sites written as false mean none; choice = false means the defaults
+    a = project("[analysis]\nregions = false\nsites = false\nchoice = false\n").analysis
+    assert a.annotations.regions == () and a.annotations.sites == ()
+    # a file that is not UTF-8, and the commonest TOML slips, say what to change
+    bad = tmp_path / "cp1252.toml"
+    bad.write_bytes((head + '[output]\nnotes = "café"\n').encode("cp1252"))
+    with pytest.raises(ProjectError, match=r"cp1252.toml is not UTF-8 text \(byte 0xe9 at "
+                                           r"offset \d+\): save it as UTF-8"):
+        load_project(bad)
+    bad.write_text(head.replace('data_dir = "d"', "data_dir = SpecExport"))
+    with pytest.raises(ProjectError, match='a value with letters or / needs quotes: data_dir = '
+                                           '"SpecExport" \\(line 4\\)'):
+        load_project(bad)
+    bad.write_text(head + "[output]\nbundle = \"a\"\nbundle = \"b\"\n")
+    with pytest.raises(ProjectError, match="the setting bundle at line 7 appears twice in its "
+                                           "table: delete one"):
+        load_project(bad)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("my notes\n")
+    with pytest.raises(ProjectError, match=r"hxex needs the project file \(hxex.toml, written by "
+                                           r"hxex init\); notes.txt is not one: .*not valid TOML"):
+        load_project(notes)
+    with pytest.raises(ProjectError, match="no such project file"):
+        load_project(tmp_path / "gone.toml")
+
+
+def test_commands_name_the_right_step_and_never_show_a_traceback(tmp_path, capsys,
+                                                                 monkeypatch):
+    """Audit 2026-11-01, Session A: a command given the wrong kind of file, or run before the
+    results exist, names the right step; a folder that is not a bundle, a damaged bundle and
+    an output folder equal to the bundle are refused with the fix; an internal error is one
+    sentence (the traceback with -v); hxex report says what it wrote."""
+    path = mzml_project(tmp_path)
+    out = tmp_path / "out"
+    for argv, message in [
+        (["info", str(path)], "hxex info takes the results folder, not the project file: hxex "
+                              "info out"),
+        (["info", str(out)], f"no results yet at {out}: run 'hxex run hxex.toml' first"),
+        (["report", str(out), "--figures"], "no results yet at"),
+        (["analyse", str(out)], "no results yet at"),
+        (["resume", str(out)], "no results yet at"),
+        (["report", str(tmp_path / "gone.toml")], "no such project file"),
+        (["resume", str(tmp_path / "gone.toml")], "no such project file"),
+        (["analyse", str(tmp_path / "gone.toml")], "no such project file"),
+        (["report", str(path)], "no results yet at"),  # the project's bundle, not yet run
+        (["init", "--project", "a:b", "-o", str(tmp_path / "x.toml")], "--project must be a name"),
+    ]:
+        assert cli.main(argv) == 1, argv
+        err = capsys.readouterr().err
+        assert message in err and "Traceback" not in err, (argv, err)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "mine.txt").write_text("x")
+    assert cli.main(["analyse", str(plain)]) == 1
+    assert "is not a results bundle (it has no manifest.json)" in capsys.readouterr().err
+    # a folder that is not a bundle is refused straight away, --overwrite or not
+    assert cli.main(["run", str(path), "--bundle", str(plain), "--overwrite"]) == 1
+    err = capsys.readouterr().err
+    assert "not a results bundle; it is never replaced or moved" in err
+    assert "--overwrite replaces it" not in err
+    # an output folder that is the bundle itself
+    assert cli.main(["-q", "run", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["report", str(out), "--tables", str(out)]) == 1
+    assert "is the results bundle itself: the tables go in a folder" in capsys.readouterr().err
+    assert cli.main(["analyse", str(out), "--out", str(out)]) == 1
+    assert "is the results bundle itself: the analysis goes" in capsys.readouterr().err
+    # hxex report says what it wrote, with the review's decisions
+    sid = (tmp_path / "out_tables" / "spectra.csv").read_text().splitlines()[1].split(",")[0]
+    (tmp_path / "review.csv").write_text(f"spectrum_id,review_status\n{sid},rejected\n")
+    path.write_text(path.read_text() + '\n[review]\ntable = "review.csv"\n')
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert f"table(s) in {tmp_path / 'out_tables'} (review: 1 rejected)" in \
+        capsys.readouterr().out
+    # a damaged copy of the bundle: the missing file is named, in every command
+    (out / "fit.parquet").rename(out / "fit.gone")
+    for argv in (["info", str(out)], ["report", str(out), "--overwrite"],
+                 ["analyse", str(out), "--overwrite"]):
+        assert cli.main(argv) == 1
+        err = capsys.readouterr().err
+        assert "is not a complete bundle: fit.parquet is listed in its manifest but missing" in \
+            err
+    (out / "fit.gone").rename(out / "fit.parquet")
+    # an internal error is one sentence; the traceback only with -v
+    def boom(args):
+        raise KeyError("fitt")
+
+    monkeypatch.setitem(cli.COMMANDS, "info", boom)
+    assert cli.main(["info", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "hxex stopped with an internal error (KeyError: 'fitt'); please report it" in err
+    assert "Traceback" not in err
+    assert cli.main(["-v", "info", str(out)]) == 1
+    assert "Traceback" in capsys.readouterr().err
+    # the argument types say what they want
+    for argv in (["run", "--threads", "abc", str(path)], ["--progress-every", "-1", "check",
+                                                          str(path)]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "must be a whole number of at least 1, not 'abc'" in err
+    assert "--progress-every: must be 0 or more" in err
+
+
+def test_check_names_a_sample_that_is_not_there_and_hints_at_the_format(tmp_path, capsys):
+    """[input] samples naming no folder is a problem (not a silent absence); a folder format
+    that finds nothing says which format's layout the folder has."""
+    data = tmp_path / "d"
+    (data / "WT" / f"0001-0010-{PEPTIDE}").mkdir(parents=True)
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    for name in ("Non-D-1-z2.csv", "Full-D-1-z2.csv", "60s-1-z2.csv"):
+        (data / "WT" / f"0001-0010-{PEPTIDE}" / name).write_text("")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    'samples = ["mutant"]\n[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 1
+    out, err = capsys.readouterr()
+    assert "[input] samples: no sample 'mutant' in" in err and "(samples found: WT)" in err
+    assert out.rstrip().endswith("not ok: 2 problem(s) found (listed above)")
+    path.write_text(path.read_text().replace('format = "specexport"', 'format = "hxexpress"')
+                    .replace('samples = ["mutant"]\n', ""))
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert ("no spectra of format hxexpress in" in err
+            and 'sample folders with peptide folders, 1 spectra: format = "specexport"?' in err)
+
+
+def test_resume_with_an_analysis_only_file_keeps_the_bundles_input_record(tmp_path, capsys):
+    """A project file without [input] (one for hxex analyse) that adds the population test does
+    not blank the bundle's record of how its spectra were read (audit 2026-11-01, Low 18)."""
+    path = mzml_project(tmp_path)
+    path.write_text(path.read_text().replace("k_max = 1", "k_max = 2"))
+    assert cli.main(["-q", "run", str(path)]) == 0
+    only = tmp_path / "only.toml"
+    only.write_text('[analysis]\nreference = "WT"\n[output]\nbundle = "out"\n'
+                    + FAST_RUN.replace("k_max = 1", "k_max = 2")
+                    + "\n[run.population_test]\nsimulations = 2\n")
+    assert cli.main(["-q", "resume", str(only)]) == 0
+    used = (tmp_path / "out" / "run_settings_used.toml").read_text()
+    assert "[input]" in used and 'format = "mzml"' in used and "none (the run took" not in used
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test() is not None

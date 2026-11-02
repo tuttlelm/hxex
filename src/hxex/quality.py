@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Per-spectrum quality flags: poor fit, low intensity and replicate outliers.
 
-The flags only mark spectra; nothing is dropped here (see :mod:`hxex.run`, and the review layer
+The flags only mark spectra; nothing is dropped here (see :mod:`hxex.pipeline`, and the review layer
 of the results bundle for the manual decision). Spectra that the picker marked empty or without
 signal never reach the fit and are handled before it.
 

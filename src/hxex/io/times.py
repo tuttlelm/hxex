@@ -28,6 +28,8 @@ _UNIT_SECONDS: dict[str, Decimal] = {
 UNITS_TEXT = "s, sec, m, min, h, hr or ms (or their long forms)"
 _SPECEXPORT_TIME = re.compile(r"[0-9]*\.?[0-9]+[smhSMH]")
 _PART = re.compile(r"\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-zA-Z]+)\s*")
+CONTROL_LABELS_TEXT = ("the controls are labelled undeut and TD (not FD, Full or a time): see "
+                       "the guide's HX-Express page")
 
 
 def is_control_label(label: str) -> bool:
@@ -58,13 +60,21 @@ def _to_seconds(number: str, unit: str, label: str) -> float:
     return float(value * seconds)
 
 
-def parse_time(value: object, where: str = "time") -> float:
+def parse_time(value: object, where: str = "time", *, allow_negative: bool = False) -> float:
     """Seconds of a time written in a project file or given from Python: a number (seconds), or
     text with units, ``"5 min"``, ``"20 h"``, ``"250 ms"``, ``"1.5 min"`` (90 s: a decimal is a
     fraction here), or several parts run together, ``"1h21m"``, ``"10m30s"``. Units are
     ``s``, ``sec``, ``m``, ``min``, ``h``, ``hr``, ``ms`` and their long forms, case-insensitive;
     a bare number of text form (``"60"``) is seconds. Raises :class:`ReadError` naming
-    ``where`` for anything else (a boolean, an infinite number, an unknown unit)."""
+    ``where`` for anything else (a boolean, an infinite number, an unknown unit, and a negative
+    time unless ``allow_negative``)."""
+    seconds = _parse_time(value, where)
+    if seconds < 0 and not allow_negative:
+        raise ReadError(f"{where}: a time cannot be negative, got {value!r}")
+    return seconds
+
+
+def _parse_time(value: object, where: str) -> float:
     if isinstance(value, bool):
         raise ReadError(f"{where}: expected a time (seconds, or text such as \"5 min\"), got "
                         f"{value!r}")
@@ -137,7 +147,8 @@ def parse_hxexpress_label(label: object) -> tuple[float, str]:
     own files; a time in a project file has no such rule (:func:`parse_time`).
     """
     if not isinstance(label, str):
-        raise ReadError(f"time label {label!r} is not text")
+        raise ReadError(f"time label {label!r} is not text (a time is a number, a space and a "
+                        f"unit, '5 min'; {CONTROL_LABELS_TEXT})")
     text = label.strip()
     if text.lower().startswith("undeut"):
         return math.nan, UNDEUT
@@ -145,7 +156,8 @@ def parse_hxexpress_label(label: object) -> tuple[float, str]:
         return math.nan, FULLDEUT
     parts = text.split()
     if len(parts) < 2:
-        raise ReadError(f"time label {label!r} needs a number and a unit, e.g. '5 min'")
+        raise ReadError(f"time label {label!r} needs a number, a space and a unit, e.g. "
+                        f"'5 min'; {CONTROL_LABELS_TEXT}")
     number, unit = parts[0], parts[-1]
     whole = number.split(".")[0]
     return _to_seconds(number if whole in ("0", "") else whole, unit, f"label {label!r}"), ""

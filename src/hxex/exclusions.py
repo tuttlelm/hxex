@@ -4,7 +4,7 @@
 A rule (:class:`Exclusion`, one ``[[input.exclude]]`` or ``[[review.exclude]]`` table) names
 any of a spectrum's sample, peptide (by its residues), charge, time, control role, replicate,
 data file and id, and a note; a spectrum is excluded when it matches every key of one rule.
-Before fitting (``[[input.exclude]]``, :func:`hxex.run.run`) the matched spectra are stored but
+Before fitting (``[[input.exclude]]``, :func:`hxex.pipeline.run`) the matched spectra are stored but
 not fitted; after it (``[[review.exclude]]``, :func:`exclude_from_results`) they are treated
 as rejected, in memory, by every consumer of the review layer. Nothing is deleted.
 """

@@ -153,7 +153,7 @@ def test_the_setting_is_checked_and_round_trips():
 
 
 def test_a_run_records_its_choice_and_the_bundle_keeps_it(tmp_path):
-    from hxex.run import RunConfig, run
+    from hxex.pipeline import RunConfig, run
 
     result = run(control_set(MIN_CONTROLS + 5, widening=0.25, labelled=3),
                  RunConfig(bootstrap=None), out=tmp_path / "b")

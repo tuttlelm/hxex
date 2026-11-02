@@ -26,7 +26,7 @@ from ..spectra import SpectrumSet
 
 if TYPE_CHECKING:
     from ..io.bundle import Bundle, ReviewTable
-    from ..run import RunResult
+    from ..pipeline import RunResult
 
 
 @dataclass(frozen=True)
@@ -66,8 +66,8 @@ class Settings:
 
     @property
     def run(self):
-        """The :class:`hxex.run.RunConfig` of the run, or None."""
-        from ..run import RunConfig
+        """The :class:`hxex.pipeline.RunConfig` of the run, or None."""
+        from ..pipeline import RunConfig
 
         data = self.configs.get("run")
         return None if data is None else RunConfig.from_dict(data)
@@ -209,6 +209,14 @@ class Results:
         if self.review is None:
             return self.fit.selected_K.copy()
         return self.review.effective_K(self.fit)
+
+    @cached_property
+    def replicates(self) -> np.ndarray:
+        """The replicate number of every measurement (from the picked table, else numbered
+        within each time point; computed once per ``Results``)."""
+        from .series import replicate_numbers
+
+        return replicate_numbers(self)
 
     @cached_property
     def review_status(self) -> np.ndarray:

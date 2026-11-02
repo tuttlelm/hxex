@@ -34,22 +34,22 @@ Write a project file with every default.
 
 Check a project file and show what would be read.
 
-`hxex check PROJECT [options]`
+`hxex check hxex.toml [options]`
 
 | Argument | Meaning |
 |---|---|
-| `PROJECT` | the project file (TOML) |
+| `hxex.toml` | the project file (hxex.toml, written by hxex init) |
 | `--spectra` `PATH` | take the raw spectra stored in this bundle (or spectra file) instead of reading the input (as input.spectra) |
 
 ## hxex run
 
 Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures: hxex report).
 
-`hxex run PROJECT [options]`
+`hxex run hxex.toml [options]`
 
 | Argument | Meaning |
 |---|---|
-| `PROJECT` | the project file (TOML) |
+| `hxex.toml` | the project file (hxex.toml, written by hxex init) |
 | `--bundle` `BUNDLE` | the results bundle (instead of output.bundle) |
 | `--overwrite` | replace an existing bundle (and its tables), carrying its review over; also a tables folder left from a bundle that is gone |
 | `--keep-previous` | move an existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, before writing |
@@ -59,7 +59,7 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 
 ## hxex resume
 
-Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen k), or add the population test.
+Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen K), or add the population test.
 
 `hxex resume BUNDLE|PROJECT [options]`
 

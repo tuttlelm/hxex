@@ -17,6 +17,7 @@ from hxex.model import Backend
 from hxex.model.mixture import MixtureBatch, PaddedBatch, shape_weights
 from hxex.picking.binned import MZ_CHECK_COLUMNS
 from hxex.picking.screen import SCREEN_SCORES
+from hxex.pipeline import RunConfig, run
 from hxex.report import (
     PlotConfig,
     Reference,
@@ -40,7 +41,6 @@ from hxex.report import (
     write_figures,
     write_tables,
 )
-from hxex.run import RunConfig, run
 from test_run import boot_config, config, raw_spectra
 
 
@@ -334,6 +334,13 @@ def test_uptake_and_populations_match_after_loading(written, results):
 
 def test_tables_have_the_documented_columns_and_values(results):
     comp, spec, up = components_table(results), spectra_table(results), uptake_table(results)
+    # the wide table carries every rank's errors beside its values (audit 2026-11-01, Report 73)
+    assert {"mean_se_1", "mean_corrected_se_1", "population_se_1"} <= set(spec)
+    np.testing.assert_array_equal(spec["mean_se_1"][spec["K"] == 1],
+                                  comp["mean_se"][comp["K"] == 1])
+    # the flags column is there without quality flags too (empty), so the columns never change
+    bare = spectra_table(Results(measurements=results.measurements, fit=results.fit))
+    assert "flags" in bare and set(bare["flags"]) == {""}
     ks = results.effective_K
     assert len(comp["rank"]) == ks.sum() and len(spec["K"]) == len(results)
     assert {"mean", "mean_corrected", "mean_corrected_se", "population", "review_status", "flags",
@@ -397,7 +404,7 @@ def test_select_series(results):
     assert select_series(results, "all") == [0, 1]
     assert select_series(results, [1]) == [1]
     assert select_series(results) == []  # nothing is flagged in this clean run
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match=r"data_id \[7\] that the results do not have"):
         select_series(results, [7])
     with pytest.raises(ValueError):
         select_series(results, "some")
@@ -425,6 +432,14 @@ def test_figure_files(results, tmp_path):
     assert [f.name.endswith("_uptake.png") for f in png] == [True]
     only_overview = write_figures(results, tmp_path / "none", PlotConfig())  # nothing flagged
     assert [f.name for f in only_overview] == ["overview.pdf"]
+    # corrected = true without controls is a sentence naming the setting, before anything is drawn
+    import dataclasses
+
+    with pytest.raises(ValueError, match=r"\[figures\] corrected = true: the results have no "
+                                         "controls"):
+        write_figures(dataclasses.replace(results, controls=None), tmp_path / "c",
+                      PlotConfig(series="all", corrected=True))
+    assert not (tmp_path / "c").exists()
     seen = []
     write_figures(results, tmp_path / "p",
                   PlotConfig(series="all", kinds=("uptake",), overview=False),
@@ -446,7 +461,7 @@ def test_plot_config_checks_and_round_trips():
 def test_a_run_draws_no_figures_and_its_results_draw_them(tmp_path):
     """A run writes the bundle only; its figures come from RunResult.write_figures (hxex
     report), at each spectrum's own K or, with k, at one K for every series."""
-    from hxex.run import RunConfig
+    from hxex.pipeline import RunConfig
 
     raw = raw_spectra(n_series=2)
     cfg = config(bootstrap=None)
@@ -920,6 +935,16 @@ def test_k_selection_overview(results):
     reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=other))
     d2 = k_selection_data(reviewed)
     assert d2["reviewed"] and not np.array_equal(d2["selected"], d2["effective"])
+    assert d2["rejected"] == 0 and "rejected" not in plot_k_selection(reviewed).axes[1].get_title()
+    # a rejected spectrum leaves the after-review counts and the shares (the analysis never
+    # uses it), and the figure says so
+    rej = results.with_review(ReviewTable.empty().update(sid, status="rejected"))
+    d3 = k_selection_data(rej)
+    assert d3["rejected"] == 1 and d3["effective"].sum() == len(results.fit) - 1
+    assert d3["selected"].sum() == len(results.fit)
+    fig = plot_k_selection(rej)
+    assert "rejected spectra left out" in fig.axes[1].get_title()
+    assert "1 rejected left out" in fig.axes[0].get_legend().texts[1].get_text()
     assert "effective" in gids(plot_k_selection(reviewed))
     assert plot_k_selection(results).axes[1].get_xlabel() == "time point"  # ticks carry units
 
@@ -1056,7 +1081,7 @@ def test_a_series_without_controls_is_uncorrected_or_an_error(results):
     d = population_data(partial, sid)
     assert not d["corrected"] and d["n_amides"] is None
     assert population_data(partial, str(results.fit.spectrum_id[0]))["corrected"]
-    with pytest.raises(KeyError, match="series 1"):
+    with pytest.raises(ValueError, match="series 1"):
         population_data(partial, sid, corrected=True)
     assert not uptake_data(partial, 1)["corrected"] and series_info(partial, 1)["n_amides"] is None
     comp = components_table(partial)

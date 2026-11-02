@@ -87,8 +87,8 @@ def test_a_table_of_retention_times(tmp_path, caplog):
 def test_rt_reaches_the_bundle_and_the_species_table(tmp_path):
     from hxex.analysis import species_uptake
     from hxex.io import open_bundle
+    from hxex.pipeline import run
     from hxex.report import Results
-    from hxex.run import run
     from test_run import config, raw_spectra
 
     raw = raw_spectra(n_series=2)

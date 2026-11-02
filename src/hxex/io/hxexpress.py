@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
 from ..spectra import PeptideEntry, Spectrum, time_point
-from ._common import clean_spectrum, to_number
+from ._common import clean_spectrum, not_text_error, open_text, to_number
 from .entries import filter_entries, sort_entries
 from .errors import ReadError
 from .times import parse_hxexpress_label
@@ -29,28 +30,39 @@ def parse_hxexpress_filename(name: str) -> PeptideEntry:
     underscore of the first field is the start residue.
     """
     labels = name.split("-")
-    try:
-        if len(labels) < 5:
-            raise ValueError("expected at least five '-' separated fields")
-        sample, start = labels[0].rsplit("_", 1)
-        end = labels[-4]
-        charge = labels[-2]
-        if not charge.startswith("z"):
-            raise ValueError(f"charge field {charge!r} does not start with 'z'")
-        return PeptideEntry(
-            file=name,
-            sample=sample,
-            peptide=labels[-3],
-            peptide_range=f"{start}-{end}",
-            start_seq=int(start),
-            end_seq=int(end),
-            charge=int(charge[1:]),
-        )
-    except ValueError as exc:
-        raise ReadError(
-            f"cannot read sample/peptide/charge from file name {name!r} "
-            f"(expected SAMPLE_START-END-PEPTIDE-zCHARGE-text.xlsx): {exc}"
-        ) from exc
+
+    def fail(why: str) -> ReadError:
+        return ReadError(f"cannot read sample/peptide/charge from file name {name!r} "
+                         f"(expected SAMPLE_START-END-PEPTIDE-zCHARGE-text.xlsx): {why}")
+
+    if len(labels) < 5:
+        raise fail(f"expected at least five '-' separated fields, found {len(labels)}")
+    if len(labels) > 5:
+        raise fail("the last field (free text) cannot contain '-', nor can the sample")
+    if "_" not in labels[0]:
+        raise fail(f"the first field {labels[0]!r} needs SAMPLE_START (the sample, '_', "
+                   "the first residue number)")
+    sample, start = labels[0].rsplit("_", 1)
+    end, peptide, charge = labels[1], labels[2], labels[3]
+    if not start.isdigit():
+        raise fail(f"START {start!r} is not a residue number (the first field is SAMPLE_START; "
+                   "a terminal group such as Ac- cannot be written in the name: list the "
+                   "files in a table)")
+    if not end.isdigit():
+        raise fail(f"END {end!r} is not a residue number")
+    if not peptide:
+        raise fail("the PEPTIDE field is empty")
+    if not charge.startswith("z") or not charge[1:].isdigit():
+        raise fail(f"the charge field {charge!r} must be 'z' and the charge (z2)")
+    return PeptideEntry(
+        file=name,
+        sample=sample,
+        peptide=peptide,
+        peptide_range=f"{start}-{end}",
+        start_seq=int(start),
+        end_seq=int(end),
+        charge=int(charge[1:]),
+    )
 
 
 def scan_hxexpress(
@@ -79,6 +91,23 @@ def scan_hxexpress(
                                        peptide_region=peptide_region))
 
 
+def _has_cells(rows) -> bool:
+    return any(c is not None and str(c).strip() for r in rows for c in r)
+
+
+def _first_sheet(wb, path: Path, max_row: int | None = None) -> list[tuple]:
+    """The rows of the workbook's first worksheet (``max_row`` of them at most). When that
+    sheet is empty and another holds data, say so: only the first sheet is read."""
+    rows = [tuple(r) for r in wb.worksheets[0].iter_rows(max_row=max_row, values_only=True)]
+    if not _has_cells(rows) and len(wb.worksheets) > 1:
+        for sheet in wb.worksheets[1:]:
+            if _has_cells(sheet.iter_rows(values_only=True)):
+                raise ReadError(f"{path}: the first worksheet is empty and {sheet.title!r} "
+                                "holds data; hxex reads the first sheet only (move the data "
+                                "there)")
+    return rows
+
+
 def _read_rows(path: Path) -> list[tuple]:
     suffix = path.suffix.lower()
     try:
@@ -87,14 +116,16 @@ def _read_rows(path: Path) -> list[tuple]:
 
             wb = load_workbook(path, read_only=True, data_only=True)
             try:
-                return [tuple(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+                return _first_sheet(wb, path)
             finally:
                 wb.close()
         if suffix == ".csv":
-            with path.open(newline="", encoding="utf-8-sig") as fh:
+            with open_text(path, newline="") as fh:
                 return [tuple(r) for r in csv.reader(fh)]
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
+    except ReadError:
+        raise
     except Exception as exc:  # openpyxl raises many types for damaged files
         raise ReadError(f"cannot read {path}: {exc}") from exc
     raise ReadError(f"{path}: unsupported file type {suffix!r} (use .xlsx or .csv)")
@@ -110,15 +141,17 @@ def read_hxexpress_header(path: str | Path) -> tuple:
 
             wb = load_workbook(path, read_only=True, data_only=True)
             try:
-                rows = wb.worksheets[0].iter_rows(max_row=1, values_only=True)
-                return tuple(next(rows, ()))
+                rows = _first_sheet(wb, path, max_row=1)
+                return rows[0] if rows else ()
             finally:
                 wb.close()
         if suffix == ".csv":
-            with path.open(newline="", encoding="utf-8-sig") as fh:
+            with open_text(path, newline="") as fh:
                 return tuple(next(csv.reader(fh), ()))
     except (OSError, UnicodeDecodeError) as exc:
-        raise ReadError(f"cannot read {path}: {exc}") from exc
+        raise not_text_error(path, exc) from exc
+    except ReadError:
+        raise
     except Exception as exc:  # openpyxl raises many types for damaged files
         raise ReadError(f"cannot read {path}: {exc}") from exc
     raise ReadError(f"{path}: unsupported file type {suffix!r} (use .xlsx or .csv)")
@@ -168,6 +201,7 @@ def read_hxexpress_file(
     for col, label, time, role, rep in hxexpress_columns(rows[0], path):
         mz_col = [r[col] if col < len(r) else None for r in rows[1:]]
         in_col = [r[col + 1] if col + 1 < len(r) else None for r in rows[1:]]
+        mz_col, in_col = _without_notes(mz_col, in_col, path, label)
         where = f"{path.name}, label {label!r}"
         mz, intensity = clean_spectrum(
             [to_number(c, where) for c in mz_col], [to_number(c, where) for c in in_col]
@@ -180,3 +214,40 @@ def read_hxexpress_file(
         )
     return spectra
 
+
+def _cell_kind(cell) -> str:
+    """``'empty'`` (None, blank, NaN), ``'number'`` or ``'text'`` (anything else)."""
+    if cell is None:
+        return "empty"
+    if isinstance(cell, bool):
+        return "text"
+    if isinstance(cell, str):
+        text = cell.strip()
+        if not text or text.lower() == "nan":
+            return "empty"
+        try:
+            float(text)
+        except ValueError:
+            return "text"
+        return "number"
+    try:
+        return "empty" if math.isnan(float(cell)) else "number"
+    except (TypeError, ValueError):
+        return "text"
+
+
+def _without_notes(mz_col: list, in_col: list, path: Path, label: str) -> tuple[list, list]:
+    """The two columns of a spectrum cut before a note written under its data: a text cell
+    with numbers above it and none below it in either column (a remark at the bottom of the
+    sheet). Text with numbers below it is left to be refused as not a number."""
+    kinds = [(_cell_kind(m), _cell_kind(y)) for m, y in zip(mz_col, in_col, strict=True)]
+    first = next((i for i, k in enumerate(kinds) if "text" in k), None)
+    if first is None:
+        return mz_col, in_col
+    above = any("number" in k for k in kinds[:first])
+    below = any("number" in k for k in kinds[first + 1:])
+    if not above or below:
+        return mz_col, in_col
+    log.debug("%s, label %r: the text from row %d down is ignored (a note below the data)",
+              path.name, label, first + 2)
+    return mz_col[:first], in_col[:first]

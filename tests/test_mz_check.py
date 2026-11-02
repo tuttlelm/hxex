@@ -18,7 +18,7 @@ from hxex.noise import NoiseConfig
 from hxex.picking import BinnedSet, PickerConfig, pick_spectra, plan_bins
 from hxex.picking.binned import MZ_CHECK_COLUMNS
 from hxex.picking.mz_check import MIN_LIMIT_PPM, envelope_offset, series_offsets
-from hxex.run import RunConfig, run
+from hxex.pipeline import RunConfig, run
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_screen import PLAN, envelope, profile
 

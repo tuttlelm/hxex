@@ -167,8 +167,8 @@ def test_the_run_flags_rt_found_and_writes_the_suggestions(runs, tmp_path):
     from hxex.fit import FitConfig
     from hxex.model import Backend
     from hxex.noise import NoiseConfig
+    from hxex.pipeline import RunConfig, run
     from hxex.report.tables import write_tables
-    from hxex.run import RunConfig, run
 
     fit = FitConfig(k_max=1, adam_steps=40, n_restarts=1, backend=Backend("cpu", "float64"),
                     noise=NoiseConfig("gaussian", percent=3.0))

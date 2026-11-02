@@ -22,7 +22,7 @@ hxex.write_figures(results, "results_figures", hxex.PlotConfig(series="all"))
 ```
 
 Plot functions return Matplotlib figures and never show them. Long operations take `progress`
-and `cancel` hooks (`hxex.hooks`). Settings are explicit config objects (`hxex.run.RunConfig`
+and `cancel` hooks (`hxex.hooks`). Settings are explicit config objects (`hxex.pipeline.RunConfig`
 and its parts); nothing is set globally.
 
 ## Reviewing spectra

@@ -37,7 +37,7 @@ from .config import (
 )
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget
 from .kint import ExchangeConditions
-from .run import RunConfig
+from .pipeline import RunConfig
 
 REQUIRED = "required"
 UNSET = "unset"
@@ -723,7 +723,8 @@ def commands_markdown() -> str:
     for p in dict.fromkeys(sub.choices.values()):
         first, *aliases = names[id(p)]
         positional = " ".join(_positional(a) for a in p._actions if not a.option_strings)
-        lines += ["", f"## hxex {first}", "", helps.get(first, "").capitalize() + ".", ""]
+        text = helps.get(first, "")
+        lines += ["", f"## hxex {first}", "", text[:1].upper() + text[1:] + ".", ""]
         lines += [f"`hxex {' '.join(filter(None, (first, positional, '[options]')))}`", ""]
         if aliases:
             lines += [f"Also spelt `hxex {', '.join(aliases)}`.", ""]

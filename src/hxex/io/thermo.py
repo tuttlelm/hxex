@@ -256,10 +256,7 @@ class _RawFileReader:
         i = self._trailer.get(label)
         if i is None:
             return default
-        try:
-            return type(default)(self._raw.GetTrailerExtraValue(number, i))
-        except (TypeError, ValueError):
-            return default
+        return trailer_value(self._raw.GetTrailerExtraValue(number, i), default)
 
     def info(self, number: int) -> ScanInfo:
         raw = self._raw
@@ -313,6 +310,18 @@ class _RawFileReader:
 def _open_reader(path: Path, thermo_dir: str | Path | None):
     """The RawFileReader of ``path`` (tests replace this with a reader of synthetic scans)."""
     return _RawFileReader(path, thermo_dir)
+
+
+def trailer_value(value, default):
+    """A trailer value as the type of ``default``: a whole number written ``2.0`` or ``2`` for
+    an integer default (``Charge State:``), a float for a float one; ``default`` when the value
+    cannot be read."""
+    try:
+        if isinstance(default, int) and not isinstance(default, bool):
+            return int(float(value))
+        return type(default)(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 
 class ThermoFile:
