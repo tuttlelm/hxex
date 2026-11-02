@@ -123,17 +123,11 @@ def prepare_output(directory: str | Path, *, overwrite: bool = False,
         "every command")
 
 
-@contextmanager
-def replace_outputs(directory: str | Path, names: Iterable[str], *,
-                    made: Mapping[str, str] | None = None) -> Iterator[list[Path]]:
-    """Prepare ``directory`` for the files ``names`` (relative to it) and yield the list the
-    caller appends every written path to; the listing is written from that list when the
-    block ends, also when it fails part-way, so the next write knows what is hxex's. Before
-    anything changes: a file in ``directory`` named like one of ``names`` that the listing
-    does not cover is refused (:class:`OutputError`); then the listed files are removed, so
-    the folder holds only what this write produces (and your own files). ``made`` (run name
-    -> the ``created`` stamp of the bundle read; :func:`made_from`) is recorded in the listing
-    of an analysis folder, so a later command can tell whether it is out of date."""
+def check_output(directory: str | Path, names: Iterable[str]) -> None:
+    """Refuse (:class:`OutputError`) a ``directory`` holding a file named like one of
+    ``names`` that its listing does not cover (a file of your own, or one written before hxex
+    kept listings): :func:`replace_outputs` would refuse it. Commands call it before they read
+    or fit anything, so the refusal comes first."""
     directory = Path(directory)
     names = sorted({Path(n).as_posix() for n in names})  # compared with the listing's form
     listed = output_listing(directory)
@@ -146,6 +140,22 @@ def replace_outputs(directory: str | Path, names: Iterable[str], *,
             f"{directory} holds file(s) {hint}of your own named like the new ones "
             f"({', '.join(clash[:5])}{', ...' if len(clash) > 5 else ''}); move them, or write "
             f"to another directory")
+
+
+@contextmanager
+def replace_outputs(directory: str | Path, names: Iterable[str], *,
+                    made: Mapping[str, str] | None = None) -> Iterator[list[Path]]:
+    """Prepare ``directory`` for the files ``names`` (relative to it) and yield the list the
+    caller appends every written path to; the listing is written from that list when the
+    block ends, also when it fails part-way, so the next write knows what is hxex's. Before
+    anything changes: a file in ``directory`` named like one of ``names`` that the listing
+    does not cover is refused (:class:`OutputError`); then the listed files are removed, so
+    the folder holds only what this write produces (and your own files). ``made`` (run name
+    -> the ``created`` stamp of the bundle read; :func:`made_from`) is recorded in the listing
+    of an analysis folder, so a later command can tell whether it is out of date."""
+    directory = Path(directory)
+    check_output(directory, names)
+    listed = output_listing(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for name in listed or ():
         target = directory / name

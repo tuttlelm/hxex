@@ -5,6 +5,7 @@ import dataclasses
 import json
 import shutil
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
@@ -748,3 +749,136 @@ def test_the_role_is_stored_in_every_per_spectrum_table(tmp_path, run):
         for got in (b.spectra(), b.binned(), b.measurements(), b.fit()):
             assert list(got.role) == list(raw.role)
         assert "role" in b.components_table()
+
+
+# --- the bundle contract (audit 2026-11-01, Session D) -----------------------------------------
+
+def test_keep_previous_moves_all_or_nothing(tmp_path, run, monkeypatch):
+    """High 4: a folder that cannot be moved (a file open in it, on Windows) moves the others
+    back and names it; nothing is left half moved."""
+    from hxex.io import keep_previous
+
+    _, _, meas, fit, _ = run
+    path = write_bundle(tmp_path / "res", measurements=meas, fit=fit)
+    (tmp_path / "res_tables").mkdir()
+    (tmp_path / "res_tables" / "series.csv").write_text("x")
+    real = bundle_module.os.replace
+
+    def locked(src, dst):
+        if str(src).endswith("res_tables"):
+            raise PermissionError("in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(bundle_module.os, "replace", locked)
+    with pytest.raises(BundleError, match="could not move .*res_tables.* nothing was moved"):
+        keep_previous(path)
+    assert path.is_dir() and (tmp_path / "res_tables" / "series.csv").exists()
+    assert not (tmp_path / "res.1").exists()
+    monkeypatch.setattr(bundle_module.os, "replace", real)
+    assert keep_previous(path) == tmp_path / "res.1"
+
+
+def test_an_interrupted_replacement_adding_a_table_can_be_written_again(tmp_path, run,
+                                                                         monkeypatch):
+    """Medium 18: the checkpoint bundle (no bootstrap) replaced by the complete one, stopped
+    right after bootstrap.parquet was moved in: the next write recognises it as the bundle's."""
+    _, _, meas, fit, boot = run
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit)
+    real = bundle_module.os.replace
+
+    def stop_after_bootstrap(src, dst):  # a crash right after the new table is moved in
+        real(src, dst)
+        if Path(dst) == path / "bootstrap.parquet":
+            raise OSError("power cut")
+
+    monkeypatch.setattr(bundle_module.os, "replace", stop_after_bootstrap)
+    with pytest.raises(OSError, match="power cut"):
+        write_bundle(path, measurements=meas, fit=fit, bootstrap=boot, overwrite=True)
+    monkeypatch.setattr(bundle_module.os, "replace", real)
+    assert (path / "manifest.json.replacing").exists() and (path / "bootstrap.parquet").exists()
+    write_bundle(path, measurements=meas, fit=fit, bootstrap=boot, overwrite=True)
+    with open_bundle(path) as b:
+        b.verify()
+        assert b.has("bootstrap")
+
+
+def test_the_review_of_an_interrupted_bundle_is_recovered(tmp_path, run):
+    """Medium 19: a bundle whose replacement was interrupted keeps its review for the next
+    run: read from review.parquet, which its interrupted manifest lists."""
+    from hxex.io.bundle import interrupted_review
+
+    _, _, meas, fit, _ = run
+    review = ReviewTable.empty().update(str(fit.spectrum_id[0]), status="rejected", note="n")
+    path = write_bundle(tmp_path / "b", measurements=meas, fit=fit, review=review)
+    assert interrupted_review(path) is None  # whole: open_bundle reads it
+    (path / "manifest.json").rename(path / "manifest.json.replacing")
+    got = interrupted_review(path)
+    assert list(got.spectrum_id) == [str(fit.spectrum_id[0])] and list(got.note) == ["n"]
+    (path / "review.parquet").write_bytes(b"damaged")
+    with pytest.raises(BundleError, match="copy that file somewhere safe"):
+        interrupted_review(path)
+
+
+def test_settings_given_as_tuples_are_no_change():
+    """Medium 22: a run setting held as a tuple (ks = (1, 2)) is stored as a list; the same
+    settings again are no change."""
+    from hxex.io import provenance_of
+
+    old = {"configs": {"run": {"bootstrap": {"ks": [1, 2]}}, "spectra_source": None}}
+    new = {"run": {"bootstrap": {"ks": (1, 2)}}, "spectra_source": None}
+    assert provenance_of(old, "p", new_configs=new, review=None)["settings_changed"] == []
+    changed = {"run": {"bootstrap": {"ks": (1,)}}, "spectra_source": None}
+    assert provenance_of(old, "p", new_configs=changed,
+                         review=None)["settings_changed"] == ["bootstrap.ks"]
+
+
+def test_analysis_folders_keep_letters_of_any_script():
+    """Medium 23."""
+    from hxex.io.bundle import analysis_folder_name
+
+    assert analysis_folder_name("r", "Δ-mutant α") != analysis_folder_name("r", "Δ-mutant β")
+    assert analysis_folder_name("r", "A:WT") == "r_analysis_A_WT"
+    assert analysis_folder_name("r", "-x-") == "r_analysis_x"
+
+
+def test_columns_written_by_other_programs_read_safely():
+    """Low 42 and 43: a null text cell reads as empty text; a list column of the wrong length
+    is a damaged file, said so."""
+    from hxex.io._arrow import _matrix, _strs
+
+    t = pa.table({"label": ["a", None], "m": [[1.0, 2.0], [3.0]]})
+    assert list(_strs(t, "label")) == ["a", ""]
+    with pytest.raises(BundleError, match="damaged"):
+        _matrix(t, "m", 2)
+
+
+def test_numpy_scalars_are_written_as_json():
+    """Low 44."""
+    from hxex.io._json import dumps
+
+    assert json.loads(dumps({"a": np.int64(3), "b": np.float32(1.5), "c": np.float64("nan"),
+                             "d": [np.bool_(True)]})) == {"a": 3, "b": 1.5, "c": None,
+                                                          "d": [True]}
+
+
+def test_a_ctrl_c_waits_until_the_bundle_is_written():
+    """The owner's decision (2026-11-02): a Ctrl-C during the swap of a bundle's files is held
+    and delivered once they are all in place."""
+    import signal
+
+    from hxex.io.bundle import deferred_interrupt
+
+    seen = []
+    with pytest.raises(KeyboardInterrupt), deferred_interrupt():  # Python's handler: raises
+        signal.raise_signal(signal.SIGINT)
+        seen.append("finished")
+    assert seen == ["finished"]  # the block ran to its end, then the interrupt came
+    # a command's own handler (its first Ctrl-C asks it to stop) is called once, afterwards
+    previous = signal.signal(signal.SIGINT, lambda *_: seen.append("handler"))
+    try:
+        with deferred_interrupt():
+            signal.raise_signal(signal.SIGINT)
+            seen.append("written")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert seen == ["finished", "written", "handler"]

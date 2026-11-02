@@ -505,6 +505,11 @@ def retention_suggestions_table(results: Results) -> dict | None:
     return suggestions_table(None if source is None else source.get("retention_search"))
 
 
+# every table write_tables may write (a command checks the folder for them before it reads)
+TABLE_NAMES = ("series.csv", "spectra.csv", "components.csv", "uptake.csv", "review.csv",
+               "retention_suggestions.csv")
+
+
 def write_tables(results: Results, directory: str | Path, *, created: str | None = None
                  ) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into

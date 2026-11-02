@@ -430,9 +430,14 @@ def test_run_info_and_report(tmp_path, capsys):
     info = capsys.readouterr().out
     assert "kept as " + str(tmp_path / "out.1") in info and "generations    out.1" in info
     # a file of yours named like a table stops the run before anything is fitted or replaced
+    # (audit 2026-11-01 Medium 20: the bundle was replaced first, then the tables refused)
     (tmp_path / "out_tables" / "hxex_listing.json").unlink()
+    with open_bundle(tmp_path / "out") as b:
+        created = b.manifest["created"]
     assert cli.main(["-q", "run", "--overwrite", str(path)]) == 1
     assert "series.csv" in capsys.readouterr().err
+    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["created"] == created
 
 
 def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
@@ -570,11 +575,23 @@ def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
     assert "tables of other results" in capsys.readouterr().err
     with open_bundle(tmp_path / "b") as b:
         assert b.pending == ["bootstrap"]
-    shutil.rmtree(tmp_path / "b_tables")
-    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 0
+    # without --tables, the folder of other results' tables is left alone, and said so
+    assert cli.main(["resume", str(tmp_path / "b")]) == 0
+    assert "holds tables of other results: not written" in capsys.readouterr().err
+    assert (tmp_path / "b_tables" / "uptake.csv").read_text() == "x\n"
     with open_bundle(tmp_path / "b") as b:
         assert b.pending == [] and b.bootstrap() is not None
-    assert (tmp_path / "b_tables" / "uptake.csv").is_file()
+    # the bundle's own tables are written by default (audit 2026-11-01 Medium 21)
+    stages.clear()
+    with pytest.raises(Cancelled):
+        run(raw, run_config(), out=tmp_path / "c", progress=Hook(),
+            cancel=lambda: stages[-1:] == ["bootstrap"])
+    assert cli.main(["-q", "resume", str(tmp_path / "c")]) == 0
+    from hxex.io import made_from
+
+    with open_bundle(tmp_path / "c") as b:
+        assert made_from(tmp_path / "c_tables") == {"": b.manifest["created"]}
+    assert (tmp_path / "c_tables" / "uptake.csv").is_file()
     assert not (tmp_path / "b_figures").exists()  # figures come from hxex report
     assert cli.main(["resume", str(tmp_path / "b")]) == 1  # nothing pending any more
 
@@ -1037,6 +1054,8 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     assert cli.main(["-q", "resume", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.bootstrap() is not None and b.manifest["configs"]["bootstrap"]["n_boot"] == 3
+        # the provenance says the bootstrap was added (audit 2026-11-01 Low 39)
+        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["bootstrap"]
         assert list(b.fit().spectrum_id) == ids and list(b.fit().selected_K) == ks
     assert (tmp_path / "out_tables" / "spectra.csv").is_file()
     path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4"))

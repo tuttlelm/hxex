@@ -223,6 +223,9 @@ class RunResult:
     project_file: dict | None = None  # the project file's other settings (config.project_record)
     population_test: PopulationTest | None = None
     peak_measure: PeakMeasure | None = None
+    # the ``created`` stamp of the bundle the run wrote ("" before it is written): figures and
+    # tables drawn from this result then say they were made from that bundle
+    created: str = ""
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -903,7 +906,8 @@ def run(
     stay) and its review layer carried over, with the entries this run cannot apply marked
     stale (see :class:`~hxex.io.ReviewTable`); with ``keep_previous`` it is first moved to its next
     generation (``name.N``, with its ``name_tables`` and ``name_figures`` folders; see
-    :func:`hxex.io.keep_previous`) just before the new bundle is written. Either way the new
+    :func:`hxex.io.keep_previous`) before anything is read or fitted, so that a folder that
+    cannot be moved stops the run with nothing changed. Either way the new
     manifest records what was replaced, what changed and the review carried (its
     ``provenance``). ``project_file`` (:func:`hxex.config.project_record`) records the
     project file's other settings in the bundle, beside the run settings. With a bootstrap, the
@@ -913,6 +917,15 @@ def run(
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
+    moved = None
+    if previous is not None and keep_previous:
+        # before anything is read or fitted (audit 2026-11-01 High 4): a folder that cannot be
+        # moved stops the run with everything where it was, and a run that fails later leaves
+        # the earlier results whole at their generation
+        from .io.bundle import keep_previous as move_previous
+
+        moved = move_previous(out)
+        data = _stored_moved(data, out, moved)
     # every spectrum, for the bundle, with the readers' roles: the promotion of [run.controls]
     # undeut_at/fulldeut_at is applied again from the settings of every run
     stored = data if isinstance(data, SpectrumSet) else None
@@ -1072,10 +1085,8 @@ def run(
     review = _review_for(review, fit)
     provenance = None
     if previous is not None:
-        from .io.bundle import keep_previous as move_previous
         from .io.bundle import provenance_of
 
-        moved = move_previous(out) if keep_previous else None
         provenance = provenance_of(
             previous, out, moved_to=moved, review=review,
             new_configs={"run": config.to_dict(), "spectra_source": result.spectra_source})
@@ -1157,12 +1168,23 @@ def _drop_reasons(binned, kept: np.ndarray) -> np.ndarray:
                                                                   "no_signal"))).astype(str)
 
 
+def _stored_moved(data, out, moved):
+    """``data`` whose spectra were taken from the bundle at ``out`` (``[input] spectra``) now
+    pointing at ``moved``, the generation it was just moved to, so that its stored picking can
+    still be reused."""
+    source = getattr(data, "source", None) or {}
+    where = source.get("stored_in")
+    if moved is None or not where or Path(where).resolve() != Path(out).resolve():
+        return data
+    return dataclasses.replace(data, source={**source, "stored_in": str(moved)})
+
+
 def _previous(out, replace: bool):
     """Refuse an existing ``out`` unless ``replace`` (before anything is fitted, as the CLI
     does); with it, ``(manifest, review)`` of the bundle there (``(None, None)`` when there is
     nothing there; a bundle without a review gives ``(manifest, None)``). Something that is
     not a bundle is refused: it is never replaced or moved."""
-    from .io.bundle import BundleError, bundle_manifest, open_bundle
+    from .io.bundle import BundleError, bundle_manifest, interrupted_review, open_bundle
 
     path = Path(out)
     if not path.exists():
@@ -1177,7 +1199,12 @@ def _previous(out, replace: bool):
         with open_bundle(path) as b:
             review = b.review() if b.has("review") else None
     except BundleError:
-        review = None
+        # an interrupted replacement: its review is read from its file, never dropped
+        # silently (audit 2026-11-01 Medium 19)
+        review = interrupted_review(path)
+        if review is not None:
+            log.warning("%s was interrupted while being replaced; its review (%d entries) is "
+                        "carried over from %s", path, len(review), path / "review.parquet")
     return manifest, review
 
 
@@ -1217,6 +1244,10 @@ def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, progr
         start_stage(progress, "write", UNITS - _FINISH, UNITS)
         result.write(out, spectra=spectra, project=project, notes=notes, overwrite=overwrite,
                      review=review, provenance=provenance)
+        from .io.bundle import bundle_manifest
+
+        result = dataclasses.replace(
+            result, created=str((bundle_manifest(out) or {}).get("created", "")))
     report(progress, UNITS, UNITS)
     return result
 
@@ -1381,6 +1412,11 @@ def resume_bootstrap(
     else:
         boot = _patched_bootstrap(config, measurements, fit, stored_boot, held, cancel)
         by_k = held or None
+    # the provenance says what the resume added (audit 2026-11-01 Low 39)
+    if redo:
+        provenance = _resumed(provenance, "bootstrap", False)
+    elif chosen and _missing_choices(fit, by_k or {}, chosen):
+        provenance = _resumed(provenance, "bootstrap at chosen K", False)
     by_k = _chosen_part(config, measurements, fit, by_k, chosen, progress, cancel)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,

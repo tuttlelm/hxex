@@ -75,6 +75,13 @@ anything, and says what to do. There are three ways on:
 `overwrite = true` or `keep_previous = true` in the `[output]` part of the project file does
 the same for every command, so you need not type the option each time.
 
+With `--keep-previous`, `hxex run` moves the earlier results before it reads anything, so you
+know at once whether it can: on Windows a folder cannot be moved while one of its files is open
+(a table open in a spreadsheet program, for example), and *hxex* then stops with every folder
+where it was and tells you to close the file. If the run fails later, the earlier results are
+whole at `results.1`. Names of the form `results.N` beside the bundle are kept for these
+generations: do not give another bundle such a name, since *hxex* would list it as one.
+
 | Command | Writes | Afterwards out of date |
 |---|---|---|
 | `hxex run` | `results`, `results_tables` | `results_figures`, `results_analysis_...` |
@@ -84,7 +91,8 @@ the same for every command, so you need not type the option each time.
 | `hxex analyse` | `results_analysis_...` | |
 
 `hxex resume` adds to the bundle and writes its tables again without asking: they belong to the
-same results. After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
+same results (a tables folder made from other results is left as it is, with a warning; `hxex
+report --overwrite` writes it). After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
 folder made from other results, and `hxex info results` lists each folder as `up to date` or
 `made from earlier results`. To bring them up to date:
 
@@ -589,7 +597,9 @@ those without running *hxex*.
 
 *hxex* can also write the results as a zip from the start: give the bundle a name ending in
 `.zip` (`bundle = "results.zip"` in `[output]`, or `hxex run hxex.toml --bundle results.zip`).
-The tables and figures are still written as ordinary folders beside it.
+The tables and figures are still written as ordinary folders beside it, named after the whole
+file name: `results.zip_tables` and `results.zip_figures` (and `results.1.zip_tables` for an
+earlier generation).
 
 A zip cannot be changed in place, so review decisions cannot be saved into one; unpack it
 first if you need to.

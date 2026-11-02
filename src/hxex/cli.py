@@ -96,7 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
-                   help="also write the tables (default: beside the bundle)")
+                   help="where the tables go (default: beside the bundle, or a project "
+                        "file's [output] tables)")
 
     p = sub.add_parser("report", help="draw the figures, and write the tables again, from a "
                                       "bundle; fits nothing")
@@ -849,7 +850,8 @@ def cmd_run(args) -> int:
                   "(%s.N), or write to another output.bundle (the bundle and the folders "
                   "named after it are hxex's)", bundle, bundle.name)
         return EXIT_ERROR
-    from .io import prepare_output
+    from .io import check_output, holds_output, prepare_output
+    from .report.tables import TABLE_NAMES
 
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
     if tables is not None and _same_folder(tables, bundle):
@@ -864,6 +866,8 @@ def cmd_run(args) -> int:
         prepare_output(tables, overwrite=overwrite, keep_previous=keep_previous, move=False,
                        what="tables of earlier results",
                        elsewhere="another output.bundle (or output.tables)")
+        if not (keep_previous and holds_output(tables)):  # stays: its files must be hxex's
+            check_output(tables, TABLE_NAMES)
     config = project.run
     chosen_k = table_choices(project.review)  # before anything is read
     check_table_choices(chosen_k, config.fit.k_values)
@@ -1002,18 +1006,31 @@ def cmd_resume(args) -> int:
                      view_exclude=_view_exclude(project), chosen_k=chosen)
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
-    from .io import holds_output, made_from, prepare_output
+    from .io import check_output, holds_output, made_from, prepare_output
+    from .report.tables import TABLE_NAMES
 
+    created = (bundle_manifest(bundle) or {}).get("created", "")
+    if project is None and tables_arg is None:
+        # the bundle's own tables beside it are brought up to date (audit 2026-11-01 Medium
+        # 21); a folder there made from other results is left as it is, with a warning
+        own = Path(bundle).with_name(Path(bundle).name + "_tables")
+        if holds_output(own) and (made_from(own) or {}).get("") != created:
+            log.warning("%s holds tables of other results: not written (hxex report %s "
+                        "--overwrite writes them)", own, bundle)
+        else:
+            tables_arg = True
     tables = _beside(bundle, tables_arg, "_tables")
-    # the tables of this bundle are brought up to date; a folder holding other results' tables
-    # follows the bundle's rule (refused before anything is fitted)
-    others = (tables is not None and holds_output(tables) and (made_from(tables) or {}).get("")
-              != (bundle_manifest(bundle) or {}).get("created", ""))
+    # a tables folder holding other results' tables follows the bundle's rule (refused before
+    # anything is fitted)
+    others = (tables is not None and holds_output(tables)
+              and (made_from(tables) or {}).get("") != created)
     flags = {} if project is None else {"overwrite": project.output.overwrite,
                                         "keep_previous": project.output.keep_previous}
     if others:
         prepare_output(tables, move=False, what="tables of other results",
                        elsewhere="another folder with --tables DIR", **flags)
+    if tables is not None and not (others and flags.get("keep_previous")):
+        check_output(tables, TABLE_NAMES)  # a file of your own there: refused before the fit
     stop = _Stop()
     with stop.installed(), _threads(threads):
         try:
@@ -1084,9 +1101,10 @@ def cmd_report(args) -> int:
     import dataclasses
 
     from .hooks import ProgressLog
-    from .io import open_bundle, prepare_output
+    from .io import check_output, holds_output, open_bundle, prepare_output
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
+    from .report.tables import TABLE_NAMES
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
     overwrite, keep_previous = args.overwrite, args.keep_previous
@@ -1128,6 +1146,8 @@ def cmd_report(args) -> int:
     for folder, what, option in outputs:  # the bundle's rule, before anything is opened
         prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous, move=False,
                        what=what, elsewhere=f"another folder with {option}")
+    if tables is not None and not (keep_previous and holds_output(tables)):
+        check_output(tables, TABLE_NAMES)  # a file of your own there: refused before drawing
     stop = _Stop()
     with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
         if b.pending:

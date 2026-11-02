@@ -5957,3 +5957,36 @@ CSVs or mzML if wanted.
     (`delta_crit` pools every sample; charge-state errors), part-of-a-dataset.md, picking-window.md,
     tutorial.md (`n_multi`), ANALYSIS.md; settings.md regenerated. The tutorial images change on
     the next `make_tutorial.py --run`.
+
+218. **Third audit, Session D: the bundle contract (2026-11-02; decisions in
+    docs/AUDIT_2026-11-01.md).** `--keep-previous` moves the earlier bundle (with its tables,
+    figures, and analysis folders) at the start of `run()`, before anything is read or fitted,
+    and the moves are all or nothing: a folder that cannot be moved (on Windows, a file open in
+    it) moves the others back and stops the run naming it (High 4; was: moved after the fit, a
+    failure lost the fit and left the folders half moved). Spectra taken from the bundle being
+    moved (`[input] spectra`) follow it, so its stored picking is still reused. An interrupted
+    replacement lists the new bundle's files in `manifest.json.replacing` before any is moved in,
+    so writing again works (18); its review is read from `review.parquet` and carried over, or
+    the run stops naming the file (19). `hxex run`, `hxex resume` and `hxex report` check the
+    tables folder for files of your own named like the tables (`hxex.io.check_output`) before
+    anything is read or fitted (20; was: after the bundle had been replaced). `hxex resume
+    BUNDLE` writes the bundle's own tables beside it by default; a folder there made from other
+    results is left as it is with a warning, and an explicit `--tables` keeps the refusal (21).
+    `settings_changed` compares the new settings as the manifest stores them (`ks = (1, 2)` was
+    always a change; 22). Analysis folder names keep letters of any script (23). Owner's
+    decisions on the open questions: a second Ctrl-C is held while a bundle's files are swapped
+    in or a generation is moved (`hxex.io.bundle.deferred_interrupt`), then delivered; `review_K
+    = 0` for a spectrum the review never chose a K for adds nothing (no blank row in
+    review.csv). Low: `NAME.N` beside a bundle documented as reserved for its generations (37);
+    BUNDLE.md and the ReviewTable docstring say a later run that can apply a stale entry makes it
+    current again (38); a resumed bootstrap is recorded in the provenance (`resumed`: `bootstrap`
+    or `bootstrap at chosen K`; 39); `Bundle.set_review`'s docstring says the tables and figures
+    must be written again (40); `RunResult.created` holds the written bundle's stamp, so figures
+    drawn from a run's result are up to date (41); a null text cell reads as empty text (42); a
+    list column of the wrong length is a `BundleError` saying the file is damaged (43); strict
+    JSON converts numpy scalars (44); outputs.md names a zip bundle's folders (`results.zip_tables`)
+    (45). Review table (Session A leftovers): the row numbers were already the spreadsheet's (the
+    evaluator misread them); the message now says so, and the warning about spectra the results
+    do not have names a typo first. Windows CI: Session B's test made a folder named with `?`,
+    which Windows does not allow; it now uses `#`. Docs: outputs.md ("Running again", "Sharing
+    results"), BUNDLE.md; commands.md regenerated.

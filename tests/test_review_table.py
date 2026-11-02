@@ -72,6 +72,11 @@ def test_review_k_zero_clears_a_chosen_k(tmp_path):
     assert view.review.get(a)["k_override"] == 0 and view.review.get(b)["k_override"] == 2
     choices = table_choices(ReviewSettings(table=str(path)))
     assert merge_choices({a: 2, b: 2}, choices) == {b: 2}
+    # clearing a K never chosen adds nothing (owner, 2026-11-02): no blank row in review.csv
+    c = str(results.fit.spectrum_id[5])
+    path.write_text(f"spectrum_id,review_K\n{c},0\n")
+    view = apply_review_table(stored, read_review_table(path))
+    assert c not in set(map(str, view.review.spectrum_id))
     for bad in ("inf", "nan", "1e400"):
         path.write_text(f"spectrum_id,review_K\n{a},{bad}\n")
         with pytest.raises(ValueError, match=f"row 2: review_K '{bad}'"):

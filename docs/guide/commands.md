@@ -68,7 +68,7 @@ Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstr
 | `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed); the fits kept |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
-| `--tables` `[DIR]` | also write the tables (default: beside the bundle) |
+| `--tables` `[DIR]` | where the tables go (default: beside the bundle, or a project file's [output] tables) |
 
 ## hxex report
 

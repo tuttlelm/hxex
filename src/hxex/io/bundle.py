@@ -25,9 +25,12 @@ import os
 import platform
 import re
 import shutil
+import signal
 import tempfile
+import threading
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -613,7 +616,11 @@ def provenance_of(
         "replaced_hxex": (old.get("versions") or {}).get("hxex"),
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "moved_to": None if moved_to is None else str(moved_to),
-        "settings_changed": settings_changed(old.get("configs"), new_configs),
+        # compared as the manifest stores them: a tuple (ks = (1, 2)) reads back a list
+        # (audit 2026-11-01 Medium 22)
+        "settings_changed": settings_changed(
+            old.get("configs"),
+            None if new_configs is None else json.loads(strict_json(dict(new_configs)))),
         "review": {"carried": 0 if review is None else len(review),
                    "stale": 0 if review is None else review.n_stale},
     }
@@ -628,10 +635,12 @@ def analysis_folder_name(name: str, reference: str = "") -> str:
     """The default analysis folder of the bundle ``name``: ``name_analysis``, with the reference
     the samples are compared with when there is one (``name_analysis_WT``), so analyses against
     different references never write into one folder. Characters a folder name should not hold
-    become ``_`` (``A:WT`` gives ``name_analysis_A_WT``)."""
+    become ``_`` (``A:WT`` gives ``name_analysis_A_WT``); letters of any script are kept
+    (``Δ-mutant α`` and ``Δ-mutant β`` stay apart; audit 2026-11-01 Medium 23)."""
     if not reference:
         return f"{name}_analysis"
-    return f"{name}_analysis_{re.sub(r'[^A-Za-z0-9._-]+', '_', reference).strip('_') or 'ref'}"
+    cleaned = re.sub(r"[^\w.-]+", "_", reference).strip("_.-")
+    return f"{name}_analysis_{cleaned or 'ref'}"
 
 
 def analysis_folders(path: Path) -> list[Path]:
@@ -706,7 +715,9 @@ def keep_previous(path: str | Path) -> Path | None:
     ``name.N_analysis...``, and return the generation's
     path (None when there is nothing at ``path``). N is one more than any number used beside the
     bundle before, so a generation's name is never reused. A path that holds something other
-    than a bundle is refused. Sizes are logged."""
+    than a bundle is refused. Sizes are logged. The moves are all or nothing: when a folder
+    cannot be moved (on Windows, a file in it is open), those already moved are moved back and
+    a :class:`BundleError` names it."""
     path = Path(path)
     if not path.exists():
         return None
@@ -725,13 +736,31 @@ def keep_previous(path: str | Path) -> Path | None:
     for src, dst in moves:
         if dst.exists():  # cannot happen (N is new); never replace anything
             raise BundleError(f"{dst} exists; not moving {src} over it")
-    done = []
-    for src, dst in moves:
-        size = _size_of(src)
-        os.replace(src, dst)
-        done.append(f"{src.name} ({size / 1e6:.1f} MB) to {dst.name}")
+    done, moved = [], []
+    with deferred_interrupt():  # all or nothing, also for a Ctrl-C
+        _move_all(moves, done, moved)
     log.info("kept the previous results: moved %s", "; ".join(done))
     return target
+
+
+def _move_all(moves, done: list, moved: list) -> None:
+    """The moves of :func:`keep_previous`, undone in reverse when one fails."""
+    for src, dst in moves:
+        size = _size_of(src)
+        try:
+            os.replace(src, dst)
+        except OSError as exc:  # undo what was moved, in reverse: every folder where it was
+            for back_src, back_dst in reversed(moved):
+                try:
+                    os.replace(back_dst, back_src)
+                except OSError:
+                    log.error("could not move %s back to %s", back_dst, back_src)
+            raise BundleError(
+                f"could not move {src} to {dst.name} ({exc}); nothing was moved: close any "
+                "file open in it (a table open in a spreadsheet program, for example) and "
+                "run again") from exc
+        moved.append((src, dst))
+        done.append(f"{src.name} ({size / 1e6:.1f} MB) to {dst.name}")
 
 
 def write_bundle(
@@ -891,7 +920,8 @@ def write_bundle(
 
         (tmp / RUN_SETTINGS_FILE).write_text(run_settings_text(manifest), encoding="utf-8")
         (tmp / MANIFEST).write_text(strict_json(manifest, indent=2) + "\n")
-        _publish(tmp, path, overwrite)
+        with deferred_interrupt():  # a Ctrl-C waits until the files are all in place
+            _publish(tmp, path, overwrite)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
@@ -901,6 +931,40 @@ def write_bundle(
 def _project_of(ids) -> str:
     heads = {str(i).partition(":")[0] for i in ids if ":" in str(i)}
     return heads.pop() if len(heads) == 1 else ""
+
+
+@contextmanager
+def deferred_interrupt() -> Iterator[None]:
+    """Hold a Ctrl-C (SIGINT) while the block runs (a bundle's files being swapped in, a
+    generation being moved: well under a second) and deliver it to the handler that was in
+    place once the block has finished, so an interrupt never leaves a bundle half replaced
+    (owner, 2026-11-02; audit 2026-11-01 question 4). Outside the main thread nothing is held.
+    A block that fails keeps its own error (the held Ctrl-C is then only logged)."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    held: list[tuple] = []
+
+    def hold(signum, frame):
+        held.append((signum, frame))
+        log.warning("Ctrl-C: finishing the write of the bundle first")
+
+    try:
+        previous = signal.signal(signal.SIGINT, hold)
+    except ValueError:  # signals cannot be set here
+        yield
+        return
+    try:
+        yield
+    except BaseException:
+        signal.signal(signal.SIGINT, previous)
+        raise
+    signal.signal(signal.SIGINT, previous)
+    if held:
+        if callable(previous):
+            previous(*held[0])  # the command's handler (a first Ctrl-C), or Python's (raises)
+        elif previous != signal.SIG_IGN:
+            raise KeyboardInterrupt
 
 
 def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
@@ -937,8 +1001,13 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     if clash:
         raise BundleError(f"{path} holds file(s) of its own named like the bundle's "
                           f"({', '.join(clash)}); move them and write again")
-    if (path / MANIFEST).exists():
-        os.replace(path / MANIFEST, path / REPLACING)
+    # the replacement's own files are listed before any is moved in (audit 2026-11-01 Medium
+    # 18): an interrupted write leaves only files a later write knows as the bundle's
+    listing = {**old, "files": {**dict.fromkeys(new), **(old.get("files") or {})}}
+    staged = path / (REPLACING + ".tmp")
+    staged.write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
+    os.replace(staged, path / REPLACING)
+    (path / MANIFEST).unlink(missing_ok=True)
     for name in owned - {MANIFEST, REPLACING}:
         (path / name).unlink(missing_ok=True)
     for name in new:
@@ -957,7 +1026,8 @@ class ReviewTable:
     unreviewed. It changes nothing in the fit: :meth:`effective_K` and :meth:`status_of` give
     the reviewed view. ``stale`` marks an entry a rerun could not apply (its spectrum was
     dropped, or its chosen K was not fitted): the status and note are kept on record, the
-    chosen K is ignored while stale, and :meth:`update` makes the entry current again (it is
+    chosen K is ignored while stale, and :meth:`update` (or a later run that can apply it,
+    through :meth:`mark_stale`) makes the entry current again (it is
     then checked like any other when stored)."""
 
     spectrum_id: np.ndarray
@@ -1099,6 +1169,26 @@ def _review_table(r: ReviewTable) -> pa.Table:
         "note": _str(r.note), "updated": _str(r.updated),
         "stale": pa.array(np.asarray(r.stale, dtype=bool)),
     })
+
+
+def interrupted_review(path: str | Path) -> ReviewTable | None:
+    """The review layer of a bundle directory whose replacement was interrupted (it holds
+    ``manifest.json.replacing`` and no ``manifest.json``, so :func:`open_bundle` refuses it):
+    its ``review.parquet``, read directly, when the interrupted manifest lists one (None
+    otherwise). A listed file that cannot be read raises :class:`BundleError` naming it, so
+    that a run never drops a review without saying so."""
+    path = Path(path)
+    if (path / MANIFEST).exists() or not (path / REPLACING).exists():
+        return None
+    listed = (_old_manifest(path) or {}).get("files") or {}
+    if "review.parquet" not in listed or not (path / "review.parquet").exists():
+        return None
+    try:
+        return _read_review(pq.read_table(path / "review.parquet"))
+    except Exception as exc:  # noqa: BLE001 - any damage: say which file holds the review
+        raise BundleError(f"{path} was interrupted while being replaced and its review "
+                          f"({path / 'review.parquet'}) cannot be read ({exc}): copy that "
+                          "file somewhere safe before writing the bundle again") from exc
 
 
 def _read_review(table: pa.Table) -> ReviewTable:
@@ -1442,7 +1532,10 @@ class Bundle:
         return _read_review(self._table("review")) if self.has("review") else ReviewTable.empty()
 
     def set_review(self, review: ReviewTable) -> None:
-        """Replace the review layer (directory bundles only); no fit is touched."""
+        """Replace the review layer (directory bundles only); no fit is touched. The tables and
+        figures made before are not marked out of date (they record the bundle's ``created``
+        stamp, which does not change): write them again (``hxex report --overwrite``) to show
+        the new review."""
         if not self._store.writable:
             raise BundleError("a zip bundle is read only; unpack it to edit the review layer")
         _check_review(review, self.fit())

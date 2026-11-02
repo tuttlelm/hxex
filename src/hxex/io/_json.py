@@ -9,9 +9,13 @@ import json
 import math
 from collections.abc import Mapping
 
+import numpy as np
+
 
 def _finite(value):
-    if isinstance(value, float):  # numpy's float64 too
+    if isinstance(value, np.generic) and not isinstance(value, np.str_ | np.bytes_):
+        value = value.item()  # a numpy scalar (int64, float32, bool_) as Python's
+    if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, Mapping):
         return {k: _finite(v) for k, v in value.items()}

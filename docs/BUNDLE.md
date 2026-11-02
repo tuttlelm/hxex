@@ -38,7 +38,10 @@ live there and are treated differently:
 - **Annotations** (the review layer: your work, keyed by `spectrum_id`) are carried over to
   the new bundle, never silently dropped: an entry the new run cannot apply (its spectrum was
   dropped, its chosen K was not fitted) is kept with `stale = true`, its status and note on
-  record and its chosen K ignored until you change the entry (see "The review layer").
+  record and its chosen K ignored until you change the entry or a later run can apply it
+  again (see "The review layer"). The review of a bundle whose replacement was interrupted
+  (`manifest.json.replacing` without `manifest.json`) is read from its `review.parquet` and
+  carried over the same way; one that cannot be read stops the run, naming the file.
 - **Your own files** in these folders are never touched, but one named like a file hxex is
   about to write stops the run before anything changes; keep your own files elsewhere, or
   under other names.
@@ -54,8 +57,8 @@ folder (owner, 2026-10-21): a folder whose listing (`hxex_listing.json`) names f
 by the command about to write it (`hxex run` for its tables, before anything is fitted; `hxex
 report`; `hxex analyse`) unless `--overwrite` (its hxex files are replaced) or
 `--keep-previous` (it moves to `NAME.N` first, N never reused; `hxex.io.prepare_output`), or
-`[output] overwrite` / `keep_previous`. `hxex resume` rewrites the tables of the bundle it adds
-to without asking. Every listing records the bundle it was made from (`made_from`: the
+`[output] overwrite` / `keep_previous`. `hxex resume` rewrites the tables of the bundle it adds to without asking (beside it by
+default; a folder there made from other results is left as it is, with a warning). Every listing records the bundle it was made from (`made_from`: the
 bundle's `created` stamp), so `hxex info` and the warnings after `hxex run` and `hxex resume`
 name the tables, figures, and analysis folders made from other results. `hxex run` does not
 write the analysis or the figures: after it they describe the replaced results until `hxex
@@ -96,7 +99,8 @@ null), `settings_changed` (the dotted paths of the run settings that differ, `fi
 and `spectra_source` when other files were read or read differently) and `review`
 (`carried`, `stale`: the review entries carried over and how many are stale);
 `hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
-`hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`)
+`hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`,
+`bootstrap` (added or made again), or `bootstrap at chosen K` (the K a review chose))
 and `project_file_replaced` (whether the record of the project file, `configs.project_file`,
 was replaced by the one resume was given)), `peak_measure` (whether the
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
@@ -224,7 +228,8 @@ not fitted for it: not tried, or skipped by the screen): the status and note sta
 the spectrum is there), `effective_K` ignores a stale entry's chosen K, and `hxex info` counts
 them. `ReviewTable.update` makes an entry current again, so a stale entry you change is
 checked like any other when stored (an entry for a spectrum the bundle does not have is
-refused; clearing it removes it). `ReviewTable.mark_stale(fit)` recomputes the marker.
+refused; clearing it removes it). `ReviewTable.mark_stale(fit)` recomputes the marker, so
+a later run that can apply a stale entry (it fits the chosen K again) makes it current again.
 
 ## Versioning
 

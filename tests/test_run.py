@@ -576,6 +576,54 @@ def test_keep_previous_moves_the_bundle_and_its_folders(tmp_path, caplog):
     assert (tmp_path / "plain").read_text() == "mine"
 
 
+def test_keep_previous_moves_before_anything_is_fitted(tmp_path, monkeypatch, caplog):
+    """Audit 2026-11-01 High 4: the earlier bundle moves before the fit; a folder that cannot be
+    moved stops the run with every folder where it was and nothing fitted. Medium 19: the review
+    of a bundle whose replacement was interrupted is carried over. Low 41: the result knows the
+    stamp of the bundle it wrote."""
+    import hxex.io.bundle as bundle_module
+    import hxex.pipeline as pipeline
+    from hxex.io import ReviewTable
+    from hxex.io.bundle import BundleError
+
+    cfg = config(bootstrap=None)
+    path = tmp_path / "res"
+    first = run(raw_spectra(n_series=1), cfg, out=path)
+    with open_bundle(path) as b:
+        assert first.created == b.manifest["created"] != ""
+        created = b.manifest["created"]
+    (tmp_path / "res_tables").mkdir()
+    real = bundle_module.os.replace
+
+    def locked(src, dst):
+        if str(src).endswith("res_tables"):
+            raise PermissionError("a table is open")
+        return real(src, dst)
+
+    def no_fit(*args, **kwargs):
+        raise AssertionError("fitted although the move failed")
+
+    monkeypatch.setattr(bundle_module.os, "replace", locked)
+    monkeypatch.setattr(pipeline, "_fit_part", no_fit)
+    with pytest.raises(BundleError, match="close any file open in it"):
+        run(raw_spectra(n_series=1), cfg, out=path, keep_previous=True)
+    with open_bundle(path) as b:
+        assert b.manifest["created"] == created  # the earlier results, untouched
+    assert (tmp_path / "res_tables").is_dir() and not (tmp_path / "res.1").exists()
+    monkeypatch.undo()
+    # an interrupted replacement of a reviewed bundle: its review is carried over
+    review = ReviewTable.empty().update(str(first.fit.spectrum_id[1]), status="rejected")
+    with open_bundle(path) as b:
+        b.set_review(review)
+    (path / "manifest.json").rename(path / "manifest.json.replacing")
+    with caplog.at_level(logging.WARNING):
+        again = run(raw_spectra(n_series=1), cfg, out=path, overwrite=True)
+    assert "was interrupted while being replaced" in caplog.text
+    assert list(again.review.spectrum_id) == [str(first.fit.spectrum_id[1])]
+    with open_bundle(path) as b:
+        assert b.manifest["provenance"]["review"]["carried"] == 1
+
+
 def test_a_screened_run_keeps_the_selected_k_and_its_bundle_reads_back(whole, tmp_path, caplog):
     raw, res = whole
     cfg = config(fit=dataclasses.replace(config().fit, screen=True),

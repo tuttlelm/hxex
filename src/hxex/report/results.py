@@ -62,7 +62,9 @@ class Settings:
         from ..io.bundle import _versions
 
         return cls(
-            project=project, created=datetime.now(UTC).isoformat(timespec="seconds"),
+            project=project,  # the written bundle's stamp, so its figures are up to date
+            created=getattr(run, "created", "") or datetime.now(UTC).isoformat(
+                timespec="seconds"),
             notes=notes, versions=_versions(),
             configs={"run": run.config.to_dict(), "spectra_source": run.spectra_source},
             excluded=dict(run.excluded or {}),

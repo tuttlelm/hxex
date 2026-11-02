@@ -147,7 +147,8 @@ def read_review_table(path: str | Path) -> ReviewSheet:
             continue
         entries.setdefault(sid, (status, k, note, row_number))
     if problems:
-        raise ValueError(f"the review table {path}: " + "; ".join(problems[:10])
+        raise ValueError(f"the review table {path} (rows numbered as a spreadsheet numbers "
+                         "them, the header being row 1): " + "; ".join(problems[:10])
                          + (f"; and {len(problems) - 10} more" if len(problems) > 10 else ""))
     ids = list(entries)
     return ReviewSheet(tuple(ids), tuple(entries[s][0] for s in ids),
@@ -171,8 +172,10 @@ def apply_review_table(results, sheet: ReviewSheet | None):
     unknown = [s for s in sheet.spectrum_id if s not in index]
     if unknown:
         log.warning("the review table %s names %d spectra these results do not have (for "
-                    "example %s): they are skipped; a table from an earlier run may name "
-                    "spectra since left out", sheet.path, len(unknown), ", ".join(unknown[:3]))
+                    "example %s): they are skipped; check their spectrum_id (a typo, or a row "
+                    "copied from another project), or the table may be from an earlier run "
+                    "that had spectra since left out", sheet.path, len(unknown),
+                    ", ".join(unknown[:3]))
     tried = fit.config.k_values
     beyond = [f"{sid} (K = {k})" for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True)
               if k > 0 and sid in index and k not in tried]
@@ -203,6 +206,8 @@ def apply_review_table(results, sheet: ReviewSheet | None):
         if sid not in index:
             continue
         j = stored.get(sid)
+        if j is None and not st and not nt and k == CLEARED:
+            continue  # clearing a K never chosen changes nothing (owner, 2026-11-02)
         if j is None:
             ids.append(sid)
             status.append(st)

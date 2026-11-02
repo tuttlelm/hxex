@@ -134,11 +134,13 @@ def test_modified_residues_and_termini_are_compared_as_base_residues(tmp_path):
 
 
 def test_a_folder_name_that_cannot_be_read_is_not_checked(tmp_path, caplog):
-    sample(tmp_path, "WT", "MKVLAGHEDW", ["0002-0005-KV?A"])
+    """A folder name whose sequence cannot be read is warned about and not checked (the
+    character is one Windows allows in a file name: ? is not)."""
+    sample(tmp_path, "WT", "MKVLAGHEDW", ["0002-0005-KV#A"])
     with caplog.at_level(logging.WARNING):
         (entry,) = hio.scan(tmp_path, "specexport")[:1]
     assert entry.peptide == "KVLA"
-    assert "0002-0005-KV?A: the sequence in the folder's name cannot be read" in caplog.text
+    assert "0002-0005-KV#A: the sequence in the folder's name cannot be read" in caplog.text
     assert "not checked against WT.fasta" in caplog.text
 
 

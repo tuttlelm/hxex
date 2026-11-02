@@ -57,7 +57,10 @@ def _col(table: pa.Table, name: str) -> np.ndarray:
 
 
 def _strs(table: pa.Table, name: str) -> np.ndarray:
-    return np.array(table.column(name).to_pylist(), dtype=str)
+    """A text column as an array; a null cell (a file written by another program) is empty
+    text, never the word ``None`` (audit 2026-11-01 Low 42)."""
+    return np.array(["" if v is None else v for v in table.column(name).to_pylist()],
+                    dtype=str)
 
 
 def _ragged_read(table: pa.Table, name: str):
@@ -75,9 +78,16 @@ def _split(flat: np.ndarray, offsets: np.ndarray) -> list[np.ndarray]:
 def _matrix(table: pa.Table, name: str, width: int, dtype=np.float64) -> np.ndarray:
     """A list column whose rows all have ``width`` values, as an ``(M, width)`` array."""
     flat, _ = _ragged_read(table, name)
-    return np.asarray(flat, dtype=dtype).reshape(table.num_rows, width) if width else np.empty(
-        (table.num_rows, 0), dtype=dtype
-    )
+    if not width:
+        return np.empty((table.num_rows, 0), dtype=dtype)
+    try:
+        return np.asarray(flat, dtype=dtype).reshape(table.num_rows, width)
+    except ValueError as exc:  # a row with the wrong number of values: a damaged file
+        from .bundle import BundleError
+
+        raise BundleError(f"column {name}: {len(flat)} values for {table.num_rows} rows of "
+                          f"{width}; the file is damaged (hxex info --verify checks a "
+                          "bundle)") from exc
 
 
 _INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", "modification")
