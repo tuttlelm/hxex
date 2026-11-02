@@ -256,6 +256,12 @@ in the published work; where it matters, a component is named by its rank.
   "high state" shift was such a tail; a sign reversal in 24-34). Per peptide, the rank and
   population comparisons are made only where both sides have `best_set_K = 2`; elsewhere the
   difference is NaN and `reason` says `one population (sample)`, `(reference)` or `(both)`.
+  A set chosen at K = 3 counts as two or more: it is compared at its K = 2 description, and
+  `reason` says `three populations (sample): K = 2 compared` (owner, 2026-11-02; audit
+  2026-11-01 Analysis 33); its peptides vote for two in the residue choice too. A pair with no
+  K = 2 description on a side keeps its row with `reason` `no K=2 (sample)` (`(reference)`,
+  `(both)`), and a sample with no labelled time point (controls only) is left out of the
+  analysis with a warning (audit 2026-11-01 High 5).
   Per residue (`residue_map(two_population_peptides=True)`) the K=2 values come from every
   covering peptide, as K=1 does (owner, 2026-10-22, HISTORY 141: from the two-population
   peptides alone they formed curves that did not bracket K=1), every covering peptide votes

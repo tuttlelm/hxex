@@ -434,6 +434,12 @@ def _warn_own_reference(meas: Measurements, picked, config: RunConfig,
     own = sorted(s for s, k in kinds.items() if k == "own spectrum")
     if not own:
         return
+    if len(own) == len(kinds) and len(meas.data_id) == 1:  # plainer (audit 2026-11-01, t02)
+        log.warning("one spectrum and no undeuterated control: its noise is set from the "
+                    "spectrum itself, so the number of populations cannot be judged; fit it with "
+                    "its series and an undeuterated control (guide: Analysing part of a "
+                    "dataset)")
+        return
     if len(own) == len(kinds):
         log.warning("no series has an undeuterated control in this run, so every spectrum is its "
                     "own noise reference (its noise set from its own tallest peak): the number of "

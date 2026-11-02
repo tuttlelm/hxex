@@ -43,6 +43,9 @@ class Settings:
     # the spectra [[input.exclude]] left out before fitting (the manifest's ``excluded``: the
     # rules with how many each matched, and the spectrum ids; empty without rules)
     excluded: dict[str, Any] = field(default_factory=dict)
+    # what the bins hold: "height" (a bundle made before the choice was recorded) or "area"
+    # (the manifest's ``peak_measure``, :mod:`hxex.picking.measure`)
+    peak_measure: str = "height"
 
     @classmethod
     def from_manifest(cls, manifest: dict[str, Any]) -> Settings:
@@ -51,6 +54,7 @@ class Settings:
             notes=str(manifest.get("notes", "")), versions=dict(manifest.get("versions", {})),
             configs=dict(manifest.get("configs", {})),
             excluded=dict(manifest.get("excluded") or {}),
+            peak_measure=str((manifest.get("peak_measure") or {}).get("measure", "height")),
         )
 
     @classmethod
@@ -62,6 +66,8 @@ class Settings:
             notes=notes, versions=_versions(),
             configs={"run": run.config.to_dict(), "spectra_source": run.spectra_source},
             excluded=dict(run.excluded or {}),
+            peak_measure=(run.peak_measure.measure if run.peak_measure is not None
+                          else "height"),
         )
 
     @property

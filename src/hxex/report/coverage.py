@@ -13,6 +13,7 @@ them.
 from __future__ import annotations
 
 import itertools
+import logging
 from collections.abc import Sequence
 
 import numpy as np
@@ -43,6 +44,42 @@ SAMPLE_STYLES = (
     ("#000000", "s", 3.5), ("#1f77b4", "o", 4.5), ("#d62728", "o", 6.0), ("#17becf", "o", 7.0),
     ("#9467bd", "v", 5.0), ("#ff7f0e", "^", 5.0), ("#2ca02c", "D", 4.0), ("#8c564b", "P", 5.0),
 )
+# past the palette the colours repeat with markers (and bar hatches) none of the first round uses,
+# so that no two samples of a figure share both colour and marker
+_EXTRA_MARKERS = ("X", "h", "p", "d", "<", ">", "*", "H")
+_EXTRA_HATCHES = ("//", "..", "xx", "\\\\", "oo", "++", "--", "**")
+_warned_repeat = False
+
+
+def sample_style(n: int) -> tuple[str, str, float]:
+    """(colour, marker, marker size) of the sample at position ``n`` of a figure, the reference
+    at 0: the reference keeps the first style (black) and no other sample ever gets it; the
+    others take the remaining colours in turn and, each time the colours run out, a marker that
+    no earlier round used (:func:`sample_hatch` gives bars the same distinction). Colours and
+    markers together repeat only after 57 samples (logged once)."""
+    if n <= 0:
+        return SAMPLE_STYLES[0]
+    cycle, i = divmod(n - 1, len(SAMPLE_STYLES) - 1)
+    colour, marker, size = SAMPLE_STYLES[1 + i]
+    if cycle:
+        if cycle > len(_EXTRA_MARKERS):
+            global _warned_repeat
+            if not _warned_repeat:
+                logging.getLogger(__name__).warning(
+                    "more than %d samples in one figure: their colours and markers repeat",
+                    1 + (len(SAMPLE_STYLES) - 1) * (1 + len(_EXTRA_MARKERS)))
+                _warned_repeat = True
+        marker, size = _EXTRA_MARKERS[(cycle - 1) % len(_EXTRA_MARKERS)], 5.5
+    return colour, marker, size
+
+
+def sample_hatch(n: int) -> str | None:
+    """The hatch of sample ``n``'s bars: None while the colours are used for the first time
+    (:func:`sample_style`), then one pattern per round."""
+    if n <= 0:
+        return None
+    cycle = (n - 1) // (len(SAMPLE_STYLES) - 1)
+    return None if cycle == 0 else _EXTRA_HATCHES[(cycle - 1) % len(_EXTRA_HATCHES)]
 
 
 def autowrap(start: Sequence[int], end: Sequence[int], margin: int = 4, step: int = 5) -> int:
@@ -221,7 +258,7 @@ def plot_redundancy_resolution(
         rows = coverage.sample == sample
         if not rows.any():
             raise ValueError(f"no sample {sample!r} in the coverage table")
-        colour, marker, size = SAMPLE_STYLES[n % len(SAMPLE_STYLES)]
+        colour, marker, size = sample_style(n)
         res = coverage.residue[rows]
         n_res = max(n_res, int(res.max()))
         prolines |= set(res[coverage.proline[rows]].tolist())

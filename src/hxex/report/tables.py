@@ -321,7 +321,8 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     """One row per series (a peptide at one charge in one sample), ordered by ``data_id``:
     ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
-    (by the reviewer), ``n_multi`` (more than one population at the K in effect), ``controls``
+    (by the reviewer), ``n_multi`` (more than one population at the K in effect, rejected
+    spectra left out), ``controls``
     (``measured``, ``uncorrected`` for a series the controls leave as measured, such as a
     fragment ion, or the fallback reasons; empty without controls), ``control_notes`` (the
     control flags that only warn, :data:`hxex.controls.CONTROL_NOTES`), ``retention`` (the
@@ -341,7 +342,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     where = {str(s): j for j, s in enumerate(b.spectrum_id)} if b is not None else {}
     flagged = results.quality.flagged if results.quality is not None else np.zeros(len(fit), bool)
     rejected = np.asarray(results.review_status == "rejected", dtype=bool)
-    multi = results.effective_K > 1
+    multi = (results.effective_K > 1) & ~rejected  # as the analysis: rejected ones left out
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
         "n_rejected", "n_multi", "controls", "control_notes", "retention", "deamidated_share",

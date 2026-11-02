@@ -61,7 +61,9 @@ class SpeciesFilters:
       that time (the same peptide and charge state; at least three replicates) is left out
       (``replicate outlier``). The typical deviation is the run's own: the median of the
       replicate variances of all its time points (each scaled by its chi-square median),
-      robust to the outliers it looks for. None turns it off. Charge states are not compared
+      robust to the outliers it looks for; a run with fewer than
+      :data:`REPLICATE_OUTLIER_MIN_GROUPS` replicated series and times is not assessed (the
+      median would be the outlier's own group). None turns it off. Charge states are not compared
       with each other here (``charge_trend`` does that).
     - ``above_amides``: a spectrum whose K=1 mean exceeds the peptide's exchangeable amides
       before the back-exchange correction is left out (``above the amide count``): no
@@ -188,8 +190,9 @@ class SpeciesUptake:
     test, :mod:`hxex.analysis.set_test`, whose p-values are ``set_p_1``, one against two, and
     ``set_p_2``, two against three, NaN without the test; ``set_test_K`` is the test's own
     number, which ``best_set_K`` can only follow up to the largest K analysed; 0 without the
-    test; ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in
-    some sample of the run, has two populations or more by the test: another species);
+    test, and for a set the test never saw (every spectrum left out by the filters);
+    ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in some
+    sample of the run, has two populations or more by the test: another species);
     ``average_from_k2`` (every row of a species and time): its K=1 values are the K = 2
     description's population-weighted mean, not the K = 1 fit, because its set has two
     populations at least :data:`K2_AVERAGE_SEPARATION` deuterons apart, where the
@@ -750,6 +753,9 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             for i, n in enumerate(names)}
 
 
+REPLICATE_OUTLIER_MIN_GROUPS = 5  # the fewest replicated groups the typical scatter needs
+
+
 def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
               keep: np.ndarray, values: bool = False, screen: Screening | None = None,
               unscreened=None):
@@ -829,7 +835,9 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
             groups.setdefault((int(data_id[i]), float(time[i])), []).append(i)
         scaled = [float(np.var(fd[g], ddof=1)) * (len(g) - 1) / stats.chi2.median(len(g) - 1)
                   for g in groups.values() if len(g) >= 2]
-        if scaled:
+        # with fewer replicated groups the median variance is set by the outlier it looks
+        # for: not assessed (audit 2026-11-01 Low 71; as the controls' OUTLIER_MIN_SERIES)
+        if len(scaled) >= REPLICATE_OUTLIER_MIN_GROUPS:
             limit = filters.replicate_outlier * float(np.sqrt(np.median(scaled)))
             far = np.zeros(n, dtype=bool)
             for g in groups.values():
@@ -1199,9 +1207,15 @@ def species_uptake(
             out["average_from_k2"][i] = True
             if out["K"][i] != 1 or set_key not in k1:
                 continue
-            d, d_se = _combine_replicates(k1[set_key], 0)
+            recs = k1[set_key]
+            d, d_se = _combine_replicates(recs, 0)
             out["fD"][i], out["fD_se"][i] = d, d_se
             out["mean"][i], out["mean_se"][i] = d * out["n_amides"][i], d_se * out["n_amides"][i]
+            # the counts of the spectra the value now averages (those with a K = 2 description)
+            out["n_spectra"][i], out["n_charges"][i] = len(recs), len({r[4] for r in recs})
+            out["control_fallback"][i] = any(r[7] for r in recs)
+            out["fd_other_charge"][i] = (any(r[7] for r in recs)
+                                         and not any(r[9] for r in recs))
         log.info("%d species and times have two populations at least %g D apart: their average "
                  "is the K = 2 description's population-weighted mean (average_from_k2)",
                  len(switched), K2_AVERAGE_SEPARATION)
@@ -1426,7 +1440,7 @@ def test_set(cols: Mapping[str, np.ndarray], tests: Mapping[tuple, Any]
     n = len(cols["K"])
     out = {"best_set_K": np.zeros(n, dtype=np.int64), "best_set": np.zeros(n, dtype=bool),
            "best_set_reason": np.full(n, "", dtype=object), "set_p_1": np.full(n, np.nan),
-           "set_p_2": np.full(n, np.nan), "set_test_K": np.ones(n, dtype=np.int64),
+           "set_p_2": np.full(n, np.nan), "set_test_K": np.zeros(n, dtype=np.int64),
            "undeuterated_two": np.zeros(n, dtype=bool)}
     rows: dict[tuple, list[int]] = {}
     for i in range(n):

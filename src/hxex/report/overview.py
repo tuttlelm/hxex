@@ -149,8 +149,10 @@ def plot_controls_overview(results: Results) -> Figure:
     fig = Figure(figsize=(14, 3.8))
     a1, a2, a3 = fig.subplots(1, 3)
     ret = d["retention"][np.isfinite(d["retention"])]
-    if len(ret):
-        a1.hist(ret, bins=40, color=GOOD, gid="retention")
+    if len(ret):  # fixed edges over the drawn range, so that a small run shows its bars
+        a1.hist(ret, bins=np.linspace(min(0.0, float(ret.min())),
+                                      max(1.1, float(ret.max()), d["retention_max"]), 45),
+                color=GOOD, gid="retention")
     for x in (d["retention_min"], d["retention_max"]):
         a1.axvline(x, color=FIT_COLOR, ls="--", lw=1, gid="limits")
     median = f", median {np.median(ret):.2f}" if len(ret) else ""
@@ -159,7 +161,9 @@ def plot_controls_overview(results: Results) -> Figure:
     a1.set_ylabel("series")
     m0 = d["m0"][np.isfinite(d["m0"])]
     if len(m0):
-        a2.hist(m0, bins=40, color=GOOD, gid="m0")
+        a2.hist(m0, bins=np.linspace(min(0.0, float(m0.min())),
+                                     max(d["m0_max"], float(m0.max())) * 1.1, 45),
+                color=GOOD, gid="m0")
     a2.axvline(d["m0_max"], color=FIT_COLOR, ls="--", lw=1, gid="limits")
     a2.set_title(f"undeuterated control means ({len(m0)} series)", fontsize=9)
     a2.set_xlabel("m0 (deuterons beyond natural abundance)")

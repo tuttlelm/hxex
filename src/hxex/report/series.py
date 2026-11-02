@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import textwrap
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -23,15 +24,52 @@ from ..controls import correct_means
 from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT, time_index
 from .results import Results
-from .spectrum import LAYERS, plot_spectrum, population_style
+from .spectrum import (
+    LAYERS,
+    drawn_layers,
+    page_legend_handles,
+    peak_measure,
+    plot_spectrum,
+    population_style,
+    spectrum_notes,
+)
 
 log = logging.getLogger(__name__)
 
-# replicate shapes in the overlay of the population map (there the colour is the population)
-REP_MARKERS = ("o", "s", "^", "D", "v", "P")
+# replicate shapes in the overlay of the population map (there the colour is the population);
+# twelve, so that a pooled run's replicates stay apart (they repeat after twelve)
+REP_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "h", "p", "<", ">", "*")
 
-# replicates (uptake plot): Okabe-Ito colours, the first two differing most
+# replicates (uptake plot): Okabe-Ito colours, the first two differing most; past the six
+# colours the marker changes too (UPTAKE_MARKERS), so that no two replicates look alike
 REP_COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9")
+UPTAKE_MARKERS = ("v", "s", "D", "P", "X", "h")
+REJECTED_STYLE = {"color": "grey", "fillstyle": "none", "alpha": 0.6}
+
+
+def rep_style(rep: int) -> tuple[str, str]:
+    """(colour, marker) of replicate ``rep`` (from 1) on the uptake page: the six colours of
+    ``REP_COLORS`` with a down triangle, then the same colours with the next marker of
+    ``UPTAKE_MARKERS``, so that replicates differ in colour or marker up to 36."""
+    i = max(int(rep) - 1, 0)
+    return (REP_COLORS[i % len(REP_COLORS)],
+            UPTAKE_MARKERS[(i // len(REP_COLORS)) % len(UPTAKE_MARKERS)])
+
+
+def _page_header(fig: Figure, label: str, handles: list) -> None:
+    """The series title in a band at the top with the page's one legend under it, both placed
+    in inches (a fraction of the height would drop them into the first row of a tall figure),
+    and the panels laid out below them."""
+    height, width = fig.get_figheight(), fig.get_figwidth()
+    fig.suptitle(label, fontsize=10, y=1 - 0.1 / height, va="top")
+    top = 0.45
+    if handles:
+        ncol = max(1, min(len(handles), int(width / 2.0)))
+        rows = math.ceil(len(handles) / ncol)
+        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1 - 0.38 / height),
+                   ncol=ncol, frameon=False, fontsize=7, handlelength=2.2)
+        top += 0.2 * rows + 0.1
+    fig.tight_layout(rect=(0, 0, 1, 1 - top / height))
 
 
 @dataclass(frozen=True)
@@ -141,9 +179,11 @@ def series_info(results: Results, data_id: int) -> dict:
     rows = series_rows(results, data_id)
     fit = results.fit
     label = file_label = f"series {data_id}"
+    sample = ""
     if results.binned is not None:
         j = results.binned.find(str(fit.spectrum_id[rows[0]]))
         b = results.binned
+        sample = str(b.sample[j])
         z = int(b.charge[j])
         label = file_label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z={z}".strip()
         frag = _fragment_of(results, data_id)
@@ -158,7 +198,7 @@ def series_info(results: Results, data_id: int) -> dict:
     n_amides = None if row is None else float(results.controls.n_amides[row])
     return {
         "data_id": data_id, "rows": rows, "label": label, "file_label": file_label,
-        "n_amides": n_amides,
+        "sample": sample, "n_amides": n_amides,
         "times": fit.time[rows], "roles": fit.role[rows], "reps": _reps(results)[rows],
         "time_index": time_index(fit.data_id[rows], fit.time[rows], fit.role[rows]),
     }
@@ -278,18 +318,19 @@ def plot_series_spectra(
                     color="darkred", transform=ax.transAxes, gid="raw_unread")
         pos = list(info["rows"]).index(i)
         when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
-        ax.set_title(f"{when}, rep {info['reps'][pos]}", fontsize=8)
+        # the panel keeps what plot_spectrum says of the spectrum: its K, status and flags
+        title = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
+        ax.set_title("\n".join(textwrap.wrap(title, 64)), fontsize=8)
     lo, hi = _series_range(results, [str(results.fit.spectrum_id[i]) for i in cells],
                            [ax for ax, _ in cells.values()])
     if np.isfinite(lo) and hi > lo:
         pad = padding * (hi - lo)
         for ax, _ in cells.values():  # the residual panels share their spectrum's x axis
             ax.set_xlim(lo - pad, hi + pad)
-    # the series title in a band at the top, placed in inches (a fraction of the height would
-    # drop it into the first row of a tall figure; the layout does not count it in nested grids)
-    height = fig.get_figheight()
-    fig.suptitle(info["label"], fontsize=10, y=1 - 0.1 / height, va="top")
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.45 / height))
+    # one legend for the page, naming every layer drawn (the panels have none)
+    handles = page_legend_handles(drawn_layers(ax for ax, _ in cells.values()),
+                                  peak_measure(results))
+    _page_header(fig, info["label"], handles)
     return fig
 
 
@@ -396,13 +437,29 @@ def population_data(
     }
 
 
-def _limits(ax: Axes, n_amides: float | None) -> None:
-    """The dashed guides at 0 and at the number of amides (once per axes) and the x range."""
+def _top(d: dict) -> float:
+    """The largest deuterium value a population map of ``d`` draws: a component's mean plus
+    its standard error, or a bootstrap draw (-inf when none is finite)."""
+    values = [d["mean"][r - 1] + (d["mean_se"][r - 1] if np.isfinite(d["mean_se"][r - 1]) else 0)
+              for r in d["shown"]]
+    if d["draws"] is not None and d["draws"].size:
+        values.append(np.nanmax(d["draws"][:, [r - 1 for r in d["shown"]], 0], initial=-np.inf))
+    values = [v for v in values if np.isfinite(v)]
+    return max(values) if values else -np.inf
+
+
+def _limits(ax: Axes, n_amides: float | None, top: float = -np.inf) -> None:
+    """The dashed guides at 0 and at the number of amides (once per axes) and the x range: to
+    the amide count + 1, wider when a component (``top``: its mean plus its error) lies beyond
+    it, so that none is clipped (an axes drawn again keeps its widest range)."""
     if n_amides is None:
         return
-    if not any(line.get_gid() == "limits" for line in ax.collections):
+    right = max(n_amides + 1, top + 0.3)
+    if any(line.get_gid() == "limits" for line in ax.collections):
+        right = max(right, ax.get_xlim()[1])
+    else:
         ax.vlines([0, n_amides], 0, 1, color="grey", ls=":", lw=1, gid="limits")
-    ax.set_xlim(-1, n_amides + 1)
+    ax.set_xlim(-1, right)
 
 
 def _deuterium_label(corrected: bool, uncorrected_series: bool) -> str:
@@ -427,7 +484,7 @@ def _draw_population_map(ax: Axes, d: dict, title: str | None) -> None:
                     label=f"pop {rank}", gid=f"pop:{rank}")
     ax.scatter([d["centroid"]], [1.0], marker="*", s=90, color="darkorange", zorder=1,
                label="centroid", gid="centroid")
-    _limits(ax, d["n_amides"])
+    _limits(ax, d["n_amides"], _top(d))
     ax.set_ylim(-0.05, 1.1)
     ax.set_xlabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_ylabel("population")
@@ -471,8 +528,8 @@ def plot_populations(
         ax.set_visible(True)
         rejected = results.review_status[i] == "rejected"
         when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
-        label = f"{when}, rep {info['reps'][pos]}" + (" (rejected)" if rejected else "")
-        _draw_population_map(ax, d, label)
+        label = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
+        _draw_population_map(ax, d, "\n".join(textwrap.wrap(label, 58)))
         if reference is not None and d["n_amides"] is not None:
             known = reference.at(float(info["times"][pos]), d["n_amides"])
             if known is not None:
@@ -485,26 +542,59 @@ def plot_populations(
                 c = rank - 1
                 # the colour is the population's (as in the single cells), the shape the replicate;
                 # a rejected or excluded spectrum hollow and grey
-                style = ({"color": "grey", "fillstyle": "none", "alpha": 0.6} if rejected else
+                style = (REJECTED_STYLE if rejected else
                          {"color": population_style(rank)["color"],
                           "fillstyle": population_style(rank)["fillstyle"]})
                 ov.errorbar(d["mean"][c], d["population"][c], xerr=_err(d["mean_se"][c]),
-                            yerr=_err(d["population_se"][c]), marker=REP_MARKERS[r_idx % 6], ms=5,
+                            yerr=_err(d["population_se"][c]),
+                            marker=REP_MARKERS[r_idx % len(REP_MARKERS)], ms=5,
                             lw=1, gid=f"overlay:{info['reps'][pos]}"
                             + (":rejected" if rejected else ""), **style)
             ov.set_ylim(-0.05, 1.1)
             when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
             ov.set_title(f"{when}, replicates", fontsize=8)
-            _limits(ov, d["n_amides"])
+            _limits(ov, d["n_amides"], _top(d))
             if reference is not None and d["n_amides"] is not None:
                 known = reference.at(float(info["times"][pos]), d["n_amides"])
                 drawn = any(c.get_gid() == "reference" for c in ov.collections)
                 if known is not None and not drawn:
                     ov.scatter(known[0], known[1], s=70, facecolors="none", edgecolors="darkred",
                                lw=1.5, zorder=6, gid="reference")
-    fig.suptitle(info["label"], fontsize=10)
-    fig.tight_layout()
+    _page_header(fig, info["label"], _population_legend(fig, reps if ncols > ncols_cells
+                                                         else ()))
     return fig
+
+
+def _population_legend(fig: Figure, reps) -> list:
+    """The populations page's legend: every symbol drawn on its panels (the populations by
+    colour, the population-weighted mean, bootstrap draws, the replicates' shapes in the
+    replicates column, rejected spectra and known populations)."""
+    from matplotlib.lines import Line2D
+
+    gids = {a.get_gid() or "" for ax in fig.axes if ax.get_visible() for a in ax.get_children()}
+    out = []
+    for rank in sorted(int(g.split(":")[1]) for g in gids if g.startswith("pop:")):
+        style = population_style(rank)
+        out.append(Line2D([], [], color=style["color"], marker="o", ms=5,
+                          fillstyle=style["fillstyle"], label=f"population {rank} (± se)"))
+    if "centroid" in gids:
+        out.append(Line2D([], [], ls="none", marker="*", ms=9, color="darkorange",
+                          label="population-weighted mean"))
+    if any(g.startswith("draws:") for g in gids):
+        out.append(Line2D([], [], ls="none", marker="o", ms=3, color="grey", alpha=0.4,
+                          label="bootstrap draws"))
+    for j, r in enumerate(reps):
+        out.append(Line2D([], [], ls="none", marker=REP_MARKERS[j % len(REP_MARKERS)], ms=5,
+                          color="black", fillstyle="none", label=f"rep {r} (replicates column)"))
+    if any(g.endswith(":rejected") for g in gids):
+        out.append(Line2D([], [], ls="none", marker="o", ms=5, label="rejected / excluded",
+                          **REJECTED_STYLE))
+    if "reference" in gids:
+        out.append(Line2D([], [], ls="none", marker="o", ms=8, markerfacecolor="none",
+                          markeredgecolor="darkred", label="known populations"))
+    if "limits" in gids:
+        out.append(Line2D([], [], color="grey", ls=":", lw=1, label="0 and the amide count"))
+    return out
 
 
 def uptake_data(
@@ -547,17 +637,46 @@ def uptake_data(
     out: dict = {n: np.array(v) for n, v in cols.items()}
     out["role"] = np.asarray(out["role"], dtype=str)
     status = results.review_status
-    out["rejected"] = np.array([status[int(i)] == "rejected" for i in out["index"]], dtype=bool)
     ctrl = results.controls
+    # rejected or excluded by the review, or a control spectrum the quality screens left out
+    screened = set(ctrl.screened or ()) if ctrl is not None else set()
+    ids = results.fit.spectrum_id
+    out["rejected"] = np.array([status[int(i)] == "rejected" or str(ids[int(i)]) in screened
+                                for i in out["index"]], dtype=bool)
     row = _control_row(results, data_id)
+    un_source, fd_source = control_sources(ctrl, row) if row is not None else (None, None)
     out.update({
         "label": info["label"], "corrected": use, "uncorrected_series": uncorrected_series,
         "n_amides": info["n_amides"],
         "m0": None if row is None else float(ctrl.m0[row]),
         "mfd": None if row is None else float(ctrl.mfd[row]),
         "control_fallback": None if row is None else bool(ctrl.fallback[row]),
+        "un_source": un_source, "fd_source": fd_source,
     })
     return out
+
+
+# the fully deuterated stand-ins by their flag (hxex.controls), in the words of the legend
+FD_STAND_INS = (("fd_other_charge", "other charge stand-in"),
+                ("fd_other_sample", "other sample stand-in"),
+                ("fd_map", "retention map stand-in"), ("fd_kint", "kint stand-in"),
+                ("fd_median", "median stand-in"))
+
+
+def control_sources(ctrl, row: int) -> tuple[str, str]:
+    """Where a series' undeuterated and fully deuterated levels came from, in words:
+    ``measured``, or the stand-in that replaced a missing or rejected control (``theoretical``
+    for the undeuterated level; ``other charge stand-in``, ``other sample stand-in``,
+    ``retention map stand-in``, ``kint stand-in``, ``median stand-in`` or ``D2O fraction
+    stand-in`` for the fully deuterated one; :mod:`hxex.controls`)."""
+    from ..controls import FD_REJECTED
+
+    tokens = set(str(ctrl.flags[row]).split(";"))
+    un = "theoretical (0)" if tokens & {"m0_missing", "m0_high"} else "measured"
+    fd = next((text for flag, text in FD_STAND_INS if flag in tokens), None)
+    if fd is None:
+        fd = "D2O fraction stand-in" if tokens & set(FD_REJECTED) else "measured"
+    return un, fd
 
 
 def plot_uptake(
@@ -578,8 +697,11 @@ def plot_uptake(
     mean, and each replicate has its own colour).
 
     ``x='time'`` plots against the measured time (``scale='linear'`` or ``'log'``; a log axis
-    leaves out times of 0 or less; the controls, known by their role, are drawn as lines, not
-    points, unless they are time points as well). ``x='index'`` plots against the position of
+    leaves out times of 0 or less); every control spectrum of the series (known by its role)
+    that is not a time point as well is drawn at an end of the axis, the undeuterated ones
+    before the first time and the fully deuterated ones after the last, labelled ``UN`` and
+    ``FD``, in their replicate's colour (hollow and grey when rejected, excluded, or left out
+    by the quality screens). ``x='index'`` plots against the position of
     the point in the series (0, 1, 2, ..., labelled with the times), with every point including
     the controls (the undeuterated first, the fully deuterated last), as for the test data
     sets. ``x=None`` (the default) is ``'time'``, or ``'index'`` when the times only order the
@@ -588,7 +710,10 @@ def plot_uptake(
     back-exchange corrected means, and the limits drawn are then 0 and the number of amides;
     otherwise the measured control levels. ``reference`` marks the known populations (open
     circles; in the measured units, ``m0 + level * (mfd - m0)``, when the plot is not
-    corrected).
+    corrected). The dotted lines are the levels used for the correction; the legend, outside
+    the axes on the right, names each replicate's colour and marker (:func:`rep_style`; the
+    marker's area grows with the population) and says when a level came from a stand-in
+    (:func:`control_sources`).
     """
     if x not in ("time", "index", None):
         raise ValueError("x must be 'time' or 'index'")
@@ -601,23 +726,45 @@ def plot_uptake(
         raise ValueError("the times of these results only order the points ([input] "
                          "time_scale = \"order\"): the uptake is drawn by index (x='index')")
     d = uptake_data(results, data_id, corrected=corrected, components=components, k=k)
-    fig = ax.figure if ax is not None else Figure(figsize=(6.5, 4.5))
+    # a figure of its own is laid out by constrained layout, which leaves room for the legend
+    # outside the axes
+    own = ax is None
+    fig = ax.figure if ax is not None else Figure(figsize=(8.0, 4.5), layout="constrained")
     ax = ax if ax is not None else fig.subplots()
     keep = np.ones(len(d["time"]), dtype=bool) if x == "index" else np.isfinite(d["time"])
     if x == "time" and scale == "log":
         keep &= d["time"] > 0
-    xs = d["time_index"] if x == "index" else d["time"]
-    reps = np.unique(d["rep"])
+    xs = (d["time_index"] if x == "index" else d["time"]).astype(float)
+    # x = "time": the series' own controls that are not time points as well, at the axis ends
+    # (undeuterated left, fully deuterated right), so that the levels behind the correction show
+    ends = (~keep & (d["role"] != "")) if x == "time" else np.zeros(len(xs), dtype=bool)
+    if ends.any():
+        xs = xs.copy()
+        left, right = _end_positions(xs[keep], scale)
+        xs[ends & (d["role"] == "UN")] = left
+        xs[ends & (d["role"] == "FD")] = right
+        # each label beside its own points: above the undeuterated ones, below the fully
+        # deuterated ones (a label at the axis' far edge read as the other level's)
+        for role, at, top, offset, va in (("UN", left, True, 8, "bottom"),
+                                          ("FD", right, False, -8, "top")):
+            ys = d["mean"][ends & (d["role"] == role)]
+            ys = ys[np.isfinite(ys)]
+            if len(ys):
+                ax.annotate(role, (at, ys.max() if top else ys.min()), xytext=(0, offset),
+                            textcoords="offset points", ha="center", va=va, fontsize=8,
+                            color="#555555", gid=f"control_label:{role}")
+    drawn = keep | ends
+    reps = np.unique(d["rep"][drawn]) if drawn.any() else np.unique(d["rep"])
     rejected = d["rejected"]
     for r in reps:
-        sel = keep & (d["rep"] == r) & ~rejected
-        color = REP_COLORS[(int(r) - 1) % len(REP_COLORS)]
+        sel = drawn & (d["rep"] == r) & ~rejected
+        color, marker = rep_style(int(r))
         ax.errorbar(xs[sel], d["mean"][sel],
                     yerr=np.where(np.isfinite(d["mean_se"][sel]), d["mean_se"][sel], 0.0),
                     fmt="none", ecolor=color, elinewidth=1.2, capsize=0, gid=f"errors:rep{r}")
         ax.scatter(xs[sel], d["mean"][sel], s=20 + 160 * np.nan_to_num(d["population"][sel]),
-                   color=color, marker="v", alpha=0.9, label=f"rep {r}", gid=f"rep:{r}")
-    out = keep & rejected  # rejected or excluded: visible, but hollow and grey
+                   color=color, marker=marker, alpha=0.9, label=f"rep {r}", gid=f"rep:{r}")
+    out = drawn & rejected  # rejected, excluded or screened: visible, but hollow and grey
     if out.any():
         ax.errorbar(xs[out], d["mean"][out],
                     yerr=np.where(np.isfinite(d["mean_se"][out]), d["mean_se"][out], 0.0),
@@ -655,16 +802,70 @@ def plot_uptake(
         ax.set_xscale(scale)
     ax.set_ylabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_title(d["label"], fontsize=9)
-    if legend and (len(reps) > 1 or out.any()):
-        ax.legend(fontsize=7, frameon=False, loc="lower right")
-    try:
-        fig.tight_layout()
-    except Exception:  # noqa: BLE001 - layout is cosmetic
-        pass
+    if legend:  # outside the axes, on the right
+        kw = {"handles": _uptake_legend(ax, d, lo, hi, reference is not None), "fontsize": 7,
+              "frameon": False, "title": "marker area: population", "title_fontsize": 7}
+        if own:  # constrained layout makes room for a figure legend placed "outside"
+            fig.legend(loc="outside right upper", **kw)
+        else:
+            ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), **kw)
     return fig
 
 
+def _end_positions(times: np.ndarray, scale: str) -> tuple[float, float]:
+    """Where the controls go on a time axis: a little before the first and after the last time
+    drawn (by a share of the range, in decades on a log axis)."""
+    times = times[np.isfinite(times) & ((times > 0) if scale == "log" else True)]
+    if scale == "log":
+        if not len(times):
+            return 1.0, 10.0
+        a, b = np.log10(times.min()), np.log10(times.max())
+        gap = max(0.12 * (b - a), 0.3)
+        return float(10 ** (a - gap)), float(10 ** (b + gap))
+    if not len(times):
+        return -1.0, 1.0
+    a, b = float(times.min()), float(times.max())
+    gap = 0.1 * (b - a) if b > a else max(abs(a), 1.0) * 0.5
+    return a - gap, b + gap
+
+
+def _uptake_legend(ax: Axes, d: dict, lo, hi, reference: bool) -> list:
+    """The uptake page's legend: each replicate's colour and marker, rejected points, the
+    controls at the axis ends, known populations and the dotted levels used for the
+    correction, saying where each level came from (a stand-in by name)."""
+    from matplotlib.lines import Line2D
+
+    handles, _ = ax.get_legend_handles_labels()
+    handles = [h for h in handles if h.get_gid() and h.get_gid().startswith(("rep:", "rejected"))]
+    out = []
+    for h in handles:
+        gid = h.get_gid()
+        if gid == "rejected":
+            out.append(Line2D([], [], ls="none", marker="v", ms=7, markerfacecolor="none",
+                              markeredgecolor="grey", label="rejected / excluded"))
+        else:
+            color, marker = rep_style(int(gid.split(":")[1]))
+            out.append(Line2D([], [], ls="none", marker=marker, ms=7, color=color,
+                              label=f"rep {gid.split(':')[1]}"))
+    if any((a.get_gid() or "").startswith("control_label:") for a in ax.texts):
+        out.append(Line2D([], [], ls="none", label="UN, FD: control spectra"))
+    if reference:
+        out.append(Line2D([], [], ls="none", marker="o", ms=8, markerfacecolor="none",
+                          markeredgecolor="darkred", label="known populations"))
+    if lo is not None or hi is not None:
+        if d["corrected"]:
+            un, fd = "UN level (0)", "FD level (amide count)"
+        else:
+            un, fd = "UN level", "FD level"
+        if d.get("un_source") not in (None, "measured"):
+            un += f": {d['un_source']}"
+        if d.get("fd_source") not in (None, "measured"):
+            fd += f": {d['fd_source']}"
+        out.append(Line2D([], [], color="grey", ls=":", lw=1, label=f"{un}\n{fd}"))
+    return out
+
+
 __all__ = [
-    "Reference", "load_reference", "plot_populations", "plot_series_spectra", "plot_uptake",
-    "population_data", "series_info", "series_rows", "uptake_data",
+    "Reference", "control_sources", "load_reference", "plot_populations", "plot_series_spectra",
+    "plot_uptake", "population_data", "rep_style", "series_info", "series_rows", "uptake_data",
 ]

@@ -67,6 +67,20 @@ class NumberedSequence(str):
         return obj
 
 
+DEFAULT_OVERLAY = ("low", "high", "avg")  # without K = 2 in ks: ("avg",)
+
+
+def _same_sample(a: str, b: str) -> bool:
+    """Whether two sample names can name the same sample: equal, or one is ``run:sample`` and
+    the other that sample's bare name (which the results resolve where it is unambiguous)."""
+    from .runs import SEPARATOR
+
+    def bare(name: str) -> str:
+        return name.partition(SEPARATOR)[2] if SEPARATOR in name else name
+
+    return a == b or (SEPARATOR in a) != (SEPARATOR in b) and bare(a) == bare(b)
+
+
 @dataclass(frozen=True)
 class AnalysisConfig:
     """What :func:`hxex.report.write_analysis` computes and draws (the ``[analysis]`` table).
@@ -109,7 +123,9 @@ class AnalysisConfig:
     - ``alpha``: the significance level of the comparisons.
     - ``annotations``: regions and sites to mark (``[[analysis.regions]]``, ``[[analysis.sites]]``).
     - ``overlay``: the values the by-residue comparison figures show, any of ``'low'`` and
-      ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); ``overlay_two_only``: draw the K=2 values
+      ``'high'`` (the K=2 ranks) and ``'avg'`` (K=1); the default, all three, keeps ``'avg'``
+      alone when ``ks`` has no 2 (a K=2 value set explicitly is then refused);
+      ``overlay_two_only``: draw the K=2 values
       only where the choice keeps two populations (the default; False draws every K=2 value
       the filters keep).
     - ``populations``: how the number of populations is decided (HISTORY 137, 139):
@@ -167,7 +183,7 @@ class AnalysisConfig:
     format: str = "pdf"
     out: str | None = None
     runs: Mapping[str, str] | None = None
-    overlay: tuple[str, ...] = ("low", "high", "avg")
+    overlay: tuple[str, ...] = DEFAULT_OVERLAY
     overlay_two_only: bool = True
     peptide_match: str = "range"
     populations: str | None = None
@@ -192,6 +208,9 @@ class AnalysisConfig:
         object.__setattr__(self, "overlay", tuple(str(v) for v in self.overlay))
         if not self.overlay or any(v not in OVERLAY_VALUES for v in self.overlay):
             raise ValueError(f"overlay must be some of {', '.join(OVERLAY_VALUES)}")
+        if self.overlay == DEFAULT_OVERLAY:  # the default follows ks: K=1 alone shows avg
+            object.__setattr__(self, "overlay", tuple(
+                v for v in self.overlay if OVERLAY_VALUES[v][0] in self.ks) or ("avg",))
         if any(OVERLAY_VALUES[v][0] not in self.ks for v in self.overlay):
             raise ValueError("overlay shows K=2 values ('low', 'high'): include 2 in ks, or "
                              "set overlay = ['avg']")
@@ -249,7 +268,8 @@ class AnalysisConfig:
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
             raise ValueError("borderline_evidence must be a number >= 0")
 
-        if self.reference and self.samples and self.reference not in self.samples:
+        if self.reference and self.samples and not any(
+                _same_sample(self.reference, s) for s in self.samples):
             raise ValueError(f"the reference {self.reference!r} is not among the samples")
 
     def _check_nested(self, what: str, setting) -> None:

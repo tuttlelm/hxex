@@ -297,6 +297,30 @@ def test_a_peptide_whose_undeuterated_set_reads_two_is_flagged_or_capped(tested_
                               populations="population_test").undeuterated_two.any()
 
 
+def test_a_time_point_promoted_to_a_control_keeps_its_test(tested_run):
+    """Audit 2026-11-01 Analysis 34: [analysis.controls] fulldeut_at / undeut_at promote a time
+    point; its sets are keyed as the tables key them, so they keep the test's verdict."""
+    from hxex.analysis import SpeciesFilters, species_uptake
+    from hxex.report import Results
+
+    res = Results.from_run(tested_run)
+    labelled = np.flatnonzero(res.fit.role == "")
+    forced = _forced(res, labelled)
+    # a labelled point as the undeuterated control reads high: keep the series to look at it
+    keep = SpeciesFilters(stand_in_controls="include")
+    for change, role in (({"fulldeut_at": 60.0}, "fulldeut"), ({"undeut_at": 60.0}, "undeut")):
+        up = species_uptake(forced, populations="population_test", controls=change,
+                            filters=keep)
+        rows = up.where(K=1, rank=1) & (up.time == 60.0)
+        assert rows.any() and set(up.role[rows]) == {role}
+        assert np.isfinite(up.set_p_1[rows]).all()
+        assert all(r.startswith("set test: two") for r in up.best_set_reason[rows])
+    # a promoted undeuterated set reading two is the peptide's undeuterated_two
+    up = species_uptake(forced, populations="population_test", controls={"undeut_at": 60.0},
+                        filters=keep)
+    assert up.undeuterated_two.all()
+
+
 def test_narrow_component_is_the_flag_of_the_fit_at_the_spectrums_k():
     from types import SimpleNamespace
 
@@ -427,6 +451,10 @@ def test_a_set_at_three_keeps_its_k_beside_the_described_two(tested_run):
     out = test_set(cols, {key: three for key in keys})
     assert (out["set_test_K"] == 3).all() and (out["best_set_K"] == 2).all()
     assert all("K = 3 not kept" in r for r in out["best_set_reason"])
+    # a set the test never saw reads 0, as without the test (audit 2026-11-01 Low 68)
+    none = test_set(cols, {})
+    assert (none["set_test_K"] == 0).all() and (none["best_set_K"] == 1).all()
+    assert set(none["best_set_reason"]) == {"not tested: one population"}
 
 
 def test_borderline_follows_the_test_when_it_is_on():
@@ -478,6 +506,13 @@ def test_the_residue_choice_follows_the_tiers(tested_run):
     assert set(plain.reason[some]) <= {"tier: no sign", "tier: undecided"}
     with pytest.raises(ValueError, match="tier"):
         ChoiceConfig(tier="three")
+    # audit 2026-11-01 Low 65: a tier the localised setting does not draw says so
+    for tier in ("two", "three"):
+        forced = dataclasses.replace(rm, population_tier=np.where(
+            np.asarray(rm.population_tier, dtype=object) != "", tier, ""))
+        local = choose_populations(forced, ChoiceConfig(tier="localised"), tiers=True)
+        assert not local.two_populations[at].any()
+        assert set(local.reason[at]) == {f"tier: {tier}, not localised: one drawn"}
 
 
 def test_spectra_above_full_deuteration_leave_the_test(tested_run):

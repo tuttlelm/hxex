@@ -94,7 +94,14 @@ class _Run:
 
 
 def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> _Run:
-    from .species import _kept, _points, left_out_spectra, review_one
+    from .species import (
+        _analysis_roles,
+        _kept,
+        _points,
+        _screened_controls,
+        left_out_spectra,
+        review_one,
+    )
 
     fit, b = r.fit, r.binned
     if b is None:
@@ -114,7 +121,10 @@ def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> 
     one = screen.one_population | review_one(r)
     index = {str(s): j for j, s in enumerate(b.spectrum_id)}
     rows = [index[str(s)] for s in fit.spectrum_id]
-    points = _points(fit)
+    # the roles the tables use: time points [analysis.controls] promotes are controls here too
+    ctl, _ = _screened_controls(r, controls, screen, _kept(r, exclude_flagged), quiet=True)
+    role = _analysis_roles(fit, ctl)
+    points = _points(fit, role)
     keys, peptide = [], []
     for i, j in enumerate(rows):
         run, sample = state(name, str(b.sample[j]))
@@ -126,7 +136,7 @@ def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> 
                   if filters is not None
                   else np.zeros(test.statistic.shape, dtype=bool))
     return _Run(name, test, use, one, np.asarray(r.review_status) == "accepted", unphysical,
-                keys, peptide, np.asarray(fit.role, dtype=str) == UNDEUT)
+                keys, peptide, role == UNDEUT)
 
 
 def above_max_fd(r, filters, controls=None, screen=None, use=None) -> np.ndarray:

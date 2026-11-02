@@ -34,7 +34,8 @@ above (``ChoiceConfig.tier = 'two'``, the default: strong evidence and a third o
 weight) or "two, localised" or above (``'localised'``: half of it), and the residue has K=2
 values to draw. The tests above do not apply (the bootstrap gives errors only, never the
 decision); ``reason`` then names the tier that did not reach it (``'tier: undecided'``,
-``'tier: no sign'``, ``'tier: two'``) or ``'no K=2'``. A residue in a "three" tier is drawn
+``'tier: no sign'``; with ``tier = "localised"``, ``'tier: two, not localised: one drawn'``)
+or ``'no K=2'``. A residue in a "three" tier is drawn
 with its K=2 values (``reason`` ``'tier: three, drawn as two'``).
 """
 # the method follows pyHXExpress's choose_fits, per residue instead of per spectrum; its
@@ -229,7 +230,11 @@ def choose_populations(residues: ResidueMap, config: ChoiceConfig = ChoiceConfig
         rank = np.where(rank >= 4, rank - 2, rank)  # three, three localised: as two, localised
         reached = rank >= least
         two = has_k2 & reached
-        named = np.array(["tier: " + str(t) for t in tier], dtype=str)  # numpy 1.26: no string +
+        # a tier of two or more that the localised setting does not draw says so (audit
+        # 2026-11-01 Low 65: "tier: three" alone read as three populations found)
+        named = np.array(["tier: " + str(t) + (", not localised: one drawn"
+                                               if t in ("two", "three") else "")
+                          for t in tier], dtype=object)  # numpy 1.26: no string +
         reason = np.where(~has_k2, "no K=2", np.where(reached, "", named))
         reason = np.where(np.isin(tier, ("three", "three, localised")) & two,
                           "tier: three, drawn as two", reason)

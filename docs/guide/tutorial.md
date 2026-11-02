@@ -197,7 +197,8 @@ Open `results_tables` and double-click a file to open it in your spreadsheet pro
 
 - **`series.csv`**: one row per peptide and charge in each sample (195 rows). The columns
   `controls` and `retention` show how each was corrected: `measured` means its own controls
-  were used. `n_multi` counts its spectra with more than one population.
+  were used. `n_multi` counts its spectra with more than one population (rejected spectra are
+  not counted; `n_rejected` beside it counts those).
 - **`spectra.csv`**: one row per spectrum, with its time, replicate, chosen number of
   populations (`K`), and each population's deuterium (`mean_1`, `mean_corrected_1`, ...) and
   share (`population_1`, ...).

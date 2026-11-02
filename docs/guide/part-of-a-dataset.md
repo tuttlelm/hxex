@@ -63,7 +63,8 @@ dataset, or adding more, changes them:
   would reject, or the reverse.
 - **Replicates left out as outliers.** Both the controls' replicates (`[run.controls]
   replicate_outlier`) and the analysis's spectra (`[analysis.filters] replicate_outlier`) are
-  judged against the typical replicate scatter of the whole project.
+  judged against the typical replicate scatter of the whole project; the analysis's check is
+  made only when the project has at least five replicated series and times.
 - **Stand-in series in the analysis.** With `stand_in_controls = "exclude"` (the default), a
   sample keeps the series corrected with a stand-in only when none of its series has a measured
   control. A project holding only some of a sample's peptides can therefore keep series that the

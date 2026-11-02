@@ -422,7 +422,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `exclude_flagged` | true/false | `false` | leave out spectra with a quality flag |
 | `format` | text | `"pdf"` | of the figure files: "pdf", "png" or "svg" |
 | `out` | text | unset | the output directory (unset: beside the bundle, named after it and the reference: results_analysis_WT, or results_analysis without a reference) |
-| `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares) |
+| `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares); by default "low", "high", and "avg" ("avg" alone when ks has no 2) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |
 | `populations` | text | unset | how the number of populations is decided: "population_test" (the population test of each peptide's spectra together, made by [run.population_test]; the default when the run has it), "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two; the default without the test) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
@@ -440,7 +440,7 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 | `max_fD_se` | number | `0.25` | every population's fD standard error below this |
 | `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides (with the population test, such a spectrum also leaves the test, at one population) |
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
-| `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more); unset: off |
+| `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more; not assessed in a run with fewer than five replicated series and times); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
 | `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species); "other_sample" excludes them but keeps the series that took the same peptide's control in another sample |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |

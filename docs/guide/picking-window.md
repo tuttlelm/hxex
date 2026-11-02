@@ -66,7 +66,11 @@ bin values     areas (weak peaks 1.12 times as wide as the tallest); peak width 
 
 An area is turned back into a number on the height scale: it is divided by the area that the
 run's tallest peaks have per unit of height, so a peak as wide as those keeps its height and a
-wider one counts for more. Tables and figures read as before; mostly the weak bins change.
+wider one counts for more. Tables and figures read as before; mostly the weak bins change. On
+the spectra page of the figures, a picked value is drawn as an up-pointing triangle when it is
+an area and as a circle when it is a height, and the legend says which ("picked values: areas
+(height-equivalent)"). A triangle may sit below the top of a narrow, bright peak in the raw
+profile or above a wide, weak one: that is the area at work, not a mispicked peak.
 
 The area is taken over 1.5 peak widths either side of the peak's top (never more than 0.45 of
 the isotope spacing). That reaches a little further than a height does, so a peak of another

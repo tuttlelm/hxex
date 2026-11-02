@@ -264,7 +264,9 @@ def test_plot_uptake_axes(results):
     assert ax.get_ylabel().endswith("corrected)")
     by_time = plot_uptake(results, 0, x="time", corrected=False)
     pts = [a for a in by_time.axes[0].get_children() if a.get_gid() == "rep:1"][0]
-    assert pts.get_offsets()[:, 0].max() == 60  # fully deuterated: a line, not a point
+    # the controls at the axis ends (UN before the only time point, FD after it), labelled
+    assert pts.get_offsets()[:, 0].tolist() == [30.0, 60.0, 90.0]
+    assert {"control_label:UN", "control_label:FD"} <= gids(by_time)
     logged = plot_uptake(results, 0, x="time", scale="log")
     pts = [a for a in logged.axes[0].get_children() if a.get_gid() == "rep:1"][0]
     assert (pts.get_offsets()[:, 0] > 0).all() and logged.axes[0].get_xscale() == "log"
@@ -825,7 +827,9 @@ def test_controls_are_recognised_at_any_time_as_in_a_reverse_experiment(results)
     assert list(d["index"][:2]) == [6, 7]  # the spectra that were the fully deuterated ones
     by_time = plot_uptake(rev, 0, x="time", corrected=False)
     pts = [a for a in by_time.axes[0].get_children() if a.get_gid() == "rep:1"][0]
-    assert sorted(pts.get_offsets()[:, 0]) == [60.0]  # the controls have no time: lines only
+    # the controls have no time: drawn at the axis ends, the undeuterated ones (the spectra
+    # that were the fully deuterated ones) before the time point
+    assert sorted(pts.get_offsets()[:, 0]) == [30.0, 60.0, 90.0]
     titles = [ax.get_title() for ax in plot_series_spectra(rev, 0, show=("picked",)).axes]
     assert any(t.startswith("FD, rep") for t in titles)
     assert any(t.startswith("UN, rep") for t in titles)
@@ -1199,10 +1203,10 @@ def test_rejected_spectra_are_drawn_hollow_and_grey(results):
     assert hollow.get_facecolors().size == 0 or (hollow.get_facecolors()[:, 3] == 0).all()
     rep2 = [a for a in ax.get_children() if a.get_gid() == "rep:2"][0]
     assert len(rep2.get_offsets()) == np.sum((d["rep"] == 2) & ~d["rejected"])
-    assert "rejected / excluded" in [t.get_text() for t in ax.get_legend().get_texts()]
+    assert "rejected / excluded" in [t.get_text() for t in fig.legends[0].get_texts()]
     assert "rejected" not in gids(plot_uptake(results, 0, x="index"))
     pops = plot_populations(out, 0)
-    assert any("(rejected)" in a.get_title() for a in pops.axes)
+    assert any("rejected" in a.get_title() for a in pops.axes)
     assert any(str(g).endswith(":rejected") for g in gids(pops))
 
 
@@ -1284,3 +1288,223 @@ def test_notebook_images_are_sharp_png_or_svg(results):
     assert isinstance(notebook_image(fig, "svg"), SVG)
     with pytest.raises(ValueError, match="format"):
         show_series(results, "S", "1-2", format="pdf")
+
+
+# --- third audit, Session C: figure styles, titles, legends, names --------------------------
+
+
+def test_no_compared_sample_takes_the_references_style():
+    from hxex.report.coverage import SAMPLE_STYLES, sample_hatch, sample_style
+
+    styles = [sample_style(n) for n in range(57)]
+    assert styles[0] == SAMPLE_STYLES[0]
+    # ten samples (the audit's case): the ninth and tenth are not the reference's black or
+    # the first sample's blue circle again
+    assert all(s[0] != SAMPLE_STYLES[0][0] for s in styles[1:])
+    pairs = [(c, m) for c, m, _ in styles]
+    assert len(set(pairs)) == len(pairs)  # colour and marker together never repeat
+    assert [sample_hatch(n) for n in range(8)] == [None] * 8 and sample_hatch(8) is not None
+    from hxex.report.compare import _style
+
+    assert _style(8) != _style(0) and _style(9) != _style(1)
+
+
+def test_spectra_panels_keep_the_k_status_and_flags(results):
+    i = int(np.flatnonzero(results.fit.data_id == 0)[3])
+    sid = str(results.fit.spectrum_id[i])
+    flags = np.zeros(len(results.fit), dtype=bool)
+    flags[i] = True
+    quality = dataclasses.replace(results.quality, poor_fit=flags, bright=flags)
+    review = ReviewTable.empty().update(sid, status="rejected", note="test")
+    marked = dataclasses.replace(results, quality=quality).with_review(review)
+    fig = plot_series_spectra(marked, 0, show=("picked", "fit"))
+    titles = [ax.get_title() for ax in fig.axes]
+    k = int(marked.effective_K[i])
+    assert sum(f"(K={k}, rejected; poor_fit, bright)" in t for t in titles) == 1
+    assert all("(K=" in t for t in titles)  # every panel says its K
+    pops = plot_populations(marked, 0)
+    assert any("rejected; poor_fit, bright" in ax.get_title() for ax in pops.axes)
+
+
+def test_the_picked_marker_and_the_legend_say_heights_or_areas(results):
+    from matplotlib.markers import MarkerStyle
+
+    from hxex.report.spectrum import MEASURE_LABELS
+
+    sid = str(results.fit.spectrum_id[3])
+
+    def marker_vertices(fig):
+        pts = [a for a in fig.axes[0].collections if a.get_gid() == "picked"
+               and a.get_label() in MEASURE_LABELS.values()][0]
+        return pts.get_paths()[0].vertices, pts.get_label()
+
+    def expected(name):
+        m = MarkerStyle(name)
+        return m.get_path().transformed(m.get_transform()).vertices
+
+    heights = plot_spectrum(sid, results, show=("picked", "fit"))
+    verts, label = marker_vertices(heights)
+    assert label == "picked values: heights" and np.allclose(verts, expected("o"))
+    areas = dataclasses.replace(results, settings=dataclasses.replace(results.settings,
+                                                                      peak_measure="area"))
+    verts, label = marker_vertices(plot_spectrum(sid, areas, show=("picked", "fit")))
+    assert label == "picked values: areas (height-equivalent)"
+    assert np.allclose(verts, expected("^"))
+    # one legend for the page of spectra, naming every layer
+    page = plot_series_spectra(areas, 0)
+    texts = [t.get_text() for t in page.legends[0].get_texts()]
+    assert texts[0] == "fit" and "picked values: areas (height-equivalent)" in texts
+    assert "raw profile" in texts and "picking window" in texts
+    assert all(ax.get_legend() is None for ax in page.axes)
+    # no settings (a bundle without them): heights
+    bare = dataclasses.replace(results, settings=None)
+    assert marker_vertices(plot_spectrum(sid, bare, show=("picked", "fit")))[1] == \
+        "picked values: heights"
+
+
+def test_the_populations_page_names_its_symbols_and_its_title_stays_clear(results):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    fig = plot_populations(results, 0, k=2)
+    texts = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert {"population 1 (± se)", "population 2 (± se)", "population-weighted mean",
+            "rep 1 (replicates column)"} <= set(texts)
+    renderer = FigureCanvasAgg(fig).get_renderer()
+    title = fig._suptitle.get_window_extent(renderer)
+    legend = fig.legends[0].get_window_extent(renderer)
+    panels = max(ax.title.get_window_extent(renderer).y1 for ax in fig.axes if ax.get_visible())
+    assert title.y0 > legend.y1 - 1 and legend.y0 > panels  # title, legend, then the panels
+
+
+def test_the_population_axis_reaches_the_largest_component(results):
+    c = results.controls
+    low = dataclasses.replace(results, controls=dataclasses.replace(
+        c, mfd=c.m0 + 0.6 * (c.mfd - c.m0)))  # a lower FD level: corrected values above it
+    fig = plot_populations(low, 0, k=2)
+    top = 0.0
+    for i in series_info(low, 0)["rows"]:
+        d = population_data(low, str(low.fit.spectrum_id[i]), k=2)
+        top = max(top, np.nanmax(d["mean"] + np.nan_to_num(d["mean_se"])))
+    assert top > c.n_amides[0] + 1  # the case the fixed axis clipped
+    assert max(ax.get_xlim()[1] for ax in fig.axes if ax.get_visible()) >= top
+    # an uncorrected page is not cut either
+    raw = plot_populations(low, 0, k=2, corrected=False)
+    lines = [(ax, a) for ax in raw.axes for a in ax.get_lines()
+             if (a.get_gid() or "").startswith("pop:")]
+    assert lines
+    for ax, a in lines:
+        assert ax.get_xlim()[0] <= a.get_xdata()[0] <= ax.get_xlim()[1]
+
+
+def test_replicates_past_six_change_marker_too(results):
+    from hxex.report.series import REP_MARKERS, rep_style
+
+    styles = [rep_style(r) for r in range(1, 37)]
+    assert len(set(styles)) == 36 and styles[6][0] == styles[0][0]
+    assert styles[6][1] != styles[0][1]
+    assert len(set(REP_MARKERS)) == len(REP_MARKERS) == 12
+    fig = plot_uptake(results, 0)
+    handles = fig.legends[0].legend_handles
+    shown = [(h.get_color(), h.get_marker()) for h in handles
+             if h.get_label().startswith("rep ")]
+    assert len(shown) == len(set(shown)) == 3
+
+
+def test_figure_stems_keep_any_letters_and_shorten_the_sample(results, monkeypatch):
+    from hxex.report import figures
+
+    labels = {0: ("α-syn Müller", "α-syn Müller 0001-0010 PEP z=2"),
+              1: ("a" * 70, "a" * 70 + " 0001-0010 PEP z=2"),
+              2: ("a" * 70, "a" * 70 + " 0001-0010 PEP z=3"),
+              3: ("WT", "WT 0001-0010 PEP z=2"),
+              4: ("WT", "WT 0001-0010 PEP z=2")}
+    monkeypatch.setattr(figures, "series_info", lambda r, d: {
+        "file_label": labels[d][1], "sample": labels[d][0]})
+    stems = figures.figure_stems(results, list(labels))
+    assert stems[0] == "α_syn_Müller_0001_0010_PEP_z_2"
+    assert stems[1] == "a" * 30 + "_0001_0010_PEP_z_2" and stems[2].endswith("_z_3")
+    assert stems[3] == "WT_0001_0010_PEP_z_2_id3" and stems[4].endswith("_id4")
+    # ASCII names without a collision are as before
+    monkeypatch.undo()
+    assert figures.figure_stems(results, [0])[0] == "S_0001_0010_RDKVQKEYAL_z_2"
+
+
+def test_the_controls_histograms_have_fixed_edges(results):
+    from matplotlib.patches import Rectangle
+
+    from hxex.report import plot_controls_overview
+
+    fig = plot_controls_overview(results)
+    for gid in ("retention", "m0"):
+        bars = [a for ax in fig.axes for a in ax.get_children()
+                if isinstance(a, Rectangle) and a.get_gid() == gid]
+        assert len(bars) == 44  # 45 edges over the drawn range, whatever the run's size
+        assert sum(b.get_height() for b in bars) == 2
+        span = bars[-1].get_x() + bars[-1].get_width() - bars[0].get_x()
+        assert span >= (1.1 if gid == "retention" else results.controls.config.m0_max)
+
+
+def test_n_multi_leaves_rejected_spectra_out(results):
+    sid = str(results.fit.spectrum_id[4])
+    two = ReviewTable.empty().update(sid, k_override=2)
+    before = series_table(results.with_review(two))
+    after = series_table(results.with_review(two.update(sid, status="rejected")))
+    row = int(np.flatnonzero(before["data_id"] == results.fit.data_id[4])[0])
+    assert before["n_multi"][row] >= 1 and before["n_rejected"][row] == 0
+    assert after["n_multi"][row] == before["n_multi"][row] - 1 and after["n_rejected"][row] == 1
+
+
+def test_the_uptake_page_draws_the_controls_and_names_a_stand_in(results):
+    d = uptake_data(results, 0)
+    controls = d["role"] != ""
+    fig = plot_uptake(results, 0, x="time", scale="log")
+    ax = fig.axes[0]
+    xs = np.concatenate([a.get_offsets()[:, 0] for a in ax.get_children()
+                         if (a.get_gid() or "").startswith("rep:")])
+    assert len(xs) == len(d["time"])  # every spectrum, the controls included
+    assert xs.min() < 60 < xs.max()  # UN before the time point, FD after it, on a log axis
+    texts = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert any(t.startswith("UN level (0)") and "FD level (amide count)" in t for t in texts)
+    assert "stand-in" not in " ".join(texts)
+    # a stand-in level is named; a rejected control is drawn hollow and grey at its end
+    c = results.controls
+    flags = np.array(c.flags, dtype=object)
+    flags[0] = "fd_missing;fd_median"
+    stand_in = dataclasses.replace(results, controls=dataclasses.replace(
+        c, flags=flags, fallback=np.array([True] + [False] * (len(c) - 1))))
+    sid = str(results.fit.spectrum_id[d["index"][controls][-1]])
+    marked = stand_in.with_review(ReviewTable.empty().update(sid, status="rejected"))
+    fig = plot_uptake(marked, 0, x="time")
+    texts = " ".join(t.get_text() for t in fig.legends[0].get_texts())
+    assert "FD level (amide count): median stand-in" in texts
+    hollow = [a for a in fig.axes[0].get_children() if a.get_gid() == "rejected"][0]
+    assert hollow.get_offsets()[:, 0].max() > 60
+    from hxex.report.series import control_sources
+
+    assert control_sources(stand_in.controls, 0) == ("measured", "median stand-in")
+
+
+@pytest.mark.parametrize("rows", [2, 6, 20])
+@pytest.mark.parametrize("columns", [None, ("N-term", "middle", "C-term")])
+def test_the_significance_legend_never_meets_the_axis_labels(rows, columns):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.patches import Patch
+
+    from hxex.report.significance import _draw, _graded_legend
+
+    n = 40 if columns is None else len(columns)
+    legend = _graded_legend("more D", "less D") + [
+        Patch(color="grey", label=f"an entry with a long name {j}") for j in range(9)]
+    section = ("", [f"S {j} min" for j in range(rows)], [True] + [False] * (rows - 1),
+               [np.zeros(n) for _ in range(rows)], [{} for _ in range(rows)],
+               [[] for _ in range(rows)])
+    fig = _draw([section], n, legend, "a title", columns=columns)
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    box = fig.legends[0].get_window_extent(renderer)
+    ax = fig.axes[0]
+    lowest = min([ax.xaxis.label.get_window_extent(renderer).y0]
+                 + [t.get_window_extent(renderer).y0 for t in ax.get_xticklabels()
+                    if t.get_text()])
+    assert box.y1 < lowest and box.y0 >= 0

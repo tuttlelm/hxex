@@ -691,3 +691,20 @@ def test_ladder_residues_combine_the_two_ladders_within_a_condition():
     # without conditions: no kint columns
     plain = ladder_residues(ladder_rates(u, min_time=10.0))
     assert "kint" not in plain.columns() and len(plain) == len(res)
+
+
+def test_a_trace_point_takes_the_larger_of_bootstrap_and_replicate_errors():
+    """Audit 2026-11-01 Analysis 35: replicates without bootstrap errors give the scatter;
+    with errors, the larger of the mean bootstrap variance and the scatter (the peptides'
+    rule)."""
+    from hxex.analysis.fragments import _average
+
+    t = np.array([10.0, 10.0, 10.0])
+    scatter = _average(t, np.array([3.0, 5.0, 4.0]), np.full(3, np.nan))
+    np.testing.assert_allclose(scatter.mean_se, [np.sqrt(1.0 / 3)])  # var 1 over 3
+    small = _average(t[:2], np.array([3.0, 5.0]), np.array([0.1, 0.1]))
+    np.testing.assert_allclose(small.mean_se, [np.sqrt(2.0 / 2)])  # the scatter wins
+    large = _average(t[:2], np.array([3.0, 3.2]), np.array([1.0, 1.0]))
+    np.testing.assert_allclose(large.mean_se, [np.sqrt(1.0 / 2)])  # the bootstrap wins
+    one = _average(t[:1], np.array([3.0]), np.array([0.2]))
+    np.testing.assert_allclose(one.mean_se, [0.2])

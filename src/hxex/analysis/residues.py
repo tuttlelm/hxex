@@ -54,11 +54,11 @@ class ResidueMap:
     next (a proline or another residue without an amide between them included), so a line may
     join them. ``two_population_weight`` (K=1 rows, with ``two_population_peptides``): the share
     of the residue's weight carried by peptides whose set is best described by two populations
-    (``best_set_K = 2``); NaN otherwise. With the population test (``population_test``, K=1
-    rows): ``test_strength_2`` and ``test_agreement_2`` (two populations or more: the combined
-    p-value of the covering sets and the share of their weight that has two or more),
-    ``test_strength_3`` and ``test_agreement_3`` (three or more), and ``population_tier``
-    (:func:`population_tiers`); NaN and '' otherwise."""
+    (``best_set_K >= 2``: three counts as two or more); NaN otherwise. With the population
+    test (``population_test``, K=1 rows): ``test_strength_2`` and ``test_agreement_2`` (two
+    populations or more: the combined p-value of the covering sets and the share of their
+    weight that has two or more), ``test_strength_3`` and ``test_agreement_3`` (three or
+    more), and ``population_tier`` (:func:`population_tiers`); NaN and '' otherwise."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -340,7 +340,7 @@ def residue_map(
 
     With ``two_population_peptides`` (owner, 2026-10-21 and 2026-10-22; HISTORY 137 and 141)
     the K=1 rows carry ``two_population_weight``, the share of the residue's weight that the
-    peptides whose set at that time is best described by two populations (``best_set_K = 2``,
+    peptides whose set at that time is best described by two populations (``best_set_K >= 2``,
     :func:`hxex.analysis.species_uptake`) carry (every covering peptide votes, by the residue's
     weights), which :func:`hxex.analysis.choose_populations` requires to be at least half. The
     K=2 values use every covering peptide, as K=1 does, so the three describe the same peptides
@@ -426,7 +426,7 @@ def residue_map(
         if best_k is not None and k == 1:  # every covering peptide votes, by its weight
             w = np.where(z > 0, z**weight_exponent, 0.0)
             total = w.sum(axis=0)
-            two = (best_k[rows] == 2).astype(float)
+            two = (best_k[rows] >= 2).astype(float)  # three counts as two or more
             support = np.where(total > 0, (w * two[:, None]).sum(axis=0)
                                / np.where(total > 0, total, 1.0), np.nan)
         levels = {name: np.full(len(known), np.nan) for name in TEST_COLUMNS}

@@ -49,6 +49,35 @@ PICKED_BAR = "#8a8a8a"
 MIN_WINDOW_LW = 1.2  # points: the least line width of a picked window, so it is always visible
 MARKER_SIZE = 16  # area of the circle on top of a picked bin
 STICK = "#444444"
+# the marker on top of a picked bin tells what the bin holds (owner, 2026-11-02): a circle for
+# heights, an up-pointing triangle for areas (height-equivalent), which sit off the raw
+# profile's apexes by design
+MEASURE_MARKERS = {"height": ("o", MARKER_SIZE), "area": ("^", 22)}
+MEASURE_LABELS = {"height": "picked values: heights",
+                  "area": "picked values: areas (height-equivalent)"}
+
+
+def peak_measure(results: Results | None) -> str:
+    """``'height'`` or ``'area'``: what the picked bins of ``results`` hold (the bundle's
+    ``peak_measure``; heights without settings, as in a bundle made before areas)."""
+    settings = results.settings if results is not None else None
+    measure = getattr(settings, "peak_measure", "height") if settings is not None else "height"
+    return measure if measure in MEASURE_MARKERS else "height"
+
+
+def spectrum_notes(results: Results, i: int, k: int | None = None) -> str:
+    """What a panel title says about measurement ``i`` beside its time: the K drawn (``k``, else
+    the K in effect), the review status when reviewed (``rejected``, ``accepted``) and the
+    quality flags, as ``K=1, rejected; poor_fit, bright``."""
+    k = int(results.effective_K[i] if k is None else k)
+    head = [f"K={k}"]
+    status = str(results.review_status[i])
+    if status != "unreviewed":
+        head.append(status)
+    text = ", ".join(head)
+    if results.quality is not None and results.quality.flagged[i]:
+        text += "; " + ", ".join(n for n in FLAG_NAMES if getattr(results.quality, n)[i])
+    return text
 
 
 def _break_gaps(mz: np.ndarray, y: np.ndarray, factor: float = 10.0):
@@ -285,10 +314,13 @@ def plot_spectrum(
     ``resolution_ppm`` given here; it is shaded, not outlined, and never thinner than
     ``MIN_WINDOW_LW`` points, so it is visible at any zoom), ``'stick'`` (a thin line at the
     bin) or ``'auto'`` (a window when it is known and the axis is m/z, else a stick). Either
-    way every picked bin has a circle on top. The fit line has its own colour, ``FIT_COLOR``,
-    and the populations theirs
-    (``COLORS``, then the same colours with another line style beyond ``len(COLORS)``
-    populations, see :func:`population_style`; the population map uses the same ones).
+    way every picked bin has a marker on top that tells what the bins hold
+    (:func:`peak_measure`): a circle for heights, an up-pointing triangle for areas
+    (height-equivalent, so they sit off the raw profile's apexes by design); the legend names
+    it. The title gives the K, the review status and the flags (:func:`spectrum_notes`). The
+    fit line has its own colour, ``FIT_COLOR``, and the populations theirs (``COLORS``, then
+    the same colours with another line style beyond ``len(COLORS)`` populations, see
+    :func:`population_style`; the population map uses the same ones).
     ``xaxis`` is ``'mz'`` (default when raw data is drawn or the picked table is available) or
     ``'n_deut'``. ``residual`` adds a panel of picked minus fit. With ``ax`` the spectrum is
     drawn there, and with ``residual`` its residuals in ``rax``, which must then be given. Every
@@ -349,18 +381,21 @@ def plot_spectrum(
             # a window at least MIN_WINDOW_LW points wide at any zoom
             ax.bar(x, picked["intensity"] * scale, width=2 * picked["window"],
                    color=shade, edgecolor=shade, lw=MIN_WINDOW_LW,
-                   label=f"picked ({picked.get('window_label') or 'window'})", gid="picked",
-                   zorder=2)
+                   label=f"picking window ({picked.get('window_label') or 'window'})",
+                   gid="picked", zorder=2)
         else:
             ax.vlines(x, 0, picked["intensity"] * scale, color=PICKED_PALE if both else STICK,
-                      lw=5.0 if both else 2.0, label="picked", gid="picked", zorder=2)
-        # a circle on top of every stick or window, as in the pyHXExpress plots
-        ax.scatter(x, picked["intensity"] * scale, s=MARKER_SIZE, color=STICK, lw=0, zorder=4,
-                   gid="picked")
+                      lw=5.0 if both else 2.0, gid="picked", zorder=2)
+        # a marker on top of every stick or window, as in the pyHXExpress plots: a circle for
+        # heights, an up-pointing triangle for areas (height-equivalent)
+        measure = peak_measure(results)
+        marker, size = MEASURE_MARKERS[measure]
+        ax.scatter(x, picked["intensity"] * scale, s=size, color=STICK, lw=0, zorder=4,
+                   marker=marker, label=MEASURE_LABELS[measure], gid="picked")
     if raw is not None:
         rx, ry = _break_gaps(raw["mz"], raw["intensity"])
         ax.plot(rx, ry * scale, color=RAW_DARK if both else RAW,
-                lw=0.9 if both else 1.0, label="raw", gid="raw", zorder=3)
+                lw=0.9 if both else 1.0, label="raw profile", gid="raw", zorder=3)
     if fit is not None:
         x = fit["mz"] if xaxis == "mz" else fit["bins"]
         if band and fit["band"] is not None:
@@ -413,17 +448,60 @@ def _title(results: Results | None, d: dict) -> str:
     notes = []
     fit = d.get("fit")
     if fit is not None:
-        notes.append(f"K={fit['k']}")
+        notes.append(spectrum_notes(results, fit["index"], fit["k"]))
         if fit["shown"] != list(range(1, fit["k"] + 1)):
             names = ", ".join(f"pop {r}" for r in fit["shown"])
             notes.append(f"showing {names} (total is the whole fit)")
-        i = fit["index"]
-        if results is not None and results.review is not None:
-            status = str(results.review_status[i])
-            if status != "unreviewed":
-                notes.append(status)
-        if results is not None and results.quality is not None and results.quality.flagged[i]:
-            flags = [n for n in FLAG_NAMES
-                     if getattr(results.quality, n)[i]]
-            notes.append("flags: " + ", ".join(flags))
     return "\n".join([str(d["spectrum_id"]), "  ".join(notes)]) if notes else str(d["spectrum_id"])
+
+
+def drawn_layers(axes) -> dict:
+    """What :func:`plot_spectrum` drew on ``axes`` (by the artists' gids): ``fit``, ``band``,
+    ``picked`` (the markers), ``window`` (the picking window's bars), ``raw`` and the ranks of
+    the populations drawn (``ranks``)."""
+    from matplotlib.collections import PathCollection
+    from matplotlib.patches import Rectangle
+
+    out = {"fit": False, "band": False, "picked": False, "window": False, "raw": False,
+           "ranks": set()}
+    for ax in axes:
+        for a in ax.get_children():
+            gid = a.get_gid() or ""
+            if gid in ("fit", "band", "raw"):
+                out[gid] = True
+            elif gid == "picked" and isinstance(a, PathCollection):
+                out["picked"] = True
+            elif gid == "picked" and isinstance(a, Rectangle):
+                out["window"] = True
+            elif gid.startswith("component:"):
+                out["ranks"].add(int(gid.split(":")[1]))
+    return out
+
+
+def page_legend_handles(drawn: dict, measure: str) -> list:
+    """Legend entries for a page of spectra drawn with :func:`plot_spectrum` (one legend for the
+    page, :func:`hxex.report.plot_series_spectra`) from :func:`drawn_layers`, in the order fit,
+    populations by rank, bootstrap band, picked values (the marker of ``measure``), raw profile
+    and picking window."""
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    out = []
+    if drawn["fit"]:
+        out.append(Line2D([], [], color=FIT_COLOR, lw=1.6, label="fit"))
+    for rank in sorted(drawn["ranks"]):
+        style = population_style(rank)
+        out.append(Line2D([], [], color=style["color"], ls=style["linestyle"], lw=1.2,
+                          label=f"population {rank}"))
+    if drawn["band"]:
+        out.append(Patch(color=FIT_COLOR, alpha=0.18, lw=0, label="bootstrap band"))
+    if drawn["picked"]:
+        marker, size = MEASURE_MARKERS[measure]
+        out.append(Line2D([], [], ls="none", marker=marker, markersize=size ** 0.5 + 0.5,
+                          color=STICK, label=MEASURE_LABELS[measure]))
+    if drawn["raw"]:
+        out.append(Line2D([], [], color=RAW_DARK, lw=0.9, label="raw profile"))
+    if drawn["window"]:
+        out.append(Patch(color=PICKED_PALE if drawn["raw"] else PICKED_BAR,
+                         label="picking window"))
+    return out

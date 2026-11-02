@@ -195,13 +195,27 @@ def series_kinds(results: Results, data_id: int, config: PlotConfig) -> tuple[st
     return kinds
 
 
+SAMPLE_STEM = 30  # the most characters of a sample name kept in a file name
+
+
 def figure_stems(results: Results, data_ids: Sequence[int]) -> dict[int, str]:
     """The file stem of each series' figure: its label (sample, range, peptide or fragment,
-    charge, condition) as a file name; the ``data_id`` is added where two series would share a
-    stem."""
-    stems = {int(d): _slug(series_info(results, int(d))["file_label"]) for d in data_ids}
+    charge, condition) as a file name, keeping letters of any script (the analysis folder's
+    rule) and shortening a long sample name to its first ``SAMPLE_STEM`` characters, never the
+    label's tail (the range, peptide and charge); ``_id<data_id>`` is added where two series
+    would share a stem."""
+    stems = {int(d): _stem(series_info(results, int(d))) for d in data_ids}
     counts = Counter(stems.values())
-    return {d: stem if counts[stem] == 1 else f"{stem}_{d}" for d, stem in stems.items()}
+    return {d: stem if counts[stem] == 1 else f"{stem}_id{d}" for d, stem in stems.items()}
+
+
+def _stem(info: Mapping[str, Any]) -> str:
+    """A series' file stem from :func:`series_info`: the sample part shortened, the rest kept."""
+    label, sample = str(info["file_label"]), str(info.get("sample") or "")
+    if sample and label.startswith(sample):
+        head, rest = _slug(sample)[:SAMPLE_STEM].strip("_"), _slug(label[len(sample):])
+        return "_".join(p for p in (head, rest) if p) or "series"
+    return _slug(label) or "series"
 
 
 def write_figures(
@@ -268,4 +282,6 @@ def write_figures(
 
 
 def _slug(text: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")[:60] or "series"
+    """``text`` as part of a file name: every run of characters other than letters (of any
+    script) and digits becomes one ``_``."""
+    return re.sub(r"[\W_]+", "_", text).strip("_") or ""

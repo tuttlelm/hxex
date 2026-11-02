@@ -224,6 +224,42 @@ def _fitted_ks(config: AnalysisConfig, runs: Mapping) -> AnalysisConfig:
     return dataclasses.replace(config, ks=ks, overlay=overlay)
 
 
+def _check_names(results, config: AnalysisConfig) -> None:
+    """Refuse a ``reference`` or a ``samples`` entry that names no sample of the results,
+    before anything is computed (so the message is not lost after the filters' lines)."""
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    states = []
+    for name, r in runs.items():
+        if r.binned is None:
+            return  # nothing to check against (the tables say what they have)
+        for sample in dict.fromkeys(np.asarray(r.binned.sample).astype(str)):
+            states.append(results.state(name, sample) if isinstance(results, RunSet)
+                          else ("", sample))
+    run_names, sample_names = [s[0] for s in states], [s[1] for s in states]
+    if config.reference:
+        resolve_sample(run_names, sample_names, config.reference, "reference sample")
+    for s in config.samples or ():
+        resolve_sample(run_names, sample_names, s)
+
+
+def _labelled(up, wanted: list, reference) -> list:
+    """``wanted`` without the samples that have no labelled time point in the species table
+    ``up`` (controls only, or every labelled spectrum left out), each named in a warning; a
+    reference without one is refused."""
+    timed = {(str(r), str(s)) for r, s, role in zip(up.run, up.sample, up.role, strict=True)
+             if not role}
+    labels = display_labels([s[0] for s in wanted], [s[1] for s in wanted])
+    if reference is not None and reference not in timed:
+        raise ValueError(f"the reference sample {labels[reference]!r} has no labelled time "
+                         "point (controls only, or every labelled spectrum left out): set "
+                         "[analysis] reference to a sample with labelled time points")
+    for s in wanted:
+        if s not in timed:
+            log.warning("%s has no labelled time points (controls only, or every labelled "
+                        "spectrum left out): left out of the analysis", labels[s])
+    return [s for s in wanted if s in timed]
+
+
 def _fragment_series(results) -> tuple[set[int], bool]:
     """The series (``data_id``) read from fragment lists (the precursor M read with them
     included), and whether every series is one."""
@@ -249,6 +285,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                  if config.reference else None)
     if ref_state is not None:
         wanted = [ref_state] + [s for s in wanted if s != ref_state]
+    wanted = _labelled(up, wanted, ref_state)
     pairs = list(zip(up.run.astype(str), up.sample.astype(str), strict=True))
     up = up.select(np.array([p in set(wanted) for p in pairs], dtype=bool))
     sequences = config.sequences(base)
@@ -368,10 +405,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             concat_tables([compare_residues(m, ref, alpha=config.alpha, delta_crit=crit,
                                             choice=pair_choice.get(s))
                            for s, m in pairs.items()])), comparisons["K=1 fD"],
-            nterm_subtract=nterm)
+            nterm_subtract=nterm, modified=config.modified_peptides)
         tables["compare_residues"] = res_cmp.columns()
         if ann.regions:  # the regions compared from their residues, with the same gate
-            reg_cmp = compare_regions(res_cmp, ann, comparisons["K=1 fD"], nterm_subtract=nterm)
+            reg_cmp = compare_regions(res_cmp, ann, comparisons["K=1 fD"], nterm_subtract=nterm,
+                                      modified=config.modified_peptides)
             tables["compare_regions"] = reg_cmp.columns()
         if choice is not None:
             # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
@@ -385,7 +423,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                    delta_crit=crit) for s in pairs]))
             if k2_tested:
                 pop_cmp = gated_by_peptides(
-                    pop_cmp, comparisons["K=2 rank 1 (low D) population"], nterm_subtract=nterm)
+                    pop_cmp, comparisons["K=2 rank 1 (low D) population"],
+                    nterm_subtract=nterm, modified=config.modified_peptides)
             pop_cols = pop_cmp.columns()
             if not k2_tested:  # the same columns as the tested case, empty
                 pop_cols["z"] = np.full(len(pop_cmp), np.nan)
@@ -413,7 +452,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                         delta_crit=k2_crit,
                                                         choice=pair_choice[s])
                                        for s, m in pairs.items()])), comparisons[title],
-                        nterm_subtract=nterm)
+                        nterm_subtract=nterm, modified=config.modified_peptides)
                 tables["compare_residues_K2"] = _ranked(k2_positions)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
         res_cmp = _display(res_cmp, labels, reference)
@@ -616,6 +655,7 @@ def write_analysis(
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
     config = _fitted_ks(config, results.runs if isinstance(results, RunSet) else {"": results})
+    _check_names(results, config)
     rule = population_rule(config.populations, results)
     if config.populations is None:
         log.info("the number of populations: %s", "the population test of the sets"

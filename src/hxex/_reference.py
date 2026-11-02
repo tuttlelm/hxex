@@ -190,7 +190,8 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.runs": "separate runs to compare: [analysis.runs] (below)",
     "analysis.overlay": 'the values of the by-residue comparisons: "low" and "high" (the K=2 '
                         'populations\' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the '
-                        'populations\' shares)',
+                        'populations\' shares); by default "low", "high", and "avg" ("avg" '
+                        'alone when ks has no 2)',
     "analysis.overlay_two_only": "draw K=2 values only where the choice keeps two populations",
     "analysis.borderline_evidence": "where the number of populations differs between samples: "
                                     "borderline unless the two-population side's summed "
@@ -230,7 +231,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.filters.replicate_outlier": "leave out a spectrum whose K=1 fD lies more than "
                                           "this many typical replicate standard deviations "
                                           "from the median of its replicates (same charge "
-                                          "state, three or more); unset: off",
+                                          "state, three or more; not assessed in a run "
+                                          "with fewer than five replicated series and "
+                                          "times); unset: off",
     "analysis.filters.above_amides": "leave out a spectrum whose K=1 mean exceeds the amide "
                                      "count before the back-exchange correction",
     "analysis.filters.stand_in_controls": '"exclude" or "include" the series whose fully '

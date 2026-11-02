@@ -5889,10 +5889,11 @@ CSVs or mzML if wanted.
     the reference's either way). Side finding (private noisy set): in every sample the FASTA and
     the one folder covering residues 69-95 have N and S swapped at residues 70 and 78; the
     composition, m/z and amide count are the same either way, so the fits are unaffected (only
-    intrinsic rates or protection factors at those residues would be); the owner to check which
-    sequence is right. Peptide tables against folder names (Part 2 B4): a row whose sequence or
-    residues differ from its folder's name is used as written with a warning, and is a problem
-    in `hxex check`; a mutant's sequence agrees when it is what the sample's FASTA gives there.
+    intrinsic rates or protection factors at those residues would be); the owner confirmed
+    the FASTA (N70, S78): HDExaminer's sequence there is wrong, and hxex uses the FASTA.
+    Peptide tables against folder names (Part 2 B4): a row whose sequence or residues differ
+    from its folder's name is used as written with a warning, and is a problem in `hxex
+    check`; a mutant's sequence agrees when it is what the sample's FASTA gives there.
     Readers: an exact repeated row of a folder-format table is refused (10); `hxex check` finds a
     table row whose charge has no files, naming the charges present (12); an empty read is
     refused with its cause (samples matching none found, listed; filters matching none of the
@@ -5914,3 +5915,45 @@ CSVs or mzML if wanted.
     back-exchange-correction.md; settings.md regenerated. Tests: tests/test_input_checks.py (18)
     and 6 more in test_cli, test_controls and test_analysis. Not done: `*.FASTA` with a capital
     suffix is still not found; pooled folders get no pairing warnings.
+
+217. **Third audit, Session C: analysis and report correctness (2026-11-02; decisions in
+    docs/AUDIT_2026-11-01.md).** Analysis: `hxex analyse` no longer stops when a sample has no
+    two-population description (High 5): the samples and pairs of a K = 2 comparison are those
+    with a K = 1 value at a time point, and a pair without a description at (K, rank) on a side
+    keeps its row with `reason` `no K=2 (sample)` (`(reference)`, `(both)`), the population rows
+    likewise. A sample with controls only is left out of the analysis with a warning, and a
+    reference without a labelled time point is refused saying so (Part 2 B3); a `reference` or
+    `samples` name matching nothing is refused before the filters log anything (q07). A set at
+    K = 3 counts as two or more (owner's option a; Analysis 33): compared at its K = 2
+    description with `reason` `three populations (sample): K = 2 compared`, in the K = 2
+    `delta_crit` pool and the residue vote. A time point promoted by `[analysis.controls]` keeps
+    its population test (the set keys and `undeuterated_two` take the analysis's roles; 34).
+    Fragment trace points take the peptides' error rule (larger of the bootstrap variance and the
+    replicate scatter; 35). A K = 1 row averaged from K = 2 counts the spectra it averages (36).
+    Low: the peptide gate and the region test take each peptide's exchanging residues (an `Ac-`
+    first residue counts, prolines do not; 64); tier reasons say `tier: two, not localised: one
+    drawn` (65); a `run:sample` reference with the bare name in `samples` is accepted (66); the
+    default `overlay` follows `ks` (`ks = [1]` alone works; 67); `set_test_K` is 0 for a set the
+    test never saw (68); with `modified_peptides = "combined"` the gate and the region test key
+    modified peptides by their sample (69); 70 documented (a replicate's charge-state error comes
+    from the charge states that have one; NaN would leave a single replicate without an error);
+    the analysis's replicate-outlier rule needs five replicated groups (71, as the controls'
+    `OUTLIER_MIN_SERIES`). Run: one spectrum without an undeuterated control says plainly that
+    its number of populations cannot be judged (t02). Report (a builder; before/after pages
+    shown to the owner): samples past the palette never take the reference's black (colours
+    repeat with a new marker, bars hatched; High 6); spectra and populations panel titles carry
+    K, status and flags (39, walkthrough B3); the significance maps reserve the legend's height
+    (40); replicates past six change marker (41); figure stems keep letters of any script, cut
+    the sample part to 30 characters, and a collision adds `_id{data_id}` (42); the controls
+    overview's histograms use fixed edges (43); the populations page's x axis reaches the largest
+    component (44); picked values are triangles for areas and circles for heights, named in a
+    legend (Low 82, owner's decision); one legend per spectra, populations and uptake page (M5).
+    Owner's answers to the report questions: the uptake page with `x = "time"` draws every
+    control spectrum of the series at the axis ends (UN left, FD right, labelled beside their
+    points; rejected or screened ones hollow), the legend naming a stand-in level; `series.csv`
+    `n_multi` leaves rejected spectra out; the uptake legend sits outside the axes, right. Docs:
+    outputs.md (figures, `reason` values, `set_test_K`, `fd_other_charge` wording: the column is
+    true only with `combine_charges = false`, which answers the audit's question), statistics.md
+    (`delta_crit` pools every sample; charge-state errors), part-of-a-dataset.md, picking-window.md,
+    tutorial.md (`n_multi`), ANALYSIS.md; settings.md regenerated. The tutorial images change on
+    the next `make_tutorial.py --run`.

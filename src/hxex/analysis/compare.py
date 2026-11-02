@@ -319,6 +319,12 @@ def compare_peptides(
     best described by two populations (``best_set_K = 2``; owner, 2026-10-21, HISTORY 137):
     elsewhere one side's K=2 fit is a small tail, not a second state. Such a row's difference
     is NaN and ``reason`` says ``'one population (sample)'``, ``'(reference)'`` or ``'(both)'``.
+    A set with more than two populations counts as two or more and is compared at its K = 2
+    description, with a reason that says so (``'three populations (sample): K = 2 compared'``;
+    owner, 2026-11-02). A pair whose side has no description at ``(K, rank)`` (all of it left
+    out by the filters, reviewed to one population, or not fitted) keeps a row with the other
+    side's value, no difference, and ``reason`` ``'no K=2 (sample)'`` (``'(reference)'``,
+    ``'(both)'``): the samples and pairs are those with a K = 1 value at a time point.
     ``best_sets`` (:func:`hxex.analysis.best_sets`) gives each species' choice; without it, it
     is computed from the results with the same settings and the ``populations`` rule (None:
     the results', as ``hxex analyse`` takes it, :func:`hxex.analysis.settings.population_rule`).
@@ -364,41 +370,52 @@ def compare_peptides(
     if K == 1:
         groups = _k2_average_records(groups, k2_averages)
     by_sample: dict[tuple[str, str], dict[tuple, np.ndarray]] = {}
+    # every species and time with a K=1 value: the pairs compared (at K >= 2 a pair without a
+    # description at (K, rank) on a side gets a row saying so, never an error)
+    measured: dict[tuple[str, str], dict[tuple, None]] = {}
     ses: dict[tuple, np.ndarray] = {}
     fell_back: dict[tuple, bool] = {}
     for key, recs in groups.items():
         run, sample, peptide, mod, start, end, point, k, r = key
-        if (k, r) != (K, rank) or point.role:  # the controls are not time points
+        if point.role or (k, r) not in ((K, rank), (1, 1)):  # the controls are not time points
             continue
-        time = point.time
+        skey = (peptide, mod, start, end, point.time)
+        if (k, r) == (1, 1):
+            measured.setdefault((run, sample), {})[skey] = None
+            fell_back.setdefault((run, sample, *skey), any(x[7] for x in recs))
+        if (k, r) != (K, rank):
+            continue
         values, errors = _by_replicate(recs, at)  # the charge states of a replicate averaged
-        by_sample.setdefault((run, sample), {})[(peptide, mod, start, end, time)] = values
-        ses[(run, sample, peptide, mod, start, end, time)] = errors
-        fell_back[(run, sample, peptide, mod, start, end, time)] = any(x[7] for x in recs)
-    present = sorted(by_sample)
+        by_sample.setdefault((run, sample), {})[skey] = values
+        ses[(run, sample, *skey)] = errors
+        fell_back[(run, sample, *skey)] = any(x[7] for x in recs)
+    present = sorted(measured)
     runs_present = [p[0] for p in present]
     samples_present = [p[1] for p in present]
-    try:
-        reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
-    except ValueError as exc:
-        raise ValueError(f"{exc} at K={K} rank {rank}") from exc
+    reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
     # the typical standard deviation of replicate spectra and the typical replicate count; at
     # K >= 2 with the gate, from the sets best described by two populations only (the others'
     # K=2 fits are splits of one population, whose scatter is not that of a second state)
     def counted(state, key) -> bool:
         return (best_sets is None or K < 2
-                or (best_sets.get((*state, *key)) or (0, np.nan))[0] == 2)
+                or (best_sets.get((*state, *key)) or (0, np.nan))[0] >= 2)
 
     delta_crit = _delta_crit((v for state, per in by_sample.items() for key, v in per.items()
                               if counted(state, key)), alpha)
     wanted = ([resolve_sample(runs_present, samples_present, s) for s in samples]
               if samples is not None else present)
     others = [s for s in wanted if s != reference]
-    ref = by_sample[reference]
+    ref = by_sample.get(reference, {})
     rows = []
     for state in others:
         per = by_sample.get(state, {})
-        for rkey, key in _pairs(ref, per, match):
+        for rkey, key in _pairs(measured[reference], measured.get(state, {}), match):
+            missing = [side for side, have in (("reference", rkey in ref), ("sample", key in per))
+                       if not have]
+            if missing:  # no description at (K, rank) on a side: a row that says so
+                rows.append(_not_described(K, missing, state, key, reference, rkey,
+                                           ref.get(rkey), per.get(key), ses, fell_back))
+                continue
             a, b = ref[rkey], per[key]
             ma, sa = _combine(a, ses[(*reference, *rkey)])
             mb, sb = _combine(b, ses[(*state, *key)])
@@ -411,7 +428,7 @@ def compare_peptides(
                        and abs(delta) > delta_crit)
             why = (_one_population(best_sets, state, key, reference, rkey)
                    if K >= 2 and best_sets is not None else "")
-            if why:  # not compared: one side is not two populations
+            if why and not why.endswith(MORE_COMPARED):  # one side is not two populations
                 delta = t = p = np.nan
                 sig = False
             rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
@@ -512,13 +529,51 @@ def _lever_sides(groups, choice: ChoiceConfig) -> dict:
     return out
 
 
+def _not_described(K, missing, state, key, reference, rkey, a, b, ses, fell_back) -> dict:
+    """The row of a pair without a description at the comparison's K and rank on the
+    ``missing`` side(s) (``'no K=2 (sample)'``): the other side's value kept, no difference."""
+    side = missing[0] if len(missing) == 1 else "both"
+    ma = sa = mb = sb = np.nan
+    if a is not None:
+        ma, sa = _combine(a, ses[(*reference, *rkey)])
+    if b is not None:
+        mb, sb = _combine(b, ses[(*state, *key)])
+    return {"run": state[0], "sample": state[1], "peptide": key[0], "modification": key[1],
+            "start": key[2], "end": key[3], "time": key[4], "value_reference": ma,
+            "value_reference_se": sa, "value": mb, "value_se": sb, "delta": np.nan,
+            "delta_se": np.nan, "t": np.nan, "p": np.nan,
+            "n_reference": 0 if a is None else len(a), "n": 0 if b is None else len(b),
+            "significant": False, "peptide_reference": rkey[0],
+            "modification_reference": rkey[1], "same_sequence": rkey[:2] == key[:2],
+            "control_fallback_reference": fell_back[(*reference, *rkey)],
+            "control_fallback": fell_back[(*state, *key)], "reason": f"no K={K} ({side})"}
+
+
+# the end of the reason of a pair compared at K = 2 although a side's set has more than two
+# populations (owner, 2026-11-02: a set of three counts as two or more)
+MORE_COMPARED = "K = 2 compared"
+_NUMBER_WORDS = {3: "three", 4: "four", 5: "five"}
+
+
 def _one_population(best_sets: Mapping, state, key, reference, rkey) -> str:
     """Why a K=2 comparison of ``key`` (sample ``state``) with ``rkey`` (``reference``) is not
-    made: the side whose set is not best described by two populations; '' when both are."""
-    sample = (best_sets.get((*state, *key)) or (0, np.nan))[0] == 2
-    ref = (best_sets.get((*reference, *rkey)) or (0, np.nan))[0] == 2
-    return ("" if sample and ref else "one population (reference)" if sample
-            else "one population (sample)" if ref else "one population (both)")
+    made: the side whose set is not best described by two populations or more; '' when both
+    are two. A side with more than two populations is compared at its K = 2 description, and
+    the reason says so (``'three populations (sample): K = 2 compared'``, ending in
+    :data:`MORE_COMPARED`)."""
+    n_sample = (best_sets.get((*state, *key)) or (0, np.nan))[0]
+    n_ref = (best_sets.get((*reference, *rkey)) or (0, np.nan))[0]
+    sample, ref = n_sample >= 2, n_ref >= 2
+    if not (sample and ref):
+        return ("one population (reference)" if sample
+                else "one population (sample)" if ref else "one population (both)")
+    more = [(side, n) for side, n in (("reference", n_ref), ("sample", n_sample)) if n > 2]
+    if not more:
+        return ""
+    if len(more) == 2 and more[0][1] == more[1][1]:
+        more = [("both", more[0][1])]
+    return "; ".join(f"{_NUMBER_WORDS.get(n, str(n))} populations ({side})"
+                     for side, n in more) + f": {MORE_COMPARED}"
 
 
 def _compare_populations_peptides(results, reference, samples, rank, alpha, exclude_flagged,
@@ -534,10 +589,7 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
     sides = _lever_sides(groups, choice)
     present = sorted(sides)
     runs_present, samples_present = [p[0] for p in present], [p[1] for p in present]
-    try:
-        reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
-    except ValueError as exc:
-        raise ValueError(f"{exc} at K=2 (population)") from exc
+    reference = resolve_sample(runs_present, samples_present, reference, "reference sample")
     wanted = ([resolve_sample(runs_present, samples_present, s) for s in samples]
               if samples is not None else present)
     ref = sides[reference]
@@ -549,8 +601,14 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
     for state in (s for s in wanted if s != reference):
         for rkey, key in _pairs(ref, sides.get(state, {}), match):
             a, b = ref[rkey], sides[state][key]
-            reason = ((_one_population(best_sets, state, key, reference, rkey)
-                       if best_sets is not None else "")
+            gate = (_one_population(best_sets, state, key, reference, rkey)
+                    if best_sets is not None else "")
+            more = gate if gate.endswith(MORE_COMPARED) else ""  # compared, with a note
+            missing = [side for side, x in (("reference", a), ("sample", b))
+                       if x["reason"] == "no K=2"]  # first, as the positions' rows say it
+            reason = ((f"no K=2 ({missing[0] if len(missing) == 1 else 'both'})"
+                       if missing else "")
+                      or (gate if not more else "")
                       or (f"{a['reason']} (reference)" if a["reason"]
                           else f"{b['reason']} (sample)" if b["reason"] else ""))
             t = p = delta = np.nan
@@ -577,7 +635,7 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
                          "modification_reference": rkey[1], "same_sequence": rkey[:2] == key[:2],
                          "control_fallback_reference": a["fell_back"],
                          "control_fallback": b["fell_back"], "threshold": threshold,
-                         "reason": reason, "separation": sep})
+                         "reason": reason or more, "separation": sep})
     names = [f.name for f in fields(PeptideComparison) if f.name not in _SCALAR_FIELDS]
     cols = ({name: np.array([r[name] for r in rows]) for name in names} if rows
             else {name: np.array([]) for name in names})
@@ -863,34 +921,49 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
                    block_end=blocks[:, 1] if with_blocks else own.block_end)
 
 
+def _covers(peptides: PeptideComparison, nterm_subtract: int, registry) -> list[np.ndarray]:
+    """Each compared peptide's exchanging residues (:func:`hxex.analysis.exchanging_residues`:
+    an ``Ac-`` peptide keeps its first residue, prolines have none)."""
+    from .residues import exchanging_residues
+
+    return [exchanging_residues(str(p), int(a), nterm_subtract, registry)
+            for p, a in zip(peptides.peptide, peptides.start, strict=True)]
+
+
 def gated_by_peptides(
     comparison: ResidueComparison,
     peptides: PeptideComparison,
     *,
     nterm_subtract: int = 0,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    modified: str = "separate",
 ) -> ResidueComparison:
     """``comparison`` with a residue difference significant only where a peptide covering the
     residue carries it (owner, 2026-10-31: a safeguard against error bars that are wrong, such
     as from a noise model that does not fit the data; HISTORY 206): a peptide of ``peptides``
     (the peptide comparison of the same quantity) at the same sample and time whose exchanging
-    residues (after the first ``nterm_subtract``) include the residue, that is significant, and
+    residues (:func:`hxex.analysis.exchanging_residues`: after the first ``nterm_subtract``
+    unless acetylated, prolines left out) include the residue, that is significant, and
     whose difference has the sign of the residue's (``delta_shared`` where present, else
     ``delta``). ``peptide_support`` records it (NaN where no peptide comparison exists for the
     state and time, e.g. a modified form of the reference: such rows are left as they are);
     ``residue_test_only`` marks the rows the residue test called but no peptide supports, which
     are then not significant. Several nearly significant peptides can make a residue
-    significant on their own: those are the ``residue_test_only`` rows, kept visible."""
+    significant on their own: those are the ``residue_test_only`` rows, kept visible.
+    ``modified``: how the residue map took modified peptides (``[analysis]
+    modified_peptides``): ``'separate'`` keys a modified peptide to its own state (``'WT
+    pS59'``), ``'combined'`` to its sample's."""
     from .residues import modified_state
 
     by_state: dict[tuple[str, str, float], list[int]] = {}
     for j in range(len(peptides)):
         sites = modified_state(str(peptides.peptide[j]), int(peptides.start[j]),
                                str(peptides.modification[j]), registry)
-        state = f"{peptides.sample[j]} {sites}" if sites else str(peptides.sample[j])
+        # a modified form is a state of its own unless the residue map combined it
+        state = (f"{peptides.sample[j]} {sites}" if sites and modified != "combined"
+                 else str(peptides.sample[j]))
         by_state.setdefault((str(peptides.run[j]), state, float(peptides.time[j])), []).append(j)
-    start = np.asarray(peptides.start, dtype=np.int64) + nterm_subtract
-    end = np.asarray(peptides.end, dtype=np.int64)
+    covers = _covers(peptides, nterm_subtract, registry)
     passed = np.asarray(peptides.significant, dtype=bool)
     sign = np.sign(np.asarray(peptides.delta, dtype=float))
     diff = np.asarray(comparison.delta_shared if comparison.delta_shared is not None
@@ -904,8 +977,8 @@ def gated_by_peptides(
             continue
         rows = np.asarray(rows)
         r = int(comparison.residue[i])
-        support[i] = bool(np.any((start[rows] <= r) & (end[rows] >= r) & passed[rows]
-                                 & (sign[rows] == np.sign(diff[i]))))
+        support[i] = any(r in covers[j] and passed[j] and sign[j] == np.sign(diff[i])
+                         for j in rows)
     called = np.asarray(comparison.significant, dtype=bool)
     unsupported = np.array([s is False for s in support], dtype=bool)
     return replace(comparison, significant=called & ~unsupported, peptide_support=support,
@@ -1221,6 +1294,7 @@ def compare_regions(
     *,
     nterm_subtract: int = 0,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+    modified: str = "separate",
 ) -> RegionComparison:
     """Each sample against the reference per region and time (owner, 2026-10-31; HISTORY 209),
     from ``comparison`` (the K = 1 residue comparison judged on shared peptides,
@@ -1229,9 +1303,10 @@ def compare_regions(
     significant when ``|delta| / se`` exceeds the normal quantile of ``alpha`` and ``|delta|``
     the residues' threshold, and (the gate of :func:`gated_by_peptides`) a significant peptide of
     ``peptides`` at that sample and time, of the same sign, has at least half of its exchanging
-    residues (after ``nterm_subtract``) inside the region; the test's other calls are
-    ``region_test_only``. A region without a compared residue is not tested (NaN). Evaluated on
-    the noise simulation's truth before building (private residue_gate README)."""
+    residues (:func:`hxex.analysis.exchanging_residues`) inside the region; the test's other
+    calls are ``region_test_only``. A region without a compared residue is not tested (NaN).
+    Evaluated on the noise simulation's truth before building (private residue_gate
+    README). ``modified`` as in :func:`gated_by_peptides`."""
     from .residues import modified_state
 
     regions = regions.regions if isinstance(regions, Annotations) else tuple(regions)
@@ -1242,10 +1317,11 @@ def compare_regions(
     for j in range(len(peptides)):
         sites = modified_state(str(peptides.peptide[j]), int(peptides.start[j]),
                                str(peptides.modification[j]), registry)
-        state = f"{peptides.sample[j]} {sites}" if sites else str(peptides.sample[j])
+        # a modified form is a state of its own unless the residue map combined it
+        state = (f"{peptides.sample[j]} {sites}" if sites and modified != "combined"
+                 else str(peptides.sample[j]))
         by_state.setdefault((str(peptides.run[j]), state, float(peptides.time[j])), []).append(j)
-    p_start = np.asarray(peptides.start, dtype=np.int64) + nterm_subtract
-    p_end = np.asarray(peptides.end, dtype=np.int64)
+    covers = _covers(peptides, nterm_subtract, registry)
     passed = np.asarray(peptides.significant, dtype=bool)
     p_sign = np.sign(np.asarray(peptides.delta, dtype=float))
     shared = np.asarray(comparison.delta_shared if comparison.delta_shared is not None
@@ -1274,11 +1350,10 @@ def compare_regions(
             called = bool(np.isfinite(z) and abs(z) > z_crit and abs(d) > threshold)
             support: object = np.nan
             if len(peps):
-                length = np.maximum(p_end[peps] - p_start[peps] + 1, 1)
-                overlap = np.clip(np.minimum(p_end[peps], region.end)
-                                  - np.maximum(p_start[peps], region.start) + 1, 0, None)
-                support = bool(np.any(passed[peps] & (p_sign[peps] == np.sign(d))
-                                      & (overlap >= 0.5 * length)))
+                support = any(
+                    passed[j] and p_sign[j] == np.sign(d) and len(covers[j])
+                    and np.sum((covers[j] >= region.start) & (covers[j] <= region.end))
+                    >= 0.5 * len(covers[j]) for j in peps)
             unsupported = support is False
             rows.append({"run": run, "sample": sample, "time": time, "region": region.name,
                          "start": region.start, "end": region.end, "n_residues": n,

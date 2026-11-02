@@ -402,12 +402,16 @@ def fragment_trace(uptake: FragmentUptake, fragment: str, **conditions) -> Trace
 
 
 def _average(t, y, se) -> Trace:
-    times = np.unique(np.round(t, 6))
+    """The replicates at each time averaged, with the peptides' rule for the error
+    (:func:`hxex.analysis.species._combine`: the larger of the mean bootstrap variance and the
+    replicates' scatter, over the count; the scatter alone without bootstrap errors)."""
+    from .species import _combine
+
     key = np.round(t, 6)
-    mean = np.array([np.mean(y[key == x]) for x in times])
-    err = np.array([np.sqrt(np.mean(se[key == x] ** 2)) / np.sqrt(np.sum(key == x))
-                    for x in times])
-    return Trace(times, mean, err)
+    times = np.unique(key)
+    pairs = [_combine(np.asarray(y[key == x], float), np.asarray(se[key == x], float))
+             for x in times]
+    return Trace(times, np.array([m for m, _ in pairs]), np.array([e for _, e in pairs]))
 
 
 def difference_trace(uptake: FragmentUptake, larger: str, smaller: str | None,

@@ -2,8 +2,8 @@
 """Plots of comparisons (docs/ANALYSIS.md, phases 3 and 4; between samples of a run or between
 runs): a reference sample against the others residue by residue, peptide differences (Woods and
 butterfly plots) and region bar charts. Samples keep
-one colour and marker each (:data:`hxex.report.coverage.SAMPLE_STYLES`, the reference first, in
-black). Functions return figures and never show them."""
+one colour and marker each (:func:`hxex.report.coverage.sample_style`, the reference first, in
+black, and never given to another sample). Functions return figures and never show them."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from ..analysis import (
     ResidueMap,
 )
 from ..analysis.settings import OVERLAY_VALUES
-from .coverage import MARK_LINE, SAMPLE_STYLES
+from .coverage import MARK_LINE, sample_hatch, sample_style
 from .residues import _when
 
 INCREASE, DECREASE, NEUTRAL = "#c0392b", "#1f5fa8", "#b5b5b5"
@@ -38,7 +38,8 @@ COUNT_GREY = "#7f7f7f"
 
 
 def _style(n: int):
-    return SAMPLE_STYLES[n % len(SAMPLE_STYLES)]
+    """The style of the sample at position ``n`` (the reference at 0; :func:`sample_style`)."""
+    return sample_style(n)
 
 
 def _marks(ax: Axes, annotations: Annotations | None, label_sites: bool = True) -> None:
@@ -178,6 +179,7 @@ def plot_residue_comparison(
     rows = comparison.where(sample=sample, time=time)
     if not rows.any():
         raise ValueError(f"no comparison of {sample!r} at time {time:g}")
+    style_index = max(1, int(style_index))  # the reference's style (0) is the reference's only
     if ax is None:
         fig = Figure(figsize=(7.5, 3.0))
         ax = fig.add_subplot()
@@ -271,6 +273,7 @@ def plot_residue_overlay(
     if choice is None and any(v.startswith("pop_") for v in show):
         raise ValueError("the populations (pop_low, pop_high) need the choice "
                          "(hxex.analysis.choose_populations)")
+    style_index = max(1, int(style_index))  # the reference's style (0) is the reference's only
     if ax is None:
         fig = Figure(figsize=(7.5, 3.0))
         ax = fig.add_subplot()
@@ -609,13 +612,15 @@ def plot_region_bars(
     top = -np.inf
     for n, sample in enumerate(samples):
         colour, _, _ = _style(n)
+        hatch = sample_hatch(n)  # past the palette the colours repeat, with a hatch
         values, errors = [], []
         for name in names:
             row = sel & (regions.sample == sample) & (regions.region == name)
             values.append(float(regions.fD[row][0]) if row.any() else np.nan)
             errors.append(float(regions.fD_se[row][0]) if row.any() else np.nan)
         bars = ax.bar(x + (n - (len(samples) - 1) / 2) * width, values, width=width,
-                      color=colour, label=sample, yerr=np.nan_to_num(errors),
+                      color=colour, label=sample, yerr=np.nan_to_num(errors), hatch=hatch,
+                      edgecolor="white" if hatch else None,
                       error_kw={"elinewidth": 0.7, "ecolor": "#555555"}, alpha=0.9)
         for patch, name in zip(bars.patches, names, strict=True):
             patch.set_gid(f"region:{sample}:{name}")

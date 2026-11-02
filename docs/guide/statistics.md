@@ -88,7 +88,7 @@ the one-population fit then settles on one of them, and which one can change fro
 replicate. On simulated data with two equal populations a whole amide count apart, the K = 1
 value missed the true average by a third to two thirds of a deuteron.
 
-So where a peptide's spectra at a time are best described by two populations (`best_set_K = 2`,
+So where a peptide's spectra at a time are best described by two populations or more (`best_set_K` 2 or more,
 or the population test's decision) and the two lie at least 2 deuterons apart, *hxex* takes that
 peptide's average from the two populations instead: the share-weighted mean of their positions,
 for each spectrum. Those rows are marked `average_from_k2` in `species_uptake.csv`, and the
@@ -144,7 +144,10 @@ ways:
   ([*Anal. Chem.* 2019](https://doi.org/10.1021/acs.analchem.9b01325)): a difference is
   significant when Welch's t-test on the two samples' replicates gives p below 0.05 *and* the
   difference is larger than a threshold set by the typical scatter of replicates over the whole
-  dataset (`delta_crit`). The test needs at least **two replicates in each sample** at that
+  dataset (`delta_crit`; every sample in the results counts towards it, also one that
+  `[analysis] samples` leaves out of the comparisons, so the threshold is the run's and does
+  not change with the samples you choose to compare). The test needs at least **two
+  replicates in each sample** at that
   time; with one, the peptide is not tested. Three or more are recommended, as in the
   community's recommendations for HDX-MS (Masson et al.,
   [*Nat. Methods* 2019](https://doi.org/10.1038/s41592-019-0459-y)).
@@ -159,7 +162,11 @@ ways:
   analysis, and one much weaker than its replicates is flagged `low_intensity`.
 
 The charge states of a peptide are **not** replicates: they come from the same sample, so
-*hxex* averages them within each replicate before it combines the replicates.
+*hxex* averages them within each replicate before it combines the replicates. The averaged
+value's error comes from the charge states that have one: where only some were bootstrapped
+(a review that chose a K the bootstrap had not covered for every charge state), the error of
+the average is that of the bootstrapped charge states alone, which is a little larger than the
+error of all of them together would be.
 
 ## Controls
 

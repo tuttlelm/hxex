@@ -782,6 +782,16 @@ def test_analysis_config_checks_and_round_trips():
             AnalysisConfig(**bad)
     with pytest.raises(ValueError, match="unknown"):
         AnalysisConfig.from_dict({"colour": "red"})
+    # audit 2026-11-01 Low 66 and 67: a run:sample reference with the bare name in samples;
+    # K = 1 alone with the default overlay (an explicit K = 2 overlay is still refused)
+    AnalysisConfig(reference="A:S", samples=["S", "V"])
+    AnalysisConfig(reference="S", samples=["A:S", "V"])
+    with pytest.raises(ValueError, match="not among the samples"):
+        AnalysisConfig(reference="A:S", samples=["B:S"])
+    assert AnalysisConfig(ks=(1,)).overlay == ("avg",)
+    assert AnalysisConfig().overlay == ("low", "high", "avg")
+    with pytest.raises(ValueError, match="overlay"):
+        AnalysisConfig(ks=(1,), overlay=("low",))
     # per-sample settings take a run's own entries under its name (a run of runs)
     nested = AnalysisConfig(runs={"A": "a.zip", "B": "b.zip"},
                             fasta={"S": "s.fasta", "A": {"S": "s_a.fasta"}})
@@ -847,6 +857,97 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
 
 
 
+def _review_k1(results, sample):
+    """``results`` with every spectrum of ``sample`` reviewed to one population."""
+    rows = np.flatnonzero(np.asarray(results.binned.sample) == sample)
+    return _review_k1_ids(results, [str(results.binned.spectrum_id[j]) for j in rows])
+
+
+def _review_k1_ids(results, ids):
+    """``results`` with the spectra ``ids`` reviewed to one population."""
+    n = len(ids)
+    return results.with_review(ReviewTable(
+        spectrum_id=np.array(ids, dtype=object),
+        status=np.full(n, "unreviewed", dtype=object), k_override=np.ones(n, dtype=np.int64),
+        note=np.full(n, "", dtype=object), updated=np.full(n, "", dtype=object)))
+
+
+def test_a_sample_without_k2_or_time_points_does_not_stop_the_analysis(two_sample_bundle,
+                                                                        tmp_path, caplog):
+    """Audit 2026-11-01 High 5 and Part 2 B3: a sample reviewed to one population (either
+    side) keeps rows that say so; a sample with controls only is left out with a warning; a
+    reference without time points, or one that names no sample, is refused before the
+    filters run."""
+    import dataclasses
+    import logging
+
+    from hxex.analysis import AnalysisConfig, compare_peptides
+    from hxex.io import open_bundle
+    from hxex.report import write_analysis
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    for sample, side in (("V", "sample"), ("S", "reference")):
+        reviewed = _review_k1(results, sample)
+        c = compare_peptides(reviewed, "S", K=2, rank=1)
+        assert len(c) and set(c.reason) == {f"no K=2 ({side})"}
+        assert not np.isfinite(c.delta).any()
+        assert np.isfinite(c.value_reference if side == "sample" else c.value).all()
+        pop = compare_peptides(reviewed, "S", K=2, quantity="population")
+        assert set(pop.reason) == {f"no K=2 ({side})"}
+        names = {p.name for p in write_analysis(reviewed, AnalysisConfig(reference="S"),
+                                                tmp_path / f"k1_{sample}")}
+        assert "compare_peptides.csv" in names
+    # V with controls only: its labelled spectra left out of the run's input
+    raw = raw_spectra(n_series=2)
+    raw = dataclasses.replace(raw, sample=np.where(raw.data_id == 1, "V", "S"))
+    raw = raw.select(~((raw.data_id == 1) & (np.asarray(raw.role) == "")))
+    only = Results.from_run(run(raw, config()))
+    with caplog.at_level(logging.WARNING, logger="hxex"):
+        names = {p.name for p in write_analysis(only, AnalysisConfig(reference="S"),
+                                                tmp_path / "controls_only")}
+    assert "V has no labelled time points" in caplog.text
+    assert "species_uptake.csv" in names
+    with pytest.raises(ValueError, match="reference sample 'V' has no labelled time point"):
+        write_analysis(only, AnalysisConfig(reference="V"), tmp_path / "ref_controls_only")
+    # a reference naming no sample: refused before the filters say what they left out
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hxex"), pytest.raises(
+            ValueError, match="no reference sample 'Mut'"):
+        write_analysis(results, AnalysisConfig(reference="Mut"), tmp_path / "typo")
+    assert "left out" not in caplog.text
+
+
+def test_a_set_of_three_populations_is_compared_at_k2(two_sample_bundle):
+    """Audit 2026-11-01 Analysis 33 (owner, 2026-11-02): a set chosen at K = 3 counts as two
+    or more: compared at its K = 2 description with a reason saying so, and its peptides vote
+    for two populations at the residues."""
+    import dataclasses
+
+    from hxex.analysis import best_sets, compare_peptides
+    from hxex.io import open_bundle
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    two = {key: (2, v[1]) for key, v in best_sets(species_uptake(results)).items()}
+    three = {key: (3 if key[1] == "V" else 2, v[1]) for key, v in two.items()}
+    kw = dict(K=2, rank=1, filters=SpeciesFilters(min_population=0.0))
+    plain = compare_peptides(results, "S", best_sets=two, **kw)
+    more = compare_peptides(results, "S", best_sets=three, **kw)
+    assert set(plain.reason) == {""}
+    assert set(more.reason) == {"three populations (sample): K = 2 compared"}
+    np.testing.assert_allclose(more.delta, plain.delta)
+    assert np.isfinite(more.delta).all()
+    both = compare_peptides(results, "S", best_sets={k: (3, v[1]) for k, v in two.items()},
+                            **kw)
+    assert set(both.reason) == {"three populations (both): K = 2 compared"}
+    up = species_uptake(results, filters=SpeciesFilters(min_population=0.0))
+    rm = residue_map(dataclasses.replace(up, best_set_K=np.full(len(up), 3)),
+                     two_population_peptides=True)
+    weight = np.asarray(rm.two_population_weight, float)
+    assert np.nanmin(weight) == 1.0
+
+
 def test_coverage_falls_back_to_every_time_when_none_was_measured(two_sample_bundle, tmp_path,
                                                                   caplog):
     """coverage_times naming times without spectra (a project without time-0 spectra, say) does
@@ -883,7 +984,7 @@ def test_times_left_out_of_the_analysis(two_sample_bundle, tmp_path):
         cfg = AnalysisConfig(reference="S", ks=(1,), overlay=("avg",), exclude_times=[late])
         # the synthetic run has one time point: without it the controls alone (not time
         # points) leave nothing to compare
-        with pytest.raises(ValueError, match="no reference sample"):
+        with pytest.raises(ValueError, match="reference sample 'S' has no labelled time point"):
             write_analysis(res, cfg, tmp_path / "a")
         assert all(float(t) != late for t in species_uptake(dropped, ks=(1,)).time)
         # the controls have no time, so no time names them; a time point that also serves as
@@ -1183,7 +1284,7 @@ def test_residue_overlay_shows_the_chosen_values():
         plot_residue_overlay(rm, "WT", "V", 60.0)
     assert AnalysisConfig(overlay=["avg"], ks=[1]).overlay == ("avg",)
     assert AnalysisConfig().overlay_two_only  # K=2 values only where two populations are chosen
-    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1]}):
+    for bad in ({"overlay": []}, {"overlay": ["mean"]}, {"ks": [1], "overlay": ["low"]}):
         with pytest.raises(ValueError, match="overlay"):
             AnalysisConfig(**bad)
     # only where two populations are chosen: V's residue 6 has its K=1 value outside its ranks
@@ -1740,6 +1841,10 @@ def test_spectra_left_out_whole_and_why():
     out, why = _left_out(fake, SpeciesFilters(), controls, n_am, keep)
     assert why[far] == "replicate outlier" and why[above] == "above the amide count"
     assert out.sum() == 2
+    # four replicated groups are too few for a typical scatter: not assessed (audit
+    # 2026-11-01 Low 71)
+    four = np.asarray(fit.data_id) != 4
+    assert _left_out(fake, SpeciesFilters(), controls, n_am, four)[1][far] == ""
     off = SpeciesFilters(replicate_outlier=None, above_amides=False)
     assert not _left_out(fake, off, controls, n_am, keep)[0].any()
     fake.review_status[far] = "accepted"  # the review's decision wins
@@ -2195,6 +2300,52 @@ def test_a_residue_difference_needs_a_covering_peptide_to_carry_it():
     assert {"peptide_support", "residue_test_only"} <= set(gated.columns())
 
 
+def test_the_gate_and_the_region_test_take_the_exchanging_residues():
+    """Audit 2026-11-01 Analysis 64: an Ac- peptide's first residue has an amide and carries
+    its residue; a proline has none."""
+    import dataclasses
+
+    from hxex.analysis import (
+        Annotations,
+        PeptideComparison,
+        Region,
+        ResidueComparison,
+        compare_regions,
+        gated_by_peptides,
+    )
+
+    n = 3
+    rc = ResidueComparison(
+        sample=np.array(["V"] * n), time=np.full(n, 4.0), residue=np.array([1, 4, 5]),
+        value_reference=np.full(n, 0.3), value_reference_se=np.full(n, 0.01),
+        value=np.full(n, 0.5), value_se=np.full(n, 0.01), delta=np.full(n, 0.2),
+        delta_se=np.full(n, 0.01), z=np.full(n, 20.0), significant=np.ones(n, dtype=bool),
+        reference="R", delta_crit=0.1)
+    pc = PeptideComparison(
+        sample=np.array(["V"]), peptide=np.array(["Ac-AKLPGS"]), modification=np.array([""]),
+        start=np.array([1]), end=np.array([6]), time=np.array([4.0]),
+        value_reference=np.array([0.3]), value_reference_se=np.array([0.01]),
+        value=np.array([0.5]), value_se=np.array([0.01]), delta=np.array([0.2]),
+        delta_se=np.array([0.01]), t=np.array([5.0]), p=np.array([0.001]),
+        n_reference=np.array([3]), n=np.array([3]), significant=np.array([True]),
+        reference="R", delta_crit=0.1)
+    gated = gated_by_peptides(rc, pc, nterm_subtract=1)
+    assert list(gated.peptide_support) == [True, False, True]  # residue 4 is the proline
+    # residues 1-3 hold three of the five exchanging residues (1, 2, 3, 5, 6): supported
+    regions = compare_regions(gated, Annotations(regions=(Region("N", 1, 3),)), pc,
+                              nterm_subtract=1)
+    assert list(regions.peptide_support) == [True]
+    # Low 69: a modified peptide supports its sample's residues when the map combined it
+    phospho = dataclasses.replace(pc, peptide=np.array(["Ac-AKLPGpS"]))
+    apart = gated_by_peptides(rc, phospho, nterm_subtract=1)  # its own state, 'V pS6'
+    assert np.isnan(apart.peptide_support.astype(float)).all()
+    combined = gated_by_peptides(rc, phospho, nterm_subtract=1, modified="combined")
+    assert list(combined.peptide_support) == [True, False, True]
+    regions = compare_regions(combined, Annotations(regions=(Region("N", 1, 3),)), phospho,
+                              nterm_subtract=1, modified="combined")
+    assert list(regions.peptide_support) == [True]
+
+
 def test_residue_blocks_are_kept_and_outlined():
     """The block each residue lies in (the stretch between peptide boundaries: the resolution)
     is in the residue map, carried into the residue comparison from the shared peptides, and
@@ -2362,3 +2513,27 @@ def test_a_fasta_numbered_by_its_header_keeps_the_datas_residue_numbers(tmp_path
     check_sequence("VLA", 3, protein_letters(part, reg), reg)
     plain = AnalysisConfig(fasta="plain.fasta").sequences(tmp_path)
     assert type(plain) is str and protein_letters(plain, reg) == list("MKVLA")
+
+
+def test_a_k2_average_counts_the_spectra_it_averages(results, monkeypatch):
+    """Audit 2026-11-01 Analysis 36: a K = 1 row whose value comes from the K = 2 descriptions
+    (average_from_k2) counts the spectra that have one, not the K = 1 group's."""
+    from hxex.analysis import species as sp
+
+    original = sp.best_set
+
+    def two(cols, evidence, ks, min_population=0.05):  # every set reads two populations
+        out = original(cols, evidence, ks, min_population)
+        out["best_set_K"][:] = 2
+        return out
+
+    monkeypatch.setattr(sp, "best_set", two)
+    monkeypatch.setattr(sp, "K2_AVERAGE_SEPARATION", 0.0)
+    labelled = np.flatnonzero((np.asarray(results.fit.role) == "")
+                              & (np.asarray(results.fit.data_id) == 0))
+    reviewed = _review_k1_ids(results, [str(results.fit.spectrum_id[labelled[0]])])
+    up = species_uptake(reviewed, filters=SpeciesFilters(min_population=0.0))
+    rows = (up.role == "") & (up.time == 60.0)
+    assert up.average_from_k2[rows].all()
+    k1, k2 = rows & (up.K == 1), rows & (up.K == 2) & (up.rank == 1)
+    np.testing.assert_array_equal(up.n_spectra[k1], up.n_spectra[k2])

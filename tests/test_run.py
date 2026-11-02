@@ -725,3 +725,23 @@ def test_a_control_promoted_after_a_run_without_its_k1_fit_is_refused(tmp_path):
     with pytest.raises(ValueError, match="no K=1 fit.*k_min = 1"):
         analysis_controls(results, {"fulldeut_at": t, "fulldeut_marked": False})
     assert analysis_controls(results, {"d2o_fraction": 0.85}) is not None  # the marked ones
+
+
+def test_one_spectrum_without_a_reference_says_its_populations_cannot_be_judged(caplog):
+    """Audit 2026-11-01 (t02): a run of one spectrum without an undeuterated control gets one
+    plain line; several such spectra keep the general warning."""
+    from types import SimpleNamespace
+
+    from hxex.pipeline import _warn_own_reference
+
+    cfg = config(fit=FitConfig(noise=NoiseConfig("gaussian", percent=3.0, estimate=None)))
+    one = SimpleNamespace(data_id=np.array([0]), references=[None], role=np.array([""]))
+    with caplog.at_level("WARNING"):
+        _warn_own_reference(one, None, cfg)
+    assert "one spectrum and no undeuterated control" in caplog.text
+    caplog.clear()
+    two = SimpleNamespace(data_id=np.array([0, 0]), references=[None, None],
+                          role=np.array(["", ""]))
+    with caplog.at_level("WARNING"):
+        _warn_own_reference(two, None, cfg)
+    assert "no series has an undeuterated control" in caplog.text

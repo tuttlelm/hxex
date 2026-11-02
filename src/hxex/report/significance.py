@@ -27,6 +27,7 @@ uncovered ones white. Functions return figures and never show them.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -152,6 +153,10 @@ def _split(first: int, last: int, blocks) -> list[tuple[int, int]]:
     return list(zip(starts, ends, strict=True))
 
 
+LEGEND_COLUMNS = 3
+LEGEND_ROW = 0.19  # inches per row of the legend (7 pt text and its spacing)
+
+
 def _draw(sections, n: int, legend: list, title: str, block_outline: str | None = BLOCK_OUTLINE,
           columns: Sequence[str] | None = None) -> Figure:
     """The map: ``sections`` is a list of (heading or '', labels, first flags, rows, hatches,
@@ -185,7 +190,12 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
     cmap = ListedColormap(list(SIGNIFICANCE_COLOURS)).with_extremes(bad="white")
     width = (max(8.0, min(16.0, 0.06 * n + 3.0)) if columns is None
              else max(6.0, min(16.0, 0.32 * n + 3.0)))
-    fig = Figure(figsize=(width, 0.2 * edges[-1] + (1.9 if columns is None else 2.6)))
+    # the legend has a band of its own, sized in inches by its rows, so that it never meets
+    # the axis label and the tick labels however few rows the map has
+    legend_rows = math.ceil(len(legend) / LEGEND_COLUMNS)
+    legend_height = LEGEND_ROW * legend_rows + 0.15
+    height = 0.2 * edges[-1] + (1.3 if columns is None else 2.0) + legend_height
+    fig = Figure(figsize=(width, height))
     ax = fig.add_subplot()
     ax.pcolormesh(np.arange(n + 1) + 0.5, edges, image, cmap=cmap, vmin=-0.5,
                   vmax=len(SIGNIFICANCE_COLOURS) - 0.5, shading="flat")
@@ -240,10 +250,11 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
         ax.set_xlabel("region")
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    fig.legend(handles=legend, frameon=False, loc="lower center", ncol=3, fontsize=7,
+    fig.legend(handles=legend, frameon=False, loc="lower center", ncol=LEGEND_COLUMNS,
+               fontsize=7, bbox_to_anchor=(0.5, 0.05 / height),
                handler_map={_TriangleHandle: _TriangleHandler()})
     fig.suptitle(title, fontsize=8, x=0.01, ha="left")
-    fig.tight_layout(rect=(0, 0.1, 1, 0.97))
+    fig.tight_layout(rect=(0, legend_height / height, 1, 1 - 0.25 / height))
     return fig
 
 
