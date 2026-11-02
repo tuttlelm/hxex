@@ -679,6 +679,112 @@ def _fit_chosen(config: RunConfig, data: Measurements, fit: FitResult,
     return dataclasses.replace(fit, fits=fits, score=score)
 
 
+def _criterion_K(fit: FitResult) -> np.ndarray:
+    """Each measurement's K by the fit's criterion (as :func:`hxex.fit.fit_models` chose it),
+    whatever a population test made of it since."""
+    chosen = [fit.k_values.index(k) for k in fit.config.k_values]
+    return np.asarray(fit.config.k_values)[np.argmin(fit.score[:, chosen], axis=1)]
+
+
+def _test_screened(data: Measurements, fit: FitResult, chosen: Mapping[str, int],
+                   cancel) -> FitResult:
+    """``fit`` as a run with the population test would have made it: a fit made with the
+    criterion's screen (``[run.fit] screen``) skipped K + 1 fits the test's screen makes, and
+    made some it skips (:func:`hxex.fit.screen.can_exceed`). The series where the two differ
+    (with the K chosen in a review table, ``chosen``, fitted whatever the screen says) are
+    fitted again with the test's screen, whole (each measurement is seeded from its own id);
+    every other fit stays as it was."""
+    from .fit.models import screen_floor
+    from .fit.screen import can_exceed
+
+    if not fit.config.screen:
+        return fit
+    index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+    required = np.zeros(len(fit), dtype=np.int64)
+    for sid, k in chosen.items():
+        if (i := index.get(str(sid))) is not None and k:
+            required[i] = int(k)
+    floor = screen_floor(data, fit.config, noise_curve=fit.noise_curve)
+    differ = np.zeros(len(fit), dtype=bool)
+    for k in sorted(fit.k_values):
+        if k < 2:
+            continue
+        passed = can_exceed(fit.fits[k - 1].nll, floor) | (required >= k)
+        differ |= passed != fit.fitted(k)
+    if not differ.any():
+        return fit
+    rows = np.flatnonzero(np.isin(fit.data_id, np.unique(fit.data_id[differ])))
+    log.info("population test: the fits were made with the criterion's screen; %d series whose "
+             "fits the test's screen makes differently are fitted again with it",
+             len(np.unique(fit.data_id[rows])))
+    refit = fit_models(data.select(rows), fit.config, test_screen=True, cancel=cancel,
+                       noise_curve=fit.noise_curve,
+                       required_k=required[rows] if required.any() else None)
+    others = np.setdiff1d(np.arange(len(fit)), rows)
+    if not len(others):
+        return refit
+    return FitResult.merge([fit.select(others), refit], [others, rows])
+
+
+def _test_part(data: Measurements, config: RunConfig, fit: FitResult, progress, cancel,
+               progress_range: tuple[float, float]) -> tuple[FitResult, PopulationTest]:
+    """The population test of ``fit`` (made from ``data`` as a run with the test makes it),
+    in the run's chunks: ``(fit with the test's K selected, test)``."""
+    plan = _plan(data, config, progress_range)
+    fit = dataclasses.replace(fit, selected_K=_criterion_K(fit))
+    start_stage(progress, "population test", plan.lo, plan.hi)
+    tests = []
+    for j, (rows, sub) in enumerate(zip(plan.chunks, plan.subs, strict=True)):
+        check_cancel(cancel)
+        span = _Span(progress, plan.lo + (plan.hi - plan.lo) * plan.edges[j],
+                     plan.lo + (plan.hi - plan.lo) * plan.edges[j + 1])
+        tests.append(population_test(sub, fit.select(rows), config.population_test,
+                                     d2o_fraction=_d2o_fraction(config), test_screen=True,
+                                     progress=span, cancel=cancel))
+    test = tests[0] if len(tests) == 1 else PopulationTest.merge(tests, plan.chunks)
+    return dataclasses.replace(fit, selected_K=test.selected_K.copy()), test
+
+
+def _patched_bootstrap(config: RunConfig, data: Measurements, fit: FitResult,
+                       boot: BootstrapResult | None,
+                       by_k: Mapping[int, BootstrapResult] | None, cancel
+                       ) -> BootstrapResult | None:
+    """``boot`` (a bootstrap at each measurement's selected K) brought to the K of ``fit``:
+    the measurements whose K changed take the fixed-K bootstrap at their new K where ``by_k``
+    has one, else a bootstrap of their own at it (each measurement is seeded from its own id,
+    so the values are those a run with this K gives); the others keep theirs."""
+    if boot is None:
+        return None
+    changed = boot.selected_K != fit.selected_K
+    if not changed.any():
+        return boot
+    keep = np.flatnonzero(~changed)
+    parts, where = [boot.select(keep)], [keep]
+    made = 0
+    for k in sorted(set(int(k) for k in fit.selected_K[changed])):
+        rows = np.flatnonzero(changed & (fit.selected_K == k))
+        held = (by_k or {}).get(k)
+        if held is not None and held.config == boot.config:
+            covered = np.array([held.covers(int(i)) for i in rows], dtype=bool)
+        else:
+            covered = np.zeros(len(rows), dtype=bool)
+        if covered.any():
+            parts.append(held.select(rows[covered]))
+            where.append(rows[covered])
+        rest = rows[~covered]
+        if len(rest):
+            check_cancel(cancel)
+            parts.append(bootstrap_by_k(data.select(rest, drop_references=True),
+                                        fit.select(rest), [k], config.bootstrap,
+                                        cancel=cancel)[k])
+            where.append(rest)
+            made += len(rest)
+    log.info("bootstrap: %d spectra changed K with the population test; %d took the fixed-K "
+             "bootstrap at their new K, %d were bootstrapped at it", int(changed.sum()),
+             int(changed.sum()) - made, made)
+    return BootstrapResult.merge(parts, where)
+
+
 def _review_choices(review) -> dict[str, int]:
     """The K a (carried-over or stored) review layer chooses, by spectrum (current entries)."""
     if review is None:
@@ -1109,6 +1215,32 @@ def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, progr
     return result
 
 
+def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: BinnedSet,
+                kept: np.ndarray, envelopes: EnvelopeTable | None, source) -> QualityFlags:
+    """The quality flags of ``fit`` from what a bundle stores, as :func:`run` assesses them."""
+    from .io.retention_search import moved_series
+
+    return assess_quality(
+        data, fit, config.quality,
+        mz_offset_ppm=None if binned.mz_offset_ppm is None else binned.mz_offset_ppm[kept],
+        poor_envelope_series=None if envelopes is None else envelopes.data_id[envelopes.poor],
+        envelope_offset_ppm=binned.envelope_offset_ppm[kept],
+        envelope_offset_limit_ppm=binned.envelope_offset_limit_ppm[kept],
+        rt_found_series=moved_series((source or {}).get("retention_search")))
+
+
+def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict:
+    """``provenance`` (a manifest's block, or None) with a resume that added ``added`` listed
+    under ``resumed``: when, and whether the project file's record was replaced."""
+    from datetime import UTC, datetime
+
+    out = dict(provenance or {})
+    out["resumed"] = [*out.get("resumed", ()), {
+        "at": datetime.now(UTC).isoformat(timespec="seconds"), "added": added,
+        "project_file_replaced": project_file}]
+    return out
+
+
 class NothingToResume(ValueError):
     """A complete bundle with every chosen K bootstrapped: :func:`resume_bootstrap` has nothing
     to add."""
@@ -1122,6 +1254,8 @@ def resume_bootstrap(
     add: bool = False,
     view_exclude: Sequence = (),
     chosen_k: Mapping[str, int] | None = None,
+    population_test: PopulationTestConfig | None = None,
+    project_file: Mapping | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -1144,7 +1278,19 @@ def resume_bootstrap(
     review) are bootstrapped at that K where they have no bootstrap there (:func:`run` does
     the same); a K a review table chose that the run's screen skipped for its spectrum is
     fitted first (as a run with the table fits it). A complete bundle with nothing to add is
-    refused (ValueError)."""
+    refused (ValueError).
+
+    With ``population_test`` (its settings) the bundle takes the population test: added, or
+    made again with these settings where it has one. The reading, the picking and the fits are
+    kept (a fit made with the criterion's screen has the series where the test's screen fits
+    differently fitted again with it), each spectrum's K becomes the test's, the quality flags
+    are assessed again, and the spectra whose K changed take the bootstrap at their new K (from
+    the fixed-K bootstrap where there is one); the result is the one a run with the test gives.
+    The null draws the noise the bundle was fitted with. The bundle's fits must carry the test
+    (``k_min`` 1, ``k_max`` at least 2, the Gaussian noise model), else ValueError: run again.
+    The manifest's provenance records the resume (``resumed``), and ``project_file``
+    (:func:`hxex.config.project_record`), when given, replaces the bundle's record of the
+    project file (its ``run_settings_used.toml``)."""
     from .io.bundle import open_bundle
 
     path = Path(path)
@@ -1154,11 +1300,13 @@ def resume_bootstrap(
                                chosen_k)
         held = None if redo else {k: b.bootstrap(k) for k in b.bootstrap_ks()}
         unfitted = _unfitted_choices(b.fit(), merge_choices(chosen_k)).any()
-        if not redo and not unfitted and (b.bootstrap() is None
-                                          or not _missing_choices(b.fit(), held, chosen)):
+        testing = population_test is not None
+        if not redo and not unfitted and not testing and (
+                b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)):
             raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
                              "every K chosen in the review has one; to add or redo the "
-                             "bootstrap, give the project file with its [run.bootstrap] "
+                             "bootstrap or the population test, give the project file with "
+                             "its [run.bootstrap] or [run.population_test] "
                              "(hxex resume hxex.toml)")
         if add and bootstrap is None:
             raise ValueError("adding a bootstrap needs its settings (bootstrap=)")
@@ -1171,6 +1319,12 @@ def resume_bootstrap(
         config = RunConfig.from_dict(b.manifest["configs"]["run"])
         if bootstrap is not None:
             config = dataclasses.replace(config, bootstrap=bootstrap)
+        if testing:
+            try:
+                config = dataclasses.replace(config, population_test=population_test)
+            except ValueError as err:
+                raise ValueError(f"{path}: the bundle's fits cannot carry the population test "
+                                 f"({err}): run again with the test") from None
         if config.bootstrap is None and (redo or b.bootstrap() is not None):
             raise ValueError("the run had no bootstrap settings: give bootstrap=")
         measurements, fit, binned = b.measurements(), b.fit(), b.binned()
@@ -1188,28 +1342,45 @@ def resume_bootstrap(
         provenance = b.manifest.get("provenance")
         excluded = b.manifest.get("excluded")
         peak_measure = b.peak_measure()
-        project_file = b.manifest["configs"].get("project_file")
+        project_record = b.manifest["configs"].get("project_file")
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
+    if testing:
+        log.info("%s: %s the population test (%d simulations per spectrum and step); the "
+                 "reading, the picking and the fits are kept", path,
+                 "making again" if test is not None else "adding", population_test.simulations)
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = _drop_reasons(binned, kept)
     refitted = _fit_chosen(config, measurements, fit, merge_choices(chosen_k), cancel)
     if refitted is not fit and review is not None:
         review = review.mark_stale(refitted)  # a chosen K now fitted is current again
     fit = refitted
+    tested = 0.0
+    if testing:
+        tested = float(UNITS - _FINISH) * (0.6 if redo else 1.0)
+        fit = _test_screened(measurements, fit, merge_choices(chosen_k), cancel)
+        fit, test = _test_part(measurements, config, fit, progress, cancel, (0.0, tested))
+        if config.quality is not None:
+            quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source)
+        if review is not None:
+            review = review.mark_stale(fit)
+        provenance = _resumed(provenance, "population test", project_file is not None)
+        if project_file is not None:
+            project_record = dict(project_file)
     if redo:
-        plan = dataclasses.replace(_plan(measurements, config, (0.0, float(UNITS - _FINISH))),
-                                   fit_share=0.0)
+        plan = dataclasses.replace(
+            _plan(measurements, config, (tested, float(UNITS - _FINISH))), fit_share=0.0)
         boot, by_k = _bootstrap_part(config, plan, [fit.select(rows) for rows in plan.chunks],
                                      progress, cancel)
     else:
-        boot, by_k = stored_boot, held or None
+        boot = _patched_bootstrap(config, measurements, fit, stored_boot, held, cancel)
+        by_k = held or None
     by_k = _chosen_part(config, measurements, fit, by_k, chosen, progress, cancel)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=boot, bootstrap_by_k=by_k,
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
-        excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_file,
+        excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_record,
         population_test=test, peak_measure=peak_measure,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,

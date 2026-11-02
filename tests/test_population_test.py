@@ -495,3 +495,71 @@ def test_spectra_above_full_deuteration_leave_the_test(tested_run):
     summary = left_out_summary(forced, low, population_test=True)
     row = [i for i, w in enumerate(summary["what"]) if w.startswith("held out of the test")]
     assert len(row) == 1 and summary["count"][row[0]] > 0
+
+
+def _same_arrays(a, b, names=None):
+    """Every array field of two results (or those ``names``) equal, NaN where NaN (numbers to
+    rounding: a bootstrap of a few spectra adds up in another order than one of the chunk)."""
+    for name in names or [f.name for f in dataclasses.fields(a)]:
+        x, y = getattr(a, name), getattr(b, name)
+        if isinstance(x, np.ndarray) and x.dtype.kind == "f":
+            np.testing.assert_allclose(x, y, rtol=1e-9, atol=0, equal_nan=True, err_msg=name)
+        elif isinstance(x, np.ndarray):
+            np.testing.assert_array_equal(x, y, err_msg=name)
+
+
+# a permissive test, so that the test's K differs from the criterion's (and the bootstrap of
+# the spectra whose K changed is patched)
+LOOSE = PopulationTestConfig(simulations=4, significance=0.99, min_population=0.0)
+
+
+@pytest.mark.parametrize("screen", [False, True])
+def test_resume_adds_the_test_as_a_run_with_it_would(tmp_path, screen):
+    """hxex resume with [run.population_test] keeps the bundle's fits and gives the test, the
+    K, the quality flags and the bootstrap of a run with the test: from the fixed-K bootstrap
+    where there is one, else a bootstrap of the spectra whose K changed. A fit made with the
+    criterion's screen has the series the test's screen fits differently fitted again."""
+    from test_run import config, raw_spectra
+
+    raw = raw_spectra(n_series=2)
+    base = config()
+    base = dataclasses.replace(
+        base, fit=dataclasses.replace(base.fit, screen=screen),
+        bootstrap=dataclasses.replace(base.bootstrap, ks="selected" if screen else (1, 2)))
+    plain = run(raw, base, out=tmp_path / "b")
+    fresh = run(raw, dataclasses.replace(base, population_test=LOOSE))
+    assert (fresh.fit.selected_K != plain.fit.selected_K).any()
+    res = resume_bootstrap(tmp_path / "b", population_test=LOOSE, project_file={"project": "p"})
+    np.testing.assert_array_equal(res.fit.selected_K, fresh.fit.selected_K)
+    _same_arrays(res.population_test, fresh.population_test)
+    _same_arrays(res.bootstrap, fresh.bootstrap)
+    _same_arrays(res.quality, fresh.quality)
+    for k in fresh.fit.k_values:
+        _same_arrays(res.fit.fits[k], fresh.fit.fits[k])
+    with open_bundle(tmp_path / "b") as b:
+        np.testing.assert_array_equal(b.population_test().selected_K, fresh.fit.selected_K)
+        assert b.manifest["configs"]["run"]["population_test"] == LOOSE.to_dict()
+        assert b.manifest["configs"]["project_file"] == {"project": "p"}
+        [entry] = b.manifest["provenance"]["resumed"]
+        assert entry["added"] == "population test" and entry["project_file_replaced"]
+    if screen:
+        return
+    # a test with other settings is made again, as a run with them makes it
+    other = PopulationTestConfig(simulations=4)
+    again = resume_bootstrap(tmp_path / "b", population_test=other)
+    fresh = run(raw, dataclasses.replace(base, population_test=other))
+    np.testing.assert_array_equal(again.fit.selected_K, fresh.fit.selected_K)
+    _same_arrays(again.population_test, fresh.population_test)
+    _same_arrays(again.bootstrap, fresh.bootstrap)
+    with open_bundle(tmp_path / "b") as b:
+        assert len(b.manifest["provenance"]["resumed"]) == 2
+
+
+def test_resume_refuses_the_test_for_fits_that_cannot_carry_it(tmp_path):
+    from test_run import config, raw_spectra
+
+    base = config(bootstrap=None)
+    run(raw_spectra(n_series=1), dataclasses.replace(
+        base, fit=dataclasses.replace(base.fit, k_max=1)), out=tmp_path / "b")
+    with pytest.raises(ValueError, match="cannot carry the population test.*k_max.*run again"):
+        resume_bootstrap(tmp_path / "b", population_test=TEST)

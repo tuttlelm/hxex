@@ -59,13 +59,13 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 
 ## hxex resume
 
-Complete a bundle's bootstrap: finish a stopped one, add or redo one, or bootstrap the review's chosen k.
+Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen k), or add the population test.
 
 `hxex resume BUNDLE|PROJECT [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed) and one at the K its [review] table chooses where that is missing; the fits kept |
+| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed); the fits kept |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | also write the tables (default: beside the bundle) |

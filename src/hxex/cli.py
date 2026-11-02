@@ -81,13 +81,16 @@ def build_parser() -> argparse.ArgumentParser:
     _spectra_option(p)
     _threads_option(p)
 
-    p = sub.add_parser("resume", help="complete a bundle's bootstrap: finish a stopped one, add "
-                                      "or redo one, or bootstrap the review's chosen K")
+    p = sub.add_parser("resume", help="complete a bundle's bootstrap (finish a stopped one, add "
+                                      "or redo one, or bootstrap the review's chosen K), or add "
+                                      "the population test")
     p.add_argument("bundle", metavar="BUNDLE|PROJECT",
                    help="a results bundle (a folder, or .zip) waiting for its bootstrap, or a "
                         "project file: its [output] bundle gets a bootstrap with its "
-                        "[run.bootstrap] settings (redone only if they changed) and one at the "
-                        "K its [review] table chooses where that is missing; the fits kept")
+                        "[run.bootstrap] settings (redone only if they changed), one at the "
+                        "K its [review] table chooses where that is missing, and the population "
+                        "test with its [run.population_test] settings (made again only if they "
+                        "changed); the fits kept")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -740,8 +743,11 @@ def cmd_resume(args) -> int:
     bundle, extra = Path(args.bundle), {}
     tables_arg, threads = args.tables, args.threads
     review = project = None
-    if bundle.suffix == ".toml" and bundle.is_file():  # a project file: add or redo a bootstrap
-        from .config import check_table_choices, load_project
+    # a project file: add or redo a bootstrap or the population test
+    if bundle.suffix == ".toml" and bundle.is_file():
+        import dataclasses
+
+        from .config import check_table_choices, load_project, project_record
         from .review_table import table_choices
 
         project = load_project(bundle, analysis_only=True)
@@ -750,11 +756,18 @@ def cmd_resume(args) -> int:
             return EXIT_ERROR
         chosen = table_choices(project.review)
         check_table_choices(chosen, project.run.fit.k_values)
-        if project.run.bootstrap is None and not chosen:
-            log.error("%s has no [run.bootstrap] table: add one with the bootstrap's settings",
-                      bundle)
+        if project.run.bootstrap is None and project.run.population_test is None and not chosen:
+            log.error("%s has no [run.bootstrap] or [run.population_test] table: add one with "
+                      "its settings", bundle)
             return EXIT_ERROR
         bundle, review = project.output.bundle, project.review
+        threads = threads if threads is not None else project.threads
+        test = _test_to_resume(project, bundle)
+        if isinstance(test, int):
+            return test
+        if test is not None:
+            extra.update(population_test=test, project_file=project_record(
+                dataclasses.replace(project, threads=threads)))
         held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
         # the bootstrap there is kept when it has the project's settings: only what the
         # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
@@ -772,11 +785,10 @@ def cmd_resume(args) -> int:
         # without [run.bootstrap] (a review table's K to fit) the bundle's bootstrap is kept
         redo = (project.run.bootstrap is not None
                 and held != json.loads(json.dumps(project.run.bootstrap.to_dict())))
-        extra = {"bootstrap": project.run.bootstrap, "add": redo,
-                 "view_exclude": _view_exclude(project), "chosen_k": chosen}
+        extra.update(bootstrap=project.run.bootstrap, add=redo,
+                     view_exclude=_view_exclude(project), chosen_k=chosen)
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
-        threads = threads if threads is not None else project.threads
     from .io import holds_output, made_from, prepare_output
 
     tables = _beside(bundle, tables_arg, "_tables")
@@ -798,8 +810,8 @@ def cmd_resume(args) -> int:
         except NothingToResume:
             if not extra:  # the bundle alone: say how to add or redo a bootstrap
                 raise
-            _say(f"{bundle}: the bootstrap has the project's settings and every K chosen in "
-                 "the review has a bootstrap: nothing to add")
+            _say(f"{bundle}: the bootstrap and the population test have the project's "
+                 "settings and every K chosen in the review has a bootstrap: nothing to add")
             return 0
     if others:
         prepare_output(tables, what="tables of other results", **flags)
@@ -813,6 +825,46 @@ def cmd_resume(args) -> int:
     _summary(result.fit, bundle)
     _warn_stale_outputs(Path(bundle), args.bundle)
     return 0
+
+
+def _test_to_resume(project, bundle):
+    """The population test settings ``hxex resume`` gives the bundle of ``project``: the
+    project's ``[run.population_test]`` when the bundle has no test or one with other settings
+    (None: nothing to do), or an exit code when the bundle cannot take it (its fits differ from
+    the project's ``[run.fit]``: run again). The other ``[run]`` settings that differ from the
+    bundle's are named in the log, and are not applied."""
+    from .io.bundle import bundle_manifest, settings_changed
+    from .run import RunConfig
+
+    stored = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("run")
+    if stored is None:
+        return None  # resume itself refuses a bundle without its run settings
+    normal = lambda c: json.loads(json.dumps(c.to_dict()))  # noqa: E731 - as the manifest
+    held = normal(RunConfig.from_dict(stored))  # a key added since takes its default
+    wanted = normal(project.run)
+    changed = [c for c in settings_changed({"run": held}, {"run": wanted})
+               if c != "fit.backend.device"]
+    test = project.run.population_test
+    if test is None:
+        if held.get("population_test") is not None:
+            log.info("%s: the project has no [run.population_test]; the bundle's population test "
+                     "stays", bundle)
+    elif held.get("population_test") == wanted["population_test"]:
+        test = None
+    else:
+        fits = [c for c in changed if c.startswith("fit.")]
+        if fits:
+            log.error("%s: the bundle's fits were made with other [run.fit] settings (%s): the "
+                      "population test is made from the bundle's fits; run again with "
+                      "'hxex run --overwrite' (or --keep-previous) for the project's", bundle,
+                      ", ".join(fits))
+            return EXIT_ERROR
+    other = [c for c in changed if not c.startswith(("bootstrap", "population_test"))]
+    if other:
+        log.info("%s: %d [run] setting(s) differ from the bundle's and are not applied by "
+                 "resume (they need 'hxex run'): %s", bundle, len(other),
+                 ", ".join(other[:8]) + (", ..." if len(other) > 8 else ""))
+    return test
 
 
 def cmd_report(args) -> int:
@@ -1089,18 +1141,25 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
     """The ``hxex info`` lines of a manifest's provenance block (none without one)."""
     if not prov:
         return []
-    created = prov.get("replaced_created")
-    where = prov.get("moved_to")
-    rows = [("replaced", f"{prov.get('replaced')} (created {created or 'unknown'}) on "
-                         f"{prov.get('at', '')}" + (f", kept as {where}" if where else ""))]
-    changed = prov.get("settings_changed") or []
-    rows.append(("changed", "nothing" if not changed else
-                 f"{len(changed)} setting(s): " + ", ".join(changed[:8])
-                 + (", ..." if len(changed) > 8 else "")))
-    review = prov.get("review") or {}
-    if review.get("carried"):
-        rows.append(("carried", f"{review['carried']} review entries, "
-                                f"{review.get('stale', 0)} stale"))
+    rows = []
+    if prov.get("replaced"):
+        created = prov.get("replaced_created")
+        where = prov.get("moved_to")
+        rows.append(("replaced", f"{prov.get('replaced')} (created {created or 'unknown'}) on "
+                                 f"{prov.get('at', '')}" + (f", kept as {where}" if where else "")))
+        changed = prov.get("settings_changed") or []
+        rows.append(("changed", "nothing" if not changed else
+                     f"{len(changed)} setting(s): " + ", ".join(changed[:8])
+                     + (", ..." if len(changed) > 8 else "")))
+        review = prov.get("review") or {}
+        if review.get("carried"):
+            rows.append(("carried", f"{review['carried']} review entries, "
+                                    f"{review.get('stale', 0)} stale"))
+    for entry in prov.get("resumed") or ():
+        rows.append(("resumed", f"{entry.get('added')} added by hxex resume on "
+                                f"{entry.get('at', '')}"
+                     + (", with the project file's settings" if entry.get("project_file_replaced")
+                        else "")))
     return rows
 
 

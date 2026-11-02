@@ -5791,3 +5791,40 @@ CSVs or mzML if wanted.
     mixed (two datasets' undeuterated controls and the known-answer set's fully deuterated ones
     split more often); not checked on Orbitrap data beyond one dataset, where it split more often.
     Not checked: why about half the residue-times have no error without a bootstrap.
+
+214. **`hxex resume` adds the population test to a finished bundle (owner, 2026-11-01; the
+    seven decisions confirmed as proposed).** `hxex resume hxex.toml` with a
+    `[run.population_test]` the bundle lacks, or one with other settings (compared as the
+    manifest stores them, defaults filled), makes the test from the bundle's own fits; the
+    reading, the picking, the fits and the review are kept, and the result is the one a run
+    with the test gives (`resume_bootstrap(..., population_test=)`). Steps: a fit made with
+    the criterion's screen (`[run.fit] screen = true`, no test) has the series where the test's
+    screen fits differently (`can_exceed` from the loss floor, `hxex.fit.models.screen_floor`,
+    with review-chosen K fitted whatever the screen) fitted again whole with the test's screen;
+    each spectrum's criterion K is recomputed from the stored scores (a bundle's earlier test
+    had replaced it); the test runs in the run's chunks; the quality flags are assessed again
+    from what the bundle stores; the spectra whose K changed take the fixed-K bootstrap at their
+    new K where the bundle has one, else a bootstrap of their own at it (seeded per spectrum, so
+    the same values); review entries are marked stale again. The null draws the noise the
+    bundle was fitted with (`fit.noise_curve`, or one sd per spectrum), so a constant-noise
+    bundle stays consistent with itself. Decisions: (1) project `[run.fit]` settings other than
+    the bundle's (device aside) are refused with "run again" (`hxex resume` names them); fits
+    that cannot carry the test (k_min, k_max 1, Poisson) are refused by `resume_bootstrap`;
+    (2) the criterion's screen: refit only the series whose fits differ (above); (3) a test with
+    other settings is made again whole; (4) bootstrap patched only for the spectra whose K
+    changed, nothing for a bundle without a bootstrap; (5) other differing `[run]` settings are
+    named in one log line and not applied; (6) the bundle's record of the project file
+    (`configs.project_file`, hence `run_settings_used.toml`'s `[input]` and `[output]`) is
+    replaced by the project file's, the `[run]` tables stay the bundle's with the test, and the
+    manifest's provenance gains `resumed` (`at`, `added`, `project_file_replaced`; `hxex info`
+    shows a "resumed" line); (7) a project without `[run.population_test]` leaves a bundle's
+    test in place (logged). Tests: synthetic run without the test + resume = run with the test
+    (fits, test, K, quality, bootstrap, to 1e-9 relative: a bootstrap of a few spectra adds up
+    in another order than the chunk's), with the criterion's screen and a selected-K bootstrap
+    (2 of 16 spectra bootstrapped at their new K) and without the screen with `ks = [1, 2]` (10
+    taken from the fixed-K bootstrap); a test with other settings made again; the CLI path.
+    Tutorial data (k_max 3, ks [1, 2], per-bin noise, GPU; private population_test/
+    resume_check): a run without the test plus the resume gives a bundle identical to a run
+    with the test (3,874 spectra: K, test, fits, bootstrap errors and quality flags bit-equal;
+    260 spectra changed K, all taken from the fixed-K bootstrap). Times: run with the test
+    1,383 s; run without it 406 s, then the resume 968 s.

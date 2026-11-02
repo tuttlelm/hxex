@@ -718,8 +718,8 @@ Planned, not built:
    of populations for each spectrum, each peptide set and each residue: opt-in
    `[run.population_test]` (simulated null per spectrum), the width check, the peptide-wide
    undeuterated cap, `[analysis] populations = "population_test"`, residue tiers up to three and their
-   figure. Open: `hxex resume` adding the test to an existing bundle; stuck K = 1 refits in the
-   null; fragment series.
+   figure; `hxex resume` adds the test to an existing bundle (HISTORY 214). Open: fragment
+   series.
 13. **Per-bin noise from the controls** (owner, 2026-10-28; HISTORY 187-191; the default since
    2026-10-31, HISTORY 213; `estimate = false` for one sd per spectrum).
    `[run.fit.noise] estimate = "controls"`: each bin's variance `z b1 I + (m I)^2`, the counting

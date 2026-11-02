@@ -8,6 +8,7 @@ import logging
 import shutil
 import tomllib
 
+import numpy as np
 import pytest
 
 from hxex import cli
@@ -1050,6 +1051,59 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     # the bundle's settings file follows: the new bootstrap, the project file's input kept
     used = load_project(tmp_path / "out" / "run_settings_used.toml")
     assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input
+
+
+def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys):
+    """hxex resume PROJECT adds the project's [run.population_test] to a bundle without one (or
+    makes it again with other settings), keeping its fits; the bundle's settings file and
+    hxex info follow. Other [run.fit] settings are refused (the test is made from the bundle's
+    fits), other [run] settings are named in the log and not applied, and a project without
+    the table leaves the bundle's test in place."""
+    path = mzml_project(tmp_path)
+    plain = path.read_text().replace("k_max = 1", "k_max = 2")
+    path.write_text(plain)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test() is None
+        ids, nll = list(b.fit().spectrum_id), b.fit().fits[2].nll
+    test = "\n[run.population_test]\nsimulations = 2\n"
+    path.write_text(plain + test)
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test() is not None
+        assert b.manifest["configs"]["run"]["population_test"]["simulations"] == 2
+        assert list(b.fit().spectrum_id) == ids
+        np.testing.assert_array_equal(b.fit().fits[2].nll, nll)  # the fits are kept
+        np.testing.assert_array_equal(b.fit().selected_K, b.population_test().selected_K)
+    assert load_project(tmp_path / "out" / "run_settings_used.toml").run.population_test \
+        is not None
+    assert (tmp_path / "out_tables" / "spectra.csv").is_file()
+    capsys.readouterr()
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    assert "population test added by hxex resume" in capsys.readouterr().out
+    assert cli.main(["resume", str(path)]) == 0  # the same settings: nothing to add
+    assert "nothing to add" in capsys.readouterr().out
+    path.write_text(plain + test.replace("= 2", "= 3"))  # other settings: made again
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test().config.simulations == 3
+    # other [run.fit] settings are refused; other [run] settings are logged, not applied
+    path.write_text(plain.replace("k_max = 2", "k_max = 3") + test)
+    assert cli.main(["resume", str(path)]) == 1
+    assert "fit.k_max" in capsys.readouterr().err
+    path.write_text(plain.replace("zero_filling = 3", "zero_filling = 4") + test)
+    assert cli.main(["resume", str(path)]) == 0
+    err = capsys.readouterr().err
+    assert "picker.zero_filling" in err and "not applied" in err
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test().config.simulations == 2
+        assert b.manifest["configs"]["run"]["picker"]["zero_filling"] == 3
+    # a project without [run.population_test]: the bundle's test stays
+    path.write_text(plain.replace("n_boot = 3", "n_boot = 4"))
+    assert cli.main(["resume", str(path)]) == 0
+    assert "the bundle's population test stays" in capsys.readouterr().err
+    with open_bundle(tmp_path / "out") as b:
+        assert b.population_test() is not None
 
 
 def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path, capsys):

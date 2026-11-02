@@ -95,7 +95,10 @@ and version), `at`, `moved_to` (the generation it was moved to with `keep_previo
 null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
 and `spectra_source` when other files were read or read differently) and `review`
 (`carried`, `stale`: the review entries carried over and how many are stale);
-`hxex.io.provenance_of` builds it, and a resumed bundle keeps it), `peak_measure` (whether the
+`hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
+`hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`)
+and `project_file_replaced` (whether the record of the project file, `configs.project_file`,
+was replaced by the one resume was given)), `peak_measure` (whether the
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
 from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power in m/z),
 `width_ratio`, `n_controls`, `n_weak`, `area_fwhm`, `area_scale` and `reason`; absent in bundles

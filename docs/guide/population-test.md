@@ -127,6 +127,30 @@ Then `hxex run hxex.toml`. With the test in the results, `hxex analyse` uses it 
 A single spectrum has less evidence than all the spectra of its peptide together, so spectra
 stay at one population more often than their peptides.
 
+**Adding the test to finished results.** Results made without the test do not need a new
+run: add the `[run.population_test]` table to the project file and type
+`hxex resume hxex.toml`. *hxex* keeps the spectra, the picking, and the fits, runs the test,
+and gives each spectrum the test's number of populations. The spectra whose number changed
+get their error bars at the new number (taken from the bootstrap at fixed numbers,
+`ks = [1, 2]`, when the results have one). The results are then the same as those of a new
+run with the test. The test uses the results' own noise model, so results fitted with an
+earlier *hxex* stay consistent with themselves. Run `hxex resume hxex.toml` again after
+changing the test's settings, and the test is made again with them.
+
+Three things need a new run (`hxex run hxex.toml --overwrite`) instead:
+
+- results fitted with `[run.fit]` settings other than the project file's (for example a
+  smaller `k_max`): the test is made from the fits, so they must be the ones you want;
+- results fitted with `k_max = 1`: there is no two-population fit to test;
+- results fitted with `model = "poisson"` in `[run.fit.noise]`.
+
+Other `[run]` settings that differ from those of the results, such as the picking, are listed
+in the log and are not applied: `resume` never picks or reads the spectra again. A project
+file without `[run.population_test]` leaves a test already in the results in place.
+`hxex info` shows when the test was added. The results' `run_settings_used.toml` then holds
+the project file's `[input]` and `[output]` settings, with the `[run]` settings the results
+were made with, the test included.
+
 **How long it takes.** The simulations take ten to twenty times as long as the fits. On the
 [tutorial](tutorial.md)'s 3,874 spectra, on a workstation's CPU: the fits 1.2 minutes, the
 test of one against two populations 13 minutes, and of two against three another 22 minutes

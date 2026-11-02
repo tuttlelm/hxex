@@ -11,6 +11,7 @@ from ..hooks import CancelHook, ProgressHook, report
 from ..model import aic, bic
 from ..noise import (
     ControlsNoise,
+    NoiseEstimate,
     bin_variances,
     controls_noise,
     estimate_noise,
@@ -20,7 +21,7 @@ from ..noise import (
 from .config import FitConfig
 from .init import split_start
 from .measurements import Measurements
-from .optimise import FitError, fit_batch, prepare
+from .optimise import FitError, Prepared, fit_batch, prepare
 from .result import FitResult, KFit
 from .screen import can_exceed, can_win, loss_floor
 
@@ -76,56 +77,7 @@ def fit_models(
     """
     backend = config.backend
     m = len(data)
-    scale = noise_scale(data.observed, config.noise, data.references)
-    kinds = [config.noise.model] * m
-    estimate = None
-    curve = None
-    bin_var = bin_variance
-    if bin_var is None and config.noise.estimate == "controls":
-        curve = noise_curve
-        if curve is None:
-            curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
-                                   data.charges(), data.data_id,
-                                   model_error=config.noise.model_error / 100.0)
-        if curve is None:
-            log.warning("per-bin noise: too few undeuterated controls to measure the noise from "
-                        "(at least 5 series are needed); one sd per spectrum is used instead")
-        else:
-            bin_var = bin_variances(data.observed, data.charges(), curve)
-            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of I)^2, from %d "
-                     "undeuterated controls of %d series", curve.b1, 100 * curve.model_error,
-                     curve.n_controls, curve.n_series)
-    elif config.noise.estimate == "replicates":
-        # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
-        # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the
-        # expected sum of squared residuals is the estimated one); the others keep the noise
-        # settings above. The Poisson loss is never chosen here (docs/HISTORY.md item 57).
-        estimate = estimate_noise(
-            data.bins, data.observed, data.data_id, data.time, config.noise, role=data.role
-        )
-        mean_intensity = np.array([float(np.mean(o)) for o in data.observed])
-        sd = np.sqrt(estimate.gain * mean_intensity)
-        usable = estimate.estimated & np.isfinite(sd) & (sd > 0)
-        scale = np.where(usable, sd, scale)
-        n_series = len(np.unique(data.data_id))
-        n_est = len(np.unique(data.data_id[estimate.estimated]))
-        log.info("noise estimated from replicates for %d of %d series", n_est, n_series)
-        if estimate.outlier.any():
-            log.warning(
-                "%d spectra are inconsistent with their replicates (score above %g) and were "
-                "left out of the noise estimate", int(estimate.outlier.sum()),
-                config.noise.outlier_score,
-            )
-    bad = ~(np.isfinite(scale) & (scale > 0))
-    if bad.any():  # a reference without intensity: every restart would be NaN, silently
-        ids = [str(data.spectrum_id[i]) for i in np.flatnonzero(bad)[:5]]
-        raise FitError(f"{int(bad.sum())} spectra have no noise level (scale {scale[bad][0]:g}: "
-                       f"their reference spectrum has no intensity): {', '.join(ids)}"
-                       + (", ..." if bad.sum() > 5 else ""))
-    prep = prepare(
-        data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
-        keys=data.random_keys(), bin_variance=bin_var,
-    )
+    prep, scale, estimate, curve = _prepared(data, config, noise_curve, bin_variance)
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
     role = (np.full(m, "", dtype=object) if data.role is None
@@ -230,6 +182,76 @@ def fit_models(
         sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
         noise_estimate=estimate, noise_curve=curve,
     )
+
+
+def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise | None,
+              bin_variance) -> tuple[Prepared, np.ndarray, NoiseEstimate | None,
+                                     ControlsNoise | None]:
+    """The data of :func:`fit_models` divided by its noise and padded: ``(prepared, noise
+    scale, noise estimate, per-bin noise curve)`` (see :func:`fit_models` for the noise)."""
+    backend = config.backend
+    m = len(data)
+    scale = noise_scale(data.observed, config.noise, data.references)
+    kinds = [config.noise.model] * m
+    estimate = None
+    curve = None
+    bin_var = bin_variance
+    if bin_var is None and config.noise.estimate == "controls":
+        curve = noise_curve
+        if curve is None:
+            curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
+                                   data.charges(), data.data_id,
+                                   model_error=config.noise.model_error / 100.0)
+        if curve is None:
+            log.warning("per-bin noise: too few undeuterated controls to measure the noise from "
+                        "(at least 5 series are needed); one sd per spectrum is used instead")
+        else:
+            bin_var = bin_variances(data.observed, data.charges(), curve)
+            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of I)^2, from %d "
+                     "undeuterated controls of %d series", curve.b1, 100 * curve.model_error,
+                     curve.n_controls, curve.n_series)
+    elif config.noise.estimate == "replicates":
+        # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
+        # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the
+        # expected sum of squared residuals is the estimated one); the others keep the noise
+        # settings above. The Poisson loss is never chosen here (docs/HISTORY.md item 57).
+        estimate = estimate_noise(
+            data.bins, data.observed, data.data_id, data.time, config.noise, role=data.role
+        )
+        mean_intensity = np.array([float(np.mean(o)) for o in data.observed])
+        sd = np.sqrt(estimate.gain * mean_intensity)
+        usable = estimate.estimated & np.isfinite(sd) & (sd > 0)
+        scale = np.where(usable, sd, scale)
+        n_series = len(np.unique(data.data_id))
+        n_est = len(np.unique(data.data_id[estimate.estimated]))
+        log.info("noise estimated from replicates for %d of %d series", n_est, n_series)
+        if estimate.outlier.any():
+            log.warning(
+                "%d spectra are inconsistent with their replicates (score above %g) and were "
+                "left out of the noise estimate", int(estimate.outlier.sum()),
+                config.noise.outlier_score,
+            )
+    bad = ~(np.isfinite(scale) & (scale > 0))
+    if bad.any():  # a reference without intensity: every restart would be NaN, silently
+        ids = [str(data.spectrum_id[i]) for i in np.flatnonzero(bad)[:5]]
+        raise FitError(f"{int(bad.sum())} spectra have no noise level (scale {scale[bad][0]:g}: "
+                       f"their reference spectrum has no intensity): {', '.join(ids)}"
+                       + (", ..." if bad.sum() > 5 else ""))
+    prep = prepare(
+        data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
+        keys=data.random_keys(), bin_variance=bin_var,
+    )
+    return prep, scale, estimate, curve
+
+
+def screen_floor(data: Measurements, config: FitConfig, *,
+                 noise_curve: ControlsNoise | None = None) -> np.ndarray:
+    """The loss floor of each measurement that the screen of :func:`fit_models` compares the
+    fits with (:func:`hxex.fit.screen.loss_floor`), with the same noise; ``-inf`` where there
+    is none."""
+    prep, *_ = _prepared(data, config, noise_curve, None)
+    return loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind,
+                      prep.weights)
 
 
 def _unfitted(k: int, m: int) -> KFit:
