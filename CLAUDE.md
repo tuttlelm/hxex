@@ -59,7 +59,9 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
 
 - `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,
   `fit`, `report`, `noise`, `controls`, `bootstrap`, `pipeline` (the run stage; `hxex.run` is its entry point), `cli`). Each docstring says what
-  it will contain and in which phase. `fragments` makes fragment-ion entries and mzML
+  it will contain and in which phase. `gui` is the Qt window (optional `gui` extra; `hxex gui`;
+  docs/PLAN.md "GUI"; its `session` and `figures` modules import without Qt; tests run
+  offscreen). `fragments` makes fragment-ion entries and mzML
   targets from a parent peptide. `kint` gives intrinsic exchange rates in H2O/D2O mixtures
   (ported from pacilab/hdx-rates-mixtures, MIT). `deamidation` measures Asn-Gly deamidation of
   heated fully deuterated controls from the peaks' m/z. `config` reads the TOML project file that `cli` (`hxex init`,

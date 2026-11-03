@@ -125,6 +125,15 @@ uv tool install https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip --i
 *hxex* uses the GPU when you run `hxex run hxex.toml --device cuda`, or set `device = "cuda"`
 under `[run.fit.backend]` in the project file. GPU runs on macOS are not currently supported.
 
+**The *hxex* window** needs the `gui` extra: in step 3, put `"hxex[gui] @ "` before the
+address, as in
+
+```bash
+uv tool install "hxex[gui] @ https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip"
+```
+
+(keep any ending the step 3 command of your system has). See [The *hxex* window](gui.md).
+
 **Thermo `.raw` files** can be read directly, but this needs extra software from Thermo and
 Microsoft (see [Input formats](inputs.md#thermo-raw-files)). The alternative is to convert the
 files to mzML first, with the free

@@ -516,9 +516,12 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   isolation windows (item 38), fragment comparisons with pyHXExpress and the closure test (items
   39 to 41), read records for every format (item 42) and Thermo `.raw` files read directly
   (item 43). Open: fragment-ion amide counts, the z-fragment offset, the shoulder rule.
-- **Phase 7 (GUI): designed, not started** (owner, 2026-11-03; "GUI", HISTORY 231). The
-  review layer, the `*_data` functions, the artists' `gid`s and `Results.with_review` are in
-  place for it (item 31). Next: G0.
+- **Phase 7 (GUI): G0 built** (owner, 2026-11-03; "GUI", HISTORY 231-232): `hxex.gui`, the
+  `gui` extra, `hxex gui` and `hxex-gui`, the window with its four workspaces, the session
+  file, the SVG figure view with saving and click-through, and a first results view (series
+  and their figures). The review layer, the `*_data` functions, the artists' `gid`s and
+  `Results.with_review` are in place for the later phases (item 31). Next: G1, the project
+  editor and the user tables.
 
 ## Deliberate differences from pyHXExpress
 
@@ -921,7 +924,8 @@ Planned, not built:
    HISTORY 212). Not started; evaluate against the noise simulation's known populations first.
 18. **The GUI** (owner, 2026-11-03; HISTORY 231). A standalone Qt window, in addition to the
    command line and Python: the project editor and the user tables first, then running stages,
-   results and review, and analysis views (section "GUI", phases G0-G4). Next: G0.
+   results and review, and analysis views (section "GUI", phases G0-G4). G0 built (HISTORY
+   232); next: G1.
 
 ## Risks and open decisions
 

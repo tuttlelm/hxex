@@ -6272,3 +6272,48 @@ CSVs or mzML if wanted.
     the three figures; a `gid` is found as an element with its bounds (click-through). Qt's
     only warning was for matplotlib's empty glyph of the space character (harmless).
 
+232. **GUI phase G0 built (owner, 2026-11-03; PLAN "GUI").** `hxex.gui`: the optional extra
+    `gui` (`PySide6-Essentials>=6.7`), `hxex gui [PATH]` and a `gui-scripts` entry point
+    `hxex-gui` (no console window on Windows); without the extra, `hxex gui` says how to
+    install it. The window (`gui.window.MainWindow`) has the four workspaces (Project shows the
+    project file read-only; Run and Analysis name the commands to type until G2 and G4;
+    Results is a first view: one row per series from `series_table`, and the spectra, uptake
+    and population pages of the selected series, drawn as `hxex report` draws them with the
+    project's `[figures]` and review applied through `load_results`), a Messages pane fed by
+    hxex's log, and the File menu (new, open, save, save as, recent, open project, open
+    results). Long work runs in Qt's thread pool (`gui.tasks.Latest`: a newer request replaces
+    an older one; a result for a closed window is dropped; closing waits for running drawings).
+    *The figure view* (`gui.figure_view`): a figure is saved to SVG in memory
+    (`gui.figures.figure_svg`, with `svg.hashsalt` fixed and no date, so a figure gives the
+    same bytes) and drawn by `QSvgRenderer`; fit, zoom (buttons, Ctrl and the wheel), save as
+    SVG, PDF (vector) or PNG (200 dpi) from the same `Figure`, and a click reports the `gid`
+    of the smallest element under it. Found while testing: matplotlib writes `<path>`
+    elements without data for the glyph of a space and for a line with nothing to draw (every
+    point NaN, as in the choice and K = 2 Woods figures), which Qt's renderer reports
+    ("Invalid path data", "link ... is undefined"); the copy the window draws gives such a
+    path `d="M 0 0"` (draws nothing; `gui.figures.qt_ready`), and saved files stay
+    matplotlib's own. A test renders every SVG figure `hxex report` and `hxex analyse` write
+    for a two-sample synthetic run (series pages at the chosen K and at K = 2, overviews,
+    Woods, butterfly, coverage, choice, overlay, significance) through Qt and fails on any Qt
+    message; fragment and protection-factor figures join it in G4. *Lower bound*: PySide6 6.6
+    cannot resolve matplotlib's hatch patterns (`<pattern>`), 6.7.0 draws them; the GUI tests
+    pass at the lowest allowed versions (PySide6-Essentials 6.7.0, pytest-qt 4.4.0, matplotlib
+    3.8.0, Python 3.11). `pytest-qt` refuses to start without a Qt binding, so the `dev` extra
+    holds both; CI runs Qt offscreen and installs Qt's system libraries on Linux.
+    *The session file* (`gui.session`, without Qt): TOML, `NAME.hxexgui`, version 1; the
+    project file, results, analysis folder, workspace, selection (sample, residues, charge:
+    they outlast a rerun that renumbers series), figures with their changes (for G3), and the
+    window layout; paths relative to the session's folder when inside it; a newer version
+    refused, unknown keys left out with a warning, missing files left out with a warning.
+    Results opened through the project file are the project's (the session names only the
+    project). Closing a changed session asks Save, Discard or Cancel (moving the window is not
+    a change). Guide: `docs/guide/gui.md`, install.md (the extra), the guide index;
+    commands.md regenerated. *Icon* (owner): the window's icon and the About box show the
+    logo in the version for the desktop's colour scheme (`hxex_logo.svg` on a light desktop,
+    `hxex_logo_dark.svg` on a dark one, as Qt reports the scheme; switched when it changes;
+    `gui.icon`), drawn from package copies in `src/hxex/gui/icons/` that `make_logo.py`
+    writes and a test keeps identical to `docs/images/`. Known limit: the scheme is the
+    desktop's, not its bar's (a bar that stays dark in light mode shows the dark-lettered
+    logo); a white tile behind the logo was the alternative. At 16-24 pixels the wide logo
+    is not legible either way.
+

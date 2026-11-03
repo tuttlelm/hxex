@@ -132,3 +132,13 @@ What the results hold.
 |---|---|
 | `hxex.toml\|BUNDLE` | the project file (hxex.toml): its [output] bundle, and what its [review] table decides; or a results bundle (a folder, or .zip) |
 | `--verify` | also check every file's checksum |
+
+## hxex gui
+
+Open hxex's window (needs the gui extra: pip install "hxex[gui]").
+
+`hxex gui PATH [options]`
+
+| Argument | Meaning |
+|---|---|
+| `PATH` | what to open: a GUI session file (.hxexgui), a project file (hxex.toml, with its results), or a results bundle |

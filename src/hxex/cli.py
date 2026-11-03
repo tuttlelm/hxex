@@ -165,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the project file (hxex.toml): its [output] bundle, and what its "
                         "[review] table decides; or a results bundle (a folder, or .zip)")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
+
+    p = sub.add_parser("gui", help="open hxex's window (needs the gui extra: pip install "
+                                   "\"hxex[gui]\")")
+    p.add_argument("path", nargs="?", metavar="PATH",
+                   help="what to open: a GUI session file (.hxexgui), a project file "
+                        "(hxex.toml, with its results), or a results bundle")
     return parser
 
 
@@ -1701,9 +1707,18 @@ def cmd_analyse(args) -> int:
     return 0
 
 
+def cmd_gui(args) -> int:
+    from . import gui
+
+    if not gui.available():
+        log.error("%s", gui.MISSING)
+        return EXIT_ERROR
+    return gui.launch(args.path)
+
+
 COMMANDS = {"init": cmd_init, "set": cmd_set, "check": cmd_check, "run": cmd_run,
             "resume": cmd_resume, "report": cmd_report, "info": cmd_info, "analyse": cmd_analyse,
-            "analyze": cmd_analyse}
+            "analyze": cmd_analyse, "gui": cmd_gui}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

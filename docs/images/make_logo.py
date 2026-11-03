@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Draw the hxex logo: ``python docs/images/make_logo.py`` writes ``hxex_logo.svg`` (for light
-backgrounds) and ``hxex_logo_dark.svg`` (for dark ones) beside this file.
+backgrounds) and ``hxex_logo_dark.svg`` (for dark ones) beside this file, and copies both to
+``src/hxex/gui/icons/``, where the window takes its icon from (tests/test_gui_session.py checks
+the copies are the same).
 
 The h is a bimodal stick spectrum: two binomial populations (30 sites, 12 % and 34 % deuterium,
 55:45) whose sum has the shape of an h (a tall stem, a shallow valley, an arch at x-height and a
@@ -129,5 +131,7 @@ def draw(name, ink, background, stick, directory):
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
+    icons = here.parents[1] / "src" / "hxex" / "gui" / "icons"
     for name, (ink, background, stick) in THEMES.items():
         draw(name, ink, background, stick, here)
+        (icons / f"{name}.svg").write_bytes((here / f"{name}.svg").read_bytes())

@@ -25,6 +25,8 @@ a short text file.
 6. [Experiment types](experiments.md): bottom-up peptides, top-down and intact proteins, kinetics
    where the scan time is the exchange time, and fragment ions added to any of them.
 7. [Outputs](outputs.md): every table and figure, and the quality flags.
+8. [The *hxex* window](gui.md): the same project in a window of its own (being built: today it
+   opens projects and results and shows each peptide's figures).
 
 ## Topics
 

@@ -43,6 +43,9 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.6",
+    # the window's tests (tests/test_gui.py); pytest-qt needs a Qt binding to start at all
+    "pytest-qt>=4.4",
+    "PySide6-Essentials>=6.7",
 ]
 # reading Thermo .raw files (hxex.io.thermo); also needs a .NET runtime and Thermo's
 # RawFileReader assemblies, which are not Python packages
@@ -54,9 +57,17 @@ thermo = [
 notebook = [
     "notebook>=7.2",
 ]
+# hxex's window (hxex.gui; `hxex gui`): Qt for Python, LGPL. 6.7 is the first whose SVG
+# renderer draws matplotlib's hatching (docs/HISTORY.md, item 232)
+gui = [
+    "PySide6-Essentials>=6.7",
+]
 
 [project.scripts]
 hxex = "hxex.cli:main"
+
+[project.gui-scripts]
+hxex-gui = "hxex.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/tuttlelm/hxex"
