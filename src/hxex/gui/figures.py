@@ -56,6 +56,17 @@ def figure_ids(fig: Figure) -> list[str]:
     return ids
 
 
+def figure_title(fig: Figure) -> str:
+    """The figure's title, shown above it in the window so it stays readable at any zoom: the
+    page's title (``suptitle``), else the title of a figure of one plot; empty otherwise."""
+    title = fig._suptitle.get_text() if fig._suptitle is not None else ""  # get_suptitle: 3.8+
+    if not title.strip():
+        axes = [ax for ax in fig.axes if ax.get_visible()]
+        if len(axes) == 1:
+            title = axes[0].get_title()
+    return " ".join(title.split())  # one line
+
+
 def save_figure(fig: Figure, path: str | Path) -> Path:
     """Save ``fig`` in the format its file name says (``.svg``, ``.pdf`` or ``.png``)."""
     path = Path(path)

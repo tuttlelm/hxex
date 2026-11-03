@@ -18,10 +18,15 @@ from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -77,35 +82,48 @@ class MessagesHandler(logging.Handler):
 # --- the workspaces ---------------------------------------------------------------------------
 
 class ProjectWorkspace(QWidget):
-    """The project file. G0 shows it; the settings editor comes in G1."""
+    """The project file: its settings as a form (:mod:`hxex.gui.project_editor`), and the file
+    itself, read-only."""
 
     def __init__(self, window: MainWindow):
         super().__init__()
+        from .project_editor import ProjectEditor
+
         self.path_label = QLabel("No project file open.")
+        new_button = QPushButton("New project file…")
+        new_button.clicked.connect(window.new_project_dialog)
         open_button = QPushButton("Open project file…")
         open_button.clicked.connect(window.open_project_dialog)
         top = QHBoxLayout()
         top.addWidget(self.path_label, 1)
+        top.addWidget(new_button)
         top.addWidget(open_button)
+        self.editor = ProjectEditor()
+        self.editor.changed.connect(self._file_changed)
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
         self.text.setFont(QFont("monospace"))
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.views = QTabWidget()
+        self.views.addTab(self.editor, "Settings")
+        self.views.addTab(self.text, "File")
         layout = QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(_note("Changing settings in this window is not built yet: edit the "
-                               "project file in a text editor, or with hxex set in a terminal "
-                               "(hxex set hxex.toml run.controls.d2o_fraction 0.85)."))
-        layout.addWidget(self.text, 1)
+        layout.addWidget(self.views, 1)
+        self.path: Path | None = None
 
     def show_project(self, path: Path | None) -> None:
-        if path is None:
-            self.path_label.setText("No project file open.")
+        self.path = path
+        self.path_label.setText(str(path) if path is not None else "No project file open.")
+        self.editor.open(path)
+        self._file_changed()
+
+    def _file_changed(self) -> None:
+        if self.path is None:
             self.text.setPlainText("")
             return
-        self.path_label.setText(str(path))
         try:
-            self.text.setPlainText(path.read_text(encoding="utf-8"))
+            self.text.setPlainText(self.path.read_text(encoding="utf-8-sig"))
         except OSError as exc:
             self.text.setPlainText(f"cannot read the project file: {exc}")
 
@@ -261,6 +279,45 @@ class ResultsWorkspace(QWidget):
         self.window.changed()
 
 
+def new_project(path: Path, fmt: str, name: str) -> Path:
+    """Write a new project file with every default, as ``hxex init --format FMT --project NAME``
+    does (a file chosen in a save dialog has been confirmed already, so one there is
+    replaced)."""
+    from ..config import template
+
+    if not name or ":" in name:
+        raise ValueError(f"the project name must be text without ':', not {name!r}")
+    path.write_text(template(fmt, name), encoding="utf-8")
+    log.info("wrote %s (format %s): set the input paths in the Project workspace", path, fmt)
+    return path
+
+
+class NewProjectDialog(QDialog):
+    """The input format and the project's name, for a new project file."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from ..config import FORMATS
+
+        self.setWindowTitle("New project file")
+        self.format = QComboBox()
+        self.format.addItems(FORMATS)
+        self.name = QLineEdit("my_project")
+        form = QFormLayout()
+        form.addRow("Input format", self.format)
+        form.addRow("Project name", self.name)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(_note("The input formats are described in the guide's Input formats "
+                               "page. Every setting starts at its default; the next step is the "
+                               "input paths, under [input]."))
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+
 # --- the window -------------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
@@ -324,7 +381,8 @@ class MainWindow(QMainWindow):
         self.recent_menu = file.addMenu("Open &recent")
         self._fill_recent()
         file.addSeparator()
-        for text, slot in (("Open project file…", self.open_project_dialog),
+        for text, slot in (("New project file…", self.new_project_dialog),
+                           ("Open project file…", self.open_project_dialog),
                            ("Open results…", self.open_results_dialog)):
             action = QAction(text, self)
             action.triggered.connect(slot)
@@ -365,7 +423,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.clear()
         for path in self.recent():
             action = QAction(path, self)
-            action.triggered.connect(lambda checked=False, p=path: self.open_path(Path(p)))
+            action.triggered.connect(lambda checked=False, p=path: self.open_asking(Path(p)))
             self.recent_menu.addAction(action)
         self.recent_menu.setEnabled(bool(self.recent()))
 
@@ -392,13 +450,61 @@ class MainWindow(QMainWindow):
             self, "Open", "", f"hxex sessions and project files (*{SUFFIX} *.toml);;"
                               "results bundles (*.zip);;all files (*)")
         if path:
-            self.open_path(Path(path))
+            self.open_asking(Path(path))
+
+    def open_asking(self, path: Path) -> bool:
+        """Open ``path`` as the user asked: a project file or a session replaces what the
+        session shows, so a session that changed is offered for saving first (results open
+        within the session). A project file starts a new session. False when the user
+        cancels."""
+        replaces = path.suffix in (SUFFIX, ".toml")
+        if replaces and not self._may_discard():
+            return False
+        if path.suffix == ".toml":
+            self._new_session_with(path)
+        else:
+            self.open_path(path)
+        return True
+
+    def _new_session_with(self, project: Path) -> None:
+        """A new session (not yet saved) showing ``project``: what it shows now counts as
+        unchanged, so only later changes ask to be saved."""
+        self.session_path = None
+        self._pending_selection = {}
+        self.results_path = None
+        self.results_page.show_results(None, None)
+        self.open_project(project)
+        self._mark_saved()
+        self._title()
+
+    def new_project_dialog(self) -> None:
+        """Ask for the input format, a project name and where to save, then write the project
+        file (as ``hxex init`` does) and open it."""
+        if not self._may_discard():
+            return
+        dialog = NewProjectDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save the new project file", "hxex.toml",
+                                              "project files (*.toml)")
+        if not path:
+            return
+        path = Path(path)
+        if path.suffix != ".toml":
+            path = path.with_name(path.name + ".toml")
+        try:
+            new_project(path, dialog.format.currentText(), dialog.name.text().strip())
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Project file not written", str(exc))
+            return
+        self._new_session_with(path)
+        self.tabs.setCurrentIndex(0)
 
     def open_project_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open project file", "",
                                               "project files (*.toml);;all files (*)")
         if path:
-            self.open_project(Path(path))
+            self.open_asking(Path(path))
 
     def open_results_dialog(self) -> None:
         start = str(self.project.parent) if self.project else ""

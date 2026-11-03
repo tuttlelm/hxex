@@ -146,3 +146,128 @@ def test_the_command(project, capsys):
     assert main(["set", folder, "run.bootstrap.n_boot"]) == 2
     assert main(["set", folder, "run.bootstrap.n_boot", "5", "--default"]) == 2
     assert main(["set", folder, "run.picker.pick", "nonsense"]) == 1
+
+
+# --- for hxex's window: what a file sets, and stages switched on and off ------------------------
+
+def test_live_settings_lists_what_the_file_sets(project):
+    from hxex.project_edit import live_settings
+
+    values, tables = live_settings(project.read_text())
+    assert values["input.format"] == "specexport" and "run.bootstrap.n_boot" not in values
+    assert {"input", "run", "run.picker", "run.registry.residues"} <= tables
+    assert "run.bootstrap" not in tables  # its heading is off in the template
+
+
+def test_a_stage_is_switched_on_and_off_with_its_settings_and_tables(project):
+    from hxex.project_edit import file_problem, live_settings, switch_table
+
+    assert "switched on" in switch_table(project, "run.bootstrap", True)
+    assert "run.bootstrap" in live_settings(project.read_text())[1]
+    assert "already on" in switch_table(project, "run.bootstrap", True)
+    set_setting(project, "run.bootstrap.n_boot", "50")
+    switch_table(project, "analysis", True)
+    set_setting(project, "analysis.filters.replicate_outlier", "4")
+    # off: the heading, its settings and the tables under it get a # in front
+    said = switch_table(project, "analysis", False)
+    assert "[analysis]" in said and "[analysis.filters]" in said
+    values, tables = live_settings(project.read_text())
+    assert "analysis" not in tables and "analysis.filters.replicate_outlier" not in values
+    assert values["run.bootstrap.n_boot"] == 50  # the other stage is untouched
+    switch_table(project, "run.bootstrap", False)
+    assert "run.bootstrap" not in live_settings(project.read_text())[1]
+    assert file_problem(project) is None
+    assert "# n_boot = 50" in project.read_text()  # kept, switched off
+    with pytest.raises(ProjectError, match="cannot be switched"):
+        switch_table(project, "run.picker", False)
+
+
+def test_a_missing_stage_heading_is_added_at_the_end(tmp_path):
+    from hxex.project_edit import live_settings, switch_table
+
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[analysis]\nreference = "WT"\n')
+    switch_table(path, "analysis.filters", True)
+    assert path.read_text().endswith("\n\n[analysis.filters]\n")
+    assert "analysis.filters" in live_settings(path.read_text())[1]
+
+
+def test_file_problem_says_what_check_would(project):
+    from hxex.project_edit import file_problem
+
+    project.write_text(project.read_text().replace('format = "specexport"', 'format = "csv"'))
+    assert "csv" in file_problem(project)
+    project.write_text("[input\n")
+    assert "not valid TOML" in file_problem(project)
+
+
+def test_an_unfinished_file_is_written_only_in_the_windows_mode(project):
+    """hxex set refuses a change that leaves something else needed; the window (unfinished)
+    writes it and file_problem says what is still needed. A bad value of the changed setting
+    itself is refused either way."""
+    from hxex.project_edit import file_problem, set_settings
+
+    change = [("input.data_dir", None), ("input.format", "mzml")]
+    with pytest.raises(ProjectError, match="peptides"):
+        set_settings(project, change)
+    assert 'format = "specexport"' in project.read_text()
+    set_settings(project, change, unfinished=True)
+    assert 'format = "mzml"' in project.read_text()
+    assert "peptides" in file_problem(project)
+    with pytest.raises(ProjectError, match="n_boot"):
+        set_settings(project, [("run.bootstrap.n_boot", "many")], unfinished=True)
+
+
+# --- lists of tables, entry by entry (hxex's window) ---------------------------------------------
+
+@pytest.fixture
+def scan_project(tmp_path):
+    path = tmp_path / "hxex.toml"
+    path.write_text(template("mzml"), encoding="utf-8")
+    return path
+
+
+def test_an_entry_of_a_list_is_changed_in_its_own_lines(scan_project):
+    from hxex.project_edit import list_entries, set_entry
+
+    text = scan_project.read_text()
+    runs = list_entries(text, "input.runs")
+    assert [r["path"] for r in runs] == ["UN_01.mzML", "D_60s_01.mzML"]
+    set_entry(scan_project, "input.runs", 1, "rep", "2")
+    set_entry(scan_project, "input.runs", 0, "sample", "mutant")  # text, no quotes needed
+    runs = list_entries(scan_project.read_text(), "input.runs")
+    assert runs[1]["rep"] == 2 and runs[0]["sample"] == "mutant" and runs[1]["sample"] == "WT"
+    assert scan_project.read_text().count("# one [[input.runs]] per file.") == 1  # comments kept
+    set_entry(scan_project, "input.runs", 0, "rep", None)  # switched off
+    assert "rep" not in list_entries(scan_project.read_text(), "input.runs")[0]
+    with pytest.raises(ProjectError, match="no entry 3"):
+        set_entry(scan_project, "input.runs", 2, "rep", "1")
+    with pytest.raises(ProjectError, match="did you mean sample"):
+        set_entry(scan_project, "input.runs", 0, "samples", "x")
+    with pytest.raises(ProjectError, match="rep"):
+        set_entry(scan_project, "input.runs", 0, "rep", "first")
+
+
+def test_entries_are_added_and_removed(scan_project):
+    from hxex.project_edit import add_entry, file_problem, list_entries, remove_entry
+
+    add_entry(scan_project, "input.runs", {"path": "D_5min.mzML", "sample": "WT", "time": "300"})
+    runs = list_entries(scan_project.read_text(), "input.runs")
+    assert len(runs) == 3 and runs[2] == {"path": "D_5min.mzML", "sample": "WT", "time": 300}
+    # a list the file does not have yet: at the end of its table's settings, which stay its
+    add_entry(scan_project, "input.exclude", {"sample": "WT", "note": "bad"})
+    data = tomllib.loads(scan_project.read_text())
+    assert data["input"]["exclude"] == [{"sample": "WT", "note": "bad"}]
+    assert data["input"]["format"] == "mzml" and len(data["input"]["runs"]) == 3
+    remove_entry(scan_project, "input.runs", 0)
+    assert [r["path"] for r in list_entries(scan_project.read_text(), "input.runs")] == [
+        "D_60s_01.mzML", "D_5min.mzML"]
+    assert file_problem(scan_project) is None or "peptides" in file_problem(scan_project)
+    # the last run: hxex set's rule refuses it; the window's writes it and says what is needed
+    remove_entry(scan_project, "input.runs", 0)
+    with pytest.raises(ProjectError, match=r"input\.runs"):
+        remove_entry(scan_project, "input.runs", 0)
+    remove_entry(scan_project, "input.runs", 0, unfinished=True)
+    assert list_entries(scan_project.read_text(), "input.runs") == []
+    with pytest.raises(ProjectError, match="not a list of tables"):
+        add_entry(scan_project, "input", {})

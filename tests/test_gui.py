@@ -211,3 +211,113 @@ def test_the_about_box_shows_the_logo(window):
     logo = box.iconPixmap()
     assert not logo.isNull()
     assert logo.width() / logo.devicePixelRatio() == pytest.approx(220, abs=1)
+
+
+def _wheel(widget, at, notches):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+
+    event = QWheelEvent(at, widget.mapToGlobal(at), QPoint(0, 0), QPoint(0, 120 * notches),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(widget, event)
+
+
+def test_wheel_zooms_drag_moves_and_double_click_magnifies_a_panel(qtbot):
+    fig = Figure(figsize=(8, 4), dpi=100)
+    left, right = fig.subplots(1, 2)
+    fig.subplots_adjust(top=0.7)
+    fig.suptitle("a title above both panels")
+    left.plot([0, 1], [0, 1])
+    right.bar([0.5], [0.5], gid="bar")
+    panel = FigurePanel()
+    qtbot.addWidget(panel)
+    panel.resize(700, 500)
+    panel.show()
+    panel.show_figure(fig)
+    view, port = panel.view, panel.scroll.viewport()
+    fitted = view.zoom
+    # the wheel zooms at the pointer, in and out
+    centre = QPointF(port.width() / 2, port.height() / 2)
+    _wheel(port, centre, 2)
+    assert view.zoom == pytest.approx(fitted * 1.15 ** 2) and not panel.magnified
+    _wheel(port, centre, -2)
+    assert view.zoom == pytest.approx(fitted)
+    # double-click on the right panel: it fills the view; again: the whole figure
+    w, h = view.width(), view.height()
+    qtbot.mouseDClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.75, h * 0.5).toPoint())
+    assert panel.magnified and view.zoom > fitted * 1.5
+    box = view.panel_at(QPointF(view.width() * 0.75, view.height() * 0.5))
+    assert box.width() <= port.width() and box.width() >= 0.8 * port.width() or \
+        box.height() >= 0.8 * port.height()
+    assert panel.scroll.horizontalScrollBar().value() > 0  # scrolled to the right panel
+    qtbot.mouseDClick(view, Qt.MouseButton.LeftButton, pos=QPointF(10, 10).toPoint())
+    assert not panel.magnified and view.zoom == pytest.approx(fitted)
+    # above the panels (the title): nothing to magnify
+    assert view.panel_at(QPointF(view.width() / 2, 2)) is None
+    # a drag moves a zoomed figure, and is not a click
+    panel.zoom_by(3)
+    bar = panel.scroll.horizontalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    before = bar.value()
+    clicks = []
+    view.clicked.connect(clicks.append)
+    start = QPointF(view.width() * 0.75, view.height() * 0.5).toPoint()
+    qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=start)
+    for step in range(1, 6):
+        qtbot.mouseMove(view, start + QPointF(-10 * step, 0).toPoint())
+    qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=start + QPointF(-50, 0).toPoint())
+    assert bar.value() > before and clicks == []
+
+
+def test_the_title_is_centred_on_the_bar_clear_of_the_buttons(qtbot):
+    fig = Figure(figsize=(4, 3))
+    fig.add_subplot().set_title("WT 0042-0054 TSLSPFYLRPPSF z=2")
+    panel = FigurePanel()
+    qtbot.addWidget(panel)
+    panel.resize(1400, 500)
+    panel.show()
+    panel.show_figure(fig)
+    title, bar = panel.title, panel.bar
+    assert title.text() == "WT 0042-0054 TSLSPFYLRPPSF z=2"
+    assert abs(title.geometry().center().x() - bar.width() / 2) <= 2  # the whole bar's centre
+    # a narrow bar: moved aside to clear the buttons, shortened, the whole title on hover
+    panel.resize(520, 500)
+    qtbot.waitUntil(lambda: bar.width() <= 520)
+    assert title.geometry().left() > panel.save_button.geometry().right()
+    assert title.geometry().right() <= bar.width()
+    assert title.text().endswith("…") and title.toolTip() == "WT 0042-0054 TSLSPFYLRPPSF z=2"
+
+
+def test_opening_another_project_or_session_asks_to_save_a_changed_one(qtbot, window, bundle,
+                                                                       tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.config import template
+
+    window.open_path(bundle)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert window.modified()
+    project = tmp_path / "hxex.toml"
+    project.write_text(template(), encoding="utf-8")
+    asked = []
+
+    def answer(button):
+        def ask():
+            asked.append(button)
+            return button
+        return ask
+
+    window.ask_to_save = answer(QMessageBox.StandardButton.Cancel)
+    assert not window.open_asking(project)
+    assert window.project is None and window.results_path == bundle.absolute()
+    window.ask_to_save = answer(QMessageBox.StandardButton.Discard)
+    assert window.open_asking(project)
+    assert window.project == project.absolute() and window.results_path is None
+    assert window.session_path is None and not window.modified()  # a new session, unchanged
+    assert len(asked) == 2
+    # results open within the session: no question
+    window.open_asking(bundle)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert len(asked) == 2 and window.results_path == bundle.absolute()

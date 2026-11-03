@@ -399,12 +399,32 @@ calls the library in the GUI's own process. Details:
 
 ### Results and analysis
 
-- **Results and review.** A browser of samples, peptides, and charges with K, flags, and review
-  status, and filters (flagged, K above one, rejected, ...); the series pages (spectra, uptake,
-  populations) of the selection and a single spectrum in detail; a review panel (accepted or
-  rejected, `review_K`, note) that writes the user review table and updates the view at once
-  (`Results.with_review`); exclusion rules (`[[review.exclude]]`); a chosen K without a
-  bootstrap at it offers `hxex resume`.
+- **Results and review.** A tree (owner, 2026-11-03): peptide, then its charges (the series),
+  then the time points (UN first, FD last, labels as the figures write them), then the
+  replicates, which are the spectra; each level with its counts (K, flags, review status),
+  children filled when opened, and filters (flagged, K above one, rejected, ...). Selected,
+  a series shows its pages (spectra, uptake, populations); a time point its replicates side by
+  side (the series spectra page cut to that time; owner: no reference needed); a spectrum
+  itself (`plot_spectrum`) and its fits at each K (`plot_k_comparison`). A review panel on the
+  selected spectrum (accepted or rejected, `review_K`, note) writes the user review table
+  (made from `spectra.csv` on the first decision and named in `[review] table`) and updates
+  the view at once (`Results.with_review`); a decision on a time point or series is written
+  for each of its spectra; the arrow keys step through the spectra; exclusion rules
+  (`[[review.exclude]]`); a chosen K without a bootstrap at it offers `hxex resume`. The
+  series spectra page gets a `gid` per panel, so a click on a panel selects that spectrum.
+  Beside the tree (owner, 2026-11-03): a flat list of every spectrum (the columns of
+  `spectra.csv`), sorted by any column and filtered (flagged, a K, a sample, not yet
+  reviewed, a screen score above a value, ...), with the same spectrum view and review panel,
+  for working through a dataset's problems one spectrum after another. Series review (owner,
+  2026-11-03, confirmed): a second user table, a copy of `series.csv` named in `[review]
+  series_table` (suggested `user_series_review.csv`), read by the series' identity (sample,
+  peptide_range, peptide, charge; `data_id` can change on a rerun), its `note`, and its
+  `review_status` (`rejected`: every spectrum of the series is treated as rejected, as an
+  exclusion rule naming the series would; the fits are kept); `hxex report` carries both into
+  `series.csv` (`series_note`, `series_review_status`), and the window shows them in the tree
+  and above the series' figures. A user table held open
+  by a spreadsheet (Excel locks it on Windows; owner: warn): the window says so and keeps
+  the decision until the file can be written, never losing it.
 - **Analysis.** The comparison figures for a chosen reference, samples, times, and K (Woods,
   butterfly, residue significance, population tiers, uptake comparisons, protection factors and
   fragment figures where the analysis has them); clicking a peptide opens its series in the
@@ -520,8 +540,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   `gui` extra, `hxex gui` and `hxex-gui`, the window with its four workspaces, the session
   file, the SVG figure view with saving and click-through, and a first results view (series
   and their figures). The review layer, the `*_data` functions, the artists' `gid`s and
-  `Results.with_review` are in place for the later phases (item 31). Next: G1, the project
-  editor and the user tables.
+  `Results.with_review` are in place for the later phases (item 31). G1 part 1, the settings
+  form, built (HISTORY 233); next: the lists of tables and the user tables.
 
 ## Deliberate differences from pyHXExpress
 

@@ -109,3 +109,19 @@ def test_the_window_icons_are_the_logo_files():
     for name in ("hxex_logo.svg", "hxex_logo_dark.svg"):
         assert ((root / "src/hxex/gui/icons" / name).read_bytes()
                 == (root / "docs/images" / name).read_bytes()), name
+
+
+def test_the_title_shown_above_a_figure():
+    from hxex.gui.figures import figure_title
+
+    page = Figure()
+    page.subplots(1, 2)[0].set_title("rep 1")
+    page.suptitle("WT 0042-0054  TSLSPFYLRPPSF\nz=2")
+    assert figure_title(page) == "WT 0042-0054 TSLSPFYLRPPSF z=2"  # one line
+    one = Figure()
+    one.add_subplot().set_title("WT 0042-0054 z=2")
+    assert figure_title(one) == "WT 0042-0054 z=2"  # a figure of one plot: its title
+    two = Figure()
+    for ax in two.subplots(1, 2):
+        ax.set_title("a panel")
+    assert figure_title(two) == ""  # panels' titles are not the page's

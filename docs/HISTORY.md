@@ -6317,3 +6317,60 @@ CSVs or mzML if wanted.
     logo); a white tile behind the logo was the alternative. At 16-24 pixels the wide logo
     is not legible either way.
 
+233. **GUI phase G1, part 1: the project editor (owner, 2026-11-03; PLAN "GUI").** The Project
+    workspace shows the project file's settings as a form built from the settings reference
+    (`_reference.tables()`: kind, default, description; Markdown links shown as text), one
+    table per page, with a search over every table's names and descriptions
+    (`gui.project_editor`). Editors by kind: true/false a check box, `input.format` and
+    `figures.format` a list, paths a text box with Browse (a file or a folder; written
+    relative to the project's folder when inside it, with forward slashes), every other
+    kind a text box taking what `hxex set` takes (text kinds always written as text, so a
+    sample named 2024 stays text); the default shown in grey, a set setting in bold,
+    Default switches the line off. `[input]` shows the chosen format's settings (the
+    reference's format tags); keys that are tables (runs, target, fragments, scans, exclude)
+    have their own pages. Stages a heading alone turns on (`project_edit.SWITCHABLE`:
+    review, run.controls, run.bootstrap, run.population_test, run.quality, analysis and its
+    tables) have a switch: `project_edit.switch_table` switches the heading on (settings left
+    as they are) or puts a `# ` in front of the heading, its settings and the tables under
+    it. The file is watched (a change made in a text editor shows at once; a replaced file is
+    watched again); the File tab shows the text. New project file (File menu and button):
+    format and name, then where to save; `config.template` as `hxex init`.
+    *Writing*: `project_edit.set_settings` makes several changes in one checked write
+    (`set_setting` is now one change of it), so changing the input format can switch off the
+    old format's settings at once (the window asks first). Found while testing: a file is
+    filled in step by step, and some settings are needed together (mzml needs a peptide
+    table and at least one `[[input.runs]]` before a format change could pass the checks
+    `hxex set` applies), so the window writes with `unfinished=True`: a change is refused
+    only when the new problem names a changed key (a bad value of the setting itself);
+    otherwise it is written and the red line at the top (`project_edit.file_problem`, the
+    first problem `hxex check` would report about the settings) says what is still needed.
+    `hxex set` keeps its strict rule. *Lists of tables* (`[[input.runs]]`, the exclusion
+    rules, regions, sites, the registry's residues): a grid, one row per entry and one column
+    per setting (`gui.project_editor.ListEditor`), written entry by entry
+    (`project_edit.list_entries`, `set_entry`, `add_entry`, `remove_entry`) so comments in the
+    file stay; an entry ends at the next live heading (a commented heading does not end a
+    table in TOML), and a list the file does not have yet goes after the last setting of the
+    table it belongs to (a new `[[input.exclude]]` placed after the template's commented
+    heading would have taken over the `[input]` settings that follow it), else at the end of
+    the file. *Tables of names* (`[analysis.controls]`, `[analysis.runs]`, `[analysis.merge]`,
+    `[analysis.fragments.labels]`, `[run.picker.amide_rules]`): a name and value grid
+    (`NamesEditor`; a name holding a table of its own is not shown yet). Not yet: the tables
+    users write (CSV; G1, next part). *Figure view, owner's polish*: the zoom-to-window button
+    is "Fit page" ("fit" means the model fit in hxex); the mouse wheel zooms at the pointer,
+    a drag moves a zoomed figure (a press that moves less than 4 pixels is still a click), and
+    a double-click magnifies the panel under the pointer to fill the view (again: the whole
+    page). The panels' places come from the figure (`ax.get_position()`, with room for tick
+    labels), not from the SVG: the bounds Qt reports for an axes group include what the panel
+    clips away (the picking-window bands), which made a spectra-page panel taller than the
+    page. The figure's title (its `suptitle`, else the title of a figure of one plot; one
+    line; `gui.figures.figure_title`) is shown in the bar above it, readable at any zoom:
+    centred on the whole bar, so on the figure below (owner), moved aside only to clear the
+    buttons, and shortened with "…" (the whole title on hover) when there is no room. In
+    the list of tables, the top-level tables are bold with a gap above each. Opening another
+    project file or session, or making a new project file, asks to save a changed session first
+    (owner: it did not); a project file opened so starts a new, unsaved session (a later Save
+    no longer writes over the previous session's file); results open within the session.
+    Tests: tests/test_gui_project.py,
+    tests/test_project_edit.py (live_settings, switch_table, file_problem, set_settings, the
+    list operations).
+
