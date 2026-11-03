@@ -98,26 +98,25 @@ hxex init --format specexport
 This writes `hxex.toml`, the project file: a plain text file with every setting at its usual
 value, each with a comment saying what it does. Open it in a plain text editor (Notepad,
 TextEdit, or another; see
-[Your first project, step 4](first-project.md#step-4-edit-the-project-file)). Lines starting
-with `#` are comments, or settings that are switched off. The settings you are likely to
-change come first; everything below the line `Advanced settings` you can leave alone.
+[Your first project, step 4](first-project.md#step-4-edit-the-project-file)) to read it. Lines
+starting with `#` are comments, or settings that are switched off. The settings you are likely
+to change come first; everything below the line `Advanced settings` you can leave alone.
+
+You change a setting with `hxex set`, which finds its line, switches it on, and gives it the
+new value, or in the text editor. This tutorial uses `hxex set`, and says what the same change
+is in the editor.
 
 The data folder is already right: the template says `data_dir = "SpecExport"`, which is the
 folder next to `hxex.toml`.
 
 ## Step 4: tell *hxex* about the experiment
 
-Make three changes, and save the file.
+Make three changes.
 
-**A name.** At the top, change `project = "my_project"` to:
-
-```toml
-project = "hspb5"
-```
-
-**Leave out the quench-flow time points.** In the `[input]` part there is a switched-off
-example of an `[[input.exclude]]` rule. Below it (still above `[output]`), add two rules,
-one for each time:
+**Leave out the quench-flow time points.** These are rules of several lines, which `hxex set`
+does not write, so this change is made in the text editor. In the `[input]` part of
+`hxex.toml` there is a switched-off example of an `[[input.exclude]]` rule. Below it (still
+above `[output]`), add two rules, one for each time:
 
 ```toml
 [[input.exclude]]
@@ -132,40 +131,51 @@ note = "quench-flow time point (not in the paper)"
 A spectrum that matches a rule is not fitted, but it is kept with the results, so nothing is
 lost. [Excluding spectra](excluding-spectra.md) explains the rules.
 
-**Turn on the back-exchange correction.** A little further down, find the part that starts
-with `# [run.controls]`. Delete the `# ` in front of `[run.controls]`. Then find the
-`# d2o_fraction = 0.9` line in that part (its comment says "for the back-exchange
-correction ... the one to set"), delete its `# `, and change its value to the labelling
-buffer's 85 % D₂O:
+Save the file and close the editor. (An editor that still has the file open writes its own
+copy back when you save again, over the changes `hxex set` makes. Close it before using
+`hxex set`, and open the file again afterwards to see them.)
 
-```toml
-[run.controls]
-...
-d2o_fraction = 0.85
+**A name.**
+
+```bash
+hxex set hxex.toml project hspb5
 ```
 
-(The other lines of that part can stay switched off. The file has other `d2o_fraction` lines,
-further down, for other purposes: leave them as they are.) The correction uses the
-undeuterated and fully deuterated controls to put every peptide on the scale of its own
-exchangeable amides; [Back-exchange correction](back-exchange-correction.md) explains how.
+`hxex set` prints what it changed and where: `project: "my_project" -> "hspb5", line 8`. (In
+the text editor: change `project = "my_project"` at the top to `project = "hspb5"`.)
+
+**Turn on the back-exchange correction**, with the labelling buffer's 85 % D₂O:
+
+```bash
+hxex set hxex.toml run.controls.d2o_fraction 0.85
+```
+
+This sets `d2o_fraction` in the `[run.controls]` part, and says that it switched on the heading
+`[run.controls]`: that part was switched off, and switching it on turns on the correction. (In
+the text editor: find the part that starts with `# [run.controls]`, delete the `# ` in front of
+`[run.controls]` and in front of the `d2o_fraction = 0.9` line in that part, and change 0.9 to
+0.85. The other lines of that part stay switched off. The file has other `d2o_fraction` lines,
+further down, for other purposes; `hxex set` changes the one in `[run.controls]`.) The
+correction uses the undeuterated and fully deuterated controls to put every peptide on the
+scale of its own exchangeable amides;
+[Back-exchange correction](back-exchange-correction.md) explains how.
 
 ## Step 5: ask for error bars
 
 Every value *hxex* reports gets a standard error from the *bootstrap*: every spectrum is
-refitted many times with resampled noise, and the spread of the refits is the error. Just
-below `[run.controls]`, find the switched-off `# [run.bootstrap]` part. Delete the `# ` in
-front of `[run.bootstrap]`, in front of `n_boot = 20`, and in front of the `ks` line, and
-change that line to:
+refitted many times with resampled noise, and the spread of the refits is the error. The
+bootstrap is switched off in the template; setting two of its settings switches it on:
 
-```toml
-[run.bootstrap]
-n_boot = 20
-...
-ks = [1, 2]
+```bash
+hxex set hxex.toml run.bootstrap.n_boot 20
+hxex set hxex.toml run.bootstrap.ks "[1, 2]"
 ```
 
-`ks = [1, 2]` bootstraps every spectrum with one and with two populations, which the
-comparisons need. Save the file.
+`n_boot = 20` is the number of refits (20 is also its default). `ks = [1, 2]` bootstraps every
+spectrum with one and with two populations, which the comparisons need. A list goes in quotes
+(`"[1, 2]"`), so that the terminal passes it on as it is. (In the text editor: just below
+`[run.controls]`, delete the `# ` in front of `[run.bootstrap]`, in front of `n_boot = 20`, and
+in front of the `ks` line, and change that line to `ks = [1, 2]`.)
 
 ## Step 6: check
 
@@ -282,17 +292,16 @@ show what to look for:
 
 Find their numbers in the `data_id` column of `series.csv` (sample `WT`, `peptide_range`
 `0087-0096` and `0042-0054`, charge 2): 140 and 56. (These numbers belong to this dataset; in
-your own data, look them up the same way.) In `hxex.toml`, find the `[figures]` part and change
-the `series` and `scale` lines to:
+your own data, look them up the same way.) Set them, and a log time scale, in the `[figures]`
+part:
 
-```toml
-[figures]
-series = [140, 56]
-...
-scale = "log"
+```bash
+hxex set hxex.toml figures.series "[140, 56]"
+hxex set hxex.toml figures.scale log
 ```
 
-`scale = "log"` spreads the times out on the uptake plots (4 s, 1 min, 30 min, and 20 h are
+(In the text editor: in the `[figures]` part, change the `series` line to
+`series = [140, 56]` and the `scale` line to `scale = "log"`.) `scale = "log"` spreads the times out on the uptake plots (4 s, 1 min, 30 min, and 20 h are
 hard to tell apart on a straight scale). Then draw:
 
 ```bash
@@ -339,16 +348,16 @@ same peptide's in the other samples, which is good news.
 
 ## Step 10: compare the variants with WT
 
-The last step compares the samples. In `hxex.toml`, find the switched-off `# [analysis]` part.
-Switch on its first line, the `reference` line below it, and its `format` line, changed to
-`"png"`:
+The last step compares the samples. The analysis is switched off in the template; setting its
+reference sample switches it on:
 
-```toml
-[analysis]
-reference = "WT"
-format = "png"
+```bash
+hxex set hxex.toml analysis.reference WT
+hxex set hxex.toml analysis.format png
 ```
 
+(In the text editor: in the switched-off `# [analysis]` part, switch on its first line, the
+`reference` line below it, and its `format` line, changed to `format = "png"`.)
 `reference = "WT"` compares D109H and R120G with WT. `format = "png"` writes the figures as
 pictures that open with a double-click (the default, `pdf`, is better for publication). Then:
 
@@ -397,6 +406,7 @@ per residue, with the differences, their errors, and whether they are significan
 | Step | Command | What it did |
 |---|---|---|
 | 3 | `hxex init --format specexport` | wrote the project file |
+| 4, 5 | `hxex set hxex.toml ...` | changed settings of the project file (also in steps 9 and 10) |
 | 6 | `hxex check hxex.toml` | checked the settings and the data |
 | 7 | `hxex run hxex.toml` | fitted and bootstrapped every spectrum; wrote the bundle and the tables |
 | 9 | `hxex report hxex.toml --figures` | drew the figures (and wrote the tables again) |

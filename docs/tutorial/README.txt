@@ -19,7 +19,8 @@ SpecExport/              HDX-MS spectra exported from HDExaminer 3.0 ("SpecExpor
   WT.fasta, ...          the protein sequence of each sample
 hxex_b5_tutorial_1_basics.ipynb   part 1 of the tutorial as a Jupyter notebook
 hxex_b5_tutorial_2_fits.ipynb     part 2, which continues from the results of part 1
-tutorial_helpers.py      small helpers the notebooks use to change the project file
+tutorial_helpers.py      small helpers the notebooks use to add rules to the project file
+                         and fill in the review table
 README.txt               this file
 LICENSE.txt              the licence of the data (CC BY 4.0)
 

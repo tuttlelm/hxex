@@ -6214,3 +6214,26 @@ CSVs or mzML if wanted.
     below 100,000 to 0.99 above 3 million), with the tallest width flat: weak peaks are wide in
     absolute counts, not as a share of their spectrum, so judging the brighter half reads the
     effect conservatively.
+
+230. **`hxex set`: one setting changed from the terminal (owner, 2026-11-03; audit of 2026-11-01,
+    Part 2 M2, the option the audit offered besides a short template).** `hxex set hxex.toml
+    run.controls.d2o_fraction 0.85` edits the project file line by line (`hxex.project_edit`):
+    a setting switched off is switched on with the new value and keeps its comment in its
+    column; its heading is switched on too when it is off, and the line printed says so (for
+    `[run.controls]`, `[run.bootstrap]`, `[run.population_test]`, `[analysis]` and `[review]`
+    that turns a stage on); a setting the file does not have goes under its heading, after its
+    last setting, or with its heading at the end of the file. `--default` (owner) puts the `# `
+    back with the template's default value, and says when a heading is left on with no setting
+    under it. Names are checked against the settings reference's tables (`_reference.tables`:
+    a suggestion for a misspelt name; a table named as a setting and lists of tables refused;
+    free-key tables such as `[analysis.controls]` accept any key). A value is TOML when it reads
+    as TOML, otherwise text, so `20 min`, `controls` and a Windows path need no quotes; several
+    words are joined. The edited text goes through the project file's checks before it is
+    written (temporary file and replace; line endings and a byte-order mark kept); a problem the
+    file already had does not stop an unrelated change, a file that is not valid TOML is refused.
+    The tutorial (both pages and notebooks, owner) makes every single-setting change with `hxex
+    set`; the rules of several lines (`[[input.exclude]]`, `[[review.exclude]]`) stay editor
+    changes, made first in step 4 with a warning that an editor still holding the file writes
+    its old text back. The notebooks' `change` helper is gone; the zip on tutorial-data-1 needs
+    replacing. Guide: first-project.md step 4, project-file.md, commands.md (generated).
+

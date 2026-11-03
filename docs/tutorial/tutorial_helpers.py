@@ -1,32 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Helpers of the hxex tutorial notebooks: they change the project file and fill in the review
-table, as the tutorial's pages describe doing in a text editor and a spreadsheet. Each prints
-the lines it changes; running a cell again finds its change already made."""
+"""Helpers of the hxex tutorial notebooks: they add rules of several lines to the project file
+(single settings are changed with hxex set) and fill in the review table, as the tutorial's
+pages describe doing in a text editor and a spreadsheet. Each prints the lines it changes;
+running a cell again finds its change already made."""
 
 import csv
 from pathlib import Path
-
-
-def change(old, new, section=None):
-    """Replace the start of the first line of hxex.toml that starts with `old` by `new`
-    (after the line [section], or # [section], when given), and print the changed line. A
-    line that already starts with `new` (the cell was run before) is left as it is."""
-    path = Path("hxex.toml")
-    lines = path.read_text().splitlines(keepends=True)
-    start = 0
-    if section is not None:
-        start = next(i for i, line in enumerate(lines)
-                     if line.strip().lstrip("#").strip() == section)
-    for i in range(start, len(lines)):
-        if lines[i].startswith(new):  # already changed
-            print(lines[i].rstrip())
-            return
-        if lines[i].startswith(old):
-            lines[i] = new + lines[i][len(old):]
-            path.write_text("".join(lines))
-            print(lines[i].rstrip())
-            return
-    raise ValueError(f"no line starting with {old!r}")
 
 
 def add_before(line, text):

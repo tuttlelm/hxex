@@ -63,7 +63,8 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
   targets from a parent peptide. `kint` gives intrinsic exchange rates in H2O/D2O mixtures
   (ported from pacilab/hdx-rates-mixtures, MIT). `deamidation` measures Asn-Gly deamidation of
   heated fully deuterated controls from the peaks' m/z. `config` reads the TOML project file that `cli` (`hxex init`,
-  `check`, `run`, `resume`, `report`, `info`) runs. Shared contracts: `spectra.py` (spectrum and entry
+  `set`, `check`, `run`, `resume`, `report`, `info`) runs; `project_edit` changes one setting
+  of it in place (`hxex set`). Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.
 - `tests/`, `docs/` (`PLAN.md`, `HISTORY.md`, `ANALYSIS.md` (post-fitting analysis design:
   read it before working on that), `BUNDLE.md`, `PEAK_PICKING.md`, `RELEASING.md`,

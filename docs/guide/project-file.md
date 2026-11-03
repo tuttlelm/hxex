@@ -10,6 +10,7 @@ same results; the bundle records the settings it was made with.
 ```bash
 hxex init --format specexport                # hxex.toml, with every default, commented
 #   edit hxex.toml: the project name, [input] data_dir, [output] bundle
+hxex set hxex.toml run.controls.d2o_fraction 0.85   # or change one setting from the terminal
 hxex check hxex.toml                         # what would be read, and any problems
 hxex run hxex.toml                           # read, pick, fit (and bootstrap); bundle and tables
 hxex report hxex.toml --figures              # tables and figures ([figures] in the file)
@@ -111,6 +112,13 @@ reference = "WT"
 - **Unknown keys are refused**, with the table and key named, so a misspelt setting does not pass
   silently. Settings that were renamed or removed are refused with a message saying what replaces
   them.
+- **`hxex set`** changes one setting without a text editor: `hxex set hxex.toml
+  run.bootstrap.n_boot 50` switches the line on (and its heading, when that is off), gives it the
+  value, and keeps the comments and the rest of the file. The value is checked as `hxex check`
+  checks it before anything is written. `--default` switches the setting off again. It does not
+  write lists of tables (`[[input.runs]]`, `[[input.exclude]]`, regions) or values of several
+  lines: those are written in the editor. See
+  [Your first project, step 4](first-project.md#step-4-edit-the-project-file).
 
 ## File and folder locations
 
@@ -146,6 +154,7 @@ The main commands and options; every option is in the
 | Command | Does |
 |---|---|
 | `hxex init [--format F] [--project NAME] [-o FILE] [--force]` | write a project file with every default (`-o -` prints it) |
+| `hxex set PROJECT SETTING VALUE` or `hxex set PROJECT SETTING --default` | change one setting of the project file (`run.controls.d2o_fraction 0.85`), or switch it off again; the file is written only when the new value passes the checks |
 | `hxex check PROJECT [--spectra PATH]` | check the file and show what would be read |
 | `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle and tables, no figures. Slow: minutes to hours, most of it the bootstrap |
 | `hxex resume BUNDLE` | finish a run that stopped during its bootstrap. Slow: the rest of the bootstrap |

@@ -4,6 +4,7 @@
 ::
 
     hxex init [--format F] [-o hxex.toml]   write a project file with every default
+    hxex set PROJECT SETTING VALUE          change one setting of the project file
     hxex check PROJECT                      check it and show what would be read
     hxex run PROJECT                        read, pick, fit, bootstrap; bundle, tables, figures
     hxex resume PROJECT|BUNDLE              complete a bundle's bootstrap, add the population test
@@ -63,6 +64,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the file to write (default hxex.toml; '-' for stdout)")
     p.add_argument("--force", action="store_true",
                    help="replace an existing file (without it, init refuses to write over one)")
+
+    p = sub.add_parser("set", help="change one setting of a project file (no text editor "
+                       "needed)")
+    p.add_argument("project_file", metavar="hxex.toml",
+                   help="the project file (hxex.toml, written by hxex init)")
+    p.add_argument("setting", metavar="SETTING",
+                   help="the setting as table.name, e.g. run.controls.d2o_fraction (the "
+                        "settings page of the guide lists them)")
+    p.add_argument("value", nargs="*", metavar="VALUE",
+                   help='its new value: a number, true or false, text (no quotes needed: 20 '
+                        'min, controls), or a list in quotes ("[1, 2]")')
+    p.add_argument("--default", action="store_true",
+                   help="switch the setting off again (a # in front), so that it takes its "
+                        "default; give no value")
 
     p = sub.add_parser("check", help="check a project file and show what would be read")
     p.add_argument("project_file", metavar="hxex.toml",
@@ -297,10 +312,24 @@ def cmd_init(args) -> int:
         log.error("%s exists (use --force to replace it)", out)
         return EXIT_ERROR
     out.write_text(text, encoding="utf-8")
-    log.info("wrote %s (format %s): edit the input paths, then 'hxex check %s'. The output "
+    log.info("wrote %s (format %s): edit the input paths (in a text editor, or with 'hxex set "
+             "%s SETTING VALUE'), then 'hxex check %s'. The output "
              "bundle and the folders named after it (NAME_tables, NAME_figures, NAME_analysis_..., "
              "NAME.N) are "
-             "hxex's: later runs replace or rename them", out, args.format, out)
+             "hxex's: later runs replace or rename them", out, args.format, out, out)
+    return 0
+
+
+def cmd_set(args) -> int:
+    from .project_edit import set_setting
+
+    if args.default == bool(args.value):
+        log.error("give the new value of %s, or --default to return it to its default (not "
+                  "both)", args.setting)
+        return 2
+    change = set_setting(args.project_file, args.setting,
+                         None if args.default else " ".join(args.value))
+    _say(change.describe())
     return 0
 
 
@@ -1672,8 +1701,8 @@ def cmd_analyse(args) -> int:
     return 0
 
 
-COMMANDS = {"init": cmd_init, "check": cmd_check, "run": cmd_run, "resume": cmd_resume,
-            "report": cmd_report, "info": cmd_info, "analyse": cmd_analyse,
+COMMANDS = {"init": cmd_init, "set": cmd_set, "check": cmd_check, "run": cmd_run,
+            "resume": cmd_resume, "report": cmd_report, "info": cmd_info, "analyse": cmd_analyse,
             "analyze": cmd_analyse}
 
 

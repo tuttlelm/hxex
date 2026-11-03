@@ -381,7 +381,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   the large-dataset benchmark met the 10,000-fit target (item 32). HX-Express-style output of a
   run is open.
 - **Command line: done** (item 45): `hxex init`, `check`, `run`, `resume`, `report` and `info`,
-  driven by a TOML project file (`hxex.config`).
+  driven by a TOML project file (`hxex.config`); `hxex set` changes one setting of it in place
+  (item 230).
 - **Phase 5 (validation and release):** no work recorded yet. The noise model is decided ahead
   of it: the Gaussian loss (owner, 2026-10-13; HISTORY items 55 and 56), reopened for its level
   (2026-10-24): per-bin noise from the controls, the default since 2026-10-31 (Next steps 13).

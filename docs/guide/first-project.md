@@ -62,6 +62,24 @@ a setting switched on under a heading that is still off belongs to the heading a
 `hxex check` then names the line and the heading still off. Some names, such as `d2o_fraction`,
 appear under several headings; the comment beside each says which one it is.
 
+**Or change a setting from the terminal**, without the editor:
+
+```bash
+hxex set hxex.toml run.controls.d2o_fraction 0.85
+```
+
+`hxex set` finds the setting's line, switches it on, and gives it the new value; if its heading
+is switched off, it switches that on too, and says so. The setting is named by its heading and
+its name, joined by dots (`[run.controls]` and `d2o_fraction` give `run.controls.d2o_fraction`;
+a setting above every heading, such as `project`, by its name alone). Text needs no quotes
+(`hxex set hxex.toml input.data_dir SpecExport`); a list does, so that the terminal passes it on
+whole (`hxex set hxex.toml figures.series "[140, 56]"`). The comments and the rest of the file
+stay as they are, and a value *hxex* would refuse is not written: the file is left as it was,
+and the message says why. `hxex set hxex.toml run.controls.d2o_fraction --default` switches
+the setting off again, so that it takes its default. Rules of several lines, such as
+`[[input.exclude]]`, are written in the editor. Close the editor before using `hxex set`: an
+editor that still has the file open writes its own copy back when you save, over the change.
+
 The settings most projects change come first in the file: the input, the output, the review,
 the back-exchange correction (`[run.controls]`), the bootstrap, the population test, the
 analysis, and the figures. Everything after the line `Advanced settings: most projects never

@@ -45,20 +45,41 @@ def test_each_page_and_its_notebook_give_the_same_commands(part):
 
 @pytest.mark.parametrize("part", [1, 2])
 def test_each_notebook_makes_the_changes_its_page_shows(part):
-    """Every line a notebook writes into hxex.toml is in one of its page's TOML blocks."""
+    """Every line a notebook adds to hxex.toml is in one of its page's TOML blocks (single
+    settings are changed with hxex set, which the commands test covers)."""
     shown = {line.strip() for block in page_blocks(part, "toml") for line in block.splitlines()}
     written = []
     for cell in notebook_code(part):
         source = "\n".join(line for line in cell.splitlines()
                            if not line.startswith(("!", "%")))  # shell commands and magics
         for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "change":
-                written.append(ast.literal_eval(node.args[1]))
-            elif isinstance(node, ast.Call) and getattr(node.func, "id", "") == "add_before":
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "add_before":
                 written += [x for x in ast.literal_eval(node.args[1]).splitlines() if x]
-    assert len(written) > 5
+    assert written
     missing = [w for w in written if not any(s.startswith(w) for s in shown)]
     assert not missing
+
+
+@pytest.mark.parametrize("part", [1, 2])
+def test_every_hxex_set_of_the_tutorial_works_on_the_template(part, tmp_path, monkeypatch):
+    """The tutorial's hxex set commands, in order, on a fresh template (part 2 after part 1's)."""
+    import shlex
+
+    from hxex.cli import main
+    from hxex.config import load_project
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "SpecExport").mkdir()
+    assert main(["init", "--format", "specexport"]) == 0
+    for p in range(1, part + 1):
+        for block in page_blocks(p, "bash"):
+            for line in block.splitlines():
+                if line.startswith("hxex set "):
+                    assert main(shlex.split(line)[1:]) == 0, line
+    project = load_project(tmp_path / "hxex.toml")
+    assert project.project == "hspb5"
+    if part == 2:
+        assert project.output.overwrite and project.review is not None
 
 
 def test_the_zip_holds_what_the_page_lists(tmp_path):

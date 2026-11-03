@@ -13,13 +13,11 @@ The steps are also in the notebook `hxex_b5_tutorial_2_fits.ipynb`
 ## Step 1: three more peptides
 
 This part runs `hxex report` and `hxex analyse` several times. So that each one replaces what
-it wrote before without being told, change the `overwrite` line in the `[output]` part of
+it wrote before without being told, switch on `overwrite` in the `[output]` part of
 `hxex.toml`:
 
-```toml
-[output]
-...
-overwrite = true
+```bash
+hxex set hxex.toml output.overwrite true
 ```
 
 (Without it, each command stops at the folder it wrote before and asks for `--overwrite`. The
@@ -29,9 +27,8 @@ prefer.)
 Then three peptides to look at, in the `[figures]` part: WT 68-75 (`data_id` 107), WT 42-54
 (56, from part 1), and R120G 114-137 at charge 3 (166):
 
-```toml
-[figures]
-series = [107, 56, 166]
+```bash
+hxex set hxex.toml figures.series "[107, 56, 166]"
 ```
 
 and draw them:
@@ -94,13 +91,15 @@ the copy `user_review_table.csv`. Open it, and in the row of `WT`, `0068-0075`, 
 the saturation onset` in `note`. Save it, keeping the CSV format. A spectrum you accepted is
 never left out by the analysis' filters.
 
-Then tell *hxex* about the table: in `hxex.toml`, find the switched-off `# [review]` part, and
-switch on its first two lines:
+Then tell *hxex* about the table:
 
-```toml
-[review]
-table = "user_review_table.csv"
+```bash
+hxex set hxex.toml review.table user_review_table.csv
 ```
+
+This switches on the `[review]` part with the table's name. (In the text editor: find the
+switched-off `# [review]` part, and delete the `# ` in front of its first two lines,
+`[review]` and `table = "user_review_table.csv"`.)
 
 Whether the dim spectrum or the bright ones are nearer the truth is your judgement as the
 scientist; the tutorial accepts it to show how. The other decisions you could make here:
@@ -141,7 +140,9 @@ The `fd_multimodal` notes of this run mostly have another cause: they are on bri
 such as WT 29-38 and 68-75, whose fully deuterated controls are flattened like the labelled
 spectra of step 2.
 
-To leave a whole series out, write a rule. Below the two `[review]` lines of step 3, add:
+To leave a whole series out, write a rule. A rule has several lines, so it goes in with the
+text editor (close the editor again afterwards, before the next `hxex set`). Below the two
+`[review]` lines of step 3, add:
 
 ```toml
 [[review.exclude]]
@@ -175,12 +176,14 @@ question more strictly: is a further population needed, judged against simulated
 have the same noise but no such population? It tests every spectrum, and the spectra of each
 peptide and time together ([The population test](population-test.md)).
 
-In `hxex.toml`, find the switched-off `# [run.population_test]` part, and switch on its
-heading:
+The test is switched off in the template; setting its number of simulated spectra (20, also
+its default) switches it on:
 
-```toml
-[run.population_test]
+```bash
+hxex set hxex.toml run.population_test.simulations 20
 ```
+
+(In the text editor: delete the `# ` in front of the `# [run.population_test]` heading.)
 
 Then add the test to the results you have, and analyse again:
 
@@ -254,6 +257,7 @@ controls the noise was measured on, such as those of step 2, are where this is l
 
 | Step | Command | What it did |
 |---|---|---|
+| 1 | `hxex set hxex.toml ...` | changed settings of the project file (also in steps 3 and 6) |
 | 1 | `hxex report hxex.toml --figures` | drew three more peptides |
 | 2 | `hxex info hxex.toml` | showed the run's noise and the brightness limit |
 | 5 | `hxex check hxex.toml` | read the review table and the rule |

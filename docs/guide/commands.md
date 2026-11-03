@@ -32,6 +32,19 @@ Write a project file with every default.
 | `-o`, `--output` `OUTPUT` | the file to write (default hxex.toml; '-' for stdout) |
 | `--force` | replace an existing file (without it, init refuses to write over one) |
 
+## hxex set
+
+Change one setting of a project file (no text editor needed).
+
+`hxex set hxex.toml SETTING VALUE [options]`
+
+| Argument | Meaning |
+|---|---|
+| `hxex.toml` | the project file (hxex.toml, written by hxex init) |
+| `SETTING` | the setting as table.name, e.g. run.controls.d2o_fraction (the settings page of the guide lists them) |
+| `VALUE` | its new value: a number, true or false, text (no quotes needed: 20 min, controls), or a list in quotes ("[1, 2]") |
+| `--default` | switch the setting off again (a # in front), so that it takes its default; give no value |
+
 ## hxex check
 
 Check a project file and show what would be read.
