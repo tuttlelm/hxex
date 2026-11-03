@@ -10,14 +10,12 @@ workspaces say how to do the same from the command line.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -31,15 +29,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .figure_view import FigurePanel
+from .results_workspace import ResultsWorkspace
 from .run_workspace import RunWorkspace
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
 from .tasks import Latest
@@ -148,125 +143,6 @@ class AnalysisWorkspace(QWidget):
         layout.addStretch()
 
 
-class ResultsWorkspace(QWidget):
-    """A first results view: the series of the open results and their figures."""
-
-    COLUMNS = (("sample", "sample"), ("peptide_range", "residues"), ("peptide", "peptide"),
-               ("charge", "charge"), ("n_spectra", "spectra"), ("n_flagged", "flagged"),
-               ("n_rejected", "rejected"), ("n_multi", "K > 1"))
-
-    def __init__(self, window: MainWindow):
-        super().__init__()
-        self.window = window
-        self.results = None
-        self.data_ids: list[int] = []
-        self.path_label = QLabel("No results open.")
-        open_button = QPushButton("Open results…")
-        open_button.setToolTip("a results bundle: a folder, or a .zip")
-        open_button.clicked.connect(window.open_results_dialog)
-        top = QHBoxLayout()
-        top.addWidget(self.path_label, 1)
-        top.addWidget(open_button)
-
-        self.table = QTableWidget(0, len(self.COLUMNS))
-        self.table.setHorizontalHeaderLabels([label for _, label in self.COLUMNS])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSortingEnabled(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.itemSelectionChanged.connect(self._selected)
-
-        self.figures = QTabWidget()
-        self.panels: dict[str, FigurePanel] = {}
-        for kind in SERIES_KINDS:
-            panel = FigurePanel()
-            panel.view.clicked.connect(lambda gid: window.statusBar().showMessage(gid, 5000))
-            self.panels[kind] = panel
-            self.figures.addTab(panel, kind)
-
-        split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(self.table)
-        split.addWidget(self.figures)
-        split.setStretchFactor(1, 1)
-        split.setSizes([560, 900])  # the list wide enough for its columns; the figures the rest
-        layout = QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addWidget(split, 1)
-
-    def show_results(self, results, path: Path | None) -> None:
-        from ..report.tables import series_table
-
-        self.results = results
-        self.table.setSortingEnabled(False)
-        self.table.clearContents()
-        for panel in self.panels.values():
-            panel.clear()
-        if results is None:
-            self.path_label.setText("No results open.")
-            self.table.setRowCount(0)
-            self.data_ids = []
-            return
-        self.path_label.setText(str(path))
-        rows = series_table(results)
-        self.data_ids = [int(d) for d in rows["data_id"]]
-        self.table.setRowCount(len(self.data_ids))
-        for r, data_id in enumerate(self.data_ids):
-            for c, (key, _) in enumerate(self.COLUMNS):
-                value = rows[key][r]
-                item = QTableWidgetItem()
-                if key in ("charge",) or key.startswith("n_"):
-                    item.setData(Qt.ItemDataRole.DisplayRole, int(value))
-                else:
-                    item.setText(str(value))
-                    item.setToolTip(str(value))
-                item.setData(Qt.ItemDataRole.UserRole, data_id)
-                self.table.setItem(r, c, item)
-        self.table.setSortingEnabled(True)
-        self.table.resizeColumnsToContents()
-        peptide = 2  # long peptides would push the counts out of view (the tooltip has it all)
-        self.table.setColumnWidth(peptide, min(self.table.columnWidth(peptide), PEPTIDE_WIDTH))
-
-    def selection(self) -> dict:
-        """The selected series as sample, residues and charge (they outlast a rerun, which can
-        renumber the series)."""
-        row = self.table.currentRow()
-        if row < 0 or not self.table.selectedItems():
-            return {}
-        return {"sample": self.table.item(row, 0).text(),
-                "peptide_range": self.table.item(row, 1).text(),
-                "charge": int(self.table.item(row, 3).data(Qt.ItemDataRole.DisplayRole))}
-
-    def select(self, selection: dict) -> bool:
-        """Select the series ``selection`` names; False when the results do not have it."""
-        for row in range(self.table.rowCount()):
-            if (self.table.item(row, 0).text() == selection.get("sample")
-                    and self.table.item(row, 1).text() == selection.get("peptide_range")
-                    and self.table.item(row, 3).data(Qt.ItemDataRole.DisplayRole)
-                    == selection.get("charge")):
-                self.table.selectRow(row)
-                return True
-        return False
-
-    def _selected(self) -> None:
-        from ..report.figures import PlotConfig, series_figures, series_kinds
-
-        items = self.table.selectedItems()
-        if not items or self.results is None:
-            return
-        data_id = int(items[0].data(Qt.ItemDataRole.UserRole))
-        results = self.results
-        config = results.figures or PlotConfig()
-        drawn = series_kinds(results, data_id, dataclasses.replace(config, kinds=SERIES_KINDS))
-        for kind, panel in self.panels.items():
-            if kind not in drawn:
-                panel.clear("one population in every spectrum: no population map")
-                continue
-            one = dataclasses.replace(config, kinds=(kind,))
-            panel.draw(lambda one=one, kind=kind: series_figures(results, data_id, one)[kind])
-        self.window.changed()
-
-
 def new_project(path: Path, fmt: str, name: str) -> Path:
     """Write a new project file with every default, as ``hxex init --format FMT --project NAME``
     does (a file chosen in a save dialog has been confirmed already, so one there is
@@ -324,6 +200,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("hxex")
         self.resize(1200, 800)
 
+        # how figures are drawn: matplotlib (as saved files; the default, owner) or Qt's SVG
+        # renderer, which ignores clipping (HISTORY 237)
+        self.render = str(self.settings.value("render", "matplotlib"))
+        if self.render not in ("svg", "matplotlib"):
+            self.render = "matplotlib"
         self.project_page = ProjectWorkspace(self)
         self.run_page = RunWorkspace()
         self.run_page.results_changed.connect(self._results_changed)
@@ -384,6 +265,17 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file.addAction(quit_action)
 
+        view = self.menuBar().addMenu("&View")
+        draw = view.addMenu("Draw the figures with")
+        group = QActionGroup(self)
+        for mode, text in (("svg", "Qt's SVG renderer (vector)"),
+                           ("matplotlib", "matplotlib (as saved files)")):
+            action = QAction(text, self, checkable=True)
+            action.setChecked(mode == self.render)
+            action.triggered.connect(lambda checked=False, m=mode: self.set_render(m))
+            group.addAction(action)
+            draw.addAction(action)
+
         helpmenu = self.menuBar().addMenu("&Help")
         guide = QAction("User guide", self)
         guide.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(GUIDE_URL)))
@@ -406,6 +298,12 @@ class MainWindow(QMainWindow):
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
         box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 300px; }")  # the text, not wrapped
         return box
+
+    def set_render(self, render: str) -> None:
+        """Draw the figures with Qt's SVG renderer or with matplotlib (remembered)."""
+        self.render = render
+        self.settings.setValue("render", render)
+        self.results_page.set_render(render)
 
     def _about(self) -> None:
         self.about_box().exec()

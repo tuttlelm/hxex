@@ -95,6 +95,16 @@ def k_comparison_data(spectrum_id: str, results: Results) -> dict:
     }
 
 
+LEGEND_BELOW = 1.6  # inches added to a K comparison's height for the legends under the panels
+
+
+def _legend_below(ax) -> None:
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                  fontsize=6.5, frameon=False)
+
+
 def plot_k_comparison(
     spectrum_id: str,
     results: Results,
@@ -114,16 +124,21 @@ def plot_k_comparison(
     bad = [k for k in ks if k not in d["k_values"]]
     if bad:
         raise ValueError(f"K = {bad} was not fitted (tried {d['k_values']})")
-    fig = Figure(figsize=(cell[0] * len(ks), cell[1]))
+    # each panel's legend (its own populations) under it, covering none of the spectrum
+    # (owner, 2026-11-03); constrained layout makes room for it
+    fig = Figure(figsize=(cell[0] * len(ks), cell[1] + LEGEND_BELOW), layout="constrained")
     axes = np.atleast_1d(fig.subplots(1, len(ks), sharey=True))
+    kwargs.setdefault("legend", False)
     fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
     for ax, k in zip(axes, ks, strict=True):
         j = d["k_values"].index(k)
         if not fitted[k]:  # the screen skipped it: the spectrum alone
             plot_spectrum(spectrum_id, results, show=("picked",), ax=ax, title=False, **kwargs)
             ax.set_title(f"K={k} not fitted (screened)", fontsize=8)
+            _legend_below(ax)
             continue
         plot_spectrum(spectrum_id, results, k=k, show=show, ax=ax, title=False, **kwargs)
+        _legend_below(ax)
         marks = []
         if k == d["selected"]:
             marks.append("selected")
@@ -140,8 +155,7 @@ def plot_k_comparison(
         if k == d["effective"]:
             for spine in ax.spines.values():
                 spine.set_linewidth(2.0)
-    fig.suptitle(spectrum_id, fontsize=9)
-    fig.tight_layout()
+    fig.suptitle(spectrum_id, fontsize=9)  # constrained layout places it with the legends
     return fig
 
 

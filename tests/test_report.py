@@ -159,10 +159,11 @@ def test_residuals_normalise_and_corrected_labels(results):
     fig = plot_spectrum(sid, results, show=("picked", "fit"), residual=True, normalize=True)
     assert len(fig.axes) == 2 and "residual" in gids(fig)
     assert max(ax.get_ylim()[1] for ax in fig.axes[:1]) <= 1.6
-    text = " ".join(t.get_text() for t in plot_spectrum(sid, results, show=("fit",)).axes[0]
-                    .get_legend().get_texts())
+    # a figure of its own: the legend outside the axes (the figure's), covering none of it
+    text = " ".join(t.get_text() for t in plot_spectrum(sid, results, show=("fit",)).legends[0]
+                    .get_texts())
     assert "corr." in text and "±" in text
-    plain = plot_spectrum(sid, results, show=("fit",), corrected=False).axes[0].get_legend()
+    plain = plot_spectrum(sid, results, show=("fit",), corrected=False).legends[0]
     assert "corr." not in " ".join(t.get_text() for t in plain.get_texts())
 
 
@@ -707,7 +708,8 @@ def test_picked_bins_are_drawn_as_the_pickers_window(results, written):
     assert len(bars) == len(d["mz"]) and all(isinstance(b, Rectangle) for b in bars)
     np.testing.assert_allclose([b.get_width() for b in bars], 2 * d["window"])
     np.testing.assert_allclose([b.get_x() + b.get_width() / 2 for b in bars], d["mz"])
-    assert "50 ppm window" in " ".join(t.get_text() for t in fig.axes[0].get_legend().get_texts())
+    assert "50 ppm window" in " ".join(t.get_text() for t in fig.legends[0].get_texts())
+    assert fig.axes[0].get_legend() is None  # outside the axes
     # a window from the resolving power is drawn as picked, per m/z and charge
     import dataclasses
 
@@ -721,7 +723,7 @@ def test_picked_bins_are_drawn_as_the_pickers_window(results, written):
     np.testing.assert_allclose(e["window"], settings.picker.half_width(e["mz"], charge))
     assert not np.allclose(e["window"], d["window"])
     legend = " ".join(t.get_text() for t in plot_spectrum(sid, wide, show=("picked",))
-                      .axes[0].get_legend().get_texts())
+                      .legends[0].get_texts())
     assert "ppm window" not in legend and "window" in legend
     assert all(b.get_linewidth() >= 1.0 for b in bars)  # a window is never thinner than this
     assert all(b.get_edgecolor() == b.get_facecolor() for b in bars)  # shaded, no outline

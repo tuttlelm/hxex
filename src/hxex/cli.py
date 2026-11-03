@@ -25,6 +25,7 @@ import argparse
 import contextlib
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -1803,10 +1804,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
-    if args.stop_from_input:
-        _stop_from_input()
+    if not args.stop_from_input:
+        with _logging_to_stderr(args):
+            return _dispatch(args)
+    _stop_from_input()
     with _logging_to_stderr(args):
-        return _dispatch(args)
+        code = _dispatch(args)
+    # the thread waiting on the input would hold the process open at shutdown on Windows (a
+    # blocked read is not interrupted): end it here, once everything is written
+    sys.stdout.flush()
+    sys.stderr.flush()
+    logging.shutdown()
+    os._exit(code)
 
 
 def _dispatch(args) -> int:

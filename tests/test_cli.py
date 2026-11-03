@@ -1897,13 +1897,21 @@ def test_a_program_runs_hxex_with_progress_records_and_stops_it(tmp_path):
     # the input closed at once: the run stops (or aborts) and says so
     assert done.returncode == cli.EXIT_STOPPED, done.stderr
     assert "stopp" in done.stderr or "abort" in done.stderr
-    # the input kept open (as the window keeps it): the run goes to its end
-    kept = subprocess.Popen(command + ["--overwrite"], stdin=subprocess.PIPE,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                            cwd=tmp_path)
-    err = kept.stderr.read()  # until the command ends (its input still open)
-    kept.wait(timeout=300)
-    kept.stdin.close()
+    # the input kept open (as the window keeps it): the run goes to its end, and the process
+    # ends although its input is still open (a thread waits on it; on Windows that held the
+    # process open at shutdown until the command ended it itself)
+    log = tmp_path / "err.txt"
+    with log.open("w") as err_file:
+        kept = subprocess.Popen(command + ["--overwrite"], stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=err_file, text=True,
+                                cwd=tmp_path)
+        try:
+            kept.wait(timeout=300)  # a hang fails here, not forever
+        finally:
+            if kept.poll() is None:
+                kept.kill()
+            kept.stdin.close()
+    err = log.read_text()
     assert kept.returncode == 0, err
     records = [json.loads(line[len(cli.PROGRESS_PREFIX):]) for line in err.splitlines()
                if line.startswith(cli.PROGRESS_PREFIX)]

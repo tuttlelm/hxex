@@ -91,6 +91,7 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
     with qtbot.waitSignal(panel.drawn, timeout=10000):
         panel.draw(lambda: fig)
     view: FigureView = panel.view
+    qtbot.waitUntil(lambda: view.ready, timeout=10000)  # drawn: what can be clicked is known
     assert view.figure is fig and panel.save_button.isEnabled()
     own = view.figure_size()
     assert own.width() > 0
@@ -131,10 +132,12 @@ def test_the_window_opens_results_draws_a_series_and_saves_the_session(qtbot, wi
     window.open_path(bundle)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     page = window.results_page
-    assert page.table.rowCount() == 2 and window.results_path == bundle.absolute()
-    uptake = page.panels["uptake"]
+    # one peptide (the synthetic run's two series share sample, peptide and charge)
+    assert page.tree.topLevelItemCount() == 1 and window.results_path == bundle.absolute()
+    assert page.tree.topLevelItem(0).childCount() == 2
+    uptake = page.panel("uptake")
     with qtbot.waitSignal(uptake.drawn, timeout=30000):
-        page.table.selectRow(1)
+        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
     assert uptake.view.figure is not None
     chosen = page.selection()
     assert set(chosen) == {"sample", "peptide_range", "charge"}
@@ -338,3 +341,46 @@ def test_messages_start_afresh_for_another_project(qtbot, window, tmp_path):
     text = window.messages.toPlainText()
     assert str(second) in text and str(first) not in text
     assert str(second.parent) in window.run_page.where.text()
+
+
+def _red_outside_the_frame(view, fig) -> bool:
+    """Whether red is drawn left of the axes' frame (the line runs past the axis limits)."""
+    from PySide6.QtGui import QColor
+
+    image = view.grab().toImage()
+    left = fig.axes[0].get_position().x0 * image.width()
+    y = image.height() // 2
+    return any(QColor(image.pixel(x, y)).red() > 200 and QColor(image.pixel(x, y)).green() < 90
+               for x in range(2, int(left) - 4))
+
+
+def test_the_matplotlib_view_clips_what_qts_svg_renderer_does_not(qtbot):
+    """Qt's SVG renderer ignores SVG clip paths, so a line beyond the axis limits shows past
+    the frame (the owner's raw profiles, 2026-11-03); matplotlib's own drawing clips it."""
+    fig = Figure(figsize=(4, 3), dpi=100)
+    ax = fig.add_axes((0.3, 0.1, 0.6, 0.8))
+    ax.plot([-10, 10], [0.5, 0.5], color="red", lw=4, gid="line")
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(0, 1)
+    panel = FigurePanel(render="svg")
+    qtbot.addWidget(panel)
+    panel.resize(600, 500)
+    panel.show()
+    panel.show_figure(fig)
+    assert _red_outside_the_frame(panel.view, fig)  # Qt's SVG: not clipped
+    panel.set_render("matplotlib")
+    view = panel.view
+    qtbot.waitUntil(lambda: view._image is not None, timeout=10000)
+    assert not _red_outside_the_frame(view, fig)  # matplotlib: clipped at the frame
+    # the same click-through and magnifying
+    clicks = []
+    panel.clicked.connect(clicks.append)
+    w, h = view.width(), view.height()
+    qtbot.mouseClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.6, h * 0.5).toPoint())
+    assert clicks == ["line"]
+    qtbot.mouseDClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.6, h * 0.5).toPoint())
+    assert panel.magnified
+    # drawn again at the new size once the zoom settles
+    qtbot.waitUntil(lambda: abs(view._image.width() - view.width()) <= 1, timeout=10000)
+    panel.set_render("svg")
+    assert panel.view.figure is fig and panel.render == "svg"

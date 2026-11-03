@@ -8,12 +8,13 @@ never pyplot, so they can) and shows it in a :class:`FigureView` with a small to
 
 from __future__ import annotations
 
+import io
 import logging
 from collections.abc import Callable
 
 from matplotlib.figure import Figure
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QPainter, QPalette
+from PySide6.QtGui import QImage, QPainter, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -38,6 +39,8 @@ ZOOM_RANGE = (0.1, 16.0)
 # around a panel when it is magnified: its tick labels and title (left, right, top, bottom, as
 # shares of the panel's own width and height)
 PANEL_ROOM = (0.24, 0.04, 0.12, 0.24)
+REDRAW_AFTER_MS = 150  # the matplotlib view draws again once the zoom has settled this long
+MAX_PIXELS = 40e6  # the most pixels the matplotlib view draws (a page zoomed far in)
 DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a click)
 HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
         "Double-click a panel: magnify it (double-click again: the whole figure).")
@@ -63,7 +66,6 @@ class FigureView(QWidget):
         self._panels: list[QRectF] = []  # each panel (matplotlib's axes) in the SVG's units
         self._press: QPointF | None = None
         self._dragging = False
-        self.setToolTip(HINT)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setAutoFillBackground(True)
         pal = self.palette()
@@ -82,7 +84,7 @@ class FigureView(QWidget):
         """Each panel (matplotlib's axes, where the figure placed it) with room for its tick
         labels, in the SVG's units. Taken from the figure: an SVG group's bounds include what
         the panel clips away (a band drawn across the whole axis), so they cannot be used."""
-        view = self._renderer.viewBoxF()
+        view = self._view_box()
         boxes = []
         for ax in fig.axes:
             if not ax.get_visible():
@@ -130,9 +132,18 @@ class FigureView(QWidget):
         self._renderer.render(painter, QRectF(self.rect()))
         painter.end()
 
+    def _view_box(self) -> QRectF:
+        """The figure's own coordinates (the SVG's units: points from the top left)."""
+        return self._renderer.viewBoxF()
+
+    @property
+    def ready(self) -> bool:
+        """Whether the figure is drawn (and what can be clicked is known)."""
+        return self.figure is not None
+
     def _figure_point(self, point: QPointF) -> QPointF:
         """``point`` (the view's pixels) in the SVG's units."""
-        view = self._renderer.viewBoxF()
+        view = self._view_box()
         return QPointF(view.x() + point.x() * view.width() / self.width(),
                        view.y() + point.y() * view.height() / self.height())
 
@@ -146,7 +157,7 @@ class FigureView(QWidget):
         if not found:
             return None
         box = min(found, key=lambda b: b.width() * b.height())
-        view = self._renderer.viewBoxF()
+        view = self._view_box()
         sx, sy = self.width() / view.width(), self.height() / view.height()
         return QRectF((box.x() - view.x()) * sx, (box.y() - view.y()) * sy,
                       box.width() * sx, box.height() * sy)
@@ -200,6 +211,116 @@ class FigureView(QWidget):
         super().mouseDoubleClickEvent(event)
 
 
+class RasterView(FigureView):
+    """A figure drawn by matplotlib itself (its Agg renderer) at the size shown, sharp at every
+    zoom: drawn again, in a worker thread, when the size changes (the picture drawn before is
+    scaled meanwhile). It shows exactly what a saved PNG shows, clipping included, which Qt's
+    SVG renderer does not draw (on trial against :class:`FigureView`; HISTORY 237)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._image: QImage | None = None
+        self._boxes: dict[str, tuple[float, float, float, float]] = {}  # gid -> fractions
+        self._size_pt = QSize(0, 0)
+        self._drawing = Latest(self)
+        self._again = QTimer(self)
+        self._again.setSingleShot(True)
+        self._again.setInterval(REDRAW_AFTER_MS)
+        self._again.timeout.connect(self._render)
+
+    def set_figure(self, fig: Figure, svg: bytes | None = None) -> None:
+        self.figure = fig
+        self._ids = figure_ids(fig)
+        w, h = fig.get_size_inches()
+        self._size_pt = QSize(round(w * 72), round(h * 72))  # as the SVG's points
+        self._image, self._boxes = None, {}
+        self._panels = self._panel_boxes(fig)
+        self._resize()
+
+    def clear(self) -> None:
+        self.figure, self._ids, self._panels = None, [], []
+        self._image, self._boxes, self._size_pt = None, {}, QSize(0, 0)
+        self.setFixedSize(QSize(0, 0))
+        self.update()
+
+    def _view_box(self) -> QRectF:
+        return QRectF(0, 0, self._size_pt.width(), self._size_pt.height())
+
+    @property
+    def ready(self) -> bool:
+        return self.figure is not None and self._image is not None
+
+    def figure_size(self) -> QSize:
+        return QSize(self._size_pt)
+
+    def _resize(self) -> None:
+        super()._resize()
+        if self.figure is not None:
+            self._again.start()  # once the zooming settles
+
+    def _render(self) -> None:
+        fig = self.figure
+        if fig is None or self.width() == 0:
+            return
+        ratio = self.devicePixelRatioF()
+        pixels = self.width() * ratio * self.height() * ratio
+        scale = min(1.0, (MAX_PIXELS / pixels) ** 0.5) if pixels else 1.0
+        dpi = 72 * self.zoom * ratio * scale
+        need_boxes = not self._boxes
+
+        def work():
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+            boxes = {}
+            if need_boxes and self._ids:  # where each gid is, as fractions of the figure
+                canvas = FigureCanvasAgg(fig)
+                canvas.draw()
+                renderer = canvas.get_renderer()
+                width, height = canvas.get_width_height()
+                for artist in fig.findobj():
+                    gid = artist.get_gid()
+                    if gid in self._ids and gid not in boxes:
+                        try:
+                            bb = artist.get_window_extent(renderer)
+                        except Exception:  # noqa: BLE001 - an artist without an extent
+                            continue
+                        boxes[gid] = (bb.x0 / width, 1 - bb.y1 / height,
+                                      bb.width / width, bb.height / height)
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=dpi)
+            return buf.getvalue(), boxes
+
+        self._drawing.submit(work, self._rendered, lambda message: log.error(
+            "could not draw the figure: %s", message))
+
+    def _rendered(self, done) -> None:
+        png, boxes = done
+        image = QImage.fromData(png, "PNG")
+        image.setDevicePixelRatio(self.devicePixelRatioF())
+        self._image = image
+        if boxes:
+            self._boxes = boxes
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt's name
+        if self._image is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(QRectF(self.rect()), self._image)
+        painter.end()
+
+    def element_at(self, point: QPointF) -> str | None:
+        if not self._boxes or self.width() == 0:
+            return None
+        fx, fy = point.x() / self.width(), point.y() / self.height()
+        best, area = None, None
+        for gid, (x, y, w, h) in self._boxes.items():
+            if x <= fx <= x + w and y <= fy <= y + h and (area is None or w * h < area):
+                best, area = gid, w * h
+        return best
+
+
 class FigurePanel(QWidget):
     """A :class:`FigureView` in a scroll area, with buttons to zoom, fit and save. Give it a
     figure (:meth:`show_figure`) or a function that draws one (:meth:`draw`, run in a worker
@@ -207,16 +328,18 @@ class FigurePanel(QWidget):
 
     drawn = Signal()  # a figure is shown
     failed = Signal(str)
+    clicked = Signal(str)  # the gid of what was clicked (whichever view draws the figure)
 
-    def __init__(self, parent=None, pool: QThreadPool | None = None):
+    def __init__(self, parent=None, pool: QThreadPool | None = None,
+                 render: str = "matplotlib"):
         super().__init__(parent)
-        self.view = FigureView()
+        self.render = render
+        self.view = VIEWS[render]()
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.view)
         self.scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.scroll.viewport().installEventFilter(self)  # the wheel zooms (not scrolls)
-        self.view.dragged.connect(self._drag)
-        self.view.double_clicked.connect(self._double_clicked)
+        self._connect(self.view)
         self.magnified = False  # a panel fills the view (double-click)
         self.status = QLabel()
         self._fitted = True
@@ -252,12 +375,42 @@ class FigurePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.bar)
         layout.addWidget(self.scroll)
+        # how to move about, under the figure (as a tooltip it covered the figure: owner)
+        self.hint = QLabel(HINT)
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: palette(placeholder-text);")
+        layout.addWidget(self.hint)
         self.save_button.setEnabled(False)
 
     # --- showing ---------------------------------------------------------------------------
 
+    def _connect(self, view: FigureView) -> None:
+        view.dragged.connect(self._drag)
+        view.double_clicked.connect(self._double_clicked)
+        view.clicked.connect(self.clicked)
+
+    def set_render(self, render: str) -> None:
+        """Draw with Qt's SVG renderer (``'svg'``) or with matplotlib (``'matplotlib'``); the
+        figure shown is shown again the new way."""
+        if render == self.render:
+            return
+        figure, zoom, fitted = self.view.figure, self.view.zoom, self._fitted
+        old = self.scroll.takeWidget()
+        self.view = VIEWS[render]()
+        self._connect(self.view)
+        self.scroll.setWidget(self.view)
+        self.render = render
+        if old is not None:
+            old.deleteLater()
+        if figure is not None:
+            self.view.set_figure(figure)
+            if fitted:
+                self.fit()
+            else:
+                self.view.set_zoom(zoom)
+
     def show_figure(self, fig: Figure, svg: bytes | None = None) -> None:
-        self.view.set_figure(fig, svg)
+        self.view.set_figure(fig, svg if self.render == "svg" else None)
         self.set_title(figure_title(fig))
         self.save_button.setEnabled(True)
         self.status.setText("")
@@ -268,9 +421,11 @@ class FigurePanel(QWidget):
     def draw(self, draw: Callable[[], Figure]) -> None:
         """Draw a figure with ``draw`` in a worker thread and show it when done; a newer call
         replaces an older one still drawing."""
+        svg = self.render == "svg"  # the matplotlib view draws its own picture
+
         def work():
             fig = draw()
-            return fig, figure_svg(fig)
+            return fig, figure_svg(fig) if svg else None
 
         self.status.setText("drawing…")
         self._drawing.submit(work, lambda done: self.show_figure(*done), self._failed)
@@ -425,3 +580,6 @@ class FigurePanel(QWidget):
             return
         self.status.setText(f"saved {path}")
         log.info("figure saved to %s", path)
+
+
+VIEWS = {"svg": FigureView, "matplotlib": RasterView}  # how the window draws its figures

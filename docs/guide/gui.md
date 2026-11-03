@@ -8,10 +8,8 @@ you can switch between them at any point.
 The window is being built in steps. What it does today:
 
 - **Project**: makes a new project file or opens one, and changes its settings (below).
-- **Results**: opens results and lists every peptide of every sample at each charge, with its
-  number of spectra, how many have a quality flag, how many you rejected, and how many have
-  more than one population. Click a row to see its figures: the spectra, the uptake plot, and
-  the population map (when a spectrum has more than one population).
+- **Results**: opens results as a tree of peptides, their charges, time points, and
+  replicates, and shows the figures of what you select (below).
 - **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
   with their messages, a progress bar, and a Stop button (below).
 - **Analysis**: for now this shows the command to type in a terminal. Reviewing spectra and
@@ -112,6 +110,27 @@ the user review table. Choose one on the left to edit it as a grid.
 - **New table** makes a table with the columns *hxex* reads for your format, where you choose,
   and names it in the project file.
 
+## Results
+
+**Results** shows a run's results as a tree: each peptide of each sample, under it its charges
+(each a series), under a charge its time points (the undeuterated controls first, the fully
+deuterated last), and under a time point its replicates, which are the spectra. Each row
+counts its spectra, how many have a quality flag, how many you rejected, and how many have
+more than one population; a time point lists the K of its replicates, and a replicate its K,
+review status, and flags. Click a row, or move through the tree with the arrow keys, to see:
+
+- **a peptide or a charge**: the series' pages, as `hxex report` draws them: the spectra, the
+  uptake plot, and the population map (when a spectrum has more than one population);
+- **a time point**: its replicates side by side, on the same m/z range as the whole series,
+  and the series' uptake plot;
+- **a replicate**: that spectrum on its own, its fits at each K side by side (the one chosen
+  framed), and the series' uptake plot.
+
+The list above the tree shows only some series (flagged, more than one population, rejected,
+or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
+results through the project file applies your review table and exclusion rules, as `hxex
+report hxex.toml` does.
+
 ## Running the commands
 
 **Run** has a button for each command: **Check**, **Run**, **Resume**, **Report**, **Analyse**,
@@ -158,8 +177,11 @@ of a series), which stays readable however far you zoom:
 - **Save figure…** saves the figure as SVG or PDF (sharp at any size, for papers and slides
   you edit further) or PNG (a picture).
 
-The figures are those `hxex report` draws, so the same peptide gives the same figure in the
-window and in the figures folder. Changing a figure in the window (axis ranges, labels,
+The figures are those `hxex report` draws, drawn by the same program (matplotlib), so the
+same peptide gives the same figure in the window and in the figures folder. A line under each
+figure says how to move about it. (**View > Draw the figures with** can switch to Qt's SVG
+renderer, which zooms without redrawing but draws past the panels' frames anything that runs
+beyond the axis limits, such as a raw profile wider than the m/z range shown.) Changing a figure in the window (axis ranges, labels,
 colours) will come later.
 
 ## Sessions

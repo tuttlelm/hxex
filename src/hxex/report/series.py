@@ -59,16 +59,22 @@ def rep_style(rep: int) -> tuple[str, str]:
 def _page_header(fig: Figure, label: str, handles: list) -> None:
     """The series title in a band at the top with the page's one legend under it, both placed
     in inches (a fraction of the height would drop them into the first row of a tall figure),
-    and the panels laid out below them."""
-    height, width = fig.get_figheight(), fig.get_figwidth()
-    fig.suptitle(label, fontsize=10, y=1 - 0.1 / height, va="top")
-    top = 0.45
+    and the panels laid out below them. The band is added to the figure's height, so the panels
+    keep their size however many rows there are (taken from it, a one-row page lost a third of
+    its height and its panels were squashed: owner, 2026-11-03)."""
+    width = fig.get_figwidth()
+    top = 0.45  # the title's band (inches)
+    ncol = rows = 0
     if handles:
         ncol = max(1, min(len(handles), int(width / 2.0)))
         rows = math.ceil(len(handles) / ncol)
+        top = 0.4 + 0.17 * rows + 0.08  # the legend under the title, and a small gap
+    fig.set_figheight(fig.get_figheight() + top)
+    height = fig.get_figheight()
+    fig.suptitle(label, fontsize=10, y=1 - 0.1 / height, va="top")
+    if handles:
         fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1 - 0.38 / height),
                    ncol=ncol, frameon=False, fontsize=7, handlelength=2.2)
-        top += 0.2 * rows + 0.1
     fig.tight_layout(rect=(0, 0, 1, 1 - top / height))
 
 
@@ -280,6 +286,7 @@ def plot_series_spectra(
     residual: bool = False,
     cell: tuple[float, float] = (4.5, 3.0),
     padding: float = 0.1,
+    rows: Sequence[int] | None = None,
     **kwargs,
 ) -> Figure:
     """A grid of spectra: with replicates a row per time and a column per replicate, otherwise
@@ -289,8 +296,17 @@ def plot_series_spectra(
     and fit layers. Spectra whose layers cannot be drawn are left blank. Every panel has the
     same m/z range: the series' expected range (the predicted m/z of the picked bins of all its
     spectra; without a picked table, the panels' own ranges together) with ``padding`` times its
-    width on each side."""
+    width on each side. ``rows`` (the spectra's positions in the results) draws only those
+    spectra of the series, one time point's replicates say (hxex's window), on the m/z range of
+    the whole series, so that they compare with the full page."""
     info = series_info(results, data_id)
+    every = [str(results.fit.spectrum_id[i]) for i in info["rows"]]
+    if rows is not None:
+        keep = np.isin(info["rows"], np.asarray(list(rows), dtype=int))
+        if not keep.any():
+            raise ValueError(f"none of the rows {list(rows)} is a spectrum of series {data_id}")
+        info = {k: (v[keep] if isinstance(v, np.ndarray) and len(v) == len(keep) else v)
+                for k, v in info.items()}
     fig, cells = _grid(info, cell, columns, residual)
     unread = None
     if "raw" in show and results.spectra is None and results.loader is not None:
@@ -321,8 +337,7 @@ def plot_series_spectra(
         # the panel keeps what plot_spectrum says of the spectrum: its K, status and flags
         title = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
         ax.set_title("\n".join(textwrap.wrap(title, 64)), fontsize=8)
-    lo, hi = _series_range(results, [str(results.fit.spectrum_id[i]) for i in cells],
-                           [ax for ax, _ in cells.values()])
+    lo, hi = _series_range(results, every, [ax for ax, _ in cells.values()])
     if np.isfinite(lo) and hi > lo:
         pad = padding * (hi - lo)
         for ax, _ in cells.values():  # the residual panels share their spectrum's x axis

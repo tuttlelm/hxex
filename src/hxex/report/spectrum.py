@@ -352,7 +352,10 @@ def plot_spectrum(
         raise ValueError("residuals need both the picked and the fit layers")
     own = ax is None  # a figure of its own is laid out here; a caller's is the caller's to lay out
     if ax is None:
-        fig = Figure(figsize=(5.5, 4.5 if residual else 3.5))
+        # a figure of its own keeps its legend outside the axes, on the right, so that it
+        # covers none of the spectrum (owner, 2026-11-03: the legend hid the envelope)
+        fig = Figure(figsize=(5.5 + (3.2 if legend else 0.0), 4.5 if residual else 3.5),
+                     layout="constrained" if legend else None)
         if residual:
             ax, rax = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1]})
         else:
@@ -423,10 +426,13 @@ def plot_spectrum(
     ax.set_ylabel("normalised intensity" if normalize else "intensity")
     if title:
         ax.set_title(_title(results, d), fontsize=9)
-    if legend:
+    if legend and own:
+        fig.legend(*ax.get_legend_handles_labels(), loc="outside right upper", fontsize=7,
+                   frameon=False)
+    elif legend:
         ax.legend(fontsize=7, frameon=False)
     (rax or ax).set_xlabel("m/z" if xaxis == "mz" else "deuterium level (bin)")
-    if own:
+    if own and not legend:
         try:
             fig.tight_layout()
         except Exception:  # noqa: BLE001 - layout is cosmetic

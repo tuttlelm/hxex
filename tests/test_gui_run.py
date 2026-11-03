@@ -19,7 +19,7 @@ from test_cli import mzml_project  # noqa: E402
 # a stand-in for hxex: a line on stdout, a progress record, then waits; obeys "stop" lines
 # unless told to be stubborn
 STAND_IN = r'''
-import json, sys, threading, time
+import json, os, sys, threading, time
 stubborn = "stubborn" in sys.argv
 print("working", flush=True)
 sys.stderr.write("@hxex-progress " + json.dumps({"event": "progress", "stage": "fit",
@@ -36,7 +36,8 @@ for _ in range(1200):
     time.sleep(0.05)
     if stops and not stubborn:
         print("stopped", flush=True)
-        sys.exit(130)
+        os._exit(130)  # as hxex does: a thread waiting on the input holds sys.exit on Windows
+os._exit(0)
 '''
 
 

@@ -6456,3 +6456,85 @@ CSVs or mzML if wanted.
     named project files by name only (two hxex.toml files); the pane now starts afresh for
     another project, naming it in full.
 
+237. **GUI phase G3, part 1: the Results tree (owner, 2026-11-03; PLAN "GUI", "Results and
+    review").** `gui.results_workspace.ResultsWorkspace` replaces the list of series: a tree
+    of peptides (by sample, then residues), their charges (owner: peptide, then charge; two
+    series sharing sample, peptide and charge, such as a modified form, are told apart as "z=2
+    (series N)"), each series' time points (made when the series is opened, so a large run
+    opens quickly; the controls at the ends; labelled as the figures label them), and each
+    point's replicates (the spectra), with the counts of `series.csv` and the K, review status
+    and flags of `spectra.csv` (`gui.results_tree`, no Qt). Figures by what is selected: a
+    peptide or series its pages; a time point its replicates side by side (owner: no reference
+    needed) through `plot_series_spectra(rows=...)`, new, on the whole series' m/z range so they
+    compare with the full page; a spectrum `plot_spectrum` and `plot_k_comparison` (the fits at
+    each K, the chosen framed), each with the series' uptake. Filters (all, flagged, K above 1,
+    rejected, not reviewed) and a search on sample, residues and peptide. The session keeps
+    the selection by what outlasts a rerun (sample, residues, charge, and the point's label or
+    the spectrum's id); finding it clears the filters. Next in G3: the review panel, the flat
+    list, the series review table, and the Results tables. Owner's checks: a time point's page
+    was one row of replicates, 18 by 3 inches, so fitted to the window about 150 pixels tall;
+    it is now a near square (2 x 2 for four; `columns`). The legends covered the spectra:
+    `plot_spectrum` in a figure of its own puts its legend outside the axes on the right
+    (constrained layout, the figure wider by 3.2 in; on a caller's axes as before), and
+    `plot_k_comparison` puts each panel's legend under it (each K has its own populations; the
+    figure 1.6 in taller, constrained layout). Both are library changes, so notebooks and the
+    window show the same. Still squashed (owner's example, two replicates in one row): a page's
+    title and legend band (about an inch) was taken from the figure's height, so a one-row page
+    (3 in) lost a third of it and its panels were squashed, while a tall page hardly noticed;
+    `_page_header` now adds the band to the height (and trims it to what the title and legend
+    take), so every panel keeps its size however many rows there are. `hxex report`'s pages
+    are taller by the band (the tutorial's change on the next `make_tutorial.py --run`). Raw
+    profiles drawn past the panels' frames in the window (owner's example): Qt's SVG renderer
+    ignores SVG clip paths in every form (`clip-path` on a path, on a group, in a style; Qt
+    6.12), so anything beyond an axis limit shows past the frame; matplotlib's own drawings
+    (saved files) clip it. On trial (owner: test before deciding): View > Draw the figures with
+    > matplotlib, a `RasterView` that shows matplotlib's PNG at the size shown and draws it again
+    in a worker thread when the zoom settles (150 ms; at most 40 million pixels), with the same
+    click-through (gid boxes from the figure) and magnifying; SVG stays the default. Measured on
+    the tutorial's 22-panel page (18 by 19 in): the SVG is made once (0.7 s) and zooms at once;
+    matplotlib draws again on every zoom, 0.7 s at 50 %, 0.8 s at 100 %, 1.0 s at 200 %, 1.8 s at
+    400 %. Owner tried it: "the matplotlib route is okay"; matplotlib is now the default (the
+    SVG view stays under View for now (owner), its clipping gap named in the guide). The how-to-move hint was a
+    tooltip that covered the figure (owner); it is a grey line under the figure. Tests:
+    tests/test_gui_results.py, tests/test_report.py, tests/test_gui.py.
+
+238. **Area values against raw apexes, by peak size (owner's question, 2026-11-03; measured, no
+    change).** Asked whether the area values (height-equivalent, HISTORY 185) could be scaled to
+    sit on the raw peak heights, as the scale does not move the fits. Measured on 600 tutorial
+    spectra (Q-TOF, areas), the picked value over the highest raw point under it, by the peak's
+    share of its spectrum's tallest (median; undeuterated controls / labelled spectra): 90-100 %
+    1.01 / 1.02, 60-90 % 1.04 / 1.06, 30-60 % 1.07 / 1.15, 15-30 % 1.12 / 1.27, 5-15 % 1.31 /
+    1.37. The scale is anchored to the tallest peaks already (median 1.0); the rise towards weak
+    peaks is the width effect areas correct (weak peaks are wider, so their heights under-read
+    them), so no single factor can put every value on its apex, and a factor per spectrum
+    would change the fits (the noise model, the low-intensity flag and the saturation onset are
+    in absolute intensity). The large offsets seen on tall peaks are the spread between spectra
+    (middle half 0.92-1.21 for the tallest), mostly the raw profile's two or three points per
+    peak (half a point spacing off the apex reads 16 % low on this Q-TOF). The big gaps are dim
+    spectra (owner's pair: D109H 0024-0037 z2, tallest peak ~93,000, 39 ppm wide, 1.11, against
+    0008-0023 z2, ~3,600, flagged low_intensity, a ragged peak 58 ppm wide whose shoulders the
+    area window sums, 1.62). Across 1,500 tutorial spectra the tallest peak's area/apex falls
+    with brightness: below 5,000 1.51, 5-20k 1.41, 20-50k 1.23, 50-100k 1.15, 100-200k 1.02,
+    200-400k 0.96, 400-800k 0.93, above 800k 0.92; by flag low_intensity 1.14, bright 0.92,
+    saturated 0.97, others ~1.03. So a value above the apex means a dim spectrum, not a
+    saturated one (the owner had asked whether it could show saturation; squashed tops are not
+    wider, HISTORY 229). Open: whether the dim end is real broadening at low ion counts or
+    background summed by the area window (a dim/bright replicate comparison of the envelopes
+    would tell; a local-floor subtraction if it is the window); a legend or guide note. Not only
+    dim spectra (owner): D109H 0004-0023 z3 is bright enough (tallest ~24,600) yet 47 ppm wide in
+    its own undeuterated controls (area/apex 1.33) and 48-53 ppm at every labelled point (1.38-
+    1.45), its peak lopsided to the right, while the run's controls are 35-37 ppm at that charge
+    and m/z (3+, m/z 700-900, 36 controls: 37 ppm, 1.05; no trend with charge or with deuterium
+    content). Most likely an unresolved second species within the peak, which the position
+    screens cannot see; the area takes in its signal. Proposed, to measure first: a per-series
+    peak-width check (a series' controls against the run's width at its m/z) as a flag.
+
+239. **A command run with `--stop-from-input` ends its own process (2026-11-03; CI).** The three
+    Windows jobs of the push of G2 hung in their tests for over an hour (every other job done).
+    Most likely cause (no Windows logs read): a thread blocked reading the input holds a Python
+    process open at shutdown on Windows, and the command-line test read the output of `python -m
+    hxex --stop-from-input run` with its input open and no time limit. With `--stop-from-input`
+    the command line now flushes its output and ends the process itself (`os._exit`) once the
+    command is done (typed commands end as before); the test waits with a time limit (a hang
+    fails in 5 min), and the window tests' stand-in command ends the same way.
+
