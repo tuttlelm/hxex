@@ -6136,8 +6136,8 @@ CSVs or mzML if wanted.
     series the controls leave uncorrected) whatever K each chose, never split by K, with
     `n_K1`, `n_K2`, `n_K3` (and on, up to the largest K) counting the replicates at each K and
     `K`, `rank`, `population` empty. The rows of before follow unchanged, named in a new
-    `description` column: `K=1`, `K=2 low`, `K=2 high`, `K=3 low`, `K=3 middle`, `K=3 high`
-    (`K=4 rank 2` beyond). New columns on every row: `start`, `end`, `charge`, `time_label`
+    `description` column: `K=1`, `K=2 low-D`, `K=2 high-D`, `K=3 low-D`, `K=3 mid-D`,
+    `K=3 high-D` (owner: the figures' low-D/high-D words), by rank beyond three (`K=4 rank 2`). New columns on every row: `start`, `end`, `charge`, `time_label`
     (`format_time`; `UN`/`FD` for controls), `n_amides` (as the analysis counts them), `mean_se`
     (`replicate_sd / sqrt(n_replicates)`, NaN with one replicate: no fit error enters it) and
     `fD` (`mean / n_amides`, corrected series only). The columns are reordered identity first;

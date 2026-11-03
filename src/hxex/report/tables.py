@@ -281,7 +281,7 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     mean, the deuterium of the whole spectrum) whatever K each replicate chose, with ``K``,
     ``rank`` and ``population`` empty and ``n_K1``, ``n_K2``, ``n_K3`` (and on, up to the
     largest K) counting the replicates at each K. Then one row per K in effect and population
-    rank (``K=1``, ``K=2 low``, ``K=2 high``, :func:`_description`): spectra fitted at different
+    rank (``K=1``, ``K=2 low-D``, ``K=2 high-D``, :func:`_description`): spectra fitted at different
     K are never averaged together there, and the ``n_K`` columns are empty. On every row:
     ``start``, ``end`` (residues; empty for a label that is not ``START-END``), ``charge``,
     ``time_label`` (:func:`hxex.io.format_time`; ``UN`` or ``FD`` for a control),
@@ -365,14 +365,15 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
 
 def _description(k: int, rank: int) -> str:
     """What an ``uptake.csv`` row averages: ``centroid`` (K 0: every replicate), ``K=1``, or
-    the population of a K: ``K=2 low``, ``K=2 high``, ``K=3 middle``, ``K=4 rank 2``."""
+    the population of a K: ``K=2 low-D``, ``K=2 high-D``, ``K=3 mid-D``, and by rank beyond
+    three, ``K=4 rank 2``."""
     if k == 0:
         return "centroid"
     if k == 1:
         return "K=1"
-    name = ("low" if rank == 1 else "high" if rank == k else "middle" if k == 3
-            else f"rank {rank}")
-    return f"K={k} {name}"
+    if k > 3:
+        return f"K={k} rank {rank}"
+    return f"K={k} {'low-D' if rank == 1 else 'high-D' if rank == k else 'mid-D'}"
 
 
 def _median_rt(binned, where, ids) -> float:

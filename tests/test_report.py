@@ -413,7 +413,7 @@ def test_the_uptake_centroid_row_averages_every_replicate_whatever_its_k(results
     assert up["start"][c] == 1 and up["end"][c] == 10 and up["charge"][c] == 2
     assert up["time_label"][c] == "1 min"
     named = set(up["description"][here & ~centre])
-    assert named == {"K=1", "K=2 low", "K=2 high"}
+    assert named == {"K=1", "K=2 low-D", "K=2 high-D"}
     assert np.isnan(up["n_K1"][here & ~centre]).all()
     controls = up["role"] != ""
     assert set(up["time_label"][controls]) == {"UN", "FD"}
@@ -423,9 +423,9 @@ def test_uptake_descriptions_name_each_population():
     from hxex.report.tables import _description
 
     assert [_description(k, r) for k, r in ((0, 0), (1, 1), (2, 1), (2, 2))] == [
-        "centroid", "K=1", "K=2 low", "K=2 high"]
-    assert [_description(3, r) for r in (1, 2, 3)] == ["K=3 low", "K=3 middle", "K=3 high"]
-    assert _description(4, 2) == "K=4 rank 2"
+        "centroid", "K=1", "K=2 low-D", "K=2 high-D"]
+    assert [_description(3, r) for r in (1, 2, 3)] == ["K=3 low-D", "K=3 mid-D", "K=3 high-D"]
+    assert [_description(4, r) for r in (1, 4)] == ["K=4 rank 1", "K=4 rank 4"]
 
 
 def test_uptake_leaves_fd_empty_for_a_series_the_controls_leave_uncorrected(results):

@@ -259,7 +259,7 @@ Open `results_tables` and double-click a file to open it in your spreadsheet pro
   `n_K3` saying how many chose one, two, or three. The rows after it average only replicates
   with the same number of populations, one row per population: when three replicates of a
   time chose one population and the fourth two, that time has a `K=1` row for the three and
-  `K=2 low` and `K=2 high` rows for the one, with `n_replicates` saying how many each holds.
+  `K=2 low-D` and `K=2 high-D` rows for the one, with `n_replicates` saying how many each holds.
   `fD` is the deuterium as a fraction of the peptide's amides.
 - **`components.csv`**: the values of `spectra.csv` again, one row per population instead of
   one column per population (easier to filter in a spreadsheet).
