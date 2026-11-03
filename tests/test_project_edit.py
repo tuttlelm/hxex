@@ -271,3 +271,34 @@ def test_entries_are_added_and_removed(scan_project):
     assert list_entries(scan_project.read_text(), "input.runs") == []
     with pytest.raises(ProjectError, match="not a list of tables"):
         add_entry(scan_project, "input", {})
+
+
+def test_a_refused_replacement_is_tried_again_and_written_in_place_at_last(project,
+                                                                            monkeypatch):
+    """Windows refuses to replace a file another program briefly has open (a virus scanner, an
+    indexer, the window's file watcher): tried again, and at last written in place (CI,
+    2026-11-03)."""
+    import os
+
+    import hxex.project_edit as edit
+
+    monkeypatch.setattr(edit, "REPLACE_TRIES", 3)
+    real, calls = os.replace, []
+
+    def refused_twice(src, dst):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError(13, "Access is denied")
+        real(src, dst)
+
+    monkeypatch.setattr(os, "replace", refused_twice)
+    set_setting(project, "run.controls.d2o_fraction", "0.85")
+    assert len(calls) == 3 and "d2o_fraction = 0.85" in project.read_text()
+
+    def always(src, dst):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", always)
+    set_setting(project, "run.bootstrap.n_boot", "30")
+    assert "n_boot = 30" in project.read_text()  # in place
+    assert not list(project.parent.glob("*.hxex-set"))

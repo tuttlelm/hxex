@@ -275,7 +275,13 @@ class TableEditor(QWidget):
                 and not self.ask_overwrite():
             return False
         try:
-            write_table(self.table, self.path)
+            watched = self.watcher.files()  # not watched while written (Windows refuses)
+            if watched:
+                self.watcher.removePaths(watched)
+            try:
+                write_table(self.table, self.path)
+            finally:
+                self.watcher.addPath(str(self.path))
         except TableLocked as exc:
             log.warning("%s", exc)
             self.tell("Table not saved", str(exc))

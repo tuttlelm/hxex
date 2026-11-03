@@ -16,6 +16,7 @@ names (sample names, run names) are tables of names and values (:class:`NamesEdi
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from pathlib import Path
@@ -319,6 +320,19 @@ class ProjectEditor(QWidget):
             self.switch.setChecked(self.switch.property("table") in self.on)
             self.switch.blockSignals(False)
 
+    @contextlib.contextmanager
+    def own_write(self):
+        """The window writing the project file itself: not watched meanwhile (on Windows a
+        watched file could not be replaced), watched again after."""
+        watched = [f for f in self.watcher.files()]
+        if watched:
+            self.watcher.removePaths(watched)
+        try:
+            yield
+        finally:
+            if self.path is not None and self.path.exists():
+                self.watcher.addPath(str(self.path))
+
     def _file_changed(self, path: str) -> None:
         # a file replaced (as hxex writes it, and many editors) is no longer watched: watch again
         if Path(path).exists() and path not in self.watcher.files():
@@ -434,7 +448,8 @@ class ProjectEditor(QWidget):
                     return
                 changes = [(name, None) for name in others] + changes
         try:
-            done = set_settings(self.path, changes, unfinished=True)
+            with self.own_write():
+                done = set_settings(self.path, changes, unfinished=True)
         except ProjectError as exc:
             log.warning("%s", exc)
             self.problem.setText(str(exc))
@@ -459,7 +474,9 @@ class ProjectEditor(QWidget):
         if self.path is None:
             return
         try:
-            log.info("%s", change(self.path, *args, unfinished=True))
+            with self.own_write():
+                said = change(self.path, *args, unfinished=True)
+            log.info("%s", said)
         except ProjectError as exc:
             log.warning("%s", exc)
             self.problem.setText(str(exc))
@@ -474,7 +491,9 @@ class ProjectEditor(QWidget):
         from ..project_edit import switch_table
 
         try:
-            log.info("%s", switch_table(self.path, table, on))
+            with self.own_write():
+                said = switch_table(self.path, table, on)
+            log.info("%s", said)
         except ProjectError as exc:
             log.warning("%s", exc)
         self._after_change()

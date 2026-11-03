@@ -6555,3 +6555,21 @@ CSVs or mzML if wanted.
     (`gui.tasks.drawing_pool`), loading results still in the shared pool. Tests:
     tests/test_gui_results.py.
 
+241. **Windows: the window's writes and the input watcher (CI of a20134d, 2026-11-03).** The hang
+    of item 239 was gone (the jobs ended in 30 min) but Windows failed: (1) every write of the
+    project file from the window's editor: `os.replace` refused ("Access is denied"), with the
+    file watched by the window (the command line's `hxex set` tests passed); the editors now
+    stop watching a file while they write it themselves (`ProjectEditor.own_write`, the table
+    editor's save), every replacement is tried again for about two seconds
+    (`project_edit.replace_file`; a virus scanner or indexer does the same to users' files),
+    and the project file is written in place when it is still refused (the tables say so
+    instead: a spreadsheet's lock does not pass); (2) the command-line test running `python -m
+    hxex --stop-from-input run` with its input kept open timed out (the window's own runs passed):
+    a thread blocked reading a Windows pipe blocks other uses of it, so on Windows the watcher
+    reads a line only once it has arrived (`PeekNamedPipe`, every 0.1 s; a console input is read
+    as before); (3) two layout tests had Linux's font sizes (the magnified zoom, the title's room
+    on the bar). macOS 3.11 and 3.12: the same zoom test; a click on a thin line in the
+    matplotlib view missed it (a horizontal line's box has no height, so a click had to hit its
+    one pixel row; 4 pixels around a mark now count, in both views); the Run workspace test read
+    the progress text before the error stream's line had arrived (it waits for it now).
+

@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..project_edit import replace_file
 
 
 class TableLocked(OSError):
@@ -119,7 +120,7 @@ def write_table(table: Table, path: str | Path) -> Path:
     tmp = path.with_name(path.name + ".hxex-tmp")
     try:
         tmp.write_text(data, encoding="utf-8", newline="")
-        os.replace(tmp, path)
+        replace_file(tmp, path)  # tried again while Windows briefly refuses it
     except PermissionError as exc:
         tmp.unlink(missing_ok=True)
         raise TableLocked(f"{path} could not be written: another program holds it (a "

@@ -339,10 +339,11 @@ def _stop_from_input(stream=None) -> threading.Thread:
     command (:func:`_input_stop`), and so does the input closing (the program that started
     hxex is gone), once."""
     stream = stream if stream is not None else sys.stdin
+    lines = _windows_pipe_lines(stream) if os.name == "nt" else None
 
     def watch():
         try:
-            for line in stream:
+            for line in (lines if lines is not None else stream):
                 if line.strip().lower() == "stop":
                     _input_stop()
         except (OSError, ValueError):
@@ -354,6 +355,40 @@ def _stop_from_input(stream=None) -> threading.Thread:
     thread = threading.Thread(target=watch, name="hxex-stop-from-input", daemon=True)
     thread.start()
     return thread
+
+
+def _windows_pipe_lines(stream):
+    """The input's lines on Windows, read only once they have arrived: a thread blocked reading
+    a pipe there blocks other uses of the same pipe, and a command run by a program stalled so
+    (CI, 2026-11-03). None when the input is not a pipe (a console: read as usual)."""
+    import ctypes
+    import msvcrt
+    import time
+    from ctypes import wintypes
+
+    try:
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(stream.fileno()))
+    except (OSError, ValueError, AttributeError):
+        return None
+    peek = ctypes.windll.kernel32.PeekNamedPipe
+    available = wintypes.DWORD()
+    if not peek(handle, None, 0, None, ctypes.byref(available), None):
+        return None  # not a pipe
+
+    def lines():
+        fd, pending = stream.fileno(), b""
+        while True:
+            if not peek(handle, None, 0, None, ctypes.byref(available), None):
+                return  # the pipe closed: the end of the input
+            if available.value:
+                pending += os.read(fd, available.value)
+                *done, pending = pending.split(b"\n")
+                for line in done:
+                    yield line.decode("utf-8", errors="replace")
+            else:
+                time.sleep(0.1)
+
+    return lines()
 
 
 def _progress(args, **kwargs):

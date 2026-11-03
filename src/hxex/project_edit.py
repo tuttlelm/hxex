@@ -294,6 +294,25 @@ def _problem(text: str, path: Path, analysis_only: bool) -> tuple[str, str] | No
     return None
 
 
+REPLACE_TRIES = 20  # attempts at a replacement Windows refuses, about two seconds in all
+
+
+def replace_file(src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)``, tried again for a while when Windows refuses it: a file another
+    program has open briefly (a virus scanner, an indexer, a file watcher) cannot be replaced
+    there. Raises PermissionError when it is still refused."""
+    import time
+
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(0.1)
+
+
 def _read(path: Path) -> tuple[str, bool]:
     """The project file's text and whether it starts with a byte-order mark."""
     if not path.exists():
@@ -331,9 +350,15 @@ def _write_checked(path: Path, text: str, new_text: str, bom: bool, what: str,
     if new and (unfinished is None
                 or any(re.search(rf"\b{re.escape(k)}\b", problem[0]) for k in unfinished)):
         raise ProjectError(f"{what}; {path} is unchanged: {problem[1]}")
+    data = (b"\xef\xbb\xbf" if bom else b"") + new_text.encode("utf-8")
     tmp = path.with_name(path.name + ".hxex-set")
-    tmp.write_bytes((b"\xef\xbb\xbf" if bom else b"") + new_text.encode("utf-8"))
-    os.replace(tmp, path)
+    tmp.write_bytes(data)
+    try:
+        replace_file(tmp, path)
+    except PermissionError:
+        # still held (Windows): the text in place, not atomic but never lost
+        tmp.unlink(missing_ok=True)
+        path.write_bytes(data)
     return problem[1] if new else None
 
 

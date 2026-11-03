@@ -133,7 +133,9 @@ def test_closing_during_a_command_asks_and_stops_it(qtbot, stand_in, tmp_path):
     page.show_project(project)
     page.run_command("run")
     qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
-    assert page.stop_button.isEnabled() and "fit: 50%, about 3s left" == page.state.text()
+    # the progress line comes on the error stream, which may arrive a little later (macOS)
+    qtbot.waitUntil(lambda: page.state.text() == "fit: 50%, about 3s left", timeout=20000)
+    assert page.stop_button.isEnabled()
     page.ask_stop_to_close = lambda: False
     assert not page.may_close() and page.runner.running
     page.ask_stop_to_close = lambda: True

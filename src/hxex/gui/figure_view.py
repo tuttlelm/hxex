@@ -42,6 +42,9 @@ PANEL_ROOM = (0.24, 0.04, 0.12, 0.24)
 REDRAW_AFTER_MS = 150  # the matplotlib view draws again once the zoom has settled this long
 MAX_PIXELS = 40e6  # the most pixels the matplotlib view draws (a page zoomed far in)
 DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a click)
+# pixels around a drawn mark that still count as clicking it (a thin line has no height of its
+# own: a click had to land on its one pixel row)
+CLICK_ALLOWANCE = 4
 HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
         "Double-click a panel: magnify it (double-click again: the whole figure).")
 
@@ -169,12 +172,15 @@ class FigureView(QWidget):
         if not self._ids or own.width() == 0:
             return None
         at = self._figure_point(point)
+        view = self._view_box()
+        grow_x = CLICK_ALLOWANCE * view.width() / max(self.width(), 1)
+        grow_y = CLICK_ALLOWANCE * view.height() / max(self.height(), 1)
         best, area = None, None
         for gid in self._ids:
             if not self._renderer.elementExists(gid):
                 continue
             box = self._renderer.transformForElement(gid).mapRect(
-                self._renderer.boundsOnElement(gid))
+                self._renderer.boundsOnElement(gid)).adjusted(-grow_x, -grow_y, grow_x, grow_y)
             if box.contains(at) and (area is None or box.width() * box.height() < area):
                 best, area = gid, box.width() * box.height()
         return best
@@ -314,9 +320,11 @@ class RasterView(FigureView):
         if not self._boxes or self.width() == 0:
             return None
         fx, fy = point.x() / self.width(), point.y() / self.height()
+        gx, gy = CLICK_ALLOWANCE / self.width(), CLICK_ALLOWANCE / self.height()
         best, area = None, None
         for gid, (x, y, w, h) in self._boxes.items():
-            if x <= fx <= x + w and y <= fy <= y + h and (area is None or w * h < area):
+            if x - gx <= fx <= x + w + gx and y - gy <= fy <= y + h + gy \
+                    and (area is None or w * h < area):
                 best, area = gid, w * h
         return best
 
