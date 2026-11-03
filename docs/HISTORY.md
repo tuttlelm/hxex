@@ -6167,3 +6167,50 @@ CSVs or mzML if wanted.
     at its time (`1.5 min` without `1 min`: perhaps 90 s), and one time written in two ways
     (`60 s` and `1 min`, read as replicates of one point). None of the 25 HX-Express files of the
     known-answer set warns.
+
+227. **Three measurement questions of the third audit closed (owner, 2026-11-03).** No control
+    peak of the published tutorial data (941 controls) or of the intact-peptide benchmark (5,524)
+    has a flat top (two or more equal points at its tallest point), with tops up to about 7
+    million: saturation on these Q-TOF exports squashes the top without clipping it, so Session
+    E's plateau rule does not fire there. Closed: picking question 16 (the deamidation share's
+    bias came from a plateau's left edge) and the optional plateau note in `saturated` (it would
+    never fire). Engine question 2 (the BIC's N counts the empty end bins) stays as decided on
+    2026-10-29 (trimming them moved K in 0.1-1 % of spectra; the zero bins have meaning); per-bin
+    noise gives those bins weight in the loss too, which makes counting them in N more consistent.
+    Measured for engine question 1 (variance at the observed intensity): with per-bin noise the
+    population test reads two in fully deuterated controls at least twice as bright as their
+    series' undeuterated ones in 6 % of 299 on the benchmark (51 % of 269 with one sd per
+    spectrum) and 39 % of 31 on the tutorial (62 % of 34); spectra at least three times dimmer
+    read two more often than before (benchmark labelled 1 -> 24 %, fully deuterated 0 -> 8 %).
+    The dim end is evaluated next (an absolute noise floor), with the tutorial's bright controls
+    against the saturation onset.
+
+228. **No absolute noise floor for weak spectra (2026-11-03; audit Session E leftover and engine
+    question 1).** The extra two-population readings of dim spectra under per-bin noise (HISTORY
+    227) were checked on the benchmark's and the tutorial's per-bin bundles without refitting.
+    In the controls' envelope body (bins at 10 % of the tallest or more) the K = 1 residuals are
+    smaller than the model's sd at every raw intensity, the dimmest decile included (rms over sd
+    0.56 on the benchmark, 0.37 on the tutorial; 0.25-0.33 in the middle), so no absolute term is
+    missing. The dim spectra read as two are mostly reproduced by their replicates at the same
+    series and time (benchmark labelled: 56 % of their replicates read two, against 10 % when the
+    dim spectrum reads one; tutorial 95 % against 12 %): one sd per spectrum, set by the brighter
+    reference, had no power there, and per-bin noise gives it. A floor would remove that signal,
+    so none is added. The envelope edges (1-10 % of the tallest bin) misfit at K = 1 by r^2 3-9
+    in every brightness class: shape, not noise. Engine question 1's remainder: 11 of the 12
+    tutorial fully deuterated controls at least twice as bright as their undeuterated ones and
+    read as two have their top above the run's distortion onset, 10 flagged `bright`: saturation,
+    already flagged; on the benchmark 1 of 19. The observed-intensity variance stays. Private
+    record: the noise-model folder's weak_floor README.
+
+229. **Picking question 15 closed: a squashed top is not wider (2026-11-03).** With no flat tops in
+    the data (HISTORY 227), the question became whether saturation widens the tallest peak and so
+    moves `measure = "auto"`. On the stored undeuterated controls of the tutorial (517) and the
+    benchmark (3,249), the tallest peak's FWHM over its peptide and charge's median is 0.99-1.01
+    in every height class, up to tops above 3 million. Leaving out the controls above the run's
+    distortion onset (400,000) raises the width ratio (tutorial 1.19 -> 1.23, benchmark 1.12 ->
+    1.20), so areas either way. The tutorial's width law moves without them (34.9 -> 41.2 ppm at
+    m/z 1000), from the m/z mix of the controls left, not from saturation. Noted, not acted on:
+    on the benchmark a control's own weak-to-tallest width ratio falls with its brightness (1.18
+    below 100,000 to 0.99 above 3 million), with the tallest width flat: weak peaks are wide in
+    absolute counts, not as a share of their spectrum, so judging the brighter half reads the
+    effect conservatively.
