@@ -6538,3 +6538,20 @@ CSVs or mzML if wanted.
     command is done (typed commands end as before); the test waits with a time limit (a hang
     fails in 5 min), and the window tests' stand-in command ends the same way.
 
+240. **Results follow the project's figure settings; a time-axis choice; one drawing thread
+    (owner, 2026-11-03).** Results opened through the project file carry its `[figures]` and
+    `[review]` at loading, so a `scale` changed to log did not reach the uptake page shown
+    (owner); the window now compares those two tables when the project file changes and, when
+    they changed and the results shown are the project's, loads them again, keeping the place
+    in the tree (other settings change the next run, not results made). A time-axis list in
+    the uptake page's own bar (`FigurePanel.add_option`; first placed above every figure, out
+    of place there as most have no time axis: owner): the project's `[figures] scale` (named,
+    with its value) first, then log, linear, or the time points evenly spaced, for the window
+    only, kept in the session (owner: the linear default is not how uptake is read; the
+    benchmark's project file has no `[figures]`).
+    A crash of the window's tests (the process, not a test) when three figures were drawn again
+    at once: matplotlib is not thread-safe (its font objects are shared), and the drawings ran
+    in several threads; every matplotlib drawing now runs in one thread of its own
+    (`gui.tasks.drawing_pool`), loading results still in the shared pool. Tests:
+    tests/test_gui_results.py.
+

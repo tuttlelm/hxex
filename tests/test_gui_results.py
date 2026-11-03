@@ -98,3 +98,62 @@ def test_a_selection_is_found_again_and_filters_narrow_the_tree(page):
                         "point": "1 min"})
     assert page.selection()["point"] == "1 min"
     assert not page.select({"sample": "X", "peptide_range": "0001-0010"})
+
+
+def test_the_time_axis_is_chosen_in_the_window(qtbot, page):
+    """The project's [figures] scale first (named), then log, linear, or by time point; the
+    uptake page is drawn again with the choice (owner: uptake usually read on a log axis)."""
+    assert page.time_axis.itemText(0) == "[figures] scale: linear"
+    series = page.tree.topLevelItem(0).child(0)
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
+        page.tree.setCurrentItem(series)
+    ax = page.panel("uptake").view.figure.axes[0]
+    assert ax.get_xscale() == "linear" and page.view_settings() == {}
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
+        page.set_time_axis("log")
+    assert page.panel("uptake").view.figure.axes[0].get_xscale() == "log"
+    assert page.view_settings() == {"time_axis": "log"}
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
+        page.set_time_axis("index")
+    labels = [t.get_text() for t in page.panel("uptake").view.figure.axes[0].get_xticklabels()]
+    assert labels[0] == "UN" and labels[-1] == "FD"
+
+
+def test_a_change_to_the_projects_figures_reaches_the_results_shown(qtbot, tmp_path):
+    """Results opened through the project carry its [figures] and [review]: changing those in
+    the file (here as a text editor would) loads them again, keeping the place in the tree
+    (owner: a scale changed to log was not respected)."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.cli import main
+    from hxex.gui.window import MainWindow
+    from hxex.project_edit import set_setting
+    from test_cli import mzml_project
+
+    project = mzml_project(tmp_path)
+    assert main(["-q", "run", str(project)]) == 0
+    window = MainWindow(settings=QSettings(str(tmp_path / "g.ini"), QSettings.Format.IniFormat))
+    window.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(window)
+    window.open_asking(project)
+    qtbot.waitUntil(lambda: not window.loading and window.results_path == project.absolute(),
+                    timeout=30000)
+    page = window.results_page
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
+        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+    chosen = page.selection()
+    assert page.panel("uptake").view.figure.axes[0].get_xscale() == "linear"
+    set_setting(project, "figures.scale", "log")
+    window.project_page.editor._file_changed(str(project))  # as the watcher reports it
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert page.time_axis.itemText(0) == "[figures] scale: log" and page.selection() == chosen
+    qtbot.waitUntil(lambda: page.panel("uptake").view.figure is not None
+                    and page.panel("uptake").view.figure.axes[0].get_xscale() == "log",
+                    timeout=30000)
+    # a setting that does not change results already made: no reload
+    loads = []
+    window._loading.submit = lambda *a, **k: loads.append(1)
+    set_setting(project, "run.bootstrap.n_boot", "7")
+    window.project_page.editor._file_changed(str(project))
+    assert loads == []

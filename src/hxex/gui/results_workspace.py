@@ -39,6 +39,8 @@ from .results_tree import FILTERS, Peptide, peptides, points, shown
 
 log = logging.getLogger(__name__)
 
+TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
+             "index": "time points evenly spaced"}
 COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "rejected",
            "K > 1", "K", "review", "flags")
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
@@ -96,6 +98,13 @@ class ResultsWorkspace(QWidget):
         side.addLayout(filters)
         side.addWidget(self.tree, 1)
 
+        # the uptake page's time axis, for the window only (owner: the project's linear default
+        # is not how uptake is usually read); the project's [figures] setting first
+        self.time_axis = QComboBox()
+        self.time_axis.setToolTip("how the uptake page spreads the times: the project file's "
+                                  "[figures] scale and x, or for this window only log, linear, or "
+                                  "one even step per time point")
+        self.time_axis.currentIndexChanged.connect(self._redraw)
         self.figures = QTabWidget()
         self.panels: dict[str, FigurePanel] = {}
         self.render = getattr(window, "render", "matplotlib")
@@ -115,6 +124,8 @@ class ResultsWorkspace(QWidget):
     def panel(self, name: str) -> FigurePanel:
         if name not in self.panels:
             panel = FigurePanel(render=self.render)
+            if name == "uptake":  # the only page with a time axis: its choice in its own bar
+                panel.add_option(self.time_axis)
             if self.window is not None:
                 panel.clicked.connect(
                     lambda gid: self.window.statusBar().showMessage(gid, 5000))
@@ -149,8 +160,45 @@ class ResultsWorkspace(QWidget):
         for panel in self.panels.values():
             panel.clear()
         self.tree_data = [] if results is None else peptides(results)
+        self._fill_time_axis()
         self.path_label.setText("No results open." if results is None else str(path))
         self._fill()
+
+    def _fill_time_axis(self) -> None:
+        """The time axis list: the project's setting (by name and value) first."""
+        from ..report.figures import PlotConfig
+
+        keep = self.time_axis.currentData() if self.time_axis.count() else None
+        config = (self.results.figures if self.results is not None else None) or PlotConfig()
+        own = "by time point" if config.x == "index" else config.scale
+        self.time_axis.blockSignals(True)
+        self.time_axis.clear()
+        self.time_axis.addItem(f"[figures] scale: {own}", None)
+        for key, text in TIME_AXES.items():
+            self.time_axis.addItem(text, key)
+        index = self.time_axis.findData(keep) if keep is not None else 0
+        self.time_axis.setCurrentIndex(max(index, 0))
+        self.time_axis.blockSignals(False)
+
+    def set_time_axis(self, key: str | None) -> None:
+        index = self.time_axis.findData(key) if key else 0
+        self.time_axis.setCurrentIndex(max(index, 0))
+
+    def _plot_config(self):
+        """The project's figure settings, with the time axis chosen in the window."""
+        from ..report.figures import PlotConfig
+
+        config = self.results.figures or PlotConfig()
+        key = self.time_axis.currentData()
+        if key == "index":
+            return dataclasses.replace(config, x="index")
+        if key in ("log", "linear"):
+            x = "index" if self.results.time_scale == "order" else "time"
+            return dataclasses.replace(config, x=x, scale=key)
+        return config
+
+    def _redraw(self, *_) -> None:
+        self._selected(self.tree.currentItem())
 
     def _fill(self, *_) -> None:
         how = self.filter.currentData() or "all"
@@ -211,7 +259,7 @@ class ResultsWorkspace(QWidget):
     # --- selection -------------------------------------------------------------------------
 
     def _selected(self, item: QTreeWidgetItem | None, _previous=None) -> None:
-        from ..report.figures import PlotConfig, series_figures, series_kinds
+        from ..report.figures import series_figures, series_kinds
         from ..report.overview import plot_k_comparison
         from ..report.series import plot_series_spectra
         from ..report.spectrum import plot_spectrum
@@ -227,7 +275,7 @@ class ResultsWorkspace(QWidget):
                           pep.series[0])
             kind, payload = "series", (pep, series)
         results = self.results
-        config = results.figures or PlotConfig()
+        config = self._plot_config()
         series = payload[1]
         data_id = series.data_id
         self._show_tabs(kind)
@@ -285,6 +333,11 @@ class ResultsWorkspace(QWidget):
         elif kind == "spectrum":
             out["spectrum_id"] = payload[3].spectrum_id
         return out
+
+    def view_settings(self) -> dict:
+        """How the figures are shown, for the session (only what differs from the project)."""
+        key = self.time_axis.currentData()
+        return {"time_axis": key} if key else {}
 
     def select(self, selection: dict) -> bool:
         """Select what ``selection`` names (as :meth:`selection` gives it); False when the

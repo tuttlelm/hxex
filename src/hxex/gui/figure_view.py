@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .figures import SAVE_FORMATS, figure_ids, figure_svg, figure_title, save_figure
-from .tasks import Latest
+from .tasks import Latest, drawing_pool
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class RasterView(FigureView):
         self._image: QImage | None = None
         self._boxes: dict[str, tuple[float, float, float, float]] = {}  # gid -> fractions
         self._size_pt = QSize(0, 0)
-        self._drawing = Latest(self)
+        self._drawing = Latest(self, drawing_pool())
         self._again = QTimer(self)
         self._again.setSingleShot(True)
         self._again.setInterval(REDRAW_AFTER_MS)
@@ -343,7 +343,7 @@ class FigurePanel(QWidget):
         self.magnified = False  # a panel fills the view (double-click)
         self.status = QLabel()
         self._fitted = True
-        self._drawing = Latest(self, pool)
+        self._drawing = Latest(self, pool or drawing_pool())
 
         self.bar = QWidget()
         buttons = QHBoxLayout(self.bar)
@@ -359,6 +359,8 @@ class FigurePanel(QWidget):
             button.clicked.connect(slot)
             buttons.addWidget(button)
         self.save_button = button  # the last one
+        self._bar_layout = buttons
+        self._options: list[QWidget] = []  # a figure's own choices, after the buttons
         buttons.addStretch(1)
         buttons.addWidget(self.status)
         # the figure's title, readable at any zoom: centred on the whole bar (so on the figure
@@ -527,6 +529,13 @@ class FigurePanel(QWidget):
         if self._fitted and self.view.figure is not None:
             self.fit()
 
+    def add_option(self, widget: QWidget) -> None:
+        """A choice of this figure's own (the uptake page's time axis), after the buttons."""
+        self._bar_layout.insertWidget(self._bar_layout.indexOf(self.save_button) + 1
+                                      + len(self._options), widget)
+        self._options.append(widget)
+        self._place_title()
+
     def set_title(self, text: str) -> None:
         self._title_text = text
         self.title.setToolTip(text)
@@ -536,7 +545,8 @@ class FigurePanel(QWidget):
         """Centre the title on the bar, clear of the buttons on the left and the status on
         the right; shortened with "…" when there is no room for all of it."""
         gap = 12
-        left = self.save_button.geometry().right() + gap
+        last = self._options[-1] if self._options else self.save_button
+        left = last.geometry().right() + gap
         right = (self.status.geometry().left() - gap if self.status.text()
                  else self.bar.width() - gap)
         room = max(0, right - left)

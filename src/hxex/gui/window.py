@@ -210,6 +210,8 @@ class MainWindow(QMainWindow):
         self.run_page.results_changed.connect(self._results_changed)
         self.run_page.show_setting.connect(self.show_setting)
         self.project_page.file_changed.connect(self.run_page.show_device)
+        self.project_page.file_changed.connect(self._project_file_changed)
+        self._view_settings: dict | None = None  # the [figures] and [review] the results have
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace()
         self.tabs = QTabWidget()
@@ -493,14 +495,17 @@ class MainWindow(QMainWindow):
 
     def _results_loaded(self, results, path: Path) -> None:
         self.results_path = path
+        if path == self.project:
+            self._view_settings = self._figure_and_review_settings()
         self.results_page.show_results(results, path)
         self.statusBar().showMessage(f"opened {path}", 5000)
-        if self._pending_selection:
-            if not self.results_page.select(self._pending_selection):
+        pending = dict(self._pending_selection)
+        self.results_page.set_time_axis(pending.pop("time_axis", None))
+        if pending:
+            if not self.results_page.select(pending):
                 log.warning("the results do not have the series the session showed (%s); "
-                            "left out", ", ".join(f"{k} {v}" for k, v in
-                                                  self._pending_selection.items()))
-            self._pending_selection = {}
+                            "left out", ", ".join(f"{k} {v}" for k, v in pending.items()))
+        self._pending_selection = {}
         if self._restoring:
             self._mark_saved()
         self.changed()
@@ -511,6 +516,34 @@ class MainWindow(QMainWindow):
         self.project_page.views.setCurrentIndex(0)
         self.project_page.editor.search.clear()
         self.project_page.editor.show_table(table)
+
+    def _figure_and_review_settings(self) -> dict | None:
+        """The project file's [figures] and [review] settings (the ones loaded results carry)."""
+        if self.project is None:
+            return None
+        from ..project_edit import live_settings
+
+        try:
+            values, tables = live_settings(self.project.read_text(encoding="utf-8-sig"))
+        except Exception:  # noqa: BLE001 - a file that does not read: nothing to compare
+            return None
+        keep = ("figures", "review")
+        return {"values": {k: v for k, v in values.items() if k.split(".")[0] in keep},
+                "tables": sorted(n for n in tables if n.split(".")[0] in keep)}
+
+    def _project_file_changed(self) -> None:
+        """The project file changed: when the results shown are the project's and its
+        [figures] or [review] changed, load them again (they carry those settings), keeping the
+        place in the tree. Other settings do not change results already made."""
+        now = self._figure_and_review_settings()
+        before, self._view_settings = self._view_settings, now
+        if before is None or now == before or self.results_path != self.project \
+                or self.project is None or self.loading:
+            return
+        log.info("the project's [figures] or [review] changed: the results shown again with them")
+        self._pending_selection = {**self.results_page.selection(),
+                                   **self.results_page.view_settings()}
+        self.open_results(self.project)
 
     def _results_changed(self) -> None:
         """A run, resume or report from the Run workspace finished: show the new results (the
@@ -534,7 +567,7 @@ class MainWindow(QMainWindow):
         return GuiSession(
             project=self.project, results=results,
             workspace=WORKSPACES[self.tabs.currentIndex()],
-            selection=self.results_page.selection(),
+            selection={**self.results_page.selection(), **self.results_page.view_settings()},
             layout={"geometry": bytes(self.saveGeometry().toBase64()).decode(),
                     "state": bytes(self.saveState().toBase64()).decode()})
 
@@ -613,9 +646,12 @@ class MainWindow(QMainWindow):
         if self.run_page.may_close() and self.project_page.tables.editor.may_leave() \
                 and self._may_discard():
             logging.getLogger("hxex").removeHandler(self.handler)
-            # drawings still running finish first (their results are dropped)
-            QThreadPool.globalInstance().clear()
-            QThreadPool.globalInstance().waitForDone(10000)
+            # drawings and loads still running finish first (their results are dropped)
+            from .tasks import drawing_pool
+
+            for pool in (drawing_pool(), QThreadPool.globalInstance()):
+                pool.clear()
+                pool.waitForDone(10000)
             event.accept()
         else:
             event.ignore()

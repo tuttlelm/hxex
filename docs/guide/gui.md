@@ -126,6 +126,15 @@ review status, and flags. Click a row, or move through the tree with the arrow k
 - **a replicate**: that spectrum on its own, its fits at each K side by side (the one chosen
   framed), and the series' uptake plot.
 
+The uptake page has a list of its own in its bar, for how it spreads the times: the project
+file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
+linear one, or the time points evenly spaced. The session remembers the choice.
+
+Results opened through the project file carry its `[figures]` settings and its review: change
+either (in the Project part, or in a text editor) and the results are shown again with the
+change, at the same place in the tree. Other settings change what the next **Run** does, not
+results already made. The commands read the project file when they start.
+
 The list above the tree shows only some series (flagged, more than one population, rejected,
 or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
 results through the project file applies your review table and exclusion rules, as `hxex

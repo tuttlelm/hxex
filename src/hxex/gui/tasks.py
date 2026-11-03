@@ -43,6 +43,20 @@ class _Job(QRunnable):
             pass
 
 
+_DRAWING: QThreadPool | None = None
+
+
+def drawing_pool() -> QThreadPool:
+    """The one thread every matplotlib drawing runs in. matplotlib is not thread-safe (its font
+    objects are shared between figures): two figures drawn at once in two threads crashed the
+    window, so the drawings wait their turn here."""
+    global _DRAWING
+    if _DRAWING is None:
+        _DRAWING = QThreadPool()
+        _DRAWING.setMaxThreadCount(1)
+    return _DRAWING
+
+
 class Latest(QObject):
     """Runs ``work`` in the thread pool and calls ``done(result)`` or ``failed(message)`` in the
     window's thread, for the latest request only."""
