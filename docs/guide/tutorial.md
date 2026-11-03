@@ -254,8 +254,15 @@ Open `results_tables` and double-click a file to open it in your spreadsheet pro
   replicate, chosen number of populations (`K`), each population's deuterium (`mean_1`,
   `mean_corrected_1`, ...) and share (`population_1`, ...), and its `flags`.
 - **`uptake.csv`**: the deuterium uptake of every peptide at every time, replicates averaged.
-- **`components.csv`**: every fit, at every number of populations, one row per population
-  (for a spreadsheet or a program that wants them all).
+  Each time starts with a `centroid` row (in the `description` column): the average of all
+  its replicates, whatever number of populations each one chose, with `n_K1`, `n_K2`, and
+  `n_K3` saying how many chose one, two, or three. The rows after it average only replicates
+  with the same number of populations, one row per population: when three replicates of a
+  time chose one population and the fourth two, that time has a `K=1` row for the three and
+  `K=2 low` and `K=2 high` rows for the one, with `n_replicates` saying how many each holds.
+  `fD` is the deuterium as a fraction of the peptide's amides.
+- **`components.csv`**: the values of `spectra.csv` again, one row per population instead of
+  one column per population (easier to filter in a spreadsheet).
 
 [Outputs](outputs.md) describes every column.
 

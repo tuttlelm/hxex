@@ -69,11 +69,14 @@ series = series_table(results)                    # series.csv
 print(format_table(series, limit=10))             # the first rows as text
 (d,) = find_series(results, samples=["WT"], peptide_ranges=["87-96"], charges=[2])
 uptake = uptake_table(results)                    # uptake.csv
-rows = (uptake["data_id"] == d) & (uptake["role"] == "")   # labelled times only
-print(uptake["time"][rows], uptake["mean"][rows])
+rows = ((uptake["data_id"] == d) & (uptake["role"] == "")    # labelled times only,
+        & (uptake["description"] == "centroid"))            # every replicate averaged
+print(uptake["time"][rows], uptake["mean"][rows], uptake["mean_se"][rows])
 ```
 
-`uptake_table` has one row per time, number of populations (`K`), and population (`rank`).
+`uptake_table` has, for each time, a `centroid` row (every replicate averaged, whatever its
+number of populations) and then one row per number of populations (`K`) and population
+(`rank`), described as `K=1`, `K=2 low`, `K=2 high` in the `description` column.
 The undeuterated and fully deuterated controls have their own rows, with an empty time (NaN)
 and the `role` column saying which control it is (`undeut` or `fulldeut`).
 `find_series` returns the `data_id` of every series that matches (an empty list when none

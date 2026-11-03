@@ -6129,3 +6129,19 @@ CSVs or mzML if wanted.
     the files, and says how to go on (copy them out, `--overwrite`, or `--keep-previous`). Any
     command replacing an edited listed file (with `--overwrite`) warns which ones it replaced.
     Listings written before have no checksums and count as unedited.
+
+225. **`uptake.csv` gains a centroid row and the series' identity (owner, 2026-11-02).** Each
+    series and time (and control) now starts with a `centroid` row: the mean of every
+    non-rejected replicate's centroid (`centroid_corrected` of `spectra.csv`; `centroid` for a
+    series the controls leave uncorrected) whatever K each chose, never split by K, with
+    `n_K1`, `n_K2`, `n_K3` (and on, up to the largest K) counting the replicates at each K and
+    `K`, `rank`, `population` empty. The rows of before follow unchanged, named in a new
+    `description` column: `K=1`, `K=2 low`, `K=2 high`, `K=3 low`, `K=3 middle`, `K=3 high`
+    (`K=4 rank 2` beyond). New columns on every row: `start`, `end`, `charge`, `time_label`
+    (`format_time`; `UN`/`FD` for controls), `n_amides` (as the analysis counts them), `mean_se`
+    (`replicate_sd / sqrt(n_replicates)`, NaN with one replicate: no fit error enters it) and
+    `fD` (`mean / n_amides`, corrected series only). The columns are reordered identity first;
+    nothing in hxex reads `uptake.csv` back. Not added (owner): a model-free centroid of the raw
+    envelope (the fit centroid differs from it by a median -0.01 to -0.02 D on the tutorial) and
+    `best_set_K` (a set decision the run does not make). Tutorial bundle: 1,169 centroid rows,
+    95 of them averaging replicates at different K.

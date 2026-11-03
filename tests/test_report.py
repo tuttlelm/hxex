@@ -382,11 +382,57 @@ def test_uptake_averages_only_spectra_at_the_same_k(results):
     sid = str(results.fit.spectrum_id[rows[0]])
     chosen = results.with_review(ReviewTable.empty().update(sid, k_override=other))
     up = uptake_table(chosen)
-    here = (up["data_id"] == 0) & (up["time"] == 60)
+    here = (up["data_id"] == 0) & (up["time"] == 60) & (up["description"] != "centroid")
     assert set(up["K"][here]) == {k, other}
     alone = here & (up["K"] == other)
     assert (up["n_replicates"][alone] == 1).all() and len(up["rank"][alone]) == other
     assert (up["n_replicates"][here & (up["K"] == k)] == 2).all()
+
+
+def test_the_uptake_centroid_row_averages_every_replicate_whatever_its_k(results):
+    """The centroid row of a time averages each replicate's centroid (spectra.csv), at the K
+    each one chose, and counts the replicates at each K; the K rows say what they hold."""
+    rows = np.flatnonzero((results.fit.data_id == 0) & (results.fit.time == 60))
+    k = int(results.effective_K[rows[0]])
+    other = 2 if k == 1 else 1
+    sid = str(results.fit.spectrum_id[rows[0]])
+    chosen = results.with_review(ReviewTable.empty().update(sid, k_override=other))
+    up, spec = uptake_table(chosen), spectra_table(chosen)
+    here = (up["data_id"] == 0) & (up["time"] == 60)
+    centre = here & (up["description"] == "centroid")
+    assert centre.sum() == 1 and np.flatnonzero(here)[0] == np.flatnonzero(centre)[0]
+    (c,) = np.flatnonzero(centre)
+    mine = (spec["data_id"] == 0) & (spec["time"] == 60)
+    assert up["n_replicates"][c] == 3
+    assert np.isclose(up["mean"][c], spec["centroid_corrected"][mine].mean())
+    assert up[f"n_K{k}"][c] == 2 and up[f"n_K{other}"][c] == 1
+    assert np.isnan(up["K"][c]) and np.isnan(up["rank"][c]) and np.isnan(up["population"][c])
+    sd = spec["centroid_corrected"][mine].std(ddof=1)
+    assert np.isclose(up["replicate_sd"][c], sd) and np.isclose(up["mean_se"][c], sd / np.sqrt(3))
+    assert np.isclose(up["fD"][c], up["mean"][c] / up["n_amides"][c])
+    assert up["start"][c] == 1 and up["end"][c] == 10 and up["charge"][c] == 2
+    assert up["time_label"][c] == "1 min"
+    named = set(up["description"][here & ~centre])
+    assert named == {"K=1", "K=2 low", "K=2 high"}
+    assert np.isnan(up["n_K1"][here & ~centre]).all()
+    controls = up["role"] != ""
+    assert set(up["time_label"][controls]) == {"UN", "FD"}
+
+
+def test_uptake_descriptions_name_each_population():
+    from hxex.report.tables import _description
+
+    assert [_description(k, r) for k, r in ((0, 0), (1, 1), (2, 1), (2, 2))] == [
+        "centroid", "K=1", "K=2 low", "K=2 high"]
+    assert [_description(3, r) for r in (1, 2, 3)] == ["K=3 low", "K=3 middle", "K=3 high"]
+    assert _description(4, 2) == "K=4 rank 2"
+
+
+def test_uptake_leaves_fd_empty_for_a_series_the_controls_leave_uncorrected(results):
+    nocontrols = Results(measurements=results.measurements, fit=results.fit,
+                         binned=results.binned)
+    up = uptake_table(nocontrols)
+    assert np.isnan(up["fD"]).all() and (up["n_amides"] == 9).all()
 
 
 def test_csv_files(results, tmp_path):

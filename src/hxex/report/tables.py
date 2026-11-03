@@ -27,7 +27,7 @@ from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
 from .results import Results
-from .series import _control_row, _reps
+from .series import _control_row, _reps, _time_text
 
 
 def _index_columns(results: Results) -> dict[str, np.ndarray]:
@@ -276,39 +276,103 @@ def _screen_columns(results: Results) -> dict[str, np.ndarray]:
 
 
 def uptake_table(results: Results) -> dict[str, np.ndarray]:
-    """Replicate-averaged populations: one row per series, time, ``K`` (the spectra's K in
-    effect: spectra fitted at different K are never averaged together) and population rank,
-    with the number of replicates averaged (``n_replicates``), the ``mean`` of the means over them
-    (back-exchange corrected for a series the controls correct, as measured for the others) and
-    its standard deviation (``replicate_sd``; NaN with one replicate), and the mean
-    ``population``. Spectra are the ones accepted by the reviewer or not yet reviewed."""
+    """Replicate averages, per series and time (or control). Each one has a ``centroid`` row
+    first (``description``): the mean of every replicate's centroid (its population-weighted
+    mean, the deuterium of the whole spectrum) whatever K each replicate chose, with ``K``,
+    ``rank`` and ``population`` empty and ``n_K1``, ``n_K2``, ``n_K3`` (and on, up to the
+    largest K) counting the replicates at each K. Then one row per K in effect and population
+    rank (``K=1``, ``K=2 low``, ``K=2 high``, :func:`_description`): spectra fitted at different
+    K are never averaged together there, and the ``n_K`` columns are empty. On every row:
+    ``start``, ``end`` (residues; empty for a label that is not ``START-END``), ``charge``,
+    ``time_label`` (:func:`hxex.io.format_time`; ``UN`` or ``FD`` for a control),
+    ``n_amides`` (exchangeable amides), ``n_replicates`` averaged, the ``mean`` of their means
+    (back-exchange corrected for a series the controls correct, as measured for the others),
+    ``mean_se`` (``replicate_sd / sqrt(n_replicates)``) and ``replicate_sd`` (both NaN with one
+    replicate), ``fD`` (``mean / n_amides``, only for a corrected series) and ``population``.
+    Spectra are the ones accepted by the reviewer or not yet reviewed."""
+    from ..analysis.species import _site_counts
+
     comp = components_table(results)
     ctrl = results.controls
     corrected = (np.zeros(len(comp["data_id"]), dtype=bool) if ctrl is None else
                  np.isin(comp["data_id"], ctrl.data_id[~np.asarray(ctrl.uncorrected, bool)]))
     mean = np.where(corrected, comp["mean_corrected"], comp["mean"])  # per series
     ok = comp["review_status"] != "rejected"
-    rows = []
     role = comp["role"] if "role" in comp else np.full(len(comp["time"]), "", dtype="<U8")
     points = time_point(comp["time"], role)  # replicates share a point: a time, or a control
+    fit_row = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    amides = _site_counts(results)
+    n_amides = np.array([amides[fit_row[str(s)]] for s in comp["spectrum_id"]], dtype=float)
+    # each spectrum's centroid, from its rows (the components of its K in effect)
+    spectra, first_rows, inverse = np.unique(comp["spectrum_id"], return_index=True,
+                                             return_inverse=True)
+    centroid = np.bincount(inverse, weights=mean * comp["population"], minlength=len(spectra))
+    k_max = max(3, int(comp["K"].max()) if len(comp["K"]) else 0)
     keys = {}
-    for i in np.flatnonzero(ok):
-        key = (int(comp["data_id"][i]), points[i], int(comp["K"][i]), int(comp["rank"][i]))
-        keys.setdefault(key, (key[0], *point_order_key(float(comp["time"][i]), str(role[i])),
-                              *key[2:]))
+    for i in np.flatnonzero(ok):  # K 0 sorts the centroid row first
+        for key in ((int(comp["data_id"][i]), points[i], 0, 0),
+                    (int(comp["data_id"][i]), points[i], int(comp["K"][i]),
+                     int(comp["rank"][i]))):
+            keys.setdefault(key, (key[0], *point_order_key(float(comp["time"][i]),
+                                                           str(role[i])), *key[2:]))
+    scale = results.time_scale
+    cols: dict[str, list] = {n: [] for n in (
+        "data_id", "sample", "peptide", "peptide_range", "start", "end", "charge", "time",
+        "time_label", "role", "description", "K", "rank", "n_amides", "n_replicates", "mean",
+        "mean_se", "replicate_sd", "fD", "population", *(f"n_K{k}" for k in range(1, k_max + 1)))}
     for d, point, k, r in sorted(keys, key=lambda k: keys[k]):
-        sel = (ok & (comp["data_id"] == d) & (points == point) & (comp["K"] == k)
-               & (comp["rank"] == r))
-        values, fractions = mean[sel], comp["population"][sel]
+        here = ok & (comp["data_id"] == d) & (points == point)
+        if k == 0:  # one value per spectrum: its first row carries the spectrum's centroid
+            sel = np.zeros(len(here), dtype=bool)
+            sel[first_rows[np.isin(first_rows, np.flatnonzero(here))]] = True
+            values = centroid[inverse[sel]]
+        else:
+            sel = here & (comp["K"] == k) & (comp["rank"] == r)
+            values = mean[sel]
         first = np.flatnonzero(sel)[0]
-        rows.append((d, float(comp["time"][first]), str(role[first]), k, r,
-                     str(comp["sample"][first]), str(comp["peptide"][first]),
-                     str(comp["peptide_range"][first]), int(len(values)), float(values.mean()),
-                     float(values.std(ddof=1)) if len(values) > 1 else np.nan,
-                     float(fractions.mean())))
-    names = ("data_id", "time", "role", "K", "rank", "sample", "peptide", "peptide_range",
-             "n_replicates", "mean", "replicate_sd", "population")
-    return {name: np.array([row[j] for row in rows]) for j, name in enumerate(names)}
+        n = len(values)
+        sd = float(values.std(ddof=1)) if n > 1 else np.nan
+        span = _range_of(comp["peptide_range"][first])
+        amide = float(n_amides[first])
+        value = float(values.mean())
+        row = {
+            "data_id": d, "sample": str(comp["sample"][first]),
+            "peptide": str(comp["peptide"][first]),
+            "peptide_range": str(comp["peptide_range"][first]),
+            "start": np.nan if span is None else float(span[0]),
+            "end": np.nan if span is None else float(span[1]),
+            "charge": comp["charge"][first], "time": float(comp["time"][first]),
+            "time_label": _time_text(float(comp["time"][first]), str(role[first]), scale),
+            "role": str(role[first]), "description": _description(k, r),
+            "K": np.nan if k == 0 else float(k), "rank": np.nan if k == 0 else float(r),
+            "n_amides": amide, "n_replicates": n, "mean": value,
+            "mean_se": sd / np.sqrt(n), "replicate_sd": sd,
+            "fD": value / amide if corrected[first] and amide > 0 else np.nan,
+            "population": np.nan if k == 0 else float(comp["population"][sel].mean()),
+        }
+        ks = comp["K"][sel]
+        for j in range(1, k_max + 1):
+            row[f"n_K{j}"] = float((ks == j).sum()) if k == 0 else np.nan
+        for name, v in row.items():
+            cols[name].append(v)
+    out = {name: np.array(values) for name, values in cols.items()}
+    for name in ("sample", "peptide", "peptide_range", "time_label", "role", "description"):
+        out[name] = out[name].astype(str)
+    out["data_id"] = out["data_id"].astype(np.int64)
+    out["n_replicates"] = out["n_replicates"].astype(np.int64)
+    return out
+
+
+def _description(k: int, rank: int) -> str:
+    """What an ``uptake.csv`` row averages: ``centroid`` (K 0: every replicate), ``K=1``, or
+    the population of a K: ``K=2 low``, ``K=2 high``, ``K=3 middle``, ``K=4 rank 2``."""
+    if k == 0:
+        return "centroid"
+    if k == 1:
+        return "K=1"
+    name = ("low" if rank == 1 else "high" if rank == k else "middle" if k == 3
+            else f"rank {rank}")
+    return f"K={k} {name}"
 
 
 def _median_rt(binned, where, ids) -> float:
