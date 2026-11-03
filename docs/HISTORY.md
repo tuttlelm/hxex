@@ -6391,3 +6391,32 @@ CSVs or mzML if wanted.
     colouring by rank paints a one-population spectrum as population 1 even at full
     deuteration; a neutral grey for one-population points was the variant offered.
 
+235. **GUI phase G1, part 3: the tables users write (2026-11-03; PLAN "GUI").** The Project
+    workspace's Tables view (`gui.table_editor`) lists the tables the project file names (by
+    format: the peptide table of the scan formats or the table of files of the folder formats,
+    `input.peptides`; `input.retention_times`; `review.table`) and edits the chosen one as a
+    grid, its changes kept until Save. `gui.user_tables` (no Qt): `read_table` reads UTF-8
+    (with or without a byte-order mark) or Excel's UTF-16, commas or semicolons or tabs, rows
+    squared to the header (a longer row's cells kept under columns without a name, never
+    merged; empty rows dropped); `write_table` writes commas (the only separator the readers
+    take) as UTF-8, with the byte-order mark the file had and its line endings, through a
+    temporary file, and raises `TableLocked` (the old file kept, the edits kept by the window)
+    when another program holds it (owner: warn). `table_problem` runs the reader on a copy
+    beside the project file (`read_peptide_table`, with `scan_peptides` against the runs for
+    the scan formats; `read_retention_times`; `read_review_table`); Save shows a problem and
+    offers to save anyway (a table being filled in). A file changed outside the window since
+    it was opened is not written over without asking; an unchanged one is shown again when it
+    changes. Unsaved changes are asked about before another table, project, session, or the
+    end. New table: the columns its reader takes for the format, saved where the user says
+    and named in the project file (`project_edit.set_settings`, unfinished). Not yet: making
+    the user review table from `spectra.csv` (G3, with the review panel). Owner's checks:
+    Add a column and New table did nothing when clicked (a button passes its checked state,
+    taken for the name and the path; the buttons now call without arguments, and a test
+    clicks them); Remove the selected columns added (asks first, naming them). Tests:
+    tests/test_gui_tables.py. *G1's exit check*: the tutorial's project file built only through
+    the window (New project file, the form, the list editors for `[[input.exclude]]` and
+    `[[review.exclude]]`, driven by a script as a user would click) sets exactly the values of
+    the one built with the guide's `hxex init`, `hxex set` and text-editor steps, and `hxex
+    check` prints the same 23 lines for both, ending "ok" (721 + 663 quench-flow spectra left
+    out, 17 treated as rejected, as the tutorial pages say).
+

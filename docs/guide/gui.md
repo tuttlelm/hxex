@@ -86,6 +86,30 @@ every setting at its default, as `hxex init` does.
   `[analysis.runs]`, ...) is a table of names and values: type a name and its value and click
   **Add**, or change a value in the table.
 
+## Tables
+
+**Tables**, beside Settings, holds the tables your project file names: the peptide table (mzML
+and Thermo files) or the table of files (the folder formats), the retention-time table, and
+the user review table. Choose one on the left to edit it as a grid.
+
+- Type in a cell to change it; **Add a row**, **Remove the selected rows**, **Add a column**,
+  and **Remove the selected columns** do what they say (click a column's header to select the
+  whole column; removing one asks first). Columns of your own are kept (*hxex* ignores the
+  ones it does not read), and the columns keep their order.
+- Changes are kept until you press **Save**; **Revert** goes back to the file. Leaving a table,
+  the project, or the window with unsaved changes asks first.
+- **Save** checks the table as *hxex* reads it (a sample of the peptide table must be one of
+  your runs', a review status must be `accepted` or `rejected`, ...). When it finds a problem
+  it says so and lets you save anyway, for a table you are still filling in.
+- The table is saved with commas (the only separator *hxex* reads) as UTF-8, keeping the
+  byte-order mark a spreadsheet's "CSV UTF-8" puts first. A table saved with semicolons opens
+  too, and is saved with commas.
+- A table open in a spreadsheet: Excel locks the file it has open (on Windows), so *hxex* says
+  so and keeps your changes; close it there and save again. A table changed by another
+  program since you opened it here is not written over without asking.
+- **New table** makes a table with the columns *hxex* reads for your format, where you choose,
+  and names it in the project file.
+
 ## Figures
 
 Each figure has buttons above it, and its title beside them (the peptide, sample, and charge

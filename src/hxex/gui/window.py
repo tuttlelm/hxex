@@ -88,6 +88,7 @@ class ProjectWorkspace(QWidget):
     def __init__(self, window: MainWindow):
         super().__init__()
         from .project_editor import ProjectEditor
+        from .table_editor import TablesView
 
         self.path_label = QLabel("No project file open.")
         new_button = QPushButton("New project file…")
@@ -104,8 +105,10 @@ class ProjectWorkspace(QWidget):
         self.text.setReadOnly(True)
         self.text.setFont(QFont("monospace"))
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.tables = TablesView()
         self.views = QTabWidget()
         self.views.addTab(self.editor, "Settings")
+        self.views.addTab(self.tables, "Tables")
         self.views.addTab(self.text, "File")
         layout = QVBoxLayout(self)
         layout.addLayout(top)
@@ -119,6 +122,7 @@ class ProjectWorkspace(QWidget):
         self._file_changed()
 
     def _file_changed(self) -> None:
+        self.tables.show_project(self.path, self.editor.values, self.editor.format)
         if self.path is None:
             self.text.setPlainText("")
             return
@@ -458,7 +462,7 @@ class MainWindow(QMainWindow):
         within the session). A project file starts a new session. False when the user
         cancels."""
         replaces = path.suffix in (SUFFIX, ".toml")
-        if replaces and not self._may_discard():
+        if replaces and not (self.project_page.tables.editor.may_leave() and self._may_discard()):
             return False
         if path.suffix == ".toml":
             self._new_session_with(path)
@@ -480,7 +484,7 @@ class MainWindow(QMainWindow):
     def new_project_dialog(self) -> None:
         """Ask for the input format, a project name and where to save, then write the project
         file (as ``hxex init`` does) and open it."""
-        if not self._may_discard():
+        if not (self.project_page.tables.editor.may_leave() and self._may_discard()):
             return
         dialog = NewProjectDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -651,7 +655,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{name} – hxex")
 
     def new_session(self) -> None:
-        if not self._may_discard():
+        if not (self.project_page.tables.editor.may_leave() and self._may_discard()):
             return
         self.session_path = None
         self._apply(GuiSession())
@@ -698,7 +702,7 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard or self.save_session()
 
     def closeEvent(self, event: QCloseEvent):  # noqa: N802 - Qt's name
-        if self._may_discard():
+        if self.project_page.tables.editor.may_leave() and self._may_discard():
             logging.getLogger("hxex").removeHandler(self.handler)
             # drawings still running finish first (their results are dropped)
             QThreadPool.globalInstance().clear()

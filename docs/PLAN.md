@@ -540,8 +540,9 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   `gui` extra, `hxex gui` and `hxex-gui`, the window with its four workspaces, the session
   file, the SVG figure view with saving and click-through, and a first results view (series
   and their figures). The review layer, the `*_data` functions, the artists' `gid`s and
-  `Results.with_review` are in place for the later phases (item 31). G1 part 1, the settings
-  form, built (HISTORY 233); next: the lists of tables and the user tables.
+  `Results.with_review` are in place for the later phases (item 31). G1 built (HISTORY
+  233-235: the settings form, lists of tables, tables of names, the tables users write);
+  next: G2, running stages.
 
 ## Deliberate differences from pyHXExpress
 
@@ -944,8 +945,8 @@ Planned, not built:
    HISTORY 212). Not started; evaluate against the noise simulation's known populations first.
 18. **The GUI** (owner, 2026-11-03; HISTORY 231). A standalone Qt window, in addition to the
    command line and Python: the project editor and the user tables first, then running stages,
-   results and review, and analysis views (section "GUI", phases G0-G4). G0 built (HISTORY
-   232); next: G1.
+   results and review, and analysis views (section "GUI", phases G0-G4). G0 and G1 built
+   (HISTORY 232-235); next: G2.
 
 ## Risks and open decisions
 
