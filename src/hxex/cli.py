@@ -1126,7 +1126,14 @@ def cmd_report(args) -> int:
     import dataclasses
 
     from .hooks import ProgressLog
-    from .io import check_output, holds_output, made_from, open_bundle, prepare_output
+    from .io import (
+        check_output,
+        edited_outputs,
+        holds_output,
+        made_from,
+        open_bundle,
+        prepare_output,
+    )
     from .io.bundle import bundle_manifest
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
@@ -1174,6 +1181,21 @@ def cmd_report(args) -> int:
     created = (bundle_manifest(bundle) or {}).get("created", "")
     same = (tables is not None and bool(created) and holds_output(tables)
             and (made_from(tables) or {}).get("") == created)
+    # ... unless one was changed after hxex wrote it (opened and saved in a spreadsheet, say):
+    # then the rule applies after all, and the refusal names the files (owner, 2026-11-02)
+    edited = edited_outputs(tables) if same else []
+    if edited and not (overwrite or keep_previous):
+        log.error("%s: %s changed after hxex wrote %s, and writing the tables again would "
+                  "replace %s. To go on:\n"
+                  "  copy what you changed out of the folder first (a review table belongs "
+                  "next to hxex.toml), then report again;\n"
+                  "  or --overwrite replaces %s;\n"
+                  "  or --keep-previous moves the folder to %s.N first",
+                  tables, ", ".join(edited[:5]) + (", ..." if len(edited) > 5 else ""),
+                  "it" if len(edited) == 1 else "them", "it" if len(edited) == 1 else "them",
+                  "it" if len(edited) == 1 else "them", tables.name)
+        return EXIT_ERROR
+    same = same and not edited
     ruled = [(folder, what, option) for folder, what, option in outputs
              if not (what == "tables" and same)]
     for folder, what, option in ruled:  # the bundle's rule, before anything is opened

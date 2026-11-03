@@ -95,7 +95,11 @@ same results (a tables folder made from other results is left as it is, with a w
 report --overwrite` writes it). `hxex report` likewise writes the tables of the same results
 again in place, so `hxex report hxex.toml --figures` right after `hxex run` needs no
 `--overwrite` for them; the figures folder, and tables made from other results, follow the rule
-above. Its last line names both folders, for example `5 table(s) in results_tables (review: 1
+above. One exception keeps your work safe: if you changed one of the tables after *hxex* wrote
+it (opened `spectra.csv` and saved it, say), `hxex report` stops and names the file. Copy what
+you changed out of the folder first (a review table belongs next to `hxex.toml`), or give
+`--overwrite` to replace it (*hxex* says which files it replaced) or `--keep-previous` to keep
+the folder as `results_tables.N`. Its last line names both folders, for example `5 table(s) in results_tables (review: 1
 rejected); 12 figure file(s) in results_figures`. After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
 folder made from other results, and `hxex info results` lists each folder as `up to date` or
 `made from earlier results`. To bring them up to date:

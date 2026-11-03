@@ -43,6 +43,7 @@ from .mzml import (
 from .outputs import (
     OutputError,
     check_output,
+    edited_outputs,
     holds_output,
     made_from,
     output_listing,
@@ -109,6 +110,7 @@ __all__ = [
     "provenance_of",
     "OutputError",
     "holds_output",
+    "edited_outputs",
     "made_from",
     "output_listing",
     "check_output",

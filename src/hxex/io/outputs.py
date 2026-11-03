@@ -17,6 +17,7 @@ told to overwrite it (its files are replaced) or to keep it (it is moved to ``na
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -62,10 +63,41 @@ def made_from(directory: str | Path) -> dict[str, str] | None:
     return {str(k): str(v) for k, v in data["made_from"].items()}
 
 
+def _digest(path: Path) -> str | None:
+    """The SHA-256 of a file's content, or None when it cannot be read."""
+    h = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def edited_outputs(directory: str | Path) -> list[str]:
+    """The files of ``directory``'s listing whose content changed after hxex wrote them (for
+    example a table opened, edited, and saved in a spreadsheet program), sorted. A file that is
+    gone, and every file of a listing written before hxex kept the files' checksums, count as
+    not edited (nothing to compare)."""
+    data = _listing(directory)
+    digests = (data or {}).get("digests")
+    if not isinstance(digests, dict):
+        return []
+    out = []
+    for name, digest in digests.items():
+        path = Path(directory) / str(name)
+        if path.is_file() and _digest(path) != digest:
+            out.append(str(name).replace("\\", "/"))
+    return sorted(out)
+
+
 def _write_listing(directory: Path, files: Iterable[str],
                    made: Mapping[str, str] | None = None) -> None:
+    files = sorted(set(files))
+    digests = {name: d for name in files if (d := _digest(directory / name)) is not None}
     data = {"kind": KIND, "written": datetime.now(UTC).isoformat(timespec="seconds"),
-            "files": sorted(set(files)),
+            "files": files, "digests": digests,
             **({} if made is None else {"made_from": dict(made)})}
     tmp = directory / (LISTING + ".tmp")
     tmp.write_text(strict_json(data, indent=2) + "\n", encoding="utf-8")
@@ -156,6 +188,11 @@ def replace_outputs(directory: str | Path, names: Iterable[str], *,
     directory = Path(directory)
     check_output(directory, names)
     listed = output_listing(directory)
+    edited = edited_outputs(directory)
+    if edited:  # the command was told to write over them (or they are its own, unchanged)
+        log.warning("%s: %s changed after hxex wrote %s; replaced now", directory,
+                    ", ".join(edited[:5]) + (", ..." if len(edited) > 5 else ""),
+                    "it" if len(edited) == 1 else "them")
     directory.mkdir(parents=True, exist_ok=True)
     for name in listed or ():
         target = directory / name

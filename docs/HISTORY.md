@@ -6120,3 +6120,12 @@ CSVs or mzML if wanted.
     next panel's axis label, with more room between the panels. compare_populations.csv keeps
     the low-D share, as compare_peptides.csv does (owner); outputs.md says the figures draw the
     high-D share. tutorial_controls.png redrawn.
+
+224. **Tables changed by hand are not written over without asking (owner, 2026-11-02, option c
+    of the question on HISTORY 220's in-place rewrite).** An output folder's listing now records
+    each file's SHA-256 (`digests`; `hxex.io.edited_outputs` lists the files whose content has
+    changed since). `hxex report` still writes the same results' tables again in place, unless
+    one of them was changed after hxex wrote it: then it stops before anything is read, names
+    the files, and says how to go on (copy them out, `--overwrite`, or `--keep-previous`). Any
+    command replacing an edited listed file (with `--overwrite`) warns which ones it replaced.
+    Listings written before have no checksums and count as unedited.

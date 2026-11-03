@@ -56,6 +56,37 @@ def test_report_always_writes_the_tables_and_figures_add_to_them(tmp_path, capsy
     assert capsys.readouterr().out.strip().endswith("no tables ([output] tables = false)")
 
 
+def test_tables_changed_by_hand_are_not_written_over_without_asking(tmp_path, capsys):
+    """The same results' tables are written again in place, unless one of them was changed
+    after hxex wrote it (owner, 2026-11-02): then report stops and names it; --overwrite
+    replaces it with a warning, and --keep-previous keeps it in the earlier folder."""
+    from hxex.io import edited_outputs
+
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    tables = tmp_path / "out_tables"
+    assert edited_outputs(tables) == []
+    spectra = tables / "spectra.csv"
+    edited = spectra.read_text().replace("unreviewed", "rejected", 1)
+    spectra.write_text(edited)  # a review typed into the run's own table
+    assert edited_outputs(tables) == ["spectra.csv"]
+    capsys.readouterr()
+    assert cli.main(["-q", "report", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "spectra.csv changed after hxex wrote it" in err and "--overwrite" in err
+    assert spectra.read_text() == edited  # nothing written
+    assert cli.main(["-q", "report", str(path), "--keep-previous"]) == 0
+    assert (tmp_path / "out_tables.1" / "spectra.csv").read_text() == edited
+    assert edited_outputs(tables) == []  # the new tables, as written
+    spectra.write_text(spectra.read_text().replace("unreviewed", "rejected", 1))
+    capsys.readouterr()
+    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert "spectra.csv changed after hxex wrote it; replaced now" in capsys.readouterr().err
+    assert edited_outputs(tables) == []
+    # an unchanged folder is written again in place, as before
+    assert cli.main(["-q", "report", str(path)]) == 0
+
+
 def test_info_takes_the_project_file_and_tells_its_review_from_the_bundles(tmp_path, capsys):
     path = mzml_project(tmp_path)
     assert cli.main(["-q", "run", str(path)]) == 0
