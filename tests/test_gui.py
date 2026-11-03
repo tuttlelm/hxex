@@ -285,9 +285,11 @@ def test_the_title_is_centred_on_the_bar_clear_of_the_buttons(qtbot):
     title, bar = panel.title, panel.bar
     assert title.text() == "WT 0042-0054 TSLSPFYLRPPSF z=2"
     assert abs(title.geometry().center().x() - bar.width() / 2) <= 2  # the whole bar's centre
-    # a narrow bar: moved aside to clear the buttons, shortened, the whole title on hover
-    panel.resize(520, 500)
-    qtbot.waitUntil(lambda: bar.width() <= 520)
+    # a narrow bar: moved aside to clear the buttons, shortened, the whole title on hover; the
+    # width from the buttons' own (Windows' are wider: a fixed width cannot be reached there)
+    narrow = panel.save_button.geometry().right() + 150
+    panel.resize(narrow + 20, 500)
+    qtbot.waitUntil(lambda: bar.width() <= narrow + 40, timeout=5000)
     assert title.geometry().left() > panel.save_button.geometry().right()
     assert title.geometry().right() <= bar.width()
     assert title.text().endswith("…") and title.toolTip() == "WT 0042-0054 TSLSPFYLRPPSF z=2"

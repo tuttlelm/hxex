@@ -6571,5 +6571,39 @@ CSVs or mzML if wanted.
     on the bar). macOS 3.11 and 3.12: the same zoom test; a click on a thin line in the
     matplotlib view missed it (a horizontal line's box has no height, so a click had to hit its
     one pixel row; 4 pixels around a mark now count, in both views); the Run workspace test read
-    the progress text before the error stream's line had arrived (it waits for it now).
+    the progress text before the error stream's line had arrived (it waits for it now). CI of
+    11943b0: Windows passed but for the title test's narrow bar (520 pixels cannot be reached
+    with Windows' wider buttons; the width now comes from the buttons' own); a Linux job but for
+    the Stop test reading the progress record before the error stream had delivered it (the
+    error stream may come after the output stream on any system; it waits for it now).
+
+242. **GUI phase G3, part 2: the review panel (owner, 2026-11-03; PLAN "GUI", "Results and
+    review").** Under the Results tree (`gui.review_panel.ReviewPanel`): the status (not
+    reviewed, accepted, rejected; keys A, R, U in the tree, handled by the tree itself, as a
+    shortcut needs the window active; ◀ ▶ at its top right step to the previous and next
+    spectrum through every time point, series and peptide the tree shows, opening series on the
+    way: owner), the K (the fit's choice or one the run fitted) and a
+    note of what is selected, a spectrum or every spectrum of a time point or series. Each
+    decision is written at once to the project's user review table (`gui.review`, no Qt), in
+    the spectrum's row as a user would type it (`review_status`, `review_K`, `note`; other and
+    own columns kept; a row added where the table has none); the fit's choice empties the
+    table's K, or writes `review_K = 0` when the K came from the bundle's own review layer.
+    Without a table, the first decision writes `user_review_table.csv` beside the project (a
+    copy of the spectra table) and names it in `[review] table` (the results then load again
+    once, item 240). The decision is laid over the results in memory (`ReviewTable.update`, as
+    reading the table again would), so the tree's K, status and counts and the figures follow
+    at once. Only results opened through the project take decisions (the table is the
+    project's); a table another program holds keeps the decisions waiting (Try again); a K
+    without a bootstrap offers Resume (`hxex resume` in the Run workspace). `hxex check`,
+    `report` and `analyse` read the window's decisions as typed ones (tested). A time point with
+    one replicate shows that spectrum's figures (owner: stepping into it drew the same spectrum
+    another way, a one-panel page then the spectrum alone); a peptide with one charge already
+    showed its series' pages. A time point also has "fits at each K" (owner: the spectrum's
+    version, summarised): `report.overview.plot_k_comparisons` (new; `plot_k_comparison` is its
+    one-row case), a row per replicate with its label in the titles and its chosen K framed;
+    with several rows the layers are named once at the foot of the page and each panel keeps
+    only its populations' values under it (twelve repeated legends took a third of the page).
+    Next: the flat
+    list of spectra, the series review table, the Results tables. Tests:
+    tests/test_gui_review.py.
 

@@ -98,8 +98,14 @@ def k_comparison_data(spectrum_id: str, results: Results) -> dict:
 LEGEND_BELOW = 1.6  # inches added to a K comparison's height for the legends under the panels
 
 
-def _legend_below(ax) -> None:
+LEGEND_BELOW_ROWS = 0.9  # inches per row when only the populations are under each panel
+
+
+def _legend_below(ax, only_populations: bool = False) -> None:
     handles, labels = ax.get_legend_handles_labels()
+    if only_populations:
+        pairs = [(h, lab) for h, lab in zip(handles, labels, strict=True) if lab.startswith("pop ")]
+        handles, labels = [h for h, _ in pairs], [lab for _, lab in pairs]
     if handles:
         ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.18),
                   fontsize=6.5, frameon=False)
@@ -119,43 +125,79 @@ def plot_k_comparison(
     rejected it; the selected K is marked, and the reviewer's K if it differs. A K the screen
     skipped for the spectrum shows the picked spectrum alone. Keyword arguments go to
     :func:`plot_spectrum`."""
-    d = k_comparison_data(spectrum_id, results)
-    ks = list(d["k_values"] if ks is None else ks)
-    bad = [k for k in ks if k not in d["k_values"]]
+    fig = plot_k_comparisons([spectrum_id], results, ks=ks, show=show, cell=cell, **kwargs)
+    fig.suptitle(spectrum_id, fontsize=9)  # constrained layout places it with the legends
+    return fig
+
+
+def plot_k_comparisons(
+    spectrum_ids: Sequence[str],
+    results: Results,
+    *,
+    labels: Sequence[str] | None = None,
+    ks: Sequence[int] | None = None,
+    show: Sequence[str] = ("picked", "fit"),
+    cell: tuple[float, float] = (4.6, 3.6),
+    title: str | None = None,
+    **kwargs,
+) -> Figure:
+    """Several spectra fitted at each K: a row of :func:`plot_k_comparison` per spectrum (the
+    replicates of a time point, say), each row's titles starting with its label (``labels``,
+    default the spectrum id) and its chosen K framed. ``ks`` default: every K tried."""
+    if not len(spectrum_ids):
+        raise ValueError("no spectra to compare")
+    rows = [k_comparison_data(sid, results) for sid in spectrum_ids]
+    ks = list(rows[0]["k_values"] if ks is None else ks)
+    bad = [k for k in ks if k not in rows[0]["k_values"]]
     if bad:
-        raise ValueError(f"K = {bad} was not fitted (tried {d['k_values']})")
+        raise ValueError(f"K = {bad} was not fitted (tried {rows[0]['k_values']})")
+    labels = list(spectrum_ids if labels is None else labels)
     # each panel's legend (its own populations) under it, covering none of the spectrum
     # (owner, 2026-11-03); constrained layout makes room for it
-    fig = Figure(figsize=(cell[0] * len(ks), cell[1] + LEGEND_BELOW), layout="constrained")
-    axes = np.atleast_1d(fig.subplots(1, len(ks), sharey=True))
+    many = len(rows) > 1
+    # several rows: the layers named once at the top, only each fit's populations under it
+    below = LEGEND_BELOW_ROWS if many else LEGEND_BELOW
+    height = (cell[1] + below) * len(rows) + (0.6 if many else 0.0)
+    fig = Figure(figsize=(cell[0] * len(ks), height), layout="constrained")
+    axes = np.atleast_2d(fig.subplots(len(rows), len(ks), sharey="row", squeeze=False))
     kwargs.setdefault("legend", False)
-    fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
-    for ax, k in zip(axes, ks, strict=True):
-        j = d["k_values"].index(k)
-        if not fitted[k]:  # the screen skipped it: the spectrum alone
-            plot_spectrum(spectrum_id, results, show=("picked",), ax=ax, title=False, **kwargs)
-            ax.set_title(f"K={k} not fitted (screened)", fontsize=8)
-            _legend_below(ax)
-            continue
-        plot_spectrum(spectrum_id, results, k=k, show=show, ax=ax, title=False, **kwargs)
-        _legend_below(ax)
-        marks = []
-        if k == d["selected"]:
-            marks.append("selected")
-        if k == d["effective"] and d["effective"] != d["selected"]:
-            marks.append("reviewer's choice")
-        if not d["passes"][j]:
-            marks.append("population below minimum")
-        delta = d["delta"][j]
-        name = d["criterion"].upper()
-        score_text = "rejected" if not np.isfinite(delta) else f"Δ{name} {delta:+.1f}"
-        ax.set_title(f"K={k}   loss {d['nll'][j]:.4g}   {score_text}"
-                     + (f"\n{', '.join(marks)}" if marks else ""), fontsize=8,
-                     fontweight="bold" if k == d["effective"] else "normal")
-        if k == d["effective"]:
-            for spine in ax.spines.values():
-                spine.set_linewidth(2.0)
-    fig.suptitle(spectrum_id, fontsize=9)  # constrained layout places it with the legends
+    for r, (sid, d) in enumerate(zip(spectrum_ids, rows, strict=True)):
+        fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
+        lead = f"{labels[r]}: " if many else ""
+        for ax, k in zip(axes[r], ks, strict=True):
+            j = d["k_values"].index(k)
+            if not fitted[k]:  # the screen skipped it: the spectrum alone
+                plot_spectrum(sid, results, show=("picked",), ax=ax, title=False, **kwargs)
+                ax.set_title(f"{lead}K={k} not fitted (screened)", fontsize=8)
+                _legend_below(ax, many)
+                continue
+            plot_spectrum(sid, results, k=k, show=show, ax=ax, title=False, **kwargs)
+            _legend_below(ax, many)
+            marks = []
+            if k == d["selected"]:
+                marks.append("selected")
+            if k == d["effective"] and d["effective"] != d["selected"]:
+                marks.append("reviewer's choice")
+            if not d["passes"][j]:
+                marks.append("population below minimum")
+            delta = d["delta"][j]
+            name = d["criterion"].upper()
+            score_text = "rejected" if not np.isfinite(delta) else f"Δ{name} {delta:+.1f}"
+            ax.set_title(f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}"
+                         + (f"\n{', '.join(marks)}" if marks else ""), fontsize=8,
+                         fontweight="bold" if k == d["effective"] else "normal")
+            if k == d["effective"]:
+                for spine in ax.spines.values():
+                    spine.set_linewidth(2.0)
+    if title is not None:
+        fig.suptitle(title, fontsize=9)
+    if many:  # the layers, once for the page (from the panel naming the most)
+        named = max((ax.get_legend_handles_labels() for ax in axes.flat), key=lambda h: len(h[1]))
+        layers = [(h, lab) for h, lab in zip(*named, strict=True) if not lab.startswith("pop ")]
+        if layers:
+            fig.legend([h for h, _ in layers], [lab for _, lab in layers],
+                       loc="outside lower center", ncol=min(len(layers), 5), fontsize=7,
+                       frameon=False)
     return fig
 
 

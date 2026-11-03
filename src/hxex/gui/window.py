@@ -510,6 +510,11 @@ class MainWindow(QMainWindow):
             self._mark_saved()
         self.changed()
 
+    def run_resume(self) -> None:
+        """hxex resume in the Run workspace (a bootstrap for spectra shown at a K without one)."""
+        self.tabs.setCurrentIndex(WORKSPACES.index("run"))
+        self.run_page.run_command("resume")
+
     def show_setting(self, table: str) -> None:
         """The Project workspace's page of the table ``table`` (``"run.fit.backend"``)."""
         self.tabs.setCurrentIndex(WORKSPACES.index("project"))

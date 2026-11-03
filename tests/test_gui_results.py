@@ -70,7 +70,9 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
         page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
-    assert tabs == ["spectra", "uptake"]
+    assert tabs == ["spectra", "fits at each K", "uptake"]
+    qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
+    assert page.panel("fits at each K").view.figure.axes[0].get_title().startswith("rep 1: K=")
     assert len(page.panel("spectra").view.figure.axes) == 3  # that time's replicates
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
         page.tree.setCurrentItem(point.child(0))
@@ -157,3 +159,23 @@ def test_a_change_to_the_projects_figures_reaches_the_results_shown(qtbot, tmp_p
     set_setting(project, "run.bootstrap.n_boot", "7")
     window.project_page.editor._file_changed(str(project))
     assert loads == []
+
+
+def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_path):
+    """A level with one item shows that item's view (owner: stepping into it drew the same
+    spectrum another way)."""
+    from hxex.gui.results_workspace import ResultsWorkspace
+
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(results, None)
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.expandItem(series)
+    fd = series.child(series.childCount() - 1)
+    assert fd.childCount() == 2
+    fd.data(0, 257)[2].spectra.pop()  # the time point now holds one replicate
+    with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
+        page.tree.setCurrentItem(fd)
+    assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
+        "spectrum", "fits at each K", "uptake"]
+    assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name

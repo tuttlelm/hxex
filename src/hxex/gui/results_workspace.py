@@ -19,7 +19,8 @@ import logging
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+import numpy as np
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from .figure_view import FigurePanel
 from .results_tree import FILTERS, Peptide, peptides, points, shown
+from .review_panel import ReviewPanel
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 # the figure tabs of each kind of selection, in their order
 TABS = {"series": ("spectra", "uptake", "populations"),
-        "point": ("spectra", "uptake"),
+        "point": ("spectra", "fits at each K", "uptake"),
         "spectrum": ("spectrum", "fits at each K", "uptake")}
 
 
@@ -92,11 +94,22 @@ class ResultsWorkspace(QWidget):
         self.tree.setAlternatingRowColors(True)
         self.tree.itemExpanded.connect(self._expanded)
         self.tree.currentItemChanged.connect(self._selected)
+        self.review = ReviewPanel(self)
+        self.review.decided.connect(self._reviewed)
+        self.review.step.connect(self.step_spectrum)
+        if window is not None:
+            self.review.resume_asked.connect(window.run_resume)
+        # review from the tree: A accepted, R rejected, U not reviewed (the tree's own keys, so
+        # they work whenever it has the keyboard)
+        self.tree.installEventFilter(self)
+        self._leaves: dict[int, QTreeWidgetItem] = {}  # a spectrum's row in the tree
+        self._series_items: dict[int, QTreeWidgetItem] = {}
         left = QWidget()
         side = QVBoxLayout(left)
         side.setContentsMargins(0, 0, 0, 0)
         side.addLayout(filters)
         side.addWidget(self.tree, 1)
+        side.addWidget(self.review)
 
         # the uptake page's time axis, for the window only (owner: the project's linear default
         # is not how uptake is usually read); the project's [figures] setting first
@@ -161,6 +174,7 @@ class ResultsWorkspace(QWidget):
             panel.clear()
         self.tree_data = [] if results is None else peptides(results)
         self._fill_time_axis()
+        self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
         self._fill()
 
@@ -205,6 +219,7 @@ class ResultsWorkspace(QWidget):
         text = self.search.text()
         self.tree.blockSignals(True)
         self.tree.clear()
+        self._leaves, self._series_items = {}, {}
         n_series = 0
         for pep in self.tree_data:
             series = [s for s in pep.series if shown(pep, s, how, text)]
@@ -226,6 +241,7 @@ class ResultsWorkspace(QWidget):
                 child.setData(0, PAYLOAD, (pep, s))
                 child.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
                 top.addChild(child)
+                self._series_items[s.data_id] = child
                 n_series += 1
             self.tree.addTopLevelItem(top)
         self.tree.blockSignals(False)
@@ -254,13 +270,14 @@ class ResultsWorkspace(QWidget):
                 leaf.setData(0, PAYLOAD, (pep, series, point, spectrum))
                 leaf.setToolTip(0, spectrum.spectrum_id)
                 child.addChild(leaf)
+                self._leaves[spectrum.index] = leaf
             item.addChild(child)
 
     # --- selection -------------------------------------------------------------------------
 
     def _selected(self, item: QTreeWidgetItem | None, _previous=None) -> None:
         from ..report.figures import series_figures, series_kinds
-        from ..report.overview import plot_k_comparison
+        from ..report.overview import plot_k_comparison, plot_k_comparisons
         from ..report.series import plot_series_spectra
         from ..report.spectrum import plot_spectrum
 
@@ -274,11 +291,15 @@ class ResultsWorkspace(QWidget):
                                                           or "all", self.search.text())),
                           pep.series[0])
             kind, payload = "series", (pep, series)
+        if kind == "point" and len(payload[2].spectra) == 1:
+            # one replicate: its own view, so stepping into it draws nothing new (owner)
+            kind, payload = "spectrum", (*payload, payload[2].spectra[0])
         results = self.results
         config = self._plot_config()
         series = payload[1]
         data_id = series.data_id
         self._show_tabs(kind)
+        self._show_review(kind, payload)
 
         def uptake():
             one = dataclasses.replace(config, kinds=("uptake",))
@@ -304,6 +325,13 @@ class ResultsWorkspace(QWidget):
             self.panel("spectra").draw(lambda: plot_series_spectra(
                 results, data_id, rows=rows, columns=columns, show=config.show, k=config.k,
                 corrected=config.corrected))
+            point = payload[2]
+            ids = [s.spectrum_id for s in point.spectra]
+            labels = [f"rep {s.rep}" for s in point.spectra]
+            title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
+                    f"z={series.charge}, {point.label}"
+            self.panel("fits at each K").draw(lambda: plot_k_comparisons(
+                ids, results, labels=labels, title=title))
             self.panel("uptake").draw(uptake)
         else:
             spectrum = payload[3]
@@ -315,6 +343,116 @@ class ResultsWorkspace(QWidget):
         self.selection_changed.emit()
         if self.window is not None:
             self.window.changed()
+
+    # --- stepping through the spectra ---------------------------------------------------------
+
+    def step_spectrum(self, step: int) -> bool:
+        """Select the next (``step`` 1) or previous (-1) spectrum in the tree's order, opening the
+        series on the way; from a time point, series or peptide, its first (or last) spectrum.
+        False at either end."""
+        item = self.tree.currentItem()
+        if item is None:
+            if not self.tree.topLevelItemCount():
+                return False
+            item = self.tree.topLevelItem(0 if step > 0 else self.tree.topLevelItemCount() - 1)
+            target = self._edge_leaf(item, step)
+        elif item.data(0, KIND) == "spectrum":
+            target = self._leaf_after(item, step)
+        else:
+            target = self._edge_leaf(item, step)
+        if target is None:
+            return False
+        parent = target.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.tree.setCurrentItem(target)
+        self.tree.scrollToItem(target)
+        return True
+
+    def _children(self, item: QTreeWidgetItem) -> list[QTreeWidgetItem]:
+        if item.data(0, KIND) == "series" and not item.childCount():
+            self._expanded(item)  # its time points and spectra, made now
+        return [item.child(i) for i in range(item.childCount())]
+
+    def _edge_leaf(self, item: QTreeWidgetItem, step: int) -> QTreeWidgetItem | None:
+        """The first (``step`` > 0) or last spectrum under ``item`` (itself when a spectrum)."""
+        if item.data(0, KIND) == "spectrum":
+            return item
+        children = self._children(item)
+        for child in (children if step > 0 else reversed(children)):
+            leaf = self._edge_leaf(child, step)
+            if leaf is not None:
+                return leaf
+        return None
+
+    def _leaf_after(self, item: QTreeWidgetItem, step: int) -> QTreeWidgetItem | None:
+        """The spectrum after (or before) ``item``: its sibling, else the edge spectrum of the
+        next sibling of the nearest level that has one."""
+        while item is not None:
+            parent = item.parent()
+            siblings = (self._children(parent) if parent is not None else
+                        [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())])
+            at = siblings.index(item) + step
+            while 0 <= at < len(siblings):
+                leaf = self._edge_leaf(siblings[at], step)
+                if leaf is not None:
+                    return leaf
+                at += step
+            item = parent
+        return None
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
+        if watched is self.tree and event.type() == QEvent.Type.KeyPress \
+                and event.modifiers() in (Qt.KeyboardModifier.NoModifier,
+                                          Qt.KeyboardModifier.ShiftModifier) \
+                and event.text().lower() in ("a", "r", "u"):
+            self.review.key(event.text())
+            return True
+        return super().eventFilter(watched, event)
+
+    def _show_review(self, kind: str, payload) -> None:
+        pep, series = payload[0], payload[1]
+        name = f"{pep.sample} {pep.peptide_range} {pep.peptide} z={series.charge}"
+        if kind == "series":
+            rows = list(np.flatnonzero(self.results.fit.data_id == series.data_id))
+        elif kind == "point":
+            rows = [s.index for s in payload[2].spectra]
+            name += f", {payload[2].label}"
+        else:
+            rows = [payload[3].index]
+            name += f", {payload[2].label}, rep {payload[3].rep}"
+        self.review.show_spectra(rows, name)
+
+    def _reviewed(self, changed: list) -> None:
+        """Decisions were made: the rows of the spectra they touch, their time points, series
+        and peptides show them, and the figures are drawn again."""
+        from .review_panel import counts
+
+        results = self.results
+        status = np.asarray(results.review_status).astype(str)
+        ks = results.effective_K
+        series_ids = {int(results.fit.data_id[i]) for i in changed}
+        for i in changed:
+            leaf = self._leaves.get(int(i))
+            if leaf is not None:
+                leaf.setText(6, str(int(ks[i])))
+                leaf.setText(7, "" if status[i] in ("unreviewed", "None") else status[i])
+                point = leaf.parent()
+                point.setText(6, " ".join(point.child(j).text(6)
+                                          for j in range(point.childCount())))
+        for data_id in series_ids:
+            item = self._series_items.get(data_id)
+            if item is None:
+                continue
+            rejected, multi = counts(results, data_id)
+            item.setText(4, str(rejected or ""))
+            item.setText(5, str(multi or ""))
+            top = item.parent()
+            for col in (4, 5):
+                total = sum(int(top.child(j).text(col) or 0) for j in range(top.childCount()))
+                top.setText(col, str(total or ""))
+        self._redraw()
 
     def selection(self) -> dict:
         """What is selected, by what outlasts a rerun: sample, residues and charge, and the

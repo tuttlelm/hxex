@@ -63,7 +63,9 @@ def test_stop_stops_the_command_after_its_step(qtbot, stand_in, tmp_path):
     run.progress.connect(records.append)
     run.start(["run", "hxex.toml"], tmp_path)
     qtbot.waitUntil(lambda: "working" in lines, timeout=20000)
-    assert records and records[0]["stage"] == "fit"  # not shown as a line
+    # the progress record comes on the error stream, which may arrive after the output's line
+    qtbot.waitUntil(lambda: bool(records), timeout=20000)
+    assert records[0]["stage"] == "fit"  # not shown as a line
     assert not any(line.startswith("@hxex-progress") for line in lines)
     with qtbot.waitSignal(run.finished, timeout=20000) as done:
         assert run.stop() == 1
@@ -133,7 +135,7 @@ def test_closing_during_a_command_asks_and_stops_it(qtbot, stand_in, tmp_path):
     page.show_project(project)
     page.run_command("run")
     qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
-    # the progress line comes on the error stream, which may arrive a little later (macOS)
+    # the progress line comes on the error stream, which may arrive after the output's line
     qtbot.waitUntil(lambda: page.state.text() == "fit: 50%, about 3s left", timeout=20000)
     assert page.stop_button.isEnabled()
     page.ask_stop_to_close = lambda: False

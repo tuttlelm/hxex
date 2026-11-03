@@ -121,10 +121,13 @@ review status, and flags. Click a row, or move through the tree with the arrow k
 
 - **a peptide or a charge**: the series' pages, as `hxex report` draws them: the spectra, the
   uptake plot, and the population map (when a spectrum has more than one population);
-- **a time point**: its replicates side by side, on the same m/z range as the whole series,
-  and the series' uptake plot;
+- **a time point**: its replicates side by side, on the same m/z range as the whole series;
+  its replicates fitted at each K, a row per replicate with the K chosen for it framed; and
+  the series' uptake plot;
 - **a replicate**: that spectrum on its own, its fits at each K side by side (the one chosen
   framed), and the series' uptake plot.
+
+A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
 The uptake page has a list of its own in its bar, for how it spreads the times: the project
 file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
@@ -139,6 +142,32 @@ The list above the tree shows only some series (flagged, more than one populatio
 or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
 results through the project file applies your review table and exclusion rules, as `hxex
 report hxex.toml` does.
+
+## Reviewing spectra
+
+The **Review** panel under the tree records your decision on what is selected: one spectrum,
+or every spectrum of a time point or a charge.
+
+- **◀** and **▶** (top right) go to the previous and next spectrum, through every time point,
+  charge, and peptide the tree shows (with the list above it, only flagged series, say).
+- **Status**: not reviewed, accepted, or rejected. In the tree, the keys **A**, **R**, and **U**
+  do the same, so you can review with the arrow keys and those three letters.
+- **K**: the fit's choice, or the number of populations to use (as far as the run fitted).
+  When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
+  resume`, which adds it.
+- **Note**: anything you want to keep with the decision.
+
+Each decision is written at once to your review table, the same file you could edit in a
+spreadsheet ([Excluding spectra](excluding-spectra.md)): its `review_status`, `review_K`, and
+`note` columns, in the spectrum's row; your other columns stay as they are. When the project
+has no review table yet, the first decision makes `user_review_table.csv` beside the project
+file (a copy of the results' spectra table) and names it under `[review]`. The tree, the counts,
+and the figures show the decision at once, and `hxex report` and `hxex analyse` read it as they
+read a table you typed.
+
+Decisions need the project file: open the results through it (**File > Open project file**).
+A table open in a spreadsheet cannot be written (Excel locks it on Windows): the panel says so
+and keeps the decision; close the table there and press **Try again**.
 
 ## Running the commands
 

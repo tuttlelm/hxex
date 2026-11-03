@@ -1626,3 +1626,21 @@ def test_the_significance_legend_never_meets_the_axis_labels(rows, columns):
                  + [t.get_window_extent(renderer).y0 for t in ax.get_xticklabels()
                     if t.get_text()])
     assert box.y1 < lowest and box.y0 >= 0
+
+
+def test_several_spectra_fitted_at_each_k_one_row_each(results):
+    """The replicates of a time point at each K (owner: the single spectrum's version at the
+    time point): a row per spectrum, its label in its titles, its chosen K framed."""
+    from hxex.report.overview import plot_k_comparisons
+
+    ids = [str(s) for s in results.fit.spectrum_id[3:6]]
+    fig = plot_k_comparisons(ids, results, labels=["rep 1", "rep 2", "rep 3"], title="1 min")
+    n_k = len(results.fit.k_values)
+    assert len(fig.axes) == 3 * n_k
+    assert fig.axes[0].get_title().startswith("rep 1: K=")
+    assert fig.axes[n_k].get_title().startswith("rep 2: K=")
+    assert fig.get_suptitle() == "1 min"
+    framed = [ax for ax in fig.axes if max(s.get_linewidth() for s in ax.spines.values()) >= 2]
+    assert len(framed) == 3  # each row's chosen K
+    with pytest.raises(ValueError, match="no spectra"):
+        plot_k_comparisons([], results)
