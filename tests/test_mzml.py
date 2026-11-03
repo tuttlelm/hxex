@@ -379,9 +379,23 @@ def test_replicates_of_one_point_are_kept_apart(tmp_path, caplog):
                                          "time 1 min"):
         number_replicates(runs[:2])
     path = write_mzml(tmp_path / "x.mzML", time_course(n=2))
-    with pytest.raises(MzmlError, match="both rep 1"):
-        read_mzml([MzmlRun(path, "WT", time=60.0), MzmlRun(path, "WT", time=60.0)],
+    with pytest.raises(MzmlError, match="x.mzML is listed twice for sample WT"):
+        read_mzml([MzmlRun(path, "WT", time=60.0), MzmlRun(path, "WT", time=120.0)],
                   [MzmlTarget(ENTRY)], project="p")
+
+
+def test_one_file_is_listed_once_per_sample():
+    """One file listed twice for one sample is refused (two replicates of one injection),
+    however its path is written; one file in two samples (one injection of two proteins, each
+    peptide tied to its sample) is accepted."""
+    from hxex.io.mzml import number_replicates
+
+    with pytest.raises(ValueError, match="listed twice for sample WT"):
+        number_replicates([MzmlRun("x.mzML", "WT", role="undeut"),
+                           MzmlRun("./x.mzML", "WT", time=60.0)])
+    out = number_replicates([MzmlRun("x.mzML", "WT", time=60.0),
+                             MzmlRun("x.mzML", "KO", time=60.0)])
+    assert [(r.sample, r.rep) for r in out] == [("WT", 1), ("KO", 1)]
 
 
 def test_kinetics_spectra_from_the_read_record(tmp_path):
@@ -854,7 +868,7 @@ def test_fragments_take_the_scans_of_their_own_parent(tmp_path, caplog):
         MzmlTarget(ENTRY, parent_mz=(5.0, 1.0))
 
 
-def test_usable_from_is_on_the_acquisition_clock(tmp_path):
+def test_usable_from_is_on_the_acquisition_clock(tmp_path, caplog):
     """A run's usable_from leaves out its scans before that scan time; time_offset moves only
     the spectra's times (the exchange clock); MzmlConfig.min_time is a scan time too."""
     path = write_mzml(tmp_path / "k.mzML", time_course(n=6))  # scans at 30 to 180 s
@@ -870,8 +884,14 @@ def test_usable_from_is_on_the_acquisition_clock(tmp_path):
     assert "usable_from" not in MzmlRun(path, "WT").to_dict()  # older records stay as they were
     # a run with a fixed time: the start applies within the retention window as well
     fixed = MzmlRun(path, "WT", time=60.0, usable_from=100.0)
-    summed = read_mzml([fixed], [MzmlTarget(ENTRY, rt_window=(50.0, 160.0))], project="p")
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        summed = read_mzml([fixed], [MzmlTarget(ENTRY, rt_window=(50.0, 160.0))], project="p")
     assert len(summed) == 1 and summed.spectrum_id[0].endswith("scans3-4")  # 120 and 150 s
+    assert "usable_from = 100 s cuts the retention window of 1 target(s)" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):  # a window after it: silent
+        read_mzml([fixed], [MzmlTarget(ENTRY, rt_window=(110.0, 160.0))], project="p")
+    assert "usable_from" not in caplog.text
 
 
 # --- audit fixes: arrays, ids, recorded names, charges, sampling ------------------------------

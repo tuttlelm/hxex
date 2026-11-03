@@ -6,6 +6,8 @@ Every command and option of *hxex*, from the program's own definitions (`hxex CO
 
 Messages and progress go to the terminal's error stream, results and summaries to its output. Ctrl-C stops a run cleanly after the current step (a second Ctrl-C aborts at once). Exit status: 0 done, 1 an error (its message is printed), 2 a usage error, 130 stopped.
 
+A short path on the command line (`--bundle`, `--out`, `--tables DIR`, ...) is counted from the folder the terminal is in; one in the project file (`[output] bundle`, ...) from the folder that holds the project file ([File and folder locations](project-file.md#file-and-folder-locations)).
+
 ## Options of every command
 
 Given before the command: `hxex -v run hxex.toml`.
@@ -50,7 +52,7 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 | Argument | Meaning |
 |---|---|
 | `hxex.toml` | the project file (hxex.toml, written by hxex init) |
-| `--bundle` `BUNDLE` | the results bundle (instead of output.bundle) |
+| `--bundle` `BUNDLE` | the results bundle (instead of output.bundle; relative to the current folder, not to the project file's) |
 | `--overwrite` | replace an existing bundle (and its tables), carrying its review over; also a tables folder left from a bundle that is gone |
 | `--keep-previous` | move an existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, before writing |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of run.fit.backend) |
@@ -99,7 +101,7 @@ Also spelt `hxex analyze`.
 | Argument | Meaning |
 |---|---|
 | `hxex.toml\|BUNDLE ...` | the project file, hxex.toml (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
-| `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle) |
+| `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle; relative to the current folder, not to the project file's) |
 | `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT) |
 | `--overwrite` | replace hxex's files in the analysis folder when it holds earlier output (or [output] overwrite = true) |
 | `--keep-previous` | move the analysis folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |

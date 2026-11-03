@@ -103,6 +103,7 @@ reference = "WT"
   condition): TOML has no null. A switch set to `false` is off. `bootstrap = false` in `[run]`
   turns the bootstrap off.
 - **Times** are seconds, or text with a unit: `time = "5 min"`, `times = ["1 min", "20 h"]`.
+  A number in quotes without a unit (`"5"`) is seconds, like the number itself.
   Retention times (`rt`, `rt_start`, `rt_end`) are minutes. The bootstrap's `ci` is a
   percentage (95.0); the analysis' `confidence` is a fraction (0.5, or 0.95 with
   `populations = "bootstrap"`).

@@ -163,6 +163,46 @@ def parse_hxexpress_label(label: object) -> tuple[float, str]:
     return _to_seconds(number if whole in ("0", "") else whole, unit, f"label {label!r}"), ""
 
 
+def hxexpress_label_doubts(labels: list[str]) -> list[str]:
+    """What an HX-Express file's time labels (already read by :func:`parse_hxexpress_label`)
+    may mean otherwise than they are read, one sentence each: a replicate-marked label (``1.5
+    min``, read as 1 min) whose time has no plain label in the file (perhaps a fraction, 90 s),
+    and one time point written in two ways (``60 s`` and ``1 min``, read as its replicates).
+    Empty when nothing looks doubtful."""
+    points: dict[float, list[tuple[str, bool, tuple]]] = {}
+    for label in labels:
+        seconds, role = parse_hxexpress_label(label)
+        if role:
+            continue
+        parts = label.split()
+        number, unit = parts[0], _UNIT_SECONDS[parts[-1].lower()]
+        whole, _, digits = number.partition(".")
+        marked = bool(digits) and whole not in ("0", "")
+        spelling = (Decimal(whole) if marked else Decimal(number), unit)  # 1 m = 1 min = 1.2 min
+        points.setdefault(seconds, []).append((label, marked, spelling))
+    out = []
+    alone = [(t, [lab for lab, _, _ in items]) for t, items in points.items()
+             if all(m for _, m, _ in items)]  # replicate markers without the plain time
+    if alone:
+        out.append(
+            f"{_quoted([lab for _, labs in alone for lab in labs])} read as "
+            f"{_quoted([format_time(t) for t, _ in alone])} (in "
+            "HX-Express labels the digits after the point of a time of 1 or more mark a "
+            "replicate), but no column has the plain time: if a fraction is meant, write the "
+            "time in a smaller unit (90 s for 1.5 min)")
+    for t, items in points.items():
+        spellings = {w for _, _, w in items}
+        if len(spellings) > 1:
+            out.append(f"{_quoted(sorted({lab for lab, _, _ in items}))} are one time point, "
+                       f"{format_time(t)}, read as its replicates")
+    return out
+
+
+def _quoted(labels) -> str:
+    shown = [f"'{x}'" for x in labels[:3]]
+    return ", ".join(shown) + (", ..." if len(labels) > 3 else "")
+
+
 def parse_specexport_token(token: str) -> tuple[float, str]:
     """``(seconds, role)`` of a SpecExport file-name time: ``Non`` (NaN, ``'undeut'``),
     ``Full`` (NaN, ``'fulldeut'``), ``60s``, ``5m``, ``2h`` (the time, ``''``)."""

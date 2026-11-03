@@ -155,10 +155,18 @@ Units are `ms`, `s`, `sec`, `m`, `min`, `h`, `hr` and their long forms. The spac
 `60s` is refused. `FD` and `Full` are not control labels here; a label that is neither a time
 nor a control word is refused with the control words named.
 
-**Replicates.** Spectra with the same label are numbered as replicates in column order. As in
+**Replicates.** Spectra at the same time are numbered as replicates in column order. As in
 HX-Express, digits after the decimal point of a time of 1 or more mark a replicate, not a
-fraction: `1.2 min` is a second replicate at 1 min, and `10.3 s` is 10 s. Below 1 the fraction is
-kept: `0.5 min` is 30 s.
+fraction: `1.2 min` is a replicate at 1 min, and `10.3 s` is 10 s. The digit itself is not read:
+the replicates are counted from left to right. Below 1 the fraction is kept: `0.5 min` is 30 s.
+Labels that give the same time are replicates of one point even when written differently
+(`60 s` and `1 min`).
+
+Two cases get a warning, because the label may not mean what *hxex* reads:
+
+- A marked label with no plain label at its time (`1.5 min` without a `1 min` column). If you
+  meant a fraction, write the time in a smaller unit: `90 s`.
+- One time written in two ways in one file (`60 s` and `1 min`).
 
 ---
 
@@ -192,8 +200,9 @@ SpecExport/
   A folder without its FASTA, or a FASTA without its folder, is not read, with a warning that
   names it. The names are case-sensitive (`wt.fasta` does not pair with `WT/`), the FASTA sits
   beside its folder, not inside it, and `data_dir` is the folder that holds the samples, not a
-  sample folder itself. Only `.fasta` is looked for. If the FASTA has several records, the last
-  is used (with a warning). A sequence written wholly in lower case is read in capitals.
+  sample folder itself. The suffix is `.fasta` in any case (`WT.FASTA` too); `.fa` is not
+  looked for. If the FASTA has several records, the last is used (with a warning). A sequence
+  written wholly in lower case is read in capitals.
 - **A peptide** is a folder named `START-END-...`. Its sequence is cut from the sample's FASTA by
   the range, and the sequence in the folder name is checked against the FASTA (the residues
   only: modified residues and terminal groups are not compared). Other folders (for example an
@@ -422,7 +431,8 @@ own `[[input.runs]]` table, which names the file and says what was measured in i
 | `rep` | replicate number. Left out, the runs of one sample at one time (or one control role, or the kinetics runs of a sample) are numbered 1, 2, ... in the order they are listed. The same `rep` given to two runs of one sample at one time or control role is refused; kinetics runs may share one (a time course split over files) |
 | `time` | the labelling time of the whole file (`"60 s"`, `"5 min"`) |
 | `role` | `"undeut"` or `"fulldeut"`: a control run |
-| `time_offset`, `usable_from` | for kinetics runs (below); `time_offset` is refused on a run with a `time` or a `role` (it would be ignored there) |
+| `time_offset` | for kinetics runs (below); refused on a run with a `time` or a `role` (it would be ignored there) |
+| `usable_from` | leaves out the file's scans before this scan time, on any run (kinetics runs: below). On a run with a `time` or a `role` it also cuts every retention window that starts earlier, and a warning names those peptides |
 | `activation`, `precursor_mz`, `precursor_charge`, `filter_contains`, `filter_excludes` | replace one scan condition of every target for this run only (`false` removes it) |
 
 What a run holds depends on `time` and `role`:

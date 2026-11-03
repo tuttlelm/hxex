@@ -183,6 +183,26 @@ def write_hx_csv(path, header=HEADER, body=BODY):
             w.writerow(["" if c is None else c for c in row])
 
 
+def test_doubtful_hxexpress_labels_are_warned_about(tmp_path, caplog):
+    """A replicate-marked label whose time has no plain label (1.5 min meant as 90 s?) and one
+    time written two ways (60 s and 1 min) are warned about, naming the labels and how they are
+    read; the usual markers (1 min, 1.2 min), fractions below 1, and units of one size written
+    differently (1 m, 1 min) are not."""
+    from hxex.io.times import hxexpress_label_doubts
+
+    assert hxexpress_label_doubts(["undeut", "1 min", "1.2 min", "1 m", "0.5 min", "TD"]) == []
+    lone, = hxexpress_label_doubts(["undeut", "1.5 min", "5 min"])
+    assert lone.startswith("'1.5 min' read as '1 min'") and "90 s for 1.5 min" in lone
+    two, = hxexpress_label_doubts(["60 s", "1 min", "1.2 min"])
+    assert two == "'1 min', '1.2 min', '60 s' are one time point, 1 min, read as its replicates"
+    write_hx_csv(tmp_path / "a.csv", header=["undeut", None, "1.5 min", None, "60 s", None,
+                                             "1 min", None])
+    with caplog.at_level(logging.WARNING, logger="hxex.io.hxexpress"):
+        hio.read_hxexpress_file(tmp_path / "a.csv", ENTRY)
+    assert "a.csv: labels '1.5 min' read as '1 min'" not in caplog.text  # 1 min is there
+    assert "a.csv: labels '1 min', '1.5 min', '60 s' are one time point" in caplog.text
+
+
 @pytest.mark.parametrize("writer, name", [(write_xlsx, "a.xlsx"), (write_hx_csv, "a.csv")])
 def test_read_hxexpress_file(tmp_path, writer, name):
     writer(tmp_path / name)

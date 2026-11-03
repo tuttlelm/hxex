@@ -6145,3 +6145,25 @@ CSVs or mzML if wanted.
     envelope (the fit centroid differs from it by a median -0.01 to -0.02 D on the tutorial) and
     `best_set_K` (a set decision the run does not make). Tutorial bundle: 1,169 centroid rows,
     95 of them averaging replicates at different K.
+
+226. **Small leftovers of the third audit (owner, 2026-11-03).** `[figures] k` outside
+    `k_min`..`k_max` is refused when the project file is read (and so by `hxex check`), as a
+    review table choosing such a K is; `hxex report --figures` failed with "K = 3 was not
+    fitted" before. One file listed twice for one sample in `[[input.runs]]` is refused (its
+    spectra would be replicates of one injection; paths compared after normalising, in the
+    project file and the Python interface); one file in two samples stays allowed (one injection
+    of two proteins, each peptide tied to its sample). `usable_from` on a run with a fixed time
+    or a control role warns, per file, when it cuts a retention window that starts earlier (the
+    guide called it a kinetics setting; it cuts scans on every run). SpecExport finds FASTA
+    files whose suffix is in any case (`WT.FASTA`). The pooled format warns about peptide
+    folders without SpecExport files, and about a folder with no peptide folders (pointing out a
+    SpecExport folder of samples). `--bundle`'s help and the command reference say command-line
+    paths are counted from the terminal's folder. Kept as they were (owner): a time in quotes
+    without a unit is seconds (now said in project-file.md); `k_max` above what a short peptide
+    can hold is not refused (Session E fits K = 1 only below two exchangeable amides).
+    HX-Express labels keep pyHXExpress's rule (the digits after the point of a time of 1 or more
+    mark a replicate; replicates counted in column order), and a file warns where a label may
+    mean otherwise (`hxex.io.times.hxexpress_label_doubts`): a marked label with no plain label
+    at its time (`1.5 min` without `1 min`: perhaps 90 s), and one time written in two ways
+    (`60 s` and `1 min`, read as replicates of one point). None of the 25 HX-Express files of the
+    known-answer set warns.

@@ -96,6 +96,8 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
          "[run.controls] d2o_fraction = false: expected a number (false stands for unset"),
         ("[figures]\nseries = 3\n", "[figures] series = 3: expected text or a list"),
         ("[figures]\nk = 0\n", "[figures]: k must be a whole number"),
+        ("[run.fit]\nk_max = 2\n[figures]\nk = 3\n",
+         "[figures] k = 3 is a K the run does not try; [run.fit] tries K = 1, 2"),
         ("[run]\nbootstrap = 3\n", "[run] bootstrap = 3: expected a table, true or false"),
         ("[run.fit]\nk_min = 0\n", "[run.fit]: k_min = 0: k_min is the fewest populations"),
         ("[run.fit]\nk_min = 3\nk_max = 2\n", "k_min (3) is larger than k_max (2)"),
@@ -127,6 +129,9 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
     assert [r.rep for r in load_project(bom).input.runs] == [1, 2]
     bom.write_text(twice.replace('time = 60\n', 'time = 60\nrep = 1\n'))
     with pytest.raises(ProjectError, match="a.mzML and .*b.mzML are both rep 1"):
+        load_project(bom)
+    bom.write_text(twice.replace('b.mzML', 'a.mzML'))  # one file twice for one sample
+    with pytest.raises(ProjectError, match="a.mzML is listed twice for sample S"):
         load_project(bom)
     bom.write_text(twice)
     bom.write_text(bom.read_text().replace('format = "mzml"', 'format = "mzml"\nparents = "no"'))
@@ -861,11 +866,12 @@ def test_check_and_info_report_the_roles_and_the_time_scale(tmp_path, capsys):
     """A scan-format run's role is named by hxex check; after the run, hxex info counts the
     control spectra and says whether the times are real ([input] time_scale)."""
     path = mzml_project(tmp_path, extra_input=(
-        'time_scale = "order"\n\n[[input.runs]]\npath = "run1.mzML"\nsample = "WT"\n'
+        'time_scale = "order"\n\n[[input.runs]]\npath = "run0.mzML"\nsample = "WT"\n'
         'role = "undeut"\n'))
+    shutil.copy(tmp_path / "run1.mzML", tmp_path / "run0.mzML")  # a file is listed once
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
-    assert "run run1.mzML: sample WT, rep 1, undeuterated control, 6 scans" in out
+    assert "run run0.mzML: sample WT, rep 1, undeuterated control, 6 scans" in out
     assert "run run1.mzML: sample WT, rep 1, scan times, 6 scans" in out
     assert "times          order: the times only order the points" in out
     assert cli.main(["-q", "run", str(path)]) == 0

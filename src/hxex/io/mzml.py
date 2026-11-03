@@ -33,6 +33,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import re
 import zlib
 from collections.abc import Iterator, Mapping, Sequence
@@ -1385,7 +1386,19 @@ def number_replicates(runs: Sequence[MzmlRun], given: Sequence[bool] | None = No
     sample), skipping the numbers given to the others (logged where several are numbered).
     Raises ValueError when two runs of one sample at one time or control role have the same
     ``rep``; kinetics runs may share one (a time course split over files). ``given`` None:
-    every rep is as given (the Python interface)."""
+    every rep is as given (the Python interface). Raises ValueError when one file is listed
+    twice for one sample: its spectra would be replicates of one injection (one file in two
+    samples is allowed, as one injection of two proteins with a peptide table tying each
+    peptide to its sample)."""
+    listed: set[tuple[str, str]] = set()
+    for run in runs:
+        key = (run.sample, os.path.normcase(os.path.normpath(str(run.path))))
+        if key in listed:
+            raise ValueError(
+                f"{run.path} is listed twice for sample {run.sample}: each file is one run, "
+                "and two listings of one file would make replicates of one injection. List it "
+                "once")
+        listed.add(key)
     given = [True] * len(runs) if given is None else list(given)
     groups: dict[tuple[str, str], list[int]] = {}
     for n, run in enumerate(runs):
@@ -1530,6 +1543,15 @@ def _plans(table: ScanTable, run: MzmlRun, targets, config: MzmlConfig, tie: boo
                     "precursor_charge = false (for the run or the fragments) accepts scans of "
                     "any charge", run.path, len(unstated),
                     ", ".join(unstated[:3]) + (", ..." if len(unstated) > 3 else ""))
+    if run.fixed and run.usable_from is not None:
+        cut = [_target_label(t) for t, a in zip(targets, applies, strict=True)
+               if a and t.rt_window is not None and t.rt_window[0] < run.usable_from]
+        if cut:
+            log.warning("%s: usable_from = %s cuts the retention window of %d target(s) (%s): "
+                        "this run has a fixed time, so its scans before %s are left out of "
+                        "their spectra", run.path, format_time(run.usable_from), len(cut),
+                        ", ".join(cut[:3]) + (", ..." if len(cut) > 3 else ""),
+                        format_time(run.usable_from))
     plans: list[tuple[np.ndarray, list[np.ndarray]] | None] = []
     for rows in chosen:
         if rows is None or not len(rows):

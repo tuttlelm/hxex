@@ -43,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hxex",
         description="Multimodal binomial-mixture analysis of HDX-MS spectra.",
+        epilog="Paths given on the command line are relative to the folder you run the command "
+               "from; paths in the project file are relative to the project file's folder.",
     )
     parser.add_argument("--version", action=_Version, nargs=0,
                         help="show hxex's version, with the commit it was installed from")
@@ -71,7 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
                                    "bundle and tables (figures: hxex report)")
     p.add_argument("project_file", metavar="hxex.toml",
                    help="the project file (hxex.toml, written by hxex init)")
-    p.add_argument("--bundle", help="the results bundle (instead of output.bundle)")
+    p.add_argument("--bundle", help="the results bundle (instead of output.bundle; relative "
+                                    "to the current folder, not to the project file's)")
     p.add_argument("--overwrite", action="store_true",
                    help="replace an existing bundle (and its tables), carrying its review "
                         "over; also a tables folder left from a bundle that is gone")
@@ -130,7 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "enough), a bundle, or several bundles to compare as separate runs "
                         "(NAME=BUNDLE, or BUNDLE named after its file; the tables get a run "
                         "column)")
-    p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
+    p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle; "
+                                    "relative to the current folder, not to the project file's)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis + _REFERENCE when there is a "
                                  "reference, e.g. results_analysis_WT)")

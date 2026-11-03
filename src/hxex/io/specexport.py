@@ -81,7 +81,7 @@ def scan_specexport(
     """
     warning = log.warning if warn else _silent
     root = Path(data_dir)
-    fasta = {p.stem: p for p in root.glob("*.fasta")}
+    fasta = {p.stem: p for p in _fasta_files(root)}
     if not fasta:
         warning("no .fasta files found in %s", root)
     dirs = {p.name: p for p in root.iterdir() if p.is_dir()}
@@ -305,6 +305,11 @@ def _holds_peptide_folders(folder: Path) -> bool:
         return False
 
 
+def _fasta_files(folder: Path) -> list[Path]:
+    """The FASTA files in ``folder``, sorted: a ``.fasta`` suffix in any case (``.FASTA``)."""
+    return sorted(p for p in folder.iterdir() if p.suffix.lower() == ".fasta" and p.is_file())
+
+
 def _pairing_warnings(root: Path, fasta: dict[str, Path], dirs: dict[str, Path],
                       samples: Sequence[str] | None) -> None:
     """Warn about what will not be read: peptide folders straight in ``root`` (a sample folder
@@ -326,7 +331,7 @@ def _pairing_warnings(root: Path, fasta: dict[str, Path], dirs: dict[str, Path],
         if name in fasta or not asked(name) or not _holds_peptide_folders(folder):
             continue
         other = by_case.get(name.lower())
-        inside = sorted(folder.glob("*.fasta"))
+        inside = _fasta_files(folder)
         if other is not None:
             told.add(other)
             log.warning("%s: sample folder %s has no %s.fasta beside it, so it is not read "

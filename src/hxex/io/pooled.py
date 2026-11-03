@@ -23,7 +23,7 @@ from ..chem import DEFAULT_MODIFICATIONS, ModificationRegistry, SequenceError, p
 from ..spectra import PeptideEntry
 from .entries import filter_entries, read_fasta_records, sort_entries
 from .errors import ReadError
-from .specexport import parse_specexport_filename
+from .specexport import _holds_peptide_folders, parse_specexport_filename
 
 log = logging.getLogger(__name__)
 
@@ -42,13 +42,18 @@ def scan_specexport_pooled(
 
     Every entry gets the same ``sample`` label (default empty). Directories
     not named ``START-END-SEQUENCE`` are skipped, as are those whose sequence does not parse.
-    A sequence whose residue count differs from the range length is kept with a warning.
+    A sequence whose residue count differs from the range length is kept with a warning, and
+    so are what will not be read: a folder with no peptide folders (named when its folders
+    hold peptide folders: a SpecExport folder of samples), and peptide folders without
+    SpecExport files.
     """
     entries = []
+    others, empty = [], []
     for spec_dir in sorted(p for p in Path(data_dir).iterdir() if p.is_dir()):
         m = _POOLED_DIR.fullmatch(spec_dir.name)
         if m is None:
             log.debug("skipping %s: not a START-END-SEQUENCE directory", spec_dir)
+            others.append(spec_dir)
             continue
         try:
             residues = parse_sequence(m["seq"], registry)
@@ -66,6 +71,8 @@ def scan_specexport_pooled(
             for f in spec_dir.glob("*.csv")
             if (parsed := parse_specexport_filename(f.name))
         }
+        if not charges:
+            empty.append(spec_dir.name)
         for charge in sorted(charges):
             entries.append(
                 PeptideEntry(
@@ -78,8 +85,29 @@ def scan_specexport_pooled(
                     charge=charge,
                 )
             )
+    _pooled_warnings(Path(data_dir), entries, others, empty)
     return sort_entries(filter_entries(entries, peptide_ranges=peptide_ranges,
                                        peptide_region=peptide_region))
+
+
+def _pooled_warnings(root: Path, entries, others: list[Path], empty: list[str]) -> None:
+    """Warn about what a pooled scan will not read: peptide folders without SpecExport files
+    (``TIME-...-REP-zN.csv``), and a folder with no peptide folders (with a hint when its
+    folders hold them: it is a SpecExport folder of samples)."""
+    if empty:
+        log.warning("%s: %d peptide folder(s) hold no SpecExport files (TIME-...-REP-zN.csv) "
+                    "and are not read: %s", root, len(empty),
+                    ", ".join(empty[:3]) + (", ..." if len(empty) > 3 else ""))
+    if entries or empty:
+        return
+    samples = [p.name for p in others if _holds_peptide_folders(p)]
+    if samples:
+        log.warning('%s holds sample folders (%s), not peptide folders: this looks like a '
+                    'SpecExport folder: format = "specexport", or give one sample folder as '
+                    'data_dir', root, ", ".join(samples[:3]) + (", ..." if len(samples) > 3
+                                                               else ""))
+    else:
+        log.warning("%s holds no peptide folders (START-END-SEQUENCE): nothing is read", root)
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ from ..spectra import PeptideEntry, Spectrum, time_point
 from ._common import clean_spectrum, not_text_error, open_text, to_number
 from .entries import filter_entries, sort_entries
 from .errors import ReadError
-from .times import parse_hxexpress_label
+from .times import hxexpress_label_doubts, parse_hxexpress_label
 
 log = logging.getLogger(__name__)
 
@@ -187,6 +187,8 @@ def hxexpress_columns(header: tuple, path: Path) -> list[tuple]:
         point = str(time_point([time], [role])[0])
         seen[point] += 1
         out.append((col, label, time, role, seen[point]))
+    for doubt in hxexpress_label_doubts([label for _, label in labelled]):
+        log.warning("%s: labels %s", path, doubt)
     return out
 
 

@@ -720,6 +720,11 @@ def commands_markdown() -> str:
         "once). Exit status: 0 done, 1 an error (its message is printed), 2 a usage error, 130 "
         "stopped.",
         "",
+        "A short path on the command line (`--bundle`, `--out`, `--tables DIR`, ...) is "
+        "counted from the folder the terminal is in; one in the project file (`[output] "
+        "bundle`, ...) from the folder that holds the project file ([File and folder "
+        "locations](project-file.md#file-and-folder-locations)).",
+        "",
         "## Options of every command",
         "",
         "Given before the command: `hxex -v run hxex.toml`.",

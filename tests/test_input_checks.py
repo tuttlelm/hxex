@@ -208,6 +208,40 @@ def test_a_sample_folder_given_as_data_dir_is_pointed_out(tmp_path, caplog):
            in caplog.text
 
 
+
+def test_a_fasta_suffix_in_capitals_is_found(tmp_path):
+    sample(tmp_path, "WT", "MKVLA", ["0001-0003-MKV"])
+    (tmp_path / "WT.fasta").rename(tmp_path / "WT.FASTA")
+    assert {e.sample for e in hio.scan(tmp_path, "specexport")} == {"WT"}
+
+
+def test_pooled_folders_that_will_not_be_read_are_named(tmp_path, caplog):
+    """A pooled folder's peptide folders without SpecExport files are named, and a SpecExport
+    folder of samples given as a pooled one is pointed out."""
+    pool = tmp_path / "pool"
+    (pool / "0001-0003-MKV").mkdir(parents=True)
+    (pool / "0001-0003-MKV" / "Non-1-z2.csv").write_text("300.1,5\n300.2,4\n")
+    (pool / "0004-0005-LA").mkdir()
+    (pool / "0004-0005-LA" / "notes.txt").write_text("x")
+    with caplog.at_level(logging.WARNING):
+        entries = hio.scan(pool, "pooled", sample="pool")
+    assert [e.peptide for e in entries] == ["MKV"]
+    assert "1 peptide folder(s) hold no SpecExport files" in caplog.text
+    assert "0004-0005-LA" in caplog.text
+    caplog.clear()
+    (tmp_path / "specexport").mkdir()
+    sample(tmp_path / "specexport", "WT", "MKVLA", ["0001-0003-MKV"])
+    with caplog.at_level(logging.WARNING):
+        assert hio.scan(tmp_path / "specexport", "pooled", sample="pool") == []
+    assert ("holds sample folders (WT), not peptide folders: this looks like a SpecExport "
+            'folder: format = "specexport"') in caplog.text
+    caplog.clear()
+    (tmp_path / "nothing").mkdir()
+    with caplog.at_level(logging.WARNING):
+        assert hio.scan(tmp_path / "nothing", "pooled", sample="pool") == []
+    assert "holds no peptide folders (START-END-SEQUENCE): nothing is read" in caplog.text
+
+
 # --- empty reads ------------------------------------------------------------------------------
 
 def test_an_empty_read_is_refused_with_its_cause(tmp_path):

@@ -899,6 +899,12 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         inp = _input_from(data["input"], base)
     output = _output_from(data.get("output", {}), base)
     figures = _figures_from(data["figures"]) if "figures" in data else None
+    if (inp is not None and figures is not None and figures.k is not None
+            and figures.k not in run.fit.k_values):
+        raise ProjectError(
+            f"[figures] k = {figures.k} is a K the run does not try; [run.fit] tries K = "
+            f"{', '.join(map(str, run.fit.k_values))}: change k_min or k_max, or choose "
+            "another k")
     review = _review_from(review_data, base) if review_data is not None else None
     threads = data.get("threads")
     if threads is not None and (isinstance(threads, bool) or not isinstance(threads, int)
