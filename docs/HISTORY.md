@@ -6086,3 +6086,14 @@ CSVs or mzML if wanted.
     the owner: the Woods K = 2 population panel colours a smaller low-D share blue, the
     residue_significance_K2 map red (each labelled truthfully). The check runs are kept outside
     the repository.
+
+221. **The Woods K = 2 population panel shows the high-D share (owner, 2026-11-02).** The panel
+    drew the low-D share's change (times the separation) and coloured it by its sign, so a
+    smaller low-D share in the sample, which is more deuterium, was blue, against the rule every
+    other panel and the residue maps follow (red more D, blue less) and against
+    residue_significance_K2, which colours the same finding red. The panel now shows the high-D
+    share's change (`PeptideComparison.as_high_share`: one minus the shares, the sign of `delta`
+    turned round; errors, threshold, and `significant` unchanged), titled "K=2 high-D
+    population", the axis `Δhigh-D share × sep`, the legend "larger / smaller high-D share
+    than WT (more D / less D)". `compare_peptides.csv` keeps the low-D comparison as it was
+    (outputs.md says the panel's sign is the opposite). tutorial_woods_k2.png redrawn.

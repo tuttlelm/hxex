@@ -77,15 +77,19 @@ def _corrected_differently(ax: Axes, xs, *, y: float = 0.995, note: bool = True)
     return len(xs)
 
 
-def _difference_key(quantity: str, reference: str) -> list:
+def _difference_key(quantity: str, reference: str, share: str = "low") -> list:
     """The legend of the Woods plot's colours and dashed lines: what red and blue mean for
-    ``quantity`` (sample minus ``reference``), grey, and the critical difference."""
+    ``quantity`` (sample minus ``reference``; for a population, the ``share`` compared), grey,
+    and the critical difference."""
     from matplotlib.patches import Patch
 
     if quantity == "fD":
         more = f"significantly more D than {reference}"
         less = f"significantly less D than {reference}"
-    else:  # the low-D population's share (times the separation when scaled: same sign)
+    elif share == "high":  # the high-D share (times the separation when scaled: same sign)
+        more = f"significantly larger high-D share than {reference} (more D)"
+        less = f"significantly smaller high-D share than {reference} (less D)"
+    else:  # the low-D population's share
         more = f"significantly larger low-D share than {reference}"
         less = f"significantly smaller low-D share than {reference}"
     return [Patch(color=INCREASE, label=more), Patch(color=DECREASE, label=less),
@@ -504,8 +508,9 @@ def plot_peptide_differences(
     span = float(finite.max()) if len(finite) else 0.2  # every delta NaN: a default range
     ax.set_ylim(-max(span, 0.2) * 1.1, max(span, 0.2) * 1.1)
     ax.set_xlabel("residue")
-    what = ("ΔfD" if comparison.quantity == "fD" else "Δpop × sep"
-            if comparison.scaled else "Δpopulation")
+    pop = "Δhigh-D share" if comparison.share == "high" else "Δpop"
+    what = ("ΔfD" if comparison.quantity == "fD" else f"{pop} × sep"
+            if comparison.scaled else pop if comparison.share == "high" else "Δpopulation")
     ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
@@ -513,7 +518,8 @@ def plot_peptide_differences(
     ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {n_compared} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
     if legend:
-        ax.legend(handles=_difference_key(comparison.quantity, comparison.reference),
+        ax.legend(handles=_difference_key(comparison.quantity, comparison.reference,
+                                          comparison.share),
                   loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
                   fontsize=7, handlelength=1.6, columnspacing=1.0, borderaxespad=0.2)
     return fig

@@ -441,8 +441,9 @@ covers at its difference from the reference (sample minus reference), with its s
 a vertical line. A bar is coloured where the difference is significant (red: the sample is
 higher; blue: lower): Welch's t-test on the replicate spectra gives p below `alpha`, and the
 difference is larger than the critical difference, drawn as the dashed lines. The legend above
-the panel names the colours and the dashed lines; on a population panel red and blue mean a
-larger or smaller low-D share than the reference.
+the panel names the colours and the dashed lines. On every panel red means more deuterium in
+the sample and blue less, which is why the population panel shows the share of the high-D
+population: a larger high-D share is more deuterium.
 
 The plot comes in two figures. The first, `woods_<sample>_<time>`, has the average deuteration
 (K=1 fD, one population) and, below it, **Two Populations Selected**: a grey bar over each
@@ -458,15 +459,17 @@ have two populations in both samples: elsewhere one sample's second "population"
 tail of a single one, and comparing it with the other's second state would compare different
 things.
 
-The population panel does not show the change in the share of the low-D population directly,
-but that change multiplied by the peptide's separation: the difference in fD between its two
+The population panel shows the change in the share of the high-D population (the low-D
+share's change with its sign turned round, since the two shares add up to one), and not
+directly but multiplied by the peptide's separation: the difference in fD between its two
 populations (the mean of the two samples'). The product is the deuterium, as a fraction of the
 amides, that moved from one state to the other, so the panel is in the same units as the fD
 panels and has one critical difference, the K=1 one. This is the same test as comparing the
 change in share with the critical difference divided by the separation: a small change of share
 matters in a peptide whose two states are far apart, and little where they are close.
-`compare_peptides.csv` keeps the change in share itself (`delta`), with the `separation` and the
-threshold it was judged by (`delta_crit`, the K=1 critical difference divided by the
+`compare_peptides.csv` keeps the change in the low-D share itself (`delta`, the comparison
+`K=2 rank 1 (low D) population`: the opposite sign of the panel's), with the `separation` and
+the threshold it was judged by (`delta_crit`, the K=1 critical difference divided by the
 separation).
 
 **Reading the residue overlay.** `overlay_residues_<time>` draws each sample against the

@@ -1809,6 +1809,23 @@ def test_a_population_comparison_scaled_by_its_separation():
     assert "Δpop × sep" in bottom.get_ylabel()
     dashed = [ln for ln in bottom.get_lines() if ln.get_linestyle() == "--"]
     assert len(dashed) == 2  # one line each side, across the panel
+    # drawn as the high-D share: above zero (red) is more D in the sample, as on the fD panels
+    from hxex.report.compare import INCREASE
+
+    high = scaled.as_high_share()
+    assert high.share == "high" and high.as_high_share() is high and fd.as_high_share() is fd
+    np.testing.assert_allclose(high.delta, -scaled.delta)
+    np.testing.assert_allclose(high.value, 1 - scaled.value)
+    assert high.significant.tolist() == scaled.significant.tolist()
+    assert "share" not in high.columns()
+    fig = woods_figure([("K=1 fD", fd), ("K=2 high-D population", high)], "M", 60.0)
+    bottom = fig.axes[1]
+    assert "Δhigh-D share × sep" in bottom.get_ylabel()
+    texts = [x.get_text() for x in bottom.get_legend().get_texts()]
+    assert "significantly larger high-D share than WT (more D)" in texts
+    red = [ln for ln in bottom.get_lines() if str(ln.get_gid()).startswith("peptide:")
+           and ln.get_color() == INCREASE]
+    assert red and all(ln.get_ydata()[0] > 0 for ln in red)
 
 
 def test_delta_crit_is_robust_to_a_few_broken_replicates():

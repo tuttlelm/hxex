@@ -101,7 +101,7 @@ def _columns(cls, rows: list[dict]) -> dict:
 
 
 _SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "reference_run", "K", "rank", "quantity",
-                  "scaled")
+                  "scaled", "share")
 QUANTITIES = ("fD", "population")
 MATCHES = ("range", "sequence")
 
@@ -185,6 +185,7 @@ class PeptideComparison:
     reason: np.ndarray | None = None
     separation: np.ndarray | None = None
     scaled: bool = False
+    share: str = "low"  # a population comparison: of the low-D share, or the high-D one
 
     def __post_init__(self):  # built without the reference's sequences: the same as the sample's
         if self.threshold is None:
@@ -222,6 +223,19 @@ class PeptideComparison:
         return replace(self, delta=np.asarray(self.delta, dtype=float) * sep,
                        delta_se=np.asarray(self.delta_se, dtype=float) * sep,
                        threshold=np.full(len(self), self.delta_crit), scaled=True)
+
+    def as_high_share(self) -> PeptideComparison:
+        """A population comparison of the high-D population's share instead of the low-D one's
+        (one minus it), as the Woods plot draws it so that a difference above zero is more
+        deuterium in the sample, as on the fD panels (owner, 2026-11-02): ``value`` and
+        ``value_reference`` are one minus the low-D shares and ``delta`` changes sign; the
+        errors, the threshold and ``significant`` are the same. An fD comparison, or one
+        already of the high-D share, is returned as it is."""
+        if self.quantity != "population" or self.share == "high":
+            return self
+        return replace(self, value=1.0 - np.asarray(self.value, dtype=float),
+                       value_reference=1.0 - np.asarray(self.value_reference, dtype=float),
+                       delta=-np.asarray(self.delta, dtype=float), share="high")
 
     @property
     def corrected_differently(self) -> np.ndarray:

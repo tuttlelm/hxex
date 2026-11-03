@@ -520,10 +520,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         # the Woods plot: page 1, K=1 and where the number of populations differs; page 2,
         # the K=2 comparisons (made only where both have two populations), the population in
         # fD units: its difference times the separation, judged by the K=1 delta_crit
-        # (HISTORY 135, 137)
+        # (HISTORY 135, 137), drawn as the high-D share so that above zero (red) is more D,
+        # as on the fD panels (HISTORY 221)
         short = {"K=2 rank 1 (low D) fD": "K=2 low-D fD", "K=2 rank 2 (high D) fD":
-                 "K=2 high-D fD", "K=2 rank 1 (low D) population": "K=2 low-D population"}
-        k2_stack = [(short.get(title, title), c.scaled_by_separation())
+                 "K=2 high-D fD", "K=2 rank 1 (low D) population": "K=2 high-D population"}
+        k2_stack = [(short.get(title, title), c.scaled_by_separation().as_high_share())
                     for title, c in comparisons.items() if title != "K=1 fD"]
         for t in times:
             when_ = _time_label(t, scale)

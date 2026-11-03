@@ -221,20 +221,20 @@ deuterated rows should show none; the yellow there marks the bright peptides of 
 Where a peptide has two populations in both samples, the two can be compared: where each
 population lies, and how much of each there is. The Woods plot of part 1 has a second figure
 for this, `woods_K2_R120G_1min.png`: the difference in the position of the low-D population
-(top), of the high-D population (middle), and in the share of the low-D population (bottom),
+(top), of the high-D population (middle), and in the share of the high-D population (bottom),
 multiplied by the distance between the two populations, so that it is in deuterium per amide
 like the panels above and judged against the same kind of dashed line
-([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). The legend of each panel
-names its colours. Here R120G has less of the low-D population than WT over most of the first
-80 residues, and some of the positions differ too: much the same two states, populated
+([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). On every panel red means more
+deuterium than WT and blue less. Here R120G has more of the high-D population than WT over most
+of the first 80 residues (red in the bottom panel), and some of the positions differ too: much the same two states, populated
 differently.
 
 ![The two populations of R120G against WT at 1 min](../images/tutorial_woods_k2.png)
 
 `residue_significance_K2.png` shows the same residue by residue, for every sample and time, in
-three sections: the shares, the low-D positions, and the high-D positions. Note its colours:
-in the shares section, red means a smaller low-D share than WT (so more deuterium), as in the
-residue map of part 1. Hatching marks residues where only one of the two samples has two
+three sections: the shares, the low-D positions, and the high-D positions. Its colours follow
+the same rule: in the shares section, red means a smaller low-D share than WT, so more
+deuterium, as in the residue map of part 1. Hatching marks residues where only one of the two samples has two
 populations.
 
 ![Two-population differences residue by residue](../images/tutorial_residues_k2.png)
