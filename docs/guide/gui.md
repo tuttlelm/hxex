@@ -12,8 +12,10 @@ The window is being built in steps. What it does today:
   number of spectra, how many have a quality flag, how many you rejected, and how many have
   more than one population. Click a row to see its figures: the spectra, the uptake plot, and
   the population map (when a spectrum has more than one population).
-- **Run** and **Analysis**: for now these show the commands to type in a terminal. Running
-  stages from the window, reviewing spectra, and the analysis figures come later.
+- **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
+  with their messages, a progress bar, and a Stop button (below).
+- **Analysis**: for now this shows the command to type in a terminal. Reviewing spectra and
+  the analysis figures come later.
 
 ## Installing it
 
@@ -109,6 +111,37 @@ the user review table. Choose one on the left to edit it as a grid.
   program since you opened it here is not written over without asking.
 - **New table** makes a table with the columns *hxex* reads for your format, where you choose,
   and names it in the project file.
+
+## Running the commands
+
+**Run** has a button for each command: **Check**, **Run**, **Resume**, **Report**, **Analyse**,
+and **Info**. Each runs that command on the project file, in the project's folder, exactly as
+`hxex run hxex.toml` would in a terminal: the line above the messages shows the command as you
+would type it. One command runs at a time.
+
+- The messages appear as the command writes them, and the bar shows how far it is, with the
+  step it is on and the time left when *hxex* can tell.
+- **Stop** stops the command after the step it is on, as Ctrl-C does in a terminal: what is
+  finished is kept, and a bootstrap stopped part way is finished later with **Resume**. Press
+  it again (**Abort now**) to end the command at once; one that still does not end is ended by
+  the window a few seconds later.
+- When a command finds results it would replace (a second **Run**, say), it changes nothing
+  and the window asks: replace them, keep them under the next free name (`results.1`, ...),
+  or cancel. These are the command's `--overwrite` and `--keep-previous`.
+- The list below the buttons chooses where **Run** and **Resume** fit. Its first entry is the
+  project file's setting, `[run.fit.backend] device`, with its value (`auto`, the default, uses
+  an NVIDIA graphics card when *hxex* can see one, else the CPU); **Change…** opens that
+  setting. **cpu** or **cuda** use that device for this command only (`--device`). The box
+  beside it makes **Report** draw the figures as well (`--figures`).
+- The console keeps the last 20,000 lines and wraps long lines to its width (untick **Wrap
+  lines** to keep each line whole and scroll sideways); **Clear** empties it. Every command's whole output
+  also goes to a log file in a folder `hxex_logs` beside the project file, one per command,
+  named by the command and when it started (`run_2026-11-03_112059.log`), with the command, the
+  folder, the *hxex* version, and how it ended. The folder is the window's: delete old logs
+  whenever you like.
+- After **Run**, **Resume**, or **Report**, the Results part shows the new results.
+- Closing the window, or opening another project, while a command runs asks first, and stops
+  the command if you agree.
 
 ## Figures
 

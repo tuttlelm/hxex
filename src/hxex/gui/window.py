@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from .figure_view import FigurePanel
+from .run_workspace import RunWorkspace
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
 from .tasks import Latest
 
@@ -85,6 +86,8 @@ class ProjectWorkspace(QWidget):
     """The project file: its settings as a form (:mod:`hxex.gui.project_editor`), and the file
     itself, read-only."""
 
+    file_changed = Signal()  # the project file changed (in the window or outside)
+
     def __init__(self, window: MainWindow):
         super().__init__()
         from .project_editor import ProjectEditor
@@ -123,6 +126,7 @@ class ProjectWorkspace(QWidget):
 
     def _file_changed(self) -> None:
         self.tables.show_project(self.path, self.editor.values, self.editor.format)
+        self.file_changed.emit()
         if self.path is None:
             self.text.setPlainText("")
             return
@@ -130,26 +134,6 @@ class ProjectWorkspace(QWidget):
             self.text.setPlainText(self.path.read_text(encoding="utf-8-sig"))
         except OSError as exc:
             self.text.setPlainText(f"cannot read the project file: {exc}")
-
-
-class RunWorkspace(QWidget):
-    """Running stages. G2 runs them from here; until then the commands to type."""
-
-    def __init__(self):
-        super().__init__()
-        self.commands = _note("")
-        layout = QVBoxLayout(self)
-        layout.addWidget(_note("Running stages from this window is not built yet. In a "
-                               "terminal, in the project's folder:"))
-        layout.addWidget(self.commands)
-        layout.addStretch()
-        self.show_project(None)
-
-    def show_project(self, path: Path | None) -> None:
-        name = path.name if path is not None else "hxex.toml"
-        self.commands.setText("\n".join(f"hxex {c} {name}" for c in
-                                        ("check", "run", "report", "analyse")))
-        self.commands.setFont(QFont("monospace"))
 
 
 class AnalysisWorkspace(QWidget):
@@ -342,6 +326,9 @@ class MainWindow(QMainWindow):
 
         self.project_page = ProjectWorkspace(self)
         self.run_page = RunWorkspace()
+        self.run_page.results_changed.connect(self._results_changed)
+        self.run_page.show_setting.connect(self.show_setting)
+        self.project_page.file_changed.connect(self.run_page.show_device)
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace()
         self.tabs = QTabWidget()
@@ -462,7 +449,9 @@ class MainWindow(QMainWindow):
         within the session). A project file starts a new session. False when the user
         cancels."""
         replaces = path.suffix in (SUFFIX, ".toml")
-        if replaces and not (self.project_page.tables.editor.may_leave() and self._may_discard()):
+        if replaces and not (self.run_page.may_close()
+                             and self.project_page.tables.editor.may_leave()
+                             and self._may_discard()):
             return False
         if path.suffix == ".toml":
             self._new_session_with(path)
@@ -568,16 +557,23 @@ class MainWindow(QMainWindow):
         try:
             project = load_project(path, analysis_only=True)
         except (ProjectError, OSError, ValueError) as exc:
-            log.warning("%s: %s", path.name, exc)
+            log.warning("%s: %s", path, exc)
             return
         bundle = project.output.bundle
         if bundle is not None and Path(bundle).exists():
             self.open_results(path)  # the project's results, with its review applied
         else:
-            log.info("%s: no results yet (hxex run %s makes them)", path.name, path.name)
+            log.info("no results yet (hxex run %s, in %s, makes them)", path.name, path.parent)
 
     def _show_project(self, path: Path | None) -> None:
-        self.project = path.absolute() if path is not None else None
+        new = path.absolute() if path is not None else None
+        if new != self.project:
+            # the messages were about the project shown before: start afresh, saying which
+            # project the next ones are about (two projects may both be called hxex.toml)
+            self.messages.clear()
+            if new is not None:
+                log.info("project file %s", new)
+        self.project = new
         self.project_page.show_project(self.project)
         self.run_page.show_project(self.project)
         self.changed()
@@ -610,6 +606,20 @@ class MainWindow(QMainWindow):
         if self._restoring:
             self._mark_saved()
         self.changed()
+
+    def show_setting(self, table: str) -> None:
+        """The Project workspace's page of the table ``table`` (``"run.fit.backend"``)."""
+        self.tabs.setCurrentIndex(WORKSPACES.index("project"))
+        self.project_page.views.setCurrentIndex(0)
+        self.project_page.editor.search.clear()
+        self.project_page.editor.show_table(table)
+
+    def _results_changed(self) -> None:
+        """A run, resume or report from the Run workspace finished: show the new results (the
+        project's, with its review applied)."""
+        if self.project is not None:
+            self._pending_selection = self.results_page.selection()
+            self.open_results(self.project)
 
     def _results_failed(self, path: Path, message: str) -> None:
         self.statusBar().clearMessage()
@@ -702,7 +712,8 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard or self.save_session()
 
     def closeEvent(self, event: QCloseEvent):  # noqa: N802 - Qt's name
-        if self.project_page.tables.editor.may_leave() and self._may_discard():
+        if self.run_page.may_close() and self.project_page.tables.editor.may_leave() \
+                and self._may_discard():
             logging.getLogger("hxex").removeHandler(self.handler)
             # drawings still running finish first (their results are dropped)
             QThreadPool.globalInstance().clear()

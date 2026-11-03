@@ -368,12 +368,11 @@ calls the library in the GUI's own process. Details:
 
 - one job per project at a time; the output is kept when the pane is closed and reopened;
 - unbuffered output (`PYTHONUNBUFFERED`), so lines arrive as they are written;
-- Stop as Ctrl-C in a terminal: the first press stops after the current step (SIGINT on Linux
-  and macOS; on Windows CTRL_BREAK, for which the command line gains a handler), a second
-  aborts, and after a grace period the whole process tree is ended (a process group on Linux
-  and macOS, a job object on Windows);
-- machine-readable progress for the bar: a command-line option (for example
-  `--progress-format json`) beside today's progress lines, designed in G2;
+- Stop as Ctrl-C in a terminal: the first press stops after the current step, a second
+  aborts, and after a grace period the command is killed; sent as a line on the command's
+  input (`--stop-from-input`), which works the same on the three systems (owner, HISTORY 236);
+- machine-readable progress for the bar: `--progress-format json` beside the progress
+  lines (built, HISTORY 236);
 - an existing output is a plain question (replace, keep the previous one as `NAME.N`, or
   cancel), answered with `--overwrite` or `--keep-previous`.
 
@@ -425,6 +424,17 @@ calls the library in the GUI's own process. Details:
   and above the series' figures. A user table held open
   by a spreadsheet (Excel locks it on Windows; owner: warn): the window says so and keeps
   the decision until the file can be written, never losing it.
+- **Tables in Results and in Analysis** (owner, 2026-11-03): the two workspaces split as the
+  outputs do. Results shows what `hxex run` and `hxex report` write for one run, beside what is
+  selected: the series rows carry the main `series.csv` columns; a selected series shows its
+  `uptake.csv` rows (each time, per K and population, the centroid row, the errors, fD) next
+  to its figures; a selected spectrum its `spectra.csv` row (K and the evidence for it,
+  centroid, populations with errors, flags, screen scores, review status) beside the review
+  panel; the flat list is `spectra.csv`; and a Tables view lists `spectra.csv`, `series.csv`,
+  `components.csv`, and `uptake.csv` read-only, sortable, filtered to the selection on request,
+  a row opening its spectrum or series, the shown rows saveable as CSV. All from the same table
+  functions as `hxex report`, with the review applied. Analysis shows `hxex analyse`'s tables
+  beside its figures in the same way.
 - **Analysis.** The comparison figures for a chosen reference, samples, times, and K (Woods,
   butterfly, residue significance, population tiers, uptake comparisons, protection factors and
   fragment figures where the analysis has them); clicking a peptide opens its series in the
@@ -542,7 +552,8 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   and their figures). The review layer, the `*_data` functions, the artists' `gid`s and
   `Results.with_review` are in place for the later phases (item 31). G1 built (HISTORY
   233-235: the settings form, lists of tables, tables of names, the tables users write);
-  next: G2, running stages.
+  G2 built (HISTORY 236: the commands run from the window, Stop through the input); next:
+  G3, results and review.
 
 ## Deliberate differences from pyHXExpress
 
@@ -945,8 +956,8 @@ Planned, not built:
    HISTORY 212). Not started; evaluate against the noise simulation's known populations first.
 18. **The GUI** (owner, 2026-11-03; HISTORY 231). A standalone Qt window, in addition to the
    command line and Python: the project editor and the user tables first, then running stages,
-   results and review, and analysis views (section "GUI", phases G0-G4). G0 and G1 built
-   (HISTORY 232-235); next: G2.
+   results and review, and analysis views (section "GUI", phases G0-G4). G0 to G2 built
+   (HISTORY 232-236); next: G3.
 
 ## Risks and open decisions
 

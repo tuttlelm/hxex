@@ -192,3 +192,31 @@ def test_the_fit_progress_weighs_each_restart_by_its_cost():
     config = FitConfig(k_min=2, k_max=3, n_restarts=1, nested_init=True, kmeans_after_warm=True)
     span = _FitSpan(None, 0, UNITS, config, SimpleNamespace(role=["undeut", ""]))
     assert len(span.cumulative) == 1 + 1 + 2  # K = 1 once, K = 2 once, K = 3 once plus warm
+
+
+def test_a_programs_report_gets_records_of_the_stages_and_the_end():
+    clock = Clock()
+    records = []
+    log = ProgressLog(interval=30.0, clock=clock, heartbeat=False, report=records.append)
+    start_stage(log, "fit", 0, 100)
+    clock.now = 1.0
+    report(log, 20, 200)
+    clock.now = 1.1
+    report(log, 30, 200)  # within REPORT_EVERY of the last record: none
+    clock.now = 2.0
+    report(log, 50, 200)
+    clock.now = 3.0
+    report(log, 200, 200)
+    assert [r["event"] for r in records] == ["stage", "progress", "progress", "done"]
+    first = records[1]
+    assert first["stage"] == "fit" and first["fraction"] == 0.2 and first["overall"] == 0.1
+    assert first["left"] is None  # one update: no estimate yet
+    assert records[2]["left"] == 2.0 and records[2]["fraction"] == 0.5  # 1 s per 25 %
+    assert records[-1]["overall"] == 1.0 and records[-1]["elapsed"] == 3.0
+
+    def broken(record):
+        raise RuntimeError("the program's hook failed")
+
+    quiet = ProgressLog(interval=30.0, clock=clock, heartbeat=False, report=broken)
+    report(quiet, 1, 10)  # a failing hook is dropped, never stops the operation
+    assert quiet.report is None

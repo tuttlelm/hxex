@@ -60,6 +60,7 @@ def format_duration(seconds: float) -> str:
 ESTIMATE_AFTER = 0.10
 ESTIMATE_UPDATES = 2
 LONGEST_ESTIMATE = 10 * 3600.0  # beyond it: "more than 10h left"
+REPORT_EVERY = 0.25  # seconds: the most often a ``report`` hook is called
 
 
 class ProgressLog:
@@ -77,6 +78,13 @@ class ProgressLog:
     the operation is done, when :meth:`close` is called (the hook is also a context manager),
     or when the hook is no longer used.
 
+    ``report`` (a program's own hook, such as the command line's ``--progress-format json``) is
+    called with a record of the progress, at most every :data:`REPORT_EVERY` seconds and at every
+    stage and the end: ``event`` (``'stage'``, ``'progress'`` or ``'done'``), ``stage``, the
+    share of the stage done (``fraction``) and of the whole operation (``overall``; None when
+    the total is not known), ``elapsed`` and ``left`` (seconds; ``left`` None until the
+    estimate is given).
+
     ``name`` labels an operation that does not name its stages (``'progress'`` by default).
     ``logger`` defaults to the ``hxex.progress`` logger and ``level`` to INFO; ``clock`` (seconds)
     is for tests, which call :meth:`beat` themselves."""
@@ -90,11 +98,14 @@ class ProgressLog:
         level: int = logging.INFO,
         clock: Callable[[], float] = time.monotonic,
         heartbeat: bool | None = None,
+        report: Callable[[dict], None] | None = None,
     ):
         if interval < 0:
             raise ValueError("interval must be >= 0")
         self.logger = logger if logger is not None else logging.getLogger("hxex.progress")
         self.interval, self.level, self.clock = interval, level, clock
+        self.report = report
+        self.reported = -float("inf")  # when the last record went to ``report``
         self.name = name
         self.began = self.clock()
         self.stage: str | None = None
@@ -139,6 +150,7 @@ class ProgressLog:
             self.latest, self.updates = None, 0
             self.logger.log(self.level, "%s: started", name)
             self.last = now
+            self._report("stage", now)
         self._start_heartbeat()
 
     def __call__(self, done: int, total: int) -> None:
@@ -156,6 +168,7 @@ class ProgressLog:
                         self.logger.log(self.level, "%s: done in %s", self.name, done_in)
                     else:
                         self.logger.log(self.level, "done in %s", done_in)
+                    self._report("done", now, overall=1.0)
                 return
             before = (self.latest[0] if self.latest is not None
                       else self.span[0] if self.stage is not None else 0)
@@ -164,6 +177,8 @@ class ProgressLog:
             self.latest = (done, total)
             if now - self.last >= self.interval:
                 self._line(now)
+            if now - self.reported >= REPORT_EVERY:
+                self._report("progress", now, overall=done / total if total > 0 else None)
         self._start_heartbeat()
 
     def beat(self) -> None:
@@ -185,6 +200,29 @@ class ProgressLog:
         done, total = self.latest
         start, end = self.span if self.stage is not None else (0.0, float(total))
         return min(max((done - start) / (end - start), 0.0), 1.0) if end > start else 0.0
+
+    def _left(self, now: float) -> float | None:
+        """The stage's time left, once the estimate is given (as :meth:`_line` gives it)."""
+        frac = self._fraction()
+        if frac < ESTIMATE_AFTER or self.updates < ESTIMATE_UPDATES:
+            return None
+        spent = now - (self.stage_began if self.stage is not None else self.began)
+        return spent / frac * (1 - frac)
+
+    def _report(self, event: str, now: float, overall: float | None = None) -> None:
+        if self.report is None:
+            return
+        self.reported = now
+        record = {"event": event, "stage": self.stage or self.name or "progress",
+                  "fraction": 1.0 if event == "done" else self._fraction(),
+                  "overall": overall, "elapsed": round(now - self.began, 1),
+                  "left": None if event == "done" else self._left(now)}
+        if record["left"] is not None:
+            record["left"] = round(record["left"], 1)
+        try:
+            self.report(record)
+        except Exception:  # noqa: BLE001 - a progress record must never stop the operation
+            self.report = None
 
     def _line(self, now: float) -> None:
         self.last = now

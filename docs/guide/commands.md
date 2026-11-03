@@ -18,6 +18,8 @@ Given before the command: `hxex -v run hxex.toml`.
 | `-q`, `--quiet` | warnings and errors only |
 | `-v`, `--verbose` | more messages |
 | `--progress-every` `SECONDS` | seconds between progress lines (default 30) |
+| `--progress-format` `{text,json}` | json: also a line '@hxex-progress {...}' with the stage, the share done and the time left, for a program to read (hxex's window draws its progress bar from them); text (default): the progress lines only |
+| `--stop-from-input` | for a program running hxex (hxex's window): a line 'stop' on the input stops after the current step, as Ctrl-C does, a second aborts at once; the input closing stops too |
 
 ## hxex init
 

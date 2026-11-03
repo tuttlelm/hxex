@@ -27,6 +27,7 @@ import json
 import logging
 import signal
 import sys
+import threading
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -54,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
     noise.add_argument("-v", "--verbose", action="store_true", help="more messages")
     parser.add_argument("--progress-every", type=_seconds, default=30.0, metavar="SECONDS",
                         help="seconds between progress lines (default 30)")
+    parser.add_argument("--progress-format", choices=("text", "json"), default="text",
+                        help="json: also a line '@hxex-progress {...}' with the stage, the share "
+                             "done and the time left, for a program to read (hxex's window "
+                             "draws its progress bar from them); text (default): the progress "
+                             "lines only")
+    parser.add_argument("--stop-from-input", action="store_true",
+                        help="for a program running hxex (hxex's window): a line 'stop' on the "
+                             "input stops after the current step, as Ctrl-C does, a second "
+                             "aborts at once; the input closing stops too")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     p = sub.add_parser("init", help="write a project file with every default")
@@ -269,7 +279,11 @@ def _say(text: str = "") -> None:
 
 
 class _Stop:
-    """The cancel hook of a command: True after Ctrl-C (a second Ctrl-C aborts at once)."""
+    """The cancel hook of a command: True after Ctrl-C (a second Ctrl-C aborts at once), or
+    after a line 'stop' on the input with ``--stop-from-input`` (:func:`_stop_from_input`)."""
+
+    active: _Stop | None = None  # the hook of the command running, for the input's stop
+    early = False  # a stop from the input before the command was ready: taken when it is
 
     def __init__(self):
         self.asked = False
@@ -278,21 +292,87 @@ class _Stop:
         return self.asked
 
     def _on_interrupt(self, signum, frame):
+        if self.asked:  # a second stop (from the input, which cannot reset this handler)
+            raise KeyboardInterrupt
         self.asked = True
         log.warning("stopping after the current step (Ctrl-C again to abort now)")
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
     @contextlib.contextmanager
     def installed(self):
+        _Stop.active = self
+        if _Stop.early:
+            self.asked = True
+            log.warning("stopping after the current step (Stop again to abort now)")
         try:
-            previous = signal.signal(signal.SIGINT, self._on_interrupt)
-        except ValueError:  # not the main thread: no handler, Ctrl-C raises as usual
-            yield self
-            return
-        try:
-            yield self
+            try:
+                previous = signal.signal(signal.SIGINT, self._on_interrupt)
+            except ValueError:  # not the main thread: no handler, Ctrl-C raises as usual
+                yield self
+                return
+            try:
+                yield self
+            finally:
+                signal.signal(signal.SIGINT, previous)
         finally:
-            signal.signal(signal.SIGINT, previous)
+            _Stop.active = None
+
+
+def _input_stop() -> None:
+    """A 'stop' from the input: the running command stops after its current step; a second
+    (or a command without a cancel hook) aborts at once, as a second Ctrl-C does."""
+    import _thread
+
+    active = _Stop.active
+    if active is not None and not active.asked:
+        active.asked = True
+        log.warning("stopping after the current step (Stop again to abort now)")
+    elif active is None and not _Stop.early:  # not ready yet: stop when it is
+        _Stop.early = True
+    else:
+        _thread.interrupt_main()
+
+
+def _stop_from_input(stream=None) -> threading.Thread:
+    """``--stop-from-input``: a thread that reads the input line by line; 'stop' stops the
+    command (:func:`_input_stop`), and so does the input closing (the program that started
+    hxex is gone), once."""
+    stream = stream if stream is not None else sys.stdin
+
+    def watch():
+        try:
+            for line in stream:
+                if line.strip().lower() == "stop":
+                    _input_stop()
+        except (OSError, ValueError):
+            pass
+        active = _Stop.active
+        if not _Stop.early and (active is None or not active.asked):
+            _input_stop()
+
+    thread = threading.Thread(target=watch, name="hxex-stop-from-input", daemon=True)
+    thread.start()
+    return thread
+
+
+def _progress(args, **kwargs):
+    """The progress hook of a command: lines every ``--progress-every`` seconds, and with
+    ``--progress-format json`` a line for a program as well (:func:`_progress_json`)."""
+    from .hooks import ProgressLog
+
+    report = _progress_json if getattr(args, "progress_format", "text") == "json" else None
+    return ProgressLog(interval=args.progress_every, report=report, **kwargs)
+
+
+PROGRESS_PREFIX = "@hxex-progress "
+
+
+def _progress_json(record: dict) -> None:
+    """One progress record as a line on stderr: ``@hxex-progress`` and the record as JSON."""
+    import json
+
+    sys.stderr.write(PROGRESS_PREFIX + json.dumps(record) + "\n")
+    sys.stderr.flush()
 
 
 def _beside(bundle: Path, value, suffix: str) -> Path | None:
@@ -876,7 +956,6 @@ def cmd_run(args) -> int:
     import dataclasses
 
     from .config import check_table_choices, project_record, read_input
-    from .hooks import ProgressLog
     from .model import Backend
     from .pipeline import run
     from .review_table import table_choices
@@ -940,10 +1019,10 @@ def cmd_run(args) -> int:
     with stop.installed(), _threads(threads):
         if stored is None:
             log.info("reading the %s input of %s", project.input.format, project.project)
-        with ProgressLog(name="read", interval=args.progress_every) as progress:
+        with _progress(args, name="read") as progress:
             spectra = read_input(project, progress=progress, cancel=stop)
         log.info("%d spectra read", len(spectra))
-        with ProgressLog(interval=args.progress_every) as progress:
+        with _progress(args) as progress:
             result = run(
                 spectra, config, out=bundle, project=project.project, notes=out.notes,
                 overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
@@ -1004,7 +1083,6 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
 
 
 def cmd_resume(args) -> int:
-    from .hooks import ProgressLog
     from .io.bundle import bundle_manifest
     from .pipeline import NothingToResume, resume_bootstrap
 
@@ -1095,7 +1173,7 @@ def cmd_resume(args) -> int:
         check_output(tables, TABLE_NAMES)  # a file of your own there: refused before the fit
     stop = _Stop()
     with stop.installed(), _threads(threads), \
-            ProgressLog(interval=args.progress_every) as progress:
+            _progress(args) as progress:
         try:
             result = resume_bootstrap(bundle, device=args.device, progress=progress,
                                       cancel=stop, **extra)
@@ -1164,7 +1242,6 @@ def cmd_report(args) -> int:
     chooses the folder) and, with ``--figures``, the figures too, from a bundle."""
     import dataclasses
 
-    from .hooks import ProgressLog
     from .io import (
         check_output,
         edited_outputs,
@@ -1273,7 +1350,7 @@ def cmd_report(args) -> int:
                 plots = dataclasses.replace(plots, series=args.series)
             if args.fig_format:
                 plots = dataclasses.replace(plots, format=args.fig_format)
-            with ProgressLog(name="figures", interval=args.progress_every) as progress:
+            with _progress(args, name="figures") as progress:
                 written = write_figures(results, figures, plots, progress=progress, cancel=stop)
             said.append(f"{len(written)} figure file(s) in {figures}")
             if tables is None:
@@ -1607,7 +1684,6 @@ def cmd_analyse(args) -> int:
     import dataclasses
 
     from .analysis import AnalysisConfig, RunSet
-    from .hooks import ProgressLog
     from .io import open_bundle
     from .report import Results, write_analysis
 
@@ -1692,7 +1768,7 @@ def cmd_analyse(args) -> int:
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
         results = RunSet(opened, merge=config.merge) if several else opened[""]
-        with ProgressLog(name="analysis", interval=args.progress_every) as progress:
+        with _progress(args, name="analysis") as progress:
             written = write_analysis(
                 results, config, out, base=base, record_paths=record_paths, review=review,
                 progress=progress, cancel=stop,
@@ -1727,6 +1803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
+    if args.stop_from_input:
+        _stop_from_input()
     with _logging_to_stderr(args):
         return _dispatch(args)
 

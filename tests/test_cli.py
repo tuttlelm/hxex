@@ -1855,3 +1855,57 @@ def test_a_mutants_table_sequence_agrees_with_its_fasta_not_the_folder_name(tmp_
             f"0001-0010-{PEPTIDE},MUT,{peptide},1,10,2\n")
         assert cli.main(["check", str(path)]) == (0 if ok else 1)
         assert ("differs from the folder" in capsys.readouterr().err) is not ok
+
+
+def test_stop_from_input_stops_the_command_and_a_second_aborts():
+    import io
+
+    stop = cli._Stop()
+    with stop.installed():
+        cli._stop_from_input(io.StringIO("nothing\nstop\n")).join(5)
+        assert stop.asked  # stops after the current step
+        with pytest.raises(KeyboardInterrupt):  # a second stop: at once
+            cli._input_stop()
+            for _ in range(100):
+                import time
+
+                time.sleep(0.01)
+    closed = cli._Stop()
+    with closed.installed():
+        cli._stop_from_input(io.StringIO("")).join(5)  # the input closed: the program is gone
+        assert closed.asked
+    assert cli._Stop.active is None
+    # a stop before the command is ready is kept for it
+    cli._stop_from_input(io.StringIO("")).join(5)
+    try:
+        assert cli._Stop.early
+        with cli._Stop().installed() as early:
+            assert early.asked
+    finally:
+        cli._Stop.early = False
+
+
+def test_a_program_runs_hxex_with_progress_records_and_stops_it(tmp_path):
+    import subprocess
+    import sys
+
+    path = mzml_project(tmp_path)
+    command = [sys.executable, "-m", "hxex", "--stop-from-input", "--progress-format", "json",
+               "run", str(path)]
+    done = subprocess.run(command, input="", capture_output=True, text=True, timeout=300,
+                          cwd=tmp_path)
+    # the input closed at once: the run stops (or aborts) and says so
+    assert done.returncode == cli.EXIT_STOPPED, done.stderr
+    assert "stopp" in done.stderr or "abort" in done.stderr
+    # the input kept open (as the window keeps it): the run goes to its end
+    kept = subprocess.Popen(command + ["--overwrite"], stdin=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                            cwd=tmp_path)
+    err = kept.stderr.read()  # until the command ends (its input still open)
+    kept.wait(timeout=300)
+    kept.stdin.close()
+    assert kept.returncode == 0, err
+    records = [json.loads(line[len(cli.PROGRESS_PREFIX):]) for line in err.splitlines()
+               if line.startswith(cli.PROGRESS_PREFIX)]
+    assert records and records[-1]["event"] == "done"
+    assert {"stage", "fraction", "overall", "elapsed", "left"} <= set(records[0])

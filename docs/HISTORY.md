@@ -6420,3 +6420,39 @@ CSVs or mzML if wanted.
     check` prints the same 23 lines for both, ending "ok" (721 + 663 quench-flow spectra left
     out, 17 treated as rejected, as the tutorial pages say).
 
+236. **GUI phase G2: running the commands from the window (owner, 2026-11-03; PLAN "GUI").**
+    *Command line* (owner agreed the form): `--stop-from-input` (a program's line `stop` on
+    the input stops after the current step, as Ctrl-C; a second aborts, through
+    `_thread.interrupt_main` and the Ctrl-C handler, which now aborts once a stop has been
+    asked; the input closing stops once; a stop before the command is ready is kept for it)
+    and `--progress-format json` (a line `@hxex-progress {...}` with event, stage, fraction,
+    overall, elapsed, left, at most every 0.25 s and at every stage and the end:
+    `hooks.ProgressLog(report=...)`); `python -m hxex` (new `__main__`). Signals were not
+    used: a window cannot send Ctrl-C to a child reliably on Windows; the input works the same
+    on the three systems. Typed commands behave as before.
+    *Window* (`gui.runner.CommandRun`, `gui.run_workspace.RunWorkspace`): Check, Run, Resume,
+    Report, Analyse, Info on the project file, as `python -P -m hxex` with the window's own
+    Python in the project's folder (`-P`: a folder named hxex there is not run instead),
+    `PYTHONUNBUFFERED`; the command shown as typed in a terminal; output line by line in a
+    console (the progress records go to the bar and the step's line, not the console); Stop
+    (first: after the step; second, "Abort now": at once; killed after 10 s if it still runs);
+    one command at a time; a command refusing to write over earlier output (its message names
+    `--keep-previous`) offers Replace / Keep it as NAME.N / Cancel and runs again with the
+    flag; device choice for Run and Resume (`--device`; the first entry names the project's
+    setting and its value, "[run.fit.backend] device: auto", with Change… opening it: owner,
+    "as the project says" did not say where), figures for Report (`--figures`);
+    after Run, Resume or Report the results are loaded again (the selected series kept).
+    The console keeps 20,000 lines (the Messages pane 5,000); every command's whole output also
+    goes to `hxex_logs/COMMAND_DATE_TIME.log` beside the project file (owner), with the
+    command, folder, start time, hxex version, and how it ended after how long; written line by
+    line, so a record survives the window; a folder that cannot be written means no log, said
+    once in the console.
+    Closing the window or opening another project while a command runs asks, then stops it
+    and waits (aborts, then kills, if it does not end). Tests: tests/test_gui_run.py (a
+    stand-in command for Stop, abort and kill; real `hxex check` and `hxex run` on the
+    synthetic mzML project, with the replace question), tests/test_cli.py (the input stop,
+    a program running `python -m hxex` with both options), tests/test_hooks.py (the records).
+    Also (owner): opening a project in another folder cleared nothing in the Messages pane and
+    named project files by name only (two hxex.toml files); the pane now starts afresh for
+    another project, naming it in full.
+

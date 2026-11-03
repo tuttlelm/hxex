@@ -321,3 +321,20 @@ def test_opening_another_project_or_session_asks_to_save_a_changed_one(qtbot, wi
     window.open_asking(bundle)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     assert len(asked) == 2 and window.results_path == bundle.absolute()
+
+
+def test_messages_start_afresh_for_another_project(qtbot, window, tmp_path):
+    """Opened from one folder, then a project in another: the messages are about the project
+    shown, named in full (both files may be called hxex.toml; owner, 2026-11-03)."""
+    from hxex.config import template
+
+    first, second = tmp_path / "a" / "hxex.toml", tmp_path / "b" / "hxex.toml"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_text(template(), encoding="utf-8")
+    window.open_asking(first)
+    assert str(first) in window.messages.toPlainText()
+    window.open_asking(second)
+    text = window.messages.toPlainText()
+    assert str(second) in text and str(first) not in text
+    assert str(second.parent) in window.run_page.where.text()
