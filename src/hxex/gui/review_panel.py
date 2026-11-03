@@ -32,7 +32,9 @@ from .user_tables import TableLocked
 
 log = logging.getLogger(__name__)
 
-STATUS_WORDS = (("", "not reviewed"), ("accepted", "accepted"), ("rejected", "rejected"))
+# (status, words, key in the tree)
+STATUS_WORDS = (("", "not reviewed", "U"), ("accepted", "accepted", "A"),
+                ("rejected", "rejected", "R"))
 
 
 class ReviewPanel(QGroupBox):
@@ -52,10 +54,10 @@ class ReviewPanel(QGroupBox):
         self.heading.setWordWrap(True)
         self.status = QButtonGroup(self)
         status_row = QHBoxLayout()
-        for i, (value, words) in enumerate(STATUS_WORDS):
+        for i, (value, words, key) in enumerate(STATUS_WORDS):
             button = QRadioButton(words)
             button.setProperty("status", value)
-            button.setToolTip(f"{words} (key {'URA'[i]} in the tree)")
+            button.setToolTip(f"{words} (key {key} in the tree)")
             self.status.addButton(button, i)
             status_row.addWidget(button)
         status_row.addStretch()
@@ -266,7 +268,7 @@ class ReviewPanel(QGroupBox):
 
     def key(self, letter: str) -> None:
         """A, R or U in the tree: accepted, rejected, not reviewed."""
-        status = {"a": "accepted", "r": "rejected", "u": ""}.get(letter.lower())
+        status = {key.lower(): value for value, _, key in STATUS_WORDS}.get(letter.lower())
         if status is not None and self.status.buttons()[0].isEnabled():
             self.decide(status=status)
 

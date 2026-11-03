@@ -162,9 +162,9 @@ def test_residuals_normalise_and_corrected_labels(results):
     # a figure of its own: the legend outside the axes (the figure's), covering none of it
     text = " ".join(t.get_text() for t in plot_spectrum(sid, results, show=("fit",)).legends[0]
                     .get_texts())
-    assert "corr." in text and "±" in text
+    assert " corrected)" in text and "±" in text
     plain = plot_spectrum(sid, results, show=("fit",), corrected=False).legends[0]
-    assert "corr." not in " ".join(t.get_text() for t in plain.get_texts())
+    assert "corrected" not in " ".join(t.get_text() for t in plain.get_texts())
 
 
 def test_a_loaded_bundle_plots_the_same_data(written, results):

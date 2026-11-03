@@ -211,3 +211,13 @@ def test_back_and_forward_step_through_every_spectrum(qtbot, window_on):
     page.review.previous.click()
     assert page.tree.currentItem().toolTip(0) == seen[-2]
     assert not page.step_spectrum(1) or page.tree.currentItem().toolTip(0) == seen[-1]
+
+
+def test_each_status_names_its_own_key(window_on):
+    """The tooltips and the keys agree (owner: the tooltips had A and R swapped)."""
+    window, project, open_ = window_on
+    page = open_(project)
+    tips = {b.text(): b.toolTip() for b in page.review.status.buttons()}
+    assert tips == {"not reviewed": "not reviewed (key U in the tree)",
+                    "accepted": "accepted (key A in the tree)",
+                    "rejected": "rejected (key R in the tree)"}

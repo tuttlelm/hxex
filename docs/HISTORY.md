@@ -6598,7 +6598,9 @@ CSVs or mzML if wanted.
     `report` and `analyse` read the window's decisions as typed ones (tested). A time point with
     one replicate shows that spectrum's figures (owner: stepping into it drew the same spectrum
     another way, a one-panel page then the spectrum alone); a peptide with one charge already
-    showed its series' pages. A time point also has "fits at each K" (owner: the spectrum's
+    showed its series' pages. A population's legend entry says "(4.11 corrected)" where it said
+    "(corr. 4.11)" (owner: the abbreviation was not explained anywhere and could read as a
+    correlation). A time point also has "fits at each K" (owner: the spectrum's
     version, summarised): `report.overview.plot_k_comparisons` (new; `plot_k_comparison` is its
     one-row case), a row per replicate with its label in the titles and its chosen K framed;
     with several rows the layers are named once at the foot of the page and each panel keeps

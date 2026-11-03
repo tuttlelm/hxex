@@ -446,7 +446,7 @@ def _label(fit: dict, c: int, corrected: bool) -> str:
         text += f" ± {fit['mean_se'][c]:.2f}"
     text += f" D, {100 * fit['population'][c]:.0f}%"
     if corrected:
-        text += f" (corr. {fit['corrected'][c]:.2f})"
+        text += f" ({fit['corrected'][c]:.2f} corrected)"  # back-exchange corrected (owner)
     return text
 
 
