@@ -121,9 +121,41 @@ def test_a_null_without_spread_leaves_the_spectrum_untested(mixed, monkeypatch):
 
     monkeypatch.setattr(module, "simulate_null", flat_first)
     again = population_test(data, fit, TEST)
-    assert again.null_kind[7, 0] == "" and np.isnan(again.p[7, 0]) and again.selected_K[7] == 1
+    # named apart from an untested spectrum (audit 2026-11-01 Low 58), and still not tested
+    assert again.null_kind[7, 0] == "flat" and np.isnan(again.p[7, 0]) and again.selected_K[7] == 1
+    assert not again.tested()[7, 0]
     others = np.arange(len(fit)) != 7
     np.testing.assert_array_equal(again.selected_K[others], test.selected_K[others])
+
+
+def test_a_failed_null_draw_is_left_out_not_the_run(mixed, monkeypatch, caplog):
+    """Audit 2026-11-01 Engine 29: a null simulation whose refits all fail (FitError) leaves
+    that draw NaN, with a warning; the other draws stand. Low 63: few simulations warn."""
+    import logging
+
+    import hxex.population_test as module
+    from hxex.fit import FitError
+
+    data, fit, _ = mixed
+    real, calls = module.fit_models, []
+
+    def fail_first(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise FitError("all restarts were non-finite for K=1")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "fit_models", fail_first)
+    rows = np.arange(3)
+    with caplog.at_level(logging.WARNING):
+        sim = module.simulate_null(data, fit, rows, 1, 4)
+    assert np.isnan(sim[:, 0]).all() and np.isfinite(sim[:, 1:]).all()
+    assert "null simulation 1 at K = 1 failed for 3 spectra" in caplog.text
+    monkeypatch.undo()
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        population_test(data, fit, dataclasses.replace(TEST, simulations=3))
+    assert "3 simulations per spectrum" in caplog.text
 
 
 def test_a_spectrum_is_tested_alone_whatever_else_is_in_the_batch(mixed):
@@ -329,7 +361,7 @@ def test_narrow_component_is_the_flag_of_the_fit_at_the_spectrums_k():
     # steps one and two: the K = 2 and K = 3 fits' flags
     narrow = np.array([[True, False], [True, False], [False, True], [False, True]])
     test = SimpleNamespace(criterion_K=np.ones(4), steps=(1, 2), p=np.zeros((4, 2)),
-                           narrow=narrow)
+                           narrow=narrow, null_kind=np.full((4, 2), "simulated"))
     cols = _test_columns(SimpleNamespace(population_test=test,
                                          effective_K=np.array([1, 2, 2, 3])))
     # K = 1 never; K = 2 the first step's flag; K = 3 the second's

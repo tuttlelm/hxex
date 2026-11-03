@@ -65,9 +65,10 @@ class FragmentSpec:
             f"{self.ion_type}:{self.lengths}")
 
 
-def _expand(text: str, top: int, what: str) -> list[int]:
+def _expand(text: str, top: int, what: str, empty: list[str] | None = None) -> list[int]:
     """``'ALL'`` -> 1 to ``top``; ``'1,3-5,8-'`` -> 1, 3, 4, 5 and 8 to ``top`` (``'-4'`` is 1
-    to 4)."""
+    to 4). The items that give no number (an open range starting beyond ``top``: ``'9-'`` with
+    ``top`` 7) are added to ``empty`` when it is given."""
     if text.strip().upper() == "ALL":
         return list(range(1, top + 1))
     out: set[int] = set()
@@ -82,6 +83,8 @@ def _expand(text: str, top: int, what: str) -> list[int]:
                 raise ValueError
         except ValueError:
             raise ValueError(f"cannot read {what} {item!r} in {text!r}") from None
+        if b < a and empty is not None:
+            empty.append(item.strip())
         out.update(range(a, b + 1))
     return sorted(out)
 
@@ -132,7 +135,12 @@ def fragment_entries(
     for spec in specs:
         side = ion_terminus(spec.ion_type)
         top_charge = parent.charge - (1 if limit_charge and side != "M" else 0)
-        lengths = [n] if side == "M" else _expand(spec.lengths, n - 1, "lengths")
+        nothing: list[str] = []
+        lengths = [n] if side == "M" else _expand(spec.lengths, n - 1, "lengths", nothing)
+        if nothing:
+            log.warning("%s: fragment lengths %s give no fragment of %s (%d residues: fragments "
+                        "are 1 to %d long)", spec.ion_type, ", ".join(nothing), parent.peptide,
+                        n, n - 1)
         too_long = [x for x in lengths if x >= n and side != "M"]
         if too_long:
             log.warning("%s: fragment lengths %s are not shorter than the parent %s "

@@ -163,9 +163,11 @@ def test_a_single_k_can_be_bootstrapped(k):
 def test_a_measurement_whose_fit_failed_is_skipped_and_the_others_are_not():
     meas, _ = synthetic([BIMODAL, BIMODAL, BIMODAL])
     obs = [o.copy() for o in meas.observed]
-    obs[1][3] = np.nan
-    bad = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
-                                   spectrum_id=meas.spectrum_id)
+    obs[1][3] = np.nan  # Measurements refuses it: set past the checks, as a fit whose loss
+    # turned non-finite numerically
+    bad = Measurements.from_arrays(meas.bins, [np.ones_like(o) for o in obs], meas.shapes,
+                                   meas.n_max, spectrum_id=meas.spectrum_id)
+    object.__setattr__(bad, "observed", obs)
     res = fit_models(bad, FitConfig(noise=NOISE, backend=CPU, k_max=2, **LIGHT))
     b = bootstrap(bad, res, BOOT)
     assert list(b.n_success) == [10, 0, 10]  # the others are not discarded with it

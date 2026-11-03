@@ -168,3 +168,46 @@ def test_the_run_flags_off_mz_and_the_bundle_keeps_the_check(tmp_path):
     assert set(gone["spectrum_id"]) == {"0:0.0", "0:2.0"}
     assert set(gone["reason"]) == {"off its m/z"}
     assert len(left_out_spectra(loaded, SpeciesFilters(off_mz=False))["spectrum_id"]) == 0
+
+
+def test_a_flat_clipped_top_reads_at_its_centre():
+    """A saturated undeuterated control clipped flat: the climb crosses the plateau and reads
+    its centre, so an envelope 12 or 25 ppm off reads 12 or 25 (it read about 0, or NaN, at its
+    plateau's edge; audit of 2026-11-01, Medium 27)."""
+    for off in (0.0, 12.0, 25.0):
+        pos, h = envelope(0.0)
+        mz, y = profile((pos * (1 + off * 1e-6), h))
+        clipped = np.minimum(y, 0.4 * y.max())
+        assert (clipped == clipped.max()).sum() >= 5
+        assert envelope_offset(mz, clipped, PLAN.pred_mz, Z, 10.0) == pytest.approx(off, abs=1.0)
+
+
+def test_fewer_than_five_controls_give_no_scatter(caplog):
+    """The scatter of three or four offsets about a line is degenerate (three points: the line
+    passes through two, MAD 0): with fewer than five undeuterated controls with an offset no
+    series is assessed, NaN offset and limit, logged (audit of 2026-11-01, Medium 24)."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="hxex.picking.mz_check"):
+        few = series_offsets(spectra_set(n=4), NARROW)
+    assert len(few.data_id) == 4 and not few.off.any()
+    assert np.isnan(few.relative_ppm).all() and np.isnan(few.limit_ppm).all()
+    assert "fewer than the 5 a scatter needs" in caplog.text
+    b = pick_spectra(spectra_set(n=4), NARROW)
+    assert np.isnan(b.envelope_offset_ppm).all() and np.isnan(b.envelope_offset_limit_ppm).all()
+    five = series_offsets(spectra_set(n=5), NARROW)
+    assert five.off.tolist() == [True, False, False, False, False]
+
+
+def test_a_scan_file_is_its_own_injection():
+    """With scan files (mzML, Thermo raw) each undeuterated control file is one injection,
+    whatever its replicate number; other formats keep (sample, rep) (audit of 2026-11-01,
+    question 17)."""
+    from hxex.picking.mz_check import injection
+
+    raw = spectra_set(n=12, labelled=False)
+    files = np.array([f"{'a' if s < 6 else 'b'}.mzML scan{s + 1}" for s in raw.data_id])
+    assert {injection(raw, i) for i in range(len(raw))} == {("S", "1")}
+    scans = dataclasses.replace(raw, label=files, source={"reader": "mzml"})
+    assert [injection(scans, i) for i in (0, 11)] == [("S", "a.mzML"), ("S", "b.mzML")]
+    assert set(series_offsets(scans, NARROW).calibration) == {("S", "a.mzML"), ("S", "b.mzML")}

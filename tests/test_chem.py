@@ -284,6 +284,32 @@ def test_undeut_mz_override():
     assert chem.mz("PEPTIDE", 2, mod=chem.parse_modification("undeut_mz:400.5")) == 400.5
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-400.5"])
+def test_undeut_mz_must_be_a_finite_positive_mz(value):
+    """A NaN or infinite undeut_mz would make every predicted m/z NaN and pick empty spectra
+    with no message (audit of 2026-11-01, Low 47)."""
+    with pytest.raises(chem.ChemistryError, match="undeut_mz must be a finite m/z above 0"):
+        chem.parse_modification(f"undeut_mz:{value}")
+
+
+@pytest.mark.parametrize("seq, words", [
+    ("EELKVKVlGD", ["lowercase 'l' at position 8 of 'EELKVKVlGD'", "capital letters",
+                    "write 'L'", "'lG' is not a known modified residue"]),
+    ("EELKV KVLGD", ["a space at position 6 of 'EELKV KVLGD'", "remove it"]),
+    ("EELKVKVLGd", ["lowercase 'd' at position 10", "write 'D'"]),
+    ("Ac-PE PT", ["a space at position 6 of 'Ac-PE PT'"]),
+    ("PEP1TIDE", ["cannot read '1' at position 4"]),
+    ("PEPXTIDE", ["unknown residue 'X' at position 4"]),
+])
+def test_sequence_errors_say_what_is_wrong_and_how_to_fix_it(seq, words):
+    """A lowercase letter or a space is named plainly, at its position counted from 1 in the
+    sequence as written (audit of 2026-11-01, Part 2 p07 and p08)."""
+    with pytest.raises(chem.SequenceError) as err:
+        chem.parse_sequence(seq)
+    for w in words:
+        assert w in str(err.value)
+
+
 def test_bad_charge():
     with pytest.raises(chem.ChemistryError):
         chem.mz("PEPTIDE", 0)

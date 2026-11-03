@@ -33,8 +33,8 @@ log = logging.getLogger(__name__)
 
 # a fit is skipped only if its best possible criterion is worse than the best one by more than
 # this (absolute plus relative to the best): float32 losses are not exact
-_TOLERANCE_ABS = 1e-3
-_TOLERANCE_REL = 1e-4
+TOLERANCE_ABS = 1e-3  # the precision of a loss: absolute, and relative to it
+TOLERANCE_REL = 1e-4  # (the population test takes the same: hxex.population_test)
 
 
 def loss_floor(
@@ -93,7 +93,7 @@ def can_win(
     plus twice the loss floor) is not worse than ``best``, the best criterion of the Ks
     fitted so far, by more than the tolerance."""
     reach = penalty(criterion, k, sample_size) + 2.0 * floor
-    margin = _TOLERANCE_ABS + _TOLERANCE_REL * np.abs(best)
+    margin = TOLERANCE_ABS + TOLERANCE_REL * np.abs(best)
     return ~(reach > best + margin)
 
 

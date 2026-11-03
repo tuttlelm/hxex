@@ -788,6 +788,7 @@ def write_bundle(
     excluded: Mapping | None = None,
     project_file: Mapping | None = None,
     peak_measure: PeakMeasure | None = None,
+    chunk_plan: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
@@ -900,6 +901,9 @@ def write_bundle(
             "provenance": None if provenance is None else dict(provenance),
             **({} if not excluded else {"excluded": dict(excluded)}),
             **({} if peak_measure is None else {"peak_measure": peak_measure.to_dict()}),
+            # the chunks the fits were made in (hxex.pipeline.chunk_record), so that a resume
+            # fits and tests in the same ones (audit 2026-11-01 Engine 28)
+            **({} if chunk_plan is None else {"chunk_plan": dict(chunk_plan)}),
             **({} if fit.noise_curve is None else {"noise_curve": fit.noise_curve.to_dict()}),
             "configs": {
                 "fit": fit.config.to_dict(),

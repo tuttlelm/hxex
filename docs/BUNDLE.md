@@ -106,7 +106,10 @@ was replaced by the one resume was given)), `peak_measure` (whether the
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
 from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power in m/z),
 `width_ratio`, `n_controls`, `n_weak`, `area_fwhm`, `area_scale` and `reason`; absent in bundles
-written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `noise_curve`
+written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `chunk_plan`
+(the chunks the fits were made in: `budget_bytes` and `series`, the `data_id` of each chunk's
+series; `hxex resume` fits and tests in them, so that its fits are made as the run's were;
+absent before 2026-11-02; `hxex.pipeline.chunk_record`), `noise_curve`
 (with `[run.fit.noise] estimate = "controls"`, the default since 2026-10-31, when enough
 controls measured it: the per-bin noise the fit used, `b1`,
 `b1_se`, `model_error` (a share), `onset` (null: none), `n_controls`, `n_series` and `by_sample`

@@ -5990,3 +5990,48 @@ CSVs or mzML if wanted.
     do not have names a typo first. Windows CI: Session B's test made a folder named with `?`,
     which Windows does not allow; it now uses `#`. Docs: outputs.md ("Running again", "Sharing
     results"), BUNDLE.md; commands.md regenerated.
+
+219. **Third audit, Session E: statistics on few values, the picker's edges, and the engine
+    (2026-11-02; decisions in docs/AUDIT_2026-11-01.md).** Few values (owner: no scatter from
+    fewer than five values): the m/z check needs five undeuterated offsets in the set, else no
+    series is assessed (`MIN_SCATTER_OFFSETS`; 24); the control replicate-outlier rule needs
+    five replicated groups, else only the above-amides rule (`REPLICATE_MIN_GROUPS`; 25), and its
+    limit is never below 0.02 D per amide (`REPLICATE_FLOOR`; owner, 2026-11-02); `retention_outlier` needs
+    TEN measured controls (owner, question 14; `OUTLIER_MIN_SERIES` 5 -> 10; audit simulation:
+    9.3 % false rejections at five, 4.7 % at ten). `fd_disagrees`, `fd_retention_agrees` and
+    `fd_charges_agree` compare accepted controls only, and a rejected control gets no note (26,
+    54); `data_below_m0` only against an accepted undeuterated control (46). The m/z check's
+    injection is (sample, file) for mzML and Thermo spectra, else (sample, rep) (owner,
+    question 17). Picker: a run of equal points is one peak at the plateau's centre (`_peaks`,
+    `_apex`, mz_check `_peak_top`; 27: on a clipped synthetic peak the offset read -21 / -9 ppm
+    for a true 0 / 12 now reads -1 / 11); the first and last points of a spectrum are never
+    peaks (49); coarse profile data is told from centroided at two points per isotope step
+    (`STICK_POINTS` 4 -> 2; 50); non-finite m/z points are dropped (`clean_profile`; 52); the auto
+    measure picks the controls with their recorded resolving power (48). Measured: the golden and
+    whole-run oracle data (2,244 spectra) pick identically except 1 peak m/z in `window_max` (two
+    equal maxima now at their centre, ~7 ppm) and 5 spectra in `peak` mode whose last point sat
+    on a rising flank (offset changes at most 0.11 ppm); the published tutorial run (5,261
+    spectra) has no clipped maxima (its bright controls are compressed, not clipped: unchanged)
+    and 6 spectra change through 49 (their last bin 8-37 -> 0 against tops of 217-6,399;
+    offsets at most 0.16 ppm). Chemistry: `undeut_mz` must be finite and positive (47); sequence
+    errors name a lowercase letter or a space at its position and say how to fix it (Session A
+    leftover); fragment length items that give no fragment are warned about (51); selenocysteine
+    and pyrrolysine series take no kint rates (median fallback, logged; 53). Engine: the default
+    GPU budget is half the GPU's total memory, not its free memory, and the chunk plan is
+    recorded in the manifest (`chunk_plan`) and reused by `hxex resume`, since a fit differs by
+    rounding between batches (float32 loss up to ~0.03, float64 ~1e-3; documented, with
+    `float64` for cross-machine agreement; 28); a null draw whose refits all fail is left out
+    with a warning (29); too few usable controls for per-bin noise means one sd per spectrum, no
+    second measurement from every control, and the log says which rule applied (30);
+    `Measurements` refuses non-finite intensities and `n_max`, `fit_models` refuses spectra with
+    no signal and an empty input (31, 32, 55; no absolute variance floor: it would change weak
+    real spectra, to evaluate first); a failed fit's placeholder parameters are NaN and never
+    pass `min_population`, and `table()` leaves them out (32, 59); the Poisson model refuses
+    negative intensities (56); a measurement with n_max below 2 (at most one deuteron) is fitted
+    at K = 1 only (57; the fix line's `ceil(n_max)` would still fit K = 2 at n_max 1.2); a flat
+    null is its own kind, `flat`, and spectra.csv gains `test_null_<K>` (58); `cuda:abc` is
+    refused (60); one copy of the loss tolerance (61); null seeding documented (62); fewer than
+    10 simulations warn (63); ANALYSIS.md states the statistic's tolerance (engine question 3).
+    Not done: engine questions 1 and 2 (measurements), picking questions 15 and 16
+    (measurements), the optional plateau note in `saturated`. Private before/after pages were in
+    the session scratchpad only.

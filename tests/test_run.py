@@ -793,3 +793,47 @@ def test_one_spectrum_without_a_reference_says_its_populations_cannot_be_judged(
     with caplog.at_level("WARNING"):
         _warn_own_reference(two, None, cfg)
     assert "no series has an undeuterated control" in caplog.text
+
+
+def test_the_chunk_plan_is_recorded_and_reused(tmp_path):
+    """Audit 2026-11-01 Engine 28: the chunks a run fitted in are recorded in the bundle and a
+    resume plans from them (a fit depends on its batch through rounding); a record that does
+    not cover the measurements is planned again."""
+    import dataclasses
+
+    from hxex.pipeline import _plan, recorded_chunks
+
+    cfg = config(bootstrap=None, max_chunk=8)
+    res = run(raw_spectra(n_series=2), cfg, out=tmp_path / "b")
+    with open_bundle(tmp_path / "b") as b:
+        plan = b.manifest["chunk_plan"]
+    assert plan == res.chunk_plan and plan["series"] == [[0], [1]]
+    meas = res.measurements
+    other = dataclasses.replace(cfg, max_chunk=None)  # would plan one chunk
+    assert len(_plan(meas, other, (0.0, 1.0)).chunks) == 1
+    reused = _plan(meas, other, (0.0, 1.0), record=plan)
+    assert [sorted(set(meas.data_id[c])) for c in reused.chunks] == [[0], [1]]
+    assert recorded_chunks(meas, {"series": [[0]]}) is None  # series 1 not covered
+    assert recorded_chunks(meas, {"series": [[0, 1], [1]]}) is None  # covered twice
+
+
+def test_too_few_controls_for_per_bin_noise_are_not_measured_again(monkeypatch, caplog):
+    """Audit 2026-11-01 Engine 30: when the bundle's rule finds too few usable controls, the
+    fit takes one sd per spectrum; it does not measure the noise again from every control."""
+    import hxex.noise as noise_module
+
+    calls = []
+    real = noise_module.controls_noise
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get("usable") is not None)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(noise_module, "controls_noise", counted)
+    cfg = config(bootstrap=None)
+    cfg = dataclasses.replace(cfg, fit=dataclasses.replace(cfg.fit, noise=NoiseConfig(
+        "gaussian", percent=3.0, estimate="controls")))
+    with caplog.at_level(logging.INFO):
+        res = run(raw_spectra(n_series=1), cfg)  # one series of controls: fewer than five
+    assert calls == [True]  # the bundle's rule only
+    assert res.fit.noise_curve is None and "per-bin noise not measured" in caplog.text

@@ -372,6 +372,72 @@ def test_a_gap_in_the_data_counts_as_lower():
     assert got.intensity[1] == pytest.approx(far_y.max())
 
 
+@pytest.mark.parametrize("cfg", [PEAK_CFG, CFG], ids=["peak", "window_max"])
+def test_a_flat_clipped_top_reads_at_its_centre(cfg):
+    """A saturated peak clipped flat is one peak whose apex is the plateau's centre, not its
+    first point (audit of 2026-11-01, Medium 27: a 56 ppm plateau read 21 ppm low)."""
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    p0, p1 = plan.pred_mz[0], plan.pred_mz[1]
+    true = p0 * (1 + 12e-6)
+    mz, y = peaks_profile([true, true + (p1 - p0)], [1e5, 6e4], p0 - 0.2, p1 + 0.2,
+                          spacing=p0 * 4e-6, width=p0 * 20e-6 / 2.3548 * 2)
+    clean = pick_spectrum(mz, y, PEPTIDE, 2, config=cfg)
+    clipped = np.minimum(y, 0.4 * y.max())
+    assert (clipped == clipped.max()).sum() >= 5  # a plateau of several points
+    got = pick_spectrum(mz, clipped, PEPTIDE, 2, config=cfg)
+    assert got.intensity[0] == clipped.max()
+    assert abs(got.peak_mz[0] - true) / true < 3e-6  # the centre, to half a point spacing
+    assert abs(clean.peak_mz[0] - true) / true < 1e-6
+
+
+def test_the_first_and_last_point_of_a_spectrum_are_not_peaks():
+    """A spectrum whose export window starts (or ends) on the flank of a peak: the edge point
+    has no lower neighbour, so it is not a peak (audit of 2026-11-01, Low 49); after a gap in
+    the data an edge counts as lower, as before."""
+    plan = plan_bins(PEPTIDE, 2, config=CFG)
+    p0, p1 = plan.pred_mz[0], plan.pred_mz[1]
+    # the profile starts 0.006 m/z (10 ppm) above M's apex, on its falling flank
+    mz, y = peaks_profile([p0, p1], [1e4, 5e3], p0 + 0.006, p1 + 0.1, spacing=0.004)
+    got = pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[0] == 0.0 and got.intensity[1] == pytest.approx(5e3, rel=0.01)
+    # ... and ends on the rising flank of M+1
+    mz, y = peaks_profile([p0, p1], [1e4, 5e3], p0 - 0.1, p1 - 0.006, spacing=0.004)
+    got = pick_spectrum(mz, y, PEPTIDE, 2, config=PEAK_CFG)
+    assert got.intensity[0] == pytest.approx(1e4, rel=0.01) and got.intensity[1] == 0.0
+
+
+def test_coarse_profile_data_is_not_taken_for_centroided():
+    """Profile data with fewer than four points per isotope step (a Q-TOF's 18 ppm spacing at
+    charge 20 and m/z 1000: 2.8 points per step) is still profile: only local maxima are
+    peaks, so the flank points of a peak are not picked as peaks of their own (audit of
+    2026-11-01, Low 50)."""
+    charge = 20
+    plan = plan_bins(PEPTIDE * 6, charge, config=PEAK_CFG)
+    pred = plan.pred_mz[:6]
+    step = pred[1] - pred[0]
+    spacing = step / 2.8
+    mz = np.arange(pred[0] - step, pred[-1] + step, spacing)
+    y = sum(h * np.exp(-0.5 * ((mz - c) / (0.8 * spacing)) ** 2)
+            for c, h in zip(pred, [1e4, 3e4, 4e4, 3e4, 1.5e4, 5e3], strict=True))
+    from hxex.picking.pick import _peaks
+
+    index, apex = _peaks(mz, np.asarray(y), charge)
+    assert len(apex) == len(pred)  # one peak per isotope, no flanks
+    np.testing.assert_allclose(apex, pred, atol=0.3 * spacing)
+
+
+def test_points_without_a_finite_mz_are_dropped():
+    """A NaN m/z cannot be placed: the point is dropped with its intensity before the sort
+    check, which a NaN would defeat (audit of 2026-11-01, Low 52)."""
+    plan, clean = pick({0: 1000.0, 1: 600.0, 2: 300.0})
+    mz, y = sticks(plan, {0: 1000.0, 1: 600.0, 2: 300.0})
+    for at in range(1, len(mz)):  # a NaN (with a tall intensity) anywhere among sorted points
+        got = pick_spectrum(np.r_[mz[:at], np.nan, mz[at:]], np.r_[y[:at], 5e5, y[at:]],
+                            PEPTIDE, 2, config=CFG)
+        np.testing.assert_array_equal(got.intensity, clean.intensity)
+        assert got.mz_offset_ppm == clean.mz_offset_ppm
+
+
 # --- noise threshold and flags --------------------------------------------------------------
 
 def test_noise_threshold_absolute_and_percent():

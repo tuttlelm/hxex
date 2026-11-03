@@ -197,12 +197,19 @@ def area_values(mz: np.ndarray, y: np.ndarray, where: np.ndarray, values: np.nda
     return out
 
 
+def _recorded(spectra, name: str, i: int) -> float:
+    """Spectrum ``i``'s recorded ``resolving_power`` or ``resolving_power_mz`` (NaN: none), as
+    :func:`~hxex.picking.pick_spectra` passes them to the picker."""
+    values = getattr(spectra, name, None)
+    return float("nan") if values is None else float(values[i])
+
+
 def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasure:
     """The run's :class:`PeakMeasure` under ``config.measure`` from the undeuterated controls
     (role ``'undeut'``) of ``spectra`` (a :class:`~hxex.spectra.SpectrumSet`); see the module
     docstring. ``'height'`` is returned without measuring."""
     from .. import chem
-    from .pick import pick_spectrum, plan_bins
+    from .pick import clean_profile, pick_spectrum, plan_bins
 
     if config.measure == "height":
         return HEIGHTS
@@ -214,11 +221,7 @@ def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasu
     tops, top_fw, top_mz, weak, tall = [], [], [], [], []
     n_centroided = 0
     for i in rows:
-        mz, y = spectra.spectrum(int(i))
-        mz, y = np.asarray(mz, dtype=np.float64), np.asarray(y, dtype=np.float64)
-        if len(mz) > 1 and np.any(np.diff(mz) < 0):
-            order = np.argsort(mz, kind="stable")
-            mz, y = mz[order], y[order]
+        mz, y = clean_profile(*spectra.spectrum(int(i)))
         charge = int(spectra.charge[i])
         profile, spacing = _profile(mz, charge)
         if not profile:
@@ -229,7 +232,9 @@ def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasu
             plans[key] = plan_bins(key[0], key[1], modification=key[2], config=heights,
                                    registry=registry)
         p = pick_spectrum(mz, y, key[0], key[1], modification=key[2], config=heights,
-                          registry=registry, plan=plans[key])
+                          registry=registry, plan=plans[key],
+                          resolving_power=_recorded(spectra, "resolving_power", i),
+                          resolving_power_mz=_recorded(spectra, "resolving_power_mz", i))
         v, apex = np.asarray(p.intensity, dtype=np.float64), np.asarray(p.peak_mz, dtype=np.float64)
         if not len(v) or not v.max() > 0:
             continue

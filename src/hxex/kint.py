@@ -295,6 +295,19 @@ def _tables(t: float, pl: float, factors: Mapping) -> dict[str, dict]:
     return out
 
 
+def missing_factors(sequence: str, conditions: ExchangeConditions, *,
+                    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
+                    ) -> list[str]:
+    """The residues of ``sequence`` (base residues of modified ones, unless ``conditions``
+    gives the modified label its own factors) without intrinsic-rate factors, sorted: for
+    example selenocysteine ``U`` and pyrrolysine ``O``, which the composition tables know.
+    :func:`intrinsic_rates` refuses such a sequence."""
+    own = conditions.factors
+    labels = chem.parse_sequence(sequence, registry)
+    known = set(_FACTORS) | set(_CHARGED) | set(own)
+    return sorted({lab if lab in own else registry.base_residue(lab) for lab in labels} - known)
+
+
 def intrinsic_rates(
     sequence: str,
     conditions: ExchangeConditions,
@@ -323,8 +336,7 @@ def intrinsic_rates(
     def base(label: str) -> str:
         return label if label in own else registry.base_residue(label)
 
-    known = set(_FACTORS) | set(_CHARGED) | set(own)
-    unknown = sorted({base(lab) for lab in labels} - known)
+    unknown = missing_factors(sequence, conditions, registry=registry)
     if unknown:
         raise ValueError(f"no intrinsic-rate factors for residue(s) {', '.join(unknown)} in "
                          f"{sequence!r}")

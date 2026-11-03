@@ -109,6 +109,19 @@ def test_too_long_and_parent_modifications(caplog):
     assert len(fragment_entries(fine, "c:3")) == 1
 
 
+def test_a_length_range_beyond_the_parent_is_warned_about(caplog):
+    """``c:12-`` on an 11-residue parent expands to no length: a warning names it (audit of
+    2026-11-01, Low 51); the list's other items are made as usual."""
+    with caplog.at_level(logging.WARNING, logger="hxex.fragments"):
+        got = fragment_entries(SUBP, "c:5,12-:1")
+    assert [e.end_seq for e in got] == [5]
+    assert "fragment lengths 12- give no fragment" in caplog.text and "1 to 10 long" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hxex.fragments"):
+        fragment_entries(SUBP, "c:3-:1")
+    assert "give no fragment" not in caplog.text
+
+
 def test_no_c_or_z_ions_at_a_proline():
     """Electron-based dissociation does not cut the N-Calpha bond of proline: no c ion before
     one and no z ion starting with one; b and y ions there are made."""

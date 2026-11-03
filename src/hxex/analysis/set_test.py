@@ -38,7 +38,7 @@ from typing import Any
 
 import numpy as np
 
-from ..population_test import PopulationTestConfig, gamma_tail, steps_K
+from ..population_test import NOT_TESTED, PopulationTestConfig, gamma_tail, steps_K
 from ..spectra import UNDEUT
 from .screening import Screening, screening
 
@@ -239,7 +239,8 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
             is_capped = True
             continue
         for s in range(n_steps):
-            if test.null_kind[i, s] == "" or (run.unphysical[i, s] and not run.accepted[i]):
+            if test.null_kind[i, s] in NOT_TESTED or (run.unphysical[i, s]
+                                                       and not run.accepted[i]):
                 break  # not tested at this step (or a population above max_fD): nor after
             t_sum[s] += test.statistic[i, s]
             m_sum[s] += test.null_mean[i, s]

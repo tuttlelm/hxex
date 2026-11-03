@@ -46,7 +46,10 @@ def fit_models(
     the fit the back-exchange correction uses (:mod:`hxex.controls`): with ``k_min`` above 1,
     K = 1 is added for them only (the other measurements get NaN for it, as for a K the screen
     skipped) and is never selected, so every measurement's K is chosen within ``k_min`` to
-    ``k_max``.
+    ``k_max``. A measurement with at most one exchangeable deuteron (``n_max`` below 2) is
+    fitted at K = 1 only: a mixture of such is one population (its other K are NaN, as for a K
+    the screen skipped). No measurement, a spectrum without signal (no bin above 0), and with
+    the Poisson model a negative intensity are refused (ValueError).
 
     Each spectrum is divided by its noise scale (:func:`hxex.noise.noise_scale`) before fitting,
     and the fitted amplitudes are returned in the original intensity units. A K is rejected for a
@@ -77,6 +80,21 @@ def fit_models(
     """
     backend = config.backend
     m = len(data)
+    if not m:  # audit 2026-11-01 Low 55
+        raise ValueError("no measurements to fit")
+    silent = [str(data.spectrum_id[i]) for i, o in enumerate(data.observed)
+              if np.all(np.asarray(o) <= 0)]
+    if silent:  # nothing to fit: any K would score (audit 2026-11-01 Engine 31)
+        raise ValueError(f"{len(silent)} measurement(s) have no signal (no bin above 0), so no "
+                         f"number of populations can be judged: leave them out "
+                         f"({', '.join(silent[:3])}{', ...' if len(silent) > 3 else ''})")
+    if config.noise.model == "poisson":  # counts: a negative bin has no meaning (Low 56)
+        negative = [str(data.spectrum_id[i]) for i, o in enumerate(data.observed)
+                    if np.any(np.asarray(o) < 0)]
+        if negative:
+            raise ValueError(f"{len(negative)} measurement(s) have negative intensities, which "
+                             "the Poisson model (counts) cannot take: use model = \"gaussian\" "
+                             f"or data that is not baseline-subtracted ({', '.join(negative[:3])})")
     prep, scale, estimate, curve = _prepared(data, config, noise_curve, bin_variance)
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
@@ -124,6 +142,13 @@ def fit_models(
                          k, int(more.sum()))
                 passed = passed | more
             rows = np.flatnonzero(passed)
+        if k > 1:  # at most one deuteron: a mixture of such is one population (Low 57)
+            single = np.asarray(data.n_max, dtype=np.float64)[rows] < 2.0
+            if single.any():
+                log.info("K=%d not fitted for %d measurement(s) with at most one exchangeable "
+                         "deuteron (n_max below 2): a mixture of them is one population", k,
+                         int(single.sum()))
+                rows = rows[~single]
         warm = None
         if config.nested_init and (k - 1) in fits and (k - 1) in config.k_values:
             prev = fits[k - 1]
@@ -156,6 +181,10 @@ def fit_models(
         fit.bic[rows] = bic(k, sizes[rows], nll)
         fit.aic[rows] = aic(k, nll)
         fit.passes_min_pop[rows] = np.all(fractions >= config.min_population, axis=1)
+        failed = rows[~np.isfinite(nll)]  # placeholders (fit_batch): never read as a fit
+        if len(failed):  # (audit 2026-11-01 Engine 32; the raw parameters stay finite)
+            fit.A[failed], fit.n[failed], fit.p[failed] = np.nan, np.nan, np.nan
+            fit.passes_min_pop[failed] = False
         fits[k] = fit
         if k not in config.k_values:
             continue  # the controls' K = 1: fitted, not chosen from

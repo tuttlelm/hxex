@@ -24,6 +24,17 @@ files are laid out, or on the other spectra, so the same spectrum gets the same 
 any project with the same seeds. The seeds used are written in the bundle's
 `run_settings_used.toml` ([The settings used](outputs.md#the-settings-used)).
 
+The same fit is the same up to rounding, though. *hxex* fits spectra in batches, and a spectrum
+fitted in another batch (with other spectra beside it, as happens when the project holds other
+peptides) can come out a tiny amount different, by about 0.03 in its loss with the default
+precision. That is far below anything you would see in its values, but where two numbers of
+populations are within that of each other, the choice can go the other way. A rerun of the same
+project on the same computer gives the same batches (*hxex* records them in the bundle, and
+`hxex resume` fits in them again), so it gives the same results. For results that should agree
+to the last digit across computers, set `dtype = "float64"` in `[run.fit.backend]`: the
+differences are then about thirty times smaller, but the fits take longer (on most graphics
+cards, many times longer, since they compute in float64 far more slowly).
+
 ## What depends on the spectrum's own series
 
 These are expected: keep each series together with its controls.
@@ -59,7 +70,7 @@ dataset, or adding more, changes them:
   different set of peptides gives a different stand-in.
 - **Which fully deuterated controls are rejected.** A control far below the others is rejected
   (`outlier_sd`), and "the others" are the project's controls: the check is made only when there
-  are at least 5 of them. In a small project a poor control can be kept that the full project
+  are at least 10 of them. In a small project a poor control can be kept that the full project
   would reject, or the reverse.
 - **Replicates left out as outliers.** Both the controls' replicates (`[run.controls]
   replicate_outlier`) and the analysis's spectra (`[analysis.filters] replicate_outlier`) are
@@ -75,7 +86,8 @@ dataset, or adding more, changes them:
   significant in one analysis and not in another.
 - **The m/z check and the picking window.** *hxex* checks each series' undeuterated envelope
   against the m/z calibration of its injection, worked out from all the peptides in it (or from
-  the whole project when an injection has fewer than 10). A series flagged `off_mz` is left
+  the whole project when an injection has fewer than 10; with fewer than five in the whole
+  project, no series is checked). A series flagged `off_mz` is left
   out of the analysis, so whether a borderline series is flagged depends on the other peptides
   in the project.
 - **Heights or areas.** With `measure = "auto"` (the default), *hxex* decides whether the bins

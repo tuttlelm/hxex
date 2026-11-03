@@ -40,6 +40,9 @@ from 0.34 to 0.64 with an 85 % D₂O buffer. A fully deuterated control is rejec
 - its retention is far below the run's other controls (`retention_outlier`): more than four
   robust standard deviations below their median (`outlier_sd`). This adapts to your workflow:
   a run with much back-exchange has a low median, and its controls are judged against that.
+  The check needs at least ten controls that passed the checks above, since the spread of
+  fewer is too rough to judge by (with five, a good control was rejected in about one run in
+  eleven); with fewer it is not made, and `hxex run` says so.
 - with the quench conditions given (`quench` in `[run.controls]`), its retention misses the
   retention predicted from the peptide's sequence by more than 0.15 per amide
   (`fd_off_model`, `kint_tolerance`). This check replaces the previous one for every peptide
@@ -50,7 +53,9 @@ Two more checks only warn, and the control is still used. They are listed in the
 
 - `fd_disagrees`: the same peptide's fully deuterated controls in the other samples have a
   clearly different retention (by more than 0.1, `sample_tolerance`). In one run they should
-  agree closely, since the peptide and the workflow are the same.
+  agree closely, since the peptide and the workflow are the same. A control is compared only
+  with the accepted controls of the other samples: a rejected one is not in use, so it is
+  neither compared nor noted.
 - `fd_multimodal` or `m0_multimodal`: most of a control's replicate spectra were fitted best
   with more than one population: the envelope is wider than one population fits, for example
   because the molecules kept different amounts of deuterium. The correction uses the
@@ -65,7 +70,8 @@ Two more checks only warn, and the control is still used. They are listed in the
   so look at its spectra.
 - `data_below_m0`: a time point of the series reads below its undeuterated control. The
   fastest time points are the hardest to measure, so it is the time point that is suspect,
-  not the control: look at that time point's spectra.
+  not the control: look at that time point's spectra. Noted only when the undeuterated control
+  is accepted (one rejected as `m0_high` is replaced by 0 D).
 
 The overview figure (`hxex report hxex.toml --figures`, file `overview`) shows the retention of
 every measured control with the limits used, and counts the reasons. If you prefer a fixed
@@ -82,7 +88,10 @@ take no part in the run's median or prediction.
 Before a control's replicates are averaged, a replicate is left out when its deuterium is
 above the peptide's amide count, or when it lies far from the series' other replicates of
 that control (`replicate_outlier`, 6 typical replicate standard deviations, with three or more
-replicates). `control_notes` then says `m0_replicate_left_out` or `fd_replicate_left_out`.
+replicates). The typical standard deviation comes from the run's replicated time points and
+needs at least five of them (a peptide at one time, replicated, counts once); with fewer, only
+the amide-count rule applies, and the log says so. `control_notes` then says
+`m0_replicate_left_out` or `fd_replicate_left_out`.
 
 **The undeuterated value**
 

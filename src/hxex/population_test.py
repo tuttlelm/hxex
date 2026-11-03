@@ -41,7 +41,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import gamma
 
-from .fit import FitConfig, FitResult, Measurements, fit_models
+from .fit import FitConfig, FitError, FitResult, Measurements, fit_models
+from .fit.screen import TOLERANCE_ABS, TOLERANCE_REL
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, shape_weights
 from .noise import NoiseConfig, bin_variances
@@ -58,8 +59,7 @@ MIN_DRAWS = 0.5  # share of the simulations that must give a statistic for a spe
 # a statistic below the precision of the losses is 0 (float32 losses are not exact; the same
 # tolerance as the screen's, hxex.fit.screen): an exact fit at K and K + 1 otherwise gives
 # rounding noise against rounding noise, and an arbitrary p-value (HISTORY 176)
-LOSS_TOLERANCE_ABS = 1e-3
-LOSS_TOLERANCE_REL = 1e-4
+LOSS_TOLERANCE_ABS, LOSS_TOLERANCE_REL = TOLERANCE_ABS, TOLERANCE_REL  # one copy (Low 61)
 
 
 def statistic_of(nll_k, nll_k1) -> np.ndarray:
@@ -72,6 +72,8 @@ def statistic_of(nll_k, nll_k1) -> np.ndarray:
 
 # kinds of a spectrum's null at a step
 SIMULATED, CHI_SQUARE, SCREENED, UNTESTED = "simulated", "chi_square", "screened", ""
+FLAT = "flat"  # simulated, but every draw the same: no p-value (not tested at that step)
+NOT_TESTED = (UNTESTED, FLAT)
 
 
 @dataclass(frozen=True)
@@ -137,7 +139,8 @@ class PopulationTest:
 
     ``statistic`` is T (NaN where untested), ``null_mean`` and ``null_var`` the moments of its
     null, ``null_kind`` how the null was made (``'simulated'``, ``'chi_square'``,
-    ``'screened'``: the screen skipped the K + 1 fit, T = 0 with the chi-square null; ``''``:
+    ``'screened'``: the screen skipped the K + 1 fit, T = 0 with the chi-square null;
+    ``'flat'``: simulated, but every draw the same (no p-value: not tested); ``''``:
     untested, the fits missing or failed), ``null_draws`` the simulated statistics ``(M, S,
     simulations)`` (NaN for the others), ``added_population`` the smallest share of the K + 1
     fit, ``narrow`` the width check's flag (the K + 1 fit has a component narrower than
@@ -168,7 +171,7 @@ class PopulationTest:
 
     def tested(self) -> np.ndarray:
         """``(M, S)``: whether each spectrum has a statistic and a null at each step."""
-        return self.null_kind != UNTESTED
+        return ~np.isin(self.null_kind, NOT_TESTED)
 
     @classmethod
     def merge(cls, parts: Sequence[PopulationTest], rows: Sequence[Sequence[int]]
@@ -273,6 +276,9 @@ def population_test(
                          "fit_models(..., test_screen=True) for the population test")
     steps = tuple(range(1, fit.config.k_max))
     m, n_sim, n_steps = len(fit), config.simulations, len(steps)
+    if config.null == "simulated" and n_sim < 10:  # audit 2026-11-01 Low 63
+        log.warning("population test: %d simulations per spectrum leave its null's variance on "
+                    "few values (the p-values are rough); 20, the default, is recommended", n_sim)
     shape = (m, n_steps)
     statistic, null_mean, null_var = np.full(shape, np.nan), np.full(shape, np.nan), np.full(
         shape, np.nan)
@@ -326,6 +332,7 @@ def population_test(
         if flat.any():
             log.info("population test, %d against %d: the null simulations of %d spectra have "
                      "no spread; they are not tested at this step", k, k + 1, int(flat.sum()))
+        kind[rows[flat], s] = FLAT  # said so in spectra.csv (audit 2026-11-01 Low 58)
         enough &= ~flat
         good = rows[enough]
         null_mean[good, s], null_var[good, s] = mean[enough], var[enough]
@@ -334,7 +341,7 @@ def population_test(
             log.warning("population test, %d against %d: the null simulations failed for %d "
                         "spectra, which are not tested at this step", k, k + 1,
                         int((~enough & ~flat).sum()))
-    tested = kind != UNTESTED
+    tested = ~np.isin(kind.astype(str), NOT_TESTED)
     p = np.where(tested, gamma_tail(statistic, null_mean, null_var), np.nan)
     added = np.where(kind == SCREENED, np.nan, added)  # no K + 1 fit to say
     usable = tested
@@ -402,7 +409,11 @@ def simulate_null(
     simulations refitted with the same weights), refitted at 1 to K + 1 with the run's fit
     settings (no screen). Each draw is seeded
     by ``seed``, the simulation and what the spectrum is (``random_id``), so the result does not
-    depend on the other spectra or the project's name. NaN where a refit failed."""
+    depend on the other spectra or the project's name. The refits' k-means jitter and random
+    restarts are seeded by the null spectrum's own id (``null{K}.{s}:...``), so every draw is
+    independent of the others and of the real fit's starts: a null statistic cannot be
+    recovered from the real fit's seed alone (audit 2026-11-01 Low 62). NaN where a refit
+    failed (that draw is left out; a warning says so)."""
     rows = np.asarray(rows, dtype=np.int64)
     cfg = dataclasses.replace(fit.config, k_min=1, k_max=k + 1, screen=False,
                               noise=NoiseConfig(model="gaussian", sd=1.0, percent=None,
@@ -426,12 +437,19 @@ def simulate_null(
         rids = [f"null{k}.{s}:{rid}" for rid in data.random_id[rows]]
         sim = Measurements.from_arrays(bins, observed, shapes, n_max, spectrum_id=ids,
                                        random_id=rids)
-        with _quiet_fits():
-            res = fit_models(sim, cfg, cancel=cancel,
-                             bin_variance=None if fit.noise_curve is None else
-                             [w * w for w in sd])
-        lo, hi = res.fits[k].nll, res.fits[k + 1].nll
-        out[:, s] = np.where(np.isfinite(lo) & np.isfinite(hi), statistic_of(lo, hi), np.nan)
+        try:
+            with _quiet_fits():
+                res = fit_models(sim, cfg, cancel=cancel,
+                                 bin_variance=None if fit.noise_curve is None else
+                                 [w * w for w in sd])
+        except FitError as exc:  # every refit of the draw failed: that draw is NaN, as the
+            # bootstrap drops a failed resample (audit 2026-11-01 Engine 29)
+            log.warning("null simulation %d at K = %d failed for %d spectra (%s): left out",
+                        s + 1, k, len(rows), exc)
+        else:
+            lo, hi = res.fits[k].nll, res.fits[k + 1].nll
+            out[:, s] = np.where(np.isfinite(lo) & np.isfinite(hi), statistic_of(lo, hi),
+                                 np.nan)
         if on_simulation is not None:
             on_simulation()
     return out

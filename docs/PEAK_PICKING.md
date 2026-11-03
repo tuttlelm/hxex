@@ -138,11 +138,16 @@ half a bin after about 120.
 
 Each bin takes the tallest **peak** whose apex lies within `resolution_ppm` of its predicted m/z
 (default +/- 50 ppm), but never further than half the isotope spacing, `1.00235 / (2 z)`
-(`pick = "peak"`, the default). In profile data a peak is a local maximum of the raw spectrum (a
-point higher than the one before it and at least as high as the one after it; a gap in the data,
-more than 2.5 times the median point spacing, counts as lower), its value the height of that point
-and its apex the vertex of the parabola through it and its two neighbours when both are lower and
-evenly spaced. In centroided data (fewer than four points per isotope step) every point is a peak.
+(`pick = "peak"`, the default). In profile data a peak is a local maximum of the raw spectrum: a
+point, or a run of equal points (a flat top, as a clipped, saturated peak has), whose neighbours on
+both sides are lower; a neighbour beyond a gap in the data (more than 2.5 times the median point
+spacing) counts as lower, but the first and last points of a spectrum have no neighbour on one
+side and are never peaks (an export window that starts or ends on a peak's flank). Its value is
+the height of that point, its apex the centre of a flat top, or for a single point the vertex of
+the parabola through it and its two neighbours when both are lower and evenly spaced (audit of
+2026-11-01, Medium 27 and Low 49). In centroided data (fewer than two points per isotope step)
+every point is a peak; profile data as coarse as a Q-TOF's at charge 20 (about 2.8 points per
+step) stay profile (Low 50: the threshold was four points).
 The flank of a peak whose apex is outside the window is therefore never picked, and a peak whose
 apex is inside the window is picked at its full height even when its tallest point lies just
 outside. The reported m/z of the bin is the predicted one; where the peak was found is reported
@@ -230,7 +235,8 @@ hold at most one peak's apex. What remains open is a predicted position off the 
 
 The position of each picked peak is recorded (`peak_mz`): the m/z of the tallest point, refined to
 the vertex of the parabola through it and its two neighbours when both lie in the same window and
-are evenly spaced (profile data; centroided data keep the point itself). Each spectrum gets an
+are evenly spaced (profile data; centroided data keep the point itself), or the centre of a flat
+top of equal points (with `pick = "window_max"`, its part inside the window). Each spectrum gets an
 offset, `mz_offset_ppm`: the intensity-weighted median of `(peak - predicted) / predicted` over the
 bins at or above the threshold. The picker uses neither; they are a diagnostic.
 
@@ -256,15 +262,20 @@ fire. Before picking, the picker therefore checks every peptide-ion series with 
 controls (`hxex.picking.mz_check`; HISTORY item 166):
 
 - In each undeuterated control, the tops of the M, M+1 and M+2 peaks nearest their predictions
-  (from the profile point nearest the prediction, uphill through evenly spaced points, refined to
-  a parabola's vertex), searched within the larger of 40 ppm and twice the half-width, never
+  (from the profile point nearest the prediction, uphill through evenly spaced points and across
+  runs of equal ones; a flat top at its centre, a pointed one refined to a parabola's vertex),
+  searched within the larger of 40 ppm and twice the half-width, never
   beyond 0.4 of the isotope spacing. The control's offset is their median when the three agree
   within the larger of 5 ppm and a quarter of the half-width.
-- A run is one undeuterated injection (the controls of one sample and replicate). Its
-  calibration is a Theil-Sen line in m/z through its controls' offsets (a Q-TOF's drifts by about
-  +1 ppm per 100 m/z within a run; an Orbitrap's does not), its scatter the robust sd (1.4826 MAD)
-  of the offsets about the line. A run with fewer than 10 offsets takes the line and scatter of
-  all the controls.
+- A run is one undeuterated injection: a scan file of undeuterated controls (mzML, Thermo raw),
+  or with the other formats, which do not say which file a spectrum came from, the controls of
+  one sample and replicate (audit of 2026-11-01, question 17). Its calibration is a Theil-Sen line
+  in m/z through its controls' offsets (a Q-TOF's drifts by about +1 ppm per 100 m/z within a
+  run; an Orbitrap's does not), its scatter the robust sd (1.4826 MAD) of the offsets about the
+  line. A run with fewer than 10 offsets takes the line and scatter of all the controls. Fewer
+  than 5 offsets in all give no scatter (through three points the line passes through two of
+  them and the MAD is 0): then no series is assessed (NaN offset and limit; `mz_shift` judges
+  them), and the run logs it (audit of 2026-11-01, Medium 24).
 - A series is off its m/z (quality flag `off_mz`) when the median over its controls of (offset
   minus the calibration) is beyond `off_mz_sd` (6) times the scatter, and at least 3 ppm. The
   windows stay on the predicted m/z; the analysis leaves every spectrum of the series out,

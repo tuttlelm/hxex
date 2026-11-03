@@ -321,6 +321,23 @@ def test_series_rates_count_the_amides_of_parent_ions_only():
     assert len(acetyl) == 5 and np.isfinite(acetyl).all()
 
 
+def test_selenocysteine_and_pyrrolysine_series_get_no_rates(caplog):
+    """pyteomics knows U and O, kint has no factors for them: such a series gets no rates (the
+    median fallback, as a Hex series), logged, instead of stopping the run (audit of 2026-11-01,
+    Low 53)."""
+    from hxex.controls import series_rates
+    from hxex.kint import ExchangeConditions, intrinsic_rates, missing_factors
+
+    cond = ExchangeConditions(**QUENCH)
+    assert missing_factors("PEPUTIDE", cond) == ["U"] and missing_factors("PEPTIDE", cond) == []
+    with pytest.raises(ValueError, match="no intrinsic-rate factors"):
+        intrinsic_rates("PEPOTIDE", cond)
+    with caplog.at_level(logging.INFO, logger="hxex.controls"):
+        r = series_rates(["PEPTIDE", "PEPUTIDE", "PEPOTIDE"], ["", "", ""], [0, 1, 2], cond)
+    assert set(r) == {0}
+    assert "without intrinsic-rate factors (O, U)" in caplog.text and "PEPUTIDE" in caplog.text
+
+
 def test_kint_is_the_default_fallback_when_quench_conditions_are_given():
     assert ControlConfig().fd_mode == "median" and ControlConfig().fd_fallback is None
     auto = ControlConfig(quench=QUENCH)
@@ -476,15 +493,19 @@ def test_a_control_outside_its_time_course_is_rejected():
     assert not c.fallback[0] and c.mfd[0] == pytest.approx(7.0)
 
 
-def test_the_run_limit_rejects_an_outlier_and_records_itself():
-    ret = [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.20]
-    rows = [r for d, x in enumerate(ret) for r in ((d, 0, 0.0), (d, 0, 0.0), (d, 1e6, 10 * x),
+def _run_rows(ret):
+    return [r for d, x in enumerate(ret) for r in ((d, 0, 0.0), (d, 0, 0.0), (d, 1e6, 10 * x),
                                                    (d, 1e6, 10 * x))]
+
+
+def test_the_run_limit_rejects_an_outlier_and_records_itself():
+    ret = [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.47, 0.51, 0.50, 0.25]
+    rows = _run_rows(ret)
     c = table(rows)
-    assert c.flags[7] == "retention_outlier;fd_median" and c.fallback[7]
-    assert c.retention[7] == pytest.approx(0.50)
-    assert not c.fallback[:7].any()
-    assert c.limits["median"] == pytest.approx(0.50) and c.limits["n_series"] == 8
+    assert c.flags[10] == "retention_outlier;fd_median" and c.fallback[10]
+    assert c.retention[10] == pytest.approx(0.50)
+    assert not c.fallback[:10].any()
+    assert c.limits["median"] == pytest.approx(0.50) and c.limits["n_series"] == 11
     assert c.limits["retention_floor"] == pytest.approx(0.50 - 4 * c.limits["robust_sd"])
     # a set retention_min replaces the run's limit; a wider outlier_sd lets it through
     fixed = table(rows, ControlConfig(retention_min=0.1))
@@ -497,6 +518,17 @@ def test_the_run_limit_rejects_an_outlier_and_records_itself():
     for bad in ({"outlier_sd": 0}, {"time_course_tolerance": -1}, {"sample_tolerance": 0}):
         with pytest.raises(ValueError):
             ControlConfig(**bad)
+
+
+def test_the_run_limit_needs_ten_controls(caplog):
+    """The robust sd of fewer than ten retentions is too rough to reject a control by (a good
+    one was rejected in 9 % of simulated runs with five; audit of 2026-11-01, question 14): with
+    nine, the outlier is kept and the log says the rule was not applied."""
+    ret = [0.50, 0.52, 0.48, 0.51, 0.49, 0.50, 0.53, 0.47, 0.20]
+    with caplog.at_level(logging.INFO, logger="hxex.controls"):
+        c = table(_run_rows(ret))
+    assert not c.fallback.any() and c.limits["median"] is None and c.limits["n_series"] == 9
+    assert "retention_outlier not applied" in caplog.text and "needs 10" in caplog.text
 
 
 def test_flags_that_only_warn():
@@ -802,3 +834,64 @@ def test_a_multimodal_control_is_checked_against_its_other_charge_states():
     c = fit_controls(fake_fit(far, selected_K=k), np.full(len(far), 10.0), CFG, charges=charges)
     assert "fd_charges_agree" not in c.flags[0]
     assert "fd_multimodal (retention unchecked)" in _control_notes(c.flags[0])
+
+
+def test_control_replicates_need_five_replicated_time_points_for_their_scatter(caplog):
+    """One or two replicated time points give a far too rough typical sd (an ordinary control
+    replicate was left out in a tenth of such runs; audit of 2026-11-01, Medium 25): with fewer
+    than five the scatter rule is not applied (logged), the above-amides rule still is."""
+    rows = []
+    for d in range(2):  # two series, one replicated time point each
+        rows += [(d, 100.0, 5.0), (d, 100.0, 5.001), (d, 0, 0.0), (d, 0, 0.0)]
+    rows += [(0, 1e6, 8.0), (0, 1e6, 8.0), (0, 1e6, 8.5)]  # an ordinary scatter of 0.05 D/amide
+    rows += [(1, 1e6, 8.0), (1, 1e6, 8.1), (1, 1e6, 12.0)]  # one replicate above the amides
+    with caplog.at_level(logging.INFO, logger="hxex.controls"):
+        c = table(rows)
+    assert c.flags[0] == "" and c.mfd[0] == pytest.approx(8.5 / 3 + 16.0 / 3)
+    assert c.flags[1] == "fd_replicate_left_out" and c.mfd[1] == pytest.approx(8.05)
+    assert "not judged by their scatter" in caplog.text
+
+
+def test_only_accepted_controls_are_compared_between_samples():
+    """A rejected fully deuterated control (here fd_below_data) is not in use: the other sample's
+    good control is not flagged fd_disagrees against it, and the rejected one gets no such
+    note either (audit of 2026-11-01, Medium 26 and Low 54)."""
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 6.0), (0, 1e6, 6.0), (0, 600, 5.5)]
+    rows += [(1, 0, 0.0), (1, 0, 0.0), (1, 1e6, 0.5), (1, 1e6, 0.5), (1, 600, 5.5)]
+    groups = {0: ("PEPTIDE", "", 2), 1: ("PEPTIDE", "", 2)}
+    c = table(rows, groups=groups)
+    assert "fd_below_data" in c.flags[1].split(";")
+    assert "fd_disagrees" not in c.flags[0] and "fd_disagrees" not in c.flags[1]
+    # nor is a multimodal control compared with a rejected sibling charge state
+    from hxex.controls import charge_groups
+    from hxex.report.tables import _control_notes
+
+    ids = [r[0] for r in rows]
+    charges = charge_groups(["S"] * len(rows), ["PEP"] * len(rows), [""] * len(rows),
+                            [2 if d == 0 else 3 for d in ids], ids)
+    k = [1, 1, 2, 2, 1] + [1] * 5
+    c = fit_controls(fake_fit(rows, selected_K=k), np.full(len(rows), 10.0),
+                     ControlConfig(combine_charges=False, fd_other_charge=False),
+                     charges=charges)
+    assert "fd_charges_agree" not in c.flags[0]
+    assert "fd_multimodal (retention unchecked)" in _control_notes(c.flags[0])
+
+
+def test_data_below_m0_needs_an_undeuterated_control_in_use():
+    """An undeuterated control rejected as m0_high (0 used instead) cannot say that a time
+    point reads below it (audit of 2026-11-01, Low 46)."""
+    c = table([(0, 0, 2.0), (0, 0, 2.2), (0, 5, 0.5), (0, 1e6, 8.0), (0, 1e6, 8.2)])
+    assert "m0_high" in c.flags[0] and "data_below_m0" not in c.flags[0]
+
+
+def test_a_control_replicate_close_to_its_median_is_never_left_out():
+    """The owner's floor (2026-11-02; audit Medium 25): however closely the run's replicates
+    agree, a control replicate within 0.02 D per amide of its replicates' median stays."""
+    rows = []
+    for d in range(6):  # replicates agreeing to 0.0001 D per amide: 6 sd would be 0.0006
+        rows += [(d, 100.0, 5.0), (d, 100.0, 5.001), (d, 100.0, 4.999), (d, 0, 0.0), (d, 0, 0.0)]
+    rows += [(0, 1e6, 8.0), (0, 1e6, 8.0), (0, 1e6, 8.15)]  # 0.015 D per amide off: kept
+    rows += [(1, 1e6, 8.0), (1, 1e6, 8.0), (1, 1e6, 8.5)]  # 0.05 off: left out
+    c = table(rows)
+    assert c.flags[0] == "" and c.mfd[0] == pytest.approx((8.0 + 8.0 + 8.15) / 3)
+    assert c.flags[1] == "fd_replicate_left_out" and c.mfd[1] == pytest.approx(8.0)

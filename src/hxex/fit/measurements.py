@@ -66,8 +66,12 @@ class Measurements:
             if not np.array_equal(b, np.round(b)) or np.any(b < 0):
                 raise ValueError(f"measurement {i}: bins must be whole numbers of 0 or more "
                                  "(deuterons beyond natural abundance)")
-        if np.any(np.asarray(self.n_max) <= 0):
-            raise ValueError("n_max must be positive")
+            if not np.all(np.isfinite(np.asarray(o, dtype=np.float64))):
+                raise ValueError(f"measurement {i} ({self.spectrum_id[i]}): its intensities "
+                                 "must all be finite numbers (NaN or infinity found)")
+        n_max = np.asarray(self.n_max, dtype=np.float64)
+        if np.any(~np.isfinite(n_max) | (n_max <= 0)):
+            raise ValueError("n_max must be a positive finite number for every measurement")
 
     def __len__(self) -> int:
         return len(self.bins)

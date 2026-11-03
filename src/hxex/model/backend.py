@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,8 @@ class Backend:
     def __post_init__(self):
         if self.dtype not in _DTYPES:
             raise ValueError(f"dtype must be one of {_DTYPES}, got {self.dtype!r}")
-        if not (self.device in ("auto", "cpu") or self.device.split(":")[0] == "cuda"):
+        if not (self.device in ("auto", "cpu", "cuda")
+                or re.fullmatch(r"cuda:\d+", str(self.device))):  # audit 2026-11-01 Low 60
             raise ValueError(
                 f"device must be 'auto', 'cpu', 'cuda' or 'cuda:N', got {self.device!r}"
             )

@@ -71,12 +71,13 @@ The fitted model is :attr:`ControlTable.fd_model`.
 
 A measured control with a single replicate has no uncertainty (flagged ``m0_unreplicated`` or
 ``fd_unreplicated``); a theoretical value is exact. Two flags only warn and leave the control
-in use: ``fd_disagrees`` (its retention differs from the same peptide's in the other samples
-by more than ``sample_tolerance``; :func:`series_groups`) and ``fd_multimodal`` or
+in use: ``fd_disagrees`` (its retention differs from the same peptide's accepted controls in
+the other samples by more than ``sample_tolerance``; :func:`series_groups`; a rejected control
+is neither compared nor flagged) and ``fd_multimodal`` or
 ``m0_multimodal`` (most of a control's replicate spectra chose more than one population: an
 incompletely deuterated or a mixed sample), and ``data_below_m0`` (a time point of the series
 reads below its undeuterated control by more than ``time_course_tolerance``: that time point
-is suspect). The corrected mean of a population is
+is suspect; only when the undeuterated control is in use). The corrected mean of a population is
 ``(mean - m0) / (mFD - m0) * n_amides``, not below 0 (:func:`correct_means`); the uncertainty of
 the controls is added to the uncertainty of the mean.
 """
@@ -132,18 +133,18 @@ class ControlConfig:
     - ``outlier_sd``: with ``retention_min`` unset, a fully deuterated control whose retention
       is more than this many robust standard deviations (1.4826 times the median absolute
       deviation) below the median of the run's controls is rejected (``retention_outlier``);
-      judged only when at least five controls pass the other checks. Retention depends on the
-      workflow and on the peptide (its sequence, its time in the LC), so a fixed floor would
-      reject good controls of a workflow with much back-exchange.
+      judged only when at least ten controls (``OUTLIER_MIN_SERIES``) pass the other checks.
+      Retention depends on the workflow and on the peptide (its sequence, its time in the LC),
+      so a fixed floor would reject good controls of a workflow with much back-exchange.
     - ``time_course_tolerance`` (deuterons per amide): a fully deuterated control below the
       highest time point of its series (the median of its replicates' K=1 means, uncorrected)
       by more than this times ``n_amides`` is rejected (``fd_below_data``: it did not fully
       deuterate); an undeuterated control above the lowest time point by more than this is
       only flagged (``data_below_m0``: the early, fast time points are the hard ones to
       measure, so the time point is suspect, not the control).
-    - ``sample_tolerance`` (fraction): a measured fully deuterated control whose retention
-      differs from the median of the same peptide's controls in the other samples (or
-      conditions) by more than this is flagged ``fd_disagrees``, not rejected.
+    - ``sample_tolerance`` (fraction): an accepted measured fully deuterated control whose
+      retention differs from the median of the same peptide's accepted controls in the other
+      samples (or conditions) by more than this is flagged ``fd_disagrees``, not rejected.
     - ``combine_charges`` (the default): every charge state of a peptide in one sample takes
       the plain mean retention of the peptide's accepted measured fully deuterated controls
       over its charge states (flagged ``fd_charges_combined`` where two or more contribute):
@@ -159,7 +160,9 @@ class ControlConfig:
       typical replicate standard deviations (in deuterons per amide, from the run's time-point
       replicates: the median of their chi-square-scaled variances) from the median of the
       series' replicates of that control (three or more) is left out of its mean, flagged
-      ``m0_replicate_left_out`` or ``fd_replicate_left_out`` (a warning); None turns it off. A
+      ``m0_replicate_left_out`` or ``fd_replicate_left_out`` (a warning); None turns it off.
+      The typical sd needs at least five replicated time points (``REPLICATE_MIN_GROUPS``);
+      with fewer this part is not applied (logged). A
       control replicate whose K=1 mean is above the amide count is always left out (the same
       flags): no deuterium level explains it (owner, 2026-10-22, HISTORY 143). So is one left
       out of the noise estimate as a noise outlier (the same flags; owner, 2026-10-29).
@@ -457,15 +460,18 @@ def series_rates(
     """The intrinsic rates (1/s) at ``conditions`` of the amides each series counts
     (``data_id`` -> array, in :func:`hxex.chem.amide_positions` order), from per-spectrum
     ``peptide``, ``modification`` and ``data_id`` arrays (a picked set's). Only parent-type
-    ions (``M``) without extra ``Hex`` sites get rates; a counted N-terminal amine (with
-    ``nterm_subtract`` 0) has an infinite rate (it keeps nothing)."""
+    ions (``M``) without extra ``Hex`` sites, and without residues that have no rate factors
+    (selenocysteine ``U``, pyrrolysine ``O``: logged), get rates; the others take the median
+    fallback. A counted N-terminal amine (with ``nterm_subtract`` 0) has an infinite rate (it
+    keeps nothing)."""
     from . import chem
-    from .kint import intrinsic_rates
+    from .kint import intrinsic_rates, missing_factors
 
     rules = chem.DEFAULT_AMIDE_RULES if rules is None else rules
     registry = chem.DEFAULT_MODIFICATIONS if registry is None else registry
     out: dict[int, np.ndarray] = {}
     cache: dict[tuple[str, str], np.ndarray | None] = {}
+    no_factors: dict[str, list[str]] = {}
     for pep, mod, d in zip(np.asarray(peptide), np.asarray(modification), np.asarray(data_id),
                            strict=True):
         d = int(d)
@@ -474,7 +480,11 @@ def series_rates(
         key = (str(pep), str(mod))
         if key not in cache:
             spec = chem.parse_modification(key[1])
-            if spec.ion_type != "M" or spec.hex:
+            unknown = ([] if spec.ion_type != "M" or spec.hex
+                       else missing_factors(key[0], conditions, registry=registry))
+            if unknown:
+                no_factors[key[0]] = unknown
+            if spec.ion_type != "M" or spec.hex or unknown:
                 cache[key] = None
             else:
                 pos = np.array(chem.amide_positions(key[0], "M", None,
@@ -484,6 +494,11 @@ def series_rates(
                 cache[key] = np.where(np.isfinite(k), k, np.inf)
         if cache[key] is not None:
             out[d] = cache[key]
+    if no_factors:
+        log.info("%d peptide(s) have residues without intrinsic-rate factors (%s), so their "
+                 "series get no predicted rates and take the median retention: %s",
+                 len(no_factors), ", ".join(sorted({r for v in no_factors.values() for r in v})),
+                 ", ".join(sorted(no_factors)))
     return out
 
 
@@ -729,7 +744,7 @@ def fit_controls(
             flags.append("fd_unreplicated")
         # a time point below the undeuterated control: the early, fast points are the hard
         # ones to measure, so the time point is suspect, not the control (a note only)
-        if n_u > 0 and np.isfinite(low) and m0_meas > low + tol:
+        if m0_ok and np.isfinite(low) and m0_meas > low + tol:
             flags.append("data_below_m0")
         for label, name in ((UNDEUT, "m0_multimodal"), (FULLDEUT, "fd_multimodal")):
             used = rows[usable[rows] & ~left_out[rows] & serves[label][rows]]
@@ -822,7 +837,9 @@ def _control_replicates_left_out(fit, means: np.ndarray, n_amides: np.ndarray,
     """The control spectra left out of their control's mean (``replicate_outlier``): a K=1 mean
     above the amide count, or a replicate far from the median of its series' replicates of
     that control (three or more), measured in typical replicate standard deviations of the
-    run's time points (deuterons per amide, uncorrected)."""
+    run's time points (deuterons per amide, uncorrected); that scatter needs
+    :data:`REPLICATE_MIN_GROUPS` replicated time points, else only the first rule applies, and
+    the limit is never below :data:`REPLICATE_FLOOR` deuterons per amide."""
     role_rows = (serves[UNDEUT] | serves[FULLDEUT]) & usable & np.isfinite(means)
     skip = np.isin(np.asarray(fit.data_id), list(uncorrected))
     out = role_rows & ~skip & (means > n_amides + 1e-9)
@@ -837,25 +854,41 @@ def _control_replicates_left_out(fit, means: np.ndarray, n_amides: np.ndarray,
         groups.setdefault((int(fit.data_id[i]), points[i]), []).append(i)
     scaled = [float(np.var(per_amide[g], ddof=1)) * (len(g) - 1) / stats.chi2.median(len(g) - 1)
               for g in groups.values() if len(g) >= 2]
-    if not scaled:
-        return out
-    limit = config.replicate_outlier * float(np.sqrt(np.median(scaled)))
     ids = np.asarray(fit.data_id)
+    judged: list[list[int]] = []  # each control's replicates (three or more)
     for label in (UNDEUT, FULLDEUT):
         rows_of: dict[int, list[int]] = {}
         for i in np.flatnonzero(role_rows & ~skip & ~out & serves[label]):
             rows_of.setdefault(int(ids[i]), []).append(i)
-        for g in rows_of.values():
-            if len(g) < 3:
-                continue
-            centre = float(np.median(per_amide[g]))
-            for i in g:
-                if abs(per_amide[i] - centre) > limit:
-                    out[i] = True
+        judged += [g for g in rows_of.values() if len(g) >= 3]
+    if not judged:
+        return out
+    if len(scaled) < REPLICATE_MIN_GROUPS:
+        log.info("replicate_outlier: the typical replicate scatter needs %d replicated time "
+                 "points (a series at one time), the run has %d, so control replicates are not "
+                 "judged by their scatter (only those above the amide count are left out)",
+                 REPLICATE_MIN_GROUPS, len(scaled))
+        return out
+    # never closer than REPLICATE_FLOOR to the median: a run whose replicates happen to agree
+    # closely cannot reject one for a hundredth of a deuteron (owner, 2026-11-02; audit Medium 25)
+    limit = max(config.replicate_outlier * float(np.sqrt(np.median(scaled))), REPLICATE_FLOOR)
+    for g in judged:
+        centre = float(np.median(per_amide[g]))
+        for i in g:
+            if abs(per_amide[i] - centre) > limit:
+                out[i] = True
     return out
 
 
-OUTLIER_MIN_SERIES = 5  # the fewest controls the run-relative limit is computed from
+REPLICATE_FLOOR = 0.02  # D per amide: the control replicate-outlier limit is never below it
+REPLICATE_MIN_GROUPS = 5  # replicated time points the typical replicate scatter needs (with
+# one, a one-degree-of-freedom estimate dropped an ordinary replicate in a tenth of runs; audit
+# of 2026-11-01, Medium 25)
+
+
+OUTLIER_MIN_SERIES = 10  # the fewest controls the run-relative limit is computed from
+# (the MAD of five values is a poor sd: with five, a good control was rejected in 9 % of
+# simulated runs, 4.7 % with ten; audit of 2026-11-01, open question 14)
 
 
 def _run_limits(cols: dict, candidates: list[int], config: ControlConfig) -> dict:
@@ -865,8 +898,9 @@ def _run_limits(cols: dict, candidates: list[int], config: ControlConfig) -> dic
     ret = np.array([cols["retention"][i] for i in candidates], dtype=float)
     if len(ret) < OUTLIER_MIN_SERIES:
         if len(ret):
-            log.info("the run-relative retention limit needs %d controls, %d passed the other "
-                     "checks: no lower limit", OUTLIER_MIN_SERIES, len(ret))
+            log.info("retention_outlier not applied: the run-relative retention limit needs %d "
+                     "fully deuterated controls that passed the other checks, %d did",
+                     OUTLIER_MIN_SERIES, len(ret))
         return {"retention_floor": 0.0, "median": None, "robust_sd": None,
                 "n_series": len(ret)}
     median = float(np.median(ret))
@@ -902,19 +936,21 @@ def _flag_disagreement(cols: dict, series: np.ndarray, groups: Mapping | None,
     """Flag ``fd_disagrees`` on the measured fully deuterated controls whose retention differs
     by more than ``sample_tolerance`` from the median of their group (the same peptide in the
     other samples, :func:`series_groups`; with two controls, from the other one: both are
-    flagged). A control flagged ``fd_multimodal`` whose retention agrees gets
+    flagged). Only controls that passed their checks (:func:`_fd_used`) are compared or
+    flagged: a rejected control is not in use, and its retention says nothing about the
+    others'. A control flagged ``fd_multimodal`` whose retention agrees gets
     ``fd_retention_agrees``: its envelope is wide or split, but its retention, which the
     correction uses, matches the other samples' (owner, 2026-10-22). One that no other sample
     can check is compared with the same peptide's measured controls at its other charge
     states in the same sample (``charges``): ``fd_charges_agree`` when its retention is within
-    ``sample_tolerance`` of their median (HISTORY 145)."""
+    ``sample_tolerance`` of their median (HISTORY 145; again only the accepted ones)."""
     if groups:
         _flag_sample_disagreement(cols, series, groups, config)
     if not charges:
         return
     members: dict[tuple, list[int]] = {}
     for i, s in enumerate(series):
-        if int(s) in charges and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0:
+        if int(s) in charges and _fd_used(cols, i):
             members.setdefault(charges[int(s)][0], []).append(i)
     for rows in members.values():
         measured = {i: (cols["mfd_measured"][i] - cols["m0"][i]) / cols["n_amides"][i]
@@ -934,7 +970,7 @@ def _flag_sample_disagreement(cols: dict, series: np.ndarray, groups: Mapping,
     """The other-samples part of :func:`_flag_disagreement`."""
     members: dict[Any, list[int]] = {}
     for i, s in enumerate(series):
-        if (int(s) in groups and cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
+        if (int(s) in groups and _fd_used(cols, i)
                 and "uncorrected" not in cols["flags"][i].split(";")):
             members.setdefault(groups[int(s)], []).append(i)
     n = 0

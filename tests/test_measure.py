@@ -162,3 +162,26 @@ def test_a_run_records_its_choice_and_the_bundle_keeps_it(tmp_path):
         assert b.peak_measure() == result.peak_measure
         assert b.manifest["peak_measure"]["measure"] == "area"
     assert "areas (weak peaks" in result.peak_measure.describe()
+
+
+def test_auto_picks_the_controls_with_their_recorded_resolving_power(monkeypatch):
+    """With resolving_power = "recorded", the width measurement picks the controls with each
+    spectrum's recorded resolving power, as the run does (audit of 2026-11-01, Low 48)."""
+    import dataclasses
+
+    import hxex.picking.pick as pick
+
+    spectra = control_set(3, 0.3)
+    spectra = dataclasses.replace(spectra, resolving_power=np.full(3, 40000.0),
+                                  resolving_power_mz=np.full(3, 400.0))
+    seen = []
+    original = pick.pick_spectrum
+
+    def recording(*args, **kw):
+        seen.append((kw.get("resolving_power"), kw.get("resolving_power_mz")))
+        return original(*args, **kw)
+
+    monkeypatch.setattr(pick, "pick_spectrum", recording)
+    choose_measure(spectra, PickerConfig(pick="window_max", resolving_power="recorded",
+                                         measure="auto"))
+    assert seen and all(s == (40000.0, 400.0) for s in seen)

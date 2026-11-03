@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -52,6 +53,8 @@ def parse_modification(text: str | None) -> ModificationSpec:
                 ion_type = check_ion_type(value)
             elif key == "undeut_mz":
                 undeut_mz = float(value)
+                if not (math.isfinite(undeut_mz) and undeut_mz > 0):
+                    raise ChemistryError(f"undeut_mz must be a finite m/z above 0, got {item!r}")
             elif key == "Hex":
                 hex_sites = int(value)
                 if hex_sites < 0:

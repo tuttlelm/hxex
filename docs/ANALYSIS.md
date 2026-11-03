@@ -543,8 +543,13 @@ extra populations. `[run.picker] pick = "peak"` (the default since HISTORY item 
 apexes; bundles picked before keep their sticks until run again.
 
 **The test.** For a spectrum, the statistic of K against K + 1 is
-`T = 2 (nll_K - nll_K+1)` from its own fits (negative values count as 0). Its null comes from
-simulation: data drawn from the spectrum's K-population fit with the fit's noise, refitted at 1
+`T = 2 (nll_K - nll_K+1)` from its own fits (negative values count as 0, and so do values
+below the precision of the losses, `2 (1e-3 + 1e-4 |nll_K|)`, the screen's tolerance; with
+per-bin noise `nll_K` is about half the bin count, so this is a few thousandths, and with one
+sd per spectrum on a spectrum much brighter than its reference it can reach 1 to 2; HISTORY
+176). Its null comes from simulation (a null whose draws are all the same gives no p-value:
+the spectrum is not tested at that step, `test_null_K = "flat"` in spectra.csv; a draw whose
+refits all fail is left out, logged): data drawn from the spectrum's K-population fit with the fit's noise, refitted at 1
 to K + 1 as the run fits (nested starts), `simulations` times (20); each spectrum keeps the mean
 and variance of its null draws. A set (sample, peptide, time or control role; charge states and
 replicates pooled) adds up its spectra's statistics, and the means and variances of their nulls

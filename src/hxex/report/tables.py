@@ -208,7 +208,9 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
     fewer components); with the population test (:mod:`hxex.population_test`), the K the
     fit's criterion chose (``criterion_K``; ``K`` is then the test's), each step's p-value
-    (``test_p_<K>``, K against K + 1; empty where untested) and ``narrow_component`` (the width
+    (``test_p_<K>``, K against K + 1; empty where untested) and how its null was made
+    (``test_null_<K>``: ``simulated``, ``chi_square``, ``screened``, ``flat`` (every simulated
+    draw the same: not tested), or empty: untested), ``narrow_component`` (the width
     check left the spectrum at fewer populations); then the spectrum quality screens' scores
     (``screen_*``, :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of
     the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
@@ -251,6 +253,7 @@ def _test_columns(results: Results) -> dict[str, np.ndarray]:
     out = {"criterion_K": np.asarray(test.criterion_K, dtype=np.int64)}
     for s, k in enumerate(test.steps):
         out[f"test_p_{k}"] = np.asarray(test.p[:, s], dtype=float)
+        out[f"test_null_{k}"] = np.asarray(test.null_kind[:, s], dtype=object)
     # the fit at the K in effect: the step that added its last population (none at K = 1)
     step = {int(k) + 1: s for s, k in enumerate(test.steps)}
     narrow = np.asarray(test.narrow, dtype=bool)

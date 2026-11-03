@@ -97,7 +97,13 @@ does the same thing.
 ## Judging the controls and the correction
 
 How *hxex* judges each control, and what it uses when a control is missing or rejected, is in
-[Back-exchange correction](back-exchange-correction.md).
+[Back-exchange correction](back-exchange-correction.md). Two of those checks compare a control
+with the rest of the run, and a small project may not have enough to compare with: a fully
+deuterated control far below the others is rejected only when at least ten controls can be
+compared, and a control replicate far from its other replicates is left out only when the run
+has at least five replicated time points to measure the typical scatter by. With fewer, the
+check is not made, and `hxex run` says so in its log. A control replicate within 0.02 D per amide
+of its other replicates' median is never left out, however closely the run's replicates agree.
 
 ## Writing times
 

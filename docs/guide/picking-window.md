@@ -15,8 +15,10 @@ pick = "peak"   # the default; "window_max" picks as pyHXExpress does
 
 Each bin takes the tallest **peak** whose top lies inside its window. In a profile spectrum a
 peak is a point higher than its neighbours, and its top is found from that point and the two
-beside it, so it can lie between the recorded points. In a centroided spectrum every point is a
-peak.
+beside it, so it can lie between the recorded points. A flat top, several equal points where the
+instrument clipped a very bright peak, is one peak whose top is its middle. The first and last
+points of a spectrum are not peaks: with nothing recorded beyond them, they may be the side of a
+peak the export cut off. In a centroided spectrum every point is a peak.
 
 This matters when a brighter peak sits just outside a window, for example the peak of another
 peptide that comes off the column at the same time, a little away from where *hxex* expects this
@@ -188,7 +190,9 @@ Before picking, *hxex* looks at the undeuterated controls. In each one it finds 
 of the three lightest peaks (M, M+1, and M+2) actually are, searching well beyond the picking
 window (at least 40 ppm either side). On a calibrated instrument the peptides of one injection
 sit together: their peaks are all off by about the same small amount, the instrument's
-calibration, give or take a little scatter. On an Orbitrap the calibration is the same across
+calibration, give or take a little scatter. With scan files (mzML or Thermo raw) an injection is
+one undeuterated control file; with the other formats, which do not say which file a spectrum came
+from, it is the undeuterated controls of one sample and replicate. On an Orbitrap the calibration is the same across
 the m/z range; on a Q-TOF it drifts by about 1 ppm per 100 m/z, so *hxex* fits a straight line
 in m/z for each injection.
 
@@ -202,7 +206,10 @@ the peptide's.
 
 *hxex* calls such a series **off its m/z** when its controls sit further from the line than
 `off_mz_sd` times the injection's scatter (and at least 3 ppm). An injection with fewer than ten
-undeuterated controls uses the line and scatter of all of them. Because the limit follows the
+undeuterated controls uses the line and scatter of all of them. The check needs at least five
+undeuterated controls in the project whose peaks were found: the scatter of three or four is no
+measure (a line through three points passes through two of them), so with fewer no series is
+checked, `hxex run` says so, and `envelope_offset_ppm` is empty. Because the limit follows the
 scatter, it adapts to the instrument: on an Orbitrap digest the scatter was 0.7 ppm, on a Q-TOF
 dataset 2 to 3 ppm.
 

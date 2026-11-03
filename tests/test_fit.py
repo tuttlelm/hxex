@@ -458,26 +458,60 @@ def test_progress_and_cancel():
         fit_models(meas, cfg, cancel=lambda: next(flags, True))
 
 
+def _with_observed(meas, obs):
+    """``meas`` holding ``obs`` without the checks (Measurements refuses non-finite
+    intensities): a fit whose loss turns non-finite numerically takes the same path."""
+    out = Measurements.from_arrays(meas.bins, [np.ones_like(o) for o in obs], meas.shapes,
+                                   meas.n_max, spectrum_id=meas.spectrum_id)
+    object.__setattr__(out, "observed", obs)
+    return out
+
+
+def test_non_finite_intensities_and_silent_spectra_are_refused():
+    """Audit 2026-11-01 Engine 31, 32 and Low 55: a NaN intensity is refused naming the
+    measurement; a spectrum without any signal, or no measurement at all, is not fitted."""
+    meas, _ = synthetic([UNIMODAL, BIMODAL])
+    obs = [o.copy() for o in meas.observed]
+    obs[1][3] = np.nan
+    with pytest.raises(ValueError, match="measurement 1 .*finite"):
+        Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
+                                 spectrum_id=meas.spectrum_id)
+    with pytest.raises(ValueError, match="n_max"):
+        Measurements.from_arrays(meas.bins, meas.observed, meas.shapes,
+                                 np.array([np.nan, 5.0]))
+    silent = Measurements.from_arrays(meas.bins, [meas.observed[0] * 0.0, meas.observed[1]],
+                                      meas.shapes, meas.n_max, spectrum_id=["a", "b"])
+    cfg = FitConfig(noise=NoiseConfig("gaussian", sd=1.0, percent=None), backend=CPU, k_max=1,
+                    adam_steps=5, n_restarts=1)
+    with pytest.raises(ValueError, match="1 measurement.* no signal.*\\(a\\)"):
+        fit_models(silent, cfg)
+    with pytest.raises(ValueError, match="no measurements"):
+        fit_models(silent.select(np.array([], dtype=np.int64)), cfg)
+
+
 def test_a_non_finite_measurement_does_not_stop_the_others(caplog):
     meas, _ = synthetic([BIMODAL, UNIMODAL, BIMODAL])
     obs = [o.copy() for o in meas.observed]
     obs[1][3] = np.nan
-    bad = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
-                                   spectrum_id=meas.spectrum_id)
+    bad = _with_observed(meas, obs)
     cfg = FitConfig(noise=NoiseConfig("gaussian", sd=1500.0, percent=None), backend=CPU, **FAST)
     with caplog.at_level(logging.WARNING, logger="hxex.fit.optimise"):
         res = fit_models(bad, cfg)
     assert "non-finite" in caplog.text
     assert np.isinf(res.fits[1].nll[1]) and np.all(np.isfinite(res.fits[1].nll[[0, 2]]))
     assert res.selected_K[0] == 2 and res.selected_K[2] == 2
-    assert np.all(np.isfinite(res.fits[2].n[1]))  # placeholder parameters are finite
+    # placeholders are never read as a fit: NaN parameters, no population passes, no table
+    # rows (the raw parameters stay finite for the optimiser)
+    assert np.isnan(res.fits[2].n[1]).all() and not res.fits[2].passes_min_pop[1]
+    assert np.isfinite(res.fits[2].n_raw[1]).all()
+    assert 1 not in set(res.table()["measurement"])
 
 
 def test_all_non_finite_raises():
     meas, _ = synthetic([UNIMODAL])
     obs = [meas.observed[0].copy()]
     obs[0][:] = np.nan
-    bad = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max)
+    bad = _with_observed(meas, obs)
     cfg = FitConfig(noise=NoiseConfig("gaussian", sd=1.0, percent=None), backend=CPU, k_max=1,
                     adam_steps=5, n_restarts=1)
     with pytest.raises(FitError, match="non-finite"):
@@ -486,14 +520,14 @@ def test_all_non_finite_raises():
 
 def test_a_reference_without_intensity_is_refused():
     """A zero reference gives a zero noise scale: refused naming the spectrum, not fitted to
-    NaN in every restart."""
+    NaN in every restart (the spectrum without signal is refused first, naming it)."""
     meas, _ = synthetic([UNIMODAL, BIMODAL])
     obs = [meas.observed[0] * 0.0, meas.observed[1]]
     zero = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
                                     spectrum_id=np.array(["p:zero", "p:b"]),
                                     references=[None, (0,)])
     cfg = FitConfig(backend=CPU, k_max=1, adam_steps=5, n_restarts=1)
-    with pytest.raises(FitError, match="2 spectra have no noise level.*p:zero, p:b"):
+    with pytest.raises(ValueError, match=r"no signal .*\(p:zero\)"):
         fit_models(zero, cfg)
 
 
@@ -645,3 +679,26 @@ def test_the_screen_keeps_the_selected_k_and_marks_what_it_skipped(screened):
     fit.require_fitted(1, 2)
     merged = type(fit).merge([fit.select([0, 1]), fit.select([2, 3, 4, 5])], [[0, 1], [2, 3, 4, 5]])
     assert np.array_equal(merged.fitted(2), fit.fitted(2))
+
+
+def test_one_deuteron_is_one_population_and_poisson_takes_no_negative_counts():
+    """Audit 2026-11-01 Low 57: a measurement with at most one exchangeable deuteron (n_max
+    below 2) is fitted at K = 1 only. Low 56: the Poisson model refuses negative intensities.
+    Low 60: a device must be cpu, cuda or cuda:N."""
+    meas, _ = synthetic([UNIMODAL, BIMODAL])
+    small = Measurements.from_arrays(meas.bins, meas.observed, meas.shapes,
+                                     np.array([1.2, meas.n_max[1]]), spectrum_id=["one", "b"])
+    cfg = FitConfig(noise=NoiseConfig("gaussian", sd=1500.0, percent=None), backend=CPU, **FAST)
+    res = fit_models(small, cfg)
+    assert not res.fitted(2)[0] and res.fitted(2)[1] and res.selected_K[0] == 1
+    obs = [o.copy() for o in meas.observed]
+    obs[0][0] = -5.0
+    neg = Measurements.from_arrays(meas.bins, obs, meas.shapes, meas.n_max,
+                                   spectrum_id=["neg", "b"])
+    with pytest.raises(ValueError, match="negative intensities.*Poisson.*neg"):
+        fit_models(neg, FitConfig(noise=NoiseConfig("poisson", n_eff=1000.0, percent=None,
+                                                    estimate=None), backend=CPU, k_max=1,
+                                  adam_steps=5, n_restarts=1))
+    Backend("cuda:1")
+    with pytest.raises(ValueError, match="cuda:N"):
+        Backend("cuda:abc")

@@ -29,7 +29,7 @@ different resolving power.
 
 Peaks count above 5 % of the tallest point in the inspected range and 5 times its baseline
 (the median intensity of profile data, the lower quartile of centroided data), and in profile
-data with a prominence of 3 times the baseline. Data with fewer than 4 points per isotope step
+data with a prominence of 3 times the baseline. Data with fewer than 2 points per isotope step
 in the range are centroided: every point is a peak. A spectrum without picked intensity, or
 with fewer than three raw points, is not assessed (NaN); so are spectra picked elsewhere.
 """
@@ -54,7 +54,7 @@ NEAR = 0.25  # steps: a peak this close to a position belongs to it
 PEAK_SHARE = 0.05  # a peak reaches this share of the tallest point ...
 PEAK_BASELINE = 5.0  # ... and this many baselines
 PROMINENCE_BASELINE = 3.0  # profile peaks: prominence in baselines
-STICK_POINTS = 4  # fewer points per isotope step: centroided data
+STICK_POINTS = 2  # fewer points per isotope step: centroided data
 ENVELOPE_SHARE = 0.10  # the envelope's bins reach this share of its tallest bin
 SHAPE_SHARE = 0.01  # natural-abundance peaks counted in the reachable width
 LOW_BINS = 4  # screen_off_position looks at bins 0 to 4

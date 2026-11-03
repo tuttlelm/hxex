@@ -191,7 +191,8 @@ class FitResult:
         """One row per measurement, K and component, as a dict of equal-length columns.
 
         ``k_ordered`` ranks the components of a fit by ascending mean. Rows are ordered by
-        measurement, then K, then component. Fits the screen skipped have no rows.
+        measurement, then K, then component. Fits the screen skipped have no rows, nor have
+        fits that failed (an infinite loss: their parameters are placeholders).
         """
         cols: dict[str, list] = {name: [] for name in _TABLE_COLUMNS}
         for k in self.k_values:
@@ -201,7 +202,8 @@ class FitResult:
             fitted = self.fitted(k)
             for m in range(len(self)):
                 is_sel = bool(self.selected_K[m] == k)
-                if (selected_only and not is_sel) or not fitted[m]:
+                if (selected_only and not is_sel) or not fitted[m] or not np.isfinite(
+                        fit.nll[m]):
                     continue
                 for c in range(k):
                     row = {

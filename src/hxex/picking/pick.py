@@ -237,12 +237,15 @@ def _bin_values(
 def _peaks(mz: np.ndarray, y: np.ndarray, charge: int, span: tuple[float, float] | None = None
            ) -> tuple[np.ndarray, np.ndarray]:
     """The peaks of a spectrum (``mz`` sorted), within ``span`` (m/z) when given: their indices
-    and apex m/z, in order of the apex. Profile data: every point above 0 higher than the point
-    before it and at least as high as the point after it (the first point of a plateau), a gap
-    in the data (more than ``GAP_SPACING`` times the median spacing) counting as lower; the apex
-    is the vertex of the parabola through the point and its neighbours when both are lower,
-    above 0 and evenly spaced, else the point. Centroided data (fewer than ``STICK_POINTS``
-    points per isotope step, ``1.00235 / charge``): every point above 0, at its own m/z."""
+    and apex m/z, in order of the apex. Profile data: every point above 0 whose neighbours on
+    both sides are lower, a run of equal points (a flat, clipped top) counting as one point
+    whose apex is the run's centre; a neighbour beyond a gap in the data (more than
+    ``GAP_SPACING`` times the median spacing) counts as lower, but the first and last point of
+    the spectrum have no neighbour on one side and are never peaks (a spectrum cut on a flank).
+    The apex of a single point is the vertex of the parabola through it and its neighbours when
+    both are lower, above 0 and evenly spaced, else the point. Centroided data (fewer than
+    ``STICK_POINTS`` points per isotope step, ``1.00235 / charge``): every point above 0, at its
+    own m/z."""
     a, b = 0, len(mz)
     if span is not None:
         a = max(int(np.searchsorted(mz, span[0], side="left")) - 1, 0)
@@ -256,12 +259,27 @@ def _peaks(mz: np.ndarray, y: np.ndarray, charge: int, span: tuple[float, float]
         j = np.flatnonzero(v > 0)
         return a + j, x[j]
     gap = d > GAP_SPACING * spacing
-    rises = np.r_[True, gap | (v[:-1] < v[1:])]  # lower (or no data) before the point
-    falls = np.r_[gap | (v[1:] <= v[:-1]), True]  # not higher (or no data) after it
-    j = np.flatnonzero(rises & falls & (v > 0))
-    apex = x[j].copy()
-    inner = j[(j > 0) & (j < len(x) - 1)]
-    if len(inner):
+    # runs of equal points (not across a gap): first and last index of each
+    first = np.flatnonzero(np.r_[True, (v[1:] != v[:-1]) | gap])
+    last = np.r_[first[1:] - 1, len(x) - 1]
+    height = v[first]
+    # the neighbour before the run: lower, or beyond a gap; outside the slice, the spectrum's
+    lower_before = np.zeros(len(first), dtype=bool)
+    inside = first > 0
+    lower_before[inside] = gap[first[inside] - 1] | (v[first[inside] - 1] < height[inside])
+    if first[0] == 0 and a > 0:
+        lower_before[0] = (x[0] - mz[a - 1] > GAP_SPACING * spacing) or y[a - 1] < v[0]
+    lower_after = np.zeros(len(first), dtype=bool)
+    inside = last < len(x) - 1
+    lower_after[inside] = gap[last[inside]] | (v[last[inside] + 1] < height[inside])
+    if last[-1] == len(x) - 1 and b < len(mz):
+        lower_after[-1] = (mz[b] - x[-1] > GAP_SPACING * spacing) or y[b] < v[-1]
+    top = lower_before & lower_after & (height > 0)
+    j, k = first[top], last[top]
+    apex = 0.5 * (x[j] + x[k])  # a plateau's centre; a single point's own m/z
+    single = np.flatnonzero((j == k) & (j > 0) & (j < len(x) - 1))
+    if len(single):
+        inner = j[single]
         x0, x1, x2 = x[inner - 1], x[inner], x[inner + 1]
         y0, y1, y2 = v[inner - 1], v[inner], v[inner + 1]
         even = np.maximum(x1 - x0, x2 - x1) < GAP_SPACING * np.minimum(x1 - x0, x2 - x1)
@@ -272,18 +290,26 @@ def _peaks(mz: np.ndarray, y: np.ndarray, charge: int, span: tuple[float, float]
             qb = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den
             vertex = np.clip(-qb / (2 * qa), x0, x2)
         ok &= qa < 0
-        apex[np.searchsorted(j, inner[ok])] = vertex[ok]
+        apex[single[ok]] = vertex[ok]
     order = np.argsort(apex, kind="stable")
     return a + j[order], apex[order]
 
 
 def _apex(mz: np.ndarray, y: np.ndarray, j: int, a: int, b: int) -> float:
-    """The m/z of the local maximum at point ``j`` of the window ``a:b``: the vertex of the
-    parabola through it and its neighbours when both are inside the window, lower and evenly
-    spaced (profile data), else the point itself (centroided data, or an edge)."""
+    """The m/z of the local maximum at point ``j`` of the window ``a:b`` (its first maximum):
+    the centre of the run of equal points it starts (a flat, clipped top) within the window,
+    without a gap; else the vertex of the parabola through it and its neighbours when both are
+    inside the window, lower and evenly spaced (profile data), else the point itself
+    (centroided data, or an edge)."""
+    e = j
+    while (e + 1 < b and y[e + 1] == y[j]
+           and mz[e + 1] - mz[e] < GAP_SPACING * (mz[j + 1] - mz[j])):
+        e += 1
+    if e > j:
+        return float(0.5 * (mz[j] + mz[e]))
     if a < j < b - 1 and y[j - 1] < y[j] > y[j + 1] and y[j - 1] > 0 and y[j + 1] > 0:
         x0, x1, x2 = mz[j - 1], mz[j], mz[j + 1]
-        if max(x1 - x0, x2 - x1) < 2.5 * min(x1 - x0, x2 - x1):  # no gap in the profile
+        if max(x1 - x0, x2 - x1) < GAP_SPACING * min(x1 - x0, x2 - x1):  # no gap in the profile
             y0, y1, y2 = y[j - 1], y[j], y[j + 1]
             den = (x0 - x1) * (x0 - x2) * (x1 - x2)
             a = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den
@@ -291,6 +317,23 @@ def _apex(mz: np.ndarray, y: np.ndarray, j: int, a: int, b: int) -> float:
             if a < 0:
                 return float(min(max(-b / (2 * a), x0), x2))
     return float(mz[j])
+
+
+def clean_profile(mz, intensity) -> tuple[np.ndarray, np.ndarray]:
+    """``mz`` and ``intensity`` as float arrays sorted by m/z, without the points whose m/z is
+    not finite (a NaN m/z cannot be placed, and would break the sort check), and with a
+    non-finite intensity read as 0 (a NaN would win every window's maximum)."""
+    mz = np.asarray(mz, dtype=np.float64)
+    intensity = np.asarray(intensity, dtype=np.float64)
+    if not np.isfinite(mz).all():
+        keep = np.isfinite(mz)
+        mz, intensity = mz[keep], intensity[keep]
+    if not np.isfinite(intensity).all():
+        intensity = np.where(np.isfinite(intensity), intensity, 0.0)
+    if len(mz) > 1 and np.any(np.diff(mz) < 0):
+        order = np.argsort(mz, kind="stable")
+        mz, intensity = mz[order], intensity[order]
+    return mz, intensity
 
 
 def mz_offset_ppm(peak_mz: np.ndarray, pred_mz: np.ndarray, intensity: np.ndarray,
@@ -338,13 +381,7 @@ def pick_spectrum(
     plan = plan or plan_bins(
         peptide, charge, modification=modification, config=config, registry=registry
     )
-    mz = np.asarray(mz, dtype=np.float64)
-    intensity = np.asarray(intensity, dtype=np.float64)
-    if not np.isfinite(intensity).all():  # a NaN would win every window's maximum: read as 0
-        intensity = np.where(np.isfinite(intensity), intensity, 0.0)
-    if len(mz) > 1 and np.any(np.diff(mz) < 0):
-        order = np.argsort(mz, kind="stable")
-        mz, intensity = mz[order], intensity[order]
+    mz, intensity = clean_profile(mz, intensity)
     if config.noise_threshold:
         threshold = float(config.noise_threshold)
     elif len(intensity):

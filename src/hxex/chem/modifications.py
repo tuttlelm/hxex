@@ -183,16 +183,41 @@ def parse_sequence(
     """
     if not sequence:
         raise SequenceError("empty sequence")
+    written = sequence
     sequence = split_termini(sequence)[1]
-    residues: list[str] = []
+    # positions are counted from 1 in the sequence as written (terminal groups included)
+    offset = 0 if written.startswith(sequence) else written.index("-") + 1
+    residues: list[tuple[str, int]] = []
     pos = 0
     while pos < len(sequence):
         m = _LABEL.match(sequence, pos)
         if m is None:
-            raise SequenceError(f"cannot read a residue at position {pos} of {sequence!r}")
-        residues.append(m.group())
+            raise SequenceError(_unreadable(written, sequence, pos, offset))
+        residues.append((m.group(), pos))
         pos = m.end()
-    for label in residues:
+    for label, at in residues:
         if label not in registry.aa_comp:
-            raise SequenceError(f"unknown residue {label!r} in {sequence!r}")
-    return tuple(residues)
+            if len(label) > 1:  # a lowercase prefix that is not a known modification
+                prefix = label[:-1]
+                raise SequenceError(
+                    f"lowercase {prefix!r} at position {offset + at + 1} of {written!r}: "
+                    f"residues are capital letters (write {prefix.upper()!r} if "
+                    f"{'it is a residue' if len(prefix) == 1 else 'they are residues'}), "
+                    f"and {label!r} is not a known modified residue")
+            raise SequenceError(f"unknown residue {label!r} at position {offset + at + 1} of "
+                                f"{written!r}")
+    return tuple(label for label, _ in residues)
+
+
+def _unreadable(written: str, core: str, pos: int, offset: int) -> str:
+    """Why the residues ``core`` (of the sequence as ``written``) cannot be read at ``pos``."""
+    char = core[pos]
+    where = f"position {offset + pos + 1} of {written!r}"
+    if char.isspace():
+        return f"a space at {where}: remove it (a sequence has no spaces)"
+    if char.islower():  # lowercase letters to the end: no capital letter follows
+        return (f"lowercase {core[pos:]!r} at {where}: residues are capital letters (write "
+                f"{core[pos:].upper()!r}); a lowercase prefix names a modified residue only "
+                "before its capital letter (acK, pS)")
+    return (f"cannot read {char!r} at {where}: a sequence holds residues (capital letters), "
+            "modified residues (acK, pS), and terminal groups (Ac-, -NH2) only")

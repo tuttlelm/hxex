@@ -1544,7 +1544,9 @@ _COMMENTS: dict[str, str] = {
     "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
     "run.picker.off_mz_sd": "off_mz: a series whose undeuterated controls put its envelope "
                             "further than this many times the run's scatter from the run's "
-                            "calibration (at least 3 ppm; peptide ions only; most likely "
+                            "calibration (at least 3 ppm; needs five undeuterated controls "
+                            "with a found offset, else no series is checked; peptide ions "
+                            "only; most likely "
                             "another species, left out by [analysis.filters] off_mz; false: "
                             "not checked)",
     "run.fit.k_min": "fewest populations tried (must be 1 with screen; the controls are also "
@@ -1625,14 +1627,16 @@ _COMMENTS: dict[str, str] = {
                                   "control, as a fraction",
     "run.controls.outlier_sd": "a fully deuterated control this many robust standard "
                                "deviations below the median retention of the run's controls "
-                               "is rejected (without retention_min)",
+                               "is rejected (without retention_min; needs ten controls that "
+                               "pass the other checks, else not applied)",
     "run.controls.time_course_tolerance": "D per amide: a fully deuterated control below its "
                                           "series' highest time point by more than this is "
                                           "rejected (an undeuterated one above its lowest "
                                           "is flagged data_below_m0)",
-    "run.controls.sample_tolerance": "a fully deuterated control whose retention differs "
-                                     "this much from the same peptide's in the other "
-                                     "samples is flagged fd_disagrees (still used)",
+    "run.controls.sample_tolerance": "an accepted fully deuterated control whose retention "
+                                     "differs this much from the same peptide's accepted "
+                                     "controls in the other samples is flagged fd_disagrees "
+                                     "(still used)",
     "run.controls.combine_charges": "every charge state of a peptide (in one sample) takes the "
                                     "mean retention of its measured fully deuterated controls "
                                     "over all charge states; fd_fallback only when none is "
@@ -1640,7 +1644,9 @@ _COMMENTS: dict[str, str] = {
     "run.controls.replicate_outlier": "a control replicate this many typical replicate sd from "
                                       "its replicates' median (three or more) is left out of "
                                       "the control's mean (one above the amide count always "
-                                      "is); unset: off",
+                                      "is; the typical sd needs five replicated time points "
+                                      "in the run, else only that rule; never within 0.02 D "
+                                      "per amide of the median); unset: off",
     "run.controls.fd_other_charge": "with combine_charges = false: a series without a good "
                                     "fully deuterated control takes the retention of the same "
                                     "peptide's at its other charge states, before fd_fallback",

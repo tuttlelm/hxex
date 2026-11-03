@@ -43,8 +43,12 @@ class FitConfig:
       others).
     - ``seed``: everything random is drawn from generators seeded by it, and each measurement
       by what it is (``Measurements.random_id``: sample, peptide, charge, replicate, time, role),
-      so with the defaults a measurement's fit depends only on its own data, its noise reference
-      and the seed, not on the other measurements in the batch or the project's name.
+      so with the defaults a measurement's starts depend only on its own data, its noise
+      reference and the seed, not on the other measurements in the batch or the project's
+      name. Its fit is the same up to rounding: the batch's loss is reduced in another order in
+      another batch, and the optimiser amplifies that (in float32 a loss differs by up to about
+      0.03, in float64 by about 1e-3), which can change K where two K are that close; the run
+      therefore fits in a recorded plan of chunks (:mod:`hxex.pipeline`).
     - ``screen``: fit each K above 1 only for the measurements that could still select it, from
       a lower bound on the loss of any mixture (:mod:`hxex.fit.screen`); about a third of the
       time. The selected K does not change, but the skipped fits are NaN, so fixed-K analyses

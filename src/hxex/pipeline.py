@@ -4,9 +4,16 @@
 :func:`run` takes raw spectra (or already picked ones), drops the spectra the picker flagged,
 fits the rest in chunks of whole series, and returns a :class:`RunResult` (and writes a results
 bundle if asked). A chunk holds whole series because the noise estimate and the control
-references work within a series; each measurement is seeded from its own id, so the result does not
-depend on how the data was split (tests/test_run.py). The chunk size is set by a memory budget
-(by default a share of the free GPU memory, or a fixed amount on the CPU) and can be capped.
+references work within a series; each measurement is seeded from its own id, so its starts do not
+depend on how the data was split (tests/test_run.py). The fit itself is not bit for bit the same in
+another split: the loss of a batch is reduced in another order, and the optimiser amplifies that
+rounding (in float32 a loss differs by up to about 0.03 between splits, in float64 by about 1e-3;
+audit 2026-11-01 Engine 28), which can change K where two K are that close. So the chunks are a
+function of the data and the settings only: the chunk size is set by a memory budget (by default
+a share of the GPU's total memory, the same whatever else holds memory, or a fixed amount on the
+CPU) and can be capped, the plan is recorded in the bundle (``chunk_plan``), and ``hxex resume``
+fits and tests in the recorded chunks. ``dtype = "float64"`` makes the remaining differences
+(between machines and devices) about thirty times smaller.
 
 Progress is reported as ``progress(done, 1000)``: picking, the fit and the bootstrap each take a
 share of the 1000 units (about 5, 30 and 65 with a bootstrap; 5 and 95 without; the last 10 are
@@ -91,7 +98,7 @@ log = logging.getLogger(__name__)
 UNITS = 1000  # the ``total`` of the progress hook
 _FINISH = 10  # the last units: controls, quality flags, writing
 CPU_BUDGET = 4 * 2**30  # bytes per chunk on the CPU unless set
-GPU_SHARE = 0.5  # share of the free GPU memory used by one chunk unless set
+GPU_SHARE = 0.5  # share of the GPU's total memory used by one chunk unless set
 # memory of the fit (the bootstrap needs less) in units of one pmf array (shape points x bins x
 # components per measurement). Bins that are whole numbers (every picked spectrum) use the
 # integer convolution: peaks of 7.6 to 9.2 arrays measured on the CPU and the GPU for 945 and
@@ -226,6 +233,7 @@ class RunResult:
     # the ``created`` stamp of the bundle the run wrote ("" before it is written): figures and
     # tables drawn from this result then say they were made from that bundle
     created: str = ""
+    chunk_plan: dict | None = None  # the chunks fitted (chunk_record), reused by a resume
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -281,7 +289,7 @@ class RunResult:
             else spectra.source,
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
             provenance=provenance, excluded=self.excluded, project_file=self.project_file,
-            peak_measure=self.peak_measure,
+            peak_measure=self.peak_measure, chunk_plan=self.chunk_plan,
         )
 
 
@@ -302,8 +310,15 @@ def default_budget(config: RunConfig) -> int:
     if device.type == "cuda":
         import torch
 
-        free, _ = torch.cuda.mem_get_info(device)
-        return int(GPU_SHARE * free)
+        # of the total, not of the free memory: the plan (and so the fits, by their rounding)
+        # must not change with what other processes hold at run time (audit 2026-11-01 Engine 28)
+        free, total = torch.cuda.mem_get_info(device)
+        budget = int(GPU_SHARE * total)
+        if free < budget:
+            log.warning("the GPU has %.1f GiB free, less than the chunk budget of %.1f GiB (other "
+                        "processes hold memory): the fit may run out of memory; set "
+                        "memory_budget_bytes, or free the GPU", free / 2**30, budget / 2**30)
+        return budget
     return CPU_BUDGET
 
 
@@ -382,12 +397,16 @@ class _Plan:
     hi: float
     fit_share: float
     test_share: float = 0.0
+    record: dict | None = None  # the plan as the bundle records it (chunk_plan)
 
 
 # time of the population test's null and of a bootstrap, against the fit's: at 20 simulations
 # step K took 11 + 7 (K - 1) times the fits on a CPU (the tutorial data, HISTORY 174)
 _TEST_WEIGHT, _TEST_WEIGHT_STEP = 11.0, 7.0
 _BOOTSTRAP_WEIGHT = 7.0 / 3.0
+
+
+_MEASURE = object()  # _fit_part's noise_curve when none was measured before it
 
 
 def bundle_noise(picked, meas: Measurements, config: RunConfig):
@@ -413,7 +432,11 @@ def bundle_noise(picked, meas: Measurements, config: RunConfig):
                            meas.data_id, model_error=noise.model_error / 100.0, usable=usable,
                            sample=picked.sample)
     if curve is None:
+        log.info("per-bin noise not measured (fewer than 5 series of usable undeuterated "
+                 "controls, or no counting term found): one sd per spectrum")
         return None
+    log.info("per-bin noise measured from %d series of undeuterated controls (b1 %.3g)",
+             curve.n_series, curve.b1)
     for s in curve.disagreeing_samples():
         log.warning("per-bin noise: sample %s's own counting scale (%.3g +- %.2g, %d series) "
                     "differs from the bundle's (%.3g +- %.2g): are its spectra from another "
@@ -457,10 +480,42 @@ def _warn_own_reference(meas: Measurements, picked, config: RunConfig,
                 len(own), len(kinds), ", ".join(names), ", ..." if len(own) > 5 else "")
 
 
-def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
+def chunk_record(data: Measurements, chunks: Sequence[np.ndarray], budget: int) -> dict:
+    """The chunk plan as a bundle records it: the budget and the series of each chunk."""
+    ids = np.asarray(data.data_id)
+    return {"budget_bytes": int(budget),
+            "series": [sorted(int(d) for d in np.unique(ids[rows])) for rows in chunks]}
+
+
+def recorded_chunks(data: Measurements, record: Mapping | None) -> list[np.ndarray] | None:
+    """The chunks of ``record`` (:func:`chunk_record`, from a bundle) as measurement positions
+    of ``data``, or None when it does not cover every series of ``data`` exactly once."""
+    if not record or not record.get("series"):
+        return None
+    ids = np.asarray(data.data_id)
+    chunks = [np.flatnonzero(np.isin(ids, np.asarray(series, dtype=ids.dtype)))
+              for series in record["series"]]
+    chunks = [rows for rows in chunks if len(rows)]
+    covered = np.concatenate(chunks) if chunks else np.array([], dtype=np.int64)
+    if len(covered) != len(ids) or len(np.unique(covered)) != len(ids):
+        return None
+    return chunks
+
+
+def _plan(data: Measurements, config: RunConfig, progress_range,
+          record: Mapping | None = None) -> _Plan:
+    """The chunks of ``data`` (those of a bundle's ``record`` when it covers the data, so a
+    resume fits and tests in the chunks of the run) with their progress units."""
     k_max = config.fit.k_max
     itemsize = config.fit.backend.torch_dtype().itemsize
-    chunks = plan_chunks(data, k_max, itemsize, default_budget(config), config.max_chunk)
+    chunks = recorded_chunks(data, record)
+    if chunks is not None:
+        budget = int(record.get("budget_bytes") or 0)
+    else:
+        if record:
+            log.info("the bundle's chunk plan does not cover these measurements: planned again")
+        budget = default_budget(config)
+        chunks = plan_chunks(data, k_max, itemsize, budget, config.max_chunk)
     log.info("%d measurements in %d chunk(s)", len(data), len(chunks))
     sizes = np.array([len(c) for c in chunks], dtype=float)
     edges = np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()])
@@ -471,7 +526,8 @@ def _plan(data: Measurements, config: RunConfig, progress_range) -> _Plan:
                        for k in range(1, config.fit.k_max)) * test.simulations / 20.0)
     w_boot = _BOOTSTRAP_WEIGHT if config.bootstrap is not None else 0.0
     return _Plan(chunks, [data.select(rows) for rows in chunks], edges, lo, hi,
-                 (1.0 + w_test) / (1.0 + w_test + w_boot), w_test / (1.0 + w_test))
+                 (1.0 + w_test) / (1.0 + w_test + w_boot), w_test / (1.0 + w_test),
+                 chunk_record(data, chunks, budget))
 
 
 def _d2o_fraction(config: RunConfig) -> float:
@@ -483,8 +539,8 @@ def _d2o_fraction(config: RunConfig) -> float:
 def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
-    fragments=(), envelope_offset=(None, None), noise_curve=None, screened=None, chosen=None,
-    residues=None, deamidation=None, rt_found=None,
+    fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
+    chosen=None, residues=None, deamidation=None, rt_found=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -496,19 +552,22 @@ def _fit_part(
     ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`);
     ``envelope_offset``: the picker's m/z check of every measurement, (offset, limit) in ppm
     (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`). ``noise_curve``: the bundle's per-bin
-    noise (:func:`bundle_noise`); with ``estimate = "controls"`` and none given it is measured
-    here from every undeuterated control of ``data``, once for all the chunks. ``screened``:
+    noise (:func:`bundle_noise`; None: one sd per spectrum, as measured there); with ``estimate
+    = "controls"`` and nothing given it is measured here from every undeuterated control of
+    ``data``, once for all the chunks (data without the picker's screens). ``screened``:
     the control spectra the spectrum quality screens remove at the loose level
     (:func:`hxex.analysis.screening.control_removal`), left out of the controls. ``chosen``
     (spectrum id -> K, a review table's choices): fitted whatever the screen says.
     ``deamidation``: the fully deuterated controls' deamidation
     (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
-    if noise_curve is None and config.fit.noise.estimate == "controls":
-        from .noise import controls_noise
-        noise_curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
-                                     data.charges(), data.data_id,
-                                     model_error=config.fit.noise.model_error / 100.0)
+    if noise_curve is _MEASURE:  # run() gives its own (None: its rule found too few controls)
+        noise_curve = None
+        if config.fit.noise.estimate == "controls":
+            from .noise import controls_noise
+            noise_curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
+                                         data.charges(), data.data_id,
+                                         model_error=config.fit.noise.model_error / 100.0)
     fits: list[FitResult] = []
     tests: list[PopulationTest] = []
     testing = config.population_test is not None
@@ -736,10 +795,12 @@ def _test_screened(data: Measurements, fit: FitResult, chosen: Mapping[str, int]
 
 
 def _test_part(data: Measurements, config: RunConfig, fit: FitResult, progress, cancel,
-               progress_range: tuple[float, float]) -> tuple[FitResult, PopulationTest]:
+               progress_range: tuple[float, float], record: Mapping | None = None
+               ) -> tuple[FitResult, PopulationTest]:
     """The population test of ``fit`` (made from ``data`` as a run with the test makes it),
-    in the run's chunks: ``(fit with the test's K selected, test)``."""
-    plan = _plan(data, config, progress_range)
+    in the run's chunks (``record``, a bundle's chunk plan, when it covers the data):
+    ``(fit with the test's K selected, test)``."""
+    plan = _plan(data, config, progress_range, record)
     fit = dataclasses.replace(fit, selected_K=_criterion_K(fit))
     start_stage(progress, "population test", plan.lo, plan.hi)
     tests = []
@@ -1079,7 +1140,7 @@ def run(
         spectra_source=None if raw is None or raw.source is None else dict(raw.source),
         excluded=excluded, view_exclude=tuple(view_exclude),
         project_file=None if project_file is None else dict(project_file),
-        population_test=test, peak_measure=measure,
+        population_test=test, peak_measure=measure, chunk_plan=plan.record,
     )
     spectra = stored if keep_spectra else None
     review = _review_for(review, fit)
@@ -1382,6 +1443,7 @@ def resume_bootstrap(
         project_record = b.manifest["configs"].get("project_file")
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
+        chunk_plan = b.manifest.get("chunk_plan")  # the run's chunks (absent before 2026-11-02)
     if testing:
         log.info("%s: %s the population test (%d simulations per spectrum and step); the "
                  "reading, the picking and the fits are kept", path,
@@ -1396,7 +1458,8 @@ def resume_bootstrap(
     if testing:
         tested = float(UNITS - _FINISH) * (0.6 if redo else 1.0)
         fit = _test_screened(measurements, fit, merge_choices(chosen_k), cancel)
-        fit, test = _test_part(measurements, config, fit, progress, cancel, (0.0, tested))
+        fit, test = _test_part(measurements, config, fit, progress, cancel, (0.0, tested),
+                               record=chunk_plan)
         if config.quality is not None:
             quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source)
         if review is not None:
@@ -1406,7 +1469,8 @@ def resume_bootstrap(
             project_record = dict(project_file)
     if redo:
         plan = dataclasses.replace(
-            _plan(measurements, config, (tested, float(UNITS - _FINISH))), fit_share=0.0)
+            _plan(measurements, config, (tested, float(UNITS - _FINISH)), record=chunk_plan),
+            fit_share=0.0)
         boot, by_k = _bootstrap_part(config, plan, [fit.select(rows) for rows in plan.chunks],
                                      progress, cancel)
     else:
@@ -1424,6 +1488,7 @@ def resume_bootstrap(
         controls=controls, quality=quality, envelopes=envelopes, spectra_source=source,
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_record,
         population_test=test, peak_measure=peak_measure,
+        chunk_plan=chunk_plan or _plan(measurements, config, (0.0, 1.0)).record,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

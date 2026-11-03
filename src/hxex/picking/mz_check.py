@@ -12,29 +12,34 @@ picker's window, centred on the prediction, then reads the other species or its 
 out (``[analysis.filters] off_mz``).
 
 - The offset of one undeuterated spectrum: for M, M+1 and M+2, the top of the peak nearest the
-  prediction (from the profile point nearest it, uphill through evenly spaced points, refined to
-  the vertex of a parabola), searched within the larger of ``SEARCH_PPM`` and twice the picking
+  prediction (from the profile point nearest it, uphill through evenly spaced points and across
+  runs of equal ones; a flat, clipped top at its centre, a pointed one refined to the vertex of
+  a parabola), searched within the larger of ``SEARCH_PPM`` and twice the picking
   half-width, never beyond ``SPACING_SHARE`` of the isotope spacing; the median of the three
   when they agree within the larger of ``AGREE_PPM`` and a quarter of the half-width (else the
   spectrum has none). Unlike the picker's ``mz_offset_ppm``, measured inside the window, this
   finds an envelope wherever its peaks are. Centroided spectra give the nearest stick.
-- A run is one undeuterated injection: the controls of one sample and replicate. Its
-  calibration is a straight line in m/z through its controls' offsets (Theil-Sen, robust to
-  the off series; a TOF's calibration drifts by about 1 ppm per 100 m/z within a run, an
-  Orbitrap's hardly at all) and its scatter the robust sd of the offsets about that line
-  (1.4826 times the median absolute deviation); a run with fewer than ``MIN_RUN_CONTROLS``
-  offsets takes the line and scatter of every control.
+- A run is one undeuterated injection: a scan file of undeuterated controls (mzML, Thermo
+  raw), or for the other formats the controls of one sample and replicate. Its calibration is
+  a straight line in m/z through its controls' offsets (Theil-Sen, robust to the off series; a
+  TOF's calibration drifts by about 1 ppm per 100 m/z within a run, an Orbitrap's hardly at
+  all) and its scatter the robust sd of the offsets about that line (1.4826 times the median
+  absolute deviation); a run with fewer than ``MIN_RUN_CONTROLS`` offsets takes the line and
+  scatter of every control, and fewer than ``MIN_SCATTER_OFFSETS`` in all give no scatter (the
+  line through three points passes through two of them): then no series is assessed.
 - A series' offset is the median over its controls of (offset minus the run's calibration at
   the control's monoisotopic m/z);
   the series is off its m/z when that is beyond ``off_mz_sd`` times its runs' scatter, and at
   least ``MIN_LIMIT_PPM``.
 
 Not assessed: fragment ions (an ion-type mixture moves their peaks; ``poor_envelope`` and the
-fit-stage ``mz_shift`` cover them) and series without an undeuterated control with an offset.
+fit-stage ``mz_shift`` cover them), series without an undeuterated control with an offset, and
+every series of a set with fewer than ``MIN_SCATTER_OFFSETS`` such controls.
 """
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
@@ -51,15 +56,20 @@ SPACING_SHARE = 0.4  # the search never reaches past this share of the isotope s
 AGREE_PPM = 5.0  # M, M+1 and M+2 agree within this (or a quarter of the half-width)
 CLIMB_GAP = 1.6  # profile points closer than this times the local spacing are one peak
 MIN_RUN_CONTROLS = 10  # a run with fewer offsets takes the scatter of every control
+MIN_SCATTER_OFFSETS = 5  # no scatter from fewer offsets: the series are not assessed
 MIN_LIMIT_PPM = 3.0  # an offset is never called off within this
 _MAD_SD = 1.4826
+
+log = logging.getLogger(__name__)
 
 
 def _peak_top(mz: np.ndarray, y: np.ndarray, target: float, limit: float,
               spacing: float) -> float:
     """The m/z of the top of the peak nearest ``target`` (NaN when none lies within
     ``limit``, in m/z): the climb takes neighbours closer than ``CLIMB_GAP`` times the
-    spectrum's point ``spacing`` (in m/z; infinite for centroided data: the nearest stick)."""
+    spectrum's point ``spacing`` (in m/z; infinite for centroided data: the nearest stick) and
+    crosses runs of equal points; a flat (clipped) top reads at its centre, a pointed one at the
+    vertex of the parabola through its top and neighbours."""
     if not len(mz):
         return float("nan")
     j = int(np.argmin(np.abs(mz - target)))
@@ -68,14 +78,29 @@ def _peak_top(mz: np.ndarray, y: np.ndarray, target: float, limit: float,
     if not np.isfinite(spacing):  # centroided: one point per peak
         return float(mz[j])
     step = CLIMB_GAP * spacing
+    n = len(y)
+
+    def near(p: int, q: int) -> bool:
+        return 0 <= q < n and abs(mz[q] - mz[p]) <= step
+
     k = j
-    for d in (1, -1):  # towards the higher neighbour, if any
-        while 0 <= k + d < len(y) and abs(mz[k + d] - mz[k]) <= step and y[k + d] > y[k]:
-            k += d
-        if k != j:
+    while True:  # each move goes uphill, so the climb ends
+        s, e = k, k
+        while near(s, s - 1) and y[s - 1] == y[k]:
+            s -= 1
+        while near(e, e + 1) and y[e + 1] == y[k]:
+            e += 1
+        if near(e, e + 1) and y[e + 1] > y[k]:  # towards the higher neighbour, right first
+            k = e + 1
+        elif near(s, s - 1) and y[s - 1] > y[k]:
+            k = s - 1
+        else:
             break
+    if e > s:  # a flat top: its centre
+        x = float(0.5 * (mz[s] + mz[e]))
+        return x if abs(x - target) <= limit else float("nan")
     x = float(mz[k])
-    if 0 < k < len(y) - 1 and y[k - 1] > 0 and y[k + 1] > 0 and y[k - 1] < y[k] >= y[k + 1]:
+    if 0 < k < n - 1 and y[k - 1] > 0 and y[k + 1] > 0 and y[k - 1] < y[k] >= y[k + 1]:
         x0, x1, x2 = mz[k - 1:k + 2]
         y0, y1, y2 = y[k - 1:k + 2]
         den = (x0 - x1) * (x0 - x2) * (x1 - x2)
@@ -91,11 +116,9 @@ def envelope_offset(mz: np.ndarray, intensity: np.ndarray, pred: np.ndarray, cha
     """The offset (ppm) of an undeuterated spectrum's envelope from its predicted m/z ``pred``
     (M first): the median of the M, M+1 and M+2 peak tops' offsets when they agree, else NaN
     (see the module docstring)."""
-    mz = np.asarray(mz, dtype=np.float64)
-    y = np.asarray(intensity, dtype=np.float64)
-    if len(mz) > 1 and np.any(np.diff(mz) < 0):
-        order = np.argsort(mz, kind="stable")
-        mz, y = mz[order], y[order]
+    from .pick import clean_profile
+
+    mz, y = clean_profile(mz, intensity)
     pred = np.asarray(pred, dtype=np.float64)[:3]
     if not len(pred):
         return float("nan")
@@ -119,8 +142,9 @@ class SeriesOffsets:
     ``offset_ppm`` (the median of its controls' offsets, the run's calibration included: how
     far its windows move when it is off), ``relative_ppm`` (the median of its controls' offsets
     minus their runs' calibration), ``limit_ppm`` (what that was compared with) and
-    ``n_controls``; ``calibration``: per run (sample, rep), the line's intercept (ppm), slope
-    (ppm per m/z) and the scatter about it (ppm)."""
+    ``n_controls``; ``calibration``: per run (:func:`injection`), the line's intercept (ppm),
+    slope (ppm per m/z) and the scatter about it (ppm); NaN offsets and limits for every series
+    when the controls are too few for a scatter (``MIN_SCATTER_OFFSETS``)."""
 
     data_id: np.ndarray
     offset_ppm: np.ndarray
@@ -146,6 +170,19 @@ class SeriesOffsets:
             rel[rows] = self.relative_ppm[j]
             lim[rows] = self.limit_ppm[j]
         return rel, lim
+
+
+def injection(spectra, i: int) -> tuple[str, str]:
+    """The undeuterated injection of spectrum ``i`` of ``spectra``: its scan file (sample and
+    file name) when the reader read scan files (mzML, Thermo raw: each file one injection), else
+    its sample and replicate."""
+    from ..io.mzml import SCAN_READERS
+
+    source = spectra.source or {}
+    if source.get("reader") in SCAN_READERS:
+        label = str(spectra.label[i])  # "FILE scanN" or "FILE scansA-B"
+        return str(spectra.sample[i]), label.rsplit(" ", 1)[0] if " " in label else label
+    return str(spectra.sample[i]), str(spectra.rep[i])
 
 
 def limit_ppm(scatter: float, off_mz_sd: float) -> float:
@@ -186,7 +223,7 @@ def series_offsets(spectra, config: PickerConfig, *,
             pred[:1], key[1], resolving_power=float(spectra.resolving_power[i]),
             resolving_power_mz=float(spectra.resolving_power_mz[i])))[0])
         offsets.append(envelope_offset(mz, y, pred, key[1], 1e6 * half / pred[0]))
-        run_of.append((str(spectra.sample[i]), str(spectra.rep[i])))
+        run_of.append(injection(spectra, i))
         mono.append(float(pred[0]))
     offsets_arr = np.asarray(offsets, dtype=np.float64)
     mono_arr = np.asarray(mono, dtype=np.float64)
@@ -204,7 +241,12 @@ def series_offsets(spectra, config: PickerConfig, *,
         resid = v - (intercept + slope * x)
         return float(intercept), float(slope), _MAD_SD * float(np.median(np.abs(resid)))
 
-    whole = calibration(np.flatnonzero(found)) if found.any() else (np.nan, 0.0, np.nan)
+    n_found = int(found.sum())
+    if 0 < n_found < MIN_SCATTER_OFFSETS:
+        log.info("m/z check: %d undeuterated control(s) with a measured offset, fewer than "
+                 "the %d a scatter needs: no series assessed", n_found, MIN_SCATTER_OFFSETS)
+    whole = (calibration(np.flatnonzero(found)) if n_found >= MIN_SCATTER_OFFSETS
+             else (np.nan, 0.0, np.nan))
     runs = {run: calibration(np.asarray(at)) if len(at) >= MIN_RUN_CONTROLS else whole
             for run, at in run_index.items()}
     by_series: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
@@ -218,7 +260,8 @@ def series_offsets(spectra, config: PickerConfig, *,
     scatter = take(2)
     return SeriesOffsets(
         data_id=ids, offset_ppm=take(0), relative_ppm=take(1),
-        limit_ppm=np.maximum(float(config.off_mz_sd) * np.nan_to_num(scatter), MIN_LIMIT_PPM),
+        limit_ppm=np.where(np.isfinite(scatter), np.maximum(
+            float(config.off_mz_sd) * np.nan_to_num(scatter), MIN_LIMIT_PPM), np.nan),
         n_controls=np.array([len(by_series[d]) for d in ids], dtype=np.int64),
         calibration=runs,
     )
