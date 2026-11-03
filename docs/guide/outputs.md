@@ -156,15 +156,15 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
 
 - `overview.pdf`: which K was selected and how often (per time, before and after review); the
   controls (retention against its limits, measured against fallback); the quality flags. Each
-  dashed limit line is named beside it (for example `outlier limit 0.23 (median − 4 robust
-  sd)` or `upper limit 1.1 (retention_max)`). The bars say in words what they count, with the
-  flag name that `series.csv` and `spectra.csv` use in small grey type after the count. On the
-  controls page, bars marked `(note)` (light grey) count controls that are used but carry a
-  note, some of them good news (`retention agrees with the other samples`); the orange bars
-  say why a control was missing or not used. The quality page's middle panel plots each
-  spectrum's misfit (relative to the typical one of its series) against its intensity
-  (relative to its replicates): the poor fits worth a look are those above the dashed line
-  but right of the vertical one, poor fits that are not merely weak spectra.
+  dashed limit line is named beside it (for example `outlier limit 0.23` or `max 1.1`), and
+  the bars say in a few words what they count, close to the flag names of `series.csv` and
+  `spectra.csv` (`UN two populations` is `m0_multimodal`, `low intensity` is
+  `low_intensity`). On the controls page, bars marked `(note)` (light grey) count controls
+  that are used but carry a note, some of them good news (`agrees with other samples`); the
+  orange bars say why a control was missing or not used. The quality page's middle panel
+  plots each spectrum's misfit (relative to the typical one of its series) against its
+  intensity (relative to its replicates): the poor fits worth a look are those above the
+  dashed line but right of the vertical one, poor fits that are not merely weak spectra.
 - One file per series, named by its label (sample, range, peptide or fragment, charge,
   condition), with a page per kind. Each page has one legend, at the top or on the right, that
   names every symbol on it.
@@ -393,7 +393,7 @@ Every analysis table starts with `run` and `sample` (the run is blank for a sing
 | `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; `n_reference` and `n`, the replicates on each side (a replicate's charge states count once); for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart; `one population (sample)`: that side's set is best described by one population; `no K=2 (sample)`: that side has no two-population description left, for example reviewed to one population), or, for a peptide compared at K = 2 although a side has three populations, says so (`three populations (sample): K = 2 compared`). A sample with no labelled time point (controls only) is left out of the analysis, with a warning |
 | `compare_residues.csv` | per residue and time: difference, error, z, `significant` (at K=2, only where both samples keep two populations), and whether each side keeps two (`two_reference`, `two`); the values and `delta` are each sample's own, while `z` and `significant` come from the peptides measured in both samples at that time, whose difference and error are `delta_shared` and `delta_shared_se` (see *Reading the residue overlay* below) |
 | `compare_population_counts.csv` | per peptide and time: whether each side is best described by one or two populations (`K_reference`, `K`), the evidence (`delta_criterion`: negative favours two), `differs`, and `borderline` (a difference with weak evidence); with the [population test](population-test.md), `p` and `p_reference` (each side's p-value where they differ), which then decide `borderline` |
-| `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` (judged from the peptides measured in both samples, `delta_shared`; empty without a bootstrap at K = 2, see [the statistics page](statistics.md#what-the-bootstrap-adds)) |
+| `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` (judged from the peptides measured in both samples, `delta_shared`; empty without a bootstrap at K = 2, see [the statistics page](statistics.md#what-the-bootstrap-adds)). The table keeps the low-D share, as `compare_peptides.csv` does; the figures draw the high-D share (one minus it, so `delta` has the opposite sign there), so that higher is more deuterium |
 | `compare_residues_K2.csv` | with a bootstrap at K = 2 only: per residue, time, and `rank` (1 the low-D population's position, 2 the high-D one), the difference from the reference where both keep two populations, laid out as `compare_residues.csv` |
 | `compare_choices.csv` | per residue: whether each side keeps two populations, and whether they agree |
 
@@ -426,7 +426,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `residue_significance_K2` | the same at K = 2: where the number of populations differs, and, with a bootstrap at K = 2, the differences in the population share and in the two populations' positions |
 | `woods_<sample>_<time>` | peptide differences from the reference at K=1, and where the number of populations differs (see *Reading the Woods plot* below) |
 | `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
-| `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath (a filled point where the difference is significant, a hollow one where it is not, and the critical difference dashed: all named in the legend) |
+| `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath (a filled circle where the difference is significant, a cross where it is not, and the critical difference dashed: all named in the legend) |
 | `regions_<time>` | the regions' fD |
 | `region_significance` | with regions: which regions differ significantly from the reference, one row per sample and time, one column per region (see *Reading the region significance map* below) |
 | `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
@@ -477,15 +477,16 @@ reference residue by residue, the reference in black and the sample in its colou
 deuteration (K=1, fDavg) is small circles on a line with a shaded ±1 standard-error band; the
 line joins two residues only where one peptide measures both, so a gap means the peptides do not
 connect them. Where a sample has two populations, fDlow is an up triangle and fDhigh a down
-triangle, with their error bars; the legend names the shapes in grey beside the samples'
-colours. A residue has two populations for a sample when the peptides
+triangle, with their error bars; the axis is fD, and the legend names the shapes (fDavg,
+fDlow, fDhigh) in grey beside the samples' colours. A residue has two populations for a sample when the peptides
 whose spectra are best described by two populations carry at least half of its weight (and the
 two values are separated, precise, and on either side of the average). Its fDlow and fDhigh, like
 its average, come from every peptide covering it, so the three always describe the same
 peptides. Residue values change only where a peptide starts or ends, so the
 average runs in steps: the width of a step is the resolution the peptides allow.
-`overlay_populations_<time>` is drawn the same way, with the share of the low-D population
-(`pop_low`) as up triangles: each sample where it has two populations, whether or not the other
+`overlay_populations_<time>` is drawn the same way, with the share of the high-D population
+(`pop_high`) as down triangles, the legend showing each sample's triangle in its colour (the
+high-D share, as on the Woods plot: higher is more deuterium): each sample where it has two populations, whether or not the other
 sample has. The by-residue figure can show any of these values (`overlay` in `[analysis]`:
 `low`, `high`, `avg`, `pop_low`, `pop_high`).
 

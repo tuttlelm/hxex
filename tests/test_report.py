@@ -908,16 +908,16 @@ def test_controls_overview(results):
     np.testing.assert_allclose(c.retention, np.mean(d["retention"]))
     fig = plot_controls_overview(results)
     assert {"retention", "m0", "reasons", "limits", "limit_label"} <= gids(fig)
-    # the limits are named beside their lines, the bars in words (the flag names in grey)
+    # the limits are named beside their lines, the bars in short words (owner: not verbose)
     a1, a2, a3 = fig.axes
     named = [t.get_text() for t in a1.texts]
-    assert any(t.startswith("upper limit 1.1 (retention_max)") for t in named)
-    assert any(t.startswith(("outlier limit", "no outlier limit", "lower limit", "no lower"))
+    assert "max 1.1" in named
+    assert any(t.startswith(("outlier limit", "no outlier limit", "min", "no lower"))
                for t in named)
-    assert [t.get_text() for t in a2.texts] == ["upper limit 0.5 D (m0_max)"]
+    assert [t.get_text() for t in a2.texts] == ["max 0.5 D"]
     assert "m0" not in a2.get_xlabel()
-    assert [t.get_text() for t in a3.get_yticklabels()] == ["both controls measured and used"]
-    assert a3.get_legend() is not None
+    assert [t.get_text() for t in a3.get_yticklabels()] == ["both measured"]
+    assert a3.get_legend() is None
     with pytest.raises(ValueError, match="no controls"):
         plot_controls_overview(Results(measurements=results.measurements, fit=results.fit))
 
@@ -940,8 +940,9 @@ def test_overview_labels_name_every_flag_in_words():
     # notes, which leave the control in use, say so: good news must not read as a warning
     assert all(CONTROL_LABELS[n].endswith("(note)") for n in CONTROL_NOTES)
     assert not any(CONTROL_LABELS[r].endswith("(note)") for r in FALLBACK_REASONS)
-    assert CONTROL_LABELS["fd_retention_agrees"] == (
-        "retention agrees with the other samples (note)")
+    assert CONTROL_LABELS["fd_retention_agrees"] == "agrees with other samples (note)"
+    # short: no label longer than a few words
+    assert max(len(s) for s in (*CONTROL_LABELS.values(), *QUALITY_LABELS.values())) <= 40
 
     # the lower retention limit says how it was set
     from hxex.controls import ControlConfig
@@ -951,12 +952,10 @@ def test_overview_labels_name_every_flag_in_words():
             self.config, self.limits = ControlConfig(**kw), limits
 
     run = {"retention_floor": 0.23, "median": 0.5, "robust_sd": 0.07, "n_series": 50}
-    assert retention_limit_labels(Controls(run)) == (
-        "outlier limit 0.23 (median − 4 robust sd)", "upper limit 1.1 (retention_max)")
+    assert retention_limit_labels(Controls(run)) == ("outlier limit 0.23", "max 1.1")
     few = {"retention_floor": 0.0, "median": None, "robust_sd": None, "n_series": 3}
-    assert retention_limit_labels(Controls(few))[0] == "no outlier limit (fewer than 10 controls)"
-    assert retention_limit_labels(Controls(retention_min=0.3))[0] == (
-        "lower limit 0.30 (retention_min)")
+    assert retention_limit_labels(Controls(few))[0] == "no outlier limit (< 10 controls)"
+    assert retention_limit_labels(Controls(retention_min=0.3))[0] == "min 0.30"
 
 
 def test_quality_overview(results):
@@ -966,7 +965,7 @@ def test_quality_overview(results):
     assert d["n"] == len(results.fit) and d["n_flagged"] == int(results.quality.flagged.sum())
     assert d["samples"] == ["S"] and d["flagged_share"].shape == (1,)
     fig = plot_quality_overview(results)
-    assert {"counts", "spectra", "samples", "limits", "limit_label", "caption"} <= gids(fig)
+    assert {"counts", "spectra", "samples", "limits", "limit_label"} <= gids(fig)
     flagged = [c for c in fig.axes[1].collections if c.get_gid() == "flagged"]
     assert flagged and len(flagged[0].get_facecolors()) == 0  # open circles
     from hxex.report.overview import QUALITY_LABELS
@@ -974,15 +973,14 @@ def test_quality_overview(results):
     a1, a2 = fig.axes[:2]
     assert [t.get_text() for t in a1.get_yticklabels()][::-1] == [
         QUALITY_LABELS[n] for n in (*d["counts"], "any")]
-    assert {t.get_text() for t in a1.texts if t.get_gid() == "flag_name"} == set(d["counts"])
-    # the misfit panel: plain axes, both limits named, a caption saying what to look for
-    assert a2.get_xlabel() == "intensity relative to its replicates (1 = as bright)"
-    assert a2.get_ylabel().endswith("relative to its series (1 = typical)")
+    # the misfit panel: short axes, both limits named
+    assert a2.get_xlabel() == "intensity / replicates' mean"
+    assert a2.get_ylabel().endswith("/ series median")
     labels = [t.get_text() for t in a2.texts if t.get_gid() == "limit_label"]
-    assert any(t.startswith("poor fit limit") for t in labels)
-    assert any(t.startswith("low intensity limit") for t in labels)
+    assert any(t.startswith("poor fit ") for t in labels)
+    assert any(t.startswith("low intensity ") for t in labels)
     assert [t.get_text() for t in a2.get_legend().texts] == [
-        "a spectrum (where few are)", "a flagged spectrum (where few are)"]
+        "spectrum (sparse cell)", "flagged (sparse cell)"]
     with pytest.raises(ValueError, match="no quality"):
         quality_overview_data(Results(measurements=results.measurements, fit=results.fit))
 

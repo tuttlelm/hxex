@@ -536,15 +536,16 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                              residue_overlay_figure(
                                  residues, reference, shown, t, show=config.overlay,
                                  choice=only, annotations=ann, length=length, **when)))
-            # the populations, drawn as the K=2 values are: each sample where it keeps two
-            ref_pop = choice is not None and _has_overlay(residues, reference, t, ("pop_low",),
+            # the populations, drawn as the K=2 values are: each sample where it keeps two; the
+            # high-D share, as the Woods plot draws it (above = more D; owner, 2026-11-02)
+            ref_pop = choice is not None and _has_overlay(residues, reference, t, ("pop_high",),
                                                           choice)
             with_pop = [s for s in residue_others if choice is not None and (
-                ref_pop or _has_overlay(residues, s, t, ("pop_low",), choice))]
+                ref_pop or _has_overlay(residues, s, t, ("pop_high",), choice))]
             if with_pop:
                 jobs.append((f"overlay_populations_{when_}",
                              lambda t=t, with_pop=with_pop: residue_overlay_figure(
-                                 residues, reference, with_pop, t, show=("pop_low",),
+                                 residues, reference, with_pop, t, show=("pop_high",),
                                  choice=choice, annotations=ann, length=length, **when)))
             for s in others:
                 k1_rows = comparisons["K=1 fD"].where(sample=s, time=t).any()

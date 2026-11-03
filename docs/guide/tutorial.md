@@ -354,8 +354,8 @@ This part of the tutorial looks at the comparison of each peptide's average deut
 population (K = 1); [part 2](tutorial-fits.md) looks at the two populations.
 
 **The butterfly plot** (`butterfly_R120G.png`) shows the deuterium of every peptide, WT above
-and R120G below, one line per time, and their difference underneath (filled points are
-significant differences, hollow ones are not). R120G takes up more deuterium than WT over the
+and R120G below, one line per time, and their difference underneath (filled circles are
+significant differences, crosses are not). R120G takes up more deuterium than WT over the
 first 80 residues, most at the early times:
 
 ![Butterfly plot of R120G against WT](../images/tutorial_butterfly.png)

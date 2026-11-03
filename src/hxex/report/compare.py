@@ -37,9 +37,10 @@ K2_MARKERS = {"low": "^", "high": "v", "pop_low": "^", "pop_high": "v"}  # rank 
 COUNT_GREY = "#7f7f7f"
 KEY_GREY = "#4d4d4d"  # legend entries for shapes and lines: not a sample's colour
 # what each value's mark is called in the residue figures' legends
-SHAPE_LABELS = {"avg": "average", "low": "low-D population",
-                "high": "high-D population", "pop_low": "share of the low-D population",
-                "pop_high": "share of the high-D population"}
+# (the residue values' own names, as the axes write them: "population" is kept for the
+# population figures, owner 2026-11-02)
+SHAPE_LABELS = {"avg": r"fD$_{\rm avg}$", "low": r"fD$_{\rm low}$", "high": r"fD$_{\rm high}$",
+                "pop_low": r"pop$_{\rm low}$", "pop_high": r"pop$_{\rm high}$"}
 THRESHOLD_LABEL = "critical difference (±)"
 
 
@@ -154,8 +155,9 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
                   shapes: Sequence[str] = ()) -> None:
     """The axes, legend (the samples' colours, the shapes of ``shapes``, keys of
     :data:`SHAPE_LABELS`, in grey when more than a circle is drawn, and the
-    corrected-differently mark when drawn) and time label every residue figure shares; ``top``
-    is the highest point drawn."""
+    corrected-differently mark when drawn; a single triangle shape, as on the population
+    overlay, is drawn in each sample's colour instead) and time label every residue figure
+    shares; ``top`` is the highest point drawn."""
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length)
     ax.set_ylim(-0.05, _upper_limit(top))
@@ -165,11 +167,15 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
     ax.set_ylabel(ylabel)
     ax.grid(color="#e5e5e5", linewidth=0.8)
     named = [v for v in shapes if v != "avg"]  # a circle alone needs no name
-    handles = [Line2D([], [], linestyle="none", marker="s" if named else "o", markersize=5,
+    # one triangle shape and nothing else (the population overlay): the samples' keys are that
+    # triangle in their colours, which the axis label names; else squares and grey shapes
+    alone = K2_MARKERS[named[0]] if len(shapes) == 1 and named else None
+    handles = [Line2D([], [], linestyle="none",
+                      marker=alone or ("s" if named else "o"), markersize=5,
                       color=_style(i)[0], markerfacecolor=to_rgba(_style(i)[0], FILL),
                       label=name)
                for name, i in ((reference, 0), (sample, style_index))]
-    if named:  # the shapes, in grey: the colours are the samples'
+    if named and alone is None:  # the shapes, in grey: the colours are the samples'
         for value in shapes:
             avg = value == "avg"
             handles.append(Line2D([], [], linestyle="-" if avg else "none",
@@ -184,14 +190,15 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
     ax.legend(handles=handles, loc="lower left" if many else "lower center",
               bbox_to_anchor=(0.0 if many else 0.5, 0.98), ncol=len(handles), frameon=False,
               fontsize=7.5 if many else 9, handletextpad=0.2, columnspacing=1.0,
-              borderaxespad=0.0 if many else 0.5)
+              borderaxespad=0.0 if many else 0.5, handlelength=1.3)  # fDavg's line: short
     ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
 
 
 def _overlay_label(show: Sequence[str]) -> str:
-    """``fD_low, fD_avg, fD_high`` and ``pop_low, pop_high`` for the values shown."""
-    parts = [rf"fD$_{{\rm {v}}}$" for v in ("low", "avg", "high") if v in show]
+    """``fD`` for deuteration values (the legend names which), and ``pop_low, pop_high`` for
+    the populations shown."""
+    parts = ["fD"] if any(v in show for v in ("low", "avg", "high")) else []
     parts += [rf"pop$_{{\rm {v[4:]}}}$" for v in ("pop_low", "pop_high") if v in show]
     return ", ".join(parts)
 
@@ -704,10 +711,10 @@ def plot_butterfly(
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
-    sequential colour per time), with the differences below (filled where significant, hollow
-    where not, ``+-delta_crit`` dashed; all three named in a legend above that panel); a ``*``
-    at the top over each peptide whose two values were corrected differently at a time drawn
-    (one with a fallback control; named in the legend). ``times``
+    sequential colour per time), with the differences below (a filled circle where significant,
+    an ``x`` where not, ``+-delta_crit`` dashed; all three named in a legend above that
+    panel); a ``*`` at the top over each peptide whose two values were corrected differently at
+    a time drawn (one with a fallback control; named in the legend). ``times``
     default to every time point of the comparison (the controls are not times). Lines have the
     gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
     ``difference:<time>``.
@@ -754,8 +761,8 @@ def plot_butterfly(
         diff.set_gid(f"difference:{t:g}")
         sig = comparison.significant[here].astype(bool)
         bottom.scatter(x[sig], comparison.delta[here][sig], color=colour, s=14, zorder=3)
-        bottom.scatter(x[~sig], comparison.delta[here][~sig], facecolors="none",
-                       edgecolors=colour, s=10, linewidths=0.7, zorder=3)
+        bottom.scatter(x[~sig], comparison.delta[here][~sig], marker="x", color=colour, s=14,
+                       linewidths=1.0, zorder=3)
     drawn_rows = np.flatnonzero(rows & np.isin(comparison.time, times)
                                 & comparison.corrected_differently)
     n_diff = _corrected_differently(top, [position[key(i)] for i in drawn_rows], note=False)
@@ -781,8 +788,8 @@ def plot_butterfly(
     bottom.axhline(0, color="#000000", linewidth=0.8, zorder=1.6)  # above the grid
     key = [Line2D([], [], linestyle="none", marker="o", markersize=4, color=KEY_GREY,
                   label="significant difference"),
-           Line2D([], [], linestyle="none", marker="o", markersize=3.6, color=KEY_GREY,
-                  markerfacecolor="none", markeredgewidth=0.7, label="not significant"),
+           Line2D([], [], linestyle="none", marker="x", markersize=3.6, color=KEY_GREY,
+                  markeredgewidth=1.0, label="not significant"),
            Line2D([], [], color="#555555", linestyle="--", linewidth=0.9,
                   label=THRESHOLD_LABEL)]
     bottom.legend(handles=key, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=len(key),

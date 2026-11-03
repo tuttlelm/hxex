@@ -6097,3 +6097,26 @@ CSVs or mzML if wanted.
     population", the axis `Δhigh-D share × sep`, the legend "larger / smaller high-D share
     than WT (more D / less D)". `compare_peptides.csv` keeps the low-D comparison as it was
     (outputs.md says the panel's sign is the opposite). tutorial_woods_k2.png redrawn.
+
+222. **The butterfly plot marks a difference that is not significant with a cross (owner,
+    2026-11-02).** The hollow circles were hard to see beside the filled ones; a cross in the
+    time's colour replaces them (legend "not significant" with a cross). tutorial_butterfly.png
+    redrawn. Explained to the owner at the same time: on the Woods plots a grey bar beyond the
+    dashed lines is larger than the critical difference but fails Welch's test (few replicates
+    or large errors), as the hybrid rule requires both.
+
+223. **Shorter figure wording (owner, 2026-11-02).** The overview's controls and quality pages
+    (HISTORY 220) were too verbose: their bars now carry a few words close to the flag names
+    (`both measured`, `UN too heavy`, `FD two populations (note)`, `poor fit`, `low intensity`,
+    `off m/z`), the limits short names (`outlier limit 0.23`, `max 1.1`, `max 0.5 D`, `poor fit
+    10×`, `low intensity 0.3×`), and the grey flag names, the colour key, and the caption are
+    gone. The residue overlay's legend names its shapes as the values are named, fDavg, fDlow,
+    and fDhigh (was "average", "low-D population", "high-D population": "population" is kept for
+    the population figures), and its axis is `fD`; the population overlay's legend is each
+    sample's triangle in its colour, without a separate shape entry; the legend's fDavg line is
+    shorter. The population overlay draws the high-D share (`pop_high`, down triangles) instead
+    of the low-D one, as the Woods plot does (HISTORY 221): higher is more deuterium, and it
+    follows fDavg. On the quality page the colour bar's label reads downwards, apart from the
+    next panel's axis label, with more room between the panels. compare_populations.csv keeps
+    the low-D share, as compare_peptides.csv does (owner); outputs.md says the figures draw the
+    high-D share. tutorial_controls.png redrawn.

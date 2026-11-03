@@ -1209,11 +1209,12 @@ def test_butterfly_plot():
     np.testing.assert_allclose(lines["butterfly:60:sample"].get_ydata(), [-0.5, -0.7])
     assert [t.get_text() for t in bottom.get_xticklabels()] == ["2-9", "6-11"]
     assert len(plot_butterfly(pc, "B:S", times=[60.0]).axes[0].get_legend().texts) == 1
-    # the differences' filled and hollow points and the dashed line are named
+    # the differences' filled circles and crosses and the dashed line are named
     assert [t.get_text() for t in bottom.get_legend().texts] == [
         "significant difference", "not significant", "critical difference (±)"]
-    hollow = bottom.get_legend().legend_handles[1]
-    assert hollow.get_markerfacecolor() == "none"
+    assert bottom.get_legend().legend_handles[1].get_marker() == "x"
+    markers = {c.get_paths()[0].vertices.shape for c in bottom.collections if c.get_offsets().size}
+    assert len(markers) == 2  # the circles and the crosses
     # the frame follows the values: a value at max_fD (1.1) does not sit on it
     top_wide = plot_butterfly(dataclasses.replace(pc, value=np.array([1.1, 0.2, 0.7, 0.5])),
                               "B:S").axes[0]
@@ -1293,9 +1294,10 @@ def test_residue_overlay_shows_the_chosen_values():
     assert lines["overlay:V:high"].get_marker() == "v"
     # the legend names the samples (their colours) and, in grey, the shapes
     assert [t.get_text() for t in every.axes[0].get_legend().texts] == [
-        "WT", "V", "average", "low-D population", "high-D population"]
+        "WT", "V", r"fD$_{\rm avg}$", r"fD$_{\rm low}$", r"fD$_{\rm high}$"]
     assert [t.get_text() for t in fig.axes[0].get_legend().texts] == [
-        "WT", "V", "low-D population", "high-D population"]
+        "WT", "V", r"fD$_{\rm low}$", r"fD$_{\rm high}$"]
+    assert every.axes[0].get_ylabel() == "fD"  # the legend names which
     one = plot_residue_overlay(rm, "WT", "V", 4.0, show=("avg",))  # circles alone: no names
     assert [t.get_text() for t in one.axes[0].get_legend().texts] == ["WT", "V"]
     assert len(residue_overlay_figure(rm, "WT", ["WT", "V"], 4.0).axes) == 1

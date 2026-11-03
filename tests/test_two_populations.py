@@ -184,7 +184,14 @@ def test_populations_are_drawn_as_the_k2_values_are():
     np.testing.assert_allclose(low.get_ydata() + high.get_ydata(), 1.0)
     assert "pop" in ax.get_ylabel()
     assert [t.get_text() for t in ax.get_legend().texts] == [
-        "WT", "M", "share of the low-D population", "share of the high-D population"]
+        "WT", "M", r"pop$_{\rm low}$", r"pop$_{\rm high}$"]
+    # one share alone, as overlay_populations draws it: the samples' keys are its triangle in
+    # their colours, with nothing else (owner, 2026-11-02)
+    high_only = plot_residue_overlay(gated, "WT", "M", 60.0, show=("pop_high",), choice=choice)
+    legend = high_only.axes[0].get_legend()
+    assert [t.get_text() for t in legend.texts] == ["WT", "M"]
+    assert [h.get_marker() for h in legend.legend_handles] == ["v", "v"]
+    assert "high" in high_only.axes[0].get_ylabel()
     with pytest.raises(ValueError, match="choice"):
         plot_residue_overlay(gated, "WT", "M", 60.0, show=("pop_low",))
     # the corrected-differently mark can be switched off
