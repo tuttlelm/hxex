@@ -148,8 +148,9 @@ report hxex.toml` does.
 The **Review** panel under the tree records your decision on what is selected: one spectrum,
 or every spectrum of a time point or a charge.
 
-- **◀** and **▶** (top right) go to the previous and next spectrum, through every time point,
-  charge, and peptide the tree shows (with the list above it, only flagged series, say).
+- **◀** and **▶** (top right) go to the previous and next spectrum, time point, or charge
+  (the list beside them), through everything the tree shows (with the list above the tree,
+  only flagged series, say).
 - **Status**: not reviewed, accepted, or rejected. In the tree, the keys **A**, **R**, and **U**
   do the same, so you can review with the arrow keys and those three letters.
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted).

@@ -32,6 +32,9 @@ from .user_tables import TableLocked
 
 log = logging.getLogger(__name__)
 
+# what ◀ ▶ step through: (words, the tree's kind of row)
+# (owner: up to the charge, which is a series; a peptide's charges have no view together yet)
+STEP_LEVELS = (("spectrum", "spectrum"), ("time point", "point"), ("charge", "series"))
 # (status, words, key in the tree)
 STATUS_WORDS = (("", "not reviewed", "U"), ("accepted", "accepted", "A"),
                 ("rejected", "rejected", "R"))
@@ -78,16 +81,20 @@ class ReviewPanel(QGroupBox):
         self.resume.clicked.connect(self.resume_asked)
         self.resume.hide()
         self.previous = QPushButton("◀")
-        self.previous.setToolTip("the previous spectrum")
         self.previous.clicked.connect(lambda: self.step.emit(-1))
         self.next = QPushButton("▶")
-        self.next.setToolTip("the next spectrum (through the time points, charges and peptides "
-                             "the tree shows)")
         self.next.clicked.connect(lambda: self.step.emit(1))
         for button in (self.previous, self.next):
             button.setFixedWidth(36)
+        self.level = QComboBox()  # what ◀ ▶ step through (owner)
+        for words, kind in STEP_LEVELS:
+            self.level.addItem(words, kind)
+        self.level.setToolTip("what ◀ and ▶ step through")
+        self.level.currentIndexChanged.connect(self._level_tips)
+        self._level_tips()
         top = QHBoxLayout()
         top.addWidget(self.heading, 1)
+        top.addWidget(self.level)
         top.addWidget(self.previous)
         top.addWidget(self.next)
         grid = QGridLayout(self)
@@ -105,6 +112,11 @@ class ReviewPanel(QGroupBox):
         buttons.addStretch()
         grid.addLayout(buttons, 5, 0, 1, 2)
         self.show_spectra([], "")
+
+    def _level_tips(self, *_) -> None:
+        words = self.level.currentText()
+        self.previous.setToolTip(f"the previous {words}")
+        self.next.setToolTip(f"the next {words} (through everything the tree shows)")
 
     # --- what is shown ---------------------------------------------------------------------
 

@@ -46,6 +46,7 @@ TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
 COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "rejected",
            "K > 1", "K", "review", "flags")
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
+DEPTH = {"peptide": 0, "series": 1, "point": 2, "spectrum": 3}  # a kind of row's level
 # the figure tabs of each kind of selection, in their order
 TABS = {"series": ("spectra", "uptake", "populations"),
         "point": ("spectra", "fits at each K", "uptake"),
@@ -346,20 +347,25 @@ class ResultsWorkspace(QWidget):
 
     # --- stepping through the spectra ---------------------------------------------------------
 
-    def step_spectrum(self, step: int) -> bool:
-        """Select the next (``step`` 1) or previous (-1) spectrum in the tree's order, opening the
-        series on the way; from a time point, series or peptide, its first (or last) spectrum.
-        False at either end."""
+    def step_spectrum(self, step: int, level: str | None = None) -> bool:
+        """Select the next (``step`` 1) or previous (-1) row of ``level`` (``'spectrum'``,
+        ``'point'``, ``'series'`` or ``'peptide'``; default: the review panel's choice) in the
+        tree's order, opening series on the way. From a row below ``level``, the next after the
+        row's own ``level`` row; from a row above it, the first (or last) one inside it. False
+        at either end."""
+        level = level or self.review.level.currentData() or "spectrum"
+        depth = DEPTH[level]
         item = self.tree.currentItem()
         if item is None:
             if not self.tree.topLevelItemCount():
                 return False
-            item = self.tree.topLevelItem(0 if step > 0 else self.tree.topLevelItemCount() - 1)
-            target = self._edge_leaf(item, step)
-        elif item.data(0, KIND) == "spectrum":
-            target = self._leaf_after(item, step)
+            start = self.tree.topLevelItem(0 if step > 0 else self.tree.topLevelItemCount() - 1)
+            target = self._edge_at(start, step, depth)
         else:
-            target = self._edge_leaf(item, step)
+            while DEPTH[item.data(0, KIND)] > depth:  # a spectrum, stepping by time point, say
+                item = item.parent()
+            target = (self._after_at(item, step, depth) if DEPTH[item.data(0, KIND)] == depth
+                      else self._edge_at(item, step, depth))
         if target is None:
             return False
         parent = target.parent()
@@ -375,29 +381,29 @@ class ResultsWorkspace(QWidget):
             self._expanded(item)  # its time points and spectra, made now
         return [item.child(i) for i in range(item.childCount())]
 
-    def _edge_leaf(self, item: QTreeWidgetItem, step: int) -> QTreeWidgetItem | None:
-        """The first (``step`` > 0) or last spectrum under ``item`` (itself when a spectrum)."""
-        if item.data(0, KIND) == "spectrum":
+    def _edge_at(self, item: QTreeWidgetItem, step: int, depth: int) -> QTreeWidgetItem | None:
+        """The first (``step`` > 0) or last row of ``depth`` under ``item`` (itself when of it)."""
+        if DEPTH[item.data(0, KIND)] == depth:
             return item
         children = self._children(item)
         for child in (children if step > 0 else reversed(children)):
-            leaf = self._edge_leaf(child, step)
-            if leaf is not None:
-                return leaf
+            found = self._edge_at(child, step, depth)
+            if found is not None:
+                return found
         return None
 
-    def _leaf_after(self, item: QTreeWidgetItem, step: int) -> QTreeWidgetItem | None:
-        """The spectrum after (or before) ``item``: its sibling, else the edge spectrum of the
-        next sibling of the nearest level that has one."""
+    def _after_at(self, item: QTreeWidgetItem, step: int, depth: int) -> QTreeWidgetItem | None:
+        """The row of ``depth`` after (or before) ``item``: its sibling, else the edge row of
+        the next sibling of the nearest level that has one."""
         while item is not None:
             parent = item.parent()
             siblings = (self._children(parent) if parent is not None else
                         [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())])
             at = siblings.index(item) + step
             while 0 <= at < len(siblings):
-                leaf = self._edge_leaf(siblings[at], step)
-                if leaf is not None:
-                    return leaf
+                found = self._edge_at(siblings[at], step, depth)
+                if found is not None:
+                    return found
                 at += step
             item = parent
         return None

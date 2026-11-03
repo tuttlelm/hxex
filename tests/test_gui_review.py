@@ -221,3 +221,29 @@ def test_each_status_names_its_own_key(window_on):
     assert tips == {"not reviewed": "not reviewed (key U in the tree)",
                     "accepted": "accepted (key A in the tree)",
                     "rejected": "rejected (key R in the tree)"}
+
+
+def test_back_and_forward_step_by_the_level_chosen(qtbot, window_on):
+    """The level list beside ◀ ▶: spectrum, time point, charge, peptide (owner)."""
+    window, project, open_ = window_on
+    page = open_(project)
+    top = page.tree.topLevelItem(0)
+    series = top.child(0)
+    page.tree.setCurrentItem(series)
+    level = page.review.level
+    level.setCurrentIndex(level.findData("point"))
+    assert page.review.next.toolTip().startswith("the next time point")
+    page.review.next.click()  # from the series: its first time point
+    first = page.tree.currentItem()
+    assert first.data(0, 256) == "point" and first.parent() is series
+    page.review.next.click()
+    assert page.tree.currentItem() is series.child(1)
+    page.tree.setCurrentItem(series.child(1).child(0))  # a spectrum: the point after its own
+    page.review.next.click()
+    assert page.tree.currentItem() is series.child(2)
+    level.setCurrentIndex(level.findData("series"))
+    # from a time point: the series after its own; this project has one charge of one peptide
+    assert top.childCount() == 1 and not page.step_spectrum(1)
+    assert page.tree.currentItem() is series.child(2)  # nothing after it: no move
+    assert page.step_spectrum(-1, "point") and page.tree.currentItem() is series.child(1)
+    assert [level.itemData(i) for i in range(level.count())] == ["spectrum", "point", "series"]

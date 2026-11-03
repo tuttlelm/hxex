@@ -72,7 +72,8 @@ def test_each_level_draws_its_figures(qtbot, page):
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
     assert tabs == ["spectra", "fits at each K", "uptake"]
     qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
-    assert page.panel("fits at each K").view.figure.axes[0].get_title().startswith("rep 1: K=")
+    title = page.panel("fits at each K").view.figure.axes[0].get_title()
+    assert title.splitlines()[-1].startswith("rep 1: K=")
     assert len(page.panel("spectra").view.figure.axes) == 3  # that time's replicates
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
         page.tree.setCurrentItem(point.child(0))
@@ -179,3 +180,15 @@ def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_p
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
         "spectrum", "fits at each K", "uptake"]
     assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name
+
+
+def test_stepping_by_charge_goes_to_the_next_series(page):
+    top = page.tree.topLevelItem(0)
+    assert top.childCount() == 2
+    first = top.child(0)
+    page.tree.expandItem(first)
+    page.tree.setCurrentItem(first.child(1).child(0))  # a spectrum of the first series
+    assert page.step_spectrum(1, "series") and page.tree.currentItem() is top.child(1)
+    assert page.step_spectrum(-1, "series") and page.tree.currentItem() is first
+    assert page.step_spectrum(1, "spectrum")  # from a series: its first spectrum
+    assert page.tree.currentItem() is first.child(0).child(0)

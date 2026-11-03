@@ -1637,8 +1637,11 @@ def test_several_spectra_fitted_at_each_k_one_row_each(results):
     fig = plot_k_comparisons(ids, results, labels=["rep 1", "rep 2", "rep 3"], title="1 min")
     n_k = len(results.fit.k_values)
     assert len(fig.axes) == 3 * n_k
-    assert fig.axes[0].get_title().startswith("rep 1: K=")
-    assert fig.axes[n_k].get_title().startswith("rep 2: K=")
+    # the K line is each title's last (marks such as "selected" above it)
+    assert fig.axes[0].get_title().splitlines()[-1].startswith("rep 1: K=")
+    assert fig.axes[n_k].get_title().splitlines()[-1].startswith("rep 2: K=")
+    selected = [ax.get_title() for ax in fig.axes if "selected" in ax.get_title()]
+    assert selected and all(t.splitlines()[0].startswith("selected") for t in selected)
     assert fig.get_suptitle() == "1 min"
     framed = [ax for ax in fig.axes if max(s.get_linewidth() for s in ax.spines.values()) >= 2]
     assert len(framed) == 3  # each row's chosen K

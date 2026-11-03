@@ -183,8 +183,10 @@ def plot_k_comparisons(
             delta = d["delta"][j]
             name = d["criterion"].upper()
             score_text = "rejected" if not np.isfinite(delta) else f"Δ{name} {delta:+.1f}"
-            ax.set_title(f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}"
-                         + (f"\n{', '.join(marks)}" if marks else ""), fontsize=8,
+            # the marks ("selected", ...) above the K line, so every panel's K line sits at the
+            # same height (a title grows upwards from its axes; owner)
+            ax.set_title((f"{', '.join(marks)}\n" if marks else "")
+                         + f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}", fontsize=8,
                          fontweight="bold" if k == d["effective"] else "normal")
             if k == d["effective"]:
                 for spine in ax.spines.values():

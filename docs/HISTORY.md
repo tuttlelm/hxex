@@ -6582,7 +6582,8 @@ CSVs or mzML if wanted.
     reviewed, accepted, rejected; keys A, R, U in the tree, handled by the tree itself, as a
     shortcut needs the window active; ◀ ▶ at its top right step to the previous and next
     spectrum through every time point, series and peptide the tree shows, opening series on the
-    way: owner), the K (the fit's choice or one the run fitted) and a
+    way: owner; a list beside them steps by spectrum, time point or charge, a series, where the
+    owner stopped it), the K (the fit's choice or one the run fitted) and a
     note of what is selected, a spectrum or every spectrum of a time point or series. Each
     decision is written at once to the project's user review table (`gui.review`, no Qt), in
     the spectrum's row as a user would type it (`review_status`, `review_K`, `note`; other and
@@ -6605,6 +6606,8 @@ CSVs or mzML if wanted.
     one-row case), a row per replicate with its label in the titles and its chosen K framed;
     with several rows the layers are named once at the foot of the page and each panel keeps
     only its populations' values under it (twelve repeated legends took a third of the page).
+    A panel's marks ("selected", "reviewer's choice", "population below minimum") are the first
+    line of its title, above the K line, so the K lines of a row sit at one height (owner).
     Next: the flat
     list of spectra, the series review table, the Results tables. Tests:
     tests/test_gui_review.py.
