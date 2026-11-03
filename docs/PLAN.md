@@ -310,39 +310,163 @@ decisions".
 
 ## GUI
 
-A GUI is wanted at some point. Decision (recommendation, to be revisited): **build the library
-and the command-line tool first and add the GUI later**, as another client of the same
-library. The stages already have stable data contracts (spectra, binned table, results bundle,
-a `report` module that plots from loaded results only), and the hard parts of the project are
-the chemistry, picking and fitting engine, which do not depend on a GUI. Starting from a GUI
-would slow that work and tends to bake interface assumptions into the data model.
+The library and the command-line tool came first, as decided at the start; the GUI is now
+designed (owner, 2026-11-03; the technology choice, the review of another project's approach
+and the rendering check are in `docs/HISTORY.md`, item 231). It is a standalone desktop
+application in its own window, for users who are not computer savvy, that sets up the project
+file, runs every stage, and shows selected results and analyses. It is **an addition**: the
+command line and the Python interface stay as they are, and nothing is possible only in the GUI.
 
-Rules adopted now so that adding a GUI later is easy:
+### Rules
 
-1. No global state; explicit config objects (already planned).
-2. A serialisable configuration (TOML or JSON, generated from dataclasses) that a GUI can edit
-   and save (already planned).
-3. **Progress and cancellation hooks** on every long operation (a callback or iterator with a
-   cancel flag). A GUI cannot freeze for many minutes with no stop button, and retrofitting
-   hooks later means touching every long-running function.
-4. Logging through the `logging` module and structured exceptions; no bare `print`.
-5. Plot functions return figures and never call `show()`, so they embed in any window or save
-   headless (already planned for `report`).
-6. Lazy loading of results (Parquet row groups) so a GUI can browse thousands of fits without
-   loading everything.
+1. **Another client of the library.** No fitting, analysis, or decision logic in the GUI: it
+   calls the public functions, so the GUI, the command line, and Python always give the same
+   answer. A behaviour the GUI needs and the library lacks goes into the library first, with
+   its test.
+2. **Files are the shared state.** Settings live in the project file and review decisions in
+   the user's tables, written so that `hxex` commands read them exactly as if the user had
+   edited them by hand. A project started in the GUI can be finished in a terminal and the
+   other way round. The GUI session file (below) holds only the view.
+3. **Every action names its command.** Each run shows the `hxex ...` command it starts (copyable),
+   and each saved change names the file and setting it wrote.
+4. **Long work never in the window's thread.** Stages run as command-line child processes;
+   figures are drawn in worker threads (the report functions use `Figure()`, never pyplot).
+5. **Figures start as the command line draws them, and the user may change them** (owner,
+   2026-11-03: the default output is a starting point, not a constraint). The GUI opens each
+   figure as `hxex report` or `hxex analyse` would draw it and lets the user change what is
+   shown and how (see "Changing a figure"); a changed figure need not match the default
+   output. A new plot type designed for the GUI still starts from the owner's reference figure,
+   as every new plot does.
+6. Long operations keep their progress and cancellation hooks; logging only; plot functions
+   return figures; results load lazily (the rules adopted at the start still hold).
 
-**Review layer.** In HDX-MS the main value of a GUI is usually interactive review and
-curation. The results bundle therefore carries per-spectrum flags and notes (accept or
-reject, comments, manual overrides such as a chosen K) that need no refitting. The
-command-line tool and notebooks use the same layer, and it is cheap to add to the schema now
-and awkward to retrofit.
+### Technology
 
-Sequence: the first GUI is a **results viewer and review tool** (open a bundle, browse spectra
-and fits, set review flags), after Phase 4. A run launcher (choose files, set the configuration,
-start and monitor a run) comes after that.
+- **Qt for Python, `PySide6-Essentials`** (LGPL-3.0, compatible with GPL v3), as the optional
+  extra `hxex[gui]`; the core install does not change. Started by `hxex gui [PROJECT]` and by a
+  `gui-scripts` entry point `hxex-gui` (no console window on Windows). Lower bound measured in
+  G0 (Python 3.11 to 3.14 on the three systems).
+- **Figures are shown as SVG**: each figure is saved to SVG in memory and drawn by Qt's SVG
+  renderer (`QtSvg`), so it stays sharp at any size. Measured on a tutorial series page
+  (HISTORY 231): every element renders as in matplotlib, hatching included, in about 0.05 s
+  (saving the SVG takes 0.1-0.8 s). Zooming magnifies the picture; changing an axis range is a
+  change to the figure, which is redrawn. Click-through uses the artists' `gid`s, which appear as element ids in the SVG
+  (`QSvgRenderer.boundsOnElement`).
+- **Every figure can be saved** as SVG, PDF, or PNG from the same `Figure`, one at a time or
+  all figures shown.
+- **Tests**: `pytest-qt` (MIT) in the `dev` extra; the GUI tests skip without PySide6 and run
+  offscreen (`QT_QPA_PLATFORM=offscreen`) in CI on all three systems; the minimum-versions job
+  covers the extra's lower bound. A test renders every figure kind through `QtSvg` and fails on
+  an unsupported element, so a later figure change cannot break the GUI silently.
 
-The technology options (Qt desktop, browser-based, notebook widgets) and when integrating the GUI
-from the start would be better are in `docs/HISTORY.md` under this heading.
+### Running stages
+
+The window drives the command-line commands (`check`, `run`, `resume`, `report`, `analyse`,
+`info`) as child processes and shows their output in a read-only console pane with a progress
+bar; short read-only work (loading a project or results, drawing a figure, checking a setting)
+calls the library in the GUI's own process. Details:
+
+- one job per project at a time; the output is kept when the pane is closed and reopened;
+- unbuffered output (`PYTHONUNBUFFERED`), so lines arrive as they are written;
+- Stop as Ctrl-C in a terminal: the first press stops after the current step (SIGINT on Linux
+  and macOS; on Windows CTRL_BREAK, for which the command line gains a handler), a second
+  aborts, and after a grace period the whole process tree is ended (a process group on Linux
+  and macOS, a job object on Windows);
+- machine-readable progress for the bar: a command-line option (for example
+  `--progress-format json`) beside today's progress lines, designed in G2;
+- an existing output is a plain question (replace, keep the previous one as `NAME.N`, or
+  cancel), answered with `--overwrite` or `--keep-previous`.
+
+### Editing what users edit
+
+- **The project file.** A form built from the settings reference (`hxex._reference.tables()`:
+  type, default, and the description shown in `settings.md`), grouped by table, with each
+  setting's description beside it and settings that differ from the default marked. Changes
+  are written through `hxex.project_edit`, which keeps the user's comments and layout and
+  switches tables on as `hxex set` does; it is extended to the lists of tables
+  (`[[input.runs]]`, `[[input.exclude]]`, `[[review.exclude]]`, fragments) and to the per-run
+  nested tables. Problems show as the project is edited, in the words `hxex check` uses. A new
+  project starts from `hxex init` and an input step (format, folder, peptide table, controls by
+  role). The file is watched: a change made in a text editor is offered for reloading. The TOML
+  is shown read-only beside the form.
+- **The tables users write or edit** (owner: every table a user is expected to interact with):
+  the peptide table of the scan formats, the file table of the folder formats, the
+  retention-time table, and the user review table. They are edited as tables: columns the user
+  added and the column order are kept, writes are atomic, and the readers' checks run before a
+  save. Tables *hxex* writes (`spectra.csv`, `series.csv`, the analysis tables) are shown
+  read-only and sortable; the user review table is made from `spectra.csv` on the first review
+  edit and named in `[review] table`.
+
+### Results and analysis
+
+- **Results and review.** A browser of samples, peptides, and charges with K, flags, and review
+  status, and filters (flagged, K above one, rejected, ...); the series pages (spectra, uptake,
+  populations) of the selection and a single spectrum in detail; a review panel (accepted or
+  rejected, `review_K`, note) that writes the user review table and updates the view at once
+  (`Results.with_review`); exclusion rules (`[[review.exclude]]`); a chosen K without a
+  bootstrap at it offers `hxex resume`.
+- **Analysis.** The comparison figures for a chosen reference, samples, times, and K (Woods,
+  butterfly, residue significance, population tiers, uptake comparisons, protection factors and
+  fragment figures where the analysis has them); clicking a peptide opens its series in the
+  results view.
+
+### Changing a figure
+
+A figure in the GUI is the report function's figure plus the user's changes, kept as a list and
+applied again whenever the figure is redrawn (new data selected, review changed, session
+reopened), so a change is not lost the way a change made with a plotting toolbar is. Three
+kinds, in order of how far they reach:
+
+1. **What is drawn**: the selection (samples, peptides, charges, times, replicates, K) and the
+   display settings the figures already have (`[figures]`: kinds, scale, k, ...), passed to the
+   report functions. Where a change has a setting, the GUI can write it to the project's
+   `[figures]` table, so `hxex report` then draws the same.
+2. **How it looks**: axis ranges and scales, titles and labels, font sizes, figure size,
+   legend position or none, and the colour, width, or visibility of a drawn layer (found by
+   its `gid`), applied to the returned `Figure` before it is shown or saved.
+3. **New views** the owner asks for later (combinations, overlays, linked views), each a new
+   plot type that starts from the owner's reference and goes into the library like any other
+   figure.
+
+The change list of kind 2 is applied by a library function (planned
+`hxex.report.apply_changes(figure, changes)`), so a figure changed in the GUI can be
+reproduced from Python, and it is stored with the figure in the GUI session file. Kinds 1 and
+2 start in G3 (results) and grow in G4 (analysis).
+
+### The GUI session file
+
+The owner asked for a saved GUI project that reopens a previous session. A small TOML file
+chosen by the user (suggested `NAME.hxexgui` beside the project file) holds only the view: the
+project file (relative path), the results and analysis folders open, the selections (sample,
+peptide, charge, reference, times, K), the figures open with their changes ("Changing a
+figure"), and the window layout, with a version number. It never holds settings or review decisions, which stay in
+the project file and the user's tables. On reopening, an item that no longer exists (a bundle
+replaced, a peptide gone) is dropped with a note. Recently opened sessions are remembered per
+user by Qt (`QSettings`).
+
+### Phases of the GUI (owner: project editor first)
+
+| Phase | Deliverable | Done when |
+|---|---|---|
+| G0 | `[gui]` extra, `hxex gui`/`hxex-gui`, a window with the four workspaces (project, run, results, analysis), the session file, the SVG figure view with saving, pytest-qt in CI | Opens and closes on the three systems in CI; every figure kind renders through QtSvg |
+| G1 | Project editor and the user tables | The tutorial's project file built from scratch in the GUI passes `hxex check` like the hand-written one; table edits keep the user's columns |
+| G2 | Running stages (child processes, console, progress, Stop) and the command-line additions | The tutorial run, stopped, and resumed from the GUI on the three systems |
+| G3 | Results and review; changing a figure (what is drawn, how it looks) | Review edits made in the GUI give the same `hxex report` tables as the same edits made in a spreadsheet |
+| G4 | Analysis views and click-through | Every figure of the tutorial's analysis folder reachable from the GUI; saved without changes, identical to `hxex analyse`'s |
+| Later | Installers (torch makes them large), remote use | — |
+
+### Risks
+
+- **Remote GPU machines.** A Qt window over `ssh -X` is slow; the advice is to run on the GPU
+  machine from the command line and open the results locally. A browser front end would be a
+  separate decision.
+- **Size and system libraries.** The PySide6 wheels are up to about 116 MB; on Linux Qt needs
+  system libraries (EGL, xkbcommon) that the install page must name.
+- **Redrawing cost.** Changing an axis range redraws the figure (0.1-0.8 s for a series page
+  to SVG); if that is too slow for dragging, an interactive matplotlib canvas for the figure
+  being changed can sit beside the SVG view.
+- **Two editors of one file.** A project file or table open in a text editor or spreadsheet
+  while the GUI writes it: the GUI watches its files and refuses to overwrite a newer one.
 
 ## Phases
 
@@ -355,7 +479,7 @@ from the start would be better are in `docs/HISTORY.md` under this heading.
 | 4. Scale and reporting | Chunking by device, bootstrap, plots from saved results, tables | A 10,000-fit run within a measured time on stated hardware; replots from a saved bundle match direct plots |
 | 5. Validation and release | Real-data replicate check, docs, examples | Release 0.1 |
 | 6. Extra input | Fragment-table generation, Thermo raw (mzML and Thermo raw are done, items 33 and 43); better peak picking | Each has golden tests |
-| 7. GUI (after Phase 4) | Results viewer and review tool; later a run launcher | Opens a saved bundle, browses fits, saves review flags without refitting |
+| 7. GUI (after Phase 4) | Project editor, running stages, results and review, analysis views ("GUI", phases G0-G4) | The tutorial done end to end from the GUI on the three systems, with the same outputs as from the command line |
 
 ## Status
 
@@ -392,8 +516,9 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   isolation windows (item 38), fragment comparisons with pyHXExpress and the closure test (items
   39 to 41), read records for every format (item 42) and Thermo `.raw` files read directly
   (item 43). Open: fragment-ion amide counts, the z-fragment offset, the shoulder rule.
-- **Phase 7 (GUI): not started.** The review layer, the `*_data` functions, the artists' `gid`s
-  and `Results.with_review` are in place for it (item 31).
+- **Phase 7 (GUI): designed, not started** (owner, 2026-11-03; "GUI", HISTORY 231). The
+  review layer, the `*_data` functions, the artists' `gid`s and `Results.with_review` are in
+  place for it (item 31). Next: G0.
 
 ## Deliberate differences from pyHXExpress
 
@@ -794,6 +919,9 @@ Planned, not built:
    missed, and could serve as an adaptive floor in place of the fixed `min_population`
    (adaptive floors from the share's own error were tried and lose too many real populations,
    HISTORY 212). Not started; evaluate against the noise simulation's known populations first.
+18. **The GUI** (owner, 2026-11-03; HISTORY 231). A standalone Qt window, in addition to the
+   command line and Python: the project editor and the user tables first, then running stages,
+   results and review, and analysis views (section "GUI", phases G0-G4). Next: G0.
 
 ## Risks and open decisions
 

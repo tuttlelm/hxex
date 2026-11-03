@@ -6237,3 +6237,38 @@ CSVs or mzML if wanted.
     its old text back. The notebooks' `change` helper is gone; the zip on tutorial-data-1 needs
     replacing. Guide: first-project.md step 4, project-file.md, commands.md (generated).
 
+231. **The GUI designed (owner, 2026-11-03; PLAN "GUI").** The owner's goal: a user-friendly,
+    standalone application in its own window that sets up the project file, runs every stage
+    with the output shown as in a terminal, and shows selected data in figures, in addition to
+    the command line and Python. Owner's answers: driving the command-line commands and showing
+    their output is acceptable (the first thought had been to drive the Python functions);
+    the toolkit left to the recommendation; the project editor first; every table a user is
+    expected to interact with editable; figures shown as SVG, and every figure can be saved;
+    a GUI session file to reopen a previous session; and (added the same day) a figure in the
+    GUI need not match the default output: the command line's figure is the starting point, the
+    user may change it, and more GUI features are expected (PLAN "Changing a figure").
+    *Another project's approach reviewed* (wilburnlab/constellation, Apache-2.0, its `viz`
+    layer as of 2026-11-02): a local FastAPI server with a TypeScript front end (d3, xterm,
+    dockview, Arrow), shown in a browser tab, about 10,000 lines of Python and 15,000 of
+    TypeScript; command forms generated from argparse; commands run as child processes whose
+    output streams into a read-only terminal view, with a cancel button and one job at a time.
+    Not adopted as a whole: every hxex figure would need rewriting in d3 (two versions of each
+    figure, against the rule that the GUI, command line, and Python draw the same figures); it
+    is a console plus a browser tab, not a window of its own; Node joins the build; it is tested
+    on Linux only (on Windows its stop kills at once and child processes survive). Adopted: the
+    pattern of running the command line as a child process with a read-only console, a stop
+    with a grace period, one job at a time, and the output kept for a reopened pane, plus what
+    it lacked (stopping the process tree, unbuffered output, CI on three systems).
+    *Toolkit*: `PySide6-Essentials` (6.12.0 on 2026-11-03; LGPL-3.0, GPL-3.0 or GPL-2.0;
+    Python 3.10 to 3.15; wheels up to about 116 MB) as the extra `gui`, `pytest-qt` (4.5.0, MIT)
+    for the tests. Tkinter (no new dependency, weaker widgets and high-DPI support) and a
+    browser-based window (better over a remote connection, but a server and a browser to
+    maintain) were the alternatives.
+    *Rendering check* (scratch): the three figures of one tutorial series (the spectra page, 22
+    panels; uptake; populations) and a feature test (hatching, transparent fills, dashes,
+    triangle markers, clipping, `gid`s) saved as SVG by matplotlib and drawn by Qt's renderer
+    offscreen: identical to matplotlib's own PNGs apart from resolution, hatching included;
+    loading and drawing 0.03-0.05 s per page against 0.1-0.8 s to save the SVG and 2.1 s to draw
+    the three figures; a `gid` is found as an element with its bounds (click-through). Qt's
+    only warning was for matplotlib's empty glyph of the space character (harmless).
+
