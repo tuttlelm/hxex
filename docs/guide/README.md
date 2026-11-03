@@ -13,8 +13,10 @@ a short text file.
 ## Start here
 
 1. [Installing *hxex*](install.md): step by step, on Windows, macOS or Linux.
-2. [Tutorial](tutorial.md): a complete analysis of published data (a protein and two disease
-   variants), from the exported spectra to the comparison, with a notebook of the same steps.
+2. [Tutorial, part 1](tutorial.md): a complete analysis of published data (a protein and two
+   disease variants), from the exported spectra to the comparison, with a notebook of the same
+   steps. [Part 2](tutorial-fits.md) reads the fits: reviewing spectra, how many populations,
+   and comparing two populations.
 3. [Your first project](first-project.md): from your exported spectra to tables and figures.
 4. [The project file and the commands](project-file.md): how the file works, the commands and
    their options.

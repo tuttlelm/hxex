@@ -11,11 +11,13 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 from matplotlib.figure import Figure
 
+from ..io.entries import parse_range
 from .figures import PlotConfig, series_figures
 from .results import Results
-from .tables import find_series
+from .tables import find_series, series_table
 
 log = logging.getLogger(__name__)
 
@@ -86,8 +88,7 @@ def show_series(
     ids = find_series(results, samples=[sample], peptide_ranges=[peptide_range],
                       charges=None if charge is None else [charge])
     if not ids:
-        raise ValueError(f"no series of {sample} {peptide_range}"
-                         + ("" if charge is None else f" at charge {charge}"))
+        raise ValueError(_no_series(results, sample, peptide_range, charge))
     config = results.figures or PlotConfig()
     changes = {"k": k, "kinds": None if kinds is None else tuple(kinds), "scale": scale}
     config = dataclasses.replace(config, **{n: v for n, v in changes.items() if v is not None})
@@ -102,6 +103,39 @@ def show_series(
     for figure in figures:
         display(notebook_image(figure, format, dpi))
     return None
+
+
+def _no_series(results: Results, sample: str, peptide_range: str, charge: int | None) -> str:
+    """Why :func:`show_series` found nothing, with what the results do have."""
+    what = f"no series of {sample} {peptide_range}" + (
+        "" if charge is None else f" at charge {charge}")
+    samples = results.samples()
+    if sample not in samples:
+        return f"{what}: no sample {sample!r} (samples: {', '.join(samples) or 'none'})"
+    try:
+        wanted = parse_range(peptide_range)
+    except ValueError:
+        return f"{what}: give the residues as START-END, for example \"87-96\""
+    t = series_table(results)
+    here = t["sample"] == sample
+    same = here & np.array([_residues(r) == wanted for r in t["peptide_range"]], dtype=bool)
+    if same.any():
+        charges = sorted({int(z) for z in t["charge"][same]})
+        return f"{what}: its charges in {sample} are {', '.join(map(str, charges))}"
+    near = sorted({str(r) for r in t["peptide_range"][here]
+                   if (_residues(r) or (0, 0))[0] <= wanted[1]
+                   and (_residues(r) or (0, 0))[1] >= wanted[0]}, key=_residues)
+    return f"{what}: no peptide covering residues {wanted[0]}-{wanted[1]} exactly" + (
+        f" (peptides of {sample} overlapping them: {', '.join(near[:12])}"
+        + (" ..." if len(near) > 12 else "") + ")" if near
+        else f" (results.peptides({sample!r}) lists the peptides of {sample})")
+
+
+def _residues(label: str) -> tuple[int, int] | None:
+    try:
+        return parse_range(label)
+    except ValueError:
+        return None
 
 
 def notebook_image(figure: Figure, format: str = "png", dpi: int = 80):  # noqa: A002

@@ -272,7 +272,7 @@ def folder_name_disagreements(entries: Sequence[PeptideEntry], fmt: str, *,
         nonlocal cut
         if cut is None:
             try:
-                found = scan_specexport(data_dir, registry=registry) if (
+                found = scan_specexport(data_dir, registry=registry, warn=False) if (
                     data_dir is not None and fmt == "specexport") else []
             except ReadError:  # a FASTA the scan refuses: no sequence to agree with
                 found = []

@@ -83,6 +83,16 @@ def test_a_mutants_substitutions_are_named_and_its_fasta_used(tmp_path, caplog):
     assert "or a FASTA that differs from the sequence HDExaminer searched against" in caplog.text
 
 
+
+def test_reading_a_mutant_warns_once_about_its_substitutions(tmp_path, caplog):
+    """The read checks the entries against the folder names with a second scan of the folder:
+    that scan logs nothing, so each warning appears once."""
+    sample(tmp_path, "D7Q", "MKVLAGQEDW", ["0002-0005-KVLA", "0006-0010-GDEDW"])
+    with caplog.at_level(logging.WARNING):
+        entries = hio.scan(tmp_path, "specexport")
+        hio.read_spectra(entries, tmp_path, "specexport", project="p")
+    assert caplog.text.count("D7Q.fasta differs from the names") == 1
+
 def test_a_difference_every_sample_shares_is_not_called_a_mutation(tmp_path, caplog):
     """Folder names that differ from every sample's FASTA at the same residues point at the
     FASTA files (or HDExaminer's sequence), not at a mutation: one warning for all samples; a

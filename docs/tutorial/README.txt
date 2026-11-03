@@ -1,12 +1,13 @@
 hxex tutorial: HSPB5 and two disease-associated variants
 =========================================================
 
-This folder holds the data for the hxex tutorial. The tutorial itself is here:
+This folder holds the data for the hxex tutorial. The tutorial itself is in two parts:
 
-    https://github.com/tuttlelm/hxex/blob/main/docs/guide/tutorial.md
+    https://github.com/tuttlelm/hxex/blob/main/docs/guide/tutorial.md        (part 1)
+    https://github.com/tuttlelm/hxex/blob/main/docs/guide/tutorial-fits.md   (part 2)
 
-The same steps are in the Jupyter notebook in this folder, hxex_b5_tutorial.ipynb, for
-those who prefer to work in a notebook.
+The same steps are in the two Jupyter notebooks in this folder, for those who prefer to work
+in a notebook: hxex_b5_tutorial_1_basics.ipynb, then hxex_b5_tutorial_2_fits.ipynb.
 
 
 What is in this folder
@@ -16,7 +17,9 @@ SpecExport/              HDX-MS spectra exported from HDExaminer 3.0 ("SpecExpor
   WT/, D109H/, R120G/    one folder per sample, one folder per peptide inside it, one
                          file per time point, replicate, and charge state
   WT.fasta, ...          the protein sequence of each sample
-hxex_b5_tutorial.ipynb   the tutorial as a Jupyter notebook
+hxex_b5_tutorial_1_basics.ipynb   part 1 of the tutorial as a Jupyter notebook
+hxex_b5_tutorial_2_fits.ipynb     part 2, which continues from the results of part 1
+tutorial_helpers.py      small helpers the notebooks use to change the project file
 README.txt               this file
 LICENSE.txt              the licence of the data (CC BY 4.0)
 

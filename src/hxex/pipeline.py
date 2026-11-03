@@ -375,6 +375,36 @@ class _Span:
             report(self.hook, int(round(self.start + (self.end - self.start) * frac)), UNITS)
 
 
+class _FitSpan(_Span):
+    """The progress of :func:`~hxex.fit.fit_models` (one call per optimiser restart, K by K) on a
+    range of the overall units, each restart weighted by its cost: K times its Adam steps (a
+    K = 3 restart takes longer than a K = 1 one, so counting restarts alike made the time left
+    far too short; audit 2026-11-01, Part 2 M1). When the calls do not match the schedule
+    expected from the settings, they count alike."""
+
+    def __init__(self, hook: ProgressHook | None, start: float, end: float, config, data):
+        super().__init__(hook, start, end)
+        k_values = config.k_values
+        role = data.role
+        if 1 not in k_values and role is not None and any(r not in ("", None) for r in role):
+            k_values = (1, *k_values)  # the controls' K = 1 (fit_models)
+        weights: list[float] = []
+        for k in k_values:
+            warm = config.nested_init and config.kmeans_after_warm and (k - 1) in config.k_values
+            weights += [float(k * config.adam_steps_for(k))] * (config.n_restarts + int(warm))
+        total = sum(weights)
+        self.cumulative = (np.cumsum(weights) / total) if total > 0 else np.zeros(0)
+
+    def __call__(self, done: int, total: int) -> None:
+        if self.hook is None:
+            return
+        if total == len(self.cumulative) and 0 < done <= total:
+            frac = float(self.cumulative[done - 1])
+        else:
+            frac = done / total if total else 1.0
+        report(self.hook, int(round(self.start + (self.end - self.start) * frac)), UNITS)
+
+
 def _bootstrap_ks(config: RunConfig, fit: FitResult) -> list[int]:
     """The Ks of the fixed-K bootstrap the run was asked for (none for ``'selected'``)."""
     if config.bootstrap is None or config.bootstrap.ks == "selected":
@@ -580,7 +610,8 @@ def _fit_part(
         mid = a + (b - a) * (1.0 - plan.test_share)
         required = (np.array([int(chosen.get(str(i), 0)) for i in sub.spectrum_id])
                     if chosen else None)
-        part = fit_models(sub, config.fit, progress=_Span(progress, a, mid), cancel=cancel,
+        part = fit_models(sub, config.fit, progress=_FitSpan(progress, a, mid, config.fit, sub),
+                          cancel=cancel,
                           test_screen=testing, noise_curve=noise_curve, required_k=required)
         if testing:
             test = population_test(sub, part, config.population_test,

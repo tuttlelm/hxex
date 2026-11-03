@@ -54,7 +54,18 @@ it. A line that starts with `#` is a setting that is switched off: delete the `#
 on.
 
 Settings are grouped under headings. A heading's settings are the lines below it, up to the
-next heading.
+next heading that is switched on.
+
+Some headings are switched off too, such as `# [run.controls]` or `# [analysis]`. To use a
+setting under one, delete the `# ` in front of the heading as well as in front of the setting:
+a setting switched on under a heading that is still off belongs to the heading above, and
+`hxex check` then names the line and the heading still off. Some names, such as `d2o_fraction`,
+appear under several headings; the comment beside each says which one it is.
+
+The settings most projects change come first in the file: the input, the output, the review,
+the back-exchange correction (`[run.controls]`), the bootstrap, the population test, the
+analysis, and the figures. Everything after the line `Advanced settings: most projects never
+change these` can usually stay as it is.
 
 - **Single brackets**, such as `[input]`, are for something there is only one of: the project
   has one input, so `[input]` appears once.
@@ -169,16 +180,20 @@ hxex report hxex.toml --figures
 ```
 
 This draws the figures into `results_figures`: an overview, and for each peptide that needs a
-look (a poor fit, a missing control) its spectra and uptake. To draw every peptide, add
-`--series all`, or set `series = "all"` in the `[figures]` part near the end of `hxex.toml`.
+look (a poor fit, a missing control) its spectra and uptake. It also writes the tables in
+`results_tables` again (as `hxex report` always does), and its last line names both folders. To draw every peptide, add
+`--series all`, or set `series = "all"` in the `[figures]` part of `hxex.toml` (just above the
+advanced settings).
 Open the `.pdf` files as usual. `hxex run` never draws figures, so changing how they look needs
 only this command again, not a new run: then add `--overwrite`, which replaces the figures
-drawn before (without it, *hxex* stops rather than write over them).
+drawn before (without it, *hxex* stops rather than write over them). The tables of the same
+results are written again without it.
 
 ## Step 8: compare samples
 
 To compare your samples with a reference sample, open `hxex.toml` again, find the commented-out
-`[analysis]` group near the end, and switch on these two lines by deleting their `#`:
+`# [analysis]` group (just above `[figures]`), and switch on these two lines by deleting their
+`# `:
 
 ```toml
 [analysis]
@@ -222,8 +237,9 @@ hxex report hxex.toml --figures --overwrite
 hxex analyse hxex.toml --overwrite
 ```
 
-- `hxex run` fits and writes the results and their tables (step 6), `hxex report` draws the
-  figures (step 7), and `hxex analyse` makes the analysis (step 8). Each reads `hxex.toml`.
+- `hxex run` fits and writes the results and their tables (step 6), `hxex report` writes the
+  tables again and, with `--figures`, draws the figures (step 7), and `hxex analyse` makes the
+  analysis (step 8). Each reads `hxex.toml`.
   [What each one does](project-file.md#run-report-and-analyse-what-each-one-does) sets the
   three side by side.
 - After changing only the `[figures]` settings, run only `hxex report`; after changing only

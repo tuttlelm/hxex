@@ -2,8 +2,8 @@
 
 `hxex run` writes a results **bundle** (`[output] bundle`, such as `results`: a folder, or a `.zip`,
 of Parquet tables with a `manifest.json`) and CSV tables beside it (`results_tables`).
-`hxex report` draws the figures (`results_figures`) from the bundle, and writes the tables again;
-`hxex analyse` writes the post-fitting analysis to a folder named after the bundle and the
+`hxex report` writes the tables again from the bundle (with your review applied), and with
+`--figures` also draws the figures (`results_figures`); `hxex analyse` writes the post-fitting analysis to a folder named after the bundle and the
 reference: `results_analysis_WT` for comparisons with WT (`results_analysis` without a
 reference), so analyses with different references never replace each other.
 
@@ -87,12 +87,16 @@ generations: do not give another bundle such a name, since *hxex* would list it 
 | `hxex run` | `results`, `results_tables` | `results_figures`, `results_analysis_...` |
 | `hxex resume` | `results` (adds to it), `results_tables` | `results_figures`, `results_analysis_...` |
 | `hxex report` | `results_tables` | |
-| `hxex report --figures` | `results_figures` | |
+| `hxex report --figures` | `results_tables`, `results_figures` | |
 | `hxex analyse` | `results_analysis_...` | |
 
 `hxex resume` adds to the bundle and writes its tables again without asking: they belong to the
 same results (a tables folder made from other results is left as it is, with a warning; `hxex
-report --overwrite` writes it). After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
+report --overwrite` writes it). `hxex report` likewise writes the tables of the same results
+again in place, so `hxex report hxex.toml --figures` right after `hxex run` needs no
+`--overwrite` for them; the figures folder, and tables made from other results, follow the rule
+above. Its last line names both folders, for example `5 table(s) in results_tables (review: 1
+rejected); 12 figure file(s) in results_figures`. After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
 folder made from other results, and `hxex info results` lists each folder as `up to date` or
 `made from earlier results`. To bring them up to date:
 
@@ -102,8 +106,8 @@ hxex analyse hxex.toml --overwrite
 ```
 
 `hxex check hxex.toml` lists these folders under `outputs`: which exist, whether each was made
-from the results in the bundle now, and which command would need `--overwrite` or
-`--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
+from the results in the bundle now, and which command writes each, with one closing line on
+`--overwrite` and `--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
 command stops by itself, before doing any work.
 
 Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
@@ -129,6 +133,10 @@ delete every folder whose name starts with `results`, or use `--overwrite` or
 
 ## Tables from `hxex run` and `hxex report`
 
+Numbers are written with six significant digits (and at least four decimals from 1 up, so an
+m/z keeps its 0.0001), whole numbers without `.0` (a 30 min time is `1800`), and an empty cell
+where there is no value. The bundle keeps every digit.
+
 | File | One row per | Holds |
 |---|---|---|
 | `series.csv` | series | sample, peptide, range, charge; spectra counted (`n_flagged` with a quality flag, `n_rejected` rejected or excluded, `n_multi` with more than one population, rejected spectra not counted, as in the analysis); `controls` (measured; `uncorrected` for a series the controls leave as measured, such as a fragment ion; or why a fallback was used), `control_notes` (control warnings that leave it in use: `fd_disagrees`, `fd_multimodal` with whether its retention agrees with the other samples' (`retention agrees`, `retention differs`), or else with its other charge states' (`retention agrees with its other charge states`), or `retention unchecked`, `m0_multimodal`, `data_below_m0`, `fd_charges_disagree` (the peptide's charge states, whose fully deuterated controls are combined, differ by more than 0.1), `m0_replicate_left_out` and `fd_replicate_left_out` (a control replicate was left out of the average: far from the other replicates, above the amide count, or a noise outlier), `fd_deamidated` (the fully deuterated control was lowered by its sample's deamidated share, see [Deamidated fully deuterated controls](back-exchange-correction.md#deamidated-fully-deuterated-controls))), `retention` (deuterium kept), `deamidated_share` (with `deamidation = true`, for a peptide holding an Asn-Gly site: its sample's deamidated share; empty otherwise), `control_fallback`, `noise_reference` (where the series' noise level came from: `per bin` with per-bin noise, the default, see [The noise model](noise-model.md); with one noise level per spectrum, `undeuterated control`, `own spectrum` when no undeuterated control of the series was fitted, so each spectrum set its own and may show too many populations, see [Analysing part of a dataset](part-of-a-dataset.md), or `run's scans` for kinetics), `rt` |
@@ -140,13 +148,23 @@ delete every folder whose name starts with `results`, or use `--overwrite` or
 
 ## Figures from `hxex report --figures`
 
-`hxex run` draws no figures. `hxex report hxex.toml --figures` draws them from the results,
-with the settings of the `[figures]` part of the project file; changing those settings needs
+`hxex run` draws no figures. `hxex report hxex.toml --figures` draws them from the results
+(and writes the tables again, as `hxex report` always does), with the settings of the
+`[figures]` part of the project file; changing those settings needs
 no new run, only `hxex report` again. (Given the bundle instead, `hxex report results
 --figures` uses the usual settings and its own options.)
 
 - `overview.pdf`: which K was selected and how often (per time, before and after review); the
-  controls (retention against its limits, measured against fallback); the quality flags.
+  controls (retention against its limits, measured against fallback); the quality flags. Each
+  dashed limit line is named beside it (for example `outlier limit 0.23 (median − 4 robust
+  sd)` or `upper limit 1.1 (retention_max)`). The bars say in words what they count, with the
+  flag name that `series.csv` and `spectra.csv` use in small grey type after the count. On the
+  controls page, bars marked `(note)` (light grey) count controls that are used but carry a
+  note, some of them good news (`retention agrees with the other samples`); the orange bars
+  say why a control was missing or not used. The quality page's middle panel plots each
+  spectrum's misfit (relative to the typical one of its series) against its intensity
+  (relative to its replicates): the poor fits worth a look are those above the dashed line
+  but right of the vertical one, poor fits that are not merely weak spectra.
 - One file per series, named by its label (sample, range, peptide or fragment, charge,
   condition), with a page per kind. Each page has one legend, at the top or on the right, that
   names every symbol on it.
@@ -408,7 +426,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `residue_significance_K2` | the same at K = 2: where the number of populations differs, and, with a bootstrap at K = 2, the differences in the population share and in the two populations' positions |
 | `woods_<sample>_<time>` | peptide differences from the reference at K=1, and where the number of populations differs (see *Reading the Woods plot* below) |
 | `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
-| `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath |
+| `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath (a filled point where the difference is significant, a hollow one where it is not, and the critical difference dashed: all named in the legend) |
 | `regions_<time>` | the regions' fD |
 | `region_significance` | with regions: which regions differ significantly from the reference, one row per sample and time, one column per region (see *Reading the region significance map* below) |
 | `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
@@ -422,7 +440,9 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 covers at its difference from the reference (sample minus reference), with its standard error as
 a vertical line. A bar is coloured where the difference is significant (red: the sample is
 higher; blue: lower): Welch's t-test on the replicate spectra gives p below `alpha`, and the
-difference is larger than the critical difference, drawn as the dashed lines.
+difference is larger than the critical difference, drawn as the dashed lines. The legend above
+the panel names the colours and the dashed lines; on a population panel red and blue mean a
+larger or smaller low-D share than the reference.
 
 The plot comes in two figures. The first, `woods_<sample>_<time>`, has the average deuteration
 (K=1 fD, one population) and, below it, **Two Populations Selected**: a grey bar over each
@@ -454,7 +474,8 @@ reference residue by residue, the reference in black and the sample in its colou
 deuteration (K=1, fDavg) is small circles on a line with a shaded ±1 standard-error band; the
 line joins two residues only where one peptide measures both, so a gap means the peptides do not
 connect them. Where a sample has two populations, fDlow is an up triangle and fDhigh a down
-triangle, with their error bars. A residue has two populations for a sample when the peptides
+triangle, with their error bars; the legend names the shapes in grey beside the samples'
+colours. A residue has two populations for a sample when the peptides
 whose spectra are best described by two populations carry at least half of its weight (and the
 two values are separated, precise, and on either side of the average). Its fDlow and fDhigh, like
 its average, come from every peptide covering it, so the three always describe the same

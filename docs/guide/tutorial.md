@@ -1,12 +1,16 @@
-# Tutorial: a protein and two disease variants
+# Tutorial, part 1: a protein and two disease variants
 
 This tutorial takes you through a complete *hxex* analysis of real, published data, from the
 exported spectra to a comparison of three samples. You type every command yourself, so by the
 end you will have used each part of *hxex* once and seen what it writes. It takes about an
 hour, of which about half is the computer working.
 
+[Part 2](tutorial-fits.md) continues in the same folder. It looks closely at the fits:
+reviewing spectra, how many populations a peptide has, and comparing two populations between
+samples.
+
 The same steps are in a Jupyter notebook, which comes with the data (see
-[The notebook](#the-notebook) at the end). This page needs no Jupyter.
+[The notebooks](#the-notebooks) at the end). This page needs no Jupyter.
 
 ## The data
 
@@ -51,29 +55,39 @@ hxex_b5_tutorial/
 ├── SpecExport/                the spectra, as HDExaminer exported them
 │   ├── WT/                    one folder per sample,
 │   │   ├── 0001-0009-MDIAIHHPW/      one folder per peptide,
-│   │   │   ├── Non-1-z2.csv          one file per time point, replicate, and charge
+│   │   │   ├── Non-D-1-z2.csv        one file per time point, replicate, and charge
+│   │   │   ├── 0.1s-1-z2.csv
 │   │   │   ├── 4s-1-z2.csv
-│   │   │   └── ...
+│   │   │   ├── ...
+│   │   │   └── Full-D-1-z2.csv
 │   │   └── ...
 │   ├── D109H/
 │   ├── R120G/
 │   ├── WT.fasta               the protein sequence of each sample
 │   ├── D109H.fasta
 │   └── R120G.fasta
-├── hxex_b5_tutorial.ipynb     the notebook
+├── hxex_b5_tutorial_1_basics.ipynb     the notebook of this page
+├── hxex_b5_tutorial_2_fits.ipynb       the notebook of part 2
+├── tutorial_helpers.py        used by the notebooks
 ├── README.txt
 └── LICENSE.txt
 ```
 
 The file names say what each spectrum is: `4s-1-z2.csv` is the 4 s time point, replicate 1,
-charge 2. `Non` files are the undeuterated controls and `Full` files the fully deuterated
+charge 2. `Non-D` files are the undeuterated controls and `Full-D` files the fully deuterated
 ones. You do not need to open any of them.
 
 ## Step 2: open a terminal in the folder
 
-Open a terminal in `hxex_b5_tutorial`, as in
-[Your first project, step 2](first-project.md#step-2-open-a-terminal-in-that-folder). Every
-command below is typed there.
+Commands act on the folder the terminal is "in". Open a terminal in `hxex_b5_tutorial`:
+
+- **Windows**: open the folder in File Explorer, click the address bar at the top, type
+  `powershell` and press Enter.
+- **macOS**: in Terminal, type `cd ` (with a space after it), drag the folder from Finder onto
+  the Terminal window, and press Enter.
+- **Linux**: right-click inside the folder and choose **Open in Terminal**.
+
+Every command below is typed there.
 
 ## Step 3: write the project file
 
@@ -84,9 +98,9 @@ hxex init --format specexport
 This writes `hxex.toml`, the project file: a plain text file with every setting at its usual
 value, each with a comment saying what it does. Open it in a plain text editor (Notepad,
 TextEdit, or another; see
-[Your first project, step 4](first-project.md#step-4-edit-the-project-file)). It is long,
-but you only change a few lines. Lines starting with `#` are comments, or settings that are
-switched off.
+[Your first project, step 4](first-project.md#step-4-edit-the-project-file)). Lines starting
+with `#` are comments, or settings that are switched off. The settings you are likely to
+change come first; everything below the line `Advanced settings` you can leave alone.
 
 The data folder is already right: the template says `data_dir = "SpecExport"`, which is the
 folder next to `hxex.toml`.
@@ -118,9 +132,11 @@ note = "quench-flow time point (not in the paper)"
 A spectrum that matches a rule is not fitted, but it is kept with the results, so nothing is
 lost. [Excluding spectra](excluding-spectra.md) explains the rules.
 
-**Turn on the back-exchange correction.** Near the end of the file, find the part that starts
-with `# [run.controls]`. Delete the `# ` in front of `[run.controls]`, and in front of the
-`d2o_fraction` line, and change its value to the labelling buffer's 85 % D₂O:
+**Turn on the back-exchange correction.** A little further down, find the part that starts
+with `# [run.controls]`. Delete the `# ` in front of `[run.controls]`. Then find the
+`# d2o_fraction = 0.9` line in that part (its comment says "for the back-exchange
+correction ... the one to set"), delete its `# `, and change its value to the labelling
+buffer's 85 % D₂O:
 
 ```toml
 [run.controls]
@@ -128,11 +144,30 @@ with `# [run.controls]`. Delete the `# ` in front of `[run.controls]`, and in fr
 d2o_fraction = 0.85
 ```
 
-(The other lines of that part can stay switched off.) The correction uses the undeuterated
-and fully deuterated controls to put every peptide on the scale of its own exchangeable
-amides; [Back-exchange correction](back-exchange-correction.md) explains how.
+(The other lines of that part can stay switched off. The file has other `d2o_fraction` lines,
+further down, for other purposes: leave them as they are.) The correction uses the
+undeuterated and fully deuterated controls to put every peptide on the scale of its own
+exchangeable amides; [Back-exchange correction](back-exchange-correction.md) explains how.
 
-## Step 5: check
+## Step 5: ask for error bars
+
+Every value *hxex* reports gets a standard error from the *bootstrap*: every spectrum is
+refitted many times with resampled noise, and the spread of the refits is the error. Just
+below `[run.controls]`, find the switched-off `# [run.bootstrap]` part. Delete the `# ` in
+front of `[run.bootstrap]`, in front of `n_boot = 20`, and in front of the `ks` line, and
+change that line to:
+
+```toml
+[run.bootstrap]
+n_boot = 20
+...
+ks = [1, 2]
+```
+
+`ks = [1, 2]` bootstraps every spectrum with one and with two populations, which the
+comparisons need. Save the file.
+
+## Step 6: check
 
 ```bash
 hxex check hxex.toml
@@ -144,6 +179,8 @@ hxex check hxex.toml
 project        hspb5
 format         specexport
 K              1 to 3
+device         auto
+bootstrap      20 resamples
 ...
 controls       on
 ...
@@ -152,38 +189,53 @@ entries        195 in SpecExport
   D109H: 65 entries, 195 undeuterated and 125 fully deuterated control files
   R120G: 65 entries, 129 undeuterated and 106 fully deuterated control files
   WT: 65 entries, 194 undeuterated and 193 fully deuterated control files
+...
 ok
 ```
 
 An *entry* is one peptide at one charge in one sample (65 per sample here). `K 1 to 3` means
 each spectrum will be fitted with one, two, and three populations, and the best is chosen. If
-`check` reports a problem instead of `ok`, it says which line of the file to fix.
+`check` reports a problem, it says which line of the file to fix, and the last line says
+`not ok`.
 
-## Step 6: run
+Above the summary, two warnings say that the FASTA files of D109H and R120G differ from the
+names of some peptide folders at residues 109 and 120. That is expected: HDExaminer named the
+folders from the WT sequence, and the FASTA files have the mutations, which *hxex* uses.
+
+## Step 7: run
 
 ```bash
 hxex run hxex.toml
 ```
 
 This is the analysis itself. *hxex* reads the spectra, leaves out the 1,384 quench-flow
-spectra, picks the isotope peaks of the remaining 3,877, and fits every one of them. It
-prints its progress, and takes about two minutes on a laptop:
+spectra, picks the isotope peaks of the remaining 3,877, fits every one of them, and then
+bootstraps them. It prints its progress as it goes:
 
 ```
-07:15:14 [[input.exclude]]: 1384 of 5261 spectra left out (stored, not fitted)
-07:15:15 2 of 193 series sit off their m/z in their undeuterated controls (beyond 6 times the run's scatter; flagged off_mz): ...
-07:15:20 dropped 3 of 3877 spectra: 3 empty, 0 without signal, 0 without bins
-07:15:20 per-bin noise: variance = z x 31.2 x I + (9 % of I)^2, from 270 undeuterated controls of 115 series
-07:15:20 fitting K=1 for 3874 measurements
-07:15:40 fitting K=2 for 3874 measurements
-07:16:04 fitting K=3 for 3874 measurements
-07:16:33 done in 1m 19s
+16:53:31 [[input.exclude]]: 1384 of 5261 spectra left out (stored, not fitted)
+16:53:32 picking: the bins take areas (weak peaks 1.19 times as wide as the tallest); peak width 34.9 ppm at m/z 1000
+16:53:32 2 of 193 series sit off their m/z in their undeuterated controls (beyond 6 times the run's scatter; flagged off_mz): ...
+16:53:37 dropped 3 of 3877 spectra: 3 empty, 0 without signal, 0 without bins
+16:53:38 per-bin noise measured from 115 series of undeuterated controls (b1 31.2)
+16:53:38 fitting K=1 for 3874 measurements
+16:53:47 fitting K=2 for 3874 measurements
+16:53:56 fitting K=3 for 3874 measurements
+...
+16:54:06 bootstrap: started
+...
+17:00:20 done in 6m 49s
 3874 measurements; selected K: 1: 2983, 2: 875, 3: 16
 ```
 
+The fit takes a few minutes. The bootstrap is the slow part: 20 to 30 minutes on a laptop,
+about 15 on a fast desktop, and about 7 on a computer with an NVIDIA graphics card and the GPU
+version of *hxex* ([Installing *hxex*](install.md)). While it works, *hxex* prints a line at
+least every 30 seconds, so you can tell it has not stopped.
+
 Three spectra were empty and are dropped. Two series have their peaks away from where the
 peptide's should be, most likely another species; they are kept in the results but left out of
-the analysis of step 10. The `per-bin noise` line is the noise *hxex* measured from the
+the comparison of step 10. The `per-bin noise` line is the noise *hxex* measured from the
 undeuterated controls ([The noise model](noise-model.md)). Most spectra are best described by
 one population (K = 1), but 875 need two and 16 three.
 
@@ -191,39 +243,44 @@ The run wrote two folders: `results`, the *bundle*, which holds everything in *h
 format (you do not open it yourself; the other commands read it), and `results_tables`, the
 tables, which you do open.
 
-## Step 7: the tables
+## Step 8: the tables
 
 Open `results_tables` and double-click a file to open it in your spreadsheet program:
 
 - **`series.csv`**: one row per peptide and charge in each sample (195 rows). The columns
   `controls` and `retention` show how each was corrected: `measured` means its own controls
-  were used. `n_multi` counts its spectra with more than one population (rejected spectra are
-  not counted; `n_rejected` beside it counts those).
-- **`spectra.csv`**: one row per spectrum, with its time, replicate, chosen number of
-  populations (`K`), and each population's deuterium (`mean_1`, `mean_corrected_1`, ...) and
-  share (`population_1`, ...).
+  were used. `n_multi` counts its spectra with more than one population.
+- **`spectra.csv`**: one row per spectrum, with its time (in seconds: `1800` is 30 min),
+  replicate, chosen number of populations (`K`), each population's deuterium (`mean_1`,
+  `mean_corrected_1`, ...) and share (`population_1`, ...), and its `flags`.
 - **`uptake.csv`**: the deuterium uptake of every peptide at every time, replicates averaged.
-- **`components.csv`**: every fit, at every number of populations, for other programs.
+- **`components.csv`**: every fit, at every number of populations, one row per population
+  (for a spreadsheet or a program that wants them all).
 
 [Outputs](outputs.md) describes every column.
 
-## Step 8: the figures
+The number of populations in `spectra.csv` is each spectrum's own, judged alone. Whether a
+peptide really has two populations at a time is better judged from all its spectra at that
+time together, which the comparison of step 10 does (`best_set_K` in its
+`species_uptake.csv`). [Part 2](tutorial-fits.md) goes into this.
+
+## Step 9: the figures
 
 The run draws no figures, because a run with many peptides would draw thousands. You choose
-what to draw, in the `[figures]` part of `hxex.toml`. Three peptides of WT, all at charge 2,
+what to draw, in the `[figures]` part of `hxex.toml`. Two peptides of WT, both at charge 2,
 show what to look for:
 
 - residues 87-96 (EELKVKVLGD), with one population throughout;
-- residues 42-54 (TSLSPFYLRPPSF), with two populations at the early times;
-- residues 68-75 (MRLEKDRF), which has a weak spectrum.
+- residues 42-54 (TSLSPFYLRPPSF), with two populations at the early times.
 
 Find their numbers in the `data_id` column of `series.csv` (sample `WT`, `peptide_range`
-`0087-0096`, `0042-0054` and `0068-0075`, charge 2): 140, 56, and 107. In `hxex.toml`, find
-the `[figures]` part and change the `series` and `scale` lines to:
+`0087-0096` and `0042-0054`, charge 2): 140 and 56. (These numbers belong to this dataset; in
+your own data, look them up the same way.) In `hxex.toml`, find the `[figures]` part and change
+the `series` and `scale` lines to:
 
 ```toml
 [figures]
-series = [140, 56, 107]
+series = [140, 56]
 ...
 scale = "log"
 ```
@@ -236,7 +293,8 @@ hxex report hxex.toml --figures
 ```
 
 This writes `results_figures`, with one PDF per peptide (a page each of spectra, populations,
-and uptake) and `overview.pdf`.
+and uptake) and `overview.pdf`, and writes the tables again. Each page has a legend naming its
+lines and marks, and each spectrum's title says its number of populations (`K=2`) and any flag.
 
 **One population.** In `WT_0087_0096_EELKVKVLGD_z_2.pdf` every spectrum is one smooth envelope.
 The black sticks are the measured isotope peaks, the line through them is the fit, and the
@@ -253,102 +311,26 @@ deuterated (FD) controls have one population each, as they should.
 ![The spectra of WT 42-54: two populations at 4 s and 1 min, a small second one at 30 min, one at 20 h](../images/tutorial_two_populations.png)
 
 The uptake page shows the deuterium of every population of every spectrum against time,
-coloured by replicate: two levels at 4 s and 1 min, the slow one with a small share at 30 min,
-and one level at 20 h (this figure was drawn after step 10, which adds the error bars):
+coloured by replicate, with its error bar: two levels at 4 s and 1 min, the slow one with a
+small share at 30 min, and one level at 20 h:
 
 ![The uptake of WT 42-54, by population](../images/tutorial_uptake.png)
 
 **The overview.** `overview.pdf` summarises the whole run. Its controls page shows the
 retention of every fully deuterated control: the share of the label it still held when
 measured. Here it is about 0.5, much below the 0.85 of the buffer, because deuterium exchanges
-back during the quench, digestion, and LC. The controls of 192 of the 195 series were measured
-and accepted (the dashed lines are the limits they were judged by). Of the other three, two
-have no controls of their own and take the fully deuterated control of the same peptide in
-another sample, and one has an undeuterated control too heavy to be the peptide alone
-(`m0_high`, most likely another species), so the analysis leaves it out. The bars marked
-`(flag only)` count controls that are used but carry a note: controls whose replicates were
-best fitted with two populations, which happens for a few peptides with broad envelopes;
-controls with one replicate left out as an outlier; and controls whose retention agrees with
-the same peptide's in the other samples, so the correction is sound.
+back during the quench, digestion, and LC. The dashed lines are the limits each control was
+judged by, named beside them. The bars on the right say, in words, how each series was
+corrected: the controls of 192 of the 195 series were measured and used. Of the other three,
+two have no fully deuterated control of their own and take the same peptide's from another
+sample, and one has an undeuterated control too heavy to be the peptide alone, most likely
+another species, so the comparison leaves it out. The light grey bars marked `(note)` count
+controls that are used but carry a note, for example controls whose retention agrees with the
+same peptide's in the other samples, which is good news.
 
 ![The controls page of the overview](../images/tutorial_controls.png)
 
-## Step 9: review
-
-One spectrum in these figures deserves a decision: in WT 68-75, the 30 min replicate 2 is far
-weaker than the others, and `spectra.csv` gives it the `low_intensity` flag. It is better left
-out.
-
-Decisions like this go in a *review table*: your own copy of `spectra.csv` in which you fill
-in three columns, `review_status`, `review_K`, and `note`. Copy `results_tables/spectra.csv`
-into the project folder, next to `hxex.toml`, and rename the copy `user_review_table.csv`. Open
-it, and in the row of `WT`, `0068-0075`, time `1800` (30 min), replicate (`rep`) 2, type
-`rejected` in the `review_status` column, and `weak spectrum` in `note`.
-
-Save it, keeping the CSV format. Then tell *hxex* about it: in `hxex.toml`, find the
-switched-off `# [review]` part, and switch on its first two lines:
-
-```toml
-[review]
-table = "user_review_table.csv"
-```
-
-Check that *hxex* reads your decision, and draw the figures again:
-
-```bash
-hxex check hxex.toml
-hxex report hxex.toml --figures --overwrite
-```
-
-`--overwrite` replaces the figures drawn before; without it, *hxex* stops rather than write
-over them. `check` now has the line `review table ... 1 spectra: 1 rejected, 0 accepted, 0 with a chosen
-K`. In the new figures the rejected spectrum is drawn hollow and grey. The tables changed too.
-The fits themselves are not touched: delete a row's entries, or the `[review]` lines, and
-report again to undo. [The user review table](project-file.md#the-user-review-table) has the
-details.
-
-**What to leave alone.** The 30 min spectra of WT 42-54 have a second population too, a small
-one: 6 to 10 % in each replicate. One spectrum alone cannot pin down so small a share (the
-bootstrap of step 10 gives each share an error of 4 to 13 points, about as large as the
-share), but together they can: all four replicates find it, it continues the shrinking of the
-slow population from 4 s and 1 min, and no such population is found at 20 h or in the
-controls. Step 11 judges all the
-spectra of a peptide and time together, and finds two populations here. Setting these spectra
-to one population (the `review_K` column) would throw that away: keep `review_K` for a second
-population you know is wrong, for example one that belongs to another species.
-
-## Step 10: add the uncertainties
-
-So far the results have no error bars. They come from the *bootstrap*: every spectrum is
-refitted many times with resampled noise, and the spread of the refits gives each value its
-standard error. It is the slow part, so it is a separate step. In `hxex.toml`, find the
-switched-off `# [run.bootstrap]` part, delete the `# ` in front of `[run.bootstrap]`, in front
-of `n_boot = 20`, and in front of the `ks` line, and change that line to:
-
-```toml
-[run.bootstrap]
-n_boot = 20
-...
-ks = [1, 2]
-```
-
-`ks = [1, 2]` bootstraps every spectrum with one and with two populations, which the
-comparison of step 11 needs. Then add the bootstrap to the results you have:
-
-```bash
-hxex resume hxex.toml
-```
-
-This takes 20 to 30 minutes on a laptop (13 minutes on a fast desktop); it prints its progress
-and the time left. A computer with an NVIDIA graphics card and the GPU version of *hxex* does
-it in about four minutes ([Installing *hxex*](install.md)). When it is done, draw the figures
-again; they now have error bars:
-
-```bash
-hxex report hxex.toml --figures --overwrite
-```
-
-## Step 11: compare the variants with WT
+## Step 10: compare the variants with WT
 
 The last step compares the samples. In `hxex.toml`, find the switched-off `# [analysis]` part.
 Switch on its first line, the `reference` line below it, and its `format` line, changed to
@@ -368,80 +350,79 @@ hxex analyse hxex.toml
 ```
 
 This takes under a minute and writes `results_analysis_WT`, with tables and about 40 figures.
-A few of them:
+This part of the tutorial looks at the comparison of each peptide's average deuterium, with one
+population (K = 1); [part 2](tutorial-fits.md) looks at the two populations.
 
 **The butterfly plot** (`butterfly_R120G.png`) shows the deuterium of every peptide, WT above
-and R120G below, one line per time, and their difference underneath. R120G takes up more
-deuterium than WT over the first 80 residues, most at the early times:
+and R120G below, one line per time, and their difference underneath (filled points are
+significant differences, hollow ones are not). R120G takes up more deuterium than WT over the
+first 80 residues, most at the early times:
 
 ![Butterfly plot of R120G against WT](../images/tutorial_butterfly.png)
 
-**The Woods plot** comes as two figures. The first (`woods_R120G_1min.png`) shows the same
-difference at one time, one bar per peptide over the residues it covers, coloured where the
-difference is significant (red higher, blue lower than WT). Below it, *Two Populations
-Selected* shows the peptides whose spectra are best described by two populations in R120G only,
-in WT only, or in both (an outline marks a borderline case). Most peptides of the first 90
-residues have two populations in both samples, a few in WT only:
+**The Woods plot** (`woods_R120G_1min.png`) shows the same difference at one time, one bar per
+peptide over the residues it covers, coloured where the difference is significant (red more,
+blue less deuterium than WT; the dashed lines are the smallest difference that can count). At
+1 min, 53 of the 62 peptides compared differ significantly. The panel below it, *Two
+Populations Selected*, is for part 2.
 
 ![Woods plot of R120G against WT at 1 min](../images/tutorial_woods.png)
 
-The second figure (`woods_K2_R120G_1min.png`) compares the two populations, only for the
-peptides that have two in both samples: the positions of the two populations, and the change in
-the share of the low-D population, multiplied by the distance between the two populations, so
-that it is in the same units as the panels above and judged against the same kind of dashed line
-([Reading the Woods plot](outputs.md#figures-from-hxex-analyse)). Here R120G has less of the
-low-D population over most of the first 80 residues, and some of the positions differ too: much
-the same two states, populated differently.
+**The residue map** (`residue_significance.png`) puts every comparison on one page, residue by
+residue: a row per sample and time, red where the variant has more deuterium than WT, blue
+where it has less, darker for larger differences, and grey where the difference is not
+significant. Both variants take up more deuterium than WT over most of the protein, except the
+last 30 residues; D109H takes up less around residues 68-80 at 4 s, and R120G less around
+118-123 at 4 s and 1 min and over the first 38 residues at 20 h.
 
-![The two populations of R120G against WT at 1 min](../images/tutorial_woods_k2.png)
+![Residue-level significance against WT](../images/tutorial_residues.png)
 
 Peptides that contain the mutation are compared too, with WT's peptide over the same residues
 (they are marked `same_sequence = false` in `compare_peptides.csv`); to compare only identical
 sequences, set `peptide_match = "sequence"` in `[analysis]`.
 
-**The residue overlay** (`overlay_residues_1min.png`) goes residue by residue: the average
-deuteration as small circles on a line with its error band, and, where a sample has two
-populations, the low-D and high-D populations as up and down triangles
-([Reading the residue overlay](outputs.md#figures-from-hxex-analyse)):
-
-![Residue-level comparison at 1 min](../images/tutorial_residues.png)
-
-The tables hold the same values: `compare_peptides.csv` per peptide, `compare_residues.csv` per
-residue, with the differences, their errors, and whether they are significant.
-`species_uptake.csv` gives, for every peptide and time, the number of populations best
-supported by all of its spectra together (`best_set_K`): for WT 42-54 at 30 min it is 2, the
-small population of step 9, with a share of 8.5 ± 4 % from all four replicates together. [Outputs](outputs.md) and
-[Analysis methods](../ANALYSIS.md) describe them.
+The tables hold the same values: `compare_peptides.csv` per peptide and `compare_residues.csv`
+per residue, with the differences, their errors, and whether they are significant.
+[Outputs](outputs.md) and [Analysis methods](../ANALYSIS.md) describe them.
 
 ## What you did
 
 | Step | Command | What it did |
 |---|---|---|
 | 3 | `hxex init --format specexport` | wrote the project file |
-| 5 | `hxex check hxex.toml` | checked the settings and the data |
-| 6 | `hxex run hxex.toml` | fitted every spectrum; wrote the bundle and the tables |
-| 8, 9 | `hxex report hxex.toml --figures` (`--overwrite` the second time) | drew the figures, with your review |
-| 10 | `hxex resume hxex.toml` | added the bootstrap (the error bars) |
-| 11 | `hxex analyse hxex.toml` | compared the variants with WT |
+| 6 | `hxex check hxex.toml` | checked the settings and the data |
+| 7 | `hxex run hxex.toml` | fitted and bootstrapped every spectrum; wrote the bundle and the tables |
+| 9 | `hxex report hxex.toml --figures` | drew the figures (and wrote the tables again) |
+| 10 | `hxex analyse hxex.toml` | compared the variants with WT |
 
-Changing a setting only means running again the command it belongs to, with `--overwrite`:
+Changing a setting only means running again the command it belongs to:
 [`run`, `report`, and `analyse`: what each one does](project-file.md#run-report-and-analyse-what-each-one-does).
-To work through the tutorial again from the start, first delete every folder whose name starts
-with `results`, or the commands stop at the results already there
-([Running again](outputs.md#running-again)).
-For your own data, start from [Your first project](first-project.md).
+Part 2 shows how to do that without the refusals you would otherwise meet. To work through the
+tutorial again from the start, first delete every folder whose name starts with `results`, or
+the commands stop at the results already there ([Running again](outputs.md#running-again)).
 
-## The notebook
+Next: [Tutorial, part 2: reading the fits](tutorial-fits.md). For your own data, start from
+[Your first project](first-project.md).
 
-`hxex_b5_tutorial.ipynb`, in the downloaded folder, has the same steps as cells you run one
-by one, and draws the figures inside the notebook, so you can look at any peptide by typing
-its name. To use it, install *hxex* with Jupyter Notebook as well (this replaces your
-installation; use the same `--index` options as in [Installing *hxex*](install.md) if you used
-any there):
+## The notebooks
 
-```bash
-uv tool install "hxex[notebook] @ https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip" --with-executables-from notebook,jupyter-core --reinstall
-```
+`hxex_b5_tutorial_1_basics.ipynb`, in the downloaded folder, has the steps of this page as
+cells you run one by one, and draws the figures inside the notebook, so you can look at any
+peptide by typing its name; `hxex_b5_tutorial_2_fits.ipynb` has part 2. To use them, install
+*hxex* with Jupyter Notebook as well. This replaces your installation, so type the line for
+the computer you installed it on, as in [Installing *hxex*](install.md):
+
+- **Windows and macOS:**
+
+  ```
+  uv tool install "hxex[notebook] @ https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip" --with-executables-from notebook,jupyter-core --reinstall
+  ```
+
+- **Linux** (with the CPU-only PyTorch, as installed there):
+
+  ```
+  uv tool install "hxex[notebook] @ https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip" --with-executables-from notebook,jupyter-core --reinstall --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+  ```
 
 Then, in the terminal in `hxex_b5_tutorial`, type `jupyter notebook`. A browser window opens;
-click `hxex_b5_tutorial.ipynb`, and run each cell with Shift + Enter.
+click `hxex_b5_tutorial_1_basics.ipynb`, and run each cell with Shift + Enter.

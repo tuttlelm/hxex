@@ -6,9 +6,9 @@
     hxex init [--format F] [-o hxex.toml]   write a project file with every default
     hxex check PROJECT                      check it and show what would be read
     hxex run PROJECT                        read, pick, fit, bootstrap; bundle, tables, figures
-    hxex resume BUNDLE                      add the bootstrap to a run that stopped during it
-    hxex report BUNDLE                      tables and figures from a saved bundle
-    hxex info BUNDLE                        what a bundle holds
+    hxex resume PROJECT|BUNDLE              complete a bundle's bootstrap, add the population test
+    hxex report PROJECT|BUNDLE [--figures]  the tables (and the figures) from a saved bundle
+    hxex info PROJECT|BUNDLE                what a bundle holds
     hxex analyse PROJECT|BUNDLE...          the post-fitting analysis: tables and figures
 
 The project file is described in :mod:`hxex.config`. Progress and messages go to stderr through
@@ -32,8 +32,6 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__
-
 log = logging.getLogger("hxex.cli")
 
 EXIT_ERROR, EXIT_STOPPED = 1, 130
@@ -46,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hxex",
         description="Multimodal binomial-mixture analysis of HDX-MS spectra.",
     )
-    parser.add_argument("--version", action="version", version=f"hxex {__version__}")
+    parser.add_argument("--version", action=_Version, nargs=0,
+                        help="show hxex's version, with the commit it was installed from")
     noise = parser.add_mutually_exclusive_group()
     noise.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
     noise.add_argument("-v", "--verbose", action="store_true", help="more messages")
@@ -86,9 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("resume", help="complete a bundle's bootstrap (finish a stopped one, add "
                                       "or redo one, or bootstrap the review's chosen K), or add "
                                       "the population test")
-    p.add_argument("bundle", metavar="BUNDLE|PROJECT",
-                   help="a results bundle (a folder, or .zip) waiting for its bootstrap, or a "
-                        "project file: its [output] bundle gets a bootstrap with its "
+    p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
+                   help="the project file (hxex.toml), or a results bundle (a folder, or .zip) "
+                        "waiting for its bootstrap. With the project file, its [output] bundle "
+                        "gets a bootstrap with its "
                         "[run.bootstrap] settings (redone only if they changed), one at the "
                         "K its [review] table chooses where that is missing, and the population "
                         "test with its [run.population_test] settings (made again only if they "
@@ -99,19 +99,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="where the tables go (default: beside the bundle, or a project "
                         "file's [output] tables)")
 
-    p = sub.add_parser("report", help="draw the figures, and write the tables again, from a "
-                                      "bundle; fits nothing")
-    p.add_argument("bundle", metavar="BUNDLE|PROJECT",
-                   help="a results bundle (a folder, or .zip), or a project file: its [output] "
-                        "bundle, with its [review] decisions applied and its [figures] "
-                        "settings")
+    p = sub.add_parser("report", help="write the tables again (with the review applied), and "
+                                      "with --figures draw the figures, from the results; fits "
+                                      "nothing")
+    p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
+                   help="the project file (hxex.toml): its [output] bundle, with its [review] "
+                        "decisions applied and its [figures] settings; or a results bundle (a "
+                        "folder, or .zip)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
-                   help="write the tables (default: beside the bundle, or a project file's "
-                        "[output] tables)")
+                   help="where the tables go (default: beside the bundle, NAME_tables, or the "
+                        "project file's [output] tables); they are always written, and with "
+                        "[output] tables = false only when --tables is given")
     p.add_argument("--figures", nargs="?", const=True, default=None, metavar="DIR",
-                   help="write the figures (default: beside the bundle)")
-    _output_options(p, "the tables or figures folder")
+                   help="also draw the figures (default: beside the bundle, NAME_figures)")
+    _output_options(p, "the tables and figures folders")
     p.add_argument("--series", choices=("flagged", "all"),
                    help="which series to draw (default: [figures] series, else flagged)")
     p.add_argument("--k", type=int, metavar="K",
@@ -122,12 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("analyse", aliases=["analyze"],
                        help="the post-fitting analysis of a bundle: tables and figures")
-    p.add_argument("source", metavar="PROJECT|BUNDLE", nargs="+",
-                   help="a project file (its [analysis] settings, and [analysis.runs] or "
-                        "output.bundle; a file with only [analysis] is enough), a bundle, or "
-                        "several bundles to compare as separate "
-                        "runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a "
-                        "run column)")
+    p.add_argument("source", metavar="hxex.toml|BUNDLE", nargs="+",
+                   help="the project file, hxex.toml (its [analysis] settings, and "
+                        "[analysis.runs] or output.bundle; a file with only [analysis] is "
+                        "enough), a bundle, or several bundles to compare as separate runs "
+                        "(NAME=BUNDLE, or BUNDLE named after its file; the tables get a run "
+                        "column)")
     p.add_argument("--bundle", help="the bundle (instead of the project's output.bundle)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis + _REFERENCE when there is a "
@@ -139,10 +141,22 @@ def build_parser() -> argparse.ArgumentParser:
                    help="figure file format")
     _threads_option(p)
 
-    p = sub.add_parser("info", help="what a results bundle holds")
-    p.add_argument("bundle", metavar="BUNDLE", help="a results bundle (a folder, or .zip)")
+    p = sub.add_parser("info", help="what the results hold")
+    p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
+                   help="the project file (hxex.toml): its [output] bundle, and what its "
+                        "[review] table decides; or a results bundle (a folder, or .zip)")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
     return parser
+
+
+class _Version(argparse.Action):
+    """``--version``: the version and the commit (asked of git only when wanted)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from . import version_text
+
+        sys.stdout.write(version_text() + "\n")
+        parser.exit()
 
 
 def _spectra_option(p) -> None:
@@ -153,11 +167,12 @@ def _spectra_option(p) -> None:
 
 def _output_options(p, folder: str) -> None:
     """--overwrite and --keep-previous for a command that writes an output folder."""
+    holds = "they hold" if folder.endswith("folders") else "it holds"
     p.add_argument("--overwrite", action="store_true",
-                   help=f"replace hxex's files in {folder} when it holds earlier output "
+                   help=f"replace hxex's files in {folder} when {holds} earlier output "
                         "(or [output] overwrite = true)")
     p.add_argument("--keep-previous", action="store_true",
-                   help=f"move {folder} to NAME.N first when it holds earlier output (or "
+                   help=f"move {folder} to NAME.N first when {holds} earlier output (or "
                         "[output] keep_previous = true)")
 
 
@@ -436,17 +451,14 @@ def _output_lines(project) -> list[str]:
     bundle = out.bundle
     if bundle is None:
         return ["no [output] bundle"]
-    flags = ("[output] overwrite replaces it" if out.overwrite else
-             "[output] keep_previous moves it to NAME.N first" if out.keep_previous else "")
 
-    def needs(command: str) -> str:
-        verb = "write" if " and " in command else "writes"
-        return flags or f"{command} {verb} it again with --overwrite or --keep-previous"
+    def writes(command: str) -> str:
+        return f"({command} {'write' if ' and ' in command else 'writes'} it)"
 
     created = (bundle_manifest(bundle) or {}).get("created", "") if bundle.exists() else ""
     lines = []
     if bundle.exists():
-        lines.append(f"{bundle.name} exists: {needs('hxex run')}")
+        lines.append(f"{bundle.name} exists {writes('hxex run')}")
     tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
     for folder, command in ((tables, "hxex run and hxex report"),
                             (bundle.with_name(bundle.name + "_figures"),
@@ -457,7 +469,7 @@ def _output_lines(project) -> list[str]:
         state = ("left from a bundle that is gone" if not bundle.exists()
                  else "made from results not recorded" if not stamp
                  else "up to date" if stamp == created else "made from earlier results")
-        lines.append(f"{folder.name}: {state}; {needs(command)}")
+        lines.append(f"{folder.name}: {state} {writes(command)}")
     analysis = project.analysis  # none: hxex analyse uses the default settings
     reference = analysis.reference if analysis is not None else None
     if analysis is not None and analysis.out:
@@ -481,9 +493,17 @@ def _output_lines(project) -> list[str]:
         text = ("up to date" if state is None else "made from earlier results" if state
                 else "made from results not recorded")
         if wanted is not None and folder.resolve() == wanted.resolve():
-            text += f"; {needs('hxex analyse')}"
+            text += f" {writes('hxex analyse')}"
         lines.append(f"{folder.name}: {text}")
-    return lines or [f"none yet: hxex run writes {bundle.name}"]
+    if not lines:
+        return [f"none yet: hxex run writes {bundle.name}"]
+    # said once for the block: each command refuses by itself, before doing any work
+    lines.append("[output] overwrite = true: each command replaces its folder" if out.overwrite
+                 else "[output] keep_previous = true: each command moves its folder to NAME.N "
+                      "first" if out.keep_previous
+                 else "to write one again, give its command --overwrite (replace) or "
+                      "--keep-previous (keep the earlier one as NAME.N)")
+    return lines
 
 
 def _has_rules(project) -> bool:
@@ -528,7 +548,8 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
                 continue
             why = why_nothing(rule, index, reader) or (
                 "each key matches some spectrum, but no spectrum matches them all")
-            problems.append(f"{text} matches no spectrum: {why}")
+            problems.append(f"{text} matches no spectrum: {why}. Correct the rule, or delete "
+                            "it if this dataset has no such spectra")
     return problems
 
 
@@ -880,20 +901,20 @@ def cmd_run(args) -> int:
     with stop.installed(), _threads(threads):
         if stored is None:
             log.info("reading the %s input of %s", project.input.format, project.project)
-        spectra = read_input(project, progress=ProgressLog(name="read",
-                                                           interval=args.progress_every),
-                             cancel=stop)
+        with ProgressLog(name="read", interval=args.progress_every) as progress:
+            spectra = read_input(project, progress=progress, cancel=stop)
         log.info("%d spectra read", len(spectra))
-        result = run(
-            spectra, config, out=bundle, project=project.project, notes=out.notes,
-            overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
-            exclude=project.input.exclude, view_exclude=_view_exclude(project),
-            chosen_k=chosen_k,
-            project_file=project_record(dataclasses.replace(
-                project, threads=threads, output=dataclasses.replace(
-                    out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
-            progress=ProgressLog(interval=args.progress_every), cancel=stop,
-        )
+        with ProgressLog(interval=args.progress_every) as progress:
+            result = run(
+                spectra, config, out=bundle, project=project.project, notes=out.notes,
+                overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
+                exclude=project.input.exclude, view_exclude=_view_exclude(project),
+                chosen_k=chosen_k,
+                project_file=project_record(dataclasses.replace(
+                    project, threads=threads, output=dataclasses.replace(
+                        out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
+                progress=progress, cancel=stop,
+            )
     if tables is not None:
         from .io.bundle import bundle_manifest
         from .report import Results, write_tables
@@ -904,27 +925,29 @@ def cmd_run(args) -> int:
         write_tables(apply_view(Results.from_run(result), project.review), tables,
                      created=(bundle_manifest(bundle) or {}).get("created", ""))
     _summary(result.fit, bundle, tables=tables)
-    _warn_stale_outputs(bundle, args.project_file)
+    _warn_stale_outputs(bundle, args.project_file, out.overwrite)
     return 0
 
 
-def _warn_stale_outputs(bundle: Path, project_file) -> None:
+def _warn_stale_outputs(bundle: Path, project_file, overwrite: bool = False) -> None:
     """Warn about the bundle's figures and analysis folders made from other results than the
     ones there now (after a run, however the earlier bundle went, or a resume), naming the
-    command that brings each up to date."""
+    command that brings each up to date (without ``--overwrite`` when the project file's
+    ``[output] overwrite`` is on)."""
     from .io import holds_output, made_from
     from .io.bundle import analysis_states, bundle_manifest
 
     created = (bundle_manifest(bundle) or {}).get("created", "")
+    flag = "" if overwrite else " --overwrite"
     figures = bundle.with_name(bundle.name + "_figures")
     if holds_output(figures) and (made_from(figures) or {}).get("") != created:
         log.warning("%s holds figures of other results than the ones in %s now: 'hxex report "
-                    "%s --figures --overwrite' draws them again", figures, bundle, project_file)
+                    "%s --figures%s' draws them again", figures, bundle, project_file, flag)
     for folder, state in analysis_states(bundle):
         if state is not None:
             log.warning("%s holds an analysis of other results than the ones in %s now: "
-                        "'hxex analyse %s --overwrite' brings it up to date", folder, bundle,
-                        project_file)
+                        "'hxex analyse %s%s' brings it up to date", folder, bundle,
+                        project_file, flag)
 
 
 def _view_exclude(project) -> tuple:
@@ -1032,11 +1055,11 @@ def cmd_resume(args) -> int:
     if tables is not None and not (others and flags.get("keep_previous")):
         check_output(tables, TABLE_NAMES)  # a file of your own there: refused before the fit
     stop = _Stop()
-    with stop.installed(), _threads(threads):
+    with stop.installed(), _threads(threads), \
+            ProgressLog(interval=args.progress_every) as progress:
         try:
-            result = resume_bootstrap(
-                bundle, device=args.device, progress=ProgressLog(interval=args.progress_every),
-                cancel=stop, **extra)
+            result = resume_bootstrap(bundle, device=args.device, progress=progress,
+                                      cancel=stop, **extra)
         except NothingToResume:
             if not extra:  # the bundle alone: say how to add or redo a bootstrap
                 raise
@@ -1053,7 +1076,7 @@ def cmd_resume(args) -> int:
                      created=(bundle_manifest(bundle) or {}).get("created", ""))
         log.info("tables in %s", tables)
     _summary(result.fit, bundle)
-    _warn_stale_outputs(Path(bundle), args.bundle)
+    _warn_stale_outputs(Path(bundle), args.bundle, bool(flags.get("overwrite")))
     return 0
 
 
@@ -1098,17 +1121,20 @@ def _test_to_resume(project, bundle):
 
 
 def cmd_report(args) -> int:
+    """The tables (always, unless a project file's ``[output] tables = false``; ``--tables DIR``
+    chooses the folder) and, with ``--figures``, the figures too, from a bundle."""
     import dataclasses
 
     from .hooks import ProgressLog
-    from .io import check_output, holds_output, open_bundle, prepare_output
+    from .io import check_output, holds_output, made_from, open_bundle, prepare_output
+    from .io.bundle import bundle_manifest
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
     from .report.tables import TABLE_NAMES
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
     overwrite, keep_previous = args.overwrite, args.keep_previous
-    own_tables: Path | bool = True  # the tables folder when neither --tables nor --figures
+    own_tables: Path | bool = True  # the project's [output] tables (a bundle alone: beside it)
     if problem := _bundle_problem(bundle, "report"):
         log.error("%s", problem)
         return EXIT_ERROR
@@ -1127,14 +1153,13 @@ def cmd_report(args) -> int:
         if problem := _bundle_problem(bundle, "report"):  # the bundle itself, before its folders
             log.error("%s", problem)
             return EXIT_ERROR
-    tables = _beside(bundle, args.tables, "_tables")
     figures = _beside(bundle, args.figures, "_figures")
+    tables = _beside(bundle, args.tables if args.tables is not None
+                     else None if own_tables is False else own_tables, "_tables")
     if tables is None and figures is None:
-        if own_tables is False:
-            _say(f"nothing to write: {args.bundle} has [output] tables = false (--tables writes "
-                 "the tables all the same, --figures draws the figures)")
-            return 0
-        tables = _beside(bundle, own_tables, "_tables")
+        _say(f"nothing to write: {args.bundle} has [output] tables = false (--tables writes "
+             "the tables all the same, --figures draws the figures)")
+        return 0
     outputs = [(folder, what, option) for folder, what, option in (
         (tables, "tables", "--tables DIR"), (figures, "figures", "--figures DIR"))
         if folder is not None]
@@ -1143,10 +1168,18 @@ def cmd_report(args) -> int:
             log.error("%s is the results bundle itself: the %s go in a folder of their own "
                       "(%s)", folder, what, option)
             return EXIT_ERROR
-    for folder, what, option in outputs:  # the bundle's rule, before anything is opened
+    # tables made from these same results (hxex run wrote them, or an earlier report) hold
+    # nothing the bundle and the project file do not: written again in place, so that
+    # 'hxex report hxex.toml --figures' after a run needs no --overwrite for them
+    created = (bundle_manifest(bundle) or {}).get("created", "")
+    same = (tables is not None and bool(created) and holds_output(tables)
+            and (made_from(tables) or {}).get("") == created)
+    ruled = [(folder, what, option) for folder, what, option in outputs
+             if not (what == "tables" and same)]
+    for folder, what, option in ruled:  # the bundle's rule, before anything is opened
         prepare_output(folder, overwrite=overwrite, keep_previous=keep_previous, move=False,
                        what=what, elsewhere=f"another folder with {option}")
-    if tables is not None and not (keep_previous and holds_output(tables)):
+    if tables is not None and not (keep_previous and not same and holds_output(tables)):
         check_output(tables, TABLE_NAMES)  # a file of your own there: refused before drawing
     stop = _Stop()
     with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
@@ -1166,11 +1199,12 @@ def cmd_report(args) -> int:
                       args.bundle)
             return EXIT_ERROR
         if keep_previous:  # moved only now that nothing more can refuse the report
-            for folder, _, _ in outputs:
+            for folder, _, _ in ruled:
                 prepare_output(folder, keep_previous=True)
+        said = []
         if tables is not None:
             written = write_tables(results, tables, created=b.manifest.get("created", ""))
-            _say(f"{len(written)} table(s) in {tables}{_review_text(results)}")
+            said.append(f"{len(written)} table(s) in {tables}{_review_text(results)}")
         if figures is not None:
             if args.k is not None:
                 plots = dataclasses.replace(plots, k=args.k)
@@ -1178,44 +1212,38 @@ def cmd_report(args) -> int:
                 plots = dataclasses.replace(plots, series=args.series)
             if args.fig_format:
                 plots = dataclasses.replace(plots, format=args.fig_format)
-            written = write_figures(results, figures, plots,
-                                    progress=ProgressLog(name="figures",
-                                                         interval=args.progress_every),
-                                    cancel=stop)
-            _say(f"{len(written)} figure file(s) in {figures}")
+            with ProgressLog(name="figures", interval=args.progress_every) as progress:
+                written = write_figures(results, figures, plots, progress=progress, cancel=stop)
+            said.append(f"{len(written)} figure file(s) in {figures}")
+            if tables is None:
+                said.append("no tables ([output] tables = false)")
+        _say("; ".join(said))
     return 0
 
 
 def _review_text(results) -> str:
-    """`` (review: 1 rejected, 2 with a chosen K)`` for the closing line of a report, or empty
-    without review decisions."""
+    """`` (review: 1 rejected, 1 accepted, 2 with a chosen K)`` for the closing line of a
+    report, or empty without review decisions."""
     review = results.review
     if review is None or not len(review):
         return ""
-    rejected = int((np.asarray(results.review_status) == "rejected").sum())
+    status = np.asarray(results.review_status)
+    rejected, accepted = int((status == "rejected").sum()), int((status == "accepted").sum())
     chosen = sum(int(k) > 0 and not stale for k, stale in zip(review.k_override, review.stale,
                                                                strict=True))
     parts = [f"{rejected} rejected"] if rejected else []
+    parts += [f"{accepted} accepted"] if accepted else []
     parts += [f"{chosen} with a chosen K"] if chosen else []
     return f" (review: {', '.join(parts)})" if parts else ""
 
 
 def _bundle_problem(path: Path, command: str) -> str | None:
     """Why ``path`` cannot be the results ``command`` reads, before anything is opened: a
-    project file that does not exist (or, for ``hxex info``, one at all), no results yet, or a
-    folder that is not a bundle. None when it may be one (or is a project file to read)."""
+    project file that does not exist, no results yet, or a folder that is not a bundle. None
+    when it may be one (or is a project file to read)."""
     if path.suffix == ".toml":
         if not path.is_file():
             return f"no such project file: {path}"
-        if command == "info":
-            from .config import ProjectError, load_project
-
-            try:
-                bundle = load_project(path, analysis_only=True).output.bundle
-            except ProjectError:
-                bundle = None
-            return (f"hxex info takes the results folder, not the project file: hxex info "
-                    f"{bundle.name if bundle is not None else 'results'}")
         return None
     if not path.exists():
         return (f"no results yet at {path}: run 'hxex run hxex.toml' first (it writes the "
@@ -1324,10 +1352,22 @@ def _promotion_text(controls: dict | None) -> str:
 def cmd_info(args) -> int:
     from .io import generations, open_bundle
 
-    if problem := _bundle_problem(Path(args.bundle), "info"):
+    bundle, project = Path(args.bundle), None
+    if problem := _bundle_problem(bundle, "info"):
         log.error("%s", problem)
         return EXIT_ERROR
-    with open_bundle(args.bundle) as b:
+    if bundle.suffix == ".toml":  # a project file: its bundle, and its own review decisions
+        from .config import load_project
+
+        project = load_project(bundle, analysis_only=True)
+        if project.output.bundle is None:
+            log.error("%s names no [output] bundle", bundle)
+            return EXIT_ERROR
+        bundle = project.output.bundle
+        if problem := _bundle_problem(bundle, "info"):
+            log.error("%s", problem)
+            return EXIT_ERROR
+    with open_bundle(bundle) as b:
         m = b.manifest
         fit = b.fit()
         ks = Counter(int(k) for k in fit.selected_K)
@@ -1338,7 +1378,9 @@ def cmd_info(args) -> int:
             ("bundle", str(b.path)),
             ("project", b.project or "(none)"),
             ("created", m.get("created", "")),
-            ("hxex", m.get("versions", {}).get("hxex", "")),
+            ("hxex", m.get("versions", {}).get("hxex", "")
+             + (f" ({m['versions']['hxex_commit']})"
+                if m.get("versions", {}).get("hxex_commit") else "")),
             ("input", source.get("reader", source.get("format", "(not recorded)"))),
             ("bin values", _peak_measure_text(b.peak_measure())),
             ("measurements", str(len(fit))),
@@ -1358,10 +1400,12 @@ def cmd_info(args) -> int:
             ("quality flags", "yes" if b.has("quality") else "no"),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
-            ("review", f"{len(review)} entries" + (f" ({review.n_stale} stale)"
-                                                   if review.n_stale else "")
-             if len(review) else "none"),
+            ("review", (f"{len(review)} entries" + (f" ({review.n_stale} stale)"
+                                                    if review.n_stale else "")
+                        if len(review) else "none") + " stored in the bundle"),
         ]
+        if project is not None:
+            rows += _project_review_rows(project, Path(args.bundle))
         if m.get("notes"):
             rows.append(("notes", m["notes"]))
         if m.get("excluded"):
@@ -1386,6 +1430,23 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _project_review_rows(project, path: Path) -> list[tuple[str, str]]:
+    """The ``hxex info`` lines of a project file's own review decisions (its ``[review]``
+    table and rules, counted as ``hxex check`` counts them), which hxex report, hxex analyse
+    and the run's tables apply, apart from the review stored in the bundle."""
+    from .config import describe
+
+    lines = describe(project)
+    _check_review_ids(project, lines)  # counts only the rows the bundle has
+    rows = []
+    if "review table" in lines:
+        rows.append(("review table", f"{lines['review table']} (from {path.name}; applied by "
+                                     "hxex report and hxex analyse)"))
+    if "excluded later" in lines:
+        rows.append(("excluded later", f"{lines['excluded later']} (from {path.name})"))
+    return rows or [("review table", f"none in {path.name}")]
 
 
 def _output_rows(bundle: Path) -> list[tuple[str, str]]:
@@ -1570,14 +1631,13 @@ def cmd_analyse(args) -> int:
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
         results = RunSet(opened, merge=config.merge) if several else opened[""]
-        written = write_analysis(results, config, out, base=base, record_paths=record_paths,
-                                 review=review,
-                                 progress=ProgressLog(name="analysis",
-                                                      interval=args.progress_every),
-                                 cancel=stop,
-                                 # moved only once nothing more can refuse the analysis
-                                 before_writing=(lambda: prepare_output(out, keep_previous=True))
-                                 if keep_previous else None)
+        with ProgressLog(name="analysis", interval=args.progress_every) as progress:
+            written = write_analysis(
+                results, config, out, base=base, record_paths=record_paths, review=review,
+                progress=progress, cancel=stop,
+                # moved only once nothing more can refuse the analysis
+                before_writing=(lambda: prepare_output(out, keep_previous=True))
+                if keep_previous else None)
     if not several:
         _stale_analyses(lead, out)
     tables = sum(1 for p in written if p.suffix == ".csv")

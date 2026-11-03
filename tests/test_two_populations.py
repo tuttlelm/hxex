@@ -183,7 +183,8 @@ def test_populations_are_drawn_as_the_k2_values_are():
     assert low.get_marker() == "^" and high.get_marker() == "v"
     np.testing.assert_allclose(low.get_ydata() + high.get_ydata(), 1.0)
     assert "pop" in ax.get_ylabel()
-    assert [t.get_text() for t in ax.get_legend().texts] == ["WT", "M"]
+    assert [t.get_text() for t in ax.get_legend().texts] == [
+        "WT", "M", "share of the low-D population", "share of the high-D population"]
     with pytest.raises(ValueError, match="choice"):
         plot_residue_overlay(gated, "WT", "M", 60.0, show=("pop_low",))
     # the corrected-differently mark can be switched off

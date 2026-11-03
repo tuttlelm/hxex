@@ -55,7 +55,10 @@ graphics card, this smaller version is enough:
 uv tool install https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 ```
 
-The terminal lists what it installs and ends with `Installed 1 executable: hxex`.
+On Windows and macOS this downloads several hundred megabytes, most of it PyTorch (the library
+*hxex* fits with). If the terminal says `Downloading cpython-3...`, that is uv fetching *hxex*'s
+own copy of Python: it does not change any Python you already have. The terminal lists what it
+installs and ends with `Installed 1 executable: hxex`.
 
 ## Step 4: make the `hxex` command available
 
@@ -69,8 +72,11 @@ Close the terminal and open a new one, then check that *hxex* answers:
 hxex --version
 ```
 
-It prints `hxex` and its version number. If it says the command is not found, close and reopen
-the terminal once more; if that does not help, run step 4 again.
+It prints `hxex`, its version number, and the code version it was built from, for example
+`hxex 0.0.1.dev0 (3ed39ac, 2026-11-02)`: give that line when you report results or a problem.
+If it says the command is not found (in PowerShell: `hxex : The term 'hxex' is not recognized
+as the name of a cmdlet, function, script file, or operable program`), close and reopen the
+terminal once more; if that does not help, run step 4 again.
 
 ## Updating hxex
 

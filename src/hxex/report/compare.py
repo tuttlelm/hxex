@@ -35,6 +35,12 @@ INCREASE, DECREASE, NEUTRAL = "#c0392b", "#1f5fa8", "#b5b5b5"
 FILL = 0.65  # residue figures: marker fill and K=2 error bars; outlines solid (owner, 2026-10-21)
 K2_MARKERS = {"low": "^", "high": "v", "pop_low": "^", "pop_high": "v"}  # rank 1 up, 2 down
 COUNT_GREY = "#7f7f7f"
+KEY_GREY = "#4d4d4d"  # legend entries for shapes and lines: not a sample's colour
+# what each value's mark is called in the residue figures' legends
+SHAPE_LABELS = {"avg": "average", "low": "low-D population",
+                "high": "high-D population", "pop_low": "share of the low-D population",
+                "pop_high": "share of the high-D population"}
+THRESHOLD_LABEL = "critical difference (±)"
 
 
 def _style(n: int):
@@ -69,6 +75,23 @@ def _corrected_differently(ax: Axes, xs, *, y: float = 0.995, note: bool = True)
         ax.text(0.005, 0.01, DIFFERENT_NOTE, transform=ax.transAxes, ha="left", va="bottom",
                 fontsize=7, color="#4d4d4d")
     return len(xs)
+
+
+def _difference_key(quantity: str, reference: str) -> list:
+    """The legend of the Woods plot's colours and dashed lines: what red and blue mean for
+    ``quantity`` (sample minus ``reference``), grey, and the critical difference."""
+    from matplotlib.patches import Patch
+
+    if quantity == "fD":
+        more = f"significantly more D than {reference}"
+        less = f"significantly less D than {reference}"
+    else:  # the low-D population's share (times the separation when scaled: same sign)
+        more = f"significantly larger low-D share than {reference}"
+        less = f"significantly smaller low-D share than {reference}"
+    return [Patch(color=INCREASE, label=more), Patch(color=DECREASE, label=less),
+            Patch(color=NEUTRAL, label="not significant"),
+            Line2D([], [], color="#555555", linestyle="--", linewidth=0.9,
+                   label=THRESHOLD_LABEL)]
 
 
 def _threshold_lines(ax, comparison, rows, left, right) -> None:
@@ -123,9 +146,12 @@ def _upper_limit(top: float) -> float:
 
 def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample: str,
                   style_index: int, n_diff: int, time: float, time_scale: str,
-                  annotations: Annotations | None, top: float = -np.inf) -> None:
-    """The axes, legend (the samples' colours, and the corrected-differently mark when drawn)
-    and time label every residue figure shares; ``top`` is the highest point drawn."""
+                  annotations: Annotations | None, top: float = -np.inf,
+                  shapes: Sequence[str] = ()) -> None:
+    """The axes, legend (the samples' colours, the shapes of ``shapes``, keys of
+    :data:`SHAPE_LABELS`, in grey when more than a circle is drawn, and the
+    corrected-differently mark when drawn) and time label every residue figure shares; ``top``
+    is the highest point drawn."""
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length)
     ax.set_ylim(-0.05, _upper_limit(top))
@@ -134,15 +160,27 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
     ax.set_xlabel("Residue")
     ax.set_ylabel(ylabel)
     ax.grid(color="#e5e5e5", linewidth=0.8)
-    handles = [Line2D([], [], linestyle="none", marker="o", markersize=5,
+    named = [v for v in shapes if v != "avg"]  # a circle alone needs no name
+    handles = [Line2D([], [], linestyle="none", marker="s" if named else "o", markersize=5,
                       color=_style(i)[0], markerfacecolor=to_rgba(_style(i)[0], FILL),
                       label=name)
                for name, i in ((reference, 0), (sample, style_index))]
+    if named:  # the shapes, in grey: the colours are the samples'
+        for value in shapes:
+            avg = value == "avg"
+            handles.append(Line2D([], [], linestyle="-" if avg else "none",
+                                  linewidth=1.0, marker="o" if avg else K2_MARKERS[value],
+                                  markersize=3 if avg else 5, color=KEY_GREY,
+                                  markerfacecolor=to_rgba(KEY_GREY, FILL),
+                                  label=SHAPE_LABELS[value]))
     if n_diff:
         handles.append(Line2D([], [], linestyle="none", marker="$*$", markersize=7,
                               color="#4d4d4d", label="corrected differently"))
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.98),
-              ncol=len(handles), frameon=False, fontsize=9, handletextpad=0.2)
+    many = len(handles) > 3  # from the left, clear of the time label on the right
+    ax.legend(handles=handles, loc="lower left" if many else "lower center",
+              bbox_to_anchor=(0.0 if many else 0.5, 0.98), ncol=len(handles), frameon=False,
+              fontsize=7.5 if many else 9, handletextpad=0.2, columnspacing=1.0,
+              borderaxespad=0.0 if many else 0.5)
     ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
 
@@ -199,10 +237,14 @@ def plot_residue_comparison(
     n_diff = (_corrected_differently(
         ax, comparison.residue[rows & comparison.corrected_differently], note=False)
         if mark_corrected_differently else 0)
+    shape = ("avg" if comparison.K == 1 else
+             ("pop_low" if comparison.rank == 1 else "pop_high")
+             if comparison.quantity == "population" else
+             "low" if comparison.rank == 1 else "high")
     _residue_axes(ax, length=length if length is not None else int(comparison.residue.max()),
                   ylabel=_label(comparison.quantity), reference=comparison.reference,
                   sample=sample, style_index=style_index, n_diff=n_diff, time=time,
-                  time_scale=time_scale, annotations=annotations, top=top)
+                  time_scale=time_scale, annotations=annotations, top=top, shapes=(shape,))
     return fig
 
 
@@ -280,6 +322,7 @@ def plot_residue_overlay(
     else:
         fig = ax.figure
     drawn, top = 0, -np.inf
+    drawn_values: set[str] = set()  # for the legend
     shown: dict[str, set] = {reference: set(), sample: set()}
     fell_back: dict[str, set] = {reference: set(), sample: set()}
     for n, (name, index) in enumerate(((reference, 0), (sample, style_index))):
@@ -292,6 +335,7 @@ def plot_residue_overlay(
                 if not rows.any():
                     continue
                 drawn += 1
+                drawn_values.add(value)
                 shown[name].update(choice.residue[rows].tolist())
                 fell_back[name].update(choice.residue[rows & choice.control_fallback].tolist())
                 pop = choice.population_low[rows]
@@ -308,6 +352,7 @@ def plot_residue_overlay(
             if not rows.any():
                 continue
             drawn += 1
+            drawn_values.add(value)
             shown[name].update(residues.residue[rows].tolist())
             fell_back[name].update(residues.residue[rows & residues.control_fallback].tolist())
             top = max(top, _top(residues.fD[rows], residues.fD_se[rows]))
@@ -331,7 +376,8 @@ def plot_residue_overlay(
     _residue_axes(ax, length=length if length is not None else int(residues.residue.max()),
                   ylabel=_overlay_label(show), reference=reference, sample=sample,
                   style_index=style_index, n_diff=n_diff, time=time, time_scale=time_scale,
-                  annotations=annotations, top=top)
+                  annotations=annotations, top=top,
+                  shapes=[v for v in SHAPE_LABELS if v in drawn_values])
     return fig
 
 
@@ -414,6 +460,7 @@ def plot_peptide_differences(
     length: int | None = None,
     ax: Axes | None = None,
     time_scale: str = "seconds",
+    legend: bool = True,
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
@@ -421,7 +468,8 @@ def plot_peptide_differences(
     line, ``+-delta_crit``; for a population as it is, a short line over each peptide, and one
     line for :meth:`~hxex.analysis.PeptideComparison.scaled_by_separation`'s copy); a
     ``*`` at the top over the middle of each peptide whose two values were corrected differently
-    (one with a fallback control). Bars have the gid ``peptide:<start>-<end>``.
+    (one with a fallback control). With ``legend``, the colours and the dashed line are named
+    above the panel, on the right. Bars have the gid ``peptide:<start>-<end>``.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -464,6 +512,10 @@ def plot_peptide_differences(
     n_compared = int(np.isfinite(comparison.delta[rows]).sum())  # a population may not be
     ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {n_compared} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
+    if legend:
+        ax.legend(handles=_difference_key(comparison.quantity, comparison.reference),
+                  loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
+                  fontsize=7, handlelength=1.6, columnspacing=1.0, borderaxespad=0.2)
     return fig
 
 
@@ -646,9 +698,10 @@ def plot_butterfly(
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
-    sequential colour per time), with the differences below (filled where significant,
-    ``+-delta_crit`` dashed); a ``*`` at the top over each peptide whose two values were corrected
-    differently at a time drawn (one with a fallback control; named in the legend). ``times``
+    sequential colour per time), with the differences below (filled where significant, hollow
+    where not, ``+-delta_crit`` dashed; all three named in a legend above that panel); a ``*``
+    at the top over each peptide whose two values were corrected differently at a time drawn
+    (one with a fallback control; named in the legend). ``times``
     default to every time point of the comparison (the controls are not times). Lines have the
     gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
     ``difference:<time>``.
@@ -720,6 +773,14 @@ def plot_butterfly(
     x = np.array([position[key(i)] for i in drawn], dtype=float)
     _threshold_lines(bottom, comparison, drawn, x - 0.4, x + 0.4)
     bottom.axhline(0, color="#000000", linewidth=0.8, zorder=1.6)  # above the grid
+    key = [Line2D([], [], linestyle="none", marker="o", markersize=4, color=KEY_GREY,
+                  label="significant difference"),
+           Line2D([], [], linestyle="none", marker="o", markersize=3.6, color=KEY_GREY,
+                  markerfacecolor="none", markeredgewidth=0.7, label="not significant"),
+           Line2D([], [], color="#555555", linestyle="--", linewidth=0.9,
+                  label=THRESHOLD_LABEL)]
+    bottom.legend(handles=key, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=len(key),
+                  frameon=False, fontsize=7, borderaxespad=0.2)
     what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"
     bottom.set_ylabel(what)
     bottom.grid(color="#e5e5e5", linewidth=0.8)
@@ -752,8 +813,11 @@ def woods_figure(
     fig = Figure(figsize=(7.5, 2.7 * len(comparisons) + 0.3), layout="constrained")
     axes = fig.subplots(len(comparisons), 1, sharex=True, squeeze=False)[:, 0]
     for n, (ax, (title, comparison)) in enumerate(zip(axes, comparisons, strict=True)):
+        # the colours named where their meaning changes: the first panel, then the first
+        # population panel
+        new = n == 0 or comparison.quantity != comparisons[n - 1][1].quantity
         plot_peptide_differences(comparison, sample, time, annotations=annotations,
-                                 length=length, ax=ax, time_scale=time_scale)
+                                 length=length, ax=ax, time_scale=time_scale, legend=new)
         ax.set_title(title, fontsize=10, loc="left")
         if n < len(comparisons) - 1:
             ax.set_xlabel("")

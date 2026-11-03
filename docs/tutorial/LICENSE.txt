@@ -11,5 +11,6 @@ You may share and adapt them for any purpose, provided you give appropriate cred
     disease-associated mutants. Proc Natl Acad Sci USA 122(20), e2425061122 (2025).
     https://doi.org/10.1073/pnas.2425061122
 
-The notebook (hxex_b5_tutorial.ipynb) is part of hxex and is licensed under the GNU General
-Public License, version 3 or later.
+The notebooks (hxex_b5_tutorial_1_basics.ipynb, hxex_b5_tutorial_2_fits.ipynb) and
+tutorial_helpers.py are part of hxex and are licensed under the GNU General Public License,
+version 3 or later.

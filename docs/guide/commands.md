@@ -12,7 +12,7 @@ Given before the command: `hxex -v run hxex.toml`.
 
 | Argument | Meaning |
 |---|---|
-| `--version` | print the version and exit |
+| `--version` | show hxex's version, with the commit it was installed from |
 | `-q`, `--quiet` | warnings and errors only |
 | `-v`, `--verbose` | more messages |
 | `--progress-every` `SECONDS` | seconds between progress lines (default 30) |
@@ -61,29 +61,29 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 
 Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen K), or add the population test.
 
-`hxex resume BUNDLE|PROJECT [options]`
+`hxex resume hxex.toml|BUNDLE [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip) waiting for its bootstrap, or a project file: its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed); the fits kept |
+| `hxex.toml\|BUNDLE` | the project file (hxex.toml), or a results bundle (a folder, or .zip) waiting for its bootstrap. With the project file, its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed); the fits kept |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | where the tables go (default: beside the bundle, or a project file's [output] tables) |
 
 ## hxex report
 
-Draw the figures, and write the tables again, from a bundle; fits nothing.
+Write the tables again (with the review applied), and with --figures draw the figures, from the results; fits nothing.
 
-`hxex report BUNDLE|PROJECT [options]`
+`hxex report hxex.toml|BUNDLE [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE\|PROJECT` | a results bundle (a folder, or .zip), or a project file: its [output] bundle, with its [review] decisions applied and its [figures] settings |
+| `hxex.toml\|BUNDLE` | the project file (hxex.toml): its [output] bundle, with its [review] decisions applied and its [figures] settings; or a results bundle (a folder, or .zip) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
-| `--tables` `[DIR]` | write the tables (default: beside the bundle, or a project file's [output] tables) |
-| `--figures` `[DIR]` | write the figures (default: beside the bundle) |
-| `--overwrite` | replace hxex's files in the tables or figures folder when it holds earlier output (or [output] overwrite = true) |
-| `--keep-previous` | move the tables or figures folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |
+| `--tables` `[DIR]` | where the tables go (default: beside the bundle, NAME_tables, or the project file's [output] tables); they are always written, and with [output] tables = false only when --tables is given |
+| `--figures` `[DIR]` | also draw the figures (default: beside the bundle, NAME_figures) |
+| `--overwrite` | replace hxex's files in the tables and figures folders when they hold earlier output (or [output] overwrite = true) |
+| `--keep-previous` | move the tables and figures folders to NAME.N first when they hold earlier output (or [output] keep_previous = true) |
 | `--series` `{flagged,all}` | which series to draw (default: [figures] series, else flagged) |
 | `--k` `K` | draw every series at this number of populations (default: [figures] k, else each spectrum's own) |
 | `--format` `{pdf,png,svg}` | figure file format |
@@ -92,13 +92,13 @@ Draw the figures, and write the tables again, from a bundle; fits nothing.
 
 The post-fitting analysis of a bundle: tables and figures.
 
-`hxex analyse PROJECT|BUNDLE ... [options]`
+`hxex analyse hxex.toml|BUNDLE ... [options]`
 
 Also spelt `hxex analyze`.
 
 | Argument | Meaning |
 |---|---|
-| `PROJECT\|BUNDLE ...` | a project file (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
+| `hxex.toml\|BUNDLE ...` | the project file, hxex.toml (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
 | `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle) |
 | `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT) |
 | `--overwrite` | replace hxex's files in the analysis folder when it holds earlier output (or [output] overwrite = true) |
@@ -109,11 +109,11 @@ Also spelt `hxex analyze`.
 
 ## hxex info
 
-What a results bundle holds.
+What the results hold.
 
-`hxex info BUNDLE [options]`
+`hxex info hxex.toml|BUNDLE [options]`
 
 | Argument | Meaning |
 |---|---|
-| `BUNDLE` | a results bundle (a folder, or .zip) |
+| `hxex.toml\|BUNDLE` | the project file (hxex.toml): its [output] bundle, and what its [review] table decides; or a results bundle (a folder, or .zip) |
 | `--verify` | also check every file's checksum |

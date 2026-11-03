@@ -396,7 +396,7 @@ def test_csv_files(results, tmp_path):
         rows = list(csv.DictReader(fh))
     comp = components_table(results)
     assert len(rows) == len(comp["rank"]) and rows[0]["spectrum_id"] == comp["spectrum_id"][0]
-    assert float(rows[0]["mean"]) == pytest.approx(comp["mean"][0])
+    assert float(rows[0]["mean"]) == pytest.approx(comp["mean"][0], rel=1e-5)  # 6 digits
     nocontrols = Results(measurements=results.measurements, fit=results.fit)
     with write_tables(nocontrols, tmp_path / "n")[2].open() as fh:
         assert next(csv.DictReader(fh))["mean_corrected"] == ""  # NaN is an empty cell
@@ -907,9 +907,56 @@ def test_controls_overview(results):
     np.testing.assert_allclose(d["retention"], (c.mfd_measured - c.m0) / c.n_amides)
     np.testing.assert_allclose(c.retention, np.mean(d["retention"]))
     fig = plot_controls_overview(results)
-    assert {"retention", "m0", "reasons", "limits"} <= gids(fig)
+    assert {"retention", "m0", "reasons", "limits", "limit_label"} <= gids(fig)
+    # the limits are named beside their lines, the bars in words (the flag names in grey)
+    a1, a2, a3 = fig.axes
+    named = [t.get_text() for t in a1.texts]
+    assert any(t.startswith("upper limit 1.1 (retention_max)") for t in named)
+    assert any(t.startswith(("outlier limit", "no outlier limit", "lower limit", "no lower"))
+               for t in named)
+    assert [t.get_text() for t in a2.texts] == ["upper limit 0.5 D (m0_max)"]
+    assert "m0" not in a2.get_xlabel()
+    assert [t.get_text() for t in a3.get_yticklabels()] == ["both controls measured and used"]
+    assert a3.get_legend() is not None
     with pytest.raises(ValueError, match="no controls"):
         plot_controls_overview(Results(measurements=results.measurements, fit=results.fit))
+
+
+def test_overview_labels_name_every_flag_in_words():
+    from hxex.controls import CONTROL_NOTES
+    from hxex.quality import FLAG_NAMES
+    from hxex.report.overview import (
+        CONTROL_LABELS,
+        FALLBACK_REASONS,
+        QUALITY_LABELS,
+        retention_limit_labels,
+    )
+
+    # every bar the overview can draw has a label, and no label is a flag name
+    assert set(CONTROL_LABELS) == {"measured", "uncorrected", *FALLBACK_REASONS, *CONTROL_NOTES}
+    assert set(QUALITY_LABELS) == {*FLAG_NAMES, "any"}
+    for name, text in (*CONTROL_LABELS.items(), *QUALITY_LABELS.items()):
+        assert text and "_" not in text, name
+    # notes, which leave the control in use, say so: good news must not read as a warning
+    assert all(CONTROL_LABELS[n].endswith("(note)") for n in CONTROL_NOTES)
+    assert not any(CONTROL_LABELS[r].endswith("(note)") for r in FALLBACK_REASONS)
+    assert CONTROL_LABELS["fd_retention_agrees"] == (
+        "retention agrees with the other samples (note)")
+
+    # the lower retention limit says how it was set
+    from hxex.controls import ControlConfig
+
+    class Controls:  # what retention_limit_labels reads
+        def __init__(self, limits=None, **kw):
+            self.config, self.limits = ControlConfig(**kw), limits
+
+    run = {"retention_floor": 0.23, "median": 0.5, "robust_sd": 0.07, "n_series": 50}
+    assert retention_limit_labels(Controls(run)) == (
+        "outlier limit 0.23 (median − 4 robust sd)", "upper limit 1.1 (retention_max)")
+    few = {"retention_floor": 0.0, "median": None, "robust_sd": None, "n_series": 3}
+    assert retention_limit_labels(Controls(few))[0] == "no outlier limit (fewer than 10 controls)"
+    assert retention_limit_labels(Controls(retention_min=0.3))[0] == (
+        "lower limit 0.30 (retention_min)")
 
 
 def test_quality_overview(results):
@@ -919,9 +966,23 @@ def test_quality_overview(results):
     assert d["n"] == len(results.fit) and d["n_flagged"] == int(results.quality.flagged.sum())
     assert d["samples"] == ["S"] and d["flagged_share"].shape == (1,)
     fig = plot_quality_overview(results)
-    assert {"counts", "spectra", "samples", "limits"} <= gids(fig)
+    assert {"counts", "spectra", "samples", "limits", "limit_label", "caption"} <= gids(fig)
     flagged = [c for c in fig.axes[1].collections if c.get_gid() == "flagged"]
     assert flagged and len(flagged[0].get_facecolors()) == 0  # open circles
+    from hxex.report.overview import QUALITY_LABELS
+
+    a1, a2 = fig.axes[:2]
+    assert [t.get_text() for t in a1.get_yticklabels()][::-1] == [
+        QUALITY_LABELS[n] for n in (*d["counts"], "any")]
+    assert {t.get_text() for t in a1.texts if t.get_gid() == "flag_name"} == set(d["counts"])
+    # the misfit panel: plain axes, both limits named, a caption saying what to look for
+    assert a2.get_xlabel() == "intensity relative to its replicates (1 = as bright)"
+    assert a2.get_ylabel().endswith("relative to its series (1 = typical)")
+    labels = [t.get_text() for t in a2.texts if t.get_gid() == "limit_label"]
+    assert any(t.startswith("poor fit limit") for t in labels)
+    assert any(t.startswith("low intensity limit") for t in labels)
+    assert [t.get_text() for t in a2.get_legend().texts] == [
+        "a spectrum (where few are)", "a flagged spectrum (where few are)"]
     with pytest.raises(ValueError, match="no quality"):
         quality_overview_data(Results(measurements=results.measurements, fit=results.fit))
 
@@ -1132,7 +1193,9 @@ def test_an_uncorrected_series_keeps_its_measured_values(results):
     assert over["uncorrected"] == 1 and over["measured"] == before["measured"] - (
         0 if ctrl.fallback[int(ctrl.rows([1])[0])] else 1)
     fig = plot_controls_overview(partial)
-    assert "uncorrected" in [t.get_text() for t in fig.axes[2].get_yticklabels()]
+    from hxex.report.overview import CONTROL_LABELS
+
+    assert CONTROL_LABELS["uncorrected"] in [t.get_text() for t in fig.axes[2].get_yticklabels()]
 
 
 def test_effective_k_and_review_status_are_computed_once(results):

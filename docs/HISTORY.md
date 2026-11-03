@@ -6035,3 +6035,54 @@ CSVs or mzML if wanted.
     Not done: engine questions 1 and 2 (measurements), picking questions 15 and 16
     (measurements), the optional plateau note in `saturated`. Private before/after pages were in
     the session scratchpad only.
+
+220. **Third audit, Session F: the new user's path (2026-11-02; decisions in
+    docs/AUDIT_2026-11-01.md).** The tutorial is split into two pages with a notebook each
+    (owner's decision): part 1 (`docs/guide/tutorial.md`, `hxex_b5_tutorial_1_basics.ipynb`)
+    goes from the download to the K = 1 comparison, with the bootstrap on from the start (no
+    resume step); part 2 (`tutorial-fits.md`, `hxex_b5_tutorial_2_fits.ipynb`) continues in the
+    same folder: a bright peptide (WT 68-75: `saturated` controls, `bright` spectra whose
+    flattened envelopes fit as two populations, the run's brightness limit from `hxex info`,
+    the dim 30 min replicate left out by the analysis as a replicate outlier), the review table
+    (that replicate marked `accepted`, owner's choice: WT 68-75 at 30 min becomes the mean of four
+    spectra, 6.35 ± 0.10 D instead of 6.25 ± 0.06 D from three), what to leave alone (WT 42-54
+    at 30 min), suspect spectra (R120G 114-137 z3, `m0_multimodal`: a second species about 11 Da
+    heavier in every spectrum, the undeuterated controls included, left out with a
+    `[[review.exclude]]` rule; its two-population fits lie beyond full deuteration, so nothing
+    downstream shows it), the population test by `hxex resume` (K 2983/875/16 -> 3218/654/2;
+    WT 42-54 at 30 min reads one population under the test, p = 2.6e-14 but share 0.09 below
+    min_population 0.10), the two-population comparison, and a note on the noise. The
+    notebooks' helpers moved to `docs/tutorial/tutorial_helpers.py` (in the zip); `add_before`
+    matches a line by its start. `make_tutorial.py --run` executes both notebooks in turn and
+    draws each page's figures after its own notebook; tests/test_tutorial.py pairs each page with
+    its notebook and checks that every image a page shows is drawn. Timing on the RTX A4500: run
+    with the bootstrap 6 min 49 s, population test 15 min; on 8 CPU threads of the workstation the
+    population test took about 38 minutes. Command line and template (a builder): `hxex report` always writes the tables,
+    `--figures` adds the figures (tables made from the same results are rewritten without
+    `--overwrite`; other folders keep the rule); the template puts the settings a user changes
+    first and the rest below an "Advanced settings" line, each `d2o_fraction` comment says which
+    it is, Python class names and developer notes are gone, and an unknown key names its line and
+    a switched-off heading above it; progress lines come at the interval while nothing reports,
+    no time left is given before a tenth of a stage and two updates, the fit's units weigh K;
+    `hxex info hxex.toml` shows the project's review table beside the bundle's stored review; the
+    CSV tables carry six significant digits (whole numbers without `.0`, at least four decimals
+    from 1 up); `hxex --version` and the manifest name the commit (`_commit.txt` with
+    `export-subst`, else git for a checkout); `hxex check` says once how to write a folder again,
+    and an exclusion rule matching nothing says to correct or delete it; the report's closing
+    line counts accepted spectra too; the warning after a run or resume that a figures or
+    analysis folder is stale leaves out `--overwrite` when `[output] overwrite` is on. Figures (a builder; before/after pages shown): the
+    overview's controls and quality pages in words (limits named on the axes, bars as plain
+    labels with the flag name in grey, notes marked `(note)`), legends for the butterfly's hollow
+    points, the Woods plots' colours and dashed lines, and the residue overlay's shapes. Python:
+    `Results` prints a one-line summary and has `samples()`, `peptides(sample)`, and `times()`;
+    `show_series` says which samples, charges, or overlapping peptides there are when nothing
+    matches; python.md gained "Looking at results" and the logging lines. Guide: inputs.md shows
+    HDExaminer's `Non-D`/`Full-D` file names and the `0.1s` token; install.md the download size
+    on every system, uv's own Python, the version line, and PowerShell's wording; project-file.md
+    the report and info changes and when to set `--threads`. Fixed on the way: the
+    FASTA substitution warnings were logged twice per sample (the read's folder-name check scanned
+    the folder again; `scan_specexport(warn=False)` for that scan). Not done: a `best_set_K`
+    column in the run's tables (no set decision exists there), an `hxex set` command. Open for
+    the owner: the Woods K = 2 population panel colours a smaller low-D share blue, the
+    residue_significance_K2 map red (each labelled truthfully). The check runs are kept outside
+    the repository.

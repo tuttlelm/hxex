@@ -128,7 +128,7 @@ more when the 95 % intervals themselves matter, for a published figure, say.
 |---|---|
 | the fits | about 1.3 minutes on a CPU |
 | the bootstrap, on a CPU | about 13.5 minutes (a laptop: 20 to 30 minutes) |
-| the bootstrap, on a GPU | about 4 minutes |
+| the bootstrap, on a GPU | about 6 minutes (an RTX A4500) |
 
 You do not have to decide at the start. Run without the bootstrap, look at the results, and
 add it later with `hxex resume hxex.toml` after adding the `[run.bootstrap]` table: the fits

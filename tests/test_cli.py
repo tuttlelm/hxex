@@ -149,13 +149,20 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
     assert "K              1\n" in out  # k_min = k_max
 
 
+def _run_tables(text: str) -> list[str]:
+    """The lines of the template's [run.*] tables (the stages first, then the advanced ones)."""
+    stages = text.split("# [run.controls]", 1)[1].split("# [analysis]", 1)[0]
+    advanced = text.split("\n[run]\n", 1)[1].split("# More of the analysis", 1)[0]
+    return ("# [run.controls]" + stages).splitlines() + advanced.splitlines()
+
+
 def test_template_lines_carry_their_meaning_and_unit():
     """Every generated [run.*] and [input.scans] setting has a trailing comment, sections have
     comment lines, and the [analysis] scalars come before its sub-tables."""
     import re
 
     text = template("mzml")
-    lines = text.split("[run]", 1)[1].splitlines()
+    lines = _run_tables(text)
     for line, following in zip(lines, lines[1:] + [""], strict=True):
         if re.match(r"^#? ?[a-z_]+ = ", line) and not line.startswith(("label", "base", "delta")):
             # the comment follows at the comment column, or on the next line for a long setting
@@ -164,12 +171,58 @@ def test_template_lines_carry_their_meaning_and_unit():
     assert "Deuterium retention here is the fraction" in text
     assert "# Peak picking" in text and "Modified residues, written in sequences as modX" in text
     assert "TYPE:LENGTHS:CHARGES" in text and "composition decides" in text
-    analysis = text.split("# [analysis]", 1)[1].split("# Run settings", 1)[0]
-    first_table = analysis.index("# [analysis.")
-    assert analysis.index("# protection = true") < first_table
+    assert text.index("# protection = true") < text.index("\n# [analysis.")
     assert "protection_residues" not in text
     assert "exchange-clock min_time" in text  # the two clocks cross-refer
     assert "left out are the input's" not in text  # nothing is inherited since HISTORY 101
+
+
+def test_template_puts_the_usual_settings_first_in_plain_words():
+    """Audit 2026-11-01, Part 2 B1 and M2: the settings a project changes come first, the rest
+    below one "Advanced settings" line; every d2o_fraction comment says in its first words
+    which one it is; no Python class names or developer notes; the lines the tutorial's
+    notebook helper edits are where it looks for them."""
+    import re
+
+    for fmt in FORMATS:
+        text = template(fmt)
+        lines = text.splitlines()
+        headings = [re.sub(r"^# ", "", line).split("]")[0] + "]" for line in lines
+                    if re.match(r"^(# )?\[", line)]
+        main = headings[:headings.index("[figures]") + 1]
+        order = ["[input]", "[output]", "[review]", "[run.controls]", "[run.bootstrap]",
+                 "[run.population_test]", "[analysis]", "[figures]"]
+        assert [h for h in main if h in order] == order, fmt
+        advanced = text.index("# Advanced settings: most projects never change these")
+        assert text.index("[figures]") < advanced < text.index("\n[run]\n")
+        assert text.index("\n[run.picker]") > advanced and text.index("\n[run.fit]") > advanced
+        assert text.index("\n# [analysis.controls]") > advanced
+        assert not re.search(r"hxex\.[a-z_]+\.[A-Za-z]|[A-Z][a-z]+Config\b|fastest|"
+                             r"before 20\d\d|PEAK_PICKING", text), fmt
+        firsts = [line.split("#", 2)[2].strip() for line in lines
+                  if line.startswith("# d2o_fraction = ")]
+        assert len(firsts) == 4 and len(set(firsts)) == 4
+        assert firsts[0].startswith("D atom fraction of the labelling buffer, for the")
+        assert {f.split(":")[0] for f in firsts[1:]} == {
+            "analysis only", "fragment kinetics only", "protection factors only"}
+        assert "every core, right for most" in text  # the default threads are fine
+
+        def after(section: str, start: str, lines=lines) -> str:
+            at = next(i for i, line in enumerate(lines)
+                      if line.split("  ")[0] in (f"[{section}]", f"# [{section}]"))
+            return next(line for line in lines[at:] if line.startswith(start))
+
+        for section, start in (("run.controls", "# d2o_fraction = 0.9"),
+                               ("review", "# table = "), ("run.bootstrap", "# n_boot = 20"),
+                               ("run.bootstrap", '# ks = "selected"'),
+                               ("analysis", '# reference = "WT"'),
+                               ("analysis", '# format = "pdf"'),
+                               ("figures", 'series = "flagged"'),
+                               ("figures", 'scale = "linear"')):
+            assert after(section, start), (section, start)
+        assert after("run.controls", "# d2o_fraction = 0.9").count("labelling buffer, for")
+        assert lines.count("[output]") == 1 and any(
+            line.startswith('project = "my_project"') for line in lines)
 
 
 def test_project_files_are_checked(tmp_path):
@@ -335,16 +388,18 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
-    assert ("outputs        out exists: hxex run writes it again with --overwrite or "
-            "--keep-previous") in out
-    assert ("out_tables: up to date; hxex run and hxex report write it again with --overwrite "
-            "or --keep-previous") in out
-    assert "out_analysis: up to date; hxex analyse writes it again with --overwrite" in out
+    assert "outputs        out exists (hxex run writes it)" in out
+    assert "out_tables: up to date (hxex run and hxex report write it)" in out
+    assert "out_analysis: up to date (hxex analyse writes it)" in out
+    # the way to write them again is said once for the block (audit 2026-11-01, Part 2)
+    assert out.count("--overwrite") == 1 and ("to write one again, give its command "
+                                              "--overwrite (replace) or --keep-previous") in out
     assert out.strip().endswith("ok")
     path = mzml_project(tmp_path, output="keep_previous = true")
     assert cli.main(["check", str(path)]) == 0
-    assert "out exists: [output] keep_previous moves it to NAME.N first" in \
-        capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "[output] keep_previous = true: each command moves its folder to NAME.N first" in out
+    assert "--overwrite" not in out
 
 
 def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
@@ -768,16 +823,23 @@ def test_template_unset_lines_are_valid_toml_when_uncommented(tmp_path):
 
     for fmt in ("specexport", "mzml"):
         text = template(fmt)
-        head, run = text.split("# Run settings", 1)
-        run = re.sub(r"^# (\[|[a-z_]+ = )", r"\1", run, flags=re.M)  # every setting on
-        assert "(not set)" not in run
-        p = project_from(tomllib.loads(head + "# Run settings" + run), tmp_path)
+        out, on = [], False
+        for line in text.splitlines():  # every [run.*] table switched on, and [figures]' lines
+            if re.match(r"^(# )?\[+(run|figures)\b", line):
+                on = True
+            elif re.match(r"^(# )?\[", line) or not line.strip():
+                on = False
+            out.append(re.sub(r"^# (\[|[a-z_]+ = )", r"\1", line) if on else line)
+        text = "\n".join(out)
+        assert "(not set)" not in text
+        p = project_from(tomllib.loads(text), tmp_path)
         assert p.run.bootstrap == BootstrapConfig() and p.figures.k == 2
         assert p.run.max_chunk is None and p.run.fit.noise.sd is None
         assert p.run.controls.quench is not None and p.run.controls.fd_mode == "kint"
         assert p.run.controls.retention_min is None
         assert p.run.controls.fulldeut_at == 72000.0  # "20 h" in the template
         assert p.run.controls.undeut_at == 300.0  # "5 min"
+        assert p.run.population_test is not None
         if fmt == "mzml":
             assert [r.role for r in p.input.runs] == ["undeut", ""]
             assert p.input.runs[0].time is None and p.input.runs[1].time == 60.0
@@ -1425,7 +1487,7 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert (tmp_path / "runs_analysis" / "species_uptake.csv").is_file()
     capsys.readouterr()
     assert cli.main(["check", str(path)]) == 0
-    assert "runs_analysis: up to date; hxex analyse writes it again" in capsys.readouterr().out
+    assert "runs_analysis: up to date (hxex analyse writes it)" in capsys.readouterr().out
 
 
 def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):
@@ -1586,8 +1648,7 @@ def test_commands_name_the_right_step_and_never_show_a_traceback(tmp_path, capsy
     path = mzml_project(tmp_path)
     out = tmp_path / "out"
     for argv, message in [
-        (["info", str(path)], "hxex info takes the results folder, not the project file: hxex "
-                              "info out"),
+        (["info", str(path)], "no results yet at"),  # the project's bundle, not yet run
         (["info", str(out)], f"no results yet at {out}: run 'hxex run hxex.toml' first"),
         (["report", str(out), "--figures"], "no results yet at"),
         (["analyse", str(out)], "no results yet at"),

@@ -38,13 +38,13 @@ the first publish from GitHub create the project.
 
 ## The tutorial data
 
-The tutorial (`docs/guide/tutorial.md`) downloads `hxex_b5_tutorial.zip` from a GitHub release
+The tutorial (`docs/guide/tutorial.md`, part 2 in `tutorial-fits.md`) downloads `hxex_b5_tutorial.zip` from a GitHub release
 of its own, tagged `tutorial-data-N`. Such a release carries only that file: `publish.yml`
 publishes to PyPI only for tags starting with `v`.
 
-1. Build the zip and check it end to end (about 20 minutes on a CPU; needs the `notebook`
-   extra): `python docs/tutorial/make_tutorial.py SPECEXPORT_DIR OUT_DIR --run`, where
-   `SPECEXPORT_DIR` holds the published B5 SpecExport data. This also redraws the page's
+1. Build the zip and check it end to end, both notebooks in turn (about an hour and a half on
+   a CPU, about half an hour with a GPU; needs the `notebook` extra): `python docs/tutorial/make_tutorial.py SPECEXPORT_DIR OUT_DIR --run`, where
+   `SPECEXPORT_DIR` holds the published B5 SpecExport data. This also redraws the pages'
    figures in `docs/images/tutorial_*.png`; commit them if they changed.
 2. Until the tutorial is announced (or cited), replace the zip on the current release: on
    GitHub, **Releases**, edit `tutorial-data-N`, delete its `hxex_b5_tutorial.zip`, attach
@@ -56,5 +56,6 @@ publishes to PyPI only for tags starting with `v`.
    publish, and update the download link in `docs/guide/tutorial.md`.
 4. If the zip's size changed noticeably, update the size the page gives (`39 MB`).
 
-A new zip is needed only when the notebook, its README, or its licence change: the data do not.
+A new zip is needed only when the notebooks, their helpers, the README, or the licence change:
+the data do not.
 Status: `tutorial-data-1`, not yet announced (owner, 2026-10-21).

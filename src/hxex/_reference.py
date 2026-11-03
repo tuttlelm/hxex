@@ -63,8 +63,9 @@ _CONDITIONS = {
 
 _DESCRIPTIONS: dict[str, str] = {
     ".project": "the project's name (text without a colon, `:`); prefixes every spectrum id",
-    ".threads": "CPU threads for the command (unset: PyTorch's default, the physical cores); "
-                "about half the physical cores was fastest on a 24-core machine",
+    ".threads": "CPU threads for the command (unset: every physical core, right for most "
+                "computers, a laptop included); fewer leave cores free for other work, and on "
+                "a large shared server about half the cores can be faster",
     "input.format": "specexport, hxexpress, pooled (folder formats), mzml or thermo (scan "
                     "formats)",
     "input.data_dir": "the folder to read (needed for the folder formats)",

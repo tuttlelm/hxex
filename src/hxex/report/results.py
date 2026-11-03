@@ -202,6 +202,69 @@ class Results:
     def __len__(self) -> int:
         return len(self.fit)
 
+    def __repr__(self) -> str:
+        """A one-line summary (the default would print every array of every spectrum)."""
+        from ..io.times import format_time
+
+        project = self.settings.project if self.settings is not None else ""
+        n_series = len(np.unique(self.fit.data_id))
+        parts = [f"{len(self)} spectra in {n_series} series"]
+        samples = self.samples()
+        if samples:
+            parts.append(f"samples {', '.join(samples)}")
+        times = self.times()
+        if times:
+            span = format_time(times[0], self.time_scale)
+            if len(times) > 1:
+                span += f" to {format_time(times[-1], self.time_scale)}"
+            parts.append(f"{len(times)} time point{'s' * (len(times) > 1)} ({span})")
+        ks = sorted(int(k) for k in self.fit.k_values)
+        parts.append(f"K {ks[0]}" + (f" to {ks[-1]}" if len(ks) > 1 else ""))
+        boot = []
+        if self.bootstrap is not None:
+            boot.append("selected K")
+        boot += [f"K = {k}" for k in sorted(self.bootstrap_by_k)]
+        parts.append("bootstrap at " + ", ".join(boot) if boot else "no bootstrap")
+        status = self.review_status
+        counts = [f"{int((status == s).sum())} {s}" for s in ("rejected", "accepted")
+                  if (status == s).any()]
+        chosen = 0 if self.review is None else int(
+            (self.effective_K != np.asarray(self.fit.selected_K)).sum())
+        if chosen:
+            counts.append(f"{chosen} with a chosen K")
+        parts.append("review: " + ", ".join(counts) if counts else "no review")
+        return f"Results({project + ': ' if project else ''}{'; '.join(parts)})"
+
+    def samples(self) -> list[str]:
+        """The samples of the results, sorted (empty without the picked table)."""
+        if self.binned is None:
+            return []
+        return sorted({str(s) for s in self.binned.sample})
+
+    def peptides(self, sample: str | None = None) -> list[tuple[str, str]]:
+        """The peptides of the results (of ``sample`` only, when given) as ``(peptide_range,
+        sequence)`` pairs ordered by their residues, each once whatever its charges (empty
+        without the picked table). ``peptide_range`` is the label :func:`hxex.show_series`
+        and :func:`hxex.report.find_series` take."""
+        b = self.binned
+        if b is None:
+            return []
+        keep = np.ones(len(b.sample), dtype=bool) if sample is None else (
+            np.asarray(b.sample).astype(str) == str(sample))
+        if sample is not None and not keep.any():
+            raise ValueError(f"no sample {sample!r} in the results (samples: "
+                             f"{', '.join(self.samples()) or 'none'})")
+        pairs = {(str(r), str(p)) for r, p in zip(np.asarray(b.peptide_range)[keep],
+                                                   np.asarray(b.peptide)[keep], strict=True)}
+        return sorted(pairs, key=_range_sort_key)
+
+    def times(self) -> list[float]:
+        """The labelling times of the results in seconds (in order; the time points of the
+        undeuterated and fully deuterated controls are left out)."""
+        time = np.asarray(self.fit.time, dtype=float)
+        labelled = np.isfinite(time) & (np.asarray(self.fit.role, dtype=str) == "")
+        return [float(t) for t in np.unique(time[labelled])]
+
     def find(self, spectrum_id: str) -> int:
         """Position of a spectrum; KeyError if it is not in the results."""
         hits = np.flatnonzero(self.fit.spectrum_id == spectrum_id)
@@ -265,3 +328,13 @@ class Results:
             return spectra.spectrum(spectra.find(spectrum_id))
         except KeyError:
             return None
+
+
+def _range_sort_key(pair: tuple[str, str]) -> tuple:
+    """Order peptides by their residues (a label that is not ``START-END`` sorts last)."""
+    from ..io.entries import parse_range
+
+    try:
+        return (0, *parse_range(pair[0]), pair[1])
+    except ValueError:
+        return (1, 0, 0, *pair)

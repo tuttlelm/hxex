@@ -1151,6 +1151,65 @@ def _toml_hint(text: str, exc: Exception) -> str:
     return ""
 
 
+# the messages of an unknown key: (table, keys), the table "" for the top of the file
+_UNKNOWN_KEYS = (
+    re.compile(r"unknown key\(s\) in (?:\[([^\]]+)\]|(the project file)): ([\w, ]+?)"
+               r"(?: \(did you mean|$)"),
+    re.compile(r"^\[([^\]]+)\]: unknown [a-z ]+ setting\(s\): ([\w, ]+)$"),
+    re.compile(r"^\[([^\]]+)\] \w+ = .*: unknown key (\w+)"),
+)
+_LIVE_HEADING = re.compile(r"^\s*\[+\s*([^\]\s]+)\s*\]+")
+_OFF_HEADING = re.compile(r"^\s*#\s*\[+\s*([A-Za-z0-9_.\"-]+)\s*\]+")
+
+
+def _unknown_key_hint(text: str, message: str) -> str:
+    """Where an unknown key of ``message`` is in the file ``text``: its line, and, when a
+    heading still switched off (``# [name]``) stands between it and the live heading it was
+    read under, that this is why (the template's tables are commented out, and a setting
+    switched on without its heading lands in the table above; audit 2026-11-01, Part 2 B1).
+    Empty when the key cannot be found."""
+    for pattern in _UNKNOWN_KEYS:
+        found = pattern.search(message)
+        if found:
+            groups = [g for g in found.groups()]
+            break
+    else:
+        return ""
+    if len(groups) == 3:  # the first form: [table] or the project file
+        table = "" if groups[1] else groups[0]
+        keys = groups[2]
+    else:
+        table, keys = groups
+    keys = [k.strip() for k in keys.split(",") if k.strip()]
+    lines = text.splitlines()
+    parts = []
+    for key in keys:
+        current, heading_at = "", 0  # the live table and its heading's line (0: none)
+        setting = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        for number, line in enumerate(lines, start=1):
+            live = _LIVE_HEADING.match(line)
+            if live:
+                current, heading_at = live[1], number
+                continue
+            inside = current == table or (table and current.startswith(table + "."))
+            if not (setting.match(line) and inside):
+                continue
+            off = next(((m, _OFF_HEADING.match(lines[m - 1])[1])
+                        for m in range(number - 1, heading_at, -1)
+                        if _OFF_HEADING.match(lines[m - 1])), None)
+            under = (f"under [{current}]" if current
+                     else "at the top of the file (outside any table)")
+            if off is None:
+                parts.append(f"`{key}` is on line {number}, {under}")
+            else:
+                parts.append(f"`{key}` on line {number} was read {under} because the heading "
+                             f"above it, `# [{off[1]}]` on line {off[0]}, is still switched "
+                             f"off: delete its `# ` too, or put the `# ` back in front of line "
+                             f"{number}")
+            break
+    return ("; " if message.rstrip().endswith(")") else ". ") + "; ".join(parts) if parts else ""
+
+
 def load_project(path: str | Path, *, analysis_only: bool = False,
                  spectra: str | Path | None = None) -> Project:
     """Read and check a project file (``analysis_only``: one that may have only an
@@ -1178,8 +1237,14 @@ def load_project(path: str | Path, *, analysis_only: bool = False,
                       f"{path.name} is not one: ")
         raise ProjectError(f"{wrong_kind}{path}: not valid TOML ({exc})"
                            f"{_toml_hint(text, exc)}") from exc
-    return project_from(data, path.resolve().parent, path, analysis_only=analysis_only,
-                        spectra=spectra)
+    try:
+        return project_from(data, path.resolve().parent, path, analysis_only=analysis_only,
+                            spectra=spectra)
+    except ProjectError as exc:
+        hint = _unknown_key_hint(text, str(exc))
+        if not hint:
+            raise
+        raise ProjectError(f"{exc}{hint}") from exc
 
 
 # --- reading the input --------------------------------------------------------------------------
@@ -1662,8 +1727,9 @@ _COMMENTS: dict[str, str] = {
                                 "m/z), lower their controls by the share (fd_deamidated)",
     "run.controls.deamidation_min_share": "the deamidated share (0 to 1) from which a sample's "
                                           "Asn-Gly controls are corrected",
-    "run.controls.d2o_fraction": "D atom fraction of the labelling buffer (0 to 1); "
-                                 "[analysis.controls] may change it for the analysis",
+    "run.controls.d2o_fraction": "D atom fraction of the labelling buffer, for the "
+                                 "back-exchange correction (0 to 1): the one to set; "
+                                 "[analysis.controls] may change it for the analysis only",
     "run.controls.fd_fallback": 'retention of a series without a good fully deuterated control: '
                                 '"d2o" (d2o_fraction), "median" (of the run\'s accepted '
                                 'controls) or "kint" (predicted back-exchange; needs quench; '
@@ -1731,46 +1797,44 @@ _COMMENTS: dict[str, str] = {
 
 # comment lines written before a table's header
 _SECTION_COMMENTS: dict[str, str] = {
-    "run": "Run settings (hxex.pipeline.RunConfig); times are in s, as the measurement times. The "
-           "bootstrap, the population test, and the controls are stages that their table "
-           "turns on: uncomment the commented-out run.bootstrap, run.population_test, or "
-           "run.controls table below to use it; a stage's \"name = false\" turns it off.",
+    "run": "Run settings; times are in s, as the measurement times. The back-exchange "
+           "correction, the bootstrap, and the population test are stages that their own "
+           "tables turn on (run.controls, run.bootstrap, and run.population_test, with the "
+           "settings a project changes first); a stage's \"name = false\" here turns it off.",
     "run.picker": "Peak picking: the spectra become sticks at the predicted isotope positions "
-                  "(hxex.picking.PickerConfig; docs/PEAK_PICKING.md).",
+                  "(guide: picking-window.md).",
     "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
                               'cleavage site, e.g. "y-NH3" = false. Empty: the ion type\'s '
                               "composition decides (c, x, y keep it; a, b, z do not).",
     "run.fit": "The fit of k_min to k_max populations to every spectrum, the number chosen by "
-               "the criterion; with k_min and k_max equal, that number only "
-               "(hxex.fit.FitConfig).",
-    "run.fit.noise": "Noise model and level of the fit (hxex.noise.NoiseConfig). The level "
-                     'sets the loss scale and the model selection. By default (estimate = '
-                     '"controls") every bin has its own noise; estimate = false gives one sd '
-                     "per spectrum, as before 2026-10-31.",
-    "run.fit.backend": "Where the fit runs (hxex.model.Backend); nothing is set globally.",
+               "the criterion; with k_min and k_max equal, that number only.",
+    "run.fit.noise": "Noise model and level of the fit (guide: noise-model.md). The level "
+                     "sets the loss scale and the model selection. By default (estimate = "
+                     '"controls") every bin has its own noise, measured from the undeuterated '
+                     "controls; estimate = false gives one sd per spectrum.",
+    "run.fit.backend": "Where the fit runs: the CPU, or a CUDA graphics card when there is one.",
     "run.bootstrap": "Standard errors and intervals from resampled refits of every "
-                     "measurement (hxex.bootstrap.BootstrapConfig). Slow: most of a run's time.",
+                     "measurement (guide: statistics.md). Slow: most of a run's time.",
     "run.population_test": "Tests how many populations each spectrum, and each set of "
                            "replicates and charge states, holds against simulated spectra "
-                           "(hxex.population_test.PopulationTestConfig). Each spectrum's K is "
-                           "then the test's; needs k_min = 1. Slow: ten to twenty times the "
-                           "fit per step.",
+                           "(guide: population-test.md). Each spectrum's K is then the test's; "
+                           "needs k_min = 1. Slow: ten to twenty times the fit per step.",
     "run.controls": "Back-exchange correction from the undeuterated and fully deuterated "
-                    "controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium "
+                    "controls, fitted at K=1 (guide: back-exchange-correction.md). Deuterium "
                     "retention here is the fraction of deuterium kept, not a retention time.",
-    "run.quality": "Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, "
+    "run.quality": "Quality flags on every spectrum (guide: outputs.md): poor_fit, "
                    "low_intensity, noise_outlier, mz_shift, off_mz (thresholds in "
                    "[run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is "
-                   "dropped; the review layer of the bundle takes the decisions.",
+                   "dropped; your review ([review]) takes the decisions.",
     "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
-               "draws none; hxex.report.PlotConfig). Changing these needs no new run.",
+               "draws none). Changing these needs no new run.",
     "run.registry": "Modified residues, written in sequences as modX labels (a lowercase "
                     "prefix plus the residue letter, e.g. acK, pS; a sequence is read residue "
                     "by residue). Each [[run.registry.residues]] adds delta to the base "
                     "residue's composition. The table itself stays empty.",
-    "run.envelope": "The isotope envelope that places the bins and shapes the fit "
-                    "(hxex.picking.EnvelopeConfig). Fragment spectra can hold several ion "
-                    "types of one fragment a hydrogen apart (c-1, c, c+1 in ETD).",
+    "run.envelope": "The isotope envelope that places the bins and shapes the fit. Fragment "
+                    "spectra can hold several ion types of one fragment a hydrogen apart (c-1, "
+                    "c, c+1 in ETD).",
 }
 
 
@@ -1779,7 +1843,7 @@ def _commented(line: str, comment: str | None, prefix: str = "") -> list[str]:
     that start with ``prefix`` (``'# '`` inside a commented-out table)."""
     if not comment:
         return [line]
-    parts = textwrap.wrap(comment, _LINE_WIDTH - _COMMENT_COLUMN - 2)
+    parts = textwrap.wrap(comment, _LINE_WIDTH - _COMMENT_COLUMN - 2, break_on_hyphens=False)
     pad = (prefix.rstrip() or "").ljust(_COMMENT_COLUMN)
     if len(line) > _COMMENT_COLUMN - 2:  # too long for a trailing comment: comment lines after
         return [line] + [pad + "# " + p for p in parts]
@@ -1906,7 +1970,7 @@ ms_level = 1
 # precursor_charge = "parent"    # or a charge, or false for any charge
 # filter_excludes = "sid"
 
-# How scans become spectra (hxex.io.MzmlConfig).
+# How scans become spectra (guide: inputs.md).
 {scans}
 
 # one [[input.runs]] per file. "role" marks a control file: "undeut" (undeuterated) or
@@ -1931,9 +1995,19 @@ rep = 1
 time = "60 s\""""
 
 
+_ADVANCED = [
+    "# " + "=" * 94,
+    "# Advanced settings: most projects never change these. The defaults are the tested ones;",
+    "# the user guide's settings page (settings.md) explains each.",
+    "# " + "=" * 94,
+]
+
+
 def template(fmt: str = "specexport", project: str = "my_project") -> str:
     """A project file for the format ``fmt`` with every run setting at its default (optional
-    stages commented out), to edit."""
+    stages commented out), to edit. The settings a project usually changes come first (the
+    input, the output, the review, the three stages, the analysis, and the figures); the rest
+    follow an "Advanced settings" line."""
     if fmt not in FORMATS:
         raise ProjectError(f"format must be one of {', '.join(FORMATS)}")
     if fmt in SCAN_FORMATS:
@@ -1946,13 +2020,16 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         input_text = _INPUT_TEMPLATES[fmt]
     run = RunConfig().to_dict()
     lines = [
-        "# hxex project file (TOML). A key left out keeps its default; false stands for",
-        "# \"not set\" where a setting can be unset (a switch set to false is off).",
-        "# Relative paths are relative to this file.",
+        "# hxex project file (TOML). A line starting with # is a comment: a setting or a",
+        "# heading ([name]) with \"# \" in front is switched off. To switch one on, delete the",
+        "# \"# \" in front of it, and in front of its heading: a setting belongs to the heading",
+        "# above it. A setting left out keeps its default; false stands for \"not set\" where a",
+        "# setting can be unset (a switch set to false is off). Relative paths are relative to",
+        "# this file.",
         "",
         f'project = "{project}"              # prefixes every spectrum id',
-        "# threads = 12                    # CPU threads (default: PyTorch's, the physical",
-        "#                                 # cores); 12 was fastest on a 24-core CPU",
+        "# threads = 4                     # CPU threads (unset: every core, right for most",
+        "#                                 # computers; fewer leave cores free for other work)",
         "",
         input_text,
         "",
@@ -1982,7 +2059,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         'notes = ""',
         "",
         "# Decisions made after looking at the results, used by hxex run (its tables), hxex",
-        "# report, and hxex analyse; the fits are kept. Uncomment to use.",
+        "# report, and hxex analyse; the fits are kept. Switch on as described at the top.",
         "# [review]",
         '# table = "user_review_table.csv"  # a copy of spectra.csv with review_status,',
         "#                                 # review_K and note filled in (other columns are",
@@ -1993,8 +2070,32 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# time = "30 s"',
         "# rep = 2",
         "",
-        "# The post-fitting analysis (hxex analyse): uncomment to use. Regions and sites are",
-        "# yours to define for the protein; nothing is derived.",
+        "# The three stages below (the back-exchange correction, the bootstrap, and the",
+        "# population test) are off until their heading is switched on: delete the \"# \" in",
+        "# front of the heading, and in front of each setting you change.",
+    ]
+    control_times = {
+        "undeut_at": ('"5 min"', "the spectra at this time also serve as the undeuterated "
+                                 "control (false: only the files marked undeut)"),
+        "fulldeut_at": ('"20 h"', "the spectra at this time also serve as the fully "
+                                  "deuterated control (false: only the files marked fulldeut)"),
+        "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
+                   "pH read, degrees Celsius and D fraction of the quench and LC, for "
+                   'fd_fallback "kint" (false: none)'),
+    }
+    stages = ("controls", "bootstrap", "population_test")  # in the order a project meets them
+    for key in stages:
+        value = run[key]
+        if value is None:
+            lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
+                                        cls=_section_class(key),
+                                        notes={"controls": control_times}.get(key))
+        else:
+            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
+    lines += [
+        "",
+        "# The post-fitting analysis (hxex analyse): switch on as described at the top. Regions",
+        "# and sites (advanced settings, at the end) are yours to define for the protein.",
         "# [analysis]",
         '# reference = "WT"                # the sample the others are compared with (the',
         '#                                 # reference of exchange and labelling is a rate set)',
@@ -2020,10 +2121,34 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# modified_peptides = "separate"  # modified forms as their own states ("WT pS59") or',
         '#                                 # averaged with the sample ("combined")',
         '# format = "pdf"                  # or "png", "svg"',
-        "# protection = true               # opt in to the peptides' protection factors",
-        "#                                 # (hxex.analysis.protection); needs the labelling table",
-        "# [analysis.controls]             # control settings to change for the analysis (the",
-        "# d2o_fraction = 0.85             # controls are recomputed from the run's K=1 fits)",
+        "# protection = true               # opt in to the peptides' protection factors (guide:",
+        "#                                 # protection-factors.md); needs [analysis.labelling]",
+        "",
+    ]
+    from .report.figures import PlotConfig
+
+    lines += _toml_table("figures", PlotConfig().to_dict(), cls=PlotConfig,
+                         notes={"x": ('"time"', _COMMENTS["figures.x"]),
+                                "k": ("2", _COMMENTS["figures.k"])})
+    lines += [""] + _ADVANCED
+    scalars = {k: v for k, v in run.items()
+               if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
+    lines += [""] + _toml_table("run", scalars, cls=RunConfig)
+    for key, value in run.items():
+        if key in stages:
+            continue
+        if key in _OPTIONAL_SECTIONS and value is None:
+            lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
+                                        cls=_section_class(key))
+        elif isinstance(value, Mapping):
+            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
+    lines += [
+        "",
+        "# More of the analysis: each table below belongs to [analysis] (switched on as described",
+        "# at the top; [analysis] itself need not be).",
+        "# [analysis.controls]             # control settings changed for the analysis only",
+        "# d2o_fraction = 0.85             # analysis only: replaces [run.controls] d2o_fraction",
+        "#                                 # (the controls are recomputed from the K=1 fits)",
         "# [analysis.filters]              # which spectra and K=2 descriptions are kept",
         '# spectrum_quality_filtering = "loose"  # or "strict", "none": spectra showing another',
         "#                                 # species (spectra.csv screen_* columns)",
@@ -2034,10 +2159,11 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# stand_in_controls = "exclude"   # series without a measured fully deuterated control,',
         "#                                 # or with an undeuterated control above m0_max",
         '#                                 # ("other_sample": keep those from another sample)',
-        "# min_population = 0.05",
-        "# max_fD_se = 0.25",
-        "# max_fD = 1.1",
-        "# k1_between_ranks = true",
+        "# min_population = 0.05           # a K=2 description is kept with every population",
+        "#                                 # at least this share, ...",
+        "# max_fD_se = 0.25                # ... every population's fD error below this,",
+        "# max_fD = 1.1                    # ... no population beyond this fraction of amides,",
+        "# k1_between_ranks = true         # ... and the K=1 value between the two",
         "# undeuterated_cap = false        # population test: keep a peptide whose undeuterated",
         "#                                 # set has two populations at one in every sample",
         "#                                 # (off: flagged only, undeuterated_two)",
@@ -2048,11 +2174,11 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# tier = "two"                    # population_test: the least residue tier with two',
         '#                                 # populations ("two": a third of the weight agrees;',
         '#                                 # "localised": half); the three limits above unused',
-        "# [[analysis.regions]]",
+        "# [[analysis.regions]]            # named stretches of the protein, for the figures",
         '# name = "N-terminal region"',
         "# start = 1",
         "# end = 63",
-        "# [[analysis.sites]]",
+        "# [[analysis.sites]]              # marked residues, for the figures",
         "# residue = 19",
         '# label = "S19"',
         "# [analysis.runs]                 # compare separate runs: the tables get a run column;",
@@ -2071,52 +2197,31 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# max_rate_error = 0.5            # ladder steps with rate_se / rate at most this",
         "#                                 # give the per-residue rates (ladder_residues.csv)",
         "# kint = true                     # opt in: intrinsic rates, protection factors and",
-        "#                                 # theoretical curves (hxex.kint); needs exchange",
+        "#                                 # theoretical curves (guide: fragment-residues.md);",
+        "#                                 # needs [analysis.fragments.exchange]",
         '# [analysis.fragments.labels]     # short condition names in the figures',
         '# gentle = "G"',
         "# [analysis.fragments.exchange]   # the kinetics' solvent, for every sample (or one",
         "# ph_read = 3.0                   # table per sample: [analysis.fragments.exchange.S],",
         "#                                 # or per run: [analysis.fragments.exchange.A.S])",
         "# temperature = 20.0              # degrees Celsius",
-        "# d2o_fraction = 0.05             # D atom fraction of the kinetics' solvent (0 to 1;",
-        "#                                 # the labelling buffer's is [run.controls])",
+        "# d2o_fraction = 0.05             # fragment kinetics only: D atom fraction of the",
+        "#                                 # kinetics' solvent (0 to 1); the labelling buffer's",
+        "#                                 # is [run.controls] d2o_fraction",
         '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
         "# initial_fraction = 0.9          # D fraction when the exchange began (curves)",
         "# [analysis.labelling]            # the labelling solvent, for every sample (or one",
         "# ph_read = 7.0                   # table per sample: [analysis.labelling.WT], or per",
         "#                                 # run of [analysis.runs]: [analysis.labelling.A.WT])",
         "# temperature = 20.0              # degrees Celsius",
-        "# d2o_fraction = 0.9              # D atom fraction of the labelling buffer (as",
-        "#                                 # [run.controls] d2o_fraction)",
+        "# d2o_fraction = 0.9              # protection factors only: D atom fraction of the",
+        "#                                 # labelling buffer, usually the value of",
+        "#                                 # [run.controls] d2o_fraction",
         '# reference = "PDLA"              # intrinsic-rate set: "PDLA" or "3Ala"',
         "# initial_fraction = 0.9          # back-exchange only: the D fraction the amides",
         "#                                 # began with (above d2o_fraction: fD falls with",
         "#                                 # time); leave it out for labelling",
     ]
-    scalars = {k: v for k, v in run.items()
-               if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
-    lines += [""] + _toml_table("run", scalars, cls=RunConfig)
-    control_times = {
-        "undeut_at": ('"5 min"', "the spectra at this time also serve as the undeuterated "
-                                 "control (false: only the files marked undeut)"),
-        "fulldeut_at": ('"20 h"', "the spectra at this time also serve as the fully "
-                                  "deuterated control (false: only the files marked fulldeut)"),
-        "quench": ('{ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }',
-                   "pH read, degrees Celsius and D fraction of the quench and LC, for "
-                   'fd_fallback "kint" (false: none)'),
-    }
-    for key, value in run.items():
-        if key in _OPTIONAL_SECTIONS and value is None:
-            lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
-                                        cls=_section_class(key),
-                                        notes={"controls": control_times}.get(key))
-        elif isinstance(value, Mapping):
-            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
-    from .report.figures import PlotConfig
-
-    lines += [""] + _toml_table("figures", PlotConfig().to_dict(), cls=PlotConfig,
-                                notes={"x": ('"time"', _COMMENTS["figures.x"]),
-                                       "k": ("2", _COMMENTS["figures.k"])})
     return "\n".join(lines) + "\n"
 
 
@@ -2239,7 +2344,10 @@ def _record_header(title: str, lines: list[str]) -> list[str]:
 
 def _made(manifest: Mapping) -> str:
     """When and with which hxex a bundle was written (for a header)."""
-    hxex_version = (manifest.get("versions") or {}).get("hxex", "unknown")
+    versions = manifest.get("versions") or {}
+    hxex_version = versions.get("hxex", "unknown")
+    if versions.get("hxex_commit"):
+        hxex_version += f" ({versions['hxex_commit']})"
     return f"created {manifest.get('created') or 'at an unknown time'} by hxex {hxex_version}"
 
 

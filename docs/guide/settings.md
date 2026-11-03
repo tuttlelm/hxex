@@ -52,7 +52,7 @@ Top-level keys, before the first table.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `project` | text | required | the project's name (text without a colon, `:`); prefixes every spectrum id |
-| `threads` | integer | unset | CPU threads for the command (unset: PyTorch's default, the physical cores); about half the physical cores was fastest on a 24-core machine |
+| `threads` | integer | unset | CPU threads for the command (unset: every physical core, right for most computers, a laptop included); fewer leave cores free for other work, and on a large shared server about half the cores can be faster |
 
 ## `[input]`
 
@@ -188,7 +188,7 @@ Where results go. The bundle and the folders named after it (<bundle>_tables, <b
 
 ## `[run]`
 
-Run settings (hxex.pipeline.RunConfig); times are in s, as the measurement times. The bootstrap, the population test, and the controls are stages that their table turns on: uncomment the commented-out run.bootstrap, run.population_test, or run.controls table below to use it; a stage's "name = false" turns it off.
+Run settings; times are in s, as the measurement times. The back-exchange correction, the bootstrap, and the population test are stages that their own tables turn on (run.controls, run.bootstrap, and run.population_test, with the settings a project changes first); a stage's "name = false" here turns it off.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -200,7 +200,7 @@ Run settings (hxex.pipeline.RunConfig); times are in s, as the measurement times
 
 ## `[run.picker]`
 
-Peak picking: the spectra become sticks at the predicted isotope positions (hxex.picking.PickerConfig; docs/PEAK_PICKING.md).
+Peak picking: the spectra become sticks at the predicted isotope positions (guide: picking-window.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -229,7 +229,7 @@ Per fragment ion type, whether it keeps the amide N-H at its cleavage site, e.g.
 
 ## `[run.fit]`
 
-The fit of k_min to k_max populations to every spectrum, the number chosen by the criterion; with k_min and k_max equal, that number only (hxex.fit.FitConfig).
+The fit of k_min to k_max populations to every spectrum, the number chosen by the criterion; with k_min and k_max equal, that number only.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -254,7 +254,7 @@ The fit of k_min to k_max populations to every spectrum, the number chosen by th
 
 ## `[run.fit.noise]`
 
-Noise model and level of the fit (hxex.noise.NoiseConfig). The level sets the loss scale and the model selection. By default (estimate = "controls") every bin has its own noise; estimate = false gives one sd per spectrum, as before 2026-10-31.
+Noise model and level of the fit (guide: noise-model.md). The level sets the loss scale and the model selection. By default (estimate = "controls") every bin has its own noise, measured from the undeuterated controls; estimate = false gives one sd per spectrum.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -270,7 +270,7 @@ Noise model and level of the fit (hxex.noise.NoiseConfig). The level sets the lo
 
 ## `[run.fit.backend]`
 
-Where the fit runs (hxex.model.Backend); nothing is set globally.
+Where the fit runs: the CPU, or a CUDA graphics card when there is one.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -279,7 +279,7 @@ Where the fit runs (hxex.model.Backend); nothing is set globally.
 
 ## `[run.bootstrap]`
 
-Standard errors and intervals from resampled refits of every measurement (hxex.bootstrap.BootstrapConfig). Slow: most of a run's time.
+Standard errors and intervals from resampled refits of every measurement (guide: statistics.md). Slow: most of a run's time.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -299,7 +299,7 @@ Standard errors and intervals from resampled refits of every measurement (hxex.b
 
 ## `[run.population_test]`
 
-Tests how many populations each spectrum, and each set of replicates and charge states, holds against simulated spectra (hxex.population_test.PopulationTestConfig). Each spectrum's K is then the test's; needs k_min = 1. Slow: ten to twenty times the fit per step.
+Tests how many populations each spectrum, and each set of replicates and charge states, holds against simulated spectra (guide: population-test.md). Each spectrum's K is then the test's; needs k_min = 1. Slow: ten to twenty times the fit per step.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -311,7 +311,7 @@ Tests how many populations each spectrum, and each set of replicates and charge 
 
 ## `[run.controls]`
 
-Back-exchange correction from the undeuterated and fully deuterated controls, fitted at K=1 (hxex.controls.ControlConfig). Deuterium retention here is the fraction of deuterium kept, not a retention time.
+Back-exchange correction from the undeuterated and fully deuterated controls, fitted at K=1 (guide: back-exchange-correction.md). Deuterium retention here is the fraction of deuterium kept, not a retention time.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -332,7 +332,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `deamidation` | true/false | `false` | fully deuterated controls heated near neutral pH: where a sample's Asn-Gly peptides read deamidated (from the peaks' m/z), lower their controls by the share (fd_deamidated) |
 | `deamidation_min_share` | number | `0.25` | the deamidated share (0 to 1) from which a sample's Asn-Gly controls are corrected |
 | `replicate_outlier` | number | `6.0` | a control replicate this many typical replicate sd from its replicates' median (three or more) is left out of the control's mean (one above the amide count always is; the typical sd needs five replicated time points in the run, else only that rule; never within 0.02 D per amide of the median); unset: off |
-| `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer (0 to 1); [analysis.controls] may change it for the analysis |
+| `d2o_fraction` | number | `0.9` | D atom fraction of the labelling buffer, for the back-exchange correction (0 to 1): the one to set; [analysis.controls] may change it for the analysis only |
 | `fd_fallback` | text | unset | retention of a series without a good fully deuterated control: "d2o" (d2o_fraction), "median" (of the run's accepted controls) or "kint" (predicted back-exchange; needs quench; series it cannot predict take the median); false: "kint" with quench, else "median" |
 | `quench` | table | unset | pH read, degrees Celsius and D fraction of the quench and LC ({ ph_read = 2.5, temperature = 0.0, d2o_fraction = 0.0 }), for fd_fallback "kint" (unset: none) |
 | `kint_tolerance` | number | `0.15` | kint: a measured control this far (D per amide) from the prediction is rejected |
@@ -340,7 +340,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 
 ## `[run.quality]`
 
-Quality flags on every spectrum (hxex.quality.QualityConfig): poor_fit, low_intensity, noise_outlier, mz_shift, off_mz (thresholds in [run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is dropped; the review layer of the bundle takes the decisions.
+Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, noise_outlier, mz_shift, off_mz (thresholds in [run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is dropped; your review ([review]) takes the decisions.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -369,7 +369,7 @@ One table per modified residue; the default registry holds acK, pS, pT and pY.
 
 ## `[run.envelope]`
 
-The isotope envelope that places the bins and shapes the fit (hxex.picking.EnvelopeConfig). Fragment spectra can hold several ion types of one fragment a hydrogen apart (c-1, c, c+1 in ETD).
+The isotope envelope that places the bins and shapes the fit. Fragment spectra can hold several ion types of one fragment a hydrogen apart (c-1, c, c+1 in ETD).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -539,7 +539,7 @@ The labelling solvent of the peptide protection factors, for every sample, or on
 
 ## `[figures]`
 
-Figures, drawn by hxex report hxex.toml --figures from the results (hxex run draws none; hxex.report.PlotConfig). Changing these needs no new run. See [Outputs](outputs.md).
+Figures, drawn by hxex report hxex.toml --figures from the results (hxex run draws none). Changing these needs no new run. See [Outputs](outputs.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

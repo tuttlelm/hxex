@@ -1,0 +1,2 @@
+# git archive (and so GitHub's zip downloads) writes the commit and its date into this file
+src/hxex/_commit.txt export-subst

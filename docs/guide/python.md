@@ -25,16 +25,73 @@ Plot functions return Matplotlib figures and never show them. Long operations ta
 and `cancel` hooks (`hxex.hooks`). Settings are explicit config objects (`hxex.pipeline.RunConfig`
 and its parts); nothing is set globally.
 
+Unlike the commands, `write_tables` and `write_figures` replace the files of an existing folder
+without asking. From Python, *hxex* prints only warnings; to see the progress and the lines the
+commands print, switch on logging before the run:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+```
+
+## Looking at results
+
+`hxex.load_results` loads finished results as `hxex report` sees them: from the project file
+(its bundle, with its `[review]` applied and its `[figures]` settings) or from a bundle folder.
+Typing the object's name at the prompt prints a one-line summary:
+
+```python
+import hxex
+
+results = hxex.load_results("hxex.toml")
+results              # Results(hspb5: 3874 spectra in 195 series; samples D109H, R120G, WT; ...)
+results.samples()    # ['D109H', 'R120G', 'WT']
+results.peptides("WT")   # [('0001-0009', 'MDIAIHHPW'), ('0001-0011', 'MDIAIHHPWIR'), ...]
+results.times()      # [4.0, 60.0, 1800.0, 72000.0]  (seconds; controls left out)
+
+hxex.show_series(results, "WT", "87-96", 2)                  # every page of one peptide
+figures = hxex.show_series(results, "WT", "87-96", kinds=["uptake"])  # outside a notebook
+figures[0].savefig("WT_87-96_uptake.png")
+```
+
+In a notebook `show_series` shows the figures; elsewhere it returns them. A peptide is named by
+its residues (`"87-96"` or `"0087-0096"`); when nothing matches, the error says which samples,
+charges, or nearby peptides there are.
+
+The tables of `hxex report` are available as columns (a dictionary of NumPy arrays, one entry
+per column, as in the CSV files):
+
+```python
+from hxex.report import find_series, format_table, series_table, uptake_table
+
+series = series_table(results)                    # series.csv
+print(format_table(series, limit=10))             # the first rows as text
+(d,) = find_series(results, samples=["WT"], peptide_ranges=["87-96"], charges=[2])
+uptake = uptake_table(results)                    # uptake.csv
+rows = (uptake["data_id"] == d) & (uptake["role"] == "")   # labelled times only
+print(uptake["time"][rows], uptake["mean"][rows])
+```
+
+`uptake_table` has one row per time, number of populations (`K`), and population (`rank`).
+The undeuterated and fully deuterated controls have their own rows, with an empty time (NaN)
+and the `role` column saying which control it is (`undeut` or `fulldeut`).
+`find_series` returns the `data_id` of every series that matches (an empty list when none
+does). `hxex.write_analysis(results, hxex.AnalysisConfig(reference="WT"), "analysis")` writes
+what `hxex analyse` writes.
+
 ## Reviewing spectra
 
 A bundle's review layer records, per spectrum, a status (`accepted` or `rejected`), a chosen K
 (`k_override`, 0 for none) and a note. Rejected spectra are left out of the uptake, the reports
-and the analysis; a chosen K replaces the selected one. There is no command for this yet:
+and the analysis; a chosen K replaces the selected one. The commands take the review from the
+user review table instead ([The user review table](project-file.md#the-user-review-table)),
+which leaves the bundle as it is; from Python the bundle's own layer is written like this:
 
 ```python
-from hxex.io import open_bundle
+import hxex
 
-with open_bundle("results") as bundle:        # a bundle folder (a .zip is read only)
+with hxex.open_bundle("results") as bundle:        # a bundle folder (a .zip is read only)
     review = bundle.review()
     review = review.update("my_protein:WT/0001-0011-LKDVEHFKVSS/30s-1-z2.csv",
                            status="rejected", note="co-eluting species")

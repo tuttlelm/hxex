@@ -74,3 +74,17 @@ def test_run_is_the_entry_point_after_the_pipeline_module_is_imported(tmp_path):
     assert callable(hxex.run)
     assert hxex.run is hxex.pipeline.run
     assert hxex.RunConfig is hxex.pipeline.RunConfig
+
+
+def test_downloads_carry_the_commit():
+    """GitHub's zip downloads are made by git archive, which fills in the commit file
+    (``export-subst`` in .gitattributes); the wheel ships it (audit 2026-11-01, Part 2 M8)."""
+    from pathlib import Path
+
+    package = Path(hxex.__file__).parent
+    assert (package / "_commit.txt").is_file()
+    root = package.parent.parent
+    if (root / ".gitattributes").is_file():  # a source checkout
+        assert "src/hxex/_commit.txt export-subst" in (root / ".gitattributes").read_text()
+        text = (package / "_commit.txt").read_text()
+        assert text.strip() == "$Format:%h %cs$" or hxex._commit_from(text)

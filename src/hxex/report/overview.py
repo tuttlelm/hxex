@@ -25,6 +25,50 @@ FALLBACK_REASONS = ("m0_missing", "m0_high", "fd_missing", "retention_low",
                     "no_amides")
 QUALITY_FLAGS = FLAG_NAMES
 GOOD = "#999999"  # unflagged points and measured controls
+NOTE = "#c4c4c4"  # control notes: the control stays in use
+LIMIT_TEXT = {"color": FIT_COLOR, "fontsize": 7, "rotation": 90, "va": "top"}
+
+# What the overview's bars are called on the figure: words for the people reading it, not the
+# flag names of the tables (those are printed beside each bar's count, in grey). Every name a
+# bar can show has an entry; tests/test_report.py checks it.
+CONTROL_LABELS = {
+    "measured": "both controls measured and used",
+    "uncorrected": "not corrected (fragment ions)",
+    # why a control was missing or not used
+    "m0_missing": "no UN control",
+    "m0_high": "UN control above its limit",
+    "fd_missing": "no FD control",
+    "retention_low": "FD retention too low",
+    "retention_outlier": "FD retention far below the run's",
+    "retention_high": "FD retention above its limit",
+    "fd_below_data": "FD control below the series' data",
+    "fd_off_model": "FD control off the back-exchange prediction",
+    "no_amides": "no exchangeable amides",
+    # notes: the control stays in use
+    "fd_disagrees": "FD retention differs from other samples' (note)",
+    "fd_multimodal": "FD control looks like two populations (note)",
+    "m0_multimodal": "UN control looks like two populations (note)",
+    "data_below_m0": "a time point reads below the UN control (note)",
+    "fd_retention_agrees": "retention agrees with the other samples (note)",
+    "fd_charges_disagree": "FD retention differs between charges (note)",
+    "m0_replicate_left_out": "a UN replicate left out of the mean (note)",
+    "fd_replicate_left_out": "an FD replicate left out of the mean (note)",
+    "fd_charges_agree": "retention agrees with the other charges (note)",
+    "fd_deamidated": "FD control corrected for deamidation (note)",
+}
+QUALITY_LABELS = {
+    "poor_fit": "poor fit for its series",
+    "low_intensity": "weak compared with its replicates",
+    "noise_outlier": "noise unlike its replicates'",
+    "mz_shift": "peaks off their predicted m/z",
+    "off_mz": "envelope off its m/z (another species?)",
+    "poor_envelope": "ion-type envelope poorly measured",
+    "saturated": "UN control looks saturated",
+    "tails_low": "UN control's small peaks read low",
+    "bright": "as bright as a saturated UN control",
+    "rt_found": "read at a retention time hxex found",
+    "any": "any of these",
+}
 
 
 # --- K comparison of one spectrum -----------------------------------------------------------
@@ -129,6 +173,47 @@ def controls_overview_data(results: Results) -> dict:
     }
 
 
+def retention_limit_labels(controls) -> tuple[str, str]:
+    """What the lower and upper retention limits of :func:`plot_controls_overview` are, in
+    words: how the lower one was set (:func:`retention_floor`) and the ``retention_max``."""
+    from ..controls import OUTLIER_MIN_SERIES
+
+    cfg = controls.config
+    floor = retention_floor(controls)
+    upper = f"upper limit {cfg.retention_max:g} (retention_max)"
+    if cfg.retention_min is not None:
+        return f"lower limit {floor:.2f} (retention_min)", upper
+    limits = controls.limits
+    if limits is not None and limits.get("median") is not None:
+        what = ("outlier limit" if cfg.fd_mode != "kint"
+                else "outlier limit, series without rates")
+        return (f"{what} {floor:.2f} (median − {cfg.outlier_sd:g} robust sd)", upper)
+    if limits is not None:
+        return (f"no outlier limit (fewer than {OUTLIER_MIN_SERIES} controls)", upper)
+    if cfg.fd_mode == "kint":
+        return "no lower limit (judged by the prediction)", upper
+    return f"lower limit {floor:.2f} (half the D2O fraction)", upper
+
+
+def _limit_text(ax, x: float, text: str, *, right: bool = True) -> None:
+    """``text`` beside the vertical limit line at ``x``, read upwards, at the top of ``ax``."""
+    ax.annotate(text, (x, 1.0), xycoords=ax.get_xaxis_transform(),
+                xytext=(2 if right else -2, -3), textcoords="offset points",
+                ha="left" if right else "right", gid="limit_label", **LIMIT_TEXT)
+
+
+def _counts_text(ax, counts, names, total: int | None = None) -> None:
+    """Each bar's count at its end, and its flag name (as the tables write it) in grey."""
+    for y, (n, name) in enumerate(zip(counts[::-1], names[::-1], strict=True)):
+        share = f" ({100 * n / max(total, 1):.1f} %)" if total is not None else ""
+        count = ax.annotate(f" {n:,}{share}", (n, y), va="center", fontsize=8)
+        if name:  # just after the count, smaller and grey: for finding it in the tables
+            ax.annotate(name, (1.0, 0.5), xycoords=count, xytext=(3, 0),
+                        textcoords="offset points", va="center", fontsize=6.5,
+                        color="#8c8c8c", gid="flag_name")
+    ax.set_xlim(0, 1.45 * max(max(counts, default=0), 1))
+
+
 def retention_floor(controls) -> float:
     """The lower retention limit a run's controls were judged by: the set ``retention_min``,
     the run-relative limit (:attr:`hxex.controls.ControlTable.limits`), or, in bundles written
@@ -144,20 +229,28 @@ def retention_floor(controls) -> float:
 def plot_controls_overview(results: Results) -> Figure:
     """The controls of a run: the distribution of the measured retention with the limits it
     was judged by (:func:`retention_floor`), the distribution of the undeuterated control means
-    with ``m0_max``, why series fell back to theoretical values, and the flags that only warn."""
+    with ``m0_max``, and the control status of the series: how many use both measured controls,
+    why controls were missing or not used, and the notes that leave the control in use. The
+    limits are named beside their lines (:func:`retention_limit_labels`), the bars in words
+    (:data:`CONTROL_LABELS`) with the flag name, as the tables write it, after each count."""
+    from matplotlib.patches import Patch
+
     d = controls_overview_data(results)
-    fig = Figure(figsize=(14, 3.8))
-    a1, a2, a3 = fig.subplots(1, 3)
+    fig = Figure(figsize=(15, 4.2), layout="constrained")
+    a1, a2, a3 = fig.subplots(1, 3, gridspec_kw={"width_ratios": [1, 1, 1.25]})
     ret = d["retention"][np.isfinite(d["retention"])]
     if len(ret):  # fixed edges over the drawn range, so that a small run shows its bars
         a1.hist(ret, bins=np.linspace(min(0.0, float(ret.min())),
                                       max(1.1, float(ret.max()), d["retention_max"]), 45),
                 color=GOOD, gid="retention")
-    for x in (d["retention_min"], d["retention_max"]):
+    low, high = retention_limit_labels(results.controls)
+    for x, text in ((d["retention_min"], low), (d["retention_max"], high)):
         a1.axvline(x, color=FIT_COLOR, ls="--", lw=1, gid="limits")
+        _limit_text(a1, x, text, right=x < d["retention_max"])
     median = f", median {np.median(ret):.2f}" if len(ret) else ""
-    a1.set_title(f"retention of the measured controls ({len(ret)} series{median})", fontsize=9)
-    a1.set_xlabel("(mFD − m0) / exchangeable amides")
+    a1.set_title(f"retention of the measured FD controls ({len(ret)} series{median})",
+                 fontsize=9)
+    a1.set_xlabel("retention: (FD mean − UN mean)\n/ exchangeable amides")
     a1.set_ylabel("series")
     m0 = d["m0"][np.isfinite(d["m0"])]
     if len(m0):
@@ -165,24 +258,33 @@ def plot_controls_overview(results: Results) -> Figure:
                                      max(d["m0_max"], float(m0.max())) * 1.1, 45),
                 color=GOOD, gid="m0")
     a2.axvline(d["m0_max"], color=FIT_COLOR, ls="--", lw=1, gid="limits")
-    a2.set_title(f"undeuterated control means ({len(m0)} series)", fontsize=9)
-    a2.set_xlabel("m0 (deuterons beyond natural abundance)")
-    # the reasons that occurred (red), then the flags that only warn (grey, the control used)
-    reasons = {k: v for k, v in d["reasons"].items() if v}
-    notes = {f"{k} (flag only)": v for k, v in d["notes"].items() if v}
+    _limit_text(a2, d["m0_max"], f"upper limit {d['m0_max']:g} D (m0_max)", right=False)
+    a2.set_title(f"UN control means ({len(m0)} series)", fontsize=9)
+    a2.set_xlabel("UN control mean\n(deuterons above the natural isotope pattern)")
+    # the reasons that occurred (orange), then the notes (light grey, the control used)
+    reasons = [k for k, v in d["reasons"].items() if v]
+    notes = [k for k, v in d["notes"].items() if v]
     # series the controls leave uncorrected (fragment ions): their own bar, in neither group
-    plain = {"uncorrected": d["uncorrected"]} if d["uncorrected"] else {}
-    names = ["both measured", *plain, *reasons, *notes]
-    counts = [d["measured"], *plain.values(), *reasons.values(), *notes.values()]
+    plain = ["uncorrected"] if d["uncorrected"] else []
+    keys = ["measured", *plain, *reasons, *notes]
+    counts = [d["measured"], *([d["uncorrected"]] if plain else []),
+              *(d["reasons"][k] for k in reasons), *(d["notes"][k] for k in notes)]
     colors = ([GOOD] + ["#6b8fb3"] * len(plain) + [FIT_COLOR] * len(reasons)
-              + ["#9a9a9a"] * len(notes))
-    a3.barh(names[::-1], counts[::-1], color=colors[::-1], gid="reasons")
-    for y, n in enumerate(counts[::-1]):
-        a3.text(n, y, f" {n}", va="center", fontsize=8)
+              + [NOTE] * len(notes))
+    a3.barh([CONTROL_LABELS[k] for k in keys][::-1], counts[::-1], color=colors[::-1],
+            gid="reasons")
+    _counts_text(a3, counts, ["", *plain, *reasons, *notes])
+    a3.tick_params(axis="y", labelsize=8)
     a3.set_title(f"control status of {d['n_series']} series "
-                 f"({int(d['fallback'].sum())} fell back)", fontsize=9)
-    a3.set_xlabel("series (a series can have several reasons)")
-    fig.tight_layout()
+                 f"({int(d['fallback'].sum())} with a stand-in control)", fontsize=9)
+    a3.set_xlabel("series (a series can be counted in several rows)")
+    key = [Patch(color=GOOD, label="both controls measured")]
+    if reasons:
+        key.append(Patch(color=FIT_COLOR, label="a control missing or not used: why"))
+    if notes:
+        key.append(Patch(color=NOTE, label="note: the control is used"))
+    a3.legend(handles=key, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=len(key),
+              fontsize=7, frameon=False)
     return fig
 
 
@@ -243,19 +345,22 @@ def flagged_share_grid(x, y, flagged, bins: int = 40, min_count: int = 5) -> dic
 
 
 def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 5) -> Figure:
-    """The quality flags of a run: how many spectra carry each flag; each spectrum's fit
+    """The quality flags of a run: how many spectra carry each flag (in words,
+    :data:`QUALITY_LABELS`, with the flag name after each count); each spectrum's fit
     (misfit relative to its series) against its intensity (relative to its replicates), as the
     share of flagged spectra in each cell of a ``bins`` x ``bins`` grid (cells with fewer than
-    ``min_count`` spectra show the spectra as points instead), with the thresholds; and the
-    share of flagged spectra per sample."""
+    ``min_count`` spectra show the spectra as points instead), with the two flag limits named
+    beside their lines and a caption saying what to look for; and the share of flagged spectra
+    per sample."""
     d = quality_overview_data(results)
-    fig = Figure(figsize=(14, 3.8))
-    a1, a2, a3 = fig.subplots(1, 3)
-    names = [*d["counts"], "any flag"]
+    fig = Figure(figsize=(15, 4.4), layout="constrained")
+    a1, a2, a3 = fig.subplots(1, 3, gridspec_kw={"width_ratios": [1.15, 1.1, 0.8]})
+    keys = [*d["counts"], "any"]
     counts = [*d["counts"].values(), d["n_flagged"]]
-    a1.barh(names[::-1], counts[::-1], color=FIT_COLOR, gid="counts")
-    for y, n in enumerate(counts[::-1]):
-        a1.text(n, y, f" {n} ({100 * n / max(d['n'], 1):.1f} %)", va="center", fontsize=8)
+    a1.barh([QUALITY_LABELS[k] for k in keys][::-1], counts[::-1], color=FIT_COLOR,
+            gid="counts")
+    _counts_text(a1, counts, [*d["counts"], ""], total=d["n"])
+    a1.tick_params(axis="y", labelsize=8)
     a1.set_title(f"quality flags of {d['n']:,} spectra", fontsize=9)
     a1.set_xlabel("spectra")
     g = flagged_share_grid(d["intensity_rel"], d["fit_rel"], d["flagged"], bins=bins,
@@ -264,30 +369,45 @@ def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 
         share = np.ma.masked_where(g["count"] < min_count, 100 * g["share"])
         mesh = a2.pcolormesh(g["x_edges"], g["y_edges"], share.T, cmap="cividis", vmin=0,
                              vmax=100, gid="share")
-        fig.colorbar(mesh, ax=a2, label=f"flagged (% of spectra in the cell, ≥{min_count})")
+        fig.colorbar(mesh, ax=a2, label=f"flagged spectra (% per square of ≥{min_count})")
         # cells with few spectra: the spectra themselves, so isolated ones stay visible
         sx, sy, sf = g["sparse_x"], g["sparse_y"], g["sparse_flagged"]
-        a2.scatter(sx[~sf], sy[~sf], s=6, color=GOOD, lw=0, gid="spectra")
+        a2.scatter(sx[~sf], sy[~sf], s=6, color=GOOD, lw=0, gid="spectra",
+                   label="a spectrum (where few are)")
         a2.scatter(sx[sf], sy[sf], s=14, facecolors="none", edgecolors=FIT_COLOR, lw=0.7,
-                   gid="flagged")
+                   gid="flagged", label="a flagged spectrum (where few are)")
+        a2.legend(loc="lower right", fontsize=7, frameon=False, handletextpad=0.2)
     a2.axhline(d["poor_fit_factor"], color=FIT_COLOR, ls="--", lw=1, gid="limits")
     a2.axvline(d["min_intensity"], color=FIT_COLOR, ls="--", lw=1, gid="limits")
+    # the limits named on the panel: the fit limit at its right end (on a pale box, over the
+    # points), the intensity limit above the frame
+    a2.annotate(f"poor fit limit: {d['poor_fit_factor']:g}× typical",
+                (1.0, d["poor_fit_factor"]), xycoords=("axes fraction", "data"),
+                xytext=(-3, 3), textcoords="offset points", ha="right", va="bottom",
+                color=FIT_COLOR, fontsize=7, gid="limit_label",
+                bbox={"boxstyle": "square,pad=0.1", "facecolor": "white", "alpha": 0.8,
+                      "linewidth": 0})
+    a2.annotate(f"low intensity limit: {d['min_intensity']:g}×", (d["min_intensity"], 1.0),
+                xycoords=("data", "axes fraction"), xytext=(0, 2), textcoords="offset points",
+                ha="center", va="bottom", color=FIT_COLOR, fontsize=7, gid="limit_label")
     a2.set_xscale("log")
     a2.set_yscale("log")
-    a2.set_xlabel("intensity / mean of the other replicates")
-    a2.set_ylabel(d["fit_label"])
+    a2.set_xlabel("intensity relative to its replicates (1 = as bright)")
+    a2.set_ylabel(("misfit" if d["fit_label"].startswith("misfit") else "deviance")
+                  + " relative to its series (1 = typical)")
     n_both = 0 if g is None else int(g["count"].sum())
-    a2.set_title(f"fit against intensity ({n_both:,} spectra with both); colour: share\n"
-                 f"flagged; sparse cells as points (grey: kept, open: flagged)", fontsize=9)
+    a2.set_title(f"fit against intensity ({n_both:,} spectra)", fontsize=9, pad=14)
+    a2.text(0.5, -0.17, "Worth a look: poor fits that are not weak (above the dashed line, "
+            "right of the vertical one)", transform=a2.transAxes, ha="center", va="top",
+            fontsize=7, color="#4d4d4d", gid="caption")
     import textwrap
 
     labels = [textwrap.shorten(s or "all", 24, placeholder="...") for s in d["samples"]]
     a3.bar(labels, 100 * d["flagged_share"], color=FIT_COLOR, gid="samples")
     a3.set_ylabel("flagged spectra (%)")
-    a3.set_title("flagged share per sample", fontsize=9)
+    a3.set_title("share of spectra with any flag, per sample", fontsize=9)
     a3.tick_params(axis="x", rotation=45 if len(labels) > 6 or any(
         len(s) > 10 for s in labels) else 0)
-    fig.tight_layout()
     return fig
 
 

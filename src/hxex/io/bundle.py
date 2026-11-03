@@ -470,12 +470,19 @@ def _components_table(
 
 
 def _versions() -> dict[str, str]:
+    """The versions of Python and the packages, and ``hxex_commit``, the commit hxex was
+    installed from and its date (``'3ed39ac, 2026-11-02'``) when known (:func:`hxex.commit`;
+    bundles written before have no such key)."""
+    from .. import commit
+
     out = {"python": platform.python_version()}
     for pkg in ("hxex", "numpy", "scipy", "torch", "pyarrow", "pyteomics"):
         try:
             out[pkg] = version(pkg)
         except PackageNotFoundError:
             out[pkg] = "unknown"
+    if commit():
+        out["hxex_commit"] = commit()
     return out
 
 

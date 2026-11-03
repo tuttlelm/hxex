@@ -447,7 +447,8 @@ def format_table(
 
 def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
     """Write columns of equal length as a CSV file with a header (UTF-8); NaN is written as
-    empty, an infinite value as ``inf`` or ``-inf``."""
+    empty, an infinite value as ``inf`` or ``-inf``, and other numbers as :func:`_number` says
+    (six significant digits, at least four decimals from 1 up; the bundle keeps every digit)."""
     path = Path(path)
     names = list(columns)
     n = len(columns[names[0]]) if names else 0
@@ -461,8 +462,26 @@ def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
 
 def _cell(value) -> str:
     if isinstance(value, (float, np.floating)):
-        return "" if np.isnan(value) else repr(float(value))  # inf stays 'inf'
+        return "" if np.isnan(value) else _number(float(value))
     return str(value)
+
+
+def _number(value: float) -> str:
+    """A number as a CSV cell: six significant digits, but from 1 up at least four decimals (an
+    m/z keeps its 0.0001), trailing zeros dropped (``1800``, not ``1800.0``); ``inf``, ``-inf``
+    as they are (audit 2026-11-01, Part 2 M7: sixteen digits read as noise)."""
+    if not np.isfinite(value):
+        return repr(value)
+    if value == 0:
+        return "0"
+    whole = abs(value) >= 1
+    if whole:
+        digits = len(str(int(abs(value))))
+        text = f"{value:.{max(4, 6 - digits)}f}"
+        text = text.rstrip("0").rstrip(".") if "." in text else text
+    else:
+        text = f"{value:.6g}"
+    return "0" if text in ("-0", "0", "") else text
 
 
 def _deamidated_share(ctrl, data_id: int) -> float:

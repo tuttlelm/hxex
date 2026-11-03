@@ -60,6 +60,7 @@ def scan_specexport(
     peptide_ranges: Sequence[str] | None = None,
     peptide_region: Sequence[int] | None = None,
     registry: ModificationRegistry = DEFAULT_MODIFICATIONS,
+    warn: bool = True,
 ) -> list[PeptideEntry]:
     """List the entries (sample, peptide range, charge) found under ``data_dir``.
 
@@ -75,18 +76,21 @@ def scan_specexport(
     lies outside the FASTA, are refused together in one :class:`ReadError`, which suggests the
     header line that numbers the FASTA as the folders are when every folder's sequence is found
     in it at one numbering. A folder whose sequence cannot be read is not checked (a warning).
-    The entries keep the folders' residue numbers.
+    The entries keep the folders' residue numbers. ``warn`` False logs none of the warnings
+    (for a second scan of a folder already read).
     """
+    warning = log.warning if warn else _silent
     root = Path(data_dir)
     fasta = {p.stem: p for p in root.glob("*.fasta")}
     if not fasta:
-        log.warning("no .fasta files found in %s", root)
+        warning("no .fasta files found in %s", root)
     dirs = {p.name: p for p in root.iterdir() if p.is_dir()}
-    _pairing_warnings(root, fasta, dirs, samples)
+    if warn:
+        _pairing_warnings(root, fasta, dirs, samples)
     found = sorted(set(fasta) & set(dirs))
     if samples is not None:
         for missing in sorted(set(samples) - set(found)):
-            log.warning("samples: %s is not a sample in %s (%s)", missing, root,
+            warning("samples: %s is not a sample in %s (%s)", missing, root,
                         _samples_found(found, missing))
         found = [s for s in found if s in samples]
     entries = []
@@ -102,7 +106,7 @@ def scan_specexport(
             nterm, _, cterm = split_termini(sequence)
             residues = parse_sequence(sequence, registry)
         except SequenceError as exc:  # a letter outside the registry (X, say): cut by letters
-            log.warning("%s: %s; the sequence is cut by its letters, one residue per letter "
+            warning("%s: %s; the sequence is cut by its letters, one residue per letter "
                         "(a modX label such as acK in it would count as three)", path, exc)
             nterm, cterm, residues = "H-", "-OH", tuple(sequence)
         last = first + len(residues) - 1
@@ -119,7 +123,7 @@ def scan_specexport(
             start, end = int(m["start"]), int(m["end"])
             own = _base_residues(m["seq"], registry)
             if isinstance(own, SequenceError):
-                log.warning("%s: the sequence in the folder's name cannot be read (%s), so it "
+                warning("%s: the sequence in the folder's name cannot be read (%s), so it "
                             "is not checked against %s", spec_dir, own, path.name)
             else:
                 named.append((start, own))
@@ -163,7 +167,8 @@ def scan_specexport(
         if len(problems) > before:
             fixes.append(_numbering_fix(path, sample, plain, named))
     if not problems:
-        _substitution_warnings(substituted, len(found))
+        if warn:
+            _substitution_warnings(substituted, len(found))
     if problems:
         shown = problems[:_SHOWN]
         if len(problems) > _SHOWN:
@@ -192,6 +197,10 @@ def _base_residues(text: str, registry: ModificationRegistry) -> str | SequenceE
 # 100 to 200 covered) rather than by a shift or another sequence (which leaves few residues in
 # common) when no more than this share of the residues covered differ
 _SUBSTITUTED_SHARE = 1 / 3
+
+
+def _silent(*args, **kwargs) -> None:
+    """A warning not logged."""
 
 
 def _substitutions(differ: Sequence[tuple[str, int, str, str]],

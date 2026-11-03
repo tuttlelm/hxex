@@ -178,11 +178,11 @@ SpecExport/
   WT.fasta
   WT/
     0001-0011-LKDVEHFKVSS/
-      Non-1-z2.csv
-      Non-2-z2.csv
+      Non-D-1-z2.csv
+      Non-D-2-z2.csv
       30s-1-z2.csv
       5m-1-z2.csv
-      Full-1-z2.csv
+      Full-D-1-z2.csv
   mutant.fasta
   mutant/
     ...
@@ -239,9 +239,9 @@ Two columns, m/z and intensity, without a header row. Further columns are ignore
 
 | Token | Meaning |
 |---|---|
-| `Non` | undeuterated control |
-| `Full` | fully deuterated control |
-| `30s`, `5m`, `1.5m`, `4h` | a time point: a number and one letter, `s`, `m` or `h` |
+| `Non` | undeuterated control (`Non-D-1-z2.csv`; what follows `Non` up to the replicate is ignored) |
+| `Full` | fully deuterated control (`Full-D-1-z2.csv`) |
+| `30s`, `0.1s`, `5m`, `1.5m`, `4h` | a time point: a number and one letter, `s`, `m` or `h` |
 
 The control words are case-sensitive (`non` is refused). The unit is a single letter: `5min`
 and `250ms` are refused here, although the project file accepts them. Fractions are kept
@@ -265,7 +265,7 @@ sample = "pool"             # the sample name given to every peptide
 ```
 pooled/
   0012-0020-ACacKDEFG/
-    Non-1-z2.csv
+    Non-D-1-z2.csv
     60s-1-z2.csv
     ...
 ```

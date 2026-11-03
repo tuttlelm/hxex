@@ -8,11 +8,11 @@ same results; the bundle records the settings it was made with.
 ## A session from start to finish
 
 ```bash
-hxex init --format specexport -o hxex.toml   # a project file with every default, commented
+hxex init --format specexport                # hxex.toml, with every default, commented
 #   edit hxex.toml: the project name, [input] data_dir, [output] bundle
 hxex check hxex.toml                         # what would be read, and any problems
 hxex run hxex.toml                           # read, pick, fit (and bootstrap); bundle and tables
-hxex report hxex.toml --figures              # figures ([figures] in the file)
+hxex report hxex.toml --figures              # tables and figures ([figures] in the file)
 hxex analyse hxex.toml                       # post-fitting analysis ([analysis] in the file)
 ```
 
@@ -32,9 +32,9 @@ hxex analyse hxex.toml                       # post-fitting analysis ([analysis]
    controls if they are on, and writes the bundle and the CSV tables. Progress
    goes to the terminal; Ctrl-C stops cleanly and keeps the fits if the bootstrap had started
    (`hxex resume` finishes it). It draws no figures.
-4. **`hxex report`** draws the figures from a bundle, with the project file's `[figures]`
-   settings when given the project file, and writes the tables again. Changing the figure
-   settings needs only `hxex report`, never a new run.
+4. **`hxex report`** writes the tables again from a bundle and, with `--figures`, draws the
+   figures, with the project file's `[figures]` settings when given the project file. Changing
+   the figure settings needs only `hxex report`, never a new run.
 5. **`hxex analyse`** computes the post-fitting analysis from the bundle: coverage, residue maps,
    populations, comparisons, protection factors and fragment ladders.
 
@@ -48,7 +48,7 @@ These three commands make the results, and each makes a different kind:
 |---|---|---|---|
 | What it does | reads your spectra and fits them | draws the fits, spectrum by spectrum | combines the fits: peptides into residues, samples against the reference |
 | What it reads | your data files, with `[input]` and `[run]` | the results (the bundle), with `[figures]` | the results (the bundle), with `[analysis]` |
-| What it writes | the results (`results`) and the tables (`results_tables`) | the figures (`results_figures`), and the tables again | the analysis (`results_analysis_WT`) |
+| What it writes | the results (`results`) and the tables (`results_tables`) | the tables again (`results_tables`), and with `--figures` the figures (`results_figures`) | the analysis (`results_analysis_WT`) |
 | Fits anything | yes | no | no |
 | How long it takes | minutes to hours: the fit, and the bootstrap most of all | seconds for the tables; the figures about a second per peptide drawn, so an hour or more for every peptide of a large run | seconds to minutes |
 | Run it again after changing | `[input]` or `[run]` | `[figures]`, or the exclusion rules | `[analysis]` |
@@ -61,9 +61,9 @@ These three commands make the results, and each makes a different kind:
   or more. Draw them all once you are happy with the fits, not after every change.
 - **`hxex report` shows the fits as they are:** for each peptide, its spectra with the fitted
   populations, how the populations change over time, and its uptake. This is where you check
-  whether the fits are good. It also writes the tables again (on its own, `hxex report
-  hxex.toml` writes only the tables and prints where, with the review's decisions applied; add
-  `--figures` for the figures), for example after you have added an exclusion rule.
+  whether the fits are good. It always writes the tables again, with the review's decisions
+  applied, and prints where (`hxex report hxex.toml` on its own writes only the tables, for
+  example after you have added an exclusion rule; `--figures` adds the figures).
 - **`hxex analyse` goes further than the fits:** it combines replicates, charge states, and
   overlapping peptides into values per residue, decides residue by residue whether one or two
   populations describe the data, and compares each sample with the reference. These are the
@@ -149,9 +149,9 @@ The main commands and options; every option is in the
 | `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle and tables, no figures. Slow: minutes to hours, most of it the bootstrap |
 | `hxex resume BUNDLE` | finish a run that stopped during its bootstrap. Slow: the rest of the bootstrap |
 | `hxex resume PROJECT` | complete the bootstrap of the project's bundle, the fits kept: add one (the project's `[run.bootstrap]`) when there is none, redo it when its settings changed, and bootstrap the spectra whose number of populations the review table chose (only those). Slow: a whole bootstrap; only the chosen spectra when that is all that is missing |
-| `hxex report PROJECT` or `hxex report BUNDLE` `[--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--k K] [--format F]` | figures and tables from a bundle (given the project file: its bundle, `[figures]` settings and exclusion rules); fits nothing. The tables take seconds; the figures about a second per peptide drawn, so an hour or more with `--series all` on a large run |
+| `hxex report PROJECT` or `hxex report BUNDLE` `[--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--k K] [--format F]` | the tables from a bundle, and the figures with `--figures` (given the project file: its bundle, `[figures]` settings and exclusion rules); fits nothing. The tables take seconds; the figures about a second per peptide drawn, so an hour or more with `--series all` on a large run |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`); fits nothing. Seconds to minutes |
-| `hxex info BUNDLE [--verify]` | what a bundle holds: counts, K, bootstrap, controls, roles, noise reference, times, review, what it replaced, earlier generations |
+| `hxex info PROJECT` or `hxex info BUNDLE` `[--verify]` | what a bundle holds (given the project file: its bundle, and what its review table decides): counts, K, bootstrap, controls, roles, noise reference, times, review, what it replaced, earlier generations |
 
 `hxex init` refuses to write over an existing project file, so your edits are not lost by
 accident; `--force` replaces it with a fresh template.
@@ -168,7 +168,9 @@ folder that already holds results stops the command. `overwrite = true` or `keep
 true` in `[output]` applies to every command. See [Running again](outputs.md#running-again).
 - `--spectra PATH` fits the raw spectra stored in an earlier bundle instead of reading the input.
 - `--device cpu|cuda|cuda:N` chooses where the fit runs.
-- `--threads N` sets the CPU threads (about half the physical cores was fastest).
+- `--threads N` sets the CPU threads. On a laptop or an ordinary desktop leave it unset:
+  *hxex* then uses every core. On a large shared machine, fewer threads leave cores for other
+  work (12 threads were fastest on a 24-core one).
 
 Every command takes `-q` (warnings only), `-v` (more messages) and `--progress-every SECONDS`.
 Exit codes: 0 done, 1 error, 2 usage error, 130 stopped.
