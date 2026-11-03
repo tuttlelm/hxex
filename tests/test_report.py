@@ -266,7 +266,16 @@ def test_plot_uptake_axes(results):
     pts = [a for a in by_time.axes[0].get_children() if a.get_gid() == "rep:1"][0]
     # the controls at the axis ends (UN before the only time point, FD after it), labelled
     assert pts.get_offsets()[:, 0].tolist() == [30.0, 60.0, 90.0]
-    assert {"control_label:UN", "control_label:FD"} <= gids(by_time)
+    # UN and FD on the axis itself, and no time tick beyond the times (owner, 2026-11-03)
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    FigureCanvasAgg(by_time).draw()
+    axis = by_time.axes[0]
+    labels = {t.get_text(): t.get_position()[0] for t in axis.get_xticklabels()}
+    assert labels["UN"] == 30.0 and labels["FD"] == 90.0
+    assert all(45.0 <= x <= 75.0 for name, x in labels.items() if name not in ("UN", "FD"))
+    legend = " ".join(t.get_text() for t in by_time.legends[0].get_texts())
+    assert "UN, FD: control spectra" in legend
     logged = plot_uptake(results, 0, x="time", scale="log")
     pts = [a for a in logged.axes[0].get_children() if a.get_gid() == "rep:1"][0]
     assert (pts.get_offsets()[:, 0] > 0).all() and logged.axes[0].get_xscale() == "log"

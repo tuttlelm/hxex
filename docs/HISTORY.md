@@ -6374,3 +6374,20 @@ CSVs or mzML if wanted.
     tests/test_project_edit.py (live_settings, switch_table, file_problem, set_settings, the
     list operations).
 
+234. **Uptake and populations pages: the controls in the UN/FD words (owner, 2026-11-03).** On a
+    time axis the uptake page drew the series' control spectra at made-up positions before the
+    first time and after the last, labelled by a note beside the points; the axis went on with
+    times, so the fully deuterated controls read as a time (80,000 s on the tutorial's linear
+    axis). The positions are now labelled `UN` and `FD` on the axis itself, as on the index
+    axis, and no time tick (major or minor) is drawn beyond halfway from the last time to a
+    control (`report.series._label_controls`, a locator and formatter wrapping matplotlib's).
+    The populations page's dotted guides were in the legend as "0 and the amide count"; they
+    are "UN level (0)" and "FD level (amide count)", the uptake page's words. Both pages are
+    written by `hxex report` too, so the tutorial's uptake figures change on the next
+    `make_tutorial.py --run`. Looked at and not adopted for now (owner kept the replicate
+    colours): colouring the uptake page by population (the spectra and population pages'
+    colours) with a marker shape per replicate. The replicate colours reuse the population
+    colours (blue is replicate 1 on the uptake page and the low-D population on the next), and
+    colouring by rank paints a one-population spectrum as population 1 even at full
+    deuteration; a neutral grey for one-population points was the variant offered.
+

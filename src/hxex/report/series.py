@@ -593,7 +593,9 @@ def _population_legend(fig: Figure, reps) -> list:
         out.append(Line2D([], [], ls="none", marker="o", ms=8, markerfacecolor="none",
                           markeredgecolor="darkred", label="known populations"))
     if "limits" in gids:
-        out.append(Line2D([], [], color="grey", ls=":", lw=1, label="0 and the amide count"))
+        # in the uptake page's words (UN and FD, as everywhere else)
+        out.append(Line2D([], [], color="grey", ls=":", lw=1,
+                          label="UN level (0)\nFD level (amide count)"))
     return out
 
 
@@ -700,9 +702,10 @@ def plot_uptake(
     leaves out times of 0 or less); every control spectrum of the series (known by its role)
     that is not a time point as well is drawn at an end of the axis, the undeuterated ones
     before the first time and the fully deuterated ones after the last, labelled ``UN`` and
-    ``FD``, in their replicate's colour (hollow and grey when rejected, excluded, or left out
-    by the quality screens). ``x='index'`` plots against the position of
-    the point in the series (0, 1, 2, ..., labelled with the times), with every point including
+    ``FD`` on the axis (no time tick beyond the times drawn), in their replicate's colour
+    (hollow and grey when rejected, excluded, or left out by the quality screens).
+    ``x='index'`` plots against the position of the point in the series (0, 1, 2, ...,
+    labelled with the times), with every point including
     the controls (the undeuterated first, the fully deuterated last), as for the test data
     sets. ``x=None`` (the default) is ``'time'``, or ``'index'`` when the times only order the
     points (:attr:`Results.time_scale` ``'order'``: the labels are then the numbers given, and
@@ -738,21 +741,14 @@ def plot_uptake(
     # x = "time": the series' own controls that are not time points as well, at the axis ends
     # (undeuterated left, fully deuterated right), so that the levels behind the correction show
     ends = (~keep & (d["role"] != "")) if x == "time" else np.zeros(len(xs), dtype=bool)
+    control_at: dict[str, float] = {}  # where the controls are drawn, labelled on the axis
     if ends.any():
         xs = xs.copy()
         left, right = _end_positions(xs[keep], scale)
-        xs[ends & (d["role"] == "UN")] = left
-        xs[ends & (d["role"] == "FD")] = right
-        # each label beside its own points: above the undeuterated ones, below the fully
-        # deuterated ones (a label at the axis' far edge read as the other level's)
-        for role, at, top, offset, va in (("UN", left, True, 8, "bottom"),
-                                          ("FD", right, False, -8, "top")):
-            ys = d["mean"][ends & (d["role"] == role)]
-            ys = ys[np.isfinite(ys)]
-            if len(ys):
-                ax.annotate(role, (at, ys.max() if top else ys.min()), xytext=(0, offset),
-                            textcoords="offset points", ha="center", va=va, fontsize=8,
-                            color="#555555", gid=f"control_label:{role}")
+        for role, at in (("UN", left), ("FD", right)):
+            if (ends & (d["role"] == role)).any():
+                xs[ends & (d["role"] == role)] = at
+                control_at[role] = at
     drawn = keep | ends
     reps = np.unique(d["rep"][drawn]) if drawn.any() else np.unique(d["rep"])
     rejected = d["rejected"]
@@ -800,6 +796,9 @@ def plot_uptake(
     else:
         ax.set_xlabel("time (s)")
         ax.set_xscale(scale)
+        if control_at:
+            _label_controls(ax, control_at, xs[keep], scale)
+            d["control_at"] = control_at
     ax.set_ylabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_title(d["label"], fontsize=9)
     if legend:  # outside the axes, on the right
@@ -810,6 +809,53 @@ def plot_uptake(
         else:
             ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), **kw)
     return fig
+
+
+def _label_controls(ax: Axes, control_at: dict[str, float], times: np.ndarray,
+                    scale: str) -> None:
+    """On a time axis, the controls' positions labelled ``UN`` and ``FD`` on the axis itself (as
+    the index axis labels them), and no time tick beyond the times drawn: a number out there
+    would read as the controls' time (owner, 2026-11-03)."""
+    from matplotlib.ticker import Formatter, Locator
+
+    times = times[np.isfinite(times) & ((times > 0) if scale == "log" else True)]
+    if not len(times):
+        lo, hi = -np.inf, np.inf
+    else:
+        lo, hi = float(times.min()), float(times.max())
+
+    def middle(a, b):  # halfway between a data time and a control, on the axis' scale
+        return float(np.sqrt(a * b)) if scale == "log" else (a + b) / 2
+
+    lo = middle(lo, control_at["UN"]) if "UN" in control_at and np.isfinite(lo) else -np.inf
+    hi = middle(hi, control_at["FD"]) if "FD" in control_at and np.isfinite(hi) else np.inf
+    names = {round(v, 9): k for k, v in control_at.items()}
+
+    class Ticks(Locator):
+        def __init__(self, base, add):
+            self.base, self.add = base, add
+
+        def __call__(self):
+            kept = [v for v in self.base() if lo <= v <= hi]
+            return sorted(kept + (list(control_at.values()) if self.add else []))
+
+    class Labels(Formatter):
+        def __init__(self, base):
+            self.base = base
+
+        def set_locs(self, locs):
+            self.base.set_locs([v for v in locs if round(v, 9) not in names])
+
+        def __call__(self, value, pos=None):
+            return names.get(round(value, 9)) or self.base(value, pos)
+
+        def get_offset(self):
+            return self.base.get_offset()
+
+    xaxis = ax.xaxis
+    xaxis.set_major_locator(Ticks(xaxis.get_major_locator(), True))
+    xaxis.set_major_formatter(Labels(xaxis.get_major_formatter()))
+    xaxis.set_minor_locator(Ticks(xaxis.get_minor_locator(), False))
 
 
 def _end_positions(times: np.ndarray, scale: str) -> tuple[float, float]:
@@ -847,7 +893,7 @@ def _uptake_legend(ax: Axes, d: dict, lo, hi, reference: bool) -> list:
             color, marker = rep_style(int(gid.split(":")[1]))
             out.append(Line2D([], [], ls="none", marker=marker, ms=7, color=color,
                               label=f"rep {gid.split(':')[1]}"))
-    if any((a.get_gid() or "").startswith("control_label:") for a in ax.texts):
+    if d.get("control_at"):
         out.append(Line2D([], [], ls="none", label="UN, FD: control spectra"))
     if reference:
         out.append(Line2D([], [], ls="none", marker="o", ms=8, markerfacecolor="none",

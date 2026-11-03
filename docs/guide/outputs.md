@@ -190,9 +190,10 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     default when there are controls. The marker's area grows with the population; each
     replicate has its own colour (and, beyond six replicates, its own marker as well). A
     rejected or excluded spectrum is drawn hollow and grey. On a time axis the series' control
-    spectra are drawn at the ends of the axis, the undeuterated ones (`UN`) before the first
-    time and the fully deuterated ones (`FD`) after the last, hollow and grey when rejected or
-    left out by the quality screens. The dotted lines mark the levels the correction uses (0
+    spectra are drawn at the ends of the axis, the undeuterated ones before the first time and
+    the fully deuterated ones after the last, labelled `UN` and `FD` on the axis itself (no
+    time is marked beyond the last time point, so they are not read as times), hollow and grey
+    when rejected or left out by the quality screens. The dotted lines mark the levels the correction uses (0
     and the amide count when corrected; else the undeuterated and fully deuterated means); when
     a level came from a stand-in rather than the series' own control, the legend names it, for
     example "FD level (amide count): median stand-in". With `x = "index"` the controls are
