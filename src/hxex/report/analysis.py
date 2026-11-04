@@ -576,6 +576,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             elif residues.where(sample=s, time=t).any():
                 jobs.append((f"profile_{s}_{when_}", lambda s=s, t=t: plot_residue_profile(
                     residues, s, t, marks=marks, length=length, bootstrap=booted, **when)))
+    # the bands: +-delta_crit / 2 of the peptide comparisons (one value for every pair of
+    # samples), so two samples' bands part where they differ by more (owner); without a
+    # reference, +-1 standard error
+    k1_crit = comparisons["K=1 fD"].delta_crit if "K=1 fD" in comparisons else None
     # every sample's fD by residue on one axis, none a reference (owner), one y axis for every
     # time so the figures compare (owner, 2026-11-04)
     k1 = residues.where(K=1, rank=1) & np.isin(residues.time, list(times))
@@ -589,7 +593,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             jobs.append((f"residues_all_{_time_label(t, scale)}",
                          lambda t=t, w=with_values: plot_residue_samples(
                              residues, w, t, styles=styles, annotations=ann, length=length,
-                             top=highest, **when)))
+                             top=highest, delta_crit=k1_crit, **when)))
     if config.populations == "population_test" and (residues.population_tier != "").any():
         jobs.append(("population_tiers", lambda: plot_population_tiers(
             residues, in_order + states, length=length, **when)))

@@ -447,8 +447,12 @@ a default colour that none of yours uses.
 
 **Every sample at once.** `residues_all_<time>` draws every sample's fDavg residue by residue
 on one axis, with none of them a reference: each sample in its colour and marker, a line broken
-where no peptide measures two residues together, and a light ±1 standard-error band; every
-time's figure has the same y axis, so they compare at a glance. fDavg is
+where no peptide measures two residues together, and a light band of ±½ δcrit, half the
+smallest difference the peptide comparisons call significant (one value for every pair of
+samples, named above the plot): where two samples' bands are apart, they differ by more than
+that; where they overlap, by less (without a reference sample there is no δcrit, and the bands
+are ±1 standard error). Every time's figure has the same y axis, so they compare at a glance.
+fDavg is
 the analysis's average deuteration, as on the overlays: the K=1 fit's, or, where a peptide's
 spectra have two populations at least 2 D apart (`average_from_k2` in `species_uptake.csv`),
 the K=2 population-weighted mean, which the one-population fit misses. It is the figure to

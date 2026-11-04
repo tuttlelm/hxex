@@ -2711,6 +2711,12 @@ def test_every_samples_residue_values_on_one_axis():
     columns, table = figure_rows(fig)
     assert columns == ["sample", "time", "time_label", "residue", "fD", "fD_se"]
     assert len(table) == 9 and {r["sample"] for r in table} == {"M", "V", "WT"}
+    assert ax.get_title(loc="left") == "±1 standard error"  # no threshold given: the errors
+    # with the analysis's K=1 threshold: bands of +-delta_crit / 2, its value said (owner)
+    crit = plot_residue_samples(rm, ["M", "V", "WT"], 4.0, delta_crit=0.04)
+    assert crit.axes[0].get_title(loc="left") == "±½ δcrit (δcrit = 0.040 fD)"
+    band = crit.axes[0].collections[0].get_paths()[0].vertices[:, 1]
+    assert np.nanmax(band) - np.nanmin(band) == pytest.approx(0.04, abs=1e-9)  # 0.3 +- 0.02
     # one y axis for every time of an analysis (owner): the highest value given holds it
     own, held = fig.axes[0].get_ylim()[1], plot_residue_samples(
         rm, ["M", "V", "WT"], 4.0, top=1.3).axes[0].get_ylim()[1]

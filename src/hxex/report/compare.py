@@ -399,9 +399,10 @@ def plot_residue_overlay(
 
 
 def _average_line(ax: Axes, residues: ResidueMap, sample: str, time: float, colour: str,
-                  zorder: float, band_alpha: float = 0.3) -> None:
+                  zorder: float, band_alpha: float = 0.3, half_width: float | None = None) -> None:
     """The K=1 residue values of ``sample`` at ``time`` as a line with a +-1 standard-error
-    band in ``colour``, broken between residues no peptide measures together; a residue without
+    band (``half_width``: a band of that half-width instead) in ``colour``, broken between
+    residues no peptide measures together; a residue without
     a value (a proline) is bridged when one peptide spans both its neighbours."""
     rows = residues.where(sample=sample, time=time, K=1, rank=1)
     res = np.asarray(residues.residue[rows], dtype=int)
@@ -426,6 +427,8 @@ def _average_line(ax: Axes, residues: ResidueMap, sample: str, time: float, colo
             ys.append(np.nan)
             es.append(np.nan)
     xs, ys, es = np.array(xs, dtype=float), np.array(ys), np.array(es)
+    if half_width is not None:
+        es = np.where(np.isfinite(ys), half_width, np.nan)
     ax.fill_between(xs, ys - es, ys + es, color=colour, alpha=band_alpha, linewidth=0,
                     zorder=zorder)
     ax.plot(xs, ys, color=colour, linewidth=1.0, alpha=0.9, zorder=zorder + 0.05)
@@ -442,6 +445,7 @@ def plot_residue_samples(
     time_scale: str = "seconds",
     ax: Axes | None = None,
     top: float | None = None,
+    delta_crit: float | None = None,
 ) -> Figure:
     """Every sample's average deuteration (fDavg: the K=1 fit's, or, for a set with two
     populations at least 2 D apart, the K = 2 population-weighted mean; ``average_from_k2``,
@@ -453,20 +457,28 @@ def plot_residue_samples(
     +-1 standard-error band; the samples named above the panel, the time on its right; sites
     and region boundaries dashed. Each sample's line carries its residues as data-table rows
     (``hover.set_rows``). ``top``: the highest value the y axis must hold (the same for every
-    time of an analysis, so the figures compare; owner, 2026-11-04); else this time's own."""
+    time of an analysis, so the figures compare; owner, 2026-11-04); else this time's own.
+    ``delta_crit`` (the K=1 threshold of the analysis's peptide comparisons, one value for every
+    pair of samples): each band is +-delta_crit / 2 instead of +-1 standard error, so two
+    samples' bands part where their difference exceeds it, and its value is said above the
+    plot, on the left (owner, 2026-11-04)."""
     if ax is None:
         fig = Figure(figsize=(8.0, 3.4), layout="constrained")  # the axis label kept in
         ax = fig.add_subplot()
     else:
         fig = ax.figure
     fixed, top, handles = top, -np.inf, []
+    crit = (float(delta_crit) if delta_crit is not None and np.isfinite(delta_crit)
+            and delta_crit > 0 else None)
     for n, name in enumerate(samples):
         rows = residues.where(sample=name, time=time, K=1, rank=1) & np.isfinite(residues.fD)
         if not rows.any():
             continue
         colour, marker, size = ((styles[name].colour, styles[name].marker, styles[name].size)
                                 if styles and name in styles else sample_style(n))
-        _average_line(ax, residues, name, time, colour, zorder=1.7 + 0.1 * n, band_alpha=0.12)
+        _average_line(ax, residues, name, time, colour, zorder=1.7 + 0.1 * n,
+                      band_alpha=0.12 if crit is None else 0.18,
+                      half_width=None if crit is None else crit / 2)
         res, fd, se = residues.residue[rows], residues.fD[rows], residues.fD_se[rows]
         (points,) = ax.plot(res, fd, linestyle="none", marker=marker, markersize=size * 0.8,
                             color=colour, markerfacecolor=to_rgba(colour, FILL),
@@ -496,6 +508,14 @@ def plot_residue_samples(
               borderaxespad=0.0 if many else 0.5, handlelength=1.6)
     ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
+    many_note = len(handles) > 4  # the legend runs from the left: the note inside instead
+    note = (f"±½ δcrit (δcrit = {crit:.3f} fD)" if crit is not None  # short: beside the legend
+            else "±1 standard error")
+    if many_note:
+        ax.text(0.01, 0.97, note, transform=ax.transAxes, ha="left", va="top", fontsize=7.5,
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8, "pad": 1.5})
+    else:
+        ax.set_title(note, loc="left", fontsize=8)
     return fig
 
 

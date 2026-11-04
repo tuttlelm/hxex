@@ -7052,4 +7052,9 @@ CSVs or mzML if wanted.
     rows on one artist; `figure_rows` reads both kinds): the first residue figure with one.
     Tutorial: four figures (4 s to 20 h), 466 rows at 30 min. Then (owner): one y axis for every time of
     an analysis (`top`, the highest fDavg plus its error over the times drawn), so the figures
-    compare; tutorial: -0.05 to 1.10 on all four.
+    compare; tutorial: -0.05 to 1.10 on all four. Then (owner, after a corner bar and a graded ruler were tried and
+    found too small at this run's precision, delta_crit 0.015 fD on a 0-1.1 axis): the bands are
+    +-delta_crit / 2 of the K=1 peptide comparisons (one value for every pair of samples), so two
+    samples' bands part exactly where they differ by more; "±½ δcrit (δcrit = 0.015 fD)" above
+    the plot on the left (inside it when more than four samples push the legend left); +-1
+    standard error without a reference.
