@@ -652,11 +652,14 @@ class MainWindow(QMainWindow):
                 and self._may_discard():
             logging.getLogger("hxex").removeHandler(self.handler)
             # drawings and loads still running finish first (their results are dropped)
-            from .tasks import drawing_pool
+            from .tasks import collection, drawing_pool
 
+            stopped = True
             for pool in (drawing_pool(), QThreadPool.globalInstance()):
                 pool.clear()
-                pool.waitForDone(10000)
+                stopped = pool.waitForDone(10000) and stopped
+            if stopped:
+                collection().settled()
             event.accept()
         else:
             event.ignore()

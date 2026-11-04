@@ -113,6 +113,50 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
     assert view.size() == QSize(0, 0)
 
 
+def test_garbage_collection_waits_for_the_windows_thread(qtbot):
+    """A reference cycle holding a window object, freed by a collection in a drawing thread,
+    crashed Qt (macOS CI): automatic collection is paused while work runs off the window's
+    thread, and resumes in the window's thread, also after a failure."""
+    import gc
+    import threading
+
+    from hxex.gui.tasks import collection
+
+    assert gc.isenabled()
+    panel = FigurePanel()
+    qtbot.addWidget(panel)
+    seen = {}
+    started = threading.Event()
+    go_on = threading.Event()
+
+    def work():
+        seen["enabled"] = gc.isenabled()
+        started.set()
+        go_on.wait(10)
+        fig = Figure()
+        fig.add_subplot().plot([0, 1], [1, 0])
+        return fig
+
+    with qtbot.waitSignal(panel.drawn, timeout=10000):
+        panel.draw(work)
+        assert started.wait(10) and not gc.isenabled() and collection().running == 1
+        go_on.set()
+    qtbot.waitUntil(lambda: gc.isenabled(), timeout=5000)
+    assert seen["enabled"] is False and collection().running == 0
+
+    def broken():
+        raise ValueError("no figure")
+
+    with qtbot.waitSignal(panel.failed, timeout=10000):
+        panel.draw(broken)
+    qtbot.waitUntil(lambda: gc.isenabled(), timeout=5000)
+
+    collection().hold()  # work a cleared pool dropped: the window's close settles it
+    assert not gc.isenabled()
+    collection().settled()
+    assert gc.isenabled() and collection().running == 0
+
+
 def test_a_failed_drawing_is_reported_in_the_panel(qtbot):
     panel = FigurePanel()
     qtbot.addWidget(panel)

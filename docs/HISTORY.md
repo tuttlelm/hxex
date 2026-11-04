@@ -6581,7 +6581,11 @@ CSVs or mzML if wanted.
     `QInputEvent`, without the key's text); the keys are now in the tree's own key handling,
     `ReviewTree`, which always receives the key event itself (reproduced and passing at the
     lowest versions). The macOS py3.11 job of 7129737 crashed (exit code 139, a segmentation
-    fault) and passed on c27abc6: cause not yet known.
+    fault; it passed on c27abc6): Python's garbage collector ran in the drawing thread, during
+    a spectrum page, and freed reference cycles there; a cycle holding a window object freed off
+    the window's thread crashes Qt. While any work runs off the window's thread, automatic
+    collection is now paused, and it resumes in the window's thread when the last ends
+    (`gui.tasks.collection`; the window's close settles work its cleared pools dropped).
 
 242. **GUI phase G3, part 2: the review panel (owner, 2026-11-03; PLAN "GUI", "Results and
     review").** Under the Results tree (`gui.review_panel.ReviewPanel`): the status (not
