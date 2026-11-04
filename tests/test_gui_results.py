@@ -70,7 +70,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
         page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
-    assert tabs == ["spectra", "fits at each K", "uptake"]
+    assert tabs == ["spectra", "fits at each K", "uptake", "overview"]
     qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
     title = page.panel("fits at each K").view.figure.axes[0].get_title()
     assert title.splitlines()[-1].startswith("rep 1: K=")
@@ -78,7 +78,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
         page.tree.setCurrentItem(point.child(0))
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake"]
+        "spectrum", "fits at each K", "uptake", "overview"]
     qtbot.waitUntil(lambda: page.panel("spectrum").view.figure is not None, timeout=30000)
     sel = page.selection()
     assert sel["charge"] == 2 and sel["spectrum_id"] == point.child(0).toolTip(0)
@@ -101,6 +101,46 @@ def test_a_selection_is_found_again_and_filters_narrow_the_tree(page):
                         "point": "1 min"})
     assert page.selection()["point"] == "1 min"
     assert not page.select({"sample": "X", "peptide_range": "0001-0010"})
+
+
+def test_the_overview_is_the_first_look_and_a_tab_at_every_level(qtbot, results):
+    """Results open on the run's overview (owner: the summary pages, as hxex report writes them);
+    every level keeps it as its last tab, drawn once per results and kept; a review decision
+    (new results) draws it again."""
+    import dataclasses
+
+    from hxex.gui.results_workspace import ResultsWorkspace
+
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.resize(1200, 800)
+    page.show()
+    overview = page.panel("overview")
+    with qtbot.waitSignal(overview.drawn, timeout=30000):
+        page.show_results(results, None)
+    assert [page.figures.tabText(i) for i in range(page.figures.count())] == ["overview"]
+    pages = [page.overview_page.itemData(i) for i in range(page.overview_page.count())]
+    assert pages[0] == "k_selection" and set(pages) <= {"k_selection", "controls", "quality"}
+    assert overview.save_name == "overview_k_selection"
+    assert "Mouse over" not in overview.hint.text()  # no tooltips on the Results figures
+    first = overview.view.figure
+    if len(pages) > 1:  # another page: drawn, then kept
+        with qtbot.waitSignal(overview.drawn, timeout=30000):
+            page.overview_page.setCurrentIndex(1)
+        assert overview.save_name == f"overview_{pages[1]}"
+        page.overview_page.setCurrentIndex(0)
+        assert overview.view.figure is first and not overview.drawing
+    # a series selected: its pages, the overview last and still in view, not drawn again
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
+    assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
+        "spectra", "uptake", "populations", "overview"]
+    assert page.figures.currentWidget() is overview and overview.view.figure is first
+    # new results (as a review decision makes): drawn again
+    page.results = dataclasses.replace(results)
+    with qtbot.waitSignal(overview.drawn, timeout=30000):
+        page._redraw()
+    assert overview.view.figure is not first
 
 
 def test_the_time_axis_is_chosen_in_the_window(qtbot, page):
@@ -214,7 +254,7 @@ def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_p
     with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
         page.tree.setCurrentItem(fd)
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake"]
+        "spectrum", "fits at each K", "uptake", "overview"]
     assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name
 
 

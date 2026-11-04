@@ -6872,3 +6872,25 @@ CSVs or mzML if wanted.
     still overrides. So a sample has one colour against every reference, in the comparisons as
     well (the overlays draw the reference in its own colour). Tables and comparisons keep the
     reference first in their order. The settings reference, template and guide say so.
+
+257. **The run's overview in the Results workspace (owner, 2026-11-04: the overview pages were
+    not in the window; a row in the tree would be lost while scrolling; "its own tab for every
+    entry", the first look, the three pages behind a list).** An **overview** tab is the last
+    tab at every level of the tree, and the only one when results open (`TABS["start"]`); a
+    list in its bar chooses the page (`OVERVIEW_PAGES`: K selection, controls, quality flags,
+    those `overview_kinds` allows), drawn by the same functions as `hxex report --figures`
+    (`plot_k_selection`, `plot_controls_overview`, `plot_quality_overview`) and saved as
+    `overview_<page>`. A page is drawn only while the tab is in view, once per results object
+    (a review decision makes new results, so the counts follow), and kept: switching peptides
+    with the overview open draws nothing. Not done: one combined page (option 1; the owner
+    may ask after seeing this).
+
+258. **Sharper figures in the window's matplotlib view (owner, 2026-11-04: blurry at 100 % and
+    zoomed out, sharp zoomed in).** The view rendered at 72 dpi x zoom, and matplotlib rounds
+    the image's size down, so the picture came out one pixel short of the view (measured: at
+    every zoom tried) and was stretched to fit, resampling every line and letter. It now
+    renders at the view's exact width (dpi = (width + 0.5) / inches; 0 mismatches over four
+    page sizes and ~55 zooms each) and paints it pixel for pixel, stretching only a picture
+    drawn for another zoom until the new one comes. Text at 100 % stays as small as the figure's
+    points (7-9 px); hinting (`text.hinting` native or auto) did not help (auto changes the
+    letter spacing). The owner finds 100 % fine now: the scale (1 point per pixel) stays.

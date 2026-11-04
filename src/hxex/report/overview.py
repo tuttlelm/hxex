@@ -497,9 +497,12 @@ def plot_k_selection(results: Results) -> Figure:
                edgecolor=[COLORS[i % len(COLORS)] for i in range(len(x))], hatch="//",
                label="after review" + (f" ({d['rejected']} rejected left out)"
                                        if d["rejected"] else ""), gid="effective")
-        a1.legend(fontsize=7, frameon=False)
+        # above the bars, in the room left for it (it covered the tallest bar: owner)
+        a1.legend(fontsize=7, frameon=False, loc="upper right")
     for xi, n in zip(x, d["selected"], strict=True):
         a1.text(xi, n, f"{n:,}", ha="center", va="bottom", fontsize=8)
+    tallest = max([*d["selected"], *(d["effective"] if d["reviewed"] else [])], default=0)
+    a1.set_ylim(0, max(tallest, 1) * 1.35)  # room for the counts and the legend
     a1.set_xticks(x, [f"K={k}" for k in d["k_values"]])
     a1.set_ylabel("spectra")
     a1.set_title("selected K", fontsize=9)

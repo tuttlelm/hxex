@@ -67,10 +67,11 @@ DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a 
 # own: a click had to land on its one pixel row)
 CLICK_ALLOWANCE = 4
 HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
-        "Double-click a panel: magnify it (double-click again: the whole figure). "
-        "Mouse over a peptide or bar for details.")
-# added under the figures whose peptides lead to their spectra (the Analysis workspace's)
-SPECTRA_HINT = " Right-click a peptide to go to its spectra."
+        "Double-click a panel: magnify it (double-click again: the whole figure).")
+# added under the figures whose bars have tooltips and lead to their spectra (the Analysis
+# workspace's; the Results figures have neither)
+SPECTRA_HINT = (" Mouse over a peptide or bar for details. Right-click a peptide to go to its "
+                "spectra.")
 
 
 class FigureView(QWidget):
@@ -355,7 +356,11 @@ class RasterView(FigureView):
         ratio = self.devicePixelRatioF()
         pixels = self.width() * ratio * self.height() * ratio
         scale = min(1.0, (MAX_PIXELS / pixels) ** 0.5) if pixels else 1.0
-        dpi = 72 * self.zoom * ratio * scale
+        # exactly the view's pixels: matplotlib rounds the image's size down, and an image one
+        # pixel short was stretched to fit, blurring every line and letter (owner: blurry at
+        # 100 % and below); +0.5 makes its rounding land on the view's width
+        inches = fig.get_size_inches()[0]
+        dpi = (self.width() * ratio * scale + 0.5) / inches
         find = not self._marks_known
 
         def work():
@@ -380,8 +385,12 @@ class RasterView(FigureView):
         if self._image is None:
             return
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.drawImage(QRectF(self.rect()), self._image)
+        size = self._image.deviceIndependentSize()
+        if abs(size.width() - self.width()) <= 1 and abs(size.height() - self.height()) <= 1:
+            painter.drawImage(QPointF(0, 0), self._image)  # pixel for pixel: sharp
+        else:  # drawn for another zoom (or fewer pixels, far in): stretched until drawn again
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            painter.drawImage(QRectF(self.rect()), self._image)
         painter.end()
 
 

@@ -150,6 +150,16 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
+Every level also has an **overview** tab, last, and it is what you see first when results
+open: the run's summary pages, as `hxex report --figures` writes them to `overview.pdf`. A
+list in its bar chooses the page: **K selection** (how many spectra chose each K, and the share
+of each K at every time point; after review, how many use each), **controls** (the measured
+back-exchange retention with its limits, the undeuterated controls, and each series' control
+status), and **quality flags** (how many spectra carry each flag, where the flagged spectra
+fall, and the share flagged per sample). The last two appear when the run has controls and
+flags. The pages are drawn when the tab is in view and kept, so moving between peptides with
+the overview open costs nothing; a review decision draws them again, since the K counts change.
+
 The uptake page has a list of its own in its bar, for how it spreads the times: the project
 file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
 linear one, or the time points evenly spaced. The session remembers the choice.
@@ -232,6 +242,13 @@ file), so what you see here is what the command writes.
   which reference's analysis is shown. Each is computed when you press **Compute** with it
   chosen, and then kept, so switching back is instant; `hxex analyse` writes a folder for
   each.
+- The list has two parts. **Same for every reference** comes first: coverage, redundancy and
+  resolution, the residue profiles and population choices, the population tiers, regions,
+  protection factors, and the fragment figures. These compare nothing, so they are drawn once,
+  in the order and colours of `[analysis] samples`, from the latest analysis computed, and
+  stay as they are when you choose another reference. A **Recompute** renews them too. **Compared with the
+  reference** follows: the overlays, Woods and butterfly plots, the significance maps, and
+  protection-factor differences, for the reference chosen.
 - Results opened alone (a bundle, not through the project file) use the default settings.
   A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
   `hxex analyse` writes it.
@@ -242,13 +259,6 @@ file), so what you see here is what the command writes.
 and **Info**. Each runs that command on the project file, in the project's folder, exactly as
 `hxex run hxex.toml` would in a terminal: the line above the messages shows the command as you
 would type it. One command runs at a time.
-- The list has two parts. **Same for every reference** comes first: coverage, redundancy and
-  resolution, the residue profiles and population choices, the population tiers, regions,
-  protection factors, and the fragment figures. These compare nothing, so they are drawn once,
-  in the order and colours of `[analysis] samples`, from the latest analysis computed, and
-  stay as they are when you choose another reference. A **Recompute** renews them too. **Compared with the
-  reference** follows: the overlays, Woods and butterfly plots, the significance maps, and
-  protection-factor differences, for the reference chosen.
 
 - The messages appear as the command writes them, and the bar shows how far it is, with the
   step it is on and the time left when *hxex* can tell.

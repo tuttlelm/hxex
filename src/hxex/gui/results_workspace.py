@@ -81,9 +81,14 @@ class ReviewTree(QTreeWidget):
             return
         super().keyPressEvent(event)
 # the figure tabs of each kind of selection, in their order
-TABS = {"series": ("spectra", "uptake", "populations"),
-        "point": ("spectra", "fits at each K", "uptake"),
-        "spectrum": ("spectrum", "fits at each K", "uptake")}
+SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex report draws
+TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
+        "series": (*SERIES_PAGES, "overview"),
+        "point": ("spectra", "fits at each K", "uptake", "overview"),
+        "spectrum": ("spectrum", "fits at each K", "uptake", "overview")}
+# the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
+OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
+                  "quality": "quality flags"}
 
 
 class ResultsWorkspace(QWidget):
@@ -157,7 +162,17 @@ class ResultsWorkspace(QWidget):
                                   "[figures] scale and x, or for this window only log, linear, or "
                                   "one even step per time point")
         self.time_axis.currentIndexChanged.connect(self._redraw)
+        # the overview tab's page: the run's summary pages, one at a time (owner, 2026-11-04)
+        self.overview_page = QComboBox()
+        self.overview_page.setToolTip("which page of the overview: as hxex report --figures "
+                                      "writes them (overview)")
+        self.overview_page.currentIndexChanged.connect(lambda _i: self._draw_overview())
+        for box in (self.time_axis, self.overview_page):  # as wide as their longest entry
+            box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._overview_figures: dict[str, object] = {}  # page -> figure, for _overview_of
+        self._overview_of = None  # the results those figures were drawn from
         self.figures = QTabWidget()
+        self.figures.currentChanged.connect(lambda _i: self._draw_overview())
         self.panels: dict[str, FigurePanel] = {}
         self.render = getattr(window, "render", "matplotlib")
         self.kind = None
@@ -169,7 +184,7 @@ class ResultsWorkspace(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(split, 1)
-        self._show_tabs("series")
+        self._show_tabs("start")
 
     # --- the figures' tabs -----------------------------------------------------------------
 
@@ -178,6 +193,8 @@ class ResultsWorkspace(QWidget):
             panel = FigurePanel(render=self.render)
             if name == "uptake":  # the only page with a time axis: its choice in its own bar
                 panel.add_option(self.time_axis)
+            if name == "overview":
+                panel.add_option(self.overview_page)
             if self.window is not None:
                 panel.clicked.connect(
                     lambda gid: self.window.statusBar().showMessage(gid, 5000))
@@ -224,6 +241,61 @@ class ResultsWorkspace(QWidget):
         self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
         self._fill()
+        self._fill_overview_pages()
+        self._show_tabs("start")  # the first look: the run's overview
+        self._draw_overview()
+
+    # --- the overview -------------------------------------------------------------------------
+
+    def _fill_overview_pages(self) -> None:
+        """The overview's pages the results allow (controls and quality only when they have
+        them), the page chosen before kept."""
+        from ..report.overview import overview_kinds
+
+        keep = self.overview_page.currentData()
+        kinds = overview_kinds(self.results) if self.results is not None else []
+        self.overview_page.blockSignals(True)
+        self.overview_page.clear()
+        for kind in kinds:
+            self.overview_page.addItem(OVERVIEW_PAGES.get(kind, kind), kind)
+        index = self.overview_page.findData(keep)
+        self.overview_page.setCurrentIndex(max(index, 0))
+        self.overview_page.blockSignals(False)
+
+    def _draw_overview(self) -> None:
+        """The overview page chosen, when its tab is in view: drawn once per results (a review
+        decision makes new results, so the K counts follow) and kept."""
+        from ..report.overview import (
+            plot_controls_overview,
+            plot_k_selection,
+            plot_quality_overview,
+        )
+
+        results = self.results
+        if results is None or self.figures.currentWidget() is not self.panels.get("overview"):
+            return
+        page = self.overview_page.currentData()
+        if page is None:
+            return
+        if self._overview_of is not results:
+            self._overview_of, self._overview_figures = results, {}
+        panel = self.panel("overview")
+        panel.save_name = f"overview_{page}"
+        kept = self._overview_figures.get(page)
+        if kept is not None:
+            if panel.view.figure is not kept:
+                panel.show_figure(kept)
+            return
+        draw = {"k_selection": plot_k_selection, "controls": plot_controls_overview,
+                "quality": plot_quality_overview}[page]
+        figures = self._overview_figures
+
+        def work():
+            fig = draw(results)
+            figures[page] = fig  # kept for these results (a dict of their own)
+            return fig
+
+        panel.draw(work)
 
     def _fill_time_axis(self) -> None:
         """The time axis list: the project's setting (by name and value) first."""
@@ -358,8 +430,8 @@ class ResultsWorkspace(QWidget):
 
         if kind == "series":
             drawn = series_kinds(results, data_id,
-                                 dataclasses.replace(config, kinds=TABS["series"]))
-            for name in TABS["series"]:
+                                 dataclasses.replace(config, kinds=SERIES_PAGES))
+            for name in SERIES_PAGES:
                 panel = self.panel(name)
                 if name not in drawn:
                     panel.clear("one population in every spectrum: no population map")
@@ -391,6 +463,7 @@ class ResultsWorkspace(QWidget):
                 sid, results, show=config.show, k=config.k, corrected=config.corrected))
             self.panel("fits at each K").draw(lambda: plot_k_comparison(sid, results))
             self.panel("uptake").draw(uptake)
+        self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
         self.selection_changed.emit()
         if self.window is not None:
             self.window.changed()
