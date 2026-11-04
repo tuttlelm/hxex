@@ -135,6 +135,17 @@ What the results hold.
 | `hxex.toml\|BUNDLE` | the project file (hxex.toml): its [output] bundle, and what its [review] table decides; or a results bundle (a folder, or .zip) |
 | `--verify` | also check every file's checksum |
 
+## hxex figures
+
+Which figures report --figures and analyse would draw with the project's settings, and why the others not.
+
+`hxex figures hxex.toml [options]`
+
+| Argument | Meaning |
+|---|---|
+| `hxex.toml` | the project file; its results are read when they exist (counts, and what only the results can tell) |
+| `--settings-only` | judge by the settings alone, without reading the results |
+
 ## hxex gui
 
 Open hxex's window (needs the gui extra: pip install "hxex[gui]").

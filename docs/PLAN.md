@@ -435,10 +435,32 @@ calls the library in the GUI's own process. Details:
   a row opening its spectrum or series, the shown rows saveable as CSV. All from the same table
   functions as `hxex report`, with the review applied. Analysis shows `hxex analyse`'s tables
   beside its figures in the same way.
-- **Analysis.** The comparison figures for a chosen reference, samples, times, and K (Woods,
-  butterfly, residue significance, population tiers, uptake comparisons, protection factors and
-  fragment figures where the analysis has them); clicking a peptide opens its series in the
-  results view.
+- **The figure catalogue** (owner, 2026-11-03: which settings give which figures was not
+  clear, above all in the analysis; HISTORY 243). `hxex.report.catalogue` lists every kind of
+  figure: the command that draws it, its file names, what it shows, the settings it needs and
+  those that change it, and its guide page; `plan` says, for a project's settings and, when
+  given, its results, which kinds are drawn, which the results decide, and which a setting
+  rules out (naming it). From it come the guide's generated `figures.md`, `hxex figures
+  hxex.toml` (draws nothing), and the window's Analysis list. A test ties every file `hxex
+  report --figures` and `hxex analyse` write to its entry.
+- **Analysis** (owner, 2026-11-03). Two workspaces. *Analysis* shows exactly what `hxex
+  analyse` writes with the project's settings: the catalogue's list (each kind drawn, left to
+  the data, or off with the reason and Change… to the setting), the figures drawn from
+  `analyse`'s own list of figures (so the window and the files cannot differ), its tables, and
+  saving any figure; clicking a peptide opens its series in the results view. The analysis is
+  computed once per window in the background (measured: 5.5 s on the tutorial, 28 s on the
+  intact-peptide benchmark; a figure then draws in under a second) and kept in memory; a
+  change of the results, of `[analysis]`, or of the review marks it out of date (the figures
+  stay, with the reason and a Recompute button) rather than recomputing at once. Reopening
+  the window computes again; storing the computed analysis on disk waits until the wait is a
+  nuisance (the analysis tables are written for people, not read back, and some figures use
+  values no table holds). *Custom figures* (later, owner's idea): up to four panels, each a
+  kind of figure with the samples and time chosen for it. It needs the analysis split into
+  computing and drawing (each kind saying what it takes: one sample against the reference, a
+  reference and any samples, one time or several), and each sample's colour fixed across the
+  whole analysis (today a sample's colour follows its place in the figure). Open until then:
+  the layout (1, 2, or 4 panels), one time for all panels or each its own, a reference per
+  panel, and saving the panels as one page.
 
 ### Changing a figure
 
@@ -957,7 +979,10 @@ Planned, not built:
 18. **The GUI** (owner, 2026-11-03; HISTORY 231). A standalone Qt window, in addition to the
    command line and Python: the project editor and the user tables first, then running stages,
    results and review, and analysis views (section "GUI", phases G0-G4). G0 to G2 built
-   (HISTORY 232-236); next: G3.
+   (HISTORY 232-236); G3 parts 1 and 2 (the tree, the review panel; HISTORY 237-242); the
+   figure catalogue with `figures.md` and `hxex figures` (HISTORY 243). Next: G4's Analysis
+   workspace from the catalogue, or the rest of G3 (flat list, series review table, Results
+   tables).
 
 ## Risks and open decisions
 

@@ -57,6 +57,8 @@ a short text file.
 - [Settings reference](settings.md): every key of the project file, with its type, default and
   meaning (generated from the code).
 - [Command-line reference](commands.md): every command and option (generated from the code).
+- [Figures](figures.md): every figure, the command that draws it, and the settings it
+  needs and that change it (generated from the code).
 - [The results bundle](../BUNDLE.md): the bundle's files and their columns.
 - [Analysis methods](../ANALYSIS.md): how the post-fitting analysis computes its values.
 - [Using *hxex* from Python](python.md): for programmers.

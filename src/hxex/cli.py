@@ -177,6 +177,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "[review] table decides; or a results bundle (a folder, or .zip)")
     p.add_argument("--verify", action="store_true", help="also check every file's checksum")
 
+    p = sub.add_parser("figures", help="which figures report --figures and analyse would draw "
+                                       "with the project's settings, and why the others not")
+    p.add_argument("project", metavar="hxex.toml",
+                   help="the project file; its results are read when they exist (counts, and "
+                        "what only the results can tell)")
+    p.add_argument("--settings-only", action="store_true",
+                   help="judge by the settings alone, without reading the results")
+
     p = sub.add_parser("gui", help="open hxex's window (needs the gui extra: pip install "
                                    "\"hxex[gui]\")")
     p.add_argument("path", nargs="?", metavar="PATH",
@@ -1819,6 +1827,85 @@ def cmd_analyse(args) -> int:
     return 0
 
 
+def cmd_figures(args) -> int:
+    """Which figures ``hxex report --figures`` and ``hxex analyse`` would draw with the project's
+    settings (:func:`hxex.report.catalogue.plan`), and the setting that rules out each of the
+    others; nothing is drawn."""
+    from .config import load_project
+    from .io import open_bundle
+    from .report import Results
+    from .report.catalogue import ANALYSE, REPORT, Situation, plan
+
+    path = Path(args.project)
+    if path.suffix != ".toml" or not path.exists():
+        log.error("%s: give the project file (hxex.toml)", path)
+        return EXIT_ERROR
+    project = load_project(path, analysis_only=True)
+    bundle = project.output.bundle
+    read = (not args.settings_only and bundle is not None
+            and _bundle_problem(Path(bundle), "figures") is None)
+    counts: dict[str, tuple[str, str]] = {}
+    try:
+        if read:
+            from .review_table import apply_view
+
+            with open_bundle(bundle) as b:
+                results = apply_view(Results.from_bundle(b), project.review)
+                situation = Situation.of(project.figures, project.analysis, results)
+                counts = _figure_counts(results, situation.figures)
+        else:
+            situation = Situation.of(project.figures, project.analysis)
+    except ValueError as exc:  # settings these results refuse: the commands would refuse too
+        log.error("%s", exc)
+        return EXIT_ERROR
+    _say(f"Figures with the settings of {path}"
+         + (f" and the results in {bundle}" if read else
+            " (settings only: " + ("--settings-only" if args.settings_only else
+                                   "no results yet") + ")"))
+    planned = plan(situation)
+    for command, heading in ((REPORT, f"hxex report {path.name} --figures  ([figures])"),
+                             (ANALYSE, f"hxex analyse {path.name}  ([analysis])")):
+        _say()
+        _say(heading)
+        width = max(len(p.kind.title) for p in planned if p.kind.command == command)
+        for p in planned:
+            if p.kind.command != command:
+                continue
+            state = p.state
+            if state == "off":
+                detail = p.reason or "needs " + "; ".join(
+                    f"{n.setting} {n.words}" for n in p.missing)
+            elif p.kind.name in counts:  # the results tell
+                state, detail = counts[p.kind.name]
+            else:
+                detail = p.reason
+            _say(f"  {state:8s} {p.kind.title:{width}s}  {detail}".rstrip())
+    _say()
+    _say("off: a setting rules it out; depends: the results decide where it is drawn. "
+         "What each figure shows: docs/guide/figures.md")
+    return 0
+
+
+def _figure_counts(results, figures) -> dict[str, tuple[str, str]]:
+    """What the results say of the run's figures, as (state, detail): the overview's pages,
+    and how many series ``[figures] series`` chooses for each page."""
+    from .report.figures import select_series, series_kinds
+    from .report.overview import overview_kinds
+
+    total = len(np.unique(results.fit.data_id))
+    chosen = select_series(results, figures.series)
+    which = (f'"{figures.series}"' if isinstance(figures.series, str)
+             else "a list of data_id")
+    out = {"overview": ("drawn", "pages: " + ", ".join(overview_kinds(results)))}
+    for page in ("spectra", "populations", "uptake"):
+        n = sum(page in series_kinds(results, d, figures) for d in chosen)
+        detail = f"{n} of {total} series (series = {which})"
+        if page == "populations" and n < len(chosen):
+            detail += f"; {len(chosen) - n} with one population in every spectrum left out"
+        out[f"series_{page}"] = ("drawn" if n else "none", detail)
+    return out
+
+
 def cmd_gui(args) -> int:
     from . import gui
 
@@ -1829,8 +1916,8 @@ def cmd_gui(args) -> int:
 
 
 COMMANDS = {"init": cmd_init, "set": cmd_set, "check": cmd_check, "run": cmd_run,
-            "resume": cmd_resume, "report": cmd_report, "info": cmd_info, "analyse": cmd_analyse,
-            "analyze": cmd_analyse, "gui": cmd_gui}
+            "resume": cmd_resume, "report": cmd_report, "info": cmd_info, "figures": cmd_figures,
+            "analyse": cmd_analyse, "analyze": cmd_analyse, "gui": cmd_gui}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

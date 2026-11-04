@@ -6622,3 +6622,36 @@ CSVs or mzML if wanted.
     list of spectra, the series review table, the Results tables. Tests:
     tests/test_gui_review.py.
 
+243. **The figure catalogue, `figures.md`, and `hxex figures` (owner, 2026-11-03; PLAN "GUI",
+    "The figure catalogue" and "Analysis").** The owner: it was not clear which settings give
+    which figures, or which figures a setting gives, above all in the analysis. The analysis
+    decides its figures inside `report/analysis.py`: a reference for the comparisons, K = 2 in
+    `ks` for the population figures, `populations = "population_test"` for the tiers, regions,
+    `protection`, fragment series; none of it was written down for users. Built:
+    `hxex.report.catalogue`: 23 kinds (4 of `hxex report --figures`, 19 of `hxex analyse`, 3 of
+    them fragment figures), each with its files, what it shows, the settings it needs (each
+    judged True, False, or not known without the results), the settings that change it, and
+    its guide page; `Situation.of(figures, analysis, results)` (the K values fitted, the
+    populations rule, peptide and fragment series; a reference naming no sample refused, as
+    `hxex analyse` refuses it); `plan` (drawn, depends, or off with the setting or what the
+    results lack); `kind_of` (a written file's kind, the longest fixed text winning, so
+    `woods_K2_` is not `woods_`). `docs/guide/figures.md` is generated with the other
+    reference pages (`python -m hxex._reference docs/guide`; a test fails when it is stale);
+    outputs.md's hand-written table of the analysis figures gave way to a link (its "Reading
+    the ..." sections stay). `hxex figures hxex.toml` lists each kind's state and reason; with
+    the results it also counts the series `[figures] series` chooses per page (the populations
+    page left out where every spectrum has one population); `--settings-only`. Tests
+    (tests/test_catalogue.py): every file written by `analyse` (with a reference and regions,
+    K = 1 alone, no reference, fragments) and by `report --figures` has an entry, the plan
+    agrees with what was drawn (off never drawn, drawn always), every named setting exists in
+    the settings reference, and every guide link has its heading. Writing it found that results
+    of fragment series alone give no peptide figures (now a reason in the plan).
+    The window's Analysis workspace (decided with the owner): exactly what `hxex analyse`
+    writes, computed once per window from `analyse`'s own list of figures. Measured on this
+    machine (scratch script): the tutorial (3,874 spectra) loads in 0.2 s and computes in 5.5
+    s, its 45 figures build in 3.4 s together (the slowest, the residue significance map, 0.4
+    s); the intact-peptide benchmark (26,191 spectra) 1.1 s and 28 s, 73 figures in 10.6 s
+    (slowest 0.9 s). Recomputing on reopening is cheaper than reading the analysis tables back
+    (a second file contract, and some figures use values no table holds: each sample's
+    population choices on the peptides it shares with the reference). The owner's four-panel
+    idea becomes a separate, later workspace (PLAN "Analysis").

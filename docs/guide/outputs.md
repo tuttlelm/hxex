@@ -157,6 +157,7 @@ where there is no value. The bundle keeps every digit.
 `[figures]` part of the project file; changing those settings needs
 no new run, only `hxex report` again. (Given the bundle instead, `hxex report results
 --figures` uses the usual settings and its own options.)
+[Figures](figures.md) lists them with the settings that choose and change each.
 
 - `overview.pdf`: which K was selected and how often (per time, before and after review); the
   controls (retention against its limits, measured against fallback); the quality flags. Each
@@ -420,24 +421,8 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 
 ## Figures from `hxex analyse`
 
-| Figure | Shows |
-|---|---|
-| `coverage_<sample>` | one bar per peptide, coloured by fD, for every time and rank |
-| `redundancy_resolution` | redundancy and resolution per residue |
-| `choice_<sample>_<time>` | the residue profile: K=1, the K=2 ranks, the chosen description and the population (`profile_...` when there is no K=2) |
-| `population_tiers` | with the [population test](population-test.md): the residue tiers, one row per sample and time point (the controls first) |
-| `overlay_residues_<time>`, `overlay_populations_<time>` | each sample's residue values drawn over the reference's: values only, no significance (see *Reading the residue overlay* below) |
-| `residue_significance` | which residues differ significantly from the reference: one row per sample and time, one cell per residue (see *Reading the residue significance map* below) |
-| `residue_significance_K2` | the same at K = 2: where the number of populations differs, and, with a bootstrap at K = 2, the differences in the population share and in the two populations' positions |
-| `woods_<sample>_<time>` | peptide differences from the reference at K=1, and where the number of populations differs (see *Reading the Woods plot* below) |
-| `woods_K2_<sample>_<time>` | the two populations compared, where both samples have two |
-| `butterfly_<sample>` | reference above, sample below, a line per time, differences underneath (a filled circle where the difference is significant, a cross where it is not, and the critical difference dashed: all named in the legend) |
-| `regions_<time>` | the regions' fD |
-| `region_significance` | with regions: which regions differ significantly from the reference, one row per sample and time, one column per region (see *Reading the region significance map* below) |
-| `protection_<sample>`, `protection_difference_<sample>` | peptide protection factors, and their differences from the reference |
-| `ladder_<parent>_<ion>_z<charge>` | the precursor, then for every ladder step the two fragments and their difference with its fit |
-| `closure_<parent>_<n ion>+<c ion>` | the closure miss over time per split |
-| `residue_rates_<sample>_<range>` | per-residue rates, amplitudes and, with `kint`, protection |
+[Figures](figures.md) lists every figure `hxex analyse` draws, with its file names, what it
+shows, the settings it needs, and the settings that change it.
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 

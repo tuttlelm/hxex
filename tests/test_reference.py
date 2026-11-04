@@ -25,9 +25,18 @@ def test_the_commands_page_is_up_to_date_and_every_argument_described():
     page = (GUIDE / "commands.md").read_text(encoding="utf-8")
     assert page == _reference.commands_markdown(), (
         "regenerate it: python -m hxex._reference docs/guide")
-    for command in ("init", "check", "run", "resume", "report", "analyse", "info"):
+    for command in ("init", "check", "run", "resume", "report", "analyse", "info",
+                    "figures"):
         assert f"## hxex {command}\n" in page
     assert "`--keep-previous`" in page and "Also spelt `hxex analyze`" in page
+
+
+def test_the_figures_page_is_up_to_date():
+    page = (GUIDE / "figures.md").read_text(encoding="utf-8")
+    assert page == _reference.figures_markdown(), (
+        "regenerate it: python -m hxex._reference docs/guide")
+    assert "| [Woods plot](outputs.md#figures-from-hxex-analyse) |" in page
+    assert "[`[analysis] reference`](settings.md#analysis)" in page
 
 
 def test_the_reference_lists_the_tables_a_project_file_accepts():

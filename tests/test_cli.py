@@ -435,6 +435,34 @@ def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
     assert "not ok: 2 problem(s)" in out and "outputs        out exists" in out
 
 
+def test_figures_says_what_would_be_drawn_and_why_not(tmp_path, capsys):
+    path = mzml_project(tmp_path)
+    assert cli.main(["figures", str(path)]) == 0  # no results yet: the settings alone
+    out = capsys.readouterr().out
+    assert "settings only: no results yet" in out
+    assert "off      Woods plot" in out and "needs [analysis] reference" in out
+    assert "drawn    Coverage" in out
+    assert cli.main(["-q", "run", str(path)]) == 0
+    settings = path.read_text()
+    path.write_text(settings + '\n[figures]\nseries = "all"\nkinds = ["uptake"]\n')
+    capsys.readouterr()
+    assert cli.main(["figures", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "and the results in" in out
+    assert "off      Spectra of a series" in out
+    assert 'needs [figures] kinds includes "spectra"' in out
+    assert "drawn    Uptake of a series" in out and "series (series = \"all\")" in out
+    assert "the results hold no fragment series" in out
+    # a reference the results do not have is refused, as hxex analyse refuses it
+    path.write_text(path.read_text() + '\n[analysis]\nreference = "nothing"\n')
+    assert cli.main(["figures", str(path)]) == 1
+    assert "nothing" in capsys.readouterr().err
+    assert cli.main(["figures", str(path), "--settings-only"]) == 0
+    assert "settings only: --settings-only" in capsys.readouterr().out
+    assert cli.main(["figures", str(tmp_path / "out")]) == 1
+    assert "give the project file" in capsys.readouterr().err
+
+
 def test_run_info_and_report(tmp_path, capsys):
     path = mzml_project(tmp_path, output='notes = "first try"')
     assert cli.main(["-q", "run", str(path)]) == 0
