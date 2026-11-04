@@ -6746,6 +6746,12 @@ CSVs or mzML if wanted.
     when the pointer leaves the mark. Not yet: the residue figures (their marks are whole
     lines, so the position in data units is the way there, proposal 2). Tests: test_gui
     (both views, two panels), test_analysis, test_protection, test_two_populations.
+    Correction (2026-11-04, CI of the lowest versions and of every Windows job): the tooltip
+    was first caught by overriding `FigureView.event`; with that override PySide6 6.7 hands the
+    mouse handlers a plain `QEvent` (no `button()`), so clicks failed. It is now an event filter
+    the view installs on itself (reproduced with 6.7.0 and fixed). On Windows the clicks
+    worked, but the test's wait for Qt's tooltip window timed out; the test now records what
+    the view asks `QToolTip` to show (the text, and a rect around the mark), not Qt's window.
 
 249. **PySide6 6.12.0 excluded: on Python 3.11 the window aborts (owner, 2026-11-03: "yes").**
     A scratch script showing a figure aborted with "Fatal Python error: none_dealloc:

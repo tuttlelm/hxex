@@ -85,6 +85,9 @@ class FigureView(QWidget):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)  # figures are on white
         self.setPalette(pal)
+        # tooltips through a filter: a Python event() override makes PySide6 6.7 hand the
+        # mouse handlers a plain QEvent (no button())
+        self.installEventFilter(self)
 
     def set_figure(self, fig: Figure, svg: bytes | None = None,
                    marks: list[Mark] | None = None) -> None:
@@ -197,8 +200,8 @@ class FigureView(QWidget):
         mark = self.mark_at(point, text=True)
         return mark.text if mark is not None else ""
 
-    def event(self, event):
-        if event.type() == QEvent.Type.ToolTip:
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
+        if watched is self and event.type() == QEvent.Type.ToolTip:
             mark = self.mark_at(QPointF(event.pos()), text=True)
             if mark is None:
                 QToolTip.hideText()
@@ -210,7 +213,7 @@ class FigureView(QWidget):
                 -CLICK_ALLOWANCE, -CLICK_ALLOWANCE, CLICK_ALLOWANCE, CLICK_ALLOWANCE)
             QToolTip.showText(event.globalPos(), mark.text, self, area.toAlignedRect())
             return True
-        return super().event(event)
+        return super().eventFilter(watched, event)
 
     def mousePressEvent(self, event):  # noqa: N802 - Qt's name
         if event.button() == Qt.MouseButton.LeftButton:

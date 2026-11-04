@@ -134,14 +134,29 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
 
 
 @pytest.mark.parametrize("render", ["matplotlib", "svg"])
-def test_resting_the_pointer_on_a_mark_shows_its_tooltip(qtbot, render):
+def test_resting_the_pointer_on_a_mark_shows_its_tooltip(qtbot, render, monkeypatch):
     """A peptide drawn in two panels (the same gid twice) has its tooltip in each, in both
-    views; elsewhere there is none."""
+    views; elsewhere there is none. What the view asks Qt to show is recorded, not Qt's tooltip
+    window (Windows CI did not show it within seconds)."""
     from PySide6.QtCore import QEvent, QPoint
     from PySide6.QtGui import QHelpEvent
-    from PySide6.QtWidgets import QApplication, QToolTip
+    from PySide6.QtWidgets import QApplication
 
+    from hxex.gui import figure_view
     from hxex.report.hover import set_hover
+
+    shown = []
+
+    class Tip:
+        @staticmethod
+        def showText(pos, text, widget, rect):  # noqa: N802 - Qt's name
+            shown.append((text, rect))
+
+        @staticmethod
+        def hideText():  # noqa: N802 - Qt's name
+            shown.append(None)
+
+    monkeypatch.setattr(figure_view, "QToolTip", Tip)
 
     fig = Figure(figsize=(4, 3), dpi=100)
     for n, x0 in enumerate((0.0, 0.5)):
@@ -163,11 +178,12 @@ def test_resting_the_pointer_on_a_mark_shows_its_tooltip(qtbot, render):
     assert view.tooltip_at(QPointF(w * 0.625, h * 0.8)) == "panel 1\nresidues 1–9"
     assert view.element_at(QPointF(w * 0.625, h * 0.8)) == "peptide:1-9"
     assert view.tooltip_at(QPointF(w * 0.45, h * 0.1)) == ""
-    panel.show()
-    at = QPoint(round(w * 0.625), round(h * 0.8))
-    QApplication.sendEvent(view, QHelpEvent(QEvent.Type.ToolTip, at, view.mapToGlobal(at)))
-    qtbot.waitUntil(lambda: QToolTip.text() == "panel 1\nresidues 1–9", timeout=2000)
-    QToolTip.hideText()
+    for x, y in ((0.625, 0.8), (0.45, 0.1)):
+        at = QPoint(round(w * x), round(h * y))
+        QApplication.sendEvent(view, QHelpEvent(QEvent.Type.ToolTip, at, view.mapToGlobal(at)))
+    (text, rect), nothing = shown
+    assert text == "panel 1\nresidues 1–9" and nothing is None
+    assert rect.contains(round(w * 0.625), round(h * 0.8)) and rect.left() >= w * 0.5 - 5
 
 
 def test_garbage_collection_waits_for_the_windows_thread(qtbot):
