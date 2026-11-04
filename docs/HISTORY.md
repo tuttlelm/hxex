@@ -6575,7 +6575,13 @@ CSVs or mzML if wanted.
     11943b0: Windows passed but for the title test's narrow bar (520 pixels cannot be reached
     with Windows' wider buttons; the width now comes from the buttons' own); a Linux job but for
     the Stop test reading the progress record before the error stream had delivered it (the
-    error stream may come after the output stream on any system; it waits for it now).
+    error stream may come after the output stream on any system; it waits for it now). CI of
+    7129737: Windows passed; the lowest-versions job failed on the review keys (PySide6 6.7
+    gives an event filter a plain event, without the key's modifiers; on c27abc6 a
+    `QInputEvent`, without the key's text); the keys are now in the tree's own key handling,
+    `ReviewTree`, which always receives the key event itself (reproduced and passing at the
+    lowest versions). The macOS py3.11 job of 7129737 crashed (exit code 139, a segmentation
+    fault) and passed on c27abc6: cause not yet known.
 
 242. **GUI phase G3, part 2: the review panel (owner, 2026-11-03; PLAN "GUI", "Results and
     review").** Under the Results tree (`gui.review_panel.ReviewPanel`): the status (not

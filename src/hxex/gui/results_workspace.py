@@ -20,7 +20,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -47,6 +47,22 @@ COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "
            "K > 1", "K", "review", "flags")
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 DEPTH = {"peptide": 0, "series": 1, "point": 2, "spectrum": 3}  # a kind of row's level
+
+
+class ReviewTree(QTreeWidget):
+    """The results tree, whose keys A, R and U are review decisions (in its own key handling: an
+    event filter is given a plain event by PySide6 6.7, without the key's modifiers)."""
+
+    review_key = Signal(str)
+
+    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
+        if event.modifiers() in (Qt.KeyboardModifier.NoModifier,
+                                 Qt.KeyboardModifier.ShiftModifier) \
+                and event.text().lower() in ("a", "r", "u"):
+            self.review_key.emit(event.text())
+            event.accept()
+            return
+        super().keyPressEvent(event)
 # the figure tabs of each kind of selection, in their order
 TABS = {"series": ("spectra", "uptake", "populations"),
         "point": ("spectra", "fits at each K", "uptake"),
@@ -88,7 +104,7 @@ class ResultsWorkspace(QWidget):
         filters.addWidget(self.search, 1)
         filters.addWidget(self.count)
 
-        self.tree = QTreeWidget()
+        self.tree = ReviewTree()
         self.tree.setColumnCount(len(COLUMNS))
         self.tree.setHeaderLabels(list(COLUMNS))
         self.tree.setUniformRowHeights(True)
@@ -102,7 +118,7 @@ class ResultsWorkspace(QWidget):
             self.review.resume_asked.connect(window.run_resume)
         # review from the tree: A accepted, R rejected, U not reviewed (the tree's own keys, so
         # they work whenever it has the keyboard)
-        self.tree.installEventFilter(self)
+        self.tree.review_key.connect(self.review.key)
         self._leaves: dict[int, QTreeWidgetItem] = {}  # a spectrum's row in the tree
         self._series_items: dict[int, QTreeWidgetItem] = {}
         left = QWidget()
@@ -407,15 +423,6 @@ class ResultsWorkspace(QWidget):
                 at += step
             item = parent
         return None
-
-    def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
-        if watched is self.tree and event.type() == QEvent.Type.KeyPress \
-                and event.modifiers() in (Qt.KeyboardModifier.NoModifier,
-                                          Qt.KeyboardModifier.ShiftModifier) \
-                and event.text().lower() in ("a", "r", "u"):
-            self.review.key(event.text())
-            return True
-        return super().eventFilter(watched, event)
 
     def _show_review(self, kind: str, payload) -> None:
         pep, series = payload[0], payload[1]
