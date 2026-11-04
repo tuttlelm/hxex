@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from .data_table import DataPanel, spectra_menu
 from .figure_view import HINT, SPECTRA_HINT, FigurePanel
 from .review import table_stamp
-from .tasks import Latest
+from .tasks import Latest, drawing_pool
 
 log = logging.getLogger(__name__)
 
@@ -121,6 +121,8 @@ class AnalysisWorkspace(QWidget):
         self.panel.rows_asked.connect(self._rows_asked)
         # beside the figure, its values: what it draws, one row per bar (owner, 2026-11-04)
         self.data = DataPanel()
+        self._kind_rows = None  # a kind selected: the rows of all its figures are shown
+        self._rows_task = Latest(self, drawing_pool())
         self.data.activated.connect(self.go_to_spectra)
         self.views = QTabWidget()
         self.views.addTab(self.panel, "figure")
@@ -408,9 +410,12 @@ class AnalysisWorkspace(QWidget):
         if item is None or item.data(0, KIND) is None or outputs is None:
             return
         stem = item.data(0, STEM)
-        if stem is None and item.childCount():  # a kind: its first figure
+        self._kind_rows = None
+        if stem is None and item.childCount():  # a kind: its first figure, every figure's rows
             item.setExpanded(True)
             stem = item.child(0).data(0, STEM)
+            stems = [item.child(i).data(0, STEM) for i in range(item.childCount())]
+            self._gather_rows(item.data(0, KIND), stems, outputs)
         if stem is None:  # a kind with no figure: why, in the figure's place
             self.panel.save_name = ""
             self._clear_figure(self._off_text(self._planned.get(item.data(0, KIND)))
@@ -431,11 +436,52 @@ class AnalysisWorkspace(QWidget):
         self.views.setTabText(1, "data")
 
     def _show_data(self) -> None:
-        """The figure drawn: its data table."""
+        """The figure drawn: its data table (a kind selected: every figure's, gathered apart)."""
         from .figures import figure_rows
 
+        if self._kind_rows is not None:
+            return
         columns, rows = figure_rows(self.panel.view.figure)
         self.data.show_rows(columns, rows, self.panel.save_name)
+        self.data.set_note("")
+        self.views.setTabText(1, f"data ({len(rows)})" if rows else "data")
+
+    def _gather_rows(self, kind: str, stems: list[str], outputs) -> None:
+        """A kind selected: the rows of every one of its figures in the data tab, a ``figure``
+        column naming each one's file (owner, 2026-11-04: the first time point alone was
+        confusing). Made in the drawing thread (matplotlib is used by one thread at a time)."""
+        from .figures import figure_rows
+
+        figures = dict(outputs.figures)
+        self._kind_rows = kind
+        self.data.show_rows([], [], kind)
+        self.data.set_note(f"Gathering the rows of the {len(stems)} figures of this kind…")
+
+        def work():
+            columns, rows = ["figure"], []
+            for stem in stems:
+                draw = figures.get(stem)
+                if draw is None:
+                    continue
+                names, found = figure_rows(draw())
+                columns += [n for n in names if n not in columns]
+                rows += [{"figure": stem, **r} for r in found]
+            return columns, rows
+
+        self._rows_task.submit(work, lambda made: self._rows_gathered(kind, made),
+                               lambda message: self.data.set_note(
+                                   f"The rows could not be gathered: {message}"))
+
+    def _rows_gathered(self, kind: str, made) -> None:
+        if self._kind_rows != kind:  # another selection since
+            return
+        columns, rows = made
+        if not rows:
+            columns = []
+        self.data.show_rows(columns, rows, kind)
+        self.data.set_note(f"Every figure of this kind ({len({r['figure'] for r in rows})} with "
+                           "rows); choose one figure for its rows alone." if rows else
+                           "No data table for this kind of figure.")
         self.views.setTabText(1, f"data ({len(rows)})" if rows else "data")
 
     def _clicked_row(self, row: dict) -> None:

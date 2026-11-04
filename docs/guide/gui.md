@@ -274,8 +274,10 @@ file), so what you see here is what the command writes.
   columns are named as in the analysis tables (`species_uptake.csv`, `compare_peptides.csv`).
   Click a column's header to sort (a crowded Woods plot is easier to read sorted by residue or
   by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
-  rows, in the order shown, as a CSV file named after the figure. Figures of other kinds have
-  no data table yet.
+  rows, in the order shown, as a CSV file named after the figure. Choose a kind of figure
+  rather than one figure (the coverage maps, say) and the data tab gathers the rows of all its
+  figures, with a `figure` column naming each one's file. Figures of some kinds have no data
+  table yet.
 - Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
   choose one to see them in **Results** (the peptide is selected in the tree, its charge
   states under it). Where bars overlap, the menu lists every peptide under the pointer, top

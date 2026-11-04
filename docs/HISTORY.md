@@ -7058,3 +7058,9 @@ CSVs or mzML if wanted.
     samples' bands part exactly where they differ by more; "±½ δcrit (δcrit = 0.015 fD)" above
     the plot on the left (inside it when more than four samples push the legend left); +-1
     standard error without a reference.
+
+269. **A kind selected in Analysis: every figure's rows (owner, 2026-11-04: the kind showed its
+    first figure and that figure's rows alone, where all time points were expected).** With a
+    kind of figure selected, the data tab gathers the rows of all its figures in the drawing
+    thread (`AnalysisWorkspace._gather_rows`; a `figure` column names each one's file; the
+    figure shown is still the first); one figure selected shows its own rows as before.

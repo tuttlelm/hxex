@@ -178,3 +178,32 @@ def test_a_right_click_lists_every_peptide_under_the_pointer(qtbot):
     with qtbot.waitSignal(data.activated) as chosen:
         data.row_menu(data.model.index(1, 0)).actions()[0].trigger()
     assert chosen.args == [high]
+
+
+def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
+    """A kind of figure selected (owner: the first time point's rows alone were confusing):
+    the data tab has the rows of all its figures, each named by a figure column; one figure
+    selected: its own rows."""
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    kinds = {page.list.topLevelItem(i).data(0, 256): page.list.topLevelItem(i)
+             for i in range(page.list.topLevelItemCount())}
+    coverage = kinds["coverage"]
+    stems = [coverage.child(i).data(0, 257) for i in range(coverage.childCount())]
+    assert len(stems) == 2
+    page.list.setCurrentItem(coverage)
+    qtbot.waitUntil(lambda: page.data.model.columns[:1] == ["figure"], timeout=60000)
+    gathered = page.data.model.rows
+    assert {r["figure"] for r in gathered} == set(stems)
+    assert page.data.note.text().startswith("Every figure of this kind (2 with rows)")
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(coverage.child(1))
+    one = page.data.model.rows
+    assert "figure" not in page.data.model.columns and page.data.note.isHidden()
+    assert len(one) == sum(r["figure"] == stems[1] for r in gathered)
