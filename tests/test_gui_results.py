@@ -468,3 +468,24 @@ def test_the_list_shows_the_reports_other_tables(qtbot, page, results, tmp_path)
     qtbot.waitUntil(lambda: lst.stale_bar.isHidden() and bool(lst.rows), timeout=30000)
     lst.tables.setCurrentIndex(lst.tables.findData("spectra"))  # kept: no rebuild
     assert lst.table_name == "spectra" and len(lst.rows) == len(results.fit)
+
+
+def test_a_reread_keeps_the_chosen_table_coming(qtbot, page, results):
+    """uptake.csv chosen, Update pressed, then the results read again (a first decision names
+    the review table): the table chosen is made for the new results, not left at "Making ..."
+    (owner: it seemed stuck; one background slot dropped the Update for the reread)."""
+    import dataclasses
+
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    lst = page.list
+    page.left_tabs.setCurrentWidget(lst)
+    lst.tables.setCurrentIndex(lst.tables.findData("uptake"))
+    qtbot.waitUntil(lambda: lst.table_name == "uptake" and bool(lst.rows), timeout=30000)
+    n = len(lst.rows)
+    lst.update_button.click()  # made again ...
+    again = dataclasses.replace(results)
+    page.show_results(again, None)  # ... while the results are read again
+    qtbot.waitUntil(lambda: lst.table_name == "uptake" and len(lst.rows) == n
+                    and page._list_tables.get("uptake", (None,))[0] is again, timeout=30000)
+    assert lst.count.text().endswith("rows") or "of" in lst.count.text()
+    qtbot.waitUntil(lambda: "spectra" in page._list_tables, timeout=30000)  # made too

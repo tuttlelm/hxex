@@ -162,6 +162,9 @@ class ResultsWorkspace(QWidget):
         self.list.table_asked.connect(self._list_table)
         self.list.update_asked.connect(lambda: self._list_table(self.list.table_name, True))
         self._list_tables: dict[str, tuple] = {}  # table -> (results, columns, rows) made
+        # the other tables made apart from the spectra's: one slot kept only the latest
+        # request, so a reread of the results dropped an Update under way (owner: stuck)
+        self._table_task = Latest(self)
         self.list.grid.review_key.connect(self.review.key)
         self._list_task = Latest(self)
         self.left_tabs = QTabWidget()
@@ -423,6 +426,9 @@ class ResultsWorkspace(QWidget):
                                lambda made: self._list_built(results, "spectra", made),
                                lambda message: self.list.clear(
                                    f"The list could not be made: {message}"))
+        shown = self.list.tables.currentData()
+        if shown != "spectra":  # the table chosen, made again for these results
+            self._list_table(shown)
 
     def _list_built(self, results, table: str, made) -> None:
         if results is not self.results:  # other results opened meanwhile
@@ -446,7 +452,8 @@ class ResultsWorkspace(QWidget):
             return
         self.list.clear(f"Making {table}.csv…")
         left = self.left
-        self._list_task.submit(lambda: _table_rows(results, table, left),
+        task = self._list_task if table == "spectra" else self._table_task
+        task.submit(lambda: _table_rows(results, table, left),
                                lambda made: self._list_built(results, table, made),
                                lambda message: self.list.clear(
                                    f"{table}.csv could not be made: {message}"))

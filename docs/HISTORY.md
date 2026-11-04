@@ -7031,4 +7031,9 @@ CSVs or mzML if wanted.
     Find on each; a series row opens its series (matched by `data_id` when several series share
     a name); **Save table…** writes the rows shown. After a decision `spectra.csv` updates its
     rows; another table is marked from before the decisions until **Update** (owner: no
-    recalculation unasked).
+    recalculation unasked). Then (owner: after rejecting a series, Update left the table
+    unchanged): the spectra list and the other tables shared one background slot, which keeps
+    only the latest request, so the reread a first decision causes (the project file names the
+    review table) dropped the Update, and the rebuilt spectra list was not shown under another
+    table: the List stayed at "Making uptake.csv...". The other tables now have their own slot
+    (`_table_task`), and a reread rebuilds the table chosen.
