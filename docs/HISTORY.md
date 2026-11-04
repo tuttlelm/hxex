@@ -6939,3 +6939,16 @@ CSVs or mzML if wanted.
     pointer events went to the header afterwards; the benchmark's review table (26,191 rows x
     43 columns) took 4.9 s to open and 4.4 s per sort. It is now a model and view
     (`TableModel`, a `QTableView`): 1.2 s to open (mostly reading the file), 0.02 s per sort.
+
+262. **A flat list of every spectrum in Results (owner, 2026-11-03/04; PLAN "Results and
+    review").** A **List** tab beside the tree (`gui.spectra_list.SpectraList`): one row per
+    spectrum with `spectra.csv`'s columns and the tree's left-out reason, sortable by a header
+    (`data_table.RowsModel`), filtered (flagged, K above 1, not reviewed, rejected, left out),
+    by sample, and by a search. A row chosen selects that spectrum in the tree, so the figures
+    and the review panel are the tree's; the review's arrows step in the list's order when it
+    is shown; A, R and U decide there too. Made in the background when results open
+    (benchmark: 5 s, nearly all the populations' step); after a decision only the decided rows
+    are made again (`spectra_table(results, rows=...)`, 0.18 s for four rows on the
+    benchmark, equal to the full table's rows) and stay in view until the filter changes. Also:
+    the background task runner ignores a gate deleted at shutdown (a window closed while it ran
+    printed "Signal source has been deleted").

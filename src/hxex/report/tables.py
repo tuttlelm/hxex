@@ -202,8 +202,10 @@ def components_table(results: Results) -> dict[str, np.ndarray]:
     return out
 
 
-def spectra_table(results: Results) -> dict[str, np.ndarray]:
-    """One row per spectrum: the index columns,
+def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
+    """One row per spectrum (``rows``: only those, by position in the fit, in that order; the
+    columns are the same, so a few rows can be redone after a review decision): the index
+    columns,
     ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
@@ -217,18 +219,20 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
     the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
     ``window_shift_ppm``, :mod:`hxex.picking.mz_check`; the first two empty where not
     assessed, the last 0 except in bundles picked with the former ``recentre``)."""
-    out = dict(_index_columns(results))
     ks = results.effective_K
-    k_max = int(ks.max())
-    m = len(ks)
-    out["K"] = ks.copy()
+    k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
+    picked = np.arange(len(ks)) if rows is None else np.asarray(rows, dtype=np.int64)
+    out = {name: np.asarray(values)[picked] for name, values in _index_columns(results).items()}
+    m = len(picked)
+    out["K"] = ks[picked].copy()
     centroid = np.full(m, np.nan)
     centroid_cor = np.full(m, np.nan)
     wide = {f"{n}_{r}": np.full(m, np.nan) for r in range(1, k_max + 1)
             for n in ("mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
                       "population_se")}
-    for i, k in enumerate(ks):
-        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, i, int(k))
+    for i, at in enumerate(picked):
+        k = ks[at]
+        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, int(at), int(k))
         centroid[i] = (mean * frac).sum()
         if cor is not None:
             centroid_cor[i] = (cor * frac).sum()
@@ -242,8 +246,8 @@ def spectra_table(results: Results) -> dict[str, np.ndarray]:
                 wide[f"mean_corrected_se_{r}"][i] = cor_se[c]
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
     out.update(wide)
-    out.update(_test_columns(results))
-    out.update(_screen_columns(results))
+    out.update({k: np.asarray(v)[picked] for k, v in _test_columns(results).items()})
+    out.update({k: np.asarray(v)[picked] for k, v in _screen_columns(results).items()})
     return out
 
 

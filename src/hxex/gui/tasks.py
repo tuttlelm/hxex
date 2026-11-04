@@ -99,7 +99,10 @@ class _Job(QRunnable):
                 return
             self._emit(self.signals.done, result)
         finally:
-            self.gate.release.emit()
+            try:
+                self.gate.release.emit()
+            except RuntimeError:  # the application is gone (closed while this ran)
+                pass
 
     def _emit(self, signal, value) -> None:
         try:

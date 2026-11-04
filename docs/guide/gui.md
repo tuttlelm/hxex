@@ -163,6 +163,16 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
+**List**, the tab beside **Tree**, shows every spectrum as one row with the columns of
+`spectra.csv` (K and the populations at the K in use, the review, the flags, the screens'
+scores, and why the analysis leaves it out). Click a column's header to sort by it, choose a
+filter (flagged, K above 1, not reviewed, rejected, left out) or a sample, or type in **Find**.
+Choosing a row shows that spectrum, with the review panel, as the tree does, and **◀ ▶** step
+through the list in the order shown: sort by a screen score, say, and work down from the
+worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
+once; the row stays in view until you change the filter. The list is made in the background
+when the results open (a few seconds for a large run).
+
 Every level also has an **overview** tab, last, and it is what you see first when results
 open: the run's summary pages, as `hxex report --figures` writes them to `overview.pdf`. A
 list in its bar chooses the page: **K selection** (how many spectra chose each K, and the share

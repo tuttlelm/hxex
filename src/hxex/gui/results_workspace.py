@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from .figure_view import FigurePanel
 from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
 from .review_panel import ReviewPanel
+from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
 
 log = logging.getLogger(__name__)
@@ -148,11 +149,28 @@ class ResultsWorkspace(QWidget):
         self.tree.review_key.connect(self.review.key)
         self._leaves: dict[int, QTreeWidgetItem] = {}  # a spectrum's row in the tree
         self._series_items: dict[int, QTreeWidgetItem] = {}
+        # the tree, and beside it every spectrum as a list (owner, 2026-11-03): a row chosen in
+        # the list selects that spectrum in the tree, so the figures and the review are the same
+        tree_page = QWidget()
+        tree_side = QVBoxLayout(tree_page)
+        tree_side.setContentsMargins(0, 0, 0, 0)
+        tree_side.addLayout(filters)
+        tree_side.addWidget(self.tree, 1)
+        self.list = SpectraList()
+        self.list.chosen.connect(self._list_chosen)
+        self.list.grid.review_key.connect(self.review.key)
+        self._list_task = Latest(self)
+        self.left_tabs = QTabWidget()
+        self.left_tabs.addTab(tree_page, "Tree")
+        self.left_tabs.addTab(self.list, "List")
+        self.left_tabs.setTabToolTip(0, "peptides, their charges, time points and replicates")
+        self.left_tabs.setTabToolTip(1, "every spectrum, one row each, with the columns of "
+                                        "spectra.csv: sort by a column, filter, and step "
+                                        "through them in that order")
         left = QWidget()
         side = QVBoxLayout(left)
         side.setContentsMargins(0, 0, 0, 0)
-        side.addLayout(filters)
-        side.addWidget(self.tree, 1)
+        side.addWidget(self.left_tabs, 1)
         # the "left out" column is worked out again only when asked (owner: no recalculation
         # in the middle of a review session)
         self.left_note = QLabel()
@@ -259,9 +277,36 @@ class ResultsWorkspace(QWidget):
         self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
         self._fill()
+        self._build_list()
         self._fill_overview_pages()
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
+
+    # --- the list of spectra -------------------------------------------------------------------
+
+    def _build_list(self) -> None:
+        """The list's rows, made in the background (seconds on a large run; the tree is ready
+        meanwhile)."""
+        results, left = self.results, self.left
+        if results is None:
+            self.list.clear("No results open.")
+            return
+        self.list.clear("Building the list…")
+        self._list_task.submit(lambda: list_rows(results, left),
+                               lambda made: self._list_built(results, made),
+                               lambda message: self.list.clear(
+                                   f"The list could not be made: {message}"))
+
+    def _list_built(self, results, made) -> None:
+        if results is self.results:  # not other results opened meanwhile
+            self.list.set_rows(*made)
+
+    def _list_chosen(self, row: dict) -> None:
+        """A row chosen in the list: that spectrum selected in the tree (its figures, the
+        review panel)."""
+        self.select({"sample": str(row.get("sample")), "peptide_range":
+                     str(row.get("peptide_range")), "charge": int(row.get("charge") or 0),
+                     "spectrum_id": str(row.get("spectrum_id"))})
 
     # --- the overview -------------------------------------------------------------------------
 
@@ -494,6 +539,8 @@ class ResultsWorkspace(QWidget):
         tree's order, opening series on the way. From a row below ``level``, the next after the
         row's own ``level`` row; from a row above it, the first (or last) one inside it. False
         at either end."""
+        if self.left_tabs.currentWidget() is self.list:  # in the list's order, as sorted
+            return self.list.step(step)
         level = level or self.review.level.currentData() or "spectrum"
         depth = DEPTH[level]
         item = self.tree.currentItem()
@@ -590,6 +637,9 @@ class ResultsWorkspace(QWidget):
             item.setText(COLUMN["K > 1"], str(multi or ""))
             self._sum_children(item.parent(), ("rejected", "K > 1"))
         self._redraw()
+        if self.list.rows:  # the decided spectra's rows, made again (K, populations, review)
+            self.list.update_rows(list_rows(results, self.left, rows=sorted(
+                int(i) for i in changed))[1])
         # a decision can change what the analysis leaves out (an accepted spectrum is kept; a
         # rejected one changes its replicates' median): said, and worked out again when asked
         self._left_stale("your latest review decisions")
@@ -631,6 +681,9 @@ class ResultsWorkspace(QWidget):
             return
         self.left_bar.hide()
         self.left = left
+        if self.list.rows:
+            self.list.update_rows([{**row, "left_out": left[row["_index"]] if left else ""}
+                                   for row in self.list.rows])
         n_left = left_out_counts(results, left)
         for pep in self.tree_data:
             for series in pep.series:

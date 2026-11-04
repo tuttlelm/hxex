@@ -297,3 +297,33 @@ def test_a_review_table_saved_elsewhere_is_read_again(qtbot, window_on):
     i = results.find(target[head.index("spectrum_id")])
     assert results.review_status[i] == "rejected"
     assert window.results_page.selection() == chosen
+
+
+def test_a_decision_made_from_the_list_updates_its_row(qtbot, window_on):
+    """Working through the list (owner): a decision on its row, by key, is written and the row
+    shows it at once (made again: status, K and populations); the row stays in view."""
+    from PySide6.QtCore import Qt
+
+    window, project, open_ = window_on
+    page = open_(project)
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    page.left_tabs.setCurrentWidget(page.list)
+    lst = page.list
+    lst.filter.setCurrentIndex(lst.filter.findData("unreviewed"))
+    sid = str(lst.model.rows[0]["spectrum_id"])
+    assert lst.select(sid) and page.tree.currentItem().toolTip(0) == sid
+    qtbot.keyClick(lst.grid, Qt.Key.Key_R)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.results_page  # the first decision names the table: read again
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    row = next(r for r in page.list.rows if str(r["spectrum_id"]) == sid)
+    assert row["review_status"] == "rejected"
+    sheet = read_review_table(project.parent / "user_review_table.csv")
+    assert dict(zip(sheet.spectrum_id, sheet.status, strict=True))[sid] == "rejected"
+    # a second decision: the row made again in place, still listed under "not reviewed"
+    page.left_tabs.setCurrentWidget(page.list)
+    other = next(r for r in page.list.model.rows if str(r["spectrum_id"]) != sid)
+    assert page.list.select(str(other["spectrum_id"]))
+    page.review.decide(status="accepted")
+    assert other["review_status"] == "accepted"
+    assert any(r is other for r in page.list.model.rows)

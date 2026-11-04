@@ -309,3 +309,33 @@ def test_the_left_out_column_does_not_repeat_the_controls_messages():
         logger.removeHandler(handler)
         logger.setLevel(old)
     assert seen == ["from another", "after"]
+
+
+def test_the_list_holds_every_spectrum_and_leads_to_it(qtbot, page, results):
+    """Every spectrum as a row with spectra.csv's columns (owner: a flat list beside the
+    tree); a row chosen shows that spectrum as the tree does; the review's arrows step in the
+    list's order; the filter, sample and search narrow it."""
+    from PySide6.QtCore import Qt
+
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    lst = page.list
+    assert len(lst.rows) == len(results.fit)
+    assert {"spectrum_id", "sample", "K", "review_status", "left_out", "flags"} <= set(
+        lst.columns)
+    assert "_index" not in lst.columns and lst.count.text().endswith(f"{len(results.fit)} spectra")
+    page.left_tabs.setCurrentWidget(lst)
+    # sorted by a column: the arrows follow that order
+    time = lst.columns.index("time")
+    lst.grid.sortByColumn(time, Qt.SortOrder.DescendingOrder)
+    order = [r["spectrum_id"] for r in lst.model.rows]
+    assert lst.select(order[0])
+    assert page.tree.currentItem().toolTip(0) == order[0]  # the tree shows that spectrum
+    assert page.step_spectrum(1) and lst.current_row()["spectrum_id"] == order[1]
+    assert page.tree.currentItem().toolTip(0) == order[1]
+    assert page.step_spectrum(-1) and lst.current_row()["spectrum_id"] == order[0]
+    # narrowed: a search, then a filter keeping nothing here
+    lst.search.setText(order[0])
+    assert [r["spectrum_id"] for r in lst.model.rows] == [order[0]]
+    lst.search.clear()
+    lst.filter.setCurrentIndex(lst.filter.findData("flagged"))
+    assert lst.model.rowCount() == sum(bool(r["flags"]) for r in lst.rows)
