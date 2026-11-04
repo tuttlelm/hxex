@@ -988,7 +988,7 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta"
                  "exclude_flagged", "format", "out", "runs", "overlay",
                  "overlay_two_only", "peptide_match", "populations", "borderline_evidence",
                  "modified_peptides",
-                 "controls", "merge",
+                 "controls", "merge", "colours",
                  "fragments", "protection", "labelling")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
 _REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
@@ -2155,6 +2155,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [analysis.controls]             # control settings changed for the analysis only",
         "# d2o_fraction = 0.85             # analysis only: replaces [run.controls] d2o_fraction",
         "#                                 # (the controls are recomputed from the K=1 fits)",
+        "# [analysis.colours]              # a sample's colour in every figure (others: defaults)",
+        '# WT = "black"                    # any colour name, or a hex code such as "#1f77b4"',
         "# [analysis.filters]              # which spectra and K=2 descriptions are kept",
         '# spectrum_quality_filtering = "loose"  # or "strict", "none": spectra showing another',
         "#                                 # species (spectra.csv screen_* columns)",

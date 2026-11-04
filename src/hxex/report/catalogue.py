@@ -179,7 +179,8 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "redundancy_resolution", "Redundancy and resolution", ANALYSE,
         ("redundancy_resolution",), "redundancy and resolution per residue", _ANALYSIS_PAGE,
-        changed_by=("[analysis] redundancy", "[analysis] coverage_times")),
+        changed_by=("[analysis] redundancy", "[analysis] coverage_times",
+                    "[analysis.colours]")),
     FigureKind(
         "choice", "Residue profile with the population choice", ANALYSE,
         ("choice_{sample}_{time}",),
@@ -202,13 +203,14 @@ KINDS: tuple[FigureKind, ...] = (
         "each sample's residue values drawn over the reference's (values only, no "
         "significance)", _ANALYSIS_PAGE, (_REFERENCE,),
         data="where the reference and a sample have the values to draw at that time",
-        changed_by=("[analysis] overlay", "[analysis] overlay_two_only")),
+        changed_by=("[analysis] overlay", "[analysis] overlay_two_only",
+                    "[analysis.colours]")),
     FigureKind(
         "overlay_populations", "Population overlay", ANALYSE, ("overlay_populations_{time}",),
         "the share of the high-D population by residue, each sample over the reference",
         _ANALYSIS_PAGE, (_REFERENCE, _K2),
         data="where a sample has two populations at that time",
-        changed_by=("[analysis] populations", "[analysis.choice]")),
+        changed_by=("[analysis] populations", "[analysis.choice]", "[analysis.colours]")),
     FigureKind(
         "woods", "Woods plot", ANALYSE, ("woods_{sample}_{time}",),
         "peptide differences from the reference at K=1, and where the number of populations "
@@ -248,7 +250,7 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] alpha", "[analysis] peptide_match")),
     FigureKind(
         "regions", "Regions", ANALYSE, ("regions_{time}",), "each region's fD, per sample",
-        _ANALYSIS_PAGE, (_REGIONS,), changed_by=("[[analysis.regions]]",)),
+        _ANALYSIS_PAGE, (_REGIONS,), changed_by=("[[analysis.regions]]", "[analysis.colours]")),
     FigureKind(
         "protection", "Protection factors", ANALYSE, ("protection_{sample}",),
         "the peptides' protection factors", "protection-factors.md", (_PROTECTION,),

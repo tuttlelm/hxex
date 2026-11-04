@@ -8,7 +8,7 @@ black, and never given to another sample). Functions return figures and never sh
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import matplotlib
 import numpy as np
@@ -28,7 +28,7 @@ from ..analysis import (
     ResidueMap,
 )
 from ..analysis.settings import OVERLAY_VALUES
-from .coverage import MARK_LINE, sample_hatch, sample_style
+from .coverage import MARK_LINE, SampleStyle, sample_hatch, sample_style
 from .residues import _when
 
 INCREASE, DECREASE, NEUTRAL = "#c0392b", "#1f5fa8", "#b5b5b5"
@@ -150,7 +150,7 @@ def _upper_limit(top: float) -> float:
 
 
 def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample: str,
-                  style_index: int, n_diff: int, time: float, time_scale: str,
+                  colours: tuple[str, str], n_diff: int, time: float, time_scale: str,
                   annotations: Annotations | None, top: float = -np.inf,
                   shapes: Sequence[str] = ()) -> None:
     """The axes, legend (the samples' colours, the shapes of ``shapes``, keys of
@@ -172,9 +172,8 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
     alone = K2_MARKERS[named[0]] if len(shapes) == 1 and named else None
     handles = [Line2D([], [], linestyle="none",
                       marker=alone or ("s" if named else "o"), markersize=5,
-                      color=_style(i)[0], markerfacecolor=to_rgba(_style(i)[0], FILL),
-                      label=name)
-               for name, i in ((reference, 0), (sample, style_index))]
+                      color=colour, markerfacecolor=to_rgba(colour, FILL), label=name)
+               for name, colour in zip((reference, sample), colours, strict=True)]
     if named and alone is None:  # the shapes, in grey: the colours are the samples'
         for value in shapes:
             avg = value == "avg"
@@ -254,7 +253,8 @@ def plot_residue_comparison(
              "low" if comparison.rank == 1 else "high")
     _residue_axes(ax, length=length if length is not None else int(comparison.residue.max()),
                   ylabel=_label(comparison.quantity), reference=comparison.reference,
-                  sample=sample, style_index=style_index, n_diff=n_diff, time=time,
+                  sample=sample, colours=(_style(0)[0], _style(style_index)[0]),
+                  n_diff=n_diff, time=time,
                   time_scale=time_scale, annotations=annotations, top=top, shapes=(shape,))
     return fig
 
@@ -302,12 +302,14 @@ def plot_residue_overlay(
     ax: Axes | None = None,
     time_scale: str = "seconds",
     mark_corrected_differently: bool = True,
+    styles: Mapping[str, SampleStyle] | None = None,
 ) -> Figure:
-    """``reference`` (black) and ``sample`` (its colour) residue by residue at ``time``, the
-    sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'`` (the K=2 ranks
-    1 and 2: up and down triangles with capped standard-error bars), ``'pop_low'`` and
-    ``'pop_high'`` (the populations of those ranks, from ``choice``, which they need: the same
-    triangles) and ``'avg'`` (K=1: small
+    """``reference`` (black) and ``sample`` (its colour: ``styles[sample]``, else the style at
+    ``style_index``; :func:`hxex.report.coverage.sample_styles`) residue by residue at
+    ``time``, the sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'``
+    (the K=2 ranks 1 and 2: up and down triangles with capped standard-error bars),
+    ``'pop_low'`` and ``'pop_high'`` (the populations of those ranks, from ``choice``, which they
+    need: the same triangles) and ``'avg'`` (K=1: small
     circles on a line with a +-1 standard-error band, joined only between residues one peptide
     measures together, ``ResidueMap.linked_next``). Fills and K=2 error bars are 65 % opaque
     with solid outlines, so overlapping markers stay apart; the legend names the samples' colours.
@@ -336,8 +338,9 @@ def plot_residue_overlay(
     drawn_values: set[str] = set()  # for the legend
     shown: dict[str, set] = {reference: set(), sample: set()}
     fell_back: dict[str, set] = {reference: set(), sample: set()}
-    for n, (name, index) in enumerate(((reference, 0), (sample, style_index))):
-        colour = _style(index)[0]
+    colours = tuple(styles[name].colour if styles and name in styles else _style(index)[0]
+                    for name, index in ((reference, 0), (sample, style_index)))
+    for n, (name, colour) in enumerate(zip((reference, sample), colours, strict=True)):
         for value in show:
             if value.startswith("pop_"):  # a population: the sample's choice, where it keeps two
                 rows = (choice.where(sample=name, time=time)
@@ -386,7 +389,7 @@ def plot_residue_overlay(
         note=False) if mark_corrected_differently else 0)
     _residue_axes(ax, length=length if length is not None else int(residues.residue.max()),
                   ylabel=_overlay_label(show), reference=reference, sample=sample,
-                  style_index=style_index, n_diff=n_diff, time=time, time_scale=time_scale,
+                  colours=colours, n_diff=n_diff, time=time, time_scale=time_scale,
                   annotations=annotations, top=top,
                   shapes=[v for v in SHAPE_LABELS if v in drawn_values])
     return fig
@@ -442,9 +445,11 @@ def residue_overlay_figure(
     length: int | None = None,
     time_scale: str = "seconds",
     mark_corrected_differently: bool = True,
+    styles: Mapping[str, SampleStyle] | None = None,
 ) -> Figure:
     """One :func:`plot_residue_overlay` panel per sample of ``samples`` against ``reference``;
-    each sample keeps its colour. ``choice`` filters the K=2 values as in
+    each sample keeps its colour (``styles``: the analysis's, so it is the same in every
+    figure; else by its place among ``samples``). ``choice`` filters the K=2 values as in
     :func:`plot_residue_overlay`.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
@@ -458,7 +463,8 @@ def residue_overlay_figure(
         plot_residue_overlay(residues, reference, sample, time, show=show, choice=choice,
                              style_index=n + 1, time_scale=time_scale,
                              annotations=annotations, length=length, ax=ax,
-                             mark_corrected_differently=mark_corrected_differently)
+                             mark_corrected_differently=mark_corrected_differently,
+                             styles=styles)
     return fig
 
 
@@ -654,10 +660,12 @@ def plot_region_bars(
     region_order: Sequence[str] | None = None,
     ax: Axes | None = None,
     time_scale: str = "seconds",
+    styles: Mapping[str, SampleStyle] | None = None,
 ) -> Figure:
     """Grouped bars of the mean ``fD`` of every region, one bar per
-    sample in its colour, with standard-error bars; regions without a value are left empty. Each
-    bar has the gid ``region:<sample>:<region>``.
+    sample in its colour (``styles``, else by its place among ``samples``), with standard-error
+    bars; regions without a value are left empty. Each bar has the gid
+    ``region:<sample>:<region>``.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -676,8 +684,10 @@ def plot_region_bars(
     x = np.arange(len(names))
     top = -np.inf
     for n, sample in enumerate(samples):
-        colour, _, _ = _style(n)
-        hatch = sample_hatch(n)  # past the palette the colours repeat, with a hatch
+        if styles and sample in styles:
+            colour, hatch = styles[sample].colour, styles[sample].hatch
+        else:  # past the palette the colours repeat, with a hatch
+            colour, hatch = _style(n)[0], sample_hatch(n)
         values, errors = [], []
         for name in names:
             row = sel & (regions.sample == sample) & (regions.region == name)

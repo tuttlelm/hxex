@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import itertools
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from matplotlib.axes import Axes
@@ -71,6 +72,43 @@ def sample_style(n: int) -> tuple[str, str, float]:
                 _warned_repeat = True
         marker, size = _EXTRA_MARKERS[(cycle - 1) % len(_EXTRA_MARKERS)], 5.5
     return colour, marker, size
+
+
+@dataclass(frozen=True)
+class SampleStyle:
+    """How one sample is drawn in every figure of an analysis: ``colour``, ``marker`` and its
+    ``size``, and ``hatch`` for bars (None: plain)."""
+
+    colour: str
+    marker: str
+    size: float
+    hatch: str | None = None
+
+
+def sample_styles(samples: Sequence[str], reference: str | None = None,
+                  colours: Mapping[str, str] | None = None) -> dict[str, SampleStyle]:
+    """Each sample's style, fixed for every figure of an analysis, so a sample keeps its colour
+    whichever samples a figure shows: the reference first (black), then the others in their
+    order (:func:`sample_style`, :func:`sample_hatch`). ``colours`` (sample -> any colour
+    matplotlib knows, ``[analysis.colours]``) replaces the colour of the samples it names; the
+    others take the default colours not already chosen there."""
+    from matplotlib.colors import to_hex
+
+    order = list(dict.fromkeys(samples))
+    if reference is not None and reference in order:
+        order = [reference] + [x for x in order if x != reference]
+    chosen = {name: str(colour) for name, colour in (colours or {}).items() if name in order}
+    taken = {to_hex(c) for c in chosen.values()}
+    free = [c for c, _, _ in SAMPLE_STYLES[1:] if to_hex(c) not in taken]
+    out = {}
+    for n, name in enumerate(order):  # the first (the reference) keeps black unless chosen
+        colour, marker, size = sample_style(n)
+        if name in chosen:
+            colour = chosen[name]
+        elif n > 0 and free:
+            colour = free.pop(0)
+        out[name] = SampleStyle(colour, marker, size, sample_hatch(n))
+    return out
 
 
 def sample_hatch(n: int) -> str | None:
@@ -239,12 +277,14 @@ def plot_redundancy_resolution(
     samples: Sequence[str] | None = None,
     marks: Sequence[float] = (),
     axes: Sequence[Axes] | None = None,
+    styles: Mapping[str, SampleStyle] | None = None,
 ) -> Figure:
     """Redundancy (top) and resolution (bottom) per residue, one line with markers per sample
-    (the first in black), gaps where a residue is not covered or has no amide (a proline, or one
-    of the first residues of every peptide). Prolines are marked ``P`` along the bottom of both
-    panels; ``marks`` adds dashed lines at those residues (sites, region boundaries). ``axes`` is
-    a pair to draw into."""
+    (the first in black; ``styles``, :func:`sample_styles`, gives each sample its own), gaps
+    where a residue is not covered or has no amide (a proline, or one of the first residues of
+    every peptide). Prolines are marked ``P`` along the bottom of both panels; ``marks`` adds
+    dashed lines at those residues (sites, region boundaries). ``axes`` is a pair to draw
+    into."""
     samples = list(samples) if samples is not None else list(dict.fromkeys(coverage.sample))
     if axes is None:
         fig = Figure(figsize=(8.0, 5.2))
@@ -258,7 +298,8 @@ def plot_redundancy_resolution(
         rows = coverage.sample == sample
         if not rows.any():
             raise ValueError(f"no sample {sample!r} in the coverage table")
-        colour, marker, size = sample_style(n)
+        colour, marker, size = ((styles[sample].colour, styles[sample].marker, styles[sample].size)
+                                if styles and sample in styles else sample_style(n))
         res = coverage.residue[rows]
         n_res = max(n_res, int(res.max()))
         prolines |= set(res[coverage.proline[rows]].tolist())

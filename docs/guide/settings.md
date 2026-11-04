@@ -37,6 +37,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[analysis.controls]`](#analysiscontrols)
 - [`[analysis.runs]`](#analysisruns)
 - [`[analysis.merge]`](#analysismerge)
+- [`[analysis.colours]`](#analysiscolours)
 - [`[[analysis.regions]]`](#analysisregions)
 - [`[[analysis.sites]]`](#analysissites)
 - [`[analysis.fragments]`](#analysisfragments)
@@ -471,6 +472,11 @@ Separate runs to compare: run name = bundle path (default: this project's bundle
 ## `[analysis.merge]`
 
 Samples combined across runs: `"run:sample" = label`; the same label pools them (fragment series are drawn side by side, not pooled).
+
+
+## `[analysis.colours]`
+
+A sample's colour in every figure that colours samples (the residue overlays, the region bars, redundancy and resolution): `sample = "colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); `"run:sample"` for one run's sample. A sample not named keeps its default, the same in every figure: the reference black, the others in their order, from the colours not chosen here.
 
 
 ## `[[analysis.regions]]`

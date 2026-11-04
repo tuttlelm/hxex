@@ -128,6 +128,10 @@ class AnalysisConfig:
       ``overlay_two_only``: draw the K=2 values
       only where the choice keeps two populations (the default; False draws every K=2 value
       the filters keep).
+    - ``colours``: a sample's colour in every figure that colours samples (sample, or
+      ``run:sample``, -> any colour matplotlib knows: ``'orange'``, ``'#1f77b4'``); a sample not
+      named keeps its default (:func:`hxex.report.coverage.sample_styles`: the reference black,
+      the others in their order), the same in every figure.
     - ``populations``: how the number of populations is decided (HISTORY 137, 139):
       ``'population_test'`` (the population test of the sets, :mod:`hxex.analysis.set_test`, in
       place of ``best_set_K``; otherwise as ``'best_set'``), ``'best_set'`` (a peptide has two where
@@ -191,6 +195,7 @@ class AnalysisConfig:
     modified_peptides: str = "separate"
     controls: Mapping[str, Any] | None = None
     merge: Mapping[str, str] | None = None
+    colours: Mapping[str, str] | None = None
     fragments: FragmentAnalysis | None = FragmentAnalysis()  # noqa: RUF009
     protection: bool = False
     labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
@@ -251,6 +256,14 @@ class AnalysisConfig:
             object.__setattr__(self, "merge", {str(k): str(v) for k, v in self.merge.items()})
             if not self.runs:
                 raise ValueError("merge combines samples of separate runs: set runs too")
+        if self.colours is not None:
+            from matplotlib.colors import is_color_like
+
+            object.__setattr__(self, "colours", {str(k): str(v) for k, v in self.colours.items()})
+            bad = [f"{k} = {v!r}" for k, v in self.colours.items() if not is_color_like(v)]
+            if bad:
+                raise ValueError(f"[analysis.colours] {', '.join(bad)}: not a colour (a name such "
+                                 "as \"orange\", or a hex code such as \"#1f77b4\")")
         if self.controls is not None:
             from ..controls import ControlConfig
 

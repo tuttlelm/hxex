@@ -218,6 +218,7 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.controls": "control settings to change for the analysis: [analysis.controls] "
                          "(below)",
     "analysis.merge": "samples of several runs combined into one: [analysis.merge] (below)",
+    "analysis.colours": "each sample's colour in the figures: [analysis.colours] (below)",
     "analysis.fragments": "the fragment outputs: [analysis.fragments] (below), or false to "
                           "turn them off",
     "analysis.protection": "opt in to the peptides' protection factors (needs "
@@ -357,6 +358,12 @@ _INTROS: dict[str, str] = {
                      "project's bundle). The tables then get a run column.",
     "analysis.merge": 'Samples combined across runs: `"run:sample" = label`; the same label pools '
                       "them (fragment series are drawn side by side, not pooled).",
+    "analysis.colours": 'A sample\'s colour in every figure that colours samples (the residue '
+                        'overlays, the region bars, redundancy and resolution): `sample = '
+                        '"colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); '
+                        "`\"run:sample\"` for one run's sample. A sample not named keeps its "
+                        "default, the same in every figure: the reference black, the others "
+                        "in their order, from the colours not chosen here.",
     "analysis.regions": "Repeat the table for every region (regions may overlap).",
     "analysis.sites": "Repeat the table for every site (a modification, a mutation).",
     "analysis.fragments": "The fragment outputs of a run with fragment series (ladders, rates, "
@@ -550,7 +557,7 @@ def tables() -> list[Table]:
         Setting("table", "path", UNSET, _DESCRIPTIONS["review.table"]),), _INTROS["review"]))
     out.append(Table("review.exclude", True, _RULE, _INTROS["review.exclude"]))
     nested = ("filters", "choice", "regions", "sites", "runs", "merge", "controls", "fragments",
-              "labelling")
+              "labelling", "colours")
     out.append(Table("analysis", False, _settings(
         AnalysisConfig, "analysis", keys=[k for k in ANALYSIS_KEYS if k not in nested]),
         _INTROS["analysis"]))
@@ -558,7 +565,7 @@ def tables() -> list[Table]:
                      _INTROS["analysis.filters"]))
     out.append(Table("analysis.choice", False, _settings(ChoiceConfig, "analysis.choice"),
                      _INTROS["analysis.choice"]))
-    for name in ("controls", "runs", "merge"):
+    for name in ("controls", "runs", "merge", "colours"):
         out.append(Table(f"analysis.{name}", False, (), _INTROS[f"analysis.{name}"]))
     out.append(Table("analysis.regions", True, _settings(Region, "analysis.regions"),
                      _INTROS["analysis.regions"]))

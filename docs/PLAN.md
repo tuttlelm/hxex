@@ -457,8 +457,8 @@ calls the library in the GUI's own process. Details:
   values no table holds). *Custom figures* (later, owner's idea): up to four panels, each a
   kind of figure with the samples and time chosen for it. It needs the analysis split into
   computing and drawing (each kind saying what it takes: one sample against the reference, a
-  reference and any samples, one time or several), and each sample's colour fixed across the
-  whole analysis (today a sample's colour follows its place in the figure). Open until then:
+  reference and any samples, one time or several); each sample's colour is already fixed across
+  the whole analysis (`[analysis.colours]`, HISTORY 245). Open until then:
   the layout (1, 2, or 4 panels), one time for all panels or each its own, a reference per
   panel, and saving the panels as one page.
 

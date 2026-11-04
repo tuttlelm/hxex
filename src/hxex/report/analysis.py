@@ -242,6 +242,30 @@ def _check_names(results, config: AnalysisConfig) -> None:
         resolve_sample(run_names, sample_names, s)
 
 
+def _sample_styles(up, labels: dict, shown: list, reference: str, colours) -> dict:
+    """Each sample's style for every figure of the analysis (by display label), so a sample
+    keeps its colour whichever samples a figure shows: ``[analysis.colours]`` (a sample's name,
+    ``run:sample``, or a modified state's label) for those it names, the defaults for the
+    rest. A name that is no sample of the analysis is left out with a warning."""
+    from .coverage import sample_styles
+
+    chosen = {}
+    for name, colour in (colours or {}).items():
+        if name in shown:
+            chosen[name] = colour
+            continue
+        try:
+            state = resolve_sample(up.run, up.sample, name, "sample")
+        except ValueError as exc:
+            if "several runs" in str(exc):
+                raise ValueError(f"[analysis.colours] {exc}") from None
+            log.warning("[analysis.colours] %s: no such sample in this analysis; left out",
+                        name)
+            continue
+        chosen[labels[state]] = colour
+    return sample_styles(shown, reference or None, chosen)
+
+
 def _labelled(up, wanted: list, reference) -> list:
     """``wanted`` without the samples that have no labelled time point in the species table
     ``up`` (controls only, or every labelled spectrum left out), each named in a warning; a
@@ -305,6 +329,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     states_shown = [labels[s] for s in state_pairs]
     reference = labels[ref_state] if ref_state is not None else ""
     ref_name = label(*ref_state) if ref_state is not None else ""  # names it for the analyses
+    styles = _sample_styles(up, labels, samples + states_shown, reference, config.colours)
     coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
     try:
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
@@ -499,7 +524,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         jobs.append((f"coverage_{s}", lambda s=s: coverage_figure(
             up, samples=[s], times=times, length=length, **when)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
-        coverage, samples=samples, marks=marks)))
+        coverage, samples=samples, marks=marks, styles=styles)))
     runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
     booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
     for s in samples + states:
@@ -535,7 +560,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"overlay_residues_{when_}", lambda t=t, shown=shown, only=only:
                              residue_overlay_figure(
                                  residues, reference, shown, t, show=config.overlay,
-                                 choice=only, annotations=ann, length=length, **when)))
+                                 choice=only, annotations=ann, length=length, styles=styles,
+                                 **when)))
             # the populations, drawn as the K=2 values are: each sample where it keeps two; the
             # high-D share, as the Woods plot draws it (above = more D; owner, 2026-11-02)
             ref_pop = choice is not None and _has_overlay(residues, reference, t, ("pop_high",),
@@ -546,7 +572,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"overlay_populations_{when_}",
                              lambda t=t, with_pop=with_pop: residue_overlay_figure(
                                  residues, reference, with_pop, t, show=("pop_high",),
-                                 choice=choice, annotations=ann, length=length, **when)))
+                                 choice=choice, annotations=ann, length=length, styles=styles,
+                                 **when)))
             for s in others:
                 k1_rows = comparisons["K=1 fD"].where(sample=s, time=t).any()
                 if k1_rows and counts_d is not None:
@@ -601,7 +628,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         for t in times:
             if (regions.time == t).any():
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
-                    regions, t, samples=samples, **when)))
+                    regions, t, samples=samples, styles=styles, **when)))
 
     return tables, jobs
 

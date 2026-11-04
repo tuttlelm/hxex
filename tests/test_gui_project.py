@@ -208,6 +208,23 @@ def test_a_table_of_names_is_edited(editor, project):
         "d2o_fraction" not in _data(project)["analysis"]["controls"]
 
 
+def test_sample_colours_are_typed_bare_and_shown_as_swatches(editor, project):
+    from PySide6.QtCore import Qt
+
+    _page(editor, "analysis.colours")
+    names = editor.list_editor
+    names.name.setText("WT")
+    names.value.setText("orange")  # no quotes needed
+    names.add()
+    assert _data(project)["analysis"]["colours"]["WT"] == "orange"
+    names.name.setText("V")
+    names.value.setText("#1f77b4")  # a hex code is no comment
+    names.add()
+    assert _data(project)["analysis"]["colours"]["V"] == "#1f77b4"
+    swatch = names.grid.item(0, 1).data(Qt.ItemDataRole.DecorationRole)
+    assert swatch is not None and swatch.name() in ("#ffa500", "#1f77b4")
+
+
 def test_the_top_level_tables_stand_out_in_the_list(editor):
     from PySide6.QtCore import Qt
 

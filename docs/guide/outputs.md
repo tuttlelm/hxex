@@ -426,6 +426,12 @@ shows, the settings it needs, and the settings that change it.
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
+A sample keeps its colour in every figure that colours samples (the residue overlays, the
+region bars, and redundancy and resolution): the reference black, the others in their order,
+whichever samples a figure shows. `[analysis.colours]` chooses them yourself, one line per
+sample (`D109H = "orange"`, or a hex code such as `"#1f77b4"`); a sample you do not name keeps
+a default colour that none of yours uses.
+
 **Reading the Woods plot.** Each panel shows, for every peptide, a bar over the residues it
 covers at its difference from the reference (sample minus reference), with its standard error as
 a vertical line. A bar is coloured where the difference is significant (red: the sample is

@@ -6677,3 +6677,23 @@ CSVs or mzML if wanted.
     clicking a peptide to open its series in Results, the selection in the session file, and
     the custom-figures workspace.
 
+245. **A sample's colour, the same in every figure; `[analysis.colours]` (owner, 2026-11-03).**
+    The owner asked how the overlay figures colour the samples: by each sample's place among
+    the samples that one figure was given (the reference black at 0, then
+    `coverage.SAMPLE_STYLES` in turn). `overlay_residues_{time}` gives only the samples with
+    values at that time and `overlay_populations_{time}` only those with two populations, so a
+    sample could change colour between times and between the two figures. Built (owner: a
+    sample:colour dictionary, the defaults when none is set, changeable in the window):
+    `coverage.SampleStyle` (colour, marker, size, hatch) and `sample_styles(samples, reference,
+    colours)`, made once per analysis from every sample (the reference first and black, the
+    others in their order; the modified states after them) and passed to every figure that
+    colours samples (the residue overlays, the region bars, redundancy and resolution);
+    called without it, a plot function still numbers its samples as before.
+    `[analysis.colours]` (sample, `run:sample`, or a modified state's label = any colour
+    matplotlib knows) replaces the colours of the samples it names; the others take the
+    default colours not chosen there; a name that is no sample of the analysis is left out
+    with a warning, a colour matplotlib does not know is refused with the sample named. In the
+    window it is a table of names like `[analysis.controls]` (a colour typed without quotes,
+    hex codes included, since `set_settings` quotes text), each value with a swatch of its
+    colour. Tests: test_analysis (styles; the setting reaching the overlay and redundancy
+    figures), test_gui_project (the swatch).

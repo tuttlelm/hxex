@@ -2577,3 +2577,39 @@ def test_a_k2_average_counts_the_spectra_it_averages(results, monkeypatch):
     assert up.average_from_k2[rows].all()
     k1, k2 = rows & (up.K == 1), rows & (up.K == 2) & (up.rank == 1)
     np.testing.assert_array_equal(up.n_spectra[k1], up.n_spectra[k2])
+
+
+def test_sample_styles_keep_a_sample_s_colour_in_every_figure():
+    from hxex.report.coverage import SAMPLE_STYLES, sample_styles
+
+    every = sample_styles(["WT", "A", "B", "C"], "WT")
+    assert every["WT"].colour == "#000000" and every["A"].colour == SAMPLE_STYLES[1][0]
+    assert [every[s].colour for s in ("A", "B", "C")] == [c for c, _, _ in SAMPLE_STYLES[1:4]]
+    # chosen colours, and the defaults skipping the ones chosen
+    chosen = sample_styles(["WT", "A", "B"], "WT", {"B": SAMPLE_STYLES[1][0], "WT": "grey"})
+    assert chosen["WT"].colour == "grey" and chosen["B"].colour == SAMPLE_STYLES[1][0]
+    assert chosen["A"].colour == SAMPLE_STYLES[2][0]
+    assert sample_styles(["A", "WT"], "WT")["WT"].colour == "#000000"  # the reference first
+
+
+def test_analysis_colours_reach_every_figure_that_colours_samples(two_sample_bundle, caplog):
+    from matplotlib.colors import to_hex
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import analysis_outputs
+
+    with pytest.raises(ValueError, match="not a colour"):
+        AnalysisConfig(colours={"V": "blurple"})
+    cfg = AnalysisConfig(reference="S", colours={"V": "orange", "nobody": "red"})
+    with open_bundle(two_sample_bundle) as b:
+        outputs = analysis_outputs(Results.from_bundle(b), cfg)
+    assert "[analysis.colours] nobody: no such sample" in caplog.text
+    figures = dict(outputs.figures)
+    overlay = next(draw for stem, draw in figures.items() if stem.startswith("overlay_residues"))
+    fig = overlay()
+    colours = {to_hex(line.get_color()) for ax in fig.axes for line in ax.get_lines()
+               if (line.get_gid() or "").startswith("overlay:V:")}
+    assert colours == {to_hex("orange")}
+    redundancy = figures["redundancy_resolution"]()
+    assert to_hex("orange") in {to_hex(line.get_color()) for line in redundancy.axes[0].get_lines()}

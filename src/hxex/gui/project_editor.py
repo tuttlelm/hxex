@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QSize, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -649,7 +649,11 @@ class NamesEditor(QWidget):
             key = QTableWidgetItem(name)
             key.setFlags(key.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.grid.setItem(r, 0, key)
-            self.grid.setItem(r, 1, QTableWidgetItem(_shown(value)))
+            cell = QTableWidgetItem(_shown(value))
+            swatch = _swatch(value) if self.table.name == "analysis.colours" else None
+            if swatch is not None:  # a colour shown as itself beside its name
+                cell.setData(Qt.ItemDataRole.DecorationRole, swatch)
+            self.grid.setItem(r, 1, cell)
         self.grid.blockSignals(False)
         self.remove.setEnabled(bool(items))
 
@@ -669,6 +673,15 @@ class NamesEditor(QWidget):
         row = self.grid.currentRow()
         if row >= 0:
             self.owner.write(f"{self.table.name}.{self.grid.item(row, 0).text()}", None)
+
+
+def _swatch(value):
+    """A colour (``[analysis.colours]``) as Qt draws it; None for text that is no colour."""
+    from matplotlib.colors import is_color_like, to_hex
+
+    if not isinstance(value, str) or not is_color_like(value):
+        return None
+    return QColor(to_hex(value))
 
 
 def _form() -> QFormLayout:
