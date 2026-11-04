@@ -2711,5 +2711,9 @@ def test_every_samples_residue_values_on_one_axis():
     columns, table = figure_rows(fig)
     assert columns == ["sample", "time", "time_label", "residue", "fD", "fD_se"]
     assert len(table) == 9 and {r["sample"] for r in table} == {"M", "V", "WT"}
+    # one y axis for every time of an analysis (owner): the highest value given holds it
+    own, held = fig.axes[0].get_ylim()[1], plot_residue_samples(
+        rm, ["M", "V", "WT"], 4.0, top=1.3).axes[0].get_ylim()[1]
+    assert held > own and held >= 1.3
     with pytest.raises(ValueError, match="no residue values"):
         plot_residue_samples(rm, ["WT"], 60.0)

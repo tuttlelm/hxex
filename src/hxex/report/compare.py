@@ -441,6 +441,7 @@ def plot_residue_samples(
     length: int | None = None,
     time_scale: str = "seconds",
     ax: Axes | None = None,
+    top: float | None = None,
 ) -> Figure:
     """Every sample's average deuteration (fDavg: the K=1 fit's, or, for a set with two
     populations at least 2 D apart, the K = 2 population-weighted mean; ``average_from_k2``,
@@ -451,13 +452,14 @@ def plot_residue_samples(
     its place), a line broken between residues no peptide measures together, with a light
     +-1 standard-error band; the samples named above the panel, the time on its right; sites
     and region boundaries dashed. Each sample's line carries its residues as data-table rows
-    (``hover.set_rows``)."""
+    (``hover.set_rows``). ``top``: the highest value the y axis must hold (the same for every
+    time of an analysis, so the figures compare; owner, 2026-11-04); else this time's own."""
     if ax is None:
         fig = Figure(figsize=(8.0, 3.4), layout="constrained")  # the axis label kept in
         ax = fig.add_subplot()
     else:
         fig = ax.figure
-    top, handles = -np.inf, []
+    fixed, top, handles = top, -np.inf, []
     for n, name in enumerate(samples):
         rows = residues.where(sample=name, time=time, K=1, rank=1) & np.isfinite(residues.fD)
         if not rows.any():
@@ -481,7 +483,7 @@ def plot_residue_samples(
         raise ValueError(f"no residue values at time {time:g}")
     _marks(ax, annotations, label_sites=False)
     ax.set_xlim(0, length if length is not None else int(residues.residue.max()))
-    ax.set_ylim(-0.05, _upper_limit(top))
+    ax.set_ylim(-0.05, _upper_limit(top if fixed is None else fixed))
     ax.yaxis.set_minor_locator(AutoMinorLocator(2))
     ax.xaxis.set_minor_locator(AutoMinorLocator(4))
     ax.set_xlabel("Residue")

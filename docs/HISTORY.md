@@ -7050,4 +7050,6 @@ CSVs or mzML if wanted.
     populations at least 2 D apart, the K=2 population-weighted mean (HISTORY 210), never the
     envelope centroid. Its data tab has a row per sample and residue (`hover.set_rows`, several
     rows on one artist; `figure_rows` reads both kinds): the first residue figure with one.
-    Tutorial: four figures (4 s to 20 h), 466 rows at 30 min.
+    Tutorial: four figures (4 s to 20 h), 466 rows at 30 min. Then (owner): one y axis for every time of
+    an analysis (`top`, the highest fDavg plus its error over the times drawn), so the figures
+    compare; tutorial: -0.05 to 1.10 on all four.
