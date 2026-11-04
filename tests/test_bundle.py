@@ -869,9 +869,15 @@ def test_a_ctrl_c_waits_until_the_bundle_is_written():
     from hxex.io.bundle import deferred_interrupt
 
     seen = []
-    with pytest.raises(KeyboardInterrupt), deferred_interrupt():  # Python's handler: raises
-        signal.raise_signal(signal.SIGINT)
-        seen.append("finished")
+    # Python's own handler, whatever the suite was started with (a shell's background job
+    # starts with Ctrl-C ignored, and the signal below would be lost)
+    started = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt), deferred_interrupt():  # Python's handler: raises
+            signal.raise_signal(signal.SIGINT)
+            seen.append("finished")
+    finally:
+        signal.signal(signal.SIGINT, started)
     assert seen == ["finished"]  # the block ran to its end, then the interrupt came
     # a command's own handler (its first Ctrl-C asks it to stop) is called once, afterwards
     previous = signal.signal(signal.SIGINT, lambda *_: seen.append("handler"))
