@@ -5,6 +5,7 @@ returns what it draws, and the plots return figures without showing or saving th
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -453,10 +454,14 @@ def plot_quality_overview(results: Results, *, bins: int = 40, min_count: int = 
 
 # --- K selection overview -------------------------------------------------------------------
 
-def k_selection_data(results: Results) -> dict:
+def k_selection_data(results: Results, max_points: int | None = 48) -> dict:
     """The K of a run: counts of the selected K and of the K in effect (with the reviewer's
     choices) for each K tried, and the share of each K in effect at every distinct time
-    (``times``, ``time_labels`` with ``FD``/``UN`` for the controls, ``share`` ``(T, nK)``)."""
+    (``times``, ``time_labels`` with ``FD``/``UN`` for the controls, ``share`` ``(T, nK)``).
+    With more than ``max_points`` times (a kinetics run's hundreds), they are grouped into at
+    most that many, spread over log time as ``[figures] max_points`` thins a series' spectra:
+    the share is then over every spectrum of a group, labelled by its first and last time
+    (``points``: the times before grouping; None: every time its own bar)."""
     fit = results.fit
     ks = tuple(fit.k_values)
     eff = results.effective_K
@@ -471,7 +476,31 @@ def k_selection_data(results: Results) -> dict:
         (points == key) & kept).any() else 0.0 for k in ks] for key in keys])
     labels = [_control_role(fit.role[order[key][1]])
               or format_time(fit.time[order[key][1]], results.time_scale) for key in keys]
+    n_points = len(keys)
+    timed = [n for n, key in enumerate(keys) if not _control_role(fit.role[order[key][1]])]
+    if max_points is not None and len(timed) > max_points:
+        from ..io.mzml import _sample_log
+
+        starts = [timed[i] for i in _sample_log(times[timed], max_points)]
+        groups = [[n for n in timed if a <= n < b] for a, b in
+                  zip(starts, [*starts[1:], timed[-1] + 1], strict=True)]
+        groups = [g for g in groups if g]
+        controls = [n for n in range(len(keys)) if n not in set(timed)]
+        before = [n for n in controls if n < timed[0]]
+        after = [n for n in controls if n > timed[-1]]
+        bars = [[n] for n in before] + groups + [[n] for n in after]
+        share = np.array([[np.mean(eff[np.isin(points, [keys[n] for n in g]) & kept] == k)
+                           if (np.isin(points, [keys[n] for n in g]) & kept).any() else 0.0
+                           for k in ks] for g in bars])
+        def short(t: float) -> str:  # a scan's time to three figures: 42.4 s, not 42.3934 s
+            return format_time(float(f"{t:.3g}"), results.time_scale)
+
+        labels = [labels[g[0]] if g[0] not in set(timed) else short(times[g[0]])
+                  if len(g) == 1 else f"{short(times[g[0]])}–{short(times[g[-1]])}"
+                  for g in bars]
+        times = np.array([times[g[0]] for g in bars])
     return {
+        "points": n_points,
         "k_values": ks,
         "selected": np.array([int((fit.selected_K == k).sum()) for k in ks]),
         "effective": np.array([int(((eff == k) & kept).sum()) for k in ks]),
@@ -508,14 +537,19 @@ def plot_k_selection(results: Results) -> Figure:
     a1.set_title("selected K", fontsize=9)
     bottom = np.zeros(len(d["times"]))
     pos = np.arange(len(d["times"]))
+    grouped = len(d["times"]) < d["points"]
     for j, k in enumerate(d["k_values"]):
         a2.bar(pos, 100 * d["share"][:, j], bottom=100 * bottom,
                color=COLORS[j % len(COLORS)], label=f"K={k}", gid=f"share:{k}")
         bottom += d["share"][:, j]
-    a2.set_xticks(pos, d["time_labels"], rotation=45 if len(pos) > 8 else 0, fontsize=8)
-    a2.set_xlabel("time point")
+    every = max(1, math.ceil(len(pos) / 16))  # a readable number of labels (every bar ticked)
+    a2.set_xticks(pos, [t if n % every == 0 or n == len(pos) - 1 else ""
+                        for n, t in enumerate(d["time_labels"])],
+                  rotation=45 if len(pos) > 8 else 0, fontsize=8)
+    a2.set_xlabel("time" if grouped else "time point")
     a2.set_ylabel("spectra (%)")
-    a2.set_title("K in effect at each time point"
+    a2.set_title(("K in effect over time" + f" ({d['points']} time points in "
+                  f"{len(d['times'])} groups)" if grouped else "K in effect at each time point")
                  + (" (rejected spectra left out)" if d["rejected"] else ""), fontsize=9)
     a2.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     fig.tight_layout()

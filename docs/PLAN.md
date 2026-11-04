@@ -986,8 +986,16 @@ Planned, not built:
    results and review, and analysis views (section "GUI", phases G0-G4). G0 to G2 built
    (HISTORY 232-236); G3 parts 1 and 2 (the tree, the review panel; HISTORY 237-242); the
    figure catalogue with `figures.md` and `hxex figures` (HISTORY 243); G4 part 1, the
-   Analysis workspace (HISTORY 244); sample colours (245); several references (246); samples in order (247); tooltips on the figures' peptides and bars (248). Next: the analysis tables and click-through to Results,
-   or the rest of G3 (flat list, series review table, Results tables).
+   Analysis workspace (HISTORY 244); sample colours (245); several references (246); samples in
+   order (247); tooltips on the figures' peptides and bars (248); then (HISTORY 249-264) PySide6
+   6.12.0 excluded, the left-out column, Compute on request, the data tab with right-click to
+   spectra, the Analysis list in two sections, the overview tab, Undo in the project editor, the
+   sortable Tables grid, the flat list of spectra, and a series' spectra on pages. Next: column
+   filters in the list; the details beside the figures (a spectrum's `spectra.csv` row, a
+   series' `uptake.csv` rows) and a read-only Tables view in Results; the series review table;
+   the analysis tables. TODO (owner, 2026-11-04): panel limits for the other figures too, as for
+   the spectra pages (HISTORY 263): figures that grow with the data should wrap to rows and go
+   on over pages, e.g. the coverage maps of a kinetics run (one panel per time point).
 
 ## Risks and open decisions
 

@@ -6952,3 +6952,46 @@ CSVs or mzML if wanted.
     benchmark, equal to the full table's rows) and stay in view until the filter changes. Also:
     the background task runner ignores a gate deleted at shutdown (a window closed while it ran
     printed "Signal source has been deleted").
+
+263. **A series' spectra on pages, a long time course thinned (owner, 2026-11-04: a kinetics run
+    drew one page of 281 panels; "8 rows x 6 columns max as default in a configurable setting,
+    more replicates would wrap to next row"; plot sparsely as the read can).** Measured first
+    on the private fragment-kinetics example (62 series of 281 one-spectrum time points; 561
+    distinct times): reading, the tree, the left-out column and the list were quick (0.06-0.8
+    s); a series' spectra page took 12 s and was 18 x 214 inches; the K selection overview drew
+    561 bars with unreadable labels; the uptake page was fine. Built: `[figures] page_rows`
+    (8), `page_columns` (6) and `max_points` (48; false: every one). `series.spectra_pages`
+    thins more than `max_points` time points (controls kept) over log time with the read's
+    `_sample_log` (first and last kept; picks landing on the same scan are merged, so 39 of
+    281 here), then fills pages: a time point per row with its replicates (more than
+    `page_columns` go on over the next row; a point never split), or `page_rows` x
+    `page_columns` points of a single-replicate course (now a near square of at most 6
+    across, was 4). `hxex report` writes extra PDF pages or `<series>_spectra_<n>` files; the
+    window's spectra tab has a page list when there are several. The page header says "page n
+    of N" and "k of n time points shown, every one fitted ([figures] max_points)". The K
+    selection overview groups more than 48 time points over log time (the share over every
+    spectrum of a group; labels to three figures, every few bars labelled). Kinetics page: 1.7
+    s; the tutorial unchanged (one page, no note). Then (owner, on the targeted LC-MS run, whose time
+    points have one spectrum each and whose controls are replicated: the first page was drawn by
+    replicate, the second as a grid): the layout is decided once for the series and every page
+    keeps it, with the same width (`SpectraPage.layout`, `_layout(fixed=...)`); replicated
+    controls alone no longer make a series replicate-by-column (`_by_replicate` asks a labelled
+    time point for several replicates), so such a series fills the grid: all 1,379 series of
+    that run are one page each.
+
+264. **One m/z axis per series at every level; a plot area that holds its size (owner,
+    2026-11-04).** (1) The series pages and a time point's spectra used the series' m/z range,
+    but a single spectrum's view and the fits at each K used the spectrum's own, so the axis
+    jumped when stepping down. `series.series_mz_range` gives the pages' range (padding
+    included), and `plot_spectrum(mz_range=...)` (also through `plot_k_comparison(s)`) shows
+    it; the window passes it at every level below a series. (2) The plot area moved with the
+    intensities' digits (single-spectrum view: left edge 0.56-0.88 in, width 5.16-5.50 in over
+    ten tutorial series; the pages were steady). Intensity labels now have one decimal with the
+    power of ten once above the axis (`spectrum._IntensityFormatter`, matplotlib's public
+    `Formatter`; a first try on `ScalarFormatter` set an attribute deprecated in 3.11):
+    left edge 0.56 in for every series, width 5.49-5.50 in; pages 0.67 in throughout. Every
+    spectrum figure, `hxex report`'s included, is labelled this way.
+    (3) The review panel's arrows, stepping by series (or peptide) with the spectra tab in
+    view, go through the series' pages before the next series, and back from a first page to
+    the previous series' last page (`ResultsWorkspace._step_page`); on another tab they step
+    from series to series as before.

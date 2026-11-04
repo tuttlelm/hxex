@@ -202,7 +202,16 @@ class ResultsWorkspace(QWidget):
         self.overview_page.setToolTip("which page of the overview: as hxex report --figures "
                                       "writes them (overview)")
         self.overview_page.currentIndexChanged.connect(lambda _i: self._draw_overview())
-        for box in (self.time_axis, self.overview_page):  # as wide as their longest entry
+        # the spectra tab's page, for a series on several pages ([figures] page_rows,
+        # page_columns, max_points; owner, 2026-11-04: a kinetics run made one 214-inch page)
+        self.spectra_page = QComboBox()
+        self.spectra_page.setToolTip("which page of the series' spectra ([figures] page_rows "
+                                     "and page_columns; max_points thins a long time course)")
+        self.spectra_page.currentIndexChanged.connect(lambda _i: self._draw_spectra_page())
+        self.spectra_page.hide()
+        self._spectra_job = None  # (results, data_id, config, pages) of the series shown
+        self._land_on_last_page = False  # stepping back into a series: its last page
+        for box in (self.time_axis, self.overview_page, self.spectra_page):  # as wide as needed
             box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._overview_figures: dict[str, object] = {}  # page -> figure, for _overview_of
         self._overview_of = None  # the results those figures were drawn from
@@ -230,6 +239,8 @@ class ResultsWorkspace(QWidget):
                 panel.add_option(self.time_axis)
             if name == "overview":
                 panel.add_option(self.overview_page)
+            if name == "spectra":
+                panel.add_option(self.spectra_page)
             if self.window is not None:
                 panel.clicked.connect(
                     lambda gid: self.window.statusBar().showMessage(gid, 5000))
@@ -281,6 +292,54 @@ class ResultsWorkspace(QWidget):
         self._fill_overview_pages()
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
+
+    # --- the spectra pages of a series ---------------------------------------------------------
+
+    def _step_page(self, step: int) -> bool:
+        """With a series' spectra in view on several pages: its next (``step`` 1) or previous
+        (-1) page; False at either end (the step then goes to the next series)."""
+        item = self.tree.currentItem()
+        if self._spectra_job is None or item is None or item.data(0, KIND) not in (
+                "series", "peptide") or self.figures.currentWidget() is not self.panels.get(
+                "spectra"):
+            return False
+        at = self.spectra_page.currentIndex() + step
+        if not 0 <= at < self.spectra_page.count():
+            return False
+        self.spectra_page.setCurrentIndex(at)
+        return True
+
+    def _show_spectra_pages(self, results, data_id: int, config) -> None:
+        """The series' spectra pages: the list in the tab's bar (shown when there are several;
+        the page kept when the same series is drawn again; the last one when stepping back
+        into the series), and the chosen page drawn."""
+        from ..report.figures import series_spectra_pages
+
+        pages = series_spectra_pages(results, data_id, config)
+        same = self._spectra_job is not None and self._spectra_job[1] == data_id
+        keep = self.spectra_page.currentIndex() if same else 0
+        if not same and self._land_on_last_page:
+            keep = len(pages) - 1
+        self._land_on_last_page = False
+        self._spectra_job = (results, data_id, config, pages)
+        self.spectra_page.blockSignals(True)
+        self.spectra_page.clear()
+        for page in pages:
+            self.spectra_page.addItem(f"page {page.number} of {page.of}")
+        self.spectra_page.setCurrentIndex(min(max(keep, 0), len(pages) - 1))
+        self.spectra_page.blockSignals(False)
+        self.spectra_page.setVisible(len(pages) > 1)
+        self._draw_spectra_page()
+
+    def _draw_spectra_page(self) -> None:
+        from ..report.figures import plot_spectra_page
+
+        if self._spectra_job is None:
+            return
+        results, data_id, config, pages = self._spectra_job
+        page = pages[max(self.spectra_page.currentIndex(), 0)]
+        self.panel("spectra").draw(
+            lambda: plot_spectra_page(results, data_id, config, page))
 
     # --- the list of spectra -------------------------------------------------------------------
 
@@ -464,7 +523,7 @@ class ResultsWorkspace(QWidget):
     def _selected(self, item: QTreeWidgetItem | None, _previous=None) -> None:
         from ..report.figures import series_figures, series_kinds
         from ..report.overview import plot_k_comparison, plot_k_comparisons
-        from ..report.series import plot_series_spectra
+        from ..report.series import plot_series_spectra, series_mz_range
         from ..report.spectrum import plot_spectrum
 
         if item is None or self.results is None:
@@ -486,6 +545,8 @@ class ResultsWorkspace(QWidget):
         data_id = series.data_id
         self._show_tabs(kind)
         self._show_review(kind, payload)
+        # one m/z axis for the series at every level: its pages, a time point, a spectrum
+        mz_range = series_mz_range(results, data_id) if kind != "series" else None
 
         def uptake():
             one = dataclasses.replace(config, kinds=("uptake",))
@@ -499,10 +560,15 @@ class ResultsWorkspace(QWidget):
                 if name not in drawn:
                     panel.clear("one population in every spectrum: no population map")
                     continue
+                if name == "spectra":  # on pages: the one chosen (the first for a new series)
+                    self._show_spectra_pages(results, data_id, config)
+                    continue
                 one = dataclasses.replace(config, kinds=(name,))
                 panel.draw(lambda one=one, name=name: series_figures(results, data_id,
                                                                      one)[name])
         elif kind == "point":
+            self.spectra_page.hide()
+            self._spectra_job = None
             point = payload[2]
             rows = [s.index for s in point.spectra]
             # a near square of panels (2 x 2 for four replicates): one row of four was a wide,
@@ -517,14 +583,16 @@ class ResultsWorkspace(QWidget):
             title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
                     f"z={series.charge}, {point.label}"
             self.panel("fits at each K").draw(lambda: plot_k_comparisons(
-                ids, results, labels=labels, title=title))
+                ids, results, labels=labels, title=title, mz_range=mz_range))
             self.panel("uptake").draw(uptake)
         else:
             spectrum = payload[3]
             sid = spectrum.spectrum_id
             self.panel("spectrum").draw(lambda: plot_spectrum(
-                sid, results, show=config.show, k=config.k, corrected=config.corrected))
-            self.panel("fits at each K").draw(lambda: plot_k_comparison(sid, results))
+                sid, results, show=config.show, k=config.k, corrected=config.corrected,
+                mz_range=mz_range))
+            self.panel("fits at each K").draw(lambda: plot_k_comparison(sid, results,
+                                                                        mz_range=mz_range))
             self.panel("uptake").draw(uptake)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
         self.selection_changed.emit()
@@ -534,6 +602,14 @@ class ResultsWorkspace(QWidget):
     # --- stepping through the spectra ---------------------------------------------------------
 
     def step_spectrum(self, step: int, level: str | None = None) -> bool:
+        """The review panel's arrows: :meth:`_step`, through a series' spectra pages first when
+        stepping by series with them in view."""
+        try:
+            return self._step(step, level)
+        finally:
+            self._land_on_last_page = False  # only for the step that set it
+
+    def _step(self, step: int, level: str | None = None) -> bool:
         """Select the next (``step`` 1) or previous (-1) row of ``level`` (``'spectrum'``,
         ``'point'``, ``'series'`` or ``'peptide'``; default: the review panel's choice) in the
         tree's order, opening series on the way. From a row below ``level``, the next after the
@@ -542,6 +618,9 @@ class ResultsWorkspace(QWidget):
         if self.left_tabs.currentWidget() is self.list:  # in the list's order, as sorted
             return self.list.step(step)
         level = level or self.review.level.currentData() or "spectrum"
+        if level in ("series", "peptide") and self._step_page(step):
+            return True  # a series' next (or previous) page before the next series (owner)
+        self._land_on_last_page = step < 0 and level in ("series", "peptide")  # its last page
         depth = DEPTH[level]
         item = self.tree.currentItem()
         if item is None:

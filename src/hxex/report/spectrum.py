@@ -14,6 +14,7 @@ from collections.abc import Sequence
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.ticker import Formatter
 
 from ..controls import correct_means
 from ..picking import BinnedSet
@@ -297,6 +298,7 @@ def plot_spectrum(
     resolution_ppm: float | None = None,
     legend: bool = True,
     title: bool = True,
+    mz_range: tuple[float, float] | None = None,
 ) -> Figure:
     """Draw one spectrum. Returns the figure; nothing is shown or saved.
 
@@ -325,7 +327,9 @@ def plot_spectrum(
     ``'n_deut'``. ``residual`` adds a panel of picked minus fit. With ``ax`` the spectrum is
     drawn there, and with ``residual`` its residuals in ``rax``, which must then be given. Every
     artist has a ``gid``: ``raw``, ``picked``, ``fit``, ``band``, ``component:<rank>``,
-    ``component_band:<rank>`` and ``residual``.
+    ``component_band:<rank>`` and ``residual``. ``mz_range`` (on an m/z axis): the range shown,
+    such as its series' (:func:`hxex.report.series.series_mz_range`), so that the spectrum
+    keeps the series pages' axis.
     """
     if picked_style not in ("auto", "window", "stick"):
         raise ValueError("picked_style must be 'auto', 'window' or 'stick'")
@@ -424,6 +428,8 @@ def plot_spectrum(
                        gid="residual")
             rax.set_ylabel("residual")
     ax.set_ylabel("normalised intensity" if normalize else "intensity")
+    if not normalize:  # short labels (0.5, 1.0 with x10^6 once): the plot area keeps its size
+        ax.yaxis.set_major_formatter(_IntensityFormatter())
     if title:
         ax.set_title(_title(results, d), fontsize=9)
     if legend and own:
@@ -432,12 +438,33 @@ def plot_spectrum(
     elif legend:
         ax.legend(fontsize=7, frameon=False)
     (rax or ax).set_xlabel("m/z" if xaxis == "mz" else "deuterium level (bin)")
+    if mz_range is not None and xaxis == "mz":  # the series' range: the same at every level
+        ax.set_xlim(*mz_range)
     if own and not legend:
         try:
             fig.tight_layout()
         except Exception:  # noqa: BLE001 - layout is cosmetic
             pass
     return fig
+
+
+class _IntensityFormatter(Formatter):
+    """Intensities as ``0.0, 0.5, 1.0`` with the power of ten once above the axis (x10^6): every
+    label as wide as the others, whatever the spectrum's size, so the plot area keeps its place
+    from one spectrum to the next (owner, 2026-11-04: it moved with the digits). The power
+    comes from the axis's range as drawn."""
+
+    def _power(self) -> int:
+        lo, hi = self.axis.get_view_interval()
+        top = max(abs(lo), abs(hi))
+        return int(np.floor(np.log10(top))) if np.isfinite(top) and top > 0 else 0
+
+    def __call__(self, x, pos=None) -> str:
+        return f"{x / 10 ** self._power():.1f}"
+
+    def get_offset(self) -> str:
+        power = self._power()
+        return rf"$\times10^{{{power}}}$" if power else ""
 
 
 def _label(fit: dict, c: int, corrected: bool) -> str:

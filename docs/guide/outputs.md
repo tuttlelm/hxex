@@ -182,6 +182,16 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     area](picking-window.md#a-peaks-height-or-its-area)), so a triangle can sit below the top
     of a narrow, bright peak or above a wide, weak one: that is by design, not a mispick. The
     legend says which: "picked values: areas (height-equivalent)" or "picked values: heights";
+    the panels are laid out a time point per row, its replicates side by side (a single
+    replicate's time course fills rows instead), at most `[figures] page_rows` rows (8) of
+    `page_columns` (6) a page: more replicates of a time point go on over the next row, and a
+    series with more go on over further pages (more pages in the PDF; numbered files,
+    `<series>_spectra_1.png`, `_spectra_2.png`, ..., for PNG and SVG). A long time course
+    (a kinetics run's hundreds of scans) is drawn at no more than `[figures] max_points` time
+    points (48), spread over log time with the first and last kept (fewer when early scans lie
+    closer together than the spacing: each is drawn once); the page header says how many of
+    how many are shown. Every spectrum is still fitted and in every table; `max_points = false`
+    draws them all, over as many pages as they take;
   - **populations**: each population's mean and share, one panel per spectrum (titled as on the
     spectra page), with a last column that overlays the replicates (one marker shape per
     replicate); the star is the population-weighted mean of the spectrum. The axis reaches the

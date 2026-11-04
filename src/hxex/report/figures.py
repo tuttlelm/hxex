@@ -21,12 +21,16 @@ from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
 from .results import Results
 from .series import (
+    MAX_POINTS,
+    PAGE_COLUMNS,
+    PAGE_ROWS,
     Reference,
     plot_populations,
     plot_series_spectra,
     plot_uptake,
     series_info,
     series_rows,
+    spectra_pages,
 )
 from .spectrum import LAYERS
 
@@ -62,6 +66,12 @@ class PlotConfig:
       uptake pages); None, the default: each spectrum at its own K (the fit's choice, or the
       review's). A spectrum for which that K was not fitted (the screen skipped it) is left
       out of the populations and uptake pages, and its panel on the spectra page says so.
+    - ``page_rows``, ``page_columns``: the most rows and columns of a spectra page (8 and 6);
+      more spectra go on further pages (more than ``page_columns`` replicates of a time point
+      on over the next row).
+    - ``max_points``: the most time points a series' spectra pages draw (48; a kinetics run's
+      hundreds are thinned, spread over log time, as ``[input.scans] max_spectra`` thins a
+      read; every spectrum is still fitted and in every table); None (``false``): every one.
     """
 
     series: str | tuple[int, ...] = "flagged"
@@ -75,6 +85,9 @@ class PlotConfig:
     overview: bool = True
     residual: bool = False
     k: int | None = None
+    page_rows: int = PAGE_ROWS
+    page_columns: int = PAGE_COLUMNS
+    max_points: int | None = MAX_POINTS
 
     def __post_init__(self):
         if not isinstance(self.series, str):
@@ -96,6 +109,16 @@ class PlotConfig:
         if self.k is not None and (isinstance(self.k, bool) or int(self.k) != self.k
                                    or self.k < 1):
             raise ValueError("k must be a whole number of at least 1 (or unset)")
+        if self.max_points is False:  # max_points = false: every time point
+            object.__setattr__(self, "max_points", None)
+        for name, least in (("page_rows", 1), ("page_columns", 1), ("max_points", 2)):
+            value = getattr(self, name)
+            if value is None and name == "max_points":
+                continue
+            if isinstance(value, bool) or int(value) != value or value < least:
+                raise ValueError(f"{name} must be a whole number of at least {least}"
+                                 + (" (or false: every time point)" if name == "max_points"
+                                    else ""))
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -145,10 +168,10 @@ def series_figures(
     out: dict[str, Figure] = {}
     for kind in series_kinds(results, data_id, config):
         if kind == "spectra":
-            out[kind] = plot_series_spectra(results, data_id, show=config.show, k=config.k,
-                                            corrected=config.corrected,
-                                            residual=config.residual and "fit" in config.show
-                                            and "picked" in config.show)
+            pages = series_spectra_pages(results, data_id, config)
+            for page in pages:  # "spectra", or "spectra_1", "spectra_2", ... over pages
+                name = kind if len(pages) == 1 else f"{kind}_{page.number}"
+                out[name] = plot_spectra_page(results, data_id, config, page)
         elif kind == "populations":
             out[kind] = plot_populations(results, data_id, k=config.k,
                                          corrected=config.corrected, reference=reference)
@@ -157,6 +180,22 @@ def series_figures(
                                     scale=config.scale, corrected=config.corrected,
                                     reference=reference, k=config.k)
     return out
+
+
+def series_spectra_pages(results: Results, data_id: int, config: PlotConfig):
+    """The pages of a series' spectra under ``config``
+    (:func:`hxex.report.series.spectra_pages`)."""
+    return spectra_pages(results, data_id, page_rows=config.page_rows,
+                         page_columns=config.page_columns, max_points=config.max_points)
+
+
+def plot_spectra_page(results: Results, data_id: int, config: PlotConfig, page) -> Figure:
+    """One page of a series' spectra (:func:`series_spectra_pages`), as ``config`` draws them."""
+    return plot_series_spectra(results, data_id, rows=page.rows, show=config.show, k=config.k,
+                               corrected=config.corrected, max_columns=config.page_columns,
+                               note=page.note, layout=page.layout,
+                               residual=config.residual and "fit" in config.show
+                               and "picked" in config.show)
 
 
 def _check_k(results: Results, config: PlotConfig) -> None:
@@ -252,8 +291,11 @@ def write_figures(
         if config.format == "pdf":
             names.append(f"{stem}.pdf")
         else:
-            names += [f"{stem}_{kind}.{config.format}"
-                      for kind in series_kinds(results, data_id, config)]
+            for kind in series_kinds(results, data_id, config):
+                pages = (len(series_spectra_pages(results, data_id, config))
+                         if kind == "spectra" else 1)  # page files: <stem>_spectra_<n>
+                names += ([f"{stem}_{kind}.{config.format}"] if pages == 1 else
+                          [f"{stem}_{kind}_{n}.{config.format}" for n in range(1, pages + 1)])
     made = {"": results.settings.created if results.settings is not None else ""}
     with replace_outputs(directory, names, made=made) as written:
         if config.overview:

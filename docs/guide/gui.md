@@ -183,6 +183,11 @@ fall, and the share flagged per sample). The last two appear when the run has co
 flags. The pages are drawn when the tab is in view and kept, so moving between peptides with
 the overview open costs nothing; a review decision draws them again, since the K counts change.
 
+A series whose spectra take several pages (`[figures] page_rows` and `page_columns`; a long
+time course thinned to `max_points`, see [Outputs](outputs.md)) has a list in the spectra tab's
+bar to choose the page; only the page shown is drawn. Stepping by series with **◀ ▶** goes
+through its pages before the next series (backwards, the previous series' last page first).
+
 The uptake page has a list of its own in its bar, for how it spreads the times: the project
 file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
 linear one, or the time points evenly spaced. The session remembers the choice.

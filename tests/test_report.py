@@ -550,10 +550,11 @@ def test_grid_layout_wraps_a_single_replicate_time_course():
         return {"rows": np.arange(len(times)), "times": times, "reps": reps,
                 "time_index": np.repeat(np.arange(n_times), n_reps)}
 
-    nrows, ncols, pos, by_rep = _layout(info(24, 1), None)
-    assert (nrows, ncols, by_rep) == (6, 4, False)
-    assert pos[:5] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)]
-    assert len(set(pos)) == 24 and pos[-1] == (5, 3)
+    nrows, ncols, pos, by_rep = _layout(info(24, 1), None)  # a near square, at most 6 across
+    assert (nrows, ncols, by_rep) == (5, 5, False)
+    assert pos[:6] == [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 0)]
+    assert len(set(pos)) == 24 and pos[-1] == (4, 3)
+    assert _layout(info(48, 1), None)[:2] == (8, 6)  # a full page of a kinetics run
     nrows, ncols, pos, by_rep = _layout(info(3, 2), None)  # replicates: a row per time
     assert (nrows, ncols, by_rep) == (3, 2, True)
     assert pos == [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]

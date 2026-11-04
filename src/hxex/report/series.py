@@ -210,35 +210,146 @@ def series_info(results: Results, data_id: int) -> dict:
     }
 
 
-def _layout(info: dict, columns: int | None) -> tuple[int, int, list[tuple[int, int]], bool]:
+PAGE_ROWS, PAGE_COLUMNS = 8, 6  # the most rows and columns of a spectra page (owner)
+MAX_POINTS = 48  # the most time points a series' spectra pages draw (a kinetics run thinned)
+
+
+def _clashing(info: dict) -> bool:
+    """Whether two spectra of a series share a time point and a replicate number."""
+    pairs = list(zip(info["time_index"].tolist(), info["reps"].tolist(), strict=True))
+    return len(set(pairs)) < len(pairs)
+
+
+def _by_replicate(info: dict) -> bool:
+    """Whether a series' spectra are laid out a time point per row, a replicate per column: a
+    labelled time point (not a control) has several replicates, and no two spectra share a
+    time and a replicate number. Replicated controls alone do not count: their series fills
+    the grid (owner, 2026-11-04: a course of single spectra with replicated controls)."""
+    if _clashing(info):
+        return False
+    roles = info.get("roles", [""] * len(info["rows"]))  # none given: no controls
+    labelled = np.array([_control_role(r) is None for r in roles], dtype=bool)
+    if not labelled.any():
+        return len(np.unique(info["reps"])) > 1  # controls only: by replicate as before
+    _, counts = np.unique(np.asarray(info["time_index"])[labelled], return_counts=True)
+    return bool((counts > 1).any())
+
+
+def _layout(info: dict, columns: int | None, max_columns: int = PAGE_COLUMNS,
+            fixed: tuple | None = None) -> tuple[int, int, list[tuple[int, int]], bool]:
     """Rows, columns and the (row, column) of every spectrum of a series (in ``info`` order).
 
     With several replicates (and ``columns`` not given) a row is a time and a column a replicate,
-    unless two spectra share a time and a replicate number (warned). Otherwise the spectra, in
-    time order, fill a grid of ``columns`` columns (default: a near square of at most 4
-    columns), so that a long single-replicate time course is not one tall column. The last
-    value says whether the layout is time by replicate."""
+    unless two spectra share a time and a replicate number (warned); a time point with more
+    than ``max_columns`` replicates goes on over the next row(s). Otherwise the spectra, in time
+    order, fill a grid of ``columns`` columns (default: a near square of at most
+    ``max_columns``), so that a long single-replicate time course is not one tall column. The
+    last value says whether the layout is time by replicate. ``fixed`` (a page of
+    :func:`spectra_pages`): the series' layout, the same on every page:
+    ``('replicates', reps)`` (every replicate number of the series) or ``('grid', columns)``."""
     n = len(info["rows"])
     # a point is a time or a control role; ``time_index`` ranks them (the controls at the ends)
     points, reps = np.unique(info["time_index"]), np.unique(info["reps"])
-    pairs = list(zip(info["time_index"].tolist(), info["reps"].tolist(), strict=True))
-    if columns is None and len(reps) > 1 and len(set(pairs)) < len(pairs):
+    if fixed is not None and fixed[0] == "grid":
+        columns = int(fixed[1])
+    replicates = fixed is not None and fixed[0] == "replicates"
+    if replicates:
+        reps = np.asarray(fixed[1])
+    elif fixed is None and columns is None and len(reps) > 1 and _clashing(info):
         log.warning("%s: two spectra share a time and a replicate number; drawn in time "
                     "order, not by replicate", info.get("label", "a series"))
-    elif columns is None and len(reps) > 1:
-        pos = [(int(np.searchsorted(points, t)), int(np.searchsorted(reps, r)))
-               for t, r in zip(info["time_index"], info["reps"], strict=True)]
-        return len(points), len(reps), pos, True
+    if replicates or (fixed is None and columns is None and _by_replicate(info)):
+        ncols = min(len(reps), max(1, max_columns))
+        lines = math.ceil(len(reps) / ncols)  # rows a time point takes
+        pos = []
+        for t, r in zip(info["time_index"], info["reps"], strict=True):
+            at = int(np.searchsorted(reps, r))
+            pos.append((int(np.searchsorted(points, t)) * lines + at // ncols, at % ncols))
+        return len(points) * lines, ncols, pos, True
     if columns is not None and columns < 1:
         raise ValueError("columns must be at least 1")
-    ncols = columns or max(1, min(4, math.ceil(math.sqrt(n))))
-    ncols = min(ncols, n)
+    ncols = columns or max(1, min(max_columns, math.ceil(math.sqrt(n))))
+    if fixed is None:
+        ncols = min(ncols, n)  # a page of a series keeps the series' width
     return math.ceil(n / ncols), ncols, [(i // ncols, i % ncols) for i in range(n)], False
 
 
-def _grid(info: dict, size: tuple[float, float], columns: int | None, residual: bool = False):
+@dataclasses.dataclass(frozen=True)
+class SpectraPage:
+    """One page of a series' spectra (:func:`spectra_pages`): ``rows``, the spectra drawn
+    (positions in the results), ``number`` and ``of`` (its place among the pages), and the time
+    points ``shown`` of the series' ``points`` (fewer when ``max_points`` thinned them)."""
+
+    rows: tuple[int, ...]
+    number: int
+    of: int
+    shown: int
+    points: int
+    layout: tuple = ()  # the series' layout, for :func:`_layout`'s ``fixed``
+
+    @property
+    def note(self) -> str:
+        """What the page header says of it ('' for a single page of every time point)."""
+        parts = []
+        if self.of > 1:
+            parts.append(f"page {self.number} of {self.of}")
+        if self.shown < self.points:
+            parts.append(f"{self.shown} of {self.points} time points shown, every one fitted "
+                         "([figures] max_points)")
+        return "; ".join(parts)
+
+
+def spectra_pages(results: Results, data_id: int, *, page_rows: int = PAGE_ROWS,
+                  page_columns: int = PAGE_COLUMNS,
+                  max_points: int | None = MAX_POINTS) -> list[SpectraPage]:
+    """The pages a series' spectra are drawn on (owner, 2026-11-04: a kinetics run made one page
+    of 281 panels, 214 inches tall). First, more than ``max_points`` time points (not the
+    controls, always kept) are thinned to that many, spread over log time with the first and
+    last kept, as ``[input.scans] max_spectra`` thins a read (None: every one). Then the points
+    fill pages of ``page_rows`` rows of ``page_columns``: with replicates, a time point per row
+    (more replicates than columns go on over the next row; a point is never split between
+    pages); without, ``page_rows`` x ``page_columns`` time points a page."""
+    from ..io.mzml import _sample_log
+
+    if page_rows < 1 or page_columns < 1:
+        raise ValueError("page_rows and page_columns must be at least 1")
+    info = series_info(results, data_id)
+    order = np.argsort(info["time_index"], kind="stable")
+    rows, index = np.asarray(info["rows"])[order], np.asarray(info["time_index"])[order]
+    roles = np.asarray(info["roles"]).astype(str)[order]
+    times = np.asarray(info["times"], dtype=float)[order]
+    points = list(dict.fromkeys(index.tolist()))  # in order, controls at the ends
+    control = {p for p in points if _control_role(roles[index == p][0]) is not None}
+    timed = [p for p in points if p not in control]
+    keep = set(points)
+    if max_points is not None and len(timed) > max_points:
+        at = np.array([times[index == p][0] for p in timed])
+        keep = control | {timed[i] for i in _sample_log(at, max_points)}
+    chosen = [p for p in points if p in keep]
+    by_point = {p: [int(r) for r in rows[index == p]] for p in chosen}
+    pages: list[list[int]] = []
+    if _by_replicate(info):  # a time point per row: whole points to a page
+        reps = tuple(int(r) for r in np.unique(info["reps"]))
+        layout = ("replicates", reps)
+        lines = math.ceil(len(reps) / page_columns)
+        per_page = max(1, page_rows // lines)
+        for start in range(0, len(chosen), per_page):
+            pages.append([r for p in chosen[start:start + per_page] for r in by_point[p]])
+    else:  # the grid filled, in time order: the same width on every page
+        drawn = [r for p in chosen for r in by_point[p]]
+        columns = max(1, min(page_columns, math.ceil(math.sqrt(len(drawn)))))
+        layout = ("grid", columns)
+        per_page = page_rows * columns
+        pages = [drawn[start:start + per_page] for start in range(0, len(drawn), per_page)]
+    pages = pages or [[]]
+    return [SpectraPage(tuple(page), n + 1, len(pages), len(chosen), len(points), layout)
+            for n, page in enumerate(pages)]
+
+
+def _grid(info: dict, size: tuple[float, float], columns: int | None, residual: bool = False,
+          max_columns: int = PAGE_COLUMNS, fixed: tuple | None = None):
     """The figure and, for each spectrum, its axes (and its residual axes below it, or None)."""
-    nrows, ncols, positions, _ = _layout(info, columns)
+    nrows, ncols, positions, _ = _layout(info, columns, max_columns, fixed)
     height = size[1] * (1.3 if residual else 1.0)
     fig = Figure(figsize=(size[0] * ncols, height * nrows))
     grid = fig.add_gridspec(nrows, ncols)
@@ -275,6 +386,19 @@ def _series_range(results: Results, spectrum_ids: Sequence[str], axes) -> tuple[
     return lo, hi
 
 
+def series_mz_range(results: Results, data_id: int,
+                    padding: float = 0.1) -> tuple[float, float] | None:
+    """The m/z range a series' spectra pages draw (:func:`plot_series_spectra`): the series'
+    expected range with ``padding`` times its width on each side; None without a picked table.
+    Given to a single spectrum's figures, they keep the series' axis (owner, 2026-11-04)."""
+    ids = [str(results.fit.spectrum_id[i]) for i in series_rows(results, data_id)]
+    lo, hi = _series_range(results, ids, [])
+    if not (np.isfinite(lo) and hi > lo):
+        return None
+    pad = padding * (hi - lo)
+    return lo - pad, hi + pad
+
+
 def plot_series_spectra(
     results: Results,
     data_id: int,
@@ -287,6 +411,9 @@ def plot_series_spectra(
     cell: tuple[float, float] = (4.5, 3.0),
     padding: float = 0.1,
     rows: Sequence[int] | None = None,
+    max_columns: int = PAGE_COLUMNS,
+    note: str = "",
+    layout: tuple | None = None,
     **kwargs,
 ) -> Figure:
     """A grid of spectra: with replicates a row per time and a column per replicate, otherwise
@@ -297,8 +424,11 @@ def plot_series_spectra(
     same m/z range: the series' expected range (the predicted m/z of the picked bins of all its
     spectra; without a picked table, the panels' own ranges together) with ``padding`` times its
     width on each side. ``rows`` (the spectra's positions in the results) draws only those
-    spectra of the series, one time point's replicates say (hxex's window), on the m/z range of
-    the whole series, so that they compare with the full page."""
+    spectra of the series, one time point's replicates or one page of
+    :func:`spectra_pages` say, on the m/z range of the whole series, so that they compare with
+    the full page; ``max_columns``: the most columns (:func:`_layout`); ``note``: said after the
+    series' name in the page header (which page, how many time points); ``layout``: a page's
+    :attr:`SpectraPage.layout`, so every page of a series is laid out alike."""
     info = series_info(results, data_id)
     every = [str(results.fit.spectrum_id[i]) for i in info["rows"]]
     if rows is not None:
@@ -307,7 +437,7 @@ def plot_series_spectra(
             raise ValueError(f"none of the rows {list(rows)} is a spectrum of series {data_id}")
         info = {k: (v[keep] if isinstance(v, np.ndarray) and len(v) == len(keep) else v)
                 for k, v in info.items()}
-    fig, cells = _grid(info, cell, columns, residual)
+    fig, cells = _grid(info, cell, columns, residual, max_columns, layout or None)
     unread = None
     if "raw" in show and results.spectra is None and results.loader is not None:
         # the series' raw spectra in one read, not one read per panel
@@ -345,7 +475,7 @@ def plot_series_spectra(
     # one legend for the page, naming every layer drawn (the panels have none)
     handles = page_legend_handles(drawn_layers(ax for ax, _ in cells.values()),
                                   peak_measure(results))
-    _page_header(fig, info["label"], handles)
+    _page_header(fig, f"{info['label']} ({note})" if note else info["label"], handles)
     return fig
 
 

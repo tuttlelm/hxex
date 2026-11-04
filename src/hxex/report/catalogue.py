@@ -160,11 +160,14 @@ KINDS: tuple[FigureKind, ...] = (
         _RUN_PAGE, (_OVERVIEW,),
         data="the controls and quality pages only when the results have controls and flags"),
     FigureKind(
-        "series_spectra", "Spectra of a series", REPORT, ("{series}", "{series}_spectra"),
+        "series_spectra", "Spectra of a series", REPORT,
+        ("{series}", "{series}_spectra", "{series}_spectra_{page}"),
         "raw data, picked values and the fit of every spectrum of a series, with the picking "
-        "window shaded", _RUN_PAGE, (_kinds_include("spectra"),), data=_SERIES_DATA,
+        "window shaded, on pages of [figures] page_rows by page_columns (more time points than "
+        "max_points thinned)", _RUN_PAGE, (_kinds_include("spectra"),), data=_SERIES_DATA,
         changed_by=("[figures] series", "[figures] show", "[figures] residual",
-                    "[figures] k", "[figures] corrected")),
+                    "[figures] k", "[figures] corrected", "[figures] page_rows",
+                    "[figures] page_columns", "[figures] max_points")),
     FigureKind(
         "series_populations", "Populations of a series", REPORT,
         ("{series}", "{series}_populations"),
