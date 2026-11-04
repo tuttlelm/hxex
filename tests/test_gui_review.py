@@ -258,3 +258,42 @@ def test_back_and_forward_step_by_the_level_chosen(qtbot, window_on):
     assert page.tree.currentItem() is series.child(2)  # nothing after it: no move
     assert page.step_spectrum(-1, "point") and page.tree.currentItem() is series.child(1)
     assert [level.itemData(i) for i in range(level.count())] == ["spectrum", "point", "series"]
+
+
+def test_a_review_table_saved_elsewhere_is_read_again(qtbot, window_on):
+    """The review table edited in the Tables view or a spreadsheet: the results are read again
+    with it, at the same place (owner); the review panel's own decisions are not read again."""
+    import csv
+
+    window, project, open_ = window_on
+    page = open_(project)
+    series, leaf = _first_spectrum(page)
+    page.tree.setCurrentItem(leaf)
+    page.review.decide(status="rejected")  # makes the table and names it: read once
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    table = project.parent / "user_review_table.csv"
+    assert table.exists()
+    qtbot.waitUntil(lambda: bool(window.review_watcher.files()), timeout=10000)
+    loads = []
+    real = window.open_results
+    window.open_results = lambda path: loads.append(path) or real(path)
+    # a decision in the panel: written, but not read again
+    series, leaf = _first_spectrum(window.results_page)
+    window.results_page.tree.setCurrentItem(leaf.parent().child(1))
+    window.results_page.review.decide(status="accepted")
+    qtbot.wait(800)
+    assert loads == []
+    # the same table changed elsewhere: read again, at the same place
+    chosen = window.results_page.selection()
+    with table.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.reader(fh))
+    head = rows[0]
+    target = rows[-1]
+    target[head.index("review_status")] = "rejected"
+    with table.open("w", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerows(rows)
+    qtbot.waitUntil(lambda: bool(loads) and not window.loading, timeout=30000)
+    results = window.results_page.results
+    i = results.find(target[head.index("spectrum_id")])
+    assert results.review_status[i] == "rejected"
+    assert window.results_page.selection() == chosen

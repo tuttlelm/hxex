@@ -11,7 +11,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import (
+    QByteArray,
+    QFileSystemWatcher,
+    QObject,
+    QSettings,
+    Qt,
+    QThreadPool,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
@@ -219,6 +229,15 @@ class MainWindow(QMainWindow):
         self._analysis_text: dict | None = None  # the [analysis] the tree's 'left out' follows
         # the review table as the results shown read it (gui.review.table_stamp)
         self.results_review_stamp: tuple | None = None
+        # the review table, watched: saved from the Tables view or a spreadsheet, the results
+        # are read again with it (owner, 2026-11-04); the review panel's own writes update the
+        # stamp, so they are not read again
+        self.review_watcher = QFileSystemWatcher(self)
+        self._review_settle = QTimer(self)  # a save can report several changes: once settled
+        self._review_settle.setSingleShot(True)
+        self._review_settle.setInterval(300)
+        self._review_settle.timeout.connect(self._review_table_changed)
+        self.review_watcher.fileChanged.connect(lambda _path: self._review_settle.start())
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace(self)
         # settings that list samples offer the samples of the results open
@@ -515,6 +534,7 @@ class MainWindow(QMainWindow):
     def _results_loaded(self, results, analysis, left, stamp, path: Path) -> None:
         self.results_path = path
         self.results_review_stamp = stamp
+        self._watch_review_table()
         if path == self.project:
             self._view_settings = self._figure_and_review_settings()
             self._analysis_text = self._figure_and_review_settings(("analysis",))
@@ -579,6 +599,29 @@ class MainWindow(QMainWindow):
             return None
         return {"values": {k: v for k, v in values.items() if k.split(".")[0] in keep},
                 "tables": sorted(n for n in tables if n.split(".")[0] in keep)}
+
+    def _watch_review_table(self) -> None:
+        """Watch the review table of the project whose results are shown (none otherwise)."""
+        if self.review_watcher.files():
+            self.review_watcher.removePaths(self.review_watcher.files())
+        stamp = self.results_review_stamp
+        if self.project is not None and self.results_path == self.project and stamp \
+                and stamp[1] is not None:
+            self.review_watcher.addPath(stamp[0])
+
+    def _review_table_changed(self) -> None:
+        """The review table changed on disk: unless the review panel wrote it (its decisions are
+        in the results already), the results are read again with it, at the same place."""
+        stamp = table_stamp(self.project)
+        if stamp and stamp[1] is not None and stamp[0] not in self.review_watcher.files():
+            self.review_watcher.addPath(stamp[0])  # a file replaced is no longer watched
+        if self.project is None or self.results_path != self.project or self.loading \
+                or stamp == self.results_review_stamp:
+            return
+        log.info("the review table changed: the results are read again with it")
+        self._pending_selection = {**self.results_page.selection(),
+                                   **self.results_page.view_settings()}
+        self.open_results(self.project)
 
     def _project_file_changed(self) -> None:
         """The project file changed: when the results shown are the project's and its

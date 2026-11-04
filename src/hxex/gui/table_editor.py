@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -26,8 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +51,59 @@ def _stamp(path: Path) -> tuple[int, int] | None:
     except OSError:
         return None
     return stat.st_mtime_ns, stat.st_size
+
+
+class TableModel(QAbstractTableModel):
+    """The editor's table for the grid: its rows in the order shown (``order``, indices into
+    ``table.rows``), edited in place. A model, not a cell object per value: a review table of
+    26,000 spectra and 43 columns took 4-5 s to show and again for every sort (owner: a click
+    during it landed on another header)."""
+
+    def __init__(self, editor: TableEditor):
+        super().__init__(editor)
+        self.editor = editor
+
+    @property
+    def table(self) -> Table | None:
+        return self.editor.table
+
+    def rowCount(self, parent=QModelIndex()):  # noqa: N802, B008 - Qt's name and signature
+        return 0 if parent.isValid() or self.table is None else len(self.editor._order)
+
+    def columnCount(self, parent=QModelIndex()):  # noqa: N802, B008 - Qt's name and signature
+        return 0 if parent.isValid() or self.table is None else len(self.table.columns)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or role not in (Qt.ItemDataRole.DisplayRole,
+                                               Qt.ItemDataRole.EditRole):
+            return None
+        return self.table.rows[self.editor._order[index.row()]][index.column()]
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):  # noqa: N802 - Qt's name
+        if not index.isValid() or role != Qt.ItemDataRole.EditRole:
+            return False
+        row = self.table.rows[self.editor._order[index.row()]]
+        if row[index.column()] == str(value):
+            return False
+        row[index.column()] = str(value)
+        self.dataChanged.emit(index, index, [role])
+        self.editor._changed()
+        return True
+
+    def flags(self, index):
+        return (Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsEditable)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            return self.table.columns[section] if self.table is not None else None
+        return str(section + 1)
+
+    def refresh(self) -> None:
+        self.beginResetModel()
+        self.endResetModel()
 
 
 class TableEditor(QWidget):
@@ -77,8 +130,19 @@ class TableEditor(QWidget):
         self.problem.setWordWrap(True)
         self.problem.setStyleSheet("color: #b00020;")
         self.problem.hide()
-        self.grid = QTableWidget()
-        self.grid.itemChanged.connect(self._edited)
+        # a click on a column's header sorts the view (owner, 2026-11-04); the file keeps its
+        # own order. The header no longer selects the column (a cell in it does, for removing)
+        self._order: list[int] = []  # the table's rows in the order shown
+        self._sort: tuple[int, bool] | None = None  # (column, ascending)
+        self.model = TableModel(self)
+        self.grid = QTableView()
+        self.grid.setModel(self.model)
+        self.grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._sized = False  # the columns fitted to their contents once per table
+        header = self.grid.horizontalHeader()
+        header.sectionPressed.disconnect()  # Qt's own: select the column
+        header.sectionClicked.connect(self._sort_by)
+        header.setSortIndicatorShown(True)
         self.buttons = {}
         bar = QHBoxLayout()
         for name, text, tip, slot in (
@@ -89,7 +153,7 @@ class TableEditor(QWidget):
                 ("add_column", "Add a column…", "a column of your own (hxex keeps it)",
                  self.add_column),
                 ("remove_column", "Remove the selected columns",
-                 "the columns of the selected cells (click a column's header to select it)",
+                 "the columns of the selected cells (select a cell in each)",
                  self.remove_columns)):
             button = QPushButton(text)
             button.setToolTip(tip)
@@ -149,6 +213,7 @@ class TableEditor(QWidget):
             self.watcher.removePaths(self.watcher.files())
         self.kind, self.path, self.project = kind, path, project
         self.modified = False
+        self._sized = False  # another table: its columns fitted to it
         self.problem.hide()
         if kind is None or path is None:
             self.table = None
@@ -184,20 +249,23 @@ class TableEditor(QWidget):
     # --- the grid --------------------------------------------------------------------------
 
     def _fill(self) -> None:
-        self.grid.blockSignals(True)
-        if self.table is None:
-            self.grid.setRowCount(0)
-            self.grid.setColumnCount(0)
-        else:
-            self.grid.setColumnCount(len(self.table.columns))
-            self.grid.setHorizontalHeaderLabels(self.table.columns)
-            self.grid.setRowCount(len(self.table.rows))
-            for r, row in enumerate(self.table.rows):
-                for c, value in enumerate(row):
-                    self.grid.setItem(r, c, QTableWidgetItem(value))
-            self.grid.resizeColumnsToContents()
-        self.grid.blockSignals(False)
+        self._apply_sort()
+        self.model.refresh()
+        if self.table is not None and not self._sized:
+            self.grid.resizeColumnsToContents()  # the rows in view: quick at any size
+            self._sized = True
         self._enable()
+
+    def cell(self, row: int, column: int) -> str:
+        """The value shown at ``row`` (in the order shown) and ``column``."""
+        return self.model.data(self.model.index(row, column))
+
+    def set_cell(self, row: int, column: int, value: str) -> None:
+        """Type ``value`` into the cell at ``row`` (in the order shown) and ``column``."""
+        self.model.setData(self.model.index(row, column), value)
+
+    def _selected_rows(self) -> list[int]:
+        return sorted({i.row() for i in self.grid.selectionModel().selectedIndexes()})
 
     def _enable(self) -> None:
         has = self.table is not None
@@ -206,9 +274,32 @@ class TableEditor(QWidget):
         self.buttons["save"].setEnabled(has and self.modified)
         self.buttons["revert"].setEnabled(has and self.modified)
 
-    def _edited(self, item: QTableWidgetItem) -> None:
-        self.table.rows[item.row()][item.column()] = item.text()
-        self._changed()
+    def _sort_by(self, column: int) -> None:
+        """Sort the view by ``column``; a second click on it reverses the order."""
+        ascending = not (self._sort is not None and self._sort == (column, True))
+        self._sort = (column, ascending)
+        self._fill()
+
+    def _apply_sort(self) -> None:
+        """The order the rows are shown in: the file's, or by the sorted column (numbers as
+        numbers when every value of the column is one; empty cells last either way)."""
+        n = len(self.table.rows) if self.table is not None else 0
+        self._order = list(range(n))
+        header = self.grid.horizontalHeader()
+        if self._sort is None or self.table is None or self._sort[0] >= len(self.table.columns):
+            header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+            return
+        column, ascending = self._sort
+        values = [self.table.rows[i][column].strip() for i in range(n)]
+        filled = [i for i in range(n) if values[i]]
+        try:
+            keys = {i: float(values[i]) for i in filled}
+        except ValueError:
+            keys = {i: values[i].lower() for i in filled}
+        filled.sort(key=lambda i: keys[i], reverse=not ascending)
+        self._order = filled + [i for i in range(n) if not values[i]]
+        header.setSortIndicator(column, Qt.SortOrder.AscendingOrder if ascending
+                                else Qt.SortOrder.DescendingOrder)
 
     def _changed(self) -> None:
         self.modified = True
@@ -218,10 +309,11 @@ class TableEditor(QWidget):
         self.table.rows.append([""] * len(self.table.columns))
         self._fill()
         self._changed()
-        self.grid.setCurrentCell(len(self.table.rows) - 1, 0)
+        self.grid.setCurrentIndex(
+            self.model.index(self._order.index(len(self.table.rows) - 1), 0))
 
     def remove_rows(self) -> None:
-        rows = sorted({i.row() for i in self.grid.selectedIndexes()}, reverse=True)
+        rows = sorted({self._order[r] for r in self._selected_rows()}, reverse=True)
         for r in rows:
             del self.table.rows[r]
         if rows:
@@ -230,12 +322,16 @@ class TableEditor(QWidget):
 
     def remove_columns(self) -> None:
         """Remove the columns of the selected cells, after asking (their contents go too)."""
-        columns = sorted({i.column() for i in self.grid.selectedIndexes()})
+        columns = sorted({i.column() for i in self.grid.selectionModel().selectedIndexes()})
         if not columns:
             return
         names = [self.table.columns[c] or f"(column {c + 1}, no name)" for c in columns]
         if not self.ask_remove_columns(names):
             return
+        if self._sort is not None and self._sort[0] in columns:
+            self._sort = None  # its column is gone
+        elif self._sort is not None:
+            self._sort = (self._sort[0] - sum(c < self._sort[0] for c in columns), self._sort[1])
         for c in reversed(columns):
             del self.table.columns[c]
             for row in self.table.rows:

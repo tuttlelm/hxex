@@ -6922,3 +6922,20 @@ CSVs or mzML if wanted.
     session and the file. If the file changed by other means since (a text editor, `hxex
     set`, the review panel naming the review table), Undo refuses, says so, and starts afresh
     from there. No "are you sure" questions (they teach clicking through).
+
+261. **The review table saved elsewhere reaches the Results; the Tables grid sorts by its
+    headers (owner, 2026-11-04).** An edit of the review table saved in the Tables view (or a
+    spreadsheet) did not reach the Results tree until the results were opened again. The window
+    now watches the review table of the project whose results it shows
+    (`MainWindow.review_watcher`, settled 300 ms) and reads the results again, at the same
+    place, when its stamp (`gui.review.table_stamp`) differs from the one the results were read
+    with; the review panel's own writes update that stamp, so they are not read again. The
+    Tables grid (every user table) is sorted by a click on a column's header, again for the
+    reverse (numbers as numbers when the whole column is, empty cells last); only the view: the
+    file keeps its order when saved (`TableEditor._order`). The header no longer selects its
+    column; removing columns takes a selected cell in each. Then (owner: a sort click landed on another
+    header when the pointer moved meanwhile, as the double click had): the grid made one cell
+    object per value and rebuilt them all on every sort, freezing the window, so queued
+    pointer events went to the header afterwards; the benchmark's review table (26,191 rows x
+    43 columns) took 4.9 s to open and 4.4 s per sort. It is now a model and view
+    (`TableModel`, a `QTableView`): 1.2 s to open (mostly reading the file), 0.02 s per sort.

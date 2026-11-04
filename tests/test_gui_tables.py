@@ -139,7 +139,7 @@ def test_a_new_table_is_made_named_in_the_project_and_edited(tables_view):
     assert editor.table.columns[:3] == ["sample", "peptide", "start_seq"]
     editor.add_row()
     for c, value in enumerate(["WT", "AAAK", "1", "4", "2", "", "", ""]):
-        editor.grid.item(0, c).setText(value)
+        editor.set_cell(0, c, value)
     assert editor.modified and editor.save() and not editor.modified
     assert read_table(path).rows == [["WT", "AAAK", "1", "4", "2", "", "", ""]]
 
@@ -152,7 +152,7 @@ def test_save_checks_the_table_and_asks_before_writing_a_problem(tables_view):
     view.refresh()
     editor.add_row()
     for c, value in enumerate(["mutant", "AAAK", "1", "4", "2"]):  # not a run's sample
-        editor.grid.item(0, c).setText(value)
+        editor.set_cell(0, c, value)
     assert not editor.save() and "mutant" in editor.problem.text()
     assert read_table(path).rows == [] and editor.modified  # not written, edits kept
     editor.answers["anyway"] = True
@@ -201,8 +201,8 @@ def test_a_held_file_is_reported_and_the_edits_kept(tables_view, monkeypatch):
     view.new_table(project.parent / "user_review_table.csv")
     view.refresh()
     editor.add_row()
-    editor.grid.item(0, 0).setText("s1")
-    editor.grid.item(0, 1).setText("rejected")
+    editor.set_cell(0, 0, "s1")
+    editor.set_cell(0, 1, "rejected")
 
     def locked(src, dst):
         raise PermissionError(13, "in use")
@@ -244,16 +244,51 @@ def test_selected_columns_are_removed_after_asking(tables_view):
     editor.add_column("my notes")
     editor.add_column("scratch")
     editor.add_row()
-    editor.grid.item(0, 0).setText("s1")
-    editor.grid.item(0, 4).setText("keep me")
+    editor.set_cell(0, 0, "s1")
+    editor.set_cell(0, 4, "keep me")
     editor.answers["remove columns"] = False
-    editor.grid.selectColumn(5)
+    editor.grid.setCurrentIndex(editor.model.index(0, 5))  # a cell of the column
     editor.buttons["remove_column"].click()
     assert editor.table.columns[-1] == "scratch"  # asked, and the answer was no
     editor.answers["remove columns"] = True
-    editor.grid.selectColumn(5)
+    editor.grid.setCurrentIndex(editor.model.index(0, 5))
     editor.buttons["remove_column"].click()
     assert editor.table.columns == ["spectrum_id", "review_status", "review_K", "note",
                                     "my notes"]
     assert editor.table.rows == [["s1", "", "", "", "keep me"]]
     assert editor.save() and read_table(path).columns[-1] == "my notes"
+
+
+def test_a_header_click_sorts_the_view_not_the_file(tables_view, qtbot):
+    """Sortable by a column's header (owner): numbers as numbers, empty cells last, a second
+    click reverses; edits and removals reach the right rows; the file keeps its order."""
+    from PySide6.QtCore import QPoint, Qt
+
+    view, project = tables_view
+    editor = view.editor
+    view.show_table("review.table")
+    path = view.new_table(project.parent / "review.csv")
+    view.refresh()
+    for sid, k in (("b", "2"), ("a", ""), ("c", "10"), ("d", "1")):
+        editor.add_row()
+        r = editor._order.index(len(editor.table.rows) - 1)
+        editor.set_cell(r, 0, sid)
+        editor.set_cell(r, 2, k)
+    assert editor.save()
+    header = editor.grid.horizontalHeader()
+    qtbot.mouseClick(header.viewport(), Qt.MouseButton.LeftButton,
+                     pos=QPoint(header.sectionViewportPosition(2) + 5, 5))
+    shown = [editor.cell(r, 0) for r in range(editor.model.rowCount())]
+    assert shown == ["d", "b", "c", "a"]  # 1, 2, 10 as numbers; the empty K last
+    picked = editor.grid.selectionModel().selectedIndexes()
+    assert not picked or {i.column() for i in picked} != {2}  # the header selected nothing
+    assert header.sortIndicatorSection() == 2
+    editor._sort_by(2)  # again: reversed, empty still last
+    assert [editor.cell(r, 0) for r in range(4)] == ["c", "b", "d", "a"]
+    # an edit and a removal reach the row shown, and the file keeps its own order
+    editor.set_cell(0, 3, "checked")  # c's note
+    editor.grid.selectRow(1)  # b
+    editor.buttons["remove"].click()
+    assert editor.save()
+    assert [row[0] for row in read_table(path).rows] == ["a", "c", "d"]
+    assert read_table(path).rows[1][3] == "checked"

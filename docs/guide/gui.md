@@ -106,9 +106,12 @@ and Thermo files) or the table of files (the folder formats), the retention-time
 the user review table. Choose one on the left to edit it as a grid.
 
 - Type in a cell to change it; **Add a row**, **Remove the selected rows**, **Add a column**,
-  and **Remove the selected columns** do what they say (click a column's header to select the
-  whole column; removing one asks first). Columns of your own are kept (*hxex* ignores the
-  ones it does not read), and the columns keep their order.
+  and **Remove the selected columns** do what they say (select a cell in each column to remove;
+  removing one asks first). Columns of your own are kept (*hxex* ignores the ones it does not
+  read), and the columns keep their order.
+- Click a column's header to sort the rows by it (numbers as numbers, empty cells last); click
+  it again for the reverse order. Sorting changes only what you see: the file keeps its own
+  order when saved.
 - Changes are kept until you press **Save**; **Revert** goes back to the file. Leaving a table,
   the project, or the window with unsaved changes asks first.
 - **Save** checks the table as *hxex* reads it (a sample of the peptide table must be one of
@@ -205,7 +208,8 @@ spreadsheet ([Excluding spectra](excluding-spectra.md)): its `review_status`, `r
 has no review table yet, the first decision makes `user_review_table.csv` beside the project
 file (a copy of the results' spectra table) and names it under `[review]`. The tree, the counts,
 and the figures show the decision at once, and `hxex report` and `hxex analyse` read it as they
-read a table you typed.
+read a table you typed. When the review table is changed another way (saved in **Tables**, or
+in a spreadsheet), the window reads the results again with it, at the same place in the tree.
 
 Decisions need the project file: open the results through it (**File > Open project file**).
 A table open in a spreadsheet cannot be written (Excel locks it on Windows): the panel says so
