@@ -479,10 +479,14 @@ def test_run_info_and_report(tmp_path, capsys):
     assert cli.main(["info", "--verify", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     for line in ("project        cli", "input          mzml", "measurements   6",
-                 "selected K     1: 6", "bootstrap      yes", "pending        nothing",
+                 "selected K     1: 6", "pending        nothing",
                  "review         none", "checksums      ok", "bin values     heights ("):
         assert line in info
     assert "replaced" not in info and "generations" not in info
+    # what the bootstraps cover (owner: "yes" did not say whether a K was bootstrapped for
+    # every spectrum, as the K = 2 comparisons of residues need)
+    line = next(x for x in info.splitlines() if x.startswith("bootstrap"))
+    assert "at each spectrum's chosen K" in line and "none at a fixed K" in line
     assert cli.main(["report", str(tmp_path / "out"), "--figures", str(tmp_path / "f"),
                      "--series", "all", "--format", "png"]) == 0
     assert any(p.suffix == ".png" for p in (tmp_path / "f").iterdir())
@@ -1945,3 +1949,31 @@ def test_a_program_runs_hxex_with_progress_records_and_stops_it(tmp_path):
                if line.startswith(cli.PROGRESS_PREFIX)]
     assert records and records[-1]["event"] == "done"
     assert {"stage", "fraction", "overall", "elapsed", "left"} <= set(records[0])
+
+
+def test_info_says_what_the_bootstraps_cover():
+    """Each fixed K bootstrapped, and for how many spectra (a review's chosen K: only those)."""
+    from types import SimpleNamespace
+
+    from hxex.cli import _bootstrap_text
+
+    def boot(n_ok):
+        return SimpleNamespace(n_success=np.array(n_ok))
+
+    class Bundle:
+        def __init__(self, chosen, fixed):
+            self.manifest = {"configs": {"bootstrap": {"n_boot": 20}}}
+            self.chosen, self.fixed = chosen, fixed
+
+        def bootstrap_ks(self):
+            return sorted(self.fixed)
+
+        def bootstrap(self, k=None):
+            return self.chosen if k is None else self.fixed.get(k)
+
+    assert _bootstrap_text(Bundle(None, {}), 4) == "none"
+    only = _bootstrap_text(Bundle(boot([20, 20, 20, 20]), {}), 4)
+    assert only.startswith("at each spectrum's chosen K, 20 resamples; none at a fixed K")
+    both = _bootstrap_text(Bundle(boot([20] * 4), {1: boot([20] * 4), 2: boot([20, 0, 0, 20])}), 4)
+    assert both == ("at each spectrum's chosen K, 20 resamples; at K = 1 for every spectrum; "
+                    "at K = 2 for 2 of 4 spectra (chosen in the review)")

@@ -1537,6 +1537,31 @@ def _promotion_text(controls: dict | None) -> str:
     return "; " + ", ".join(parts) if parts else ""
 
 
+def _bootstrap_text(bundle, m: int) -> str:
+    """What the bundle's bootstraps cover (owner, 2026-11-04: "yes" did not say whether a K was
+    bootstrapped for every spectrum, as the residue level's K = 2 comparisons need): the one
+    at each spectrum's chosen K, and each fixed K with the spectra it covers."""
+    configs = bundle.manifest.get("configs", {})
+    n_boot = (configs.get("bootstrap") or {}).get("n_boot")
+    parts = []
+    chosen = bundle.bootstrap()
+    if chosen is not None:
+        covered = int((np.asarray(chosen.n_success) > 0).sum())
+        parts.append("at each spectrum's chosen K" + (f", {n_boot} resamples" if n_boot else "")
+                     + ("" if covered == m else f" ({covered} of {m} spectra)"))
+    for k in bundle.bootstrap_ks():
+        fixed = bundle.bootstrap(k)
+        covered = int((np.asarray(fixed.n_success) > 0).sum()) if fixed is not None else 0
+        parts.append(f"at K = {k} for " + ("every spectrum" if covered == m else
+                                            f"{covered} of {m} spectra (chosen in the review)"))
+    if not parts:
+        return "none"
+    if not bundle.bootstrap_ks():
+        parts.append("none at a fixed K ([run.bootstrap] ks; the K = 2 comparisons of residues "
+                     "need K = 2)")
+    return "; ".join(parts)
+
+
 def cmd_info(args) -> int:
     from .io import generations, open_bundle
 
@@ -1577,7 +1602,7 @@ def cmd_info(args) -> int:
              + (" (and K = 1 for the controls, for the back-exchange correction)"
                 if 1 in fit.k_values and 1 not in fit.config.k_values else "")),
             ("selected K", ", ".join(f"{k}: {n}" for k, n in sorted(ks.items()))),
-            ("bootstrap", "yes" if b.bootstrap() is not None else "no"),
+            ("bootstrap", _bootstrap_text(b, len(fit))),
             ("controls", ("yes" if b.has("controls") else "no")
              + _promotion_text(run_config.get("controls"))),
             ("roles", _role_counts_text(fit)),

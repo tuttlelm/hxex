@@ -42,7 +42,9 @@ summed. See [Input formats](inputs.md).
   theoretical value) and are flagged (`control_fallback`).
 - `[run.bootstrap]`: standard errors and intervals. The analysis' choice between one and two
   populations needs the fixed-K bootstraps, `ks = "all"` or `ks = [1, 2]`: without them nearly
-  every residue passes the choice, and the analysis warns.
+  every residue passes the choice, and the analysis warns. `hxex info` says which were made: its
+  `bootstrap` line names each fixed K and for how many spectra ("at K = 2 for every
+  spectrum"), or "none at a fixed K".
 - `[run.fit] screen = true` with `k1_adam_steps = 200`: about a quarter of the fitting time.
   The skipped K=2 and K=3 fits are then missing from fixed-K analyses.
 

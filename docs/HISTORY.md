@@ -7009,3 +7009,12 @@ CSVs or mzML if wanted.
     `results_tree.search_matches`, for the Tree's and the List's Find: every word must match,
     a number as a residue the peptide covers, `a-b` as its residues however padded (`42-54`
     found nothing in `0042-0054` before), the rest as text.
+
+266. **`hxex info` says what the bootstraps cover (owner, 2026-11-04: "bootstrap: yes" did not
+    say whether a K was bootstrapped for every spectrum, as the residue level's K = 2
+    comparisons need).** The line names the bootstrap at each spectrum's chosen K with its
+    resamples, each fixed K with the spectra it covers ("at K = 2 for every spectrum", or "for
+    12 of 26,191 spectra (chosen in the review)" for a partial one made by `hxex resume`), or
+    "none at a fixed K ([run.bootstrap] ks; the K = 2 comparisons of residues need K = 2)"
+    (`cli._bootstrap_text`). The window's Info shows the same. Benchmark and tutorial
+    projects: chosen K, 20 resamples; K = 1 and K = 2 for every spectrum.
