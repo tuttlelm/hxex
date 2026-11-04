@@ -6995,3 +6995,17 @@ CSVs or mzML if wanted.
     view, go through the series' pages before the next series, and back from a first page to
     the previous series' last page (`ResultsWorkspace._step_page`); on another tab they step
     from series to series as before.
+
+265. **Column filters in the list of spectra; residue numbers in Find (owner, 2026-11-04).** A
+    right click on a column's header of the List opens that column's filter
+    (`spectra_list.ColumnFilterDialog`), its kind from the data, not the column's name (owner:
+    a kinetics run has too many times to tick): ticks when the column has at most 30 values
+    (a time ticked by its label, the new `time_label` column, in time order), from and to when
+    it holds many numbers (a time with units, `hxex.io.times.parse_time`), else text it
+    contains. Filters combine with the filter list, sample and Find; a filtered header shows ▼
+    with its rule as tooltip (`RowsModel.marked`); **Clear column filters**. On the benchmark:
+    ticks for sample, time, role, replicate, charge, review, K, flags, left out; ranges for the
+    screens' scores, centroids, populations and their errors; text for ids and sequences.
+    `results_tree.search_matches`, for the Tree's and the List's Find: every word must match,
+    a number as a residue the peptide covers, `a-b` as its residues however padded (`42-54`
+    found nothing in `0042-0054` before), the rest as text.

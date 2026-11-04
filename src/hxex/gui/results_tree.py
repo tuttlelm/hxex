@@ -11,6 +11,7 @@ review applied, and the spectra the analysis settings leave out (:func:`left_out
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -217,13 +218,40 @@ def _flags(results) -> list[str]:
     return [";".join(n for n in FLAG_NAMES if getattr(q, n)[i]) for i in range(m)]
 
 
+def search_matches(text: str, sample: str, peptide_range: str, peptide: str,
+                   extra: str = "") -> bool:
+    """Whether a row matches the search ``text``: every word of it must, a number as the residue
+    it names (the peptide covers it: ``20``), two numbers as the peptide's residues (``12-23``,
+    however the range is padded), anything else as text in the sample, residues, peptide or
+    ``extra`` (any case). Owner, 2026-11-04: ``42-54`` did not find ``0042-0054``."""
+    words = f"{sample} {peptide_range} {peptide} {extra}".lower()
+    span = _span(peptide_range)
+    for word in text.lower().split():
+        both = re.fullmatch(r"(\d+)-(\d+)", word)
+        if both:
+            if span != (int(both[1]), int(both[2])):
+                return False
+        elif word.isdigit():
+            if span is None or not span[0] <= int(word) <= span[1]:
+                return False
+        elif word not in words:
+            return False
+    return True
+
+
+def _span(peptide_range: str) -> tuple[int, int] | None:
+    """``'0042-0054'`` as ``(42, 54)`` (None when it does not read so)."""
+    both = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*", str(peptide_range))
+    return (int(both[1]), int(both[2])) if both else None
+
+
 def shown(pep: Peptide, series: Series, how: str = "all", text: str = "") -> bool:
     """Whether a series is shown under the filter ``how`` (:data:`FILTERS`) and the search
-    ``text`` (in the sample, residues or peptide, any case)."""
-    if text:
-        words = f"{pep.sample} {pep.peptide_range} {pep.peptide} z{series.charge}".lower()
-        if text.strip().lower() not in words:
-            return False
+    ``text`` (:func:`search_matches`: residues by number, else the sample, residues, peptide
+    or charge as text)."""
+    if text and not search_matches(text, pep.sample, pep.peptide_range, pep.peptide,
+                                   f"z{series.charge}"):
+        return False
     if how == "flagged":
         return series.n_flagged > 0
     if how == "multi":

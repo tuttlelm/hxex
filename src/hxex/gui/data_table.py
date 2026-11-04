@@ -99,6 +99,7 @@ class RowsModel(QAbstractTableModel):
         super().__init__(parent)
         self.columns: list[str] = []
         self.rows: list[dict] = []
+        self.marked: dict[str, str] = {}  # filtered columns: their filter in words
 
     def set_rows(self, columns: list[str], rows: list[dict]) -> None:
         self.beginResetModel()
@@ -123,8 +124,13 @@ class RowsModel(QAbstractTableModel):
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return self.columns[section]
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self.columns):
+            return None
+        name = self.columns[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return f"{name} ▼" if name in self.marked else name  # a filter on it
+        if role == Qt.ItemDataRole.ToolTipRole and name in self.marked:
+            return f"filtered: {self.marked[name]} (right-click to change)"
         return None
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):

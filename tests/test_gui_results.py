@@ -339,3 +339,65 @@ def test_the_list_holds_every_spectrum_and_leads_to_it(qtbot, page, results):
     lst.search.clear()
     lst.filter.setCurrentIndex(lst.filter.findData("flagged"))
     assert lst.model.rowCount() == sum(bool(r["flags"]) for r in lst.rows)
+
+
+def test_the_lists_columns_filter_by_a_right_click(qtbot, page, results):
+    """A column's header filters by its values (owner): ticks for few values (a time by its
+    label), a range for many numbers (a time with units), text for much text; the filters
+    combine, the header says so, and Clear brings every row back."""
+    from PySide6.QtCore import Qt
+
+    from hxex.gui.spectra_list import ColumnFilterDialog, _bound
+
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    lst = page.list
+    n = len(lst.rows)
+    assert "time_label" in lst.columns and lst.filter_kind("time_label") == "values"
+    labels = lst.values_of("time_label")
+    assert labels[0] == "UN" and labels[-1] == "FD" and "1 min" in labels  # in time order
+    lst.set_column_filter("time_label", ("values", {"1 min"}))
+    assert {r["time_label"] for r in lst.model.rows} == {"1 min"}
+    header = lst.model.headerData(lst.columns.index("time_label"), Qt.Orientation.Horizontal)
+    assert header == "time_label ▼" and not lst.clear_filters.isHidden()
+    lst.set_column_filter("sample", ("values", {"nowhere"}))  # combined: nothing left
+    assert lst.model.rowCount() == 0
+    lst.clear_column_filters()
+    assert lst.model.rowCount() == n and lst.clear_filters.isHidden()
+    # a time range with units, and text contained
+    assert _bound("1 min", "time") == 60.0 and _bound("", "time") is None
+    with pytest.raises(ValueError, match="not a time"):
+        _bound("soon", "time")
+    lst.set_column_filter("time", ("range", 30.0, _bound("2 min", "time")))
+    assert {r["time"] for r in lst.model.rows} == {60.0}
+    lst.clear_column_filters()
+    lst.set_column_filter("spectrum_id", ("contains", "#2"))
+    assert all("#2" in r["spectrum_id"] for r in lst.model.rows) and lst.model.rowCount() >= 1
+    lst.clear_column_filters()
+    # the kinds: many numbers, much text
+    many = [{**lst.rows[0], "centroid": float(i), "note": f"n{i}", "_index": i}
+            for i in range(40)]
+    lst.set_rows(lst.columns, many)
+    assert lst.filter_kind("centroid") == "range" and lst.filter_kind("note") == "contains"
+    # the window: ticks, a range, text
+    ticks = ColumnFilterDialog(lst, "sample")
+    assert ticks.kind == "values" and ticks.rule() is None  # every value ticked: no filter
+    ticks.ticks.item(0).setCheckState(Qt.CheckState.Unchecked)
+    assert ticks.rule() == ("values", set())
+    span = ColumnFilterDialog(lst, "centroid")
+    span.low.setText("5")
+    assert span.rule() == ("range", 5.0, None)
+    text = ColumnFilterDialog(lst, "note")
+    text.text.setText("n3")
+    assert text.rule() == ("contains", "n3")
+
+
+def test_the_search_reads_residue_numbers():
+    """A number is a residue the peptide covers, two its residues however padded (owner:
+    42-54 did not find 0042-0054); every word must match."""
+    from hxex.gui.results_tree import search_matches
+
+    row = ("WT", "0042-0054", "TSLSPFYLRPPSF")
+    assert search_matches("42-54", *row) and search_matches("50", *row)
+    assert not search_matches("41", *row) and not search_matches("12-23", *row)
+    assert search_matches("wt 50", *row) and not search_matches("d109h 50", *row)
+    assert search_matches("spfy", *row) and search_matches("z2", *row, "z2")

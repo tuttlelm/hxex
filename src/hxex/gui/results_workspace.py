@@ -121,7 +121,7 @@ class ResultsWorkspace(QWidget):
         self.filter.setToolTip("which series the tree shows")
         self.filter.currentIndexChanged.connect(self._fill)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Find a peptide, residues or sample")
+        self.search.setPlaceholderText("Find a peptide, residues, or sample")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill)
         self.count = QLabel()

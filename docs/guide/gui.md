@@ -167,6 +167,11 @@ A time point with a single replicate shows that spectrum's figures, as its repli
 `spectra.csv` (K and the populations at the K in use, the review, the flags, the screens'
 scores, and why the analysis leaves it out). Click a column's header to sort by it, choose a
 filter (flagged, K above 1, not reviewed, rejected, left out) or a sample, or type in **Find**.
+Right-click a column's header to filter by that column: tick the values to keep when it has few
+(a time by its label, such as `30 min`), give a range when it holds many numbers (a screen
+score from `0.1`, say; a time with its units, `30 s` to `2 min`), or text the value contains.
+Filters on several columns combine; a filtered column's header has a ▼ (its tooltip says how),
+and **Clear column filters** shows every row again.
 Choosing a row shows that spectrum, with the review panel, as the tree does, and **◀ ▶** step
 through the list in the order shown: sort by a screen score, say, and work down from the
 worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
@@ -198,7 +203,10 @@ change, at the same place in the tree. Other settings change what the next **Run
 results already made. The commands read the project file when they start.
 
 The list above the tree shows only some series (flagged, more than one population, rejected,
-left out, or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
+left out, or not reviewed yet), and **Find** narrows them: every word must match, a number as a
+residue the peptide covers (`20`), two numbers as its residues (`12-23`, however the range is
+written), anything else as text in the sample, residues, sequence, or charge (`WT`, `SPFY`,
+`z2`). So `WT 20` finds WT's peptides over residue 20. The List's **Find** works the same way. Opening the
 results through the project file applies your review table and exclusion rules, as `hxex
 report hxex.toml` does.
 
