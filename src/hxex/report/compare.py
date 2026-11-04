@@ -2,8 +2,9 @@
 """Plots of comparisons (docs/ANALYSIS.md, phases 3 and 4; between samples of a run or between
 runs): a reference sample against the others residue by residue, peptide differences (Woods and
 butterfly plots) and region bar charts. Samples keep
-one colour and marker each (:func:`hxex.report.coverage.sample_style`, the reference first, in
-black, and never given to another sample). Functions return figures and never show them."""
+one colour and marker each (the analysis gives every figure the same ``styles``, in the order
+of ``[analysis] samples``; without them, :func:`hxex.report.coverage.sample_style`, the
+reference first, in black). Functions return figures and never show them."""
 
 from __future__ import annotations
 
@@ -305,8 +306,9 @@ def plot_residue_overlay(
     mark_corrected_differently: bool = True,
     styles: Mapping[str, SampleStyle] | None = None,
 ) -> Figure:
-    """``reference`` (black) and ``sample`` (its colour: ``styles[sample]``, else the style at
-    ``style_index``; :func:`hxex.report.coverage.sample_styles`) residue by residue at
+    """``reference`` and ``sample`` in their colours (``styles``, else black for the reference
+    and the style at ``style_index`` for the sample; :func:`hxex.report.coverage.sample_styles`)
+    residue by residue at
     ``time``, the sample drawn over the reference. ``show`` is any of ``'low'`` and ``'high'``
     (the K=2 ranks 1 and 2: up and down triangles with capped standard-error bars),
     ``'pop_low'`` and ``'pop_high'`` (the populations of those ranks, from ``choice``, which they

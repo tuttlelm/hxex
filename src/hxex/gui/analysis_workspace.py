@@ -137,7 +137,8 @@ class AnalysisWorkspace(QWidget):
         layout.addWidget(split, 1)
         self._change_table = ""
         self._planned: dict[str, object] = {}
-        self._drawn_reference: str | None = None
+        self._drawn_from = None  # the analysis the figure shown was drawn from
+        self._latest: str | None = None  # the reference of the latest analysis computed
         self.refresh()
 
     # --- what the analysis is made from ---------------------------------------------------
@@ -158,6 +159,30 @@ class AnalysisWorkspace(QWidget):
     def _made_from(self):
         entry = self._analyses.get(self.shown_reference)
         return entry[1] if entry else None
+
+    @property
+    def shared_reference(self) -> str | None:
+        """The reference of the analysis the figures common to every reference come from: the
+        latest computed (so a Recompute, after a review decision say, renews them too); None
+        before any."""
+        return self._latest if self._latest in self._analyses else None
+
+    @property
+    def shared_outputs(self):
+        """The analysis the figures common to every reference come from (None: none yet)."""
+        ref = self.shared_reference
+        return self._analyses[ref][0] if ref is not None else None
+
+    def outputs_for(self, kind: str):
+        """The analysis a kind of figure is drawn from: the shown reference's for a comparison,
+        the latest for a figure the same against every reference."""
+        from ..report.catalogue import kind_named
+
+        try:
+            compares = kind_named(kind).compares
+        except (KeyError, ValueError, StopIteration):
+            compares = True
+        return self.outputs if compares else self.shared_outputs
 
     def _fill_references(self, config) -> None:
         """The references to choose from (shown only when there are several)."""
@@ -207,11 +232,13 @@ class AnalysisWorkspace(QWidget):
                 sorted(t for t in tables if t.split(".")[0] == "analysis"))
         return config, project.parent, repr(text)
 
-    def why_out_of_date(self) -> str:
-        """Why the analysis shown no longer matches the results and settings (empty: it does)."""
-        if self.outputs is None or self._made_from is None:
+    def why_out_of_date(self, made_from=None) -> str:
+        """Why the analysis shown (or the one ``made_from`` describes) no longer matches the
+        results and settings (empty: it does)."""
+        made_from = made_from or self._made_from
+        if made_from is None:
             return ""
-        results, text, _, stamp = self._made_from
+        results, text, _, stamp = made_from
         if self.results is not results:
             return "the results changed (a new run or resume, or a review decision)"
         try:
@@ -244,11 +271,18 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setText("Compute")
             if self._error is None:
                 ref = self.shown_reference
+                shared = self.shared_reference
+                stale = (self.why_out_of_date(self._analyses[shared][1])
+                         if shared is not None else "")
                 self.status.setText(
                     "Not computed yet" + (f" against {ref}" if ref else "") + ": Compute "
                     f"makes the figures hxex analyse would write for {len(self.results.fit):,} "
                     "spectra (about half a minute for 25,000; nothing is written)."
+                    + (f" The figures the same for every reference are shown from the analysis "
+                       f"against {shared}" + (f" (out of date: {stale})" if stale else "") + "."
+                       if shared is not None else "")
                     + self._settings_note())
+                self._redraw_if_another()
         elif why:
             self.status.setText(f"Out of date: {why}. The figures shown are the earlier "
                                 "analysis's; Recompute to see the new one.")
@@ -258,11 +292,20 @@ class AnalysisWorkspace(QWidget):
             ref = self.shown_reference
             self.status.setText(f"{n} figure(s)" + (f" against {ref}" if ref else "")
                                 + ", as hxex analyse would write them" + self._settings_note())
-            if self._drawn_reference != ref:  # another reference chosen: its figure
-                self._selected(self.list.currentItem())
+            self._redraw_if_another()
             self.compute_button.setText("Recompute")
 
     _error: str | None = None
+
+    def _redraw_if_another(self) -> None:
+        """Another reference chosen: the figure selected again, unless it is drawn from the same
+        analysis (a figure the same for every reference stays as it is)."""
+        item = self.list.currentItem()
+        if item is None:
+            return
+        outputs = self.outputs_for(item.data(0, KIND))
+        if outputs is not self._drawn_from:
+            self._selected(item)
 
     def _settings_note(self) -> str:
         return ("" if self._project() is not None else
@@ -292,46 +335,77 @@ class AnalysisWorkspace(QWidget):
                 return
             self._error = None
             by_kind: dict[str, list[str]] = {}
-            for stem, _ in (self.outputs.figures if self.outputs is not None else []):
-                kind = kind_of(stem)
-                by_kind.setdefault(kind.name if kind else "other", []).append(stem)
-            for p in planned:
-                if p.kind.command != ANALYSE:
+            for outputs, compares in ((self.shared_outputs, False), (self.outputs, True)):
+                for stem, _ in (outputs.figures if outputs is not None else []):
+                    kind = kind_of(stem)
+                    if kind is not None and kind.compares == compares:
+                        by_kind.setdefault(kind.name, []).append(stem)
+            kinds = [p for p in planned if p.kind.command == ANALYSE]
+            shared = self.shared_reference
+            sections = (
+                ("Same for every reference",
+                 "these figures do not compare samples with the reference: they are drawn once, "
+                 "from the latest analysis computed (against "
+                 + (shared if shared else "the reference computed") + "), and shown whichever "
+                 "reference is chosen",
+                 [p for p in kinds if not p.kind.compares]),
+                ("Compared with the reference" + (f" {self.shown_reference}"
+                                                  if self.shown_reference else ""),
+                 "these figures compare each sample with the reference chosen above",
+                 [p for p in kinds if p.kind.compares]))
+            for heading, tip, group in sections:
+                if not group:
                     continue
-                self._planned[p.kind.name] = p
-                stems = by_kind.get(p.kind.name, [])
-                item = QTreeWidgetItem([p.kind.title, self._state_text(p, stems)])
-                item.setData(0, KIND, p.kind.name)
-                item.setToolTip(0, p.kind.shows)
-                if p.state == "off" or (self.outputs is not None and not stems):
-                    for col in (0, 1):
-                        item.setForeground(col, self.palette().placeholderText())
-                for stem in stems:
-                    child = QTreeWidgetItem([stem, ""])
-                    child.setData(0, KIND, p.kind.name)
-                    child.setData(0, STEM, stem)
-                    item.addChild(child)
-                self.list.addTopLevelItem(item)
-                if keep is not None and keep[0] == p.kind.name:
-                    target = item
-                    for i in range(item.childCount()):
-                        if item.child(i).data(0, STEM) == keep[1]:
-                            target = item.child(i)
-                    self.list.setCurrentItem(target)
-                    item.setExpanded(True)
+                head = QTreeWidgetItem([heading, ""])
+                head.setFlags(Qt.ItemFlag.ItemIsEnabled)  # a heading: not selectable
+                font = head.font(0)
+                font.setBold(True)
+                head.setFont(0, font)
+                head.setToolTip(0, tip)
+                head.setFirstColumnSpanned(True)
+                self.list.addTopLevelItem(head)
+                head.setFirstColumnSpanned(True)
+                for p in group:
+                    self._add_kind(p, by_kind.get(p.kind.name, []), keep)
         self.list.blockSignals(False)
         self._describe(self.list.currentItem())
+
+    def _add_kind(self, p, stems: list[str], keep) -> None:
+        """One kind of figure in the list, with its figures under it (``keep``: the kind and
+        figure selected before, selected again)."""
+        outputs = self.outputs_for(p.kind.name)
+        self._planned[p.kind.name] = p
+        item = QTreeWidgetItem([p.kind.title, self._state_text(p, stems)])
+        item.setData(0, KIND, p.kind.name)
+        item.setToolTip(0, p.kind.shows)
+        if p.state == "off" or (outputs is not None and not stems):
+            for col in (0, 1):
+                item.setForeground(col, self.palette().placeholderText())
+        for stem in stems:
+            child = QTreeWidgetItem([stem, ""])
+            child.setData(0, KIND, p.kind.name)
+            child.setData(0, STEM, stem)
+            item.addChild(child)
+        self.list.addTopLevelItem(item)
+        if keep is not None and keep[0] == p.kind.name:
+            target = item
+            for i in range(item.childCount()):
+                if item.child(i).data(0, STEM) == keep[1]:
+                    target = item.child(i)
+            self.list.setCurrentItem(target)
+            item.setExpanded(True)
 
     def _state_text(self, planned, stems) -> str:
         if planned.state == "off":
             return "off"
-        if self.outputs is None:
+        if self.outputs_for(planned.kind.name) is None:
             return STATE_WORDS[planned.state]
         return f"{len(stems)} figure(s)" if stems else "none for these results"
 
     def _selected(self, item, _previous=None) -> None:
         self._describe(item)
-        if item is None or self.outputs is None:
+        outputs = self.outputs_for(item.data(0, KIND)) if item is not None else None
+        if item is None or item.data(0, KIND) is None or outputs is None:
             return
         stem = item.data(0, STEM)
         if stem is None and item.childCount():  # a kind: its first figure
@@ -342,8 +416,8 @@ class AnalysisWorkspace(QWidget):
             self._clear_figure(self._off_text(self._planned.get(item.data(0, KIND)))
                              or "no figure of this kind for these results")
             return
-        draw = dict(self.outputs.figures).get(stem)
-        self._drawn_reference = self.shown_reference
+        draw = dict(outputs.figures).get(stem)
+        self._drawn_from = outputs
         if draw is None:  # a figure of an earlier analysis this one does not draw
             self.panel.save_name = ""
             self._clear_figure("this figure is not in the analysis computed now")
@@ -483,6 +557,7 @@ class AnalysisWorkspace(QWidget):
     def _computed(self, outputs, results, text, path, ref, stamp) -> None:
         self.busy.hide()
         self._analyses[ref] = (outputs, (results, text, path, stamp))
+        self._latest = ref  # the figures the same for every reference come from it now
         log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
         self.refresh()
         if self.list.currentItem() is not None:  # the figure shown, from the new analysis

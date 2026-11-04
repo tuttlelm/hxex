@@ -98,6 +98,13 @@ class FigureKind:
                                for part in re.split(r"(\{[^}]+\})", f)) + r"\Z")
             for f in self.files))
 
+    @property
+    def compares(self) -> bool:
+        """Whether its figures compare the samples with the reference (they change with
+        ``[analysis] reference``); the others are the same against every reference, but for
+        the reference drawn first, in black."""
+        return _REFERENCE in self.needs
+
     def matches(self, stem: str) -> int:
         """How much of ``stem`` is fixed text of one of this kind's file names (0: no match);
         the longest wins, so ``woods_K2_...`` is not taken for ``woods_...``."""

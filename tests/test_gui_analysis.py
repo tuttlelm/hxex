@@ -10,6 +10,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
+
 from hxex.gui.analysis_workspace import setting_table  # noqa: E402
 from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
 from test_gui import _window  # noqa: E402
@@ -103,14 +105,34 @@ def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
     assert page.reference.isVisibleTo(page) and page.reference.count() == 2
     assert page.shown_reference == "S" and "against S" in page.status.text()
     first = page.outputs
+    # two sections: the figures the same for every reference first, then the comparisons
+    heads = [page.list.topLevelItem(i) for i in range(page.list.topLevelItemCount())
+             if page.list.topLevelItem(i).data(0, 256) is None]
+    assert [h.text(0) for h in heads] == ["Same for every reference",
+                                          "Compared with the reference S"]
+    names = [page.list.topLevelItem(i).data(0, 256)
+             for i in range(page.list.topLevelItemCount())]
+    assert names.index("coverage") < names.index(None, 1) < names.index("woods")
+    assert not heads[0].flags() & Qt.ItemFlag.ItemIsSelectable
+    coverage = _items(page)["coverage"].child(0)
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(coverage)
+    drawn = page.panel.view.figure
     page.reference.setCurrentIndex(1)  # V: computed when asked
     assert page.outputs is None and "Not computed yet against V" in page.status.text()
+    assert "shown from the analysis against S" in page.status.text()
+    # a figure the same for every reference stays, without computing or drawing again
+    assert _items(page)["coverage"].childCount() >= 1 and _items(page)["woods"].childCount() == 0
+    assert page.panel.view.figure is drawn and not page.panel.drawing
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
     assert page.shown_reference == "V" and page.outputs is not first
     assert any(stem.startswith("woods_S_") for stem, _ in page.outputs.figures)
+    # the latest analysis now gives the common figures (a Recompute renews them)
+    assert page.shared_reference == "V" and page.shared_outputs is page.outputs
     page.reference.setCurrentIndex(0)  # back to S: kept, not computed again
     assert page.outputs is first and not page.computing
+    assert page.shared_reference == "V"
 
 
 def test_a_changed_review_table_marks_the_analysis_and_is_read_before_recomputing(

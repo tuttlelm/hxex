@@ -169,8 +169,9 @@ _DESCRIPTIONS: dict[str, str] = {
                           '`"all"` (every sample in turn) makes one analysis per reference, a '
                           "folder each",
     "analysis.samples": "which samples, and their order in every figure and table (the "
-                        "reference first wherever it is listed; the default colours follow "
-                        "it); empty: every sample, in alphabetical order, the reference first",
+                        "tables and the figures that compare samples put the reference first); "
+                        "the default colours follow this order, the first black, whichever "
+                        "sample is the reference; empty: every sample, in alphabetical order",
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "
                               "the fits are kept)",
@@ -366,8 +367,9 @@ _INTROS: dict[str, str] = {
                         'overlays, the region bars, redundancy and resolution): `sample = '
                         '"colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); '
                         "`\"run:sample\"` for one run's sample. A sample not named keeps its "
-                        "default, the same in every figure: the reference black, the others "
-                        "in their order, from the colours not chosen here.",
+                        "default, the same in every figure and against every reference: in "
+                        "the order of [analysis] samples (the first black), from the colours "
+                        "not chosen here.",
     "analysis.regions": "Repeat the table for every region (regions may overlap).",
     "analysis.sites": "Repeat the table for every site (a modification, a mutation).",
     "analysis.fragments": "The fragment outputs of a run with fragment series (ladders, rates, "

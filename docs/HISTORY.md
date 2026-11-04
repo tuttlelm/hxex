@@ -6853,3 +6853,22 @@ CSVs or mzML if wanted.
     October decision). Released as `0.0.1.dev1` (owner): the GitHub release `v0.0.1.dev0` of
     9 October points at the initial scaffold, made before `publish.yml` existed, so nothing was
     uploaded and the tag is left as it is.
+
+256. **Analysis figures the same for every reference listed first and kept across references
+    (owner, 2026-11-04: coverage, redundancy and resolution and others do not depend on the
+    reference; they should recompute with review changes and keep `[analysis] samples`'
+    order).** `FigureKind.compares` (the kinds needing `[analysis] reference`) splits the
+    Analysis list under two headings, "Same for every reference" first, then "Compared with the
+    reference". The common figures come from the latest analysis computed (so any Recompute
+    renews them; out of date like the rest) and stay, not drawn again, when another reference
+    is chosen, even one not computed yet. Measured on the tutorial (pixels, references WT and
+    D109H): coverage and choice pages identical; redundancy and resolution differed in order
+    and colour. The analysis now gives the common figures (coverage, redundancy and resolution,
+    profiles and choices, population tiers, protection, regions) the settings' sample order
+    (`in_order`: the reference where `[analysis] samples` lists it, first when it does not), so
+    they match in order. Colours (owner: "base on [analysis] samples so colours are
+    consistent"): the default colours now follow that order too, the first black, whichever
+    sample is the reference (before, the reference took black, HISTORY 245); `[analysis.colours]`
+    still overrides. So a sample has one colour against every reference, in the comparisons as
+    well (the overlays draw the reference in its own colour). Tables and comparisons keep the
+    reference first in their order. The settings reference, template and guide say so.

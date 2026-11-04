@@ -274,11 +274,13 @@ def analysis_references(results, config: AnalysisConfig) -> list[str]:
     return [label(*state) for state in states]
 
 
-def _sample_styles(up, labels: dict, shown: list, reference: str, colours) -> dict:
+def _sample_styles(up, labels: dict, shown: list, colours) -> dict:
     """Each sample's style for every figure of the analysis (by display label), so a sample
-    keeps its colour whichever samples a figure shows: ``[analysis.colours]`` (a sample's name,
-    ``run:sample``, or a modified state's label) for those it names, the defaults for the
-    rest. A name that is no sample of the analysis is left out with a warning."""
+    keeps its colour whichever samples a figure shows, and whichever sample is the reference:
+    ``[analysis.colours]`` (a sample's name, ``run:sample``, or a modified state's label) for
+    those it names, the defaults for the rest, in the order ``shown`` (``[analysis] samples``'
+    order: the first black). A name that is no sample of the analysis is left out with a
+    warning."""
     from .coverage import sample_styles
 
     chosen = {}
@@ -295,7 +297,7 @@ def _sample_styles(up, labels: dict, shown: list, reference: str, colours) -> di
                         name)
             continue
         chosen[labels[state]] = colour
-    return sample_styles(shown, reference or None, chosen)
+    return sample_styles(shown, None, chosen)  # not the reference first (owner, 2026-11-04)
 
 
 def _labelled(up, wanted: list, reference) -> list:
@@ -339,6 +341,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
               if config.samples else present)
     ref_state = (resolve_sample(up.run, up.sample, config.reference, "reference sample")
                  if config.reference else None)
+    listed = list(wanted)  # the settings' order, for the figures that compare nothing
     if ref_state is not None:
         wanted = [ref_state] + [s for s in wanted if s != ref_state]
     wanted = _labelled(up, wanted, ref_state)
@@ -358,10 +361,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     all_states = wanted + state_pairs
     labels = display_labels([s[0] for s in all_states], [s[1] for s in all_states])
     samples = [labels[s] for s in wanted]  # display labels, the reference first
+    # the figures that compare nothing keep [analysis] samples' order (the reference where it
+    # is listed, first when it is not), so they are the same against every reference (owner)
+    in_order = [labels[s] for s in wanted if s not in listed] + [
+        labels[s] for s in listed if s in set(wanted)]
     states_shown = [labels[s] for s in state_pairs]
     reference = labels[ref_state] if ref_state is not None else ""
     ref_name = label(*ref_state) if ref_state is not None else ""  # names it for the analyses
-    styles = _sample_styles(up, labels, samples + states_shown, reference, config.colours)
+    styles = _sample_styles(up, labels, in_order + states_shown, config.colours)
     coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
     try:
         coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
@@ -552,14 +559,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     states = states_shown
 
     jobs = []  # (file stem, function drawing the figure)
-    for s in samples:
+    for s in in_order:
         jobs.append((f"coverage_{s}", lambda s=s: coverage_figure(
             up, samples=[s], times=times, length=length, **when)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
-        coverage, samples=samples, marks=marks, styles=styles)))
+        coverage, samples=in_order, marks=marks, styles=styles)))
     runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
     booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
-    for s in samples + states:
+    for s in in_order + states:
         for t in times:
             when_ = _time_label(t, scale)
             if choice is not None and choice.where(sample=s, time=t).any():
@@ -570,7 +577,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                     residues, s, t, marks=marks, length=length, bootstrap=booted, **when)))
     if config.populations == "population_test" and (residues.population_tier != "").any():
         jobs.append(("population_tiers", lambda: plot_population_tiers(
-            residues, samples + states, length=length, **when)))
+            residues, in_order + states, length=length, **when)))
     if config.reference:
         others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
@@ -647,7 +654,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                     k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
                     **when)))
     if protection is not None:
-        for s in samples:
+        for s in in_order:
             if protection.where(sample=s).any():
                 jobs.append((f"protection_{s}", lambda s=s: protection_figure(
                     protection, s, length=length)))
@@ -660,7 +667,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         for t in times:
             if (regions.time == t).any():
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
-                    regions, t, samples=samples, styles=styles, **when)))
+                    regions, t, samples=in_order, styles=styles, **when)))
 
     return tables, jobs
 

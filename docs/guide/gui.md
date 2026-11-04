@@ -242,6 +242,13 @@ file), so what you see here is what the command writes.
 and **Info**. Each runs that command on the project file, in the project's folder, exactly as
 `hxex run hxex.toml` would in a terminal: the line above the messages shows the command as you
 would type it. One command runs at a time.
+- The list has two parts. **Same for every reference** comes first: coverage, redundancy and
+  resolution, the residue profiles and population choices, the population tiers, regions,
+  protection factors, and the fragment figures. These compare nothing, so they are drawn once,
+  in the order and colours of `[analysis] samples`, from the latest analysis computed, and
+  stay as they are when you choose another reference. A **Recompute** renews them too. **Compared with the
+  reference** follows: the overlays, Woods and butterfly plots, the significance maps, and
+  protection-factor differences, for the reference chosen.
 
 - The messages appear as the command writes them, and the bar shows how far it is, with the
   step it is on and the time left when *hxex* can tell.

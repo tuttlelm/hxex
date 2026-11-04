@@ -411,7 +411,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `reference` | text or list | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample. A list (`["WT", "Mut"]`) or `"all"` (every sample in turn) makes one analysis per reference, a folder each |
-| `samples` | list | `[]` | which samples, and their order in every figure and table (the reference first wherever it is listed; the default colours follow it); empty: every sample, in alphabetical order, the reference first |
+| `samples` | list | `[]` | which samples, and their order in every figure and table (the tables and the figures that compare samples put the reference first); the default colours follow this order, the first black, whichever sample is the reference; empty: every sample, in alphabetical order |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |
@@ -476,7 +476,7 @@ Samples combined across runs: `"run:sample" = label`; the same label pools them 
 
 ## `[analysis.colours]`
 
-A sample's colour in every figure that colours samples (the residue overlays, the region bars, redundancy and resolution): `sample = "colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); `"run:sample"` for one run's sample. A sample not named keeps its default, the same in every figure: the reference black, the others in their order, from the colours not chosen here.
+A sample's colour in every figure that colours samples (the residue overlays, the region bars, redundancy and resolution): `sample = "colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); `"run:sample"` for one run's sample. A sample not named keeps its default, the same in every figure and against every reference: in the order of [analysis] samples (the first black), from the colours not chosen here.
 
 
 ## `[[analysis.regions]]`

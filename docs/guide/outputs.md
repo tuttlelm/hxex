@@ -427,9 +427,10 @@ shows, the settings it needs, and the settings that change it.
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
 A sample keeps its colour in every figure that colours samples (the residue overlays, the
-region bars, and redundancy and resolution): the reference black, the others in their order
-(that of `[analysis] samples`, which also sets the order of every figure's rows and panels;
-else alphabetical), whichever samples a figure shows. `[analysis.colours]` chooses them yourself, one line per
+region bars, and redundancy and resolution), whichever samples a figure shows and whichever
+sample is the reference: the first sample black, the others in their order (that of
+`[analysis] samples`, which also sets the order of every figure's rows and panels; else
+alphabetical). `[analysis.colours]` chooses them yourself, one line per
 sample (`D109H = "orange"`, or a hex code such as `"#1f77b4"`); a sample you do not name keeps
 a default colour that none of yours uses.
 
@@ -470,7 +471,7 @@ the threshold it was judged by (`delta_crit`, the K=1 critical difference divide
 separation).
 
 **Reading the residue overlay.** `overlay_residues_<time>` draws each sample against the
-reference residue by residue, the reference in black and the sample in its colour. The average
+reference residue by residue, each in its colour. The average
 deuteration (K=1, fDavg) is small circles on a line with a shaded ±1 standard-error band; the
 line joins two residues only where one peptide measures both, so a gap means the peptides do not
 connect them. Where a sample has two populations, fDlow is an up triangle and fDhigh a down
