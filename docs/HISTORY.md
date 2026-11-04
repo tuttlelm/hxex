@@ -6894,3 +6894,16 @@ CSVs or mzML if wanted.
     drawn for another zoom until the new one comes. Text at 100 % stays as small as the figure's
     points (7-9 px); hinting (`text.hinting` native or auto) did not help (auto changes the
     letter spacing). The owner finds 100 % fine now: the scale (1 point per pixel) stays.
+
+259. **The left-out column no longer fills the messages pane (owner, 2026-11-04: a K choice on
+    the benchmark "triggered some behind the scenes rerunning").** Nothing was refitted: after
+    each review decision the window works out the "left out" column again (HISTORY 250; about
+    2 s on 26,164 spectra, in the background), which computes the analysis's controls twice
+    (as measured, and with the screened spectra removed) and logged six to eight lines each
+    time. That calculation's own thread is now quiet (`results_tree._quiet_here`, a filter on
+    the `hxex` and root handlers for that thread only; other threads' lines pass). The
+    controls' messages still come with the analysis itself (Compute, `hxex analyse`). Then
+    (owner: "I don't expect a recalculate to happen until I ask"): it is no longer worked out
+    after each decision or `[analysis]` change; a line under the tree says the column is from
+    before them, with an **Update** button (`ResultsWorkspace.update_left_out`); opening the
+    results still works it out, as part of reading them.

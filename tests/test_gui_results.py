@@ -227,13 +227,20 @@ def test_what_the_analysis_leaves_out_is_shown_at_every_level(qtbot, page, resul
     point = series.child(1)
     assert point.text(COLUMN["left out"]) == "" and series.text(COLUMN["left out"]) == ""
     page.analysis_changed(AnalysisConfig(exclude_times=(60,)))
+    # nothing worked out until asked (owner): the column says it is out of date
+    assert page.left_bar.isVisibleTo(page) and not page._left_task.running
+    assert "out of date: the [analysis] settings changed" in page.left_note.text()
+    assert point.text(COLUMN["left out"]) == ""
+    page.left_update.click()
     qtbot.waitUntil(lambda: point.text(COLUMN["left out"]) == "3", timeout=30000)
+    assert not page.left_bar.isVisibleTo(page)
     assert point.child(0).text(COLUMN["left out"]) == "time left out (exclude_times)"
     assert series.text(COLUMN["left out"]) == "3"
     assert page.tree.topLevelItem(0).text(COLUMN["left out"]) == "6"  # both series' 1 min
     page.filter.setCurrentIndex(page.filter.findData("left_out"))
     assert page.count.text() == "2 of 2 series"
     page.analysis_changed(AnalysisConfig(exclude_times=(1e6,)))  # no such time
+    page.update_left_out()
     qtbot.waitUntil(lambda: page.tree.topLevelItem(0) is None
                     or page.tree.topLevelItem(0).text(COLUMN["left out"]) == "", timeout=30000)
 
@@ -268,3 +275,37 @@ def test_stepping_by_charge_goes_to_the_next_series(page):
     assert page.step_spectrum(-1, "series") and page.tree.currentItem() is first
     assert page.step_spectrum(1, "spectrum")  # from a series: its first spectrum
     assert page.tree.currentItem() is first.child(0).child(0)
+
+
+def test_the_left_out_column_does_not_repeat_the_controls_messages():
+    """Worked out again after every review decision, the left-out column computed the controls
+    each time and repeated their messages (owner); its own thread is quiet meanwhile, other
+    threads are not."""
+    import logging
+    import threading
+
+    from hxex.gui.results_tree import _quiet_here
+
+    seen = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            seen.append(record.getMessage())
+
+    handler = Keep()
+    logger = logging.getLogger("hxex")
+    logger.addHandler(handler)
+    old = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        with _quiet_here():
+            logging.getLogger("hxex.controls").warning("from the left-out thread")
+            other = threading.Thread(
+                target=lambda: logging.getLogger("hxex.analysis").warning("from another"))
+            other.start()
+            other.join()
+        logging.getLogger("hxex.controls").warning("after")
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old)
+    assert seen == ["from another", "after"]

@@ -10,6 +10,9 @@ review applied, and the spectra the analysis settings leave out (:func:`left_out
 
 from __future__ import annotations
 
+import logging
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -115,6 +118,31 @@ def left_out(results, config=None) -> list[str]:
     reasons of ``left_out_spectra.csv`` (``[analysis.filters]``), ``exclude_flagged`` and
     ``exclude_times``, and the spectra kept at one population (``spectrum_quality_filtering``).
     Rejected spectra are not listed (the review left them out)."""
+    with _quiet_here():  # the controls' messages, said when the results were read (owner)
+        return _left_out(results, config)
+
+
+@contextmanager
+def _quiet_here():
+    """No log lines from this thread while the block runs (other threads' still pass): the
+    left-out column computes the controls again after every review decision, which repeated
+    their messages each time."""
+    me = threading.get_ident()
+
+    def elsewhere(record: logging.LogRecord) -> bool:
+        return record.thread != me
+
+    handlers = {*logging.getLogger().handlers, *logging.getLogger("hxex").handlers}
+    for handler in handlers:
+        handler.addFilter(elsewhere)
+    try:
+        yield
+    finally:
+        for handler in handlers:
+            handler.removeFilter(elsewhere)
+
+
+def _left_out(results, config) -> list[str]:
     from ..analysis import AnalysisConfig, left_out_spectra
     from ..analysis.screening import screening
 

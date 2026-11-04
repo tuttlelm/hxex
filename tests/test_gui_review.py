@@ -145,6 +145,9 @@ def test_a_key_in_the_tree_rejects_and_the_table_and_tree_show_it(qtbot, window_
     assert dict(zip(sheet.spectrum_id, sheet.status, strict=True))[sid] == "rejected"
     assert leaf.text(_col("review")) == "rejected" and series.text(_col("rejected")) == "1"
     assert leaf.text(_col("rejected")) == "yes" and leaf.parent().text(_col("rejected")) == "1"
+    # the "left out" column is not worked out again in the middle of a review (owner): said
+    assert not page._left_task.running and page.left_bar.isVisibleTo(page)
+    assert "before your latest review decisions" in page.left_note.text()
     assert panel.status.checkedId() == 2 and "Saved" in panel.message.text()
     # the note, then accepted with the A key
     panel.note.setText("checked by eye")

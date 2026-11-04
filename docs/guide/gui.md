@@ -134,8 +134,10 @@ to see what it counts.
   "spectrum quality (...)", and so on. A quality flag on its own leaves nothing out; the ones
   that do are named here. "kept at K = 1" marks a spectrum the analysis uses only as one
   population; it is not counted. Accepting a spectrum in the review keeps it against
-  `[analysis.filters]` (not against `exclude_flagged` or `exclude_times`), and the column
-  follows your decisions and changes to `[analysis]`. Results opened as a bundle on their own
+  `[analysis.filters]` (not against `exclude_flagged` or `exclude_times`). The column is
+  worked out when the results open, and again only when you ask: after a review decision or a
+  change to `[analysis]`, a line under the tree says it is from before them, with an
+  **Update** button (a few seconds on a large run). Results opened as a bundle on their own
   use the default settings.
 
 Click a row, or move through the tree with the arrow keys, to see:

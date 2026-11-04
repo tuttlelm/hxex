@@ -153,6 +153,23 @@ class ResultsWorkspace(QWidget):
         side.setContentsMargins(0, 0, 0, 0)
         side.addLayout(filters)
         side.addWidget(self.tree, 1)
+        # the "left out" column is worked out again only when asked (owner: no recalculation
+        # in the middle of a review session)
+        self.left_note = QLabel()
+        self.left_note.setWordWrap(True)
+        self.left_update = QPushButton("Update")
+        self.left_update.setToolTip("work out the 'left out' column again with your decisions "
+                                    "and the project's [analysis] settings (a few seconds on "
+                                    "a large run)")
+        self.left_update.clicked.connect(self.update_left_out)
+        stale = QHBoxLayout()
+        stale.setContentsMargins(0, 0, 0, 0)
+        stale.addWidget(self.left_note, 1)
+        stale.addWidget(self.left_update)
+        self.left_bar = QWidget()
+        self.left_bar.setLayout(stale)
+        self.left_bar.hide()
+        side.addWidget(self.left_bar)
         side.addWidget(self.review)
 
         # the uptake page's time axis, for the window only (owner: the project's linear default
@@ -234,6 +251,7 @@ class ResultsWorkspace(QWidget):
         if results is not None and left is None:
             left = _left_out_or_none(results, analysis)
         self.left = left
+        self.left_bar.hide()  # worked out as the results were read
         for panel in self.panels.values():
             panel.clear()
         self.tree_data = [] if results is None else peptides(results, left)
@@ -572,31 +590,46 @@ class ResultsWorkspace(QWidget):
             item.setText(COLUMN["K > 1"], str(multi or ""))
             self._sum_children(item.parent(), ("rejected", "K > 1"))
         self._redraw()
-        # a decision changes what the analysis leaves out (an accepted spectrum is kept; a
-        # rejected one changes its replicates' median): worked out again, off the window's
-        # thread
-        config = self.analysis_config
-        self._left_task.submit(lambda: _left_out_or_none(results, config),
-                               lambda left: self._left_out_known(results, left),
-                               lambda message: log.warning(
-                                   "what the analysis leaves out is not known: %s", message))
+        # a decision can change what the analysis leaves out (an accepted spectrum is kept; a
+        # rejected one changes its replicates' median): said, and worked out again when asked
+        self._left_stale("your latest review decisions")
 
     def analysis_changed(self, config) -> None:
-        """The project's [analysis] settings changed: what they leave out, worked out again."""
+        """The project's [analysis] settings changed: the "left out" column is from the earlier
+        ones until Update."""
         self.analysis_config = config
-        results = self.results
+        if self.results is not None:
+            self._left_stale("the [analysis] settings changed")
+
+    def _left_stale(self, why: str) -> None:
+        self.left_note.setText(f"The 'left out' column is from before {why}." if why.startswith(
+            "your") else f"The 'left out' column is out of date: {why}.")
+        self.left_update.setEnabled(True)
+        self.left_bar.show()
+
+    def update_left_out(self) -> None:
+        """Work out the "left out" column again (in the background), as asked."""
+        results, config = self.results, self.analysis_config
         if results is None:
             return
+        self.left_note.setText("Working out the 'left out' column…")
+        self.left_update.setEnabled(False)
         self._left_task.submit(lambda: _left_out_or_none(results, config),
                                lambda left: self._left_out_known(results, left),
-                               lambda message: log.warning(
-                                   "what the analysis leaves out is not known: %s", message))
+                               self._left_failed)
+
+    def _left_failed(self, message: str) -> None:
+        log.warning("what the analysis leaves out is not known: %s", message)
+        self.left_note.setText(f"The 'left out' column could not be worked out: {message}")
+        self.left_update.setEnabled(True)
 
     def _left_out_known(self, results, left: list[str] | None) -> None:
         """What the analysis leaves out, worked out again after a decision: shown on every row
         made so far."""
-        if results is not self.results:  # newer results (or decisions) are shown
+        if results is not self.results:  # newer decisions since: still out of date
+            self._left_stale("your latest review decisions")
             return
+        self.left_bar.hide()
         self.left = left
         n_left = left_out_counts(results, left)
         for pep in self.tree_data:
