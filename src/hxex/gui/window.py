@@ -2,10 +2,8 @@
 """The main window: four workspaces (project, run, results, analysis), the session file, and a
 pane of messages (docs/PLAN.md, "GUI").
 
-Phase G0 builds the frame: the window, its menus, the session file, the messages pane, the SVG
-figure view, and a first results view (a list of series and their figures). The project editor
-(G1), running stages (G2), review (G3) and the analysis views (G4) come next; until then their
-workspaces say how to do the same from the command line.
+The workspaces: the project editor and the user tables (G1), running the commands (G2), the
+results with their review (G3), and the figures of ``hxex analyse`` (G4).
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .analysis_workspace import AnalysisWorkspace
 from .results_workspace import ResultsWorkspace
 from .run_workspace import RunWorkspace
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
@@ -131,18 +130,6 @@ class ProjectWorkspace(QWidget):
             self.text.setPlainText(f"cannot read the project file: {exc}")
 
 
-class AnalysisWorkspace(QWidget):
-    """The analysis views (G4)."""
-
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.addWidget(_note("The analysis views are not built yet: run hxex analyse "
-                               "hxex.toml in a terminal and open the figures in its analysis "
-                               "folder."))
-        layout.addStretch()
-
-
 def new_project(path: Path, fmt: str, name: str) -> Path:
     """Write a new project file with every default, as ``hxex init --format FMT --project NAME``
     does (a file chosen in a save dialog has been confirmed already, so one there is
@@ -213,7 +200,7 @@ class MainWindow(QMainWindow):
         self.project_page.file_changed.connect(self._project_file_changed)
         self._view_settings: dict | None = None  # the [figures] and [review] the results have
         self.results_page = ResultsWorkspace(self)
-        self.analysis_page = AnalysisWorkspace()
+        self.analysis_page = AnalysisWorkspace(self)
         self.tabs = QTabWidget()
         for name, page in zip(WORKSPACES, (self.project_page, self.run_page, self.results_page,
                                            self.analysis_page), strict=True):
@@ -306,6 +293,7 @@ class MainWindow(QMainWindow):
         self.render = render
         self.settings.setValue("render", render)
         self.results_page.set_render(render)
+        self.analysis_page.set_render(render)
 
     def _about(self) -> None:
         self.about_box().exec()
@@ -366,6 +354,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = {}
         self.results_path = None
         self.results_page.show_results(None, None)
+        self.analysis_page.results_changed()
         self.open_project(project)
         self._mark_saved()
         self._title()
@@ -439,6 +428,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = dict(session.selection)
         self.results_path = None
         self.results_page.show_results(None, None)
+        self.analysis_page.results_changed()
         if project is not None:
             self.open_project(project, load_results=results is None)
         else:
@@ -498,6 +488,7 @@ class MainWindow(QMainWindow):
         if path == self.project:
             self._view_settings = self._figure_and_review_settings()
         self.results_page.show_results(results, path)
+        self.analysis_page.results_changed()
         self.statusBar().showMessage(f"opened {path}", 5000)
         pending = dict(self._pending_selection)
         self.results_page.set_time_axis(pending.pop("time_axis", None))

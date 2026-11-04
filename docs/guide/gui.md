@@ -12,8 +12,8 @@ The window is being built in steps. What it does today:
   replicates, and shows the figures of what you select (below).
 - **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
   with their messages, a progress bar, and a Stop button (below).
-- **Analysis**: for now this shows the command to type in a terminal. Reviewing spectra and
-  the analysis figures come later.
+- **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
+  why each figure left out is left out (below).
 
 ## Installing it
 
@@ -169,6 +169,29 @@ read a table you typed.
 Decisions need the project file: open the results through it (**File > Open project file**).
 A table open in a spreadsheet cannot be written (Excel locks it on Windows): the panel says so
 and keeps the decision; close the table there and press **Try again**.
+
+## Analysis
+
+**Analysis** shows what `hxex analyse hxex.toml` would write, without writing anything: the
+same figures, made by the same program from the same settings (`[analysis]` in the project
+file), so what you see here is what the command writes.
+
+- The list on the left has every kind of figure `hxex analyse` can draw. A kind with figures
+  shows how many; open it to see them (one per sample, or per time point, named as the command
+  names their files). **off** means a setting leaves it out: select it to see which, and
+  **Change…** opens that setting. *none for these results* means the settings allow it, but
+  these results have nothing to draw (no peptide with two populations, say). [Figures](figures.md)
+  lists every kind, with what each shows and needs; `hxex figures hxex.toml` prints the same
+  list in a terminal.
+- Select a figure to see it; **Save figure…** suggests the name `hxex analyse` gives it.
+- The analysis is computed when you first open **Analysis** with results: a few seconds for a
+  small dataset, about half a minute for 25,000 spectra. Then every figure shows at once.
+- When the results change (a new run, a review decision) or the `[analysis]` settings do, the
+  line at the top says the figures are out of date and why; they stay until you press
+  **Recompute**. Opening other results starts afresh.
+- Results opened alone (a bundle, not through the project file) use the default settings.
+  A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
+  `hxex analyse` writes it.
 
 ## Running the commands
 

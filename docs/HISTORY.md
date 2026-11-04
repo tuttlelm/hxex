@@ -6655,3 +6655,25 @@ CSVs or mzML if wanted.
     (a second file contract, and some figures use values no table holds: each sample's
     population choices on the peptides it shares with the reference). The owner's four-panel
     idea becomes a separate, later workspace (PLAN "Analysis").
+
+244. **GUI phase G4, part 1: the Analysis workspace (owner, 2026-11-03; PLAN "GUI",
+    "Analysis").** `write_analysis` split in two: `analysis_outputs` computes (tables, the
+    list of figures with their drawing functions, the config used) and `write_analysis` writes
+    what it returns, so `hxex analyse`'s files are unchanged (its tests pass as they were) and
+    the window draws from the same list. `gui.analysis_workspace.AnalysisWorkspace`: the
+    catalogue's kinds of `hxex analyse` (drawn, if the results have it, off), under each its
+    figures once computed (named as the files); a kind's text under the list, and for one that
+    is off the setting with **Change…** (the Project workspace at that table) and the reason
+    in the figure's place; selecting a kind draws its first figure; **Save figure…** suggests
+    the file's name (`FigurePanel.save_name`). Computed in the background when the workspace is
+    first shown with results (the window's results, its review already applied, so no review
+    is passed again), cancelled when superseded; kept until **Recompute**: other results
+    objects (a new run or resume, a review decision) or another `[analysis]` (its keys and
+    tables as the file has them) mark it out of date with the reason, keeping the figures;
+    other results altogether (another bundle or project) drop it. Settings the results refuse
+    (a reference naming no sample) are said in the status line; `[analysis.runs]` projects are
+    left to `hxex analyse` for now. On the tutorial project: 45 figures, as `analyse` writes.
+    Tests: tests/test_gui_analysis.py. Not yet: the analysis tables beside the figures,
+    clicking a peptide to open its series in Results, the selection in the session file, and
+    the custom-figures workspace.
+

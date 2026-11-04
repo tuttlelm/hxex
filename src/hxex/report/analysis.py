@@ -606,42 +606,22 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     return tables, jobs
 
 
-def write_analysis(
-    results,
-    config: AnalysisConfig,
-    directory: str | Path,
-    *,
-    base: str | Path = ".",
-    record_paths: str = "path",
-    review=None,
-    progress: ProgressHook | None = None,
-    cancel: CancelHook | None = None,
-    before_writing=None,
-) -> list[Path]:
-    """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
-    :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
-    ``directory``; returns the files. Relative FASTA paths are taken from
-    ``base``. ``progress(done, total)`` counts the files.
+@dataclasses.dataclass(frozen=True)
+class AnalysisOutputs:
+    """What an analysis computes before anything is written: its ``tables`` (name -> columns),
+    its ``figures`` (file stem -> a function drawing the figure, called when wanted), and the
+    ``config`` used (``ks`` cut to the K values fitted, the populations rule decided)."""
 
-    ``review`` (:class:`hxex.review_table.ReviewSettings`, a project's ``[review]`` table: the
-    user review table and its exclusion rules) and ``config.exclude`` are applied first, in
-    memory: their rejected spectra are left out.
+    tables: dict
+    figures: list
+    config: AnalysisConfig
 
-    With them go the settings used, for people (not read back): ``analysis_settings_used.toml``
-    (every setting of ``config`` written out; its paths recorded as ``record_paths`` says, as
-    ``[input] record_paths``) and the run settings of the results read
-    (``run_settings_used.toml``, or ``run_settings_used_RUN.toml`` per run of a
-    :class:`~hxex.analysis.RunSet`), written from their bundles' records, so the folder keeps
-    them when a bundle is replaced. Nothing is written when there is no table or figure. The
-    folder's listing records the results read (:func:`hxex.io.made_from`), so ``hxex info``
-    can tell when the folder no longer matches its bundle. ``before_writing`` (no arguments) is
-    called once everything is computed, just before the first file is written (``hxex
-    analyse --keep-previous`` moves the earlier folder then, so that a refusal moves
-    nothing)."""
-    from ..config import settings_records
 
-    directory = Path(directory)
-    read = results.runs if isinstance(results, RunSet) else results  # as read, for the records
+def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".", review=None,
+                     cancel: CancelHook | None = None) -> AnalysisOutputs:
+    """Compute the analysis :func:`write_analysis` writes, without writing it (the window draws
+    its figures one at a time, from the same list): ``review`` and ``config.exclude`` applied
+    first, in memory, as there."""
     if config.exclude or review:  # rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
         from ..review_table import apply_view
@@ -697,6 +677,47 @@ def write_analysis(
                 population_test=config.populations == "population_test")
     tables.update(frag_tables)
     jobs += frag_jobs
+    return AnalysisOutputs(tables, jobs, config)
+
+
+def write_analysis(
+    results,
+    config: AnalysisConfig,
+    directory: str | Path,
+    *,
+    base: str | Path = ".",
+    record_paths: str = "path",
+    review=None,
+    progress: ProgressHook | None = None,
+    cancel: CancelHook | None = None,
+    before_writing=None,
+) -> list[Path]:
+    """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
+    :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
+    ``directory``; returns the files. Relative FASTA paths are taken from
+    ``base``. ``progress(done, total)`` counts the files.
+
+    ``review`` (:class:`hxex.review_table.ReviewSettings`, a project's ``[review]`` table: the
+    user review table and its exclusion rules) and ``config.exclude`` are applied first, in
+    memory: their rejected spectra are left out.
+
+    With them go the settings used, for people (not read back): ``analysis_settings_used.toml``
+    (every setting of ``config`` written out; its paths recorded as ``record_paths`` says, as
+    ``[input] record_paths``) and the run settings of the results read
+    (``run_settings_used.toml``, or ``run_settings_used_RUN.toml`` per run of a
+    :class:`~hxex.analysis.RunSet`), written from their bundles' records, so the folder keeps
+    them when a bundle is replaced. Nothing is written when there is no table or figure. The
+    folder's listing records the results read (:func:`hxex.io.made_from`), so ``hxex info``
+    can tell when the folder no longer matches its bundle. ``before_writing`` (no arguments) is
+    called once everything is computed, just before the first file is written (``hxex
+    analyse --keep-previous`` moves the earlier folder then, so that a refusal moves
+    nothing)."""
+    from ..config import settings_records
+
+    directory = Path(directory)
+    read = results.runs if isinstance(results, RunSet) else results  # as read, for the records
+    outputs = analysis_outputs(results, config, base=base, review=review, cancel=cancel)
+    tables, jobs, config = outputs.tables, outputs.figures, outputs.config
 
     total = len(tables) + len(jobs)
     names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"

@@ -349,6 +349,7 @@ class FigurePanel(QWidget):
         self.scroll.viewport().installEventFilter(self)  # the wheel zooms (not scrolls)
         self._connect(self.view)
         self.magnified = False  # a panel fills the view (double-click)
+        self.save_name = ""  # the file name the save dialog suggests (none: it asks)
         self.status = QLabel()
         self._fitted = True
         self._drawing = Latest(self, pool or drawing_pool())
@@ -586,7 +587,7 @@ class FigurePanel(QWidget):
         if self.view.figure is None:
             return
         filters = ";;".join(f"{label} (*.{fmt})" for fmt, label in SAVE_FORMATS.items())
-        path, chosen = QFileDialog.getSaveFileName(self, "Save figure", "", filters)
+        path, chosen = QFileDialog.getSaveFileName(self, "Save figure", self.save_name, filters)
         if not path:
             return
         if "." not in path.rsplit("/", 1)[-1]:  # no suffix typed: the chosen format's

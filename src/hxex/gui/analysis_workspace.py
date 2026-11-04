@@ -1,0 +1,384 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The Analysis workspace (docs/PLAN.md, "GUI", "Analysis"): exactly what ``hxex analyse``
+writes with the project's settings, shown rather than written.
+
+On the left, every kind of figure ``hxex analyse`` draws (:mod:`hxex.report.catalogue`): drawn,
+left to the results, or off, with the reason and a button to the setting that rules it out;
+under each kind its figures, once computed. On the right, the figure selected, drawn from
+``hxex analyse``'s own list of figures (:func:`hxex.report.analysis_outputs`), so the window and
+the files cannot differ, and saved under the name the command gives it.
+
+The analysis is computed in the background once, when the workspace is first shown with
+results, and kept: a change of the results (a new run, a review decision) or of ``[analysis]``
+marks it out of date, keeping the figures, and Recompute computes it again.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .figure_view import FigurePanel
+from .tasks import Latest
+
+log = logging.getLogger(__name__)
+
+KIND, STEM = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
+STATE_WORDS = {"drawn": "drawn", "depends": "if the results have it", "off": "off"}
+
+
+def setting_table(setting: str) -> str:
+    """The table of a setting as the catalogue writes it: ``[analysis] reference`` ->
+    ``analysis``, ``[[analysis.regions]]`` -> ``analysis.regions``."""
+    return setting.split("]")[0].strip("[")
+
+
+class AnalysisWorkspace(QWidget):
+    """``hxex analyse``'s figures for the results shown, with the project's settings."""
+
+    def __init__(self, window=None):
+        super().__init__()
+        self.window = window
+        self.outputs = None  # hxex.report.AnalysisOutputs
+        self._made_from = None  # (results object, [analysis] text, results path) computed from
+        self._cancel: threading.Event | None = None
+        self._computing = Latest(self)
+        self.render = getattr(window, "render", "matplotlib")
+
+        self.status = QLabel("No results open.")
+        self.status.setWordWrap(True)
+        self.compute_button = QPushButton("Compute")
+        self.compute_button.setToolTip("compute the analysis as hxex analyse does (nothing is "
+                                       "written)")
+        self.compute_button.clicked.connect(self.compute)
+        self.busy = QProgressBar()
+        self.busy.setRange(0, 0)  # computing: no count to show
+        self.busy.setMaximumWidth(120)
+        self.busy.hide()
+        top = QHBoxLayout()
+        top.addWidget(self.status, 1)
+        top.addWidget(self.busy)
+        top.addWidget(self.compute_button)
+
+        self.list = QTreeWidget()
+        self.list.setColumnCount(2)
+        self.list.setHeaderLabels(["figure", ""])
+        self.list.setUniformRowHeights(True)
+        header = self.list.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.list.currentItemChanged.connect(self._selected)
+        self.about = QLabel()
+        self.about.setWordWrap(True)
+        self.about.setTextFormat(Qt.TextFormat.PlainText)
+        self.change = QPushButton()
+        self.change.clicked.connect(self._change)
+        self.change.hide()
+        left = QWidget()
+        side = QVBoxLayout(left)
+        side.setContentsMargins(0, 0, 0, 0)
+        side.addWidget(self.list, 1)
+        side.addWidget(self.about)
+        side.addWidget(self.change)
+
+        self.panel = FigurePanel(render=self.render)
+        split = QSplitter()
+        split.addWidget(left)
+        split.addWidget(self.panel)
+        split.setStretchFactor(1, 1)
+        split.setSizes([400, 800])
+        layout = QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(split, 1)
+        self._change_table = ""
+        self._planned: dict[str, object] = {}
+        self.refresh()
+
+    # --- what the analysis is made from ---------------------------------------------------
+
+    @property
+    def results(self):
+        page = getattr(self.window, "results_page", None)
+        return getattr(page, "results", None)
+
+    def _project(self) -> Path | None:
+        """The project file whose [analysis] applies: only results opened through it."""
+        window = self.window
+        if window is None or window.project is None or window.results_path != window.project:
+            return None
+        return window.project
+
+    def _settings(self):
+        """(the [analysis] settings, the folder relative paths are taken from, their text as
+        the project file has them, for telling a change)."""
+        from ..analysis import AnalysisConfig
+        from ..config import load_project
+        from ..project_edit import live_settings
+
+        project = self._project()
+        if project is None:
+            path = getattr(self.window, "results_path", None)
+            return AnalysisConfig(), Path(path).parent if path else Path("."), None
+        config = load_project(project, analysis_only=True).analysis or AnalysisConfig()
+        values, tables = live_settings(project.read_text(encoding="utf-8-sig"))
+        text = ({k: v for k, v in values.items() if k.split(".")[0] == "analysis"},
+                sorted(t for t in tables if t.split(".")[0] == "analysis"))
+        return config, project.parent, repr(text)
+
+    def why_out_of_date(self) -> str:
+        """Why the analysis shown no longer matches the results and settings (empty: it does)."""
+        if self.outputs is None or self._made_from is None:
+            return ""
+        results, text, _ = self._made_from
+        if self.results is not results:
+            return "the results changed (a new run or resume, or a review decision)"
+        try:
+            now = self._settings()[2]
+        except Exception:  # noqa: BLE001 - a project file that does not read now
+            return "the project file does not read"
+        if now != text:
+            return "the project's [analysis] settings changed"
+        return ""
+
+    # --- the list ---------------------------------------------------------------------------
+
+    def refresh(self) -> None:
+        """Show the plan of the current results and settings, the figures computed, and whether
+        they are out of date; compute when shown with results and nothing computed yet."""
+        self._fill()
+        if self.results is None:
+            self.status.setText("No results open: open a project file whose results exist, or "
+                                "a results bundle.")
+            self.compute_button.setEnabled(False)
+            return
+        self.compute_button.setEnabled(not self._computing.running)
+        if self._computing.running:
+            return
+        why = self.why_out_of_date()
+        if self.outputs is None:
+            self.compute_button.setText("Compute")
+            if self.isVisible() and self._error is None:
+                self.compute()
+        elif why:
+            self.status.setText(f"Out of date: {why}. The figures shown are the earlier "
+                                "analysis's; Recompute to see the new one.")
+            self.compute_button.setText("Recompute")
+        else:
+            n = len(self.outputs.figures)
+            self.status.setText(f"{n} figure(s), as hxex analyse would write them"
+                                + self._settings_note())
+            self.compute_button.setText("Recompute")
+
+    _error: str | None = None
+
+    def _settings_note(self) -> str:
+        return ("" if self._project() is not None else
+                " (a bundle opened alone: the default [analysis] settings; open the project "
+                "file for its own)")
+
+    def _fill(self) -> None:
+        """The kinds of figure and, once computed, their figures."""
+        from ..report.catalogue import ANALYSE, Situation, kind_of, plan
+
+        current = self.list.currentItem()
+        keep = (current.data(0, KIND), current.data(0, STEM)) if current is not None else None
+        self.list.blockSignals(True)
+        self.list.clear()
+        self._planned = {}
+        if self.results is not None:
+            try:
+                config = self._settings()[0]
+                planned = plan(Situation.of(analysis=config, results=self.results))
+            except Exception as exc:  # noqa: BLE001 - settings these results refuse
+                self.list.blockSignals(False)
+                self._error = str(exc)
+                self.status.setText(f"The analysis cannot be made: {exc}")
+                return
+            self._error = None
+            by_kind: dict[str, list[str]] = {}
+            for stem, _ in (self.outputs.figures if self.outputs is not None else []):
+                kind = kind_of(stem)
+                by_kind.setdefault(kind.name if kind else "other", []).append(stem)
+            for p in planned:
+                if p.kind.command != ANALYSE:
+                    continue
+                self._planned[p.kind.name] = p
+                stems = by_kind.get(p.kind.name, [])
+                item = QTreeWidgetItem([p.kind.title, self._state_text(p, stems)])
+                item.setData(0, KIND, p.kind.name)
+                item.setToolTip(0, p.kind.shows)
+                if p.state == "off" or (self.outputs is not None and not stems):
+                    for col in (0, 1):
+                        item.setForeground(col, self.palette().placeholderText())
+                for stem in stems:
+                    child = QTreeWidgetItem([stem, ""])
+                    child.setData(0, KIND, p.kind.name)
+                    child.setData(0, STEM, stem)
+                    item.addChild(child)
+                self.list.addTopLevelItem(item)
+                if keep is not None and keep[0] == p.kind.name:
+                    target = item
+                    for i in range(item.childCount()):
+                        if item.child(i).data(0, STEM) == keep[1]:
+                            target = item.child(i)
+                    self.list.setCurrentItem(target)
+                    item.setExpanded(True)
+        self.list.blockSignals(False)
+        self._describe(self.list.currentItem())
+
+    def _state_text(self, planned, stems) -> str:
+        if planned.state == "off":
+            return "off"
+        if self.outputs is None:
+            return STATE_WORDS[planned.state]
+        return f"{len(stems)} figure(s)" if stems else "none for these results"
+
+    def _selected(self, item, _previous=None) -> None:
+        self._describe(item)
+        if item is None or self.outputs is None:
+            return
+        stem = item.data(0, STEM)
+        if stem is None and item.childCount():  # a kind: its first figure
+            item.setExpanded(True)
+            stem = item.child(0).data(0, STEM)
+        if stem is None:  # a kind with no figure: why, in the figure's place
+            self.panel.save_name = ""
+            self.panel.clear(self._off_text(self._planned.get(item.data(0, KIND)))
+                             or "no figure of this kind for these results")
+            return
+        draw = dict(self.outputs.figures).get(stem)
+        if draw is not None:
+            self.panel.save_name = stem
+            self.panel.draw(draw)
+
+    def _describe(self, item) -> None:
+        """What the selected kind shows, and, when it is off, why, with its setting."""
+        self.change.hide()
+        self._change_table = ""
+        if item is None:
+            self.about.setText("")
+            return
+        p = self._planned.get(item.data(0, KIND))
+        if p is None:
+            self.about.setText("")
+            return
+        lines = [f"{p.kind.title}: {p.kind.shows}."]
+        if p.state == "off":
+            lines.append(self._off_text(p))
+            if p.missing:
+                need = p.missing[0]
+                self._change_table = setting_table(need.setting)
+                self.change.setText(f"Change {need.setting}…")
+                self.change.show()
+        elif p.reason:
+            lines.append(f"Drawn {p.reason}.")
+        self.about.setText("\n".join(lines))
+
+    @staticmethod
+    def _off_text(p) -> str:
+        """Why a kind of figure is off (empty when it is not)."""
+        if p is None or p.state != "off":
+            return ""
+        if p.missing:
+            return "Off: needs " + "; ".join(f"{n.setting} {n.words}" for n in p.missing) + "."
+        return f"Off: {p.reason}."
+
+    def _change(self) -> None:
+        if self.window is not None and self._change_table:
+            self.window.show_setting(self._change_table)
+
+    # --- computing --------------------------------------------------------------------------
+
+    def compute(self) -> None:
+        """Compute the analysis of the results shown in the background (nothing is written)."""
+        from ..report import analysis_outputs
+
+        results = self.results
+        if results is None:
+            return
+        try:
+            config, base, text = self._settings()
+        except Exception as exc:  # noqa: BLE001 - the project file does not read
+            self.status.setText(f"The analysis cannot be made: {exc}")
+            return
+        if config.runs:
+            self.status.setText("This project compares separate runs ([analysis.runs]): the "
+                                "window does not show that yet; hxex analyse writes it.")
+            return
+        if self._cancel is not None:
+            self._cancel.set()  # an older computation still running stops
+        cancel = self._cancel = threading.Event()
+        n = len(results.fit)
+        path = getattr(self.window, "results_path", None)
+        self.status.setText(f"Computing the analysis of {n:,} spectra (about half a minute "
+                            "for 25,000 spectra)…")
+        self.busy.show()
+        self.compute_button.setEnabled(False)
+        log.info("computing the analysis (as hxex analyse, nothing written)")
+        self._computing.submit(
+            lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
+            lambda outputs: self._computed(outputs, results, text, path),
+            self._failed)
+
+    @property
+    def computing(self) -> bool:
+        return self._computing.running
+
+    def _computed(self, outputs, results, text, path) -> None:
+        self.busy.hide()
+        self.outputs = outputs
+        self._made_from = (results, text, path)
+        log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
+        self.refresh()
+        if self.list.currentItem() is None:  # the first figure drawn
+            for i in range(self.list.topLevelItemCount()):
+                item = self.list.topLevelItem(i)
+                if item.childCount():
+                    item.setExpanded(True)
+                    self.list.setCurrentItem(item.child(0))
+                    break
+
+    def _failed(self, message: str) -> None:
+        self.busy.hide()
+        self.compute_button.setEnabled(True)
+        self._error = message
+        self.status.setText(f"The analysis could not be made: {message}")
+        log.error("the analysis could not be made: %s", message)
+
+    # --- the window --------------------------------------------------------------------------
+
+    def results_changed(self) -> None:
+        """Other results are shown: an analysis of other results altogether (another bundle or
+        project) is dropped; one of the same results, made again, is marked out of date."""
+        path = getattr(self.window, "results_path", None)
+        if self.results is None or (self._made_from is not None and self._made_from[2] != path):
+            if self._cancel is not None:
+                self._cancel.set()
+            self.outputs, self._made_from = None, None
+            self.panel.clear()
+        self._error = None
+        self.refresh()
+
+    def set_render(self, render: str) -> None:
+        self.render = render
+        self.panel.set_render(render)
+
+    def showEvent(self, event):  # noqa: N802 - Qt's name
+        super().showEvent(event)
+        self.refresh()

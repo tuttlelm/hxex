@@ -980,9 +980,9 @@ Planned, not built:
    command line and Python: the project editor and the user tables first, then running stages,
    results and review, and analysis views (section "GUI", phases G0-G4). G0 to G2 built
    (HISTORY 232-236); G3 parts 1 and 2 (the tree, the review panel; HISTORY 237-242); the
-   figure catalogue with `figures.md` and `hxex figures` (HISTORY 243). Next: G4's Analysis
-   workspace from the catalogue, or the rest of G3 (flat list, series review table, Results
-   tables).
+   figure catalogue with `figures.md` and `hxex figures` (HISTORY 243); G4 part 1, the
+   Analysis workspace (HISTORY 244). Next: the analysis tables and click-through to Results,
+   or the rest of G3 (flat list, series review table, Results tables).
 
 ## Risks and open decisions
 
