@@ -46,6 +46,7 @@ from .analysis_workspace import AnalysisWorkspace
 from .results_workspace import ResultsWorkspace, _left_out_or_none
 from .review import table_stamp
 from .run_workspace import RunWorkspace
+from .sequence_view import SequenceView
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
 from .tasks import Latest
 
@@ -130,9 +131,11 @@ class ProjectWorkspace(QWidget):
         self.text.setFont(QFont("monospace"))
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.tables = TablesView()
+        self.sequence = SequenceView()  # the protein sequence(s), as the analysis numbers them
         self.views = QTabWidget()
         self.views.addTab(self.editor, "Settings")
         self.views.addTab(self.tables, "Tables")
+        self.views.addTab(self.sequence, "Sequence")
         self.views.addTab(self.text, "File")
         layout = QVBoxLayout(self)
         layout.addLayout(top)
@@ -147,6 +150,7 @@ class ProjectWorkspace(QWidget):
 
     def _file_changed(self) -> None:
         self.tables.show_project(self.path, self.editor.values, self.editor.format)
+        self.sequence.show_project(self.path)
         self.file_changed.emit()
         if self.path is None:
             self.text.setPlainText("")

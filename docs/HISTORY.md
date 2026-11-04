@@ -7074,3 +7074,16 @@ CSVs or mzML if wanted.
     is chosen, as by a left click. A test found that a test's Ctrl+C keystroke can leave Qt's
     modifier state set for later tests, so a test selecting by `setCurrentIndex` now selects
     explicitly.
+
+271. **A sequence view in the Project workspace (owner, 2026-11-04: "a nice looking sequence
+    viewer, maybe at the Project level"; along the lines proposed, basic to start).**
+    `gui.sequence_view`, a **Sequence** tab: each sample's sequence as the analysis reads it
+    (`[analysis] fasta`, one file or per sample, else SpecExport's `SAMPLE.fasta` files; a
+    `>NAME/START-END` header sets the numbering), as residues (`chem.parse_sequence`, letters it
+    does not weigh, such as X, as written), one row per distinct sequence (samples sharing one
+    share the row), the reference first then `[analysis] samples`; blocks of ten, fifty a line,
+    a ruler of every tenth number; residues unlike the reference's highlighted, prolines grey,
+    regions as coloured bars under their residues, sites underlined, a key above; a residue
+    clicked described (number, residue, the other rows' residues there, region, site). HTML in
+    a `QTextBrowser`, each residue a link. Tutorial: WT, D109H (H at 109), R120G (G at 120).
+    Not yet (owner: basic first): coverage under the sequence once results exist.

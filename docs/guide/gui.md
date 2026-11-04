@@ -128,6 +128,18 @@ the user review table. Choose one on the left to edit it as a grid.
 - **New table** makes a table with the columns *hxex* reads for your format, where you choose,
   and names it in the project file.
 
+**Sequence** shows the protein sequence of each sample as the analysis numbers it: from the
+files `[analysis] fasta` names, or, for SpecExport data, the `SAMPLE.fasta` file beside each
+sample's folder; a FASTA numbered by its header (`>NAME/START-END`) starts at START. The
+residues run in blocks of ten, fifty to a line, with their numbers above. Each distinct sequence
+has a row, named by its samples (samples with the same sequence share one), the reference first;
+a residue that differs from the reference's is highlighted, so a mutation stands out, and
+prolines (which have no amide hydrogen to exchange) are in grey. The regions of
+`[[analysis.regions]]` are coloured bars under their residues and the sites of
+`[analysis.sites]` are underlined, with a key above. Click a residue to see its number, what it
+is, how the other samples differ there, and its regions and site. **Read again** reads the
+FASTA files again after you change one.
+
 ## Results
 
 **Results** shows a run's results as a tree: each peptide of each sample, under it its charges
