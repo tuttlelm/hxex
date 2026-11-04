@@ -2613,3 +2613,41 @@ def test_analysis_colours_reach_every_figure_that_colours_samples(two_sample_bun
     assert colours == {to_hex("orange")}
     redundancy = figures["redundancy_resolution"]()
     assert to_hex("orange") in {to_hex(line.get_color()) for line in redundancy.axes[0].get_lines()}
+
+
+def test_a_reference_list_or_all_makes_one_analysis_each(two_sample_bundle, tmp_path, capsys):
+    import shutil
+
+    from hxex import cli
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import analysis_outputs, analysis_references
+
+    assert AnalysisConfig(reference=["S", "V", "S"]).reference == ("S", "V")  # each once
+    assert AnalysisConfig(reference=["S"]).reference == "S"  # one stays one
+    assert AnalysisConfig(reference="all").references == ("all",)
+    assert not AnalysisConfig(reference="all").single_reference
+    with pytest.raises(ValueError, match="not among the samples"):
+        AnalysisConfig(reference=["S", "X"], samples=["S", "V"])
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    assert analysis_references(results, AnalysisConfig(reference="all")) == ["S", "V"]
+    assert analysis_references(results, AnalysisConfig(reference="all",
+                                                       samples=["V", "S"])) == ["V", "S"]
+    assert analysis_references(results, AnalysisConfig()) == [""]
+    with pytest.raises(ValueError, match="no reference sample 'X'"):
+        analysis_references(results, AnalysisConfig(reference=["S", "X"]))
+    with pytest.raises(ValueError, match="one reference at a time"):
+        analysis_outputs(results, AnalysisConfig(reference=["S", "V"]))
+    # hxex analyse: a folder per reference
+    bundle = tmp_path / "results"
+    shutil.copytree(two_sample_bundle, bundle)
+    assert cli.main(["-q", "analyse", str(bundle), "--reference", "all", "--format", "png"]) == 0
+    assert (tmp_path / "results_analysis_S").is_dir() and (tmp_path / "results_analysis_V").is_dir()
+    assert any(p.name.startswith("woods_V_") for p in (tmp_path / "results_analysis_S").iterdir())
+    assert any(p.name.startswith("woods_S_") for p in (tmp_path / "results_analysis_V").iterdir())
+    out = capsys.readouterr().out
+    assert out.count("figure(s) in") == 2
+    assert cli.main(["-q", "analyse", str(bundle), "--reference", "S,V", "--out",
+                     str(tmp_path / "one")]) == 1
+    assert "make a folder each" in capsys.readouterr().err

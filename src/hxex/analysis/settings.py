@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +70,9 @@ class NumberedSequence(str):
 DEFAULT_OVERLAY = ("low", "high", "avg")  # without K = 2 in ks: ("avg",)
 
 
+ALL_REFERENCES = "all"  # [analysis] reference = "all": every sample in turn
+
+
 def _same_sample(a: str, b: str) -> bool:
     """Whether two sample names can name the same sample: equal, or one is ``run:sample`` and
     the other that sample's bare name (which the results resolve where it is unambiguous)."""
@@ -87,8 +90,11 @@ class AnalysisConfig:
 
     Which data:
 
-    - ``reference``: the sample the others are compared with (empty: no comparisons). (The
-      ``reference`` of the exchange and labelling conditions is an intrinsic-rate set.)
+    - ``reference``: the sample the others are compared with (empty: no comparisons); a list of
+      samples, or ``'all'`` (every sample in turn), makes one analysis per reference
+      (:func:`hxex.report.analysis_references`, :meth:`with_reference`; ``hxex analyse``
+      writes a folder for each), and an analysis itself takes one. (The ``reference`` of the
+      exchange and labelling conditions is an intrinsic-rate set.)
     - ``samples``: the samples, in this order (empty: all, the reference first).
     - ``times`` (s, or text with a unit such as ``"5 min"``): the time points of the per-time
       figures (empty: all); ``exclude_times``: time points left out of the whole analysis
@@ -170,7 +176,7 @@ class AnalysisConfig:
       peptides (removed: unreliable); fragment ladders give them (``fragments``).
     """
 
-    reference: str = ""
+    reference: str | tuple[str, ...] = ""
     samples: tuple[str, ...] = ()
     times: tuple[float, ...] = ()
     exclude_times: tuple[float, ...] = ()
@@ -203,6 +209,11 @@ class AnalysisConfig:
 
     def __post_init__(self):
         from ..kint import read_conditions
+
+        if isinstance(self.reference, (list, tuple)):  # several: one name stays a name
+            names = tuple(dict.fromkeys(str(r) for r in self.reference))
+            object.__setattr__(self, "reference", names[0] if len(names) == 1 else
+                               names or "")
 
         object.__setattr__(self, "labelling", read_conditions(self.labelling))
         if not isinstance(self.protection, bool):
@@ -281,9 +292,27 @@ class AnalysisConfig:
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
             raise ValueError("borderline_evidence must be a number >= 0")
 
-        if self.reference and self.samples and not any(
-                _same_sample(self.reference, s) for s in self.samples):
-            raise ValueError(f"the reference {self.reference!r} is not among the samples")
+        if self.samples:
+            for ref in self.references:
+                if ref != ALL_REFERENCES and not any(_same_sample(ref, s) for s in self.samples):
+                    raise ValueError(f"the reference {ref!r} is not among the samples")
+
+    @property
+    def references(self) -> tuple[str, ...]:
+        """The references as written: none, one, several, or ``('all',)``."""
+        if not self.reference:
+            return ()
+        return self.reference if isinstance(self.reference, tuple) else (self.reference,)
+
+    @property
+    def single_reference(self) -> bool:
+        """Whether this is one analysis: no reference, or one sample (not a list or ``'all'``)."""
+        return isinstance(self.reference, str) and self.reference != ALL_REFERENCES
+
+    def with_reference(self, reference: str) -> AnalysisConfig:
+        """This analysis against one ``reference`` (a sample of :attr:`references`, or of every
+        sample for ``'all'``)."""
+        return replace(self, reference=reference)
 
     def _check_nested(self, what: str, setting) -> None:
         """A per-sample setting's nested tables (a run's own entries) must be named after runs

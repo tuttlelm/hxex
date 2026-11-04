@@ -410,7 +410,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `reference` | text | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample |
+| `reference` | text or list | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample. A list (`["WT", "Mut"]`) or `"all"` (every sample in turn) makes one analysis per reference, a folder each |
 | `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |

@@ -75,7 +75,7 @@ from ..analysis import (
 from ..analysis.residues import NoPeptideAtTime
 from ..analysis.residues import states as _states
 from ..analysis.runs import display_labels, label, resolve_sample
-from ..analysis.settings import OVERLAY_VALUES, UNDEUTERATED, population_rule
+from ..analysis.settings import ALL_REFERENCES, OVERLAY_VALUES, UNDEUTERATED, population_rule
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
 from ..io.times import format_time
@@ -224,22 +224,54 @@ def _fitted_ks(config: AnalysisConfig, runs: Mapping) -> AnalysisConfig:
     return dataclasses.replace(config, ks=ks, overlay=overlay)
 
 
-def _check_names(results, config: AnalysisConfig) -> None:
-    """Refuse a ``reference`` or a ``samples`` entry that names no sample of the results,
-    before anything is computed (so the message is not lost after the filters' lines)."""
+def _sample_states(results) -> list[tuple[str, str]] | None:
+    """Every ``(run, sample)`` of the results as the analysis names them (merged samples
+    under their label), sorted as the analysis orders them; None when the results do not say
+    (no binned spectra)."""
     runs = results.runs if isinstance(results, RunSet) else {"": results}
     states = []
     for name, r in runs.items():
         if r.binned is None:
-            return  # nothing to check against (the tables say what they have)
+            return None
         for sample in dict.fromkeys(np.asarray(r.binned.sample).astype(str)):
             states.append(results.state(name, sample) if isinstance(results, RunSet)
                           else ("", sample))
+    return sorted(dict.fromkeys(states))
+
+
+def _check_names(results, config: AnalysisConfig) -> None:
+    """Refuse a ``reference`` (each of several) or a ``samples`` entry that names no sample of
+    the results, before anything is computed (so the message is not lost after the filters'
+    lines)."""
+    states = _sample_states(results)
+    if states is None:
+        return  # nothing to check against (the tables say what they have)
     run_names, sample_names = [s[0] for s in states], [s[1] for s in states]
-    if config.reference:
-        resolve_sample(run_names, sample_names, config.reference, "reference sample")
+    for ref in config.references:
+        if ref != ALL_REFERENCES:
+            resolve_sample(run_names, sample_names, ref, "reference sample")
     for s in config.samples or ():
         resolve_sample(run_names, sample_names, s)
+
+
+def analysis_references(results, config: AnalysisConfig) -> list[str]:
+    """The references ``config`` makes analyses against, one analysis each: ``['']`` with
+    none, the one or the several named, or with ``'all'`` every sample of the results in the
+    order of ``[analysis] samples`` (else the analysis's own order), named as the settings name
+    them (``run:sample`` for one run's sample of several runs)."""
+    refs = config.references
+    if not refs:
+        return [""]
+    if ALL_REFERENCES not in refs:
+        _check_names(results, config)
+        return list(refs)
+    if config.samples:
+        return list(config.samples)
+    states = _sample_states(results)
+    if states is None:
+        raise ValueError('[analysis] reference = "all": these results do not list their samples; '
+                         "name the references")
+    return [label(*state) for state in states]
 
 
 def _sample_styles(up, labels: dict, shown: list, reference: str, colours) -> dict:
@@ -649,6 +681,10 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
     """Compute the analysis :func:`write_analysis` writes, without writing it (the window draws
     its figures one at a time, from the same list): ``review`` and ``config.exclude`` applied
     first, in memory, as there."""
+    if not config.single_reference:
+        raise ValueError(f"one reference at a time: {', '.join(config.references)} make an "
+                         "analysis each (analysis_references, AnalysisConfig.with_reference; "
+                         "hxex analyse writes a folder for each)")
     if config.exclude or review:  # rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
         from ..review_table import apply_view

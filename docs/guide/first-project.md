@@ -227,7 +227,10 @@ hxex analyse hxex.toml
 The comparisons, residue maps and their figures go to `results_analysis_WT`: the folder is
 named after the reference. To compare with another reference as well, run
 `hxex analyse hxex.toml --reference Mut`; it writes to `results_analysis_Mut`, beside the first,
-without touching it. (Without a reference, the folder is `results_analysis`.)
+without touching it. (Without a reference, the folder is `results_analysis`.) To make both
+every time, name both in the project file, `reference = ["WT", "Mut"]`, or write
+`reference = "all"` for every sample in turn: `hxex analyse` then makes one analysis per
+reference, each in its own folder, with the same settings.
 
 After these steps, the project folder holds:
 

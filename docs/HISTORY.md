@@ -6697,3 +6697,23 @@ CSVs or mzML if wanted.
     hex codes included, since `set_settings` quotes text), each value with a swatch of its
     colour. Tests: test_analysis (styles; the setting reaching the overlay and redundancy
     figures), test_gui_project (the swatch).
+
+246. **Several references from one project file; `"all"` (owner, 2026-11-03).** The owner
+    asked whether one project file could give residue significance against two references
+    (HISTORY 119 refused `[[analysis]]`: one table, `--reference` for another). Built (owner:
+    a list, and an "all" option): `[analysis] reference` is a sample, a list of samples, or
+    `"all"` (every sample in turn: `[analysis] samples` in its order, else the results'
+    samples as the analysis orders them; a sample named "all" needs `run:sample`). An analysis
+    still takes one reference: `AnalysisConfig.references`, `single_reference`,
+    `with_reference`, and `report.analysis_references(results, config)` expand the setting;
+    `analysis_outputs` refuses several. `hxex analyse` makes one analysis per reference, each
+    in its own `results_analysis_NAME` (the folders checked before anything is computed; with
+    `"all"` once the results are open), with the same settings; `--reference` takes one
+    name, several separated by commas, or `all`; `--out` or `[analysis] out` with several is
+    refused (a folder each). `hxex check` marks each such folder as `hxex analyse`'s;
+    `hxex figures` names the references. The window's Analysis workspace gets a list of the
+    references (shown only with several): each computed when first chosen and kept, the
+    figure selected redrawn for the reference chosen. Not shared between the analyses: each
+    computes its species table again (about 28 s per reference on the intact-peptide
+    benchmark). Tests: test_analysis (forms, expansion, the command's folders, the refusal),
+    test_gui_analysis (the list).

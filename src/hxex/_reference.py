@@ -165,7 +165,9 @@ _DESCRIPTIONS: dict[str, str] = {
                      "false",
     "output.notes": "free text kept in the bundle's manifest",
     "analysis.reference": "the sample the others are compared with (empty: no comparisons); "
-                          '`"run:sample"` names one run\'s sample',
+                          '`"run:sample"` names one run\'s sample. A list (`["WT", "Mut"]`) or '
+                          '`"all"` (every sample in turn) makes one analysis per reference, a '
+                          "folder each",
     "analysis.samples": "which samples, in this order (empty: all, the reference first)",
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "

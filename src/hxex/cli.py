@@ -166,7 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
                                  "reference, e.g. results_analysis_WT)")
     _output_options(p, "the analysis folder")
     p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
-                                       "RUN:sample when the sample is in several runs)")
+                                       "RUN:sample when the sample is in several runs); "
+                                       "several, separated by commas, or all (every sample): "
+                                       "a folder each")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
     _threads_option(p)
@@ -634,28 +636,32 @@ def _output_lines(project) -> list[str]:
                  else "up to date" if stamp == created else "made from earlier results")
         lines.append(f"{folder.name}: {state} {writes(command)}")
     analysis = project.analysis  # none: hxex analyse uses the default settings
-    reference = analysis.reference if analysis is not None else None
+    refs = [r for r in (analysis.references if analysis is not None else ()) or ("",)]
+    every = "all" in refs  # every sample in turn: each of the bundle's analysis folders
     if analysis is not None and analysis.out:
-        wanted = Path(analysis.out)
+        wanted = [Path(analysis.out)]
     elif analysis is not None and analysis.runs:  # as hxex analyse names it: beside the first
-        wanted = Path(next(iter(analysis.runs.values()))).with_name(
-            analysis_folder_name("runs", reference))
+        first = Path(next(iter(analysis.runs.values())))
+        wanted = [first.with_name(analysis_folder_name("runs", r)) for r in refs if r != "all"]
     else:
-        wanted = bundle.with_name(analysis_folder_name(bundle.name, reference))
+        wanted = [bundle.with_name(analysis_folder_name(bundle.name, r))
+                  for r in refs if r != "all"]
     folders = dict(analysis_states(bundle))
-    if analysis is not None and analysis.runs and not analysis.out and holds_output(wanted):
-        # an analysis of several runs records each run's results by its name
-        made = made_from(wanted) or {}
-        stamps = {name: (bundle_manifest(Path(p)) or {}).get("created", "")
-                  for name, p in analysis.runs.items()}
-        folders[wanted] = ("" if any(not made.get(n) for n in stamps) else None
-                           if all(made[n] == c for n, c in stamps.items()) else "earlier")
-    elif wanted is not None and wanted not in folders and holds_output(wanted):
-        folders[wanted] = ""
+    for one in wanted:
+        if analysis is not None and analysis.runs and not analysis.out and holds_output(one):
+            # an analysis of several runs records each run's results by its name
+            made = made_from(one) or {}
+            stamps = {name: (bundle_manifest(Path(p)) or {}).get("created", "")
+                      for name, p in analysis.runs.items()}
+            folders[one] = ("" if any(not made.get(n) for n in stamps) else None
+                            if all(made[n] == c for n, c in stamps.items()) else "earlier")
+        elif one not in folders and holds_output(one):
+            folders[one] = ""
+    analysed = {w.resolve() for w in wanted}
     for folder, state in sorted(folders.items()):
         text = ("up to date" if state is None else "made from earlier results" if state
                 else "made from results not recorded")
-        if wanted is not None and folder.resolve() == wanted.resolve():
+        if every or folder.resolve() in analysed:
             text += f" {writes('hxex analyse')}"
         lines.append(f"{folder.name}: {text}")
     if not lines:
@@ -1667,13 +1673,14 @@ def _analysis_rows(bundle: Path) -> list[tuple[str, str]]:
     return rows
 
 
-def _stale_analyses(bundle: Path, written: Path) -> None:
+def _stale_analyses(bundle: Path, out: Path, written: Sequence[Path] = ()) -> None:
     """Warn about the bundle's other analysis folders made from earlier results (``hxex
-    analyse`` has just brought ``written`` up to date)."""
+    analyse`` has just brought ``out``, and the folders ``written`` with it, up to date)."""
     from .io.bundle import analysis_states
 
+    done = {p.resolve() for p in [out, *written]}
     for folder, state in analysis_states(bundle):
-        if state and folder.resolve() != written.resolve():
+        if state and folder.resolve() not in done:
             log.warning("%s was made from earlier results (created %s): run hxex analyse for "
                         "it again", folder, state)
 
@@ -1774,33 +1781,58 @@ def cmd_analyse(args) -> int:
                 return EXIT_ERROR
             runs = {"": bundle}
     changes = {}
-    if args.reference:
-        changes["reference"] = args.reference
+    if args.reference:  # one, several (commas), or all
+        names = [n.strip() for n in args.reference.split(",") if n.strip()]
+        changes["reference"] = names[0] if len(names) == 1 else tuple(names)
     if args.fig_format:
         changes["format"] = args.fig_format
     if changes:
         config = dataclasses.replace(config, **changes)
     several = len(runs) > 1 or "" not in runs
     lead = next(iter(runs.values()))
+    from .analysis.settings import ALL_REFERENCES
+    from .io import prepare_output
     from .io.bundle import analysis_folder_name
 
-    # the default folder is named after the reference, so analyses against different
-    # references never write into one folder
-    out = Path(args.out) if args.out else Path(config.out) if config.out else lead.with_name(
-        analysis_folder_name("runs" if several else lead.name, config.reference))
-    from .io import prepare_output
-
-    for name, path in runs.items():
+    for path in runs.values():
         if problem := _bundle_problem(Path(path), "analyse"):
             log.error("%s", problem)
             return EXIT_ERROR
-        if _same_folder(out, path):
-            log.error("%s is the results bundle itself%s: the analysis goes in a folder of its "
-                      "own (--out DIR, or [analysis] out)", out, f" ({name})" if name else "")
-            return EXIT_ERROR
-    prepare_output(out, overwrite=overwrite, keep_previous=keep_previous, what="analysis",
-                   elsewhere="another folder with --out DIR (or [analysis] out)", move=False)
+    named = Path(args.out) if args.out else Path(config.out) if config.out else None
+    if named is not None and not config.single_reference:
+        log.error("%s: several references (%s) make a folder each, named after the reference "
+                  "(results_analysis_NAME); leave out --out and [analysis] out, or give one "
+                  "reference with --reference NAME", named, ", ".join(config.references))
+        return EXIT_ERROR
+
+    def folder(ref: str) -> Path:
+        # the default folder is named after the reference, so analyses against different
+        # references never write into one folder
+        return named if named is not None else lead.with_name(
+            analysis_folder_name("runs" if several else lead.name, ref))
+
+    def prepared(outs: dict[str, Path]) -> bool:
+        """The folders checked and made ready, before anything is computed."""
+        for out in outs.values():
+            for name, path in runs.items():
+                if _same_folder(out, path):
+                    log.error("%s is the results bundle itself%s: the analysis goes in a "
+                              "folder of its own (--out DIR, or [analysis] out)", out,
+                              f" ({name})" if name else "")
+                    return False
+            prepare_output(out, overwrite=overwrite, keep_previous=keep_previous,
+                           what="analysis",
+                           elsewhere="another folder with --out DIR (or [analysis] out)",
+                           move=False)
+        return True
+
+    # with "all" the references are the results' samples, known once they are open
+    outs = ({} if ALL_REFERENCES in config.references
+            else {ref: folder(ref) for ref in (config.references or ("",))})
+    if outs and not prepared(outs):
+        return EXIT_ERROR
     stop = _Stop()
+    said = []
     with contextlib.ExitStack() as stack:
         stack.enter_context(stop.installed())
         stack.enter_context(_threads(threads))
@@ -1812,18 +1844,33 @@ def cmd_analyse(args) -> int:
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
         results = RunSet(opened, merge=config.merge) if several else opened[""]
-        with _progress(args, name="analysis") as progress:
-            written = write_analysis(
-                results, config, out, base=base, record_paths=record_paths, review=review,
-                progress=progress, cancel=stop,
-                # moved only once nothing more can refuse the analysis
-                before_writing=(lambda: prepare_output(out, keep_previous=True))
-                if keep_previous else None)
-    if not several:
-        _stale_analyses(lead, out)
-    tables = sum(1 for p in written if p.suffix == ".csv")
-    figures = sum(1 for p in written if p.suffix == f".{config.format}")
-    _say(f"{tables} table(s) and {figures} figure(s) in {out}, with the settings used")
+        if not outs:
+            from .report import analysis_references
+
+            outs = {ref: folder(ref) for ref in analysis_references(results, config)}
+            log.info('[analysis] reference = "all": %d analyses, against %s', len(outs),
+                     ", ".join(outs))
+            if not prepared(outs):
+                return EXIT_ERROR
+        for ref, out in outs.items():
+            one = config if config.single_reference else config.with_reference(ref)
+            if len(outs) > 1:
+                log.info("the analysis against %s", ref)
+            with _progress(args, name=f"analysis against {ref}" if len(outs) > 1
+                           else "analysis") as progress:
+                written = write_analysis(
+                    results, one, out, base=base, record_paths=record_paths, review=review,
+                    progress=progress, cancel=stop,
+                    # moved only once nothing more can refuse the analysis
+                    before_writing=(lambda out=out: prepare_output(out, keep_previous=True))
+                    if keep_previous else None)
+            tables = sum(1 for p in written if p.suffix == ".csv")
+            figures = sum(1 for p in written if p.suffix == f".{config.format}")
+            said.append(f"{tables} table(s) and {figures} figure(s) in {out}")
+    if not several:  # said once, for every folder not just written
+        _stale_analyses(lead, next(iter(outs.values())), written=list(outs.values()))
+    for line in said:
+        _say(line + ", with the settings used")
     return 0
 
 
@@ -1833,7 +1880,7 @@ def cmd_figures(args) -> int:
     others; nothing is drawn."""
     from .config import load_project
     from .io import open_bundle
-    from .report import Results
+    from .report import Results, analysis_references
     from .report.catalogue import ANALYSE, REPORT, Situation, plan
 
     path = Path(args.project)
@@ -1862,6 +1909,12 @@ def cmd_figures(args) -> int:
          + (f" and the results in {bundle}" if read else
             " (settings only: " + ("--settings-only" if args.settings_only else
                                    "no results yet") + ")"))
+    analysis = situation.analysis
+    if not analysis.single_reference:  # one analysis per reference, the same figures each
+        names = (analysis_references(results, analysis) if read else analysis.references)
+        _say(f"hxex analyse makes one analysis per reference, a folder each: "
+             f"{', '.join(names)}" + ("" if read or "all" not in names else
+                                      " (every sample, named once there are results)"))
     planned = plan(situation)
     for command, heading in ((REPORT, f"hxex report {path.name} --figures  ([figures])"),
                              (ANALYSE, f"hxex analyse {path.name}  ([analysis])")):

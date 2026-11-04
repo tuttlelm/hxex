@@ -189,6 +189,9 @@ file), so what you see here is what the command writes.
 - When the results change (a new run, a review decision) or the `[analysis]` settings do, the
   line at the top says the figures are out of date and why; they stay until you press
   **Recompute**. Opening other results starts afresh.
+- When `[analysis] reference` names several samples, or `"all"`, a list at the top chooses
+  which reference's analysis is shown. Each is computed the first time you choose it and then
+  kept, so switching back is instant; `hxex analyse` writes a folder for each.
 - Results opened alone (a bundle, not through the project file) use the default settings.
   A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
   `hxex analyse` writes it.

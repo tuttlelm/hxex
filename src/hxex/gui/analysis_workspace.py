@@ -10,7 +10,9 @@ the files cannot differ, and saved under the name the command gives it.
 
 The analysis is computed in the background once, when the workspace is first shown with
 results, and kept: a change of the results (a new run, a review decision) or of ``[analysis]``
-marks it out of date, keeping the figures, and Recompute computes it again.
+marks it out of date, keeping the figures, and Recompute computes it again. With several
+references (``[analysis] reference`` a list, or ``"all"``), a list chooses which one is shown;
+each is computed when first chosen and kept, as ``hxex analyse`` writes a folder for each.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -54,8 +57,9 @@ class AnalysisWorkspace(QWidget):
     def __init__(self, window=None):
         super().__init__()
         self.window = window
-        self.outputs = None  # hxex.report.AnalysisOutputs
-        self._made_from = None  # (results object, [analysis] text, results path) computed from
+        # each reference's analysis: (hxex.report.AnalysisOutputs, (results object, [analysis]
+        # text, results path) it was computed from)
+        self._analyses: dict[str, tuple] = {}
         self._cancel: threading.Event | None = None
         self._computing = Latest(self)
         self.render = getattr(window, "render", "matplotlib")
@@ -70,7 +74,15 @@ class AnalysisWorkspace(QWidget):
         self.busy.setRange(0, 0)  # computing: no count to show
         self.busy.setMaximumWidth(120)
         self.busy.hide()
+        self.reference = QComboBox()
+        self.reference.setToolTip("which reference's analysis is shown: [analysis] reference "
+                                  "names several (or all), and hxex analyse writes a folder "
+                                  "for each")
+        self.reference.currentIndexChanged.connect(lambda _i: self.refresh())
+        self.reference_label = QLabel("against")
         top = QHBoxLayout()
+        top.addWidget(self.reference_label)
+        top.addWidget(self.reference)
         top.addWidget(self.status, 1)
         top.addWidget(self.busy)
         top.addWidget(self.compute_button)
@@ -108,9 +120,46 @@ class AnalysisWorkspace(QWidget):
         layout.addWidget(split, 1)
         self._change_table = ""
         self._planned: dict[str, object] = {}
+        self._drawn_reference: str | None = None
         self.refresh()
 
     # --- what the analysis is made from ---------------------------------------------------
+
+    @property
+    def shown_reference(self) -> str:
+        """The reference whose analysis is shown ('' with none)."""
+        data = self.reference.currentData()
+        return data if isinstance(data, str) else ""
+
+    @property
+    def outputs(self):
+        """The analysis shown (None: not computed yet)."""
+        entry = self._analyses.get(self.shown_reference)
+        return entry[0] if entry else None
+
+    @property
+    def _made_from(self):
+        entry = self._analyses.get(self.shown_reference)
+        return entry[1] if entry else None
+
+    def _fill_references(self, config) -> None:
+        """The references to choose from (shown only when there are several)."""
+        from ..report import analysis_references
+
+        refs = analysis_references(self.results, config)
+        now = [self.reference.itemData(i) for i in range(self.reference.count())]
+        if now != refs:
+            keep = self.shown_reference
+            self.reference.blockSignals(True)
+            self.reference.clear()
+            for ref in refs:
+                self.reference.addItem(ref or "(no reference)", ref)
+            index = self.reference.findData(keep)
+            self.reference.setCurrentIndex(max(index, 0))
+            self.reference.blockSignals(False)
+        several = len(refs) > 1
+        self.reference.setVisible(several)
+        self.reference_label.setVisible(several)
 
     @property
     def results(self):
@@ -181,8 +230,11 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setText("Recompute")
         else:
             n = len(self.outputs.figures)
-            self.status.setText(f"{n} figure(s), as hxex analyse would write them"
-                                + self._settings_note())
+            ref = self.shown_reference
+            self.status.setText(f"{n} figure(s)" + (f" against {ref}" if ref else "")
+                                + ", as hxex analyse would write them" + self._settings_note())
+            if self._drawn_reference != ref:  # another reference chosen: its figure
+                self._selected(self.list.currentItem())
             self.compute_button.setText("Recompute")
 
     _error: str | None = None
@@ -204,6 +256,9 @@ class AnalysisWorkspace(QWidget):
         if self.results is not None:
             try:
                 config = self._settings()[0]
+                self._fill_references(config)
+                if not config.single_reference:
+                    config = config.with_reference(self.shown_reference)
                 planned = plan(Situation.of(analysis=config, results=self.results))
             except Exception as exc:  # noqa: BLE001 - settings these results refuse
                 self.list.blockSignals(False)
@@ -265,6 +320,7 @@ class AnalysisWorkspace(QWidget):
         draw = dict(self.outputs.figures).get(stem)
         if draw is not None:
             self.panel.save_name = stem
+            self._drawn_reference = self.shown_reference
             self.panel.draw(draw)
 
     def _describe(self, item) -> None:
@@ -321,29 +377,32 @@ class AnalysisWorkspace(QWidget):
             self.status.setText("This project compares separate runs ([analysis.runs]): the "
                                 "window does not show that yet; hxex analyse writes it.")
             return
+        ref = self.shown_reference
+        if not config.single_reference:
+            config = config.with_reference(ref)
         if self._cancel is not None:
             self._cancel.set()  # an older computation still running stops
         cancel = self._cancel = threading.Event()
         n = len(results.fit)
         path = getattr(self.window, "results_path", None)
-        self.status.setText(f"Computing the analysis of {n:,} spectra (about half a minute "
-                            "for 25,000 spectra)…")
+        self.status.setText(f"Computing the analysis of {n:,} spectra"
+                            + (f" against {ref}" if ref else "")
+                            + " (about half a minute for 25,000 spectra)…")
         self.busy.show()
         self.compute_button.setEnabled(False)
         log.info("computing the analysis (as hxex analyse, nothing written)")
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
-            lambda outputs: self._computed(outputs, results, text, path),
+            lambda outputs: self._computed(outputs, results, text, path, ref),
             self._failed)
 
     @property
     def computing(self) -> bool:
         return self._computing.running
 
-    def _computed(self, outputs, results, text, path) -> None:
+    def _computed(self, outputs, results, text, path, ref) -> None:
         self.busy.hide()
-        self.outputs = outputs
-        self._made_from = (results, text, path)
+        self._analyses[ref] = (outputs, (results, text, path))
         log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
         self.refresh()
         if self.list.currentItem() is None:  # the first figure drawn
@@ -367,10 +426,11 @@ class AnalysisWorkspace(QWidget):
         """Other results are shown: an analysis of other results altogether (another bundle or
         project) is dropped; one of the same results, made again, is marked out of date."""
         path = getattr(self.window, "results_path", None)
-        if self.results is None or (self._made_from is not None and self._made_from[2] != path):
+        made = {entry[1][2] for entry in self._analyses.values()}
+        if self.results is None or (made and path not in made):
             if self._cancel is not None:
                 self._cancel.set()
-            self.outputs, self._made_from = None, None
+            self._analyses.clear()
             self.panel.clear()
         self._error = None
         self.refresh()

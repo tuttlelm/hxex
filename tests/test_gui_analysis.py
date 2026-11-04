@@ -76,6 +76,27 @@ def test_settings_the_results_refuse_say_so(qtbot, tmp_path, project):
     assert "nothing" in page.status.text() and page.outputs is None
 
 
+def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
+    project.write_text(project.read_text().replace('reference = "S"', 'reference = "all"'),
+                       encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
+    assert page.reference.isVisibleTo(page) and page.reference.count() == 2
+    assert page.shown_reference == "S" and "against S" in page.status.text()
+    first = page.outputs
+    page.reference.setCurrentIndex(1)  # V: computed when first chosen
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    assert page.shown_reference == "V" and page.outputs is not first
+    assert any(stem.startswith("woods_S_") for stem, _ in page.outputs.figures)
+    page.reference.setCurrentIndex(0)  # back to S: kept, not computed again
+    assert page.outputs is first and not page.computing
+
+
 def test_setting_tables():
     assert setting_table("[analysis] reference") == "analysis"
     assert setting_table("[[analysis.regions]]") == "analysis.regions"
