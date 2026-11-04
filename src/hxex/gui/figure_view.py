@@ -413,7 +413,6 @@ class FigurePanel(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidget(self.view)
         self.scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.scroll.viewport().installEventFilter(self)  # the wheel zooms (not scrolls)
         self._connect(self.view)
         self.magnified = False  # a panel fills the view (double-click)
         self.save_name = ""  # the file name the save dialog suggests (none: it asks)
@@ -449,6 +448,9 @@ class FigurePanel(QWidget):
         self.title.setFont(font)
         self._title_text = ""
         self.bar.installEventFilter(self)
+        # watched only once the bar exists: PySide6 6.7 delivered an event of the scroll area
+        # while the panel was being made, before the bar (lowest-versions CI)
+        self.scroll.viewport().installEventFilter(self)  # the wheel zooms (not scrolls)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.bar)
@@ -643,6 +645,8 @@ class FigurePanel(QWidget):
         self.title.setGeometry(x, 0, width, self.bar.height())
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
+        if not hasattr(self, "view") or not hasattr(self, "bar"):  # still being made
+            return False
         if watched is self.bar:
             if event.type() == QEvent.Type.Resize:
                 self._place_title()
