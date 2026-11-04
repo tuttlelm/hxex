@@ -192,6 +192,14 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] redundancy", "[analysis] coverage_times",
                     "[analysis.colours]")),
     FigureKind(
+        "residues_all", "Residue fD, every sample", ANALYSE, ("residues_all_{time}",),
+        "every sample's average deuteration (fDavg: the K=1 fit, or the K=2 average where two "
+        "populations lie at least 2 D apart) by residue on one axis, none of them a reference, "
+        "with its standard error", _ANALYSIS_PAGE,
+        data="at the times where a sample has residue values",
+        changed_by=("[analysis] samples", "[analysis.colours]", "[analysis] weight_exponent",
+                    "[analysis] times")),
+    FigureKind(
         "choice", "Residue profile with the population choice", ANALYSE,
         ("choice_{sample}_{time}",),
         "the residue profile: K=1, the K=2 ranks, the chosen description and the population",

@@ -7037,3 +7037,17 @@ CSVs or mzML if wanted.
     review table) dropped the Update, and the rebuilt spectra list was not shown under another
     table: the List stayed at "Making uptake.csv...". The other tables now have their own slot
     (`_table_task`), and a reread rebuilds the table chosen.
+
+268. **Every sample's fDavg on one axis (owner, 2026-11-04: "a figure we don't have that most
+    users will want is the all samples fDavg overlay, so not head to head"; redundancy and
+    resolution's colours and markers as the template).** `compare.plot_residue_samples`,
+    `residues_all_<time>` (catalogue kind `residues_all`, among the figures the same for every
+    reference): each sample in `[analysis] samples`' order with its colour and marker, the
+    overlay's fDavg line (broken where no peptide links two residues) with a lighter ±1 se band
+    (`_average_line(band_alpha=...)`), the samples named above, sites and boundaries dashed.
+    The y axis is fDavg, not "fD (K=1)" (owner asked whether K=1 or centroid matters for
+    separated populations): the analysis's average, the K=1 fit's or, for sets with two
+    populations at least 2 D apart, the K=2 population-weighted mean (HISTORY 210), never the
+    envelope centroid. Its data tab has a row per sample and residue (`hover.set_rows`, several
+    rows on one artist; `figure_rows` reads both kinds): the first residue figure with one.
+    Tutorial: four figures (4 s to 20 h), 466 rows at 30 min.

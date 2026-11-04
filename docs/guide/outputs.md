@@ -437,12 +437,22 @@ shows, the settings it needs, and the settings that change it.
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
 A sample keeps its colour in every figure that colours samples (the residue overlays, the
-region bars, and redundancy and resolution), whichever samples a figure shows and whichever
+every-sample residue figure, the region bars, and redundancy and resolution), whichever samples
+a figure shows and whichever
 sample is the reference: the first sample black, the others in their order (that of
 `[analysis] samples`, which also sets the order of every figure's rows and panels; else
 alphabetical). `[analysis.colours]` chooses them yourself, one line per
 sample (`D109H = "orange"`, or a hex code such as `"#1f77b4"`); a sample you do not name keeps
 a default colour that none of yours uses.
+
+**Every sample at once.** `residues_all_<time>` draws every sample's fDavg residue by residue
+on one axis, with none of them a reference: each sample in its colour and marker, a line broken
+where no peptide measures two residues together, and a light ±1 standard-error band. fDavg is
+the analysis's average deuteration, as on the overlays: the K=1 fit's, or, where a peptide's
+spectra have two populations at least 2 D apart (`average_from_k2` in `species_uptake.csv`),
+the K=2 population-weighted mean, which the one-population fit misses. It is the figure to
+look at first for a run with several samples; the Woods and overlay figures then say which
+differences are significant.
 
 **Reading the Woods plot.** Each panel shows, for every peptide, a bar over the residues it
 covers at its difference from the reference (sample minus reference), with its standard error as

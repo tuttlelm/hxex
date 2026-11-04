@@ -399,7 +399,7 @@ def plot_residue_overlay(
 
 
 def _average_line(ax: Axes, residues: ResidueMap, sample: str, time: float, colour: str,
-                  zorder: float) -> None:
+                  zorder: float, band_alpha: float = 0.3) -> None:
     """The K=1 residue values of ``sample`` at ``time`` as a line with a +-1 standard-error
     band in ``colour``, broken between residues no peptide measures together; a residue without
     a value (a proline) is bridged when one peptide spans both its neighbours."""
@@ -426,8 +426,75 @@ def _average_line(ax: Axes, residues: ResidueMap, sample: str, time: float, colo
             ys.append(np.nan)
             es.append(np.nan)
     xs, ys, es = np.array(xs, dtype=float), np.array(ys), np.array(es)
-    ax.fill_between(xs, ys - es, ys + es, color=colour, alpha=0.3, linewidth=0, zorder=zorder)
+    ax.fill_between(xs, ys - es, ys + es, color=colour, alpha=band_alpha, linewidth=0,
+                    zorder=zorder)
     ax.plot(xs, ys, color=colour, linewidth=1.0, alpha=0.9, zorder=zorder + 0.05)
+
+
+def plot_residue_samples(
+    residues: ResidueMap,
+    samples: Sequence[str],
+    time: float,
+    *,
+    styles: Mapping[str, SampleStyle] | None = None,
+    annotations: Annotations | None = None,
+    length: int | None = None,
+    time_scale: str = "seconds",
+    ax: Axes | None = None,
+) -> Figure:
+    """Every sample's average deuteration (fDavg: the K=1 fit's, or, for a set with two
+    populations at least 2 D apart, the K = 2 population-weighted mean; ``average_from_k2``,
+    HISTORY 210) residue by residue at ``time`` on one axis,
+    none of them a reference (owner, 2026-11-04: "the all samples fDavg overlay, so not head to
+    head"; drawn as redundancy and resolution draw the samples): each sample in its colour and
+    marker (``styles``, :func:`hxex.report.coverage.sample_styles`; else the default style of
+    its place), a line broken between residues no peptide measures together, with a light
+    +-1 standard-error band; the samples named above the panel, the time on its right; sites
+    and region boundaries dashed. Each sample's line carries its residues as data-table rows
+    (``hover.set_rows``)."""
+    if ax is None:
+        fig = Figure(figsize=(8.0, 3.4), layout="constrained")  # the axis label kept in
+        ax = fig.add_subplot()
+    else:
+        fig = ax.figure
+    top, handles = -np.inf, []
+    for n, name in enumerate(samples):
+        rows = residues.where(sample=name, time=time, K=1, rank=1) & np.isfinite(residues.fD)
+        if not rows.any():
+            continue
+        colour, marker, size = ((styles[name].colour, styles[name].marker, styles[name].size)
+                                if styles and name in styles else sample_style(n))
+        _average_line(ax, residues, name, time, colour, zorder=1.7 + 0.1 * n, band_alpha=0.12)
+        res, fd, se = residues.residue[rows], residues.fD[rows], residues.fD_se[rows]
+        (points,) = ax.plot(res, fd, linestyle="none", marker=marker, markersize=size * 0.8,
+                            color=colour, markerfacecolor=to_rgba(colour, FILL),
+                            markeredgecolor=colour, markeredgewidth=0.6, zorder=2.5 + 0.1 * n)
+        points.set_gid(f"samples:{name}")
+        hover.set_rows(points, [
+            {"sample": name, "time": float(time), "time_label": hover.time_label(time, time_scale),
+             "residue": int(r), "fD": float(v), "fD_se": float(e)}
+            for r, v, e in zip(res, fd, se, strict=True)])
+        top = max(top, _top(fd, se))
+        handles.append(Line2D([], [], color=colour, marker=marker, markersize=size * 0.8,
+                              markerfacecolor=to_rgba(colour, FILL), linewidth=1.0, label=name))
+    if not handles:
+        raise ValueError(f"no residue values at time {time:g}")
+    _marks(ax, annotations, label_sites=False)
+    ax.set_xlim(0, length if length is not None else int(residues.residue.max()))
+    ax.set_ylim(-0.05, _upper_limit(top))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.xaxis.set_minor_locator(AutoMinorLocator(4))
+    ax.set_xlabel("Residue")
+    ax.set_ylabel(r"fD$_{\rm avg}$")  # the K=1 fit, or the K=2 average of separated twos
+    ax.grid(color="#e5e5e5", linewidth=0.8)
+    many = len(handles) > 4
+    ax.legend(handles=handles, loc="lower left" if many else "lower center",
+              bbox_to_anchor=(0.0 if many else 0.5, 0.98), ncol=len(handles), frameon=False,
+              fontsize=7.5 if many else 9, handletextpad=0.3, columnspacing=1.0,
+              borderaxespad=0.0 if many else 0.5, handlelength=1.6)
+    ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
+            va="bottom", fontsize=9)
+    return fig
 
 
 def _two_population_residues(choice: PopulationChoice, sample: str, time: float) -> np.ndarray:

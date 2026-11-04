@@ -82,6 +82,7 @@ from ..io.times import format_time
 from .compare import (
     plot_butterfly,
     plot_region_bars,
+    plot_residue_samples,
     residue_overlay_figure,
     woods_figure,
     woods_populations_figure,
@@ -575,6 +576,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             elif residues.where(sample=s, time=t).any():
                 jobs.append((f"profile_{s}_{when_}", lambda s=s, t=t: plot_residue_profile(
                     residues, s, t, marks=marks, length=length, bootstrap=booted, **when)))
+    for t in times:  # every sample's fD by residue on one axis, none a reference (owner)
+        with_values = [s for s in in_order + states
+                       if residues.where(sample=s, time=t, K=1, rank=1).any()]
+        if with_values:
+            jobs.append((f"residues_all_{_time_label(t, scale)}",
+                         lambda t=t, w=with_values: plot_residue_samples(
+                             residues, w, t, styles=styles, annotations=ann, length=length,
+                             **when)))
     if config.populations == "population_test" and (residues.population_tier != "").any():
         jobs.append(("population_tiers", lambda: plot_population_tiers(
             residues, in_order + states, length=length, **when)))

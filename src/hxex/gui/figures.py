@@ -101,11 +101,11 @@ def figure_rows(fig: Figure | None) -> tuple[list[str], list[dict]]:
     """The data table of ``fig``: the rows its visible artists carry
     (:func:`hxex.report.hover.set_row`), in the order they are drawn, and their columns in the
     order first met (a row without a column leaves it empty). Nothing is drawn."""
-    from ..report.hover import row_of
+    from ..report.hover import rows_of
 
     if fig is None:
         return [], []
-    rows = [row_of(a) for a in fig.findobj() if a.get_visible() and row_of(a)]
+    rows = [row for a in fig.findobj() if a.get_visible() for row in rows_of(a)]
     columns = list(dict.fromkeys(name for row in rows for name in row))
     return columns, rows
 

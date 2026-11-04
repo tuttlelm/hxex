@@ -13,6 +13,7 @@ from matplotlib.artist import Artist
 
 _ATTRIBUTE = "hxex_hover"
 _ROW = "hxex_row"
+_ROWS = "hxex_rows"
 
 
 def set_hover(artist: Artist, *lines: str) -> None:
@@ -34,6 +35,18 @@ def set_row(artist: Artist, row: dict) -> None:
 def row_of(artist: Artist) -> dict | None:
     """The data-table row of ``artist`` (None when it has none)."""
     return getattr(artist, _ROW, None)
+
+
+def set_rows(artist: Artist, rows: list[dict]) -> None:
+    """Give ``artist`` several rows of the figure's data table: a line through many residues,
+    one row each (its points cannot be clicked one by one, so they have no :func:`set_row`)."""
+    setattr(artist, _ROWS, [dict(r) for r in rows])
+
+
+def rows_of(artist: Artist) -> list[dict]:
+    """Every data-table row of ``artist``: its one row, or its several (none: [])."""
+    one = row_of(artist)
+    return [one] if one else list(getattr(artist, _ROWS, []) or [])
 
 
 def time_label(time, scale: str = "seconds") -> str:

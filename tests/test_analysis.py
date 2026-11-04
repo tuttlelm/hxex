@@ -2679,3 +2679,37 @@ def test_a_reference_list_or_all_makes_one_analysis_each(two_sample_bundle, tmp_
     assert cli.main(["-q", "analyse", str(bundle), "--reference", "S,V", "--out",
                      str(tmp_path / "one")]) == 1
     assert "make a folder each" in capsys.readouterr().err
+
+
+def test_every_samples_residue_values_on_one_axis():
+    """Every sample's K=1 fD by residue on one axis, none a reference (owner: the all-samples
+    overlay, drawn as redundancy and resolution draw the samples): a colour and marker each, the
+    samples named in order, a data-table row per sample and residue."""
+    from hxex.analysis import ResidueMap
+    from hxex.gui.figures import figure_rows
+    from hxex.report.compare import plot_residue_samples
+    from hxex.report.coverage import sample_styles
+
+    rows = [(s, r, 0.3 + 0.1 * n) for n, s in enumerate(("WT", "V", "M")) for r in (3, 4, 6)]
+    n = len(rows)
+    rm = ResidueMap(sample=np.array([r[0] for r in rows]), time=np.full(n, 4.0),
+                    K=np.ones(n, dtype=np.int64), rank=np.ones(n, dtype=np.int64),
+                    residue=np.array([r[1] for r in rows]), aa=np.array(["A"] * n),
+                    fD=np.array([r[2] for r in rows]), fD_se=np.full(n, 0.02),
+                    redundancy=np.ones(n, dtype=np.int64), resolution=np.ones(n),
+                    proline=np.zeros(n, dtype=bool), covered=np.ones(n, dtype=bool))
+    styles = sample_styles(["M", "V", "WT"])
+    fig = plot_residue_samples(rm, ["M", "V", "WT"], 4.0, styles=styles)
+    ax = fig.axes[0]
+    points = {line.get_gid(): line for line in ax.lines if line.get_gid()}
+    assert set(points) == {"samples:M", "samples:V", "samples:WT"}
+    for name in ("M", "V", "WT"):  # each sample in its own colour and marker
+        assert points[f"samples:{name}"].get_marker() == styles[name].marker
+    np.testing.assert_allclose(points["samples:WT"].get_ydata(), 0.3)
+    assert [t.get_text() for t in ax.get_legend().texts] == ["M", "V", "WT"]  # the order given
+    assert ax.get_ylabel() == r"fD$_{\rm avg}$"  # the analysis's average, as on the overlay
+    columns, table = figure_rows(fig)
+    assert columns == ["sample", "time", "time_label", "residue", "fD", "fD_se"]
+    assert len(table) == 9 and {r["sample"] for r in table} == {"M", "V", "WT"}
+    with pytest.raises(ValueError, match="no residue values"):
+        plot_residue_samples(rm, ["WT"], 60.0)
