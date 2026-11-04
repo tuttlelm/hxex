@@ -6907,3 +6907,18 @@ CSVs or mzML if wanted.
     after each decision or `[analysis]` change; a line under the tree says the column is from
     before them, with an **Update** button (`ResultsWorkspace.update_left_out`); opening the
     results still works it out, as part of reading them.
+
+260. **Undo and Redo for the project file, and lists the wheel does not change (owner,
+    2026-11-04: settings are easily changed by accident, especially when starting out).**
+    Found while checking: one notch of the mouse wheel over a list in the settings form chose
+    the next value and wrote it (Qt's `QComboBox` emits `activated` on the wheel), so scrolling
+    the form could rewrite `input.format` or any other choice unseen. The form's lists are now
+    `NoWheelComboBox` (the wheel passes to the form, which scrolls; no focus by the wheel).
+    `ProjectEditor.own_write` keeps a `Step` (the file's bytes before and after, and the change
+    in words) for every change the editor makes: setting, Default, table entries, a stage
+    switched on or off, the format with the settings it switched off (one step). **Undo** and
+    **Redo** (buttons, and Ctrl+Z / Ctrl+Shift+Z within the Project part) write the bytes
+    back, so comments and layout return; a line names the last change. Steps last for the
+    session and the file. If the file changed by other means since (a text editor, `hxex
+    set`, the review panel naming the review table), Undo refuses, says so, and starts afresh
+    from there. No "are you sure" questions (they teach clicking through).

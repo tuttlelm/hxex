@@ -19,10 +19,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -85,6 +86,29 @@ def applies(setting, fmt: str) -> bool:
     return fmt in _FORMAT_GROUPS.get(tag, (tag,))
 
 
+class NoWheelComboBox(QComboBox):
+    """A list the mouse wheel does not change: turning it over the list scrolls the form (one
+    notch over a list rewrote a setting while the form was being scrolled; owner, 2026-11-04).
+    A click, or the keyboard once it has focus, still chooses."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # not focused by the wheel either
+
+    def wheelEvent(self, event):  # noqa: N802 - Qt's name
+        event.ignore()  # to the form, which scrolls
+
+
+@dataclass
+class Step:
+    """One change the window made to the project file, for Undo and Redo: the file's bytes
+    ``before`` and ``after``, and ``what`` changed, in words."""
+
+    what: str
+    before: bytes
+    after: bytes
+
+
 class SettingRow(QWidget):
     """One setting: its editor, a button back to the default, and its description. Emits
     :attr:`edited` with the setting's name and the value to write (TOML text as ``hxex set``
@@ -112,7 +136,7 @@ class SettingRow(QWidget):
             self.editor = QCheckBox()
             self.editor.toggled.connect(self._toggled)
         elif choices:
-            self.editor = QComboBox()
+            self.editor = NoWheelComboBox()
             self.editor.addItems(choices)
             self.editor.activated.connect(self._chosen)
         else:
@@ -225,7 +249,7 @@ class OrderedList(QWidget):
         self.up.clicked.connect(lambda: self._move(-1))
         self.down.clicked.connect(lambda: self._move(1))
         self.remove.clicked.connect(self._remove)
-        self.add_box = QComboBox()
+        self.add_box = NoWheelComboBox()
         self.add_box.setEditable(True)
         self.add_box.setToolTip("a sample to add: one of the results', or typed")
         self.add_button = QPushButton("Add")
@@ -337,6 +361,22 @@ class ProjectEditor(QWidget):
         self._shown_format: str | None = None
         self.watcher = QFileSystemWatcher(self)
         self.watcher.fileChanged.connect(self._file_changed)
+        # every change the window makes, to undo and redo (owner: settings are easily changed
+        # by accident, especially when starting out); for this file, this session
+        self.undo_steps: list[Step] = []
+        self.redo_steps: list[Step] = []
+        self.last_change = QLabel()
+        self.last_change.setWordWrap(True)
+        self.last_change.setStyleSheet("color: palette(placeholder-text);")
+        self.undo_button = QPushButton("Undo")
+        self.undo_button.clicked.connect(self.undo)
+        self.redo_button = QPushButton("Redo")
+        self.redo_button.clicked.connect(self.redo)
+        for keys, slot in ((QKeySequence.StandardKey.Undo, self.undo),
+                           (QKeySequence.StandardKey.Redo, self.redo)):
+            shortcut = QShortcut(keys, self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(slot)
 
         self.problem = QLabel()
         self.problem.setWordWrap(True)
@@ -378,11 +418,17 @@ class ProjectEditor(QWidget):
         top = QHBoxLayout()
         top.addWidget(self.search, 1)
         top.addWidget(self.every_format)
+        changes = QHBoxLayout()
+        changes.addWidget(self.last_change, 1)
+        changes.addWidget(self.undo_button)
+        changes.addWidget(self.redo_button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.problem)
         layout.addLayout(top)
+        layout.addLayout(changes)
         layout.addWidget(split, 1)
+        self._show_steps()
         self.setEnabled(False)
 
     # --- the file ----------------------------------------------------------------------------
@@ -390,7 +436,10 @@ class ProjectEditor(QWidget):
     def open(self, path: Path | None) -> None:
         if self.watcher.files():
             self.watcher.removePaths(self.watcher.files())
+        if path != self.path:  # another file: its own changes only
+            self.undo_steps, self.redo_steps = [], []
         self.path = path
+        self._show_steps()
         self.setEnabled(path is not None)
         if path is not None:
             self.watcher.addPath(str(path))
@@ -435,17 +484,74 @@ class ProjectEditor(QWidget):
             self.switch.blockSignals(False)
 
     @contextlib.contextmanager
-    def own_write(self):
+    def own_write(self, record: bool = True):
         """The window writing the project file itself: not watched meanwhile (on Windows a
-        watched file could not be replaced), watched again after."""
+        watched file could not be replaced), watched again after. With ``record``, a change is
+        kept for Undo (the file's bytes before and after); the block may name it, setting
+        ``.what`` of the step it is given."""
         watched = [f for f in self.watcher.files()]
         if watched:
             self.watcher.removePaths(watched)
+        step = Step("a change to the project file", self._bytes(), b"")
         try:
-            yield
+            yield step
         finally:
             if self.path is not None and self.path.exists():
                 self.watcher.addPath(str(self.path))
+        step.after = self._bytes()
+        if record and step.after != step.before:
+            self.undo_steps.append(step)
+            self.redo_steps.clear()
+            self._show_steps()
+
+    def _bytes(self) -> bytes:
+        try:
+            return self.path.read_bytes() if self.path is not None else b""
+        except OSError:
+            return b""
+
+    def undo(self) -> bool:
+        """Put the project file back as it was before the last change the window made (False,
+        said, when there is none, or the file changed elsewhere since)."""
+        return self._step_back(self.undo_steps, self.redo_steps, "undone")
+
+    def redo(self) -> bool:
+        """Make again the change last undone."""
+        return self._step_back(self.redo_steps, self.undo_steps, "redone")
+
+    def _step_back(self, take: list, give: list, word: str) -> bool:
+        if not take or self.path is None:
+            return False
+        step = take[-1]
+        now, want = (step.after, step.before) if word == "undone" else (step.before, step.after)
+        if self._bytes() != now:
+            self.problem.setText(
+                "The project file was changed since then by something other than this editor (a "
+                "text editor, hxex set, or the review panel naming your review table): not "
+                f"{word}, so that change is kept. Undo works again for changes made from now "
+                "on.")
+            self.problem.show()
+            self.undo_steps, self.redo_steps = [], []
+            self._show_steps()
+            return False
+        with self.own_write(record=False):
+            self.path.write_bytes(want)
+        take.pop()
+        give.append(step)
+        log.info("project file: %s: %s", word, step.what)
+        self._show_steps()
+        self._after_change()
+        return True
+
+    def _show_steps(self) -> None:
+        last = self.undo_steps[-1].what if self.undo_steps else ""
+        self.last_change.setText(f"Last change: {last}" if last else
+                                 "No change made in this window yet.")
+        self.undo_button.setEnabled(bool(self.undo_steps))
+        self.undo_button.setToolTip(f"Undo: {last} (Ctrl+Z)" if last else "nothing to undo")
+        nxt = self.redo_steps[-1].what if self.redo_steps else ""
+        self.redo_button.setEnabled(bool(self.redo_steps))
+        self.redo_button.setToolTip(f"Redo: {nxt} (Ctrl+Shift+Z)" if nxt else "nothing to redo")
 
     def _file_changed(self, path: str) -> None:
         # a file replaced (as hxex writes it, and many editors) is no longer watched: watch again
@@ -563,8 +669,9 @@ class ProjectEditor(QWidget):
                     return
                 changes = [(name, None) for name in others] + changes
         try:
-            with self.own_write():
+            with self.own_write() as step:
                 done = set_settings(self.path, changes, unfinished=True)
+                step.what = "; ".join(_change_words(c) for c in done if not c.unchanged)
         except ProjectError as exc:
             log.warning("%s", exc)
             self.problem.setText(str(exc))
@@ -589,8 +696,9 @@ class ProjectEditor(QWidget):
         if self.path is None:
             return
         try:
-            with self.own_write():
+            with self.own_write() as step:
                 said = change(self.path, *args, unfinished=True)
+                step.what = str(said)
             log.info("%s", said)
         except ProjectError as exc:
             log.warning("%s", exc)
@@ -606,8 +714,9 @@ class ProjectEditor(QWidget):
         from ..project_edit import switch_table
 
         try:
-            with self.own_write():
+            with self.own_write() as step:
                 said = switch_table(self.path, table, on)
+                step.what = str(said)
             log.info("%s", said)
         except ProjectError as exc:
             log.warning("%s", exc)
@@ -617,6 +726,15 @@ class ProjectEditor(QWidget):
         # the watcher reports the change too, but not at once: show it now
         self.reload()
         self.changed.emit()
+
+
+def _change_words(change) -> str:
+    """A setting's change in a few words: ``[analysis] reference: "WT" -> "D109H"``."""
+    table, _, key = change.setting.rpartition(".")
+    name = f"[{table}] {key}" if table else key
+    before = change.before if change.before is not None else "default"
+    after = change.after if change.after is not None else "default"
+    return f"{name}: {before} → {after}"
 
 
 def _written(kind: str, raw: str) -> str:

@@ -62,6 +62,14 @@ every setting at its default, as `hxex init` does.
   and press Enter (or click elsewhere): it is written to the project file at once, as `hxex set`
   writes it, so the file keeps your comments and its layout. **Default** puts the setting back
   to its default (a `#` in front of its line). Text needs no quotes.
+- **Undo** and **Redo** (or Ctrl+Z and Ctrl+Shift+Z, while the Project part has the keyboard)
+  take back or make again the changes made in the window, one at a time, as many as you like:
+  the file is put back exactly as it was, comments included. The line beside them names the
+  last change (`[run.controls] d2o_fraction: default → 0.85`), so a change made by accident is
+  easy to spot. They cover this session's changes to this project file; when the file was
+  changed by something else since (a text editor, or `hxex set`), Undo says so and leaves it.
+- Turning the mouse wheel over a list does not change it (the form scrolls instead): choose by
+  clicking.
 - A setting that holds a file or a folder has **Browse…**; a file inside the project's folder
   is written relative to it, so the folder can be moved or copied.
 - **Find a setting** searches every table by name and description.

@@ -263,3 +263,65 @@ def test_the_top_level_tables_stand_out_in_the_list(editor):
                                               for g in gaps)
     with pytest.raises(KeyError):
         editor.show_table("nothing")
+
+
+def test_changes_are_undone_and_redone_and_the_last_one_is_shown(editor, project):
+    """Settings are easily changed by accident (owner): every change the window makes can be
+    undone and redone, the file put back byte for byte, and the last change is named."""
+    original = project.read_bytes()
+    assert not editor.undo_button.isEnabled() and "No change" in editor.last_change.text()
+    _page(editor, "run.controls")
+    row = editor.rows["run.controls.d2o_fraction"]
+    row.editor.setText("0.85")
+    row.editor.editingFinished.emit()
+    changed = project.read_bytes()
+    assert changed != original
+    assert editor.last_change.text() == "Last change: [run.controls] d2o_fraction: default → 0.85"
+    assert editor.undo_button.isEnabled() and "d2o_fraction" in editor.undo_button.toolTip()
+    # the format, with the settings it switched off: one step
+    _page(editor, "input")
+    editor.confirm_switch_off = lambda f, names: True
+    fmt = editor.rows["input.format"]
+    fmt.editor.setCurrentText("mzml")
+    fmt.editor.activated.emit(fmt.editor.currentIndex())
+    assert _data(project)["input"]["format"] == "mzml" and len(editor.undo_steps) == 2
+    assert editor.undo()
+    assert project.read_bytes() == changed and editor.rows["input.format"].editor.currentText() \
+        == "specexport"
+    assert editor.undo() and project.read_bytes() == original
+    assert not editor.undo()  # nothing left
+    assert editor.redo() and project.read_bytes() == changed
+    assert editor.redo() and _data(project)["input"]["format"] == "mzml"
+    assert not editor.redo_button.isEnabled()
+    # a new change after an undo: nothing to redo
+    assert editor.undo()
+    _page(editor, "output")
+    editor.rows["output.overwrite"].editor.setChecked(True)
+    assert not editor.redo_steps
+    # changed elsewhere since: not undone, that change kept, and said
+    project.write_text(project.read_text() + "\n# typed in an editor\n", encoding="utf-8")
+    elsewhere = project.read_bytes()
+    assert not editor.undo()
+    assert project.read_bytes() == elsewhere and "not undone" in editor.problem.text()
+    assert not editor.undo_steps and not editor.undo_button.isEnabled()
+
+
+def test_the_mouse_wheel_does_not_change_a_list(editor, project):
+    """One notch of the wheel over a list rewrote a setting while the form was scrolled
+    (owner): the lists of the form ignore the wheel."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+
+    from hxex.gui.project_editor import NoWheelComboBox
+
+    _page(editor, "input")
+    fmt = editor.rows["input.format"].editor
+    assert isinstance(fmt, NoWheelComboBox)
+    before = project.read_bytes()
+    wheel = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(fmt, wheel)
+    assert fmt.currentText() == "specexport" and project.read_bytes() == before
+    assert not wheel.isAccepted()  # passed on: the form scrolls
