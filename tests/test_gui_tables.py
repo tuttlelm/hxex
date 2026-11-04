@@ -236,6 +236,8 @@ def test_the_buttons_ask_for_a_name_and_a_file(tables_view, monkeypatch):
 
 
 def test_selected_columns_are_removed_after_asking(tables_view):
+    from PySide6.QtCore import QItemSelectionModel
+
     view, project = tables_view
     editor = view.editor
     view.show_table("review.table")
@@ -247,11 +249,12 @@ def test_selected_columns_are_removed_after_asking(tables_view):
     editor.set_cell(0, 0, "s1")
     editor.set_cell(0, 4, "keep me")
     editor.answers["remove columns"] = False
-    editor.grid.setCurrentIndex(editor.model.index(0, 5))  # a cell of the column
+    pick = QItemSelectionModel.SelectionFlag.ClearAndSelect  # explicit: no stale modifier
+    editor.grid.selectionModel().select(editor.model.index(0, 5), pick)  # a cell of the column
     editor.buttons["remove_column"].click()
     assert editor.table.columns[-1] == "scratch"  # asked, and the answer was no
     editor.answers["remove columns"] = True
-    editor.grid.setCurrentIndex(editor.model.index(0, 5))
+    editor.grid.selectionModel().select(editor.model.index(0, 5), pick)
     editor.buttons["remove_column"].click()
     assert editor.table.columns == ["spectrum_id", "review_status", "review_K", "note",
                                     "my notes"]
@@ -292,3 +295,36 @@ def test_a_header_click_sorts_the_view_not_the_file(tables_view, qtbot):
     assert editor.save()
     assert [row[0] for row in read_table(path).rows] == ["a", "c", "d"]
     assert read_table(path).rows[1][3] == "checked"
+
+
+def test_ctrl_c_copies_every_selected_cell(tables_view, qtbot):
+    """Ctrl+C copies the selected cells as a block a spreadsheet takes (owner: one cell was
+    copied however many were selected), a cell not selected inside the block left empty."""
+    from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
+    from PySide6.QtWidgets import QApplication
+
+    view, project = tables_view
+    editor = view.editor
+    view.show_table("review.table")
+    view.new_table(project.parent / "review.csv")
+    view.refresh()
+    for sid, status in (("s1", "rejected"), ("s2", "accepted"), ("s3", "")):
+        editor.add_row()
+        r = editor._order.index(len(editor.table.rows) - 1)
+        editor.set_cell(r, 0, sid)
+        editor.set_cell(r, 1, status)
+    model, chosen = editor.model, editor.grid.selectionModel()
+    block = QItemSelection(model.index(0, 0), model.index(1, 1))
+    chosen.select(block, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+    qtbot.keyClick(editor.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "s1\trejected\ns2\taccepted\n"
+    chosen.select(model.index(1, 1), QItemSelectionModel.SelectionFlag.Deselect)
+    qtbot.keyClick(editor.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "s1\trejected\ns2\t\n"  # a hole stays empty
+    # the same from a right click's menu
+    QApplication.clipboard().clear()
+    menu = editor.cell_menu()
+    (copy,) = menu.actions()
+    assert copy.text() == "Copy" and copy.isEnabled()
+    copy.trigger()
+    assert QApplication.clipboard().text() == "s1\trejected\ns2\t\n"

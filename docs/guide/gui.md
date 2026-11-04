@@ -109,6 +109,8 @@ the user review table. Choose one on the left to edit it as a grid.
   and **Remove the selected columns** do what they say (select a cell in each column to remove;
   removing one asks first). Columns of your own are kept (*hxex* ignores the ones it does not
   read), and the columns keep their order.
+- Select cells and press Ctrl+C, or right-click and choose **Copy**, to copy them as a block a
+  spreadsheet takes (a cell not selected inside the block is left empty).
 - Click a column's header to sort the rows by it (numbers as numbers, empty cells last); click
   it again for the reverse order. Sorting changes only what you see: the file keeps its own
   order when saved.
@@ -179,7 +181,8 @@ score from `0.1`, say; a time with its units, `30 s` to `2 min`), or text the va
 Filters on several columns combine; a filtered column's header has a ▼ (its tooltip says how),
 and **Clear column filters** shows every row again.
 Choosing a row shows that spectrum, with the review panel, as the tree does, and **◀ ▶** step
-through the list in the order shown: sort by a screen score, say, and work down from the
+through the list in the order shown (Ctrl+C, or a right click, copies the row chosen or every
+row shown, with the header): sort by a screen score, say, and work down from the
 worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
 once; the row stays in view until you change the filter. The list is made in the background
 when the results open (a few seconds for a large run).

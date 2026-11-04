@@ -225,10 +225,18 @@ class DataPanel(QWidget):
             self.activated.emit(self.model.rows[index.row()])
 
     def row_menu(self, index) -> QMenu | None:
-        """The right-click menu of the row at ``index`` (None when it offers nothing)."""
+        """The right-click menu of the row at ``index``: its spectra (a peptide's row), then
+        Copy (the rows selected, as Ctrl+C); None outside the rows."""
         if not index.isValid():
             return None
-        return spectra_menu([self.model.rows[index.row()]], self.activated.emit, self)
+        menu = (spectra_menu([self.model.rows[index.row()]], self.activated.emit, self)
+                or QMenu(self))
+        if menu.actions():
+            menu.addSeparator()
+        copy = menu.addAction("Copy")
+        copy.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        copy.triggered.connect(self.copy)
+        return menu
 
     def _menu(self, pos) -> None:
         menu = self.row_menu(self.table.indexAt(pos))

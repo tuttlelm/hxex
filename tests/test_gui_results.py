@@ -489,3 +489,22 @@ def test_a_reread_keeps_the_chosen_table_coming(qtbot, page, results):
                     and page._list_tables.get("uptake", (None,))[0] is again, timeout=30000)
     assert lst.count.text().endswith("rows") or "of" in lst.count.text()
     qtbot.waitUntil(lambda: "spectra" in page._list_tables, timeout=30000)  # made too
+
+
+def test_the_list_copies_a_row_or_every_row_shown(qtbot, page):
+    """Ctrl+C and the right-click menu copy the row chosen, or every row shown, with the
+    header (owner: a copy menu on the tables)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    lst = page.list
+    sid = str(lst.model.rows[2]["spectrum_id"])
+    assert lst.select(sid)
+    qtbot.keyClick(lst.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    lines = QApplication.clipboard().text().splitlines()
+    assert lines[0].split("\t") == lst.model.columns and len(lines) == 2 and sid in lines[1]
+    one, every = lst.row_menu().actions()
+    assert one.text() == "Copy row" and every.text().startswith("Copy rows shown")
+    every.trigger()
+    assert len(QApplication.clipboard().text().splitlines()) == len(lst.model.rows) + 1

@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt, Signal
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -106,6 +107,22 @@ class TableModel(QAbstractTableModel):
         self.endResetModel()
 
 
+class _Grid(QTableView):
+    """The editor's grid, whose Ctrl+C copies every selected cell (Qt's own copied only the
+    current one; owner, 2026-11-04)."""
+
+    def __init__(self, editor: TableEditor):
+        super().__init__()
+        self.editor = editor
+
+    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.editor.copy_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class TableEditor(QWidget):
     """One table as a grid, with Save and Revert."""
 
@@ -135,8 +152,10 @@ class TableEditor(QWidget):
         self._order: list[int] = []  # the table's rows in the order shown
         self._sort: tuple[int, bool] | None = None  # (column, ascending)
         self.model = TableModel(self)
-        self.grid = QTableView()
+        self.grid = _Grid(self)
         self.grid.setModel(self.model)
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._menu)
         self.grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sized = False  # the columns fitted to their contents once per table
         header = self.grid.horizontalHeader()
@@ -263,6 +282,44 @@ class TableEditor(QWidget):
     def set_cell(self, row: int, column: int, value: str) -> None:
         """Type ``value`` into the cell at ``row`` (in the order shown) and ``column``."""
         self.model.setData(self.model.index(row, column), value)
+
+    def copied_text(self) -> str:
+        """The selected cells as a spreadsheet takes them: the block from the first selected row
+        and column to the last, tab-separated, a cell not selected inside it left empty."""
+        picked = self.grid.selectionModel().selectedIndexes()
+        if not picked:
+            current = self.grid.currentIndex()
+            picked = [current] if current.isValid() else []
+        if not picked:
+            return ""
+        chosen = {(i.row(), i.column()) for i in picked}
+        rows = range(min(r for r, _ in chosen), max(r for r, _ in chosen) + 1)
+        columns = range(min(c for _, c in chosen), max(c for _, c in chosen) + 1)
+        return "\n".join("\t".join(self.cell(r, c) if (r, c) in chosen else "" for c in columns)
+                         for r in rows) + "\n"
+
+    def cell_menu(self):
+        """The grid's right-click menu: Copy (the selected cells, as Ctrl+C)."""
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        copy = menu.addAction("Copy")
+        copy.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        copy.setEnabled(bool(self.copied_text()))
+        copy.triggered.connect(self.copy_selection)
+        return menu
+
+    def _menu(self, pos) -> None:
+        menu = self.cell_menu()
+        menu.exec(self.grid.viewport().mapToGlobal(pos))
+        menu.deleteLater()
+
+    def copy_selection(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        text = self.copied_text()
+        if text:
+            QApplication.clipboard().setText(text)
 
     def _selected_rows(self) -> list[int]:
         return sorted({i.row() for i in self.grid.selectionModel().selectedIndexes()})

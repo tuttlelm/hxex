@@ -207,3 +207,17 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     one = page.data.model.rows
     assert "figure" not in page.data.model.columns and page.data.note.isHidden()
     assert len(one) == sum(r["figure"] == stems[1] for r in gathered)
+
+
+def test_the_data_tabs_menu_copies(qtbot):
+    """The data tab's right-click menu has Copy beside a peptide's spectra."""
+    from PySide6.QtWidgets import QApplication
+
+    data = DataPanel()
+    qtbot.addWidget(data)
+    data.show_rows(["sample", "start", "end", "fD"], ROWS, "coverage_S")
+    texts = [a.text() for a in data.row_menu(data.model.index(0, 0)).actions()]
+    assert texts[0].startswith("Spectra of") and texts[-1] == "Copy"
+    data.table.selectRow(0)
+    data.row_menu(data.model.index(0, 0)).actions()[-1].trigger()
+    assert QApplication.clipboard().text().splitlines()[1].startswith("S\t10")

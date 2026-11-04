@@ -7064,3 +7064,13 @@ CSVs or mzML if wanted.
     kind of figure selected, the data tab gathers the rows of all its figures in the drawing
     thread (`AnalysisWorkspace._gather_rows`; a `figure` column names each one's file; the
     figure shown is still the first); one figure selected shows its own rows as before.
+
+270. **Copying from every table in the window (owner, 2026-11-04: Ctrl+C in the Tables grid
+    copied one cell; "is it possible to show a right click copy menu?").** The Tables grid copies
+    every selected cell as a tab-separated block (cells not selected inside it empty; Qt's own
+    copy took the current cell only), by Ctrl+C or a right-click Copy. The data tab's right-click
+    menu has Copy after a peptide's spectra. The Results List copies the row chosen, or every row
+    shown, with the header (Ctrl+C, right click: Copy row / Copy rows shown); a right-clicked row
+    is chosen, as by a left click. A test found that a test's Ctrl+C keystroke can leave Qt's
+    modifier state set for later tests, so a test selecting by `setCurrentIndex` now selects
+    explicitly.

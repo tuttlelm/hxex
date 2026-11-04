@@ -18,6 +18,7 @@ import math
 
 import numpy as np
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -91,11 +92,17 @@ def _plain(value):
 
 
 class _Grid(QTableView):
-    """The list's table, whose keys A, R and U are review decisions (as the tree's)."""
+    """The list's table, whose keys A, R and U are review decisions (as the tree's) and whose
+    Ctrl+C copies the row chosen."""
 
     review_key = Signal(str)
+    copy_asked = Signal()
 
     def keyPressEvent(self, event):  # noqa: N802 - Qt's name
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_asked.emit()
+            event.accept()
+            return
         if event.modifiers() in (Qt.KeyboardModifier.NoModifier,
                                  Qt.KeyboardModifier.ShiftModifier) \
                 and event.text().lower() in ("a", "r", "u"):
@@ -183,6 +190,9 @@ class SpectraList(QWidget):
         self.grid.setAlternatingRowColors(True)
         self.grid.verticalHeader().setVisible(False)
         self.grid.selectionModel().currentRowChanged.connect(self._current)
+        self.grid.copy_asked.connect(lambda: self.copy(every=False))
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._menu)
         header = self.grid.horizontalHeader()
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(
@@ -313,6 +323,47 @@ class SpectraList(QWidget):
                            self.count.text())
         if current is not None:
             self.select(current["spectrum_id"], emit=False)
+
+    def copied_text(self, every: bool) -> str:
+        """The row chosen (``every``: every row shown, in the order shown), with the header,
+        tab-separated: a spreadsheet takes it as rows and columns."""
+        rows = self.model.rows if every else [r for r in [self.current_row()] if r]
+        if not rows:
+            return ""
+        lines = ["\t".join(self.model.columns)]
+        lines += ["\t".join(cell_text(r.get(c)) for c in self.model.columns) for r in rows]
+        return "\n".join(lines) + "\n"
+
+    def copy(self, every: bool = False) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        text = self.copied_text(every)
+        if text:
+            QApplication.clipboard().setText(text)
+
+    def row_menu(self):
+        """The right-click menu: Copy row, Copy rows shown."""
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        one = menu.addAction("Copy row")
+        one.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        one.setEnabled(self.current_row() is not None)
+        one.triggered.connect(lambda: self.copy(every=False))
+        every = menu.addAction(f"Copy rows shown ({len(self.model.rows):,})")
+        every.setEnabled(bool(self.model.rows))
+        every.triggered.connect(lambda: self.copy(every=True))
+        return menu
+
+    def _menu(self, pos) -> None:
+        index = self.grid.indexAt(pos)
+        if index.isValid():  # the row right-clicked is chosen, as by a left click
+            self.grid.selectionModel().setCurrentIndex(
+                index, QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows)
+        menu = self.row_menu()
+        menu.exec(self.grid.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def mark_stale(self) -> None:
         """The table shown is from before the latest decisions (not made again until asked)."""
