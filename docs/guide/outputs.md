@@ -427,8 +427,9 @@ shows, the settings it needs, and the settings that change it.
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
 A sample keeps its colour in every figure that colours samples (the residue overlays, the
-region bars, and redundancy and resolution): the reference black, the others in their order,
-whichever samples a figure shows. `[analysis.colours]` chooses them yourself, one line per
+region bars, and redundancy and resolution): the reference black, the others in their order
+(that of `[analysis] samples`, which also sets the order of every figure's rows and panels;
+else alphabetical), whichever samples a figure shows. `[analysis.colours]` chooses them yourself, one line per
 sample (`D109H = "orange"`, or a hex code such as `"#1f77b4"`); a sample you do not name keeps
 a default colour that none of yours uses.
 

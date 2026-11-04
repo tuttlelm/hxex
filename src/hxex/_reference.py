@@ -168,7 +168,9 @@ _DESCRIPTIONS: dict[str, str] = {
                           '`"run:sample"` names one run\'s sample. A list (`["WT", "Mut"]`) or '
                           '`"all"` (every sample in turn) makes one analysis per reference, a '
                           "folder each",
-    "analysis.samples": "which samples, in this order (empty: all, the reference first)",
+    "analysis.samples": "which samples, and their order in every figure and table (the "
+                        "reference first wherever it is listed; the default colours follow "
+                        "it); empty: every sample, in alphabetical order, the reference first",
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "
                               "the fits are kept)",

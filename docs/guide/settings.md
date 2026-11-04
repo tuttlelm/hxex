@@ -411,7 +411,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `reference` | text or list | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample. A list (`["WT", "Mut"]`) or `"all"` (every sample in turn) makes one analysis per reference, a folder each |
-| `samples` | list | `[]` | which samples, in this order (empty: all, the reference first) |
+| `samples` | list | `[]` | which samples, and their order in every figure and table (the reference first wherever it is listed; the default colours follow it); empty: every sample, in alphabetical order, the reference first |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |

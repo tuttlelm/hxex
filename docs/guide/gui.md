@@ -84,7 +84,12 @@ every setting at its default, as `hxex init` does.
   entry is changed in its own lines, so comments elsewhere in the file stay.
 - A table of names you choose (sample names under `[analysis.controls]`, run names under
   `[analysis.runs]`, ...) is a table of names and values: type a name and its value and click
-  **Add**, or change a value in the table.
+  **Add**, or change a value in the table. Under `[analysis.colours]`, each colour is shown
+  beside its name.
+- `[analysis] samples` sets which samples the analysis uses and their order in every figure
+  and table: it is a list, with **↑** and **↓** to move the selected sample, **Remove**, and
+  **Add** with the samples of the results that are open (or type one). The reference goes
+  first wherever it is in the list.
 
 ## Tables
 

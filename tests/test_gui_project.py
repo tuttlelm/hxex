@@ -208,6 +208,31 @@ def test_a_table_of_names_is_edited(editor, project):
         "d2o_fraction" not in _data(project)["analysis"]["controls"]
 
 
+def test_the_samples_are_a_list_in_order(editor, project):
+    editor.sample_names = lambda: ["S", "V", "WT"]  # the results' samples, as the window gives
+    _page(editor, "analysis")
+    order = editor.rows["analysis.samples"].editor
+    order.show()
+    assert [order.add_box.itemText(i) for i in range(order.add_box.count())] == ["S", "V", "WT"]
+    for name in ("V", "WT"):
+        order.add_box.setCurrentText(name)
+        order.add_button.click()
+    assert _data(project)["analysis"]["samples"] == ["V", "WT"]
+    assert [order.add_box.itemText(i) for i in range(order.add_box.count())] == ["S"]
+    order.list.setCurrentRow(1)
+    order.up.click()  # WT first
+    assert _data(project)["analysis"]["samples"] == ["WT", "V"]
+    assert order.items() == ["WT", "V"]
+    order.list.setCurrentRow(0)
+    order.down.click()
+    assert _data(project)["analysis"]["samples"] == ["V", "WT"]
+    order.list.setCurrentRow(0)
+    order.remove.click()
+    order.list.setCurrentRow(0)
+    order.remove.click()  # an empty list: back to every sample
+    assert "samples" not in _data(project).get("analysis", {})
+
+
 def test_sample_colours_are_typed_bare_and_shown_as_swatches(editor, project):
     from PySide6.QtCore import Qt
 

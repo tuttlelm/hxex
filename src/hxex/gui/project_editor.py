@@ -92,7 +92,8 @@ class SettingRow(QWidget):
 
     edited = Signal(str, object)
 
-    def __init__(self, table: str, setting, project_dir: Path | None, parent=None):
+    def __init__(self, table: str, setting, project_dir: Path | None, parent=None,
+                 names=None):
         super().__init__(parent)
         self.name = f"{table}.{setting.key}" if table else setting.key
         self.setting = setting
@@ -104,7 +105,10 @@ class SettingRow(QWidget):
         self.label = QLabel(setting.key)
         self.label.setFont(QFont("monospace"))
         self.label.setToolTip(self.name)
-        if self.kind == "true/false":
+        if self.name in ORDERED:  # a list whose order matters: its items, with up and down
+            self.editor = OrderedList(names)
+            self.editor.changed.connect(self._ordered)
+        elif self.kind == "true/false":
             self.editor = QCheckBox()
             self.editor.toggled.connect(self._toggled)
         elif choices:
@@ -149,7 +153,9 @@ class SettingRow(QWidget):
         self.label.setFont(font)
         self.reset.setEnabled(is_set)
         self.editor.blockSignals(True)
-        if isinstance(self.editor, QCheckBox):
+        if isinstance(self.editor, OrderedList):
+            self.editor.set_items([str(v) for v in value] if isinstance(value, list) else [])
+        elif isinstance(self.editor, QCheckBox):
             self.editor.setChecked(bool(value) if is_set else self.default == "true")
         elif isinstance(self.editor, QComboBox):
             text = value if is_set else self.default
@@ -158,6 +164,11 @@ class SettingRow(QWidget):
         else:
             self.editor.setText("" if not is_set else _shown(value))
         self.editor.blockSignals(False)
+
+    def _ordered(self, items: list) -> None:
+        from ..config import _toml_value
+
+        self.edited.emit(self.name, _toml_value(list(items)) if items else None)
 
     def _toggled(self, checked: bool) -> None:
         self.edited.emit(self.name, "true" if checked else "false")
@@ -187,6 +198,106 @@ class SettingRow(QWidget):
             self.edited.emit(self.name, _quoted(relative(Path(chosen), self.project_dir)))
 
 
+# list settings whose order matters, edited as a list with up and down
+ORDERED = ("analysis.samples",)
+
+
+class OrderedList(QWidget):
+    """A list whose order matters (``[analysis] samples``: the order of every figure): its
+    items, ↑ and ↓ to move the selected one, Remove, and a box to add one, offering the names
+    ``names()`` gives (the samples of the results open) that the list does not hold yet.
+    Emits :attr:`changed` with the items after every change."""
+
+    changed = Signal(list)
+
+    def __init__(self, names=None):
+        super().__init__()
+        self.names = names
+        self.list = QListWidget()
+        self.list.setMaximumHeight(110)
+        self.up = QPushButton("↑")
+        self.down = QPushButton("↓")
+        self.remove = QPushButton("Remove")
+        for button, tip in ((self.up, "move the selected one up"),
+                            (self.down, "move the selected one down"),
+                            (self.remove, "remove the selected one")):
+            button.setToolTip(tip)
+        self.up.clicked.connect(lambda: self._move(-1))
+        self.down.clicked.connect(lambda: self._move(1))
+        self.remove.clicked.connect(self._remove)
+        self.add_box = QComboBox()
+        self.add_box.setEditable(True)
+        self.add_box.setToolTip("a sample to add: one of the results', or typed")
+        self.add_button = QPushButton("Add")
+        self.add_button.clicked.connect(self._add)
+        side = QVBoxLayout()
+        for button in (self.up, self.down, self.remove):
+            side.addWidget(button)
+        side.addStretch()
+        top = QHBoxLayout()
+        top.addWidget(self.list, 1)
+        top.addLayout(side)
+        add = QHBoxLayout()
+        add.addWidget(self.add_box, 1)
+        add.addWidget(self.add_button)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(top)
+        layout.addLayout(add)
+
+    def items(self) -> list[str]:
+        return [self.list.item(i).text() for i in range(self.list.count())]
+
+    def set_items(self, items: list[str]) -> None:
+        row = self.list.currentRow()
+        self.list.clear()
+        self.list.addItems(items)
+        if 0 <= row < len(items):
+            self.list.setCurrentRow(row)
+        self._offer()
+
+    def _offer(self) -> None:
+        """The names the add box offers: the results' samples not in the list."""
+        held = set(self.items())
+        names = [n for n in (self.names() if self.names else []) if n not in held]
+        self.add_box.blockSignals(True)
+        self.add_box.clear()
+        self.add_box.addItems(names)
+        self.add_box.setCurrentText("")
+        self.add_box.blockSignals(False)
+
+    def showEvent(self, event):  # noqa: N802 - Qt's name
+        super().showEvent(event)
+        self._offer()  # the results open may have changed
+
+    def _move(self, step: int) -> None:
+        row = self.list.currentRow()
+        items = self.items()
+        to = row + step
+        if row < 0 or not 0 <= to < len(items):
+            return
+        items[row], items[to] = items[to], items[row]
+        self.set_items(items)
+        self.list.setCurrentRow(to)
+        self.changed.emit(items)
+
+    def _remove(self) -> None:
+        row = self.list.currentRow()
+        if row >= 0:
+            items = self.items()
+            del items[row]
+            self.set_items(items)
+            self.changed.emit(items)
+
+    def _add(self) -> None:
+        name = self.add_box.currentText().strip()
+        items = self.items()
+        if name and name not in items:
+            items.append(name)
+            self.set_items(items)
+            self.changed.emit(items)
+
+
 def _quoted(text: str) -> str:
     from ..config import _toml_value
 
@@ -214,6 +325,9 @@ class ProjectEditor(QWidget):
         from .._reference import tables
 
         self.tables = tables()
+        # the samples of the results open, offered where a setting lists samples (the window
+        # sets it; none: typed)
+        self.sample_names = None
         self.path: Path | None = None
         self.values: dict[str, object] = {}
         self.on: set[str] = set()
@@ -405,7 +519,8 @@ class ProjectEditor(QWidget):
         form.addLayout(box)
 
     def _add_row(self, layout: QFormLayout, table, setting, prefix: bool = False) -> None:
-        row = SettingRow(table.name, setting, self.path.parent if self.path else None)
+        row = SettingRow(table.name, setting, self.path.parent if self.path else None,
+                         names=self.sample_names)
         row.show_value(self.values.get(row.name))
         row.edited.connect(self._edit)
         self.rows[row.name] = row

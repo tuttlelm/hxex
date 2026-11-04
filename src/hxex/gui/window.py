@@ -201,6 +201,8 @@ class MainWindow(QMainWindow):
         self._view_settings: dict | None = None  # the [figures] and [review] the results have
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace(self)
+        # settings that list samples offer the samples of the results open
+        self.project_page.editor.sample_names = self.sample_names
         self.tabs = QTabWidget()
         for name, page in zip(WORKSPACES, (self.project_page, self.run_page, self.results_page,
                                            self.analysis_page), strict=True):
@@ -500,6 +502,20 @@ class MainWindow(QMainWindow):
         if self._restoring:
             self._mark_saved()
         self.changed()
+
+    def sample_names(self) -> list[str]:
+        """The samples of the results open, named as the analysis settings name them (none
+        without results)."""
+        results = self.results_page.results
+        if results is None:
+            return []
+        from ..analysis import AnalysisConfig
+        from ..report import analysis_references
+
+        try:
+            return analysis_references(results, AnalysisConfig(reference="all"))
+        except ValueError:  # results that do not list their samples
+            return []
 
     def run_resume(self) -> None:
         """hxex resume in the Run workspace (a bootstrap for spectra shown at a K without one)."""

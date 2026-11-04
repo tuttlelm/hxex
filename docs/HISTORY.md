@@ -6717,3 +6717,15 @@ CSVs or mzML if wanted.
     computes its species table again (about 28 s per reference on the intact-peptide
     benchmark). Tests: test_analysis (forms, expansion, the command's folders, the refusal),
     test_gui_analysis (the list).
+
+247. **`[analysis] samples` sets the order, and is a list with ↑ ↓ in the window (owner,
+    2026-11-03).** The owner asked whether `[analysis.colours]` could set the samples' order;
+    agreed instead to keep one setting for it, `[analysis] samples`, which already did (the
+    reference first wherever it is listed; without it, every sample in alphabetical order, the
+    analysis's species table sorting by run and sample), but its description said only
+    "which samples". The settings reference, the template, outputs.md and gui.md now say it
+    sets the order of every figure and table (and of the default colours). In the window it is
+    a list (`gui.project_editor.OrderedList`, for the settings in `ORDERED`): ↑ and ↓ move the
+    selected sample, Remove, and Add with the samples of the results open
+    (`MainWindow.sample_names`, through `analysis_references` with `"all"`) or one typed; an
+    emptied list goes back to the default. Test: test_gui_project.
