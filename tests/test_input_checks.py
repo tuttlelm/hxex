@@ -177,8 +177,8 @@ def test_folders_and_fasta_files_that_do_not_pair_up_are_named(tmp_path, caplog)
     (tmp_path / "mutant" / "0001-0003-MKV").mkdir(parents=True)  # no FASTA
     (tmp_path / "D2" / "0001-0003-MKV").mkdir(parents=True)
     (tmp_path / "d2.fasta").write_text(">d2\nMKVLA\n")  # case differs
-    (tmp_path / "D3" / "0001-0003-MKV").mkdir(parents=True)
-    (tmp_path / "D3" / "D3.fasta").write_text(">D3\nMKVLA\n")  # inside its folder
+    (tmp_path / "M2" / "0001-0003-MKV").mkdir(parents=True)
+    (tmp_path / "M2" / "M2.fasta").write_text(">M2\nMKVLA\n")  # inside its folder
     (tmp_path / "spare.fasta").write_text(">spare\nMKVLA\n")  # no folder
     (tmp_path / "analysis").mkdir()  # holds no peptide folders: not a sample
     with caplog.at_level(logging.WARNING):
@@ -188,7 +188,7 @@ def test_folders_and_fasta_files_that_do_not_pair_up_are_named(tmp_path, caplog)
     assert "sample folder mutant has no mutant.fasta beside it, so it is not read" in text
     assert "names are case-sensitive: d2.fasta and folder D2" in text
     assert "d2.fasta has no folder" not in text  # said once, beside the folder
-    assert "D3.fasta: a sample's FASTA file must sit beside its folder" in text
+    assert "M2.fasta: a sample's FASTA file must sit beside its folder" in text
     assert "spare.fasta has no folder spare beside it, so it is not used" in text
     assert "analysis" not in text
     caplog.clear()

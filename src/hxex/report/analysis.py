@@ -353,7 +353,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                            modified=config.modified_peptides,
                            two_population_peptides=gate and 2 in config.ks,
                            population_test=config.populations == "population_test")
-    # modified forms kept apart are states of their own (e.g. 'WT pS59'), after their sample
+    # modified forms kept apart are states of their own (e.g. 'WT pS12'), after their sample
     state_pairs = [s for s in _states(residues) if s not in wanted]
     all_states = wanted + state_pairs
     labels = display_labels([s[0] for s in all_states], [s[1] for s in all_states])

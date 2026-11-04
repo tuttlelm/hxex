@@ -229,7 +229,7 @@ MODIFIED = ("separate", "combined")
 
 def modified_state(peptide: str, start: int, modification: str = "",
                    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS) -> str:
-    """The sites of a peptide's modifications, e.g. ``'pS59'`` or ``'pS59,acK64'`` (modified
+    """The sites of a peptide's modifications, e.g. ``'pS12'`` or ``'pS12,acK64'`` (modified
     residues of the modX sequence, numbered on the protein), with its ``modification`` text in
     brackets if it changes the composition; '' for an unmodified peptide. Terminal groups are
     not counted."""
@@ -359,7 +359,7 @@ def residue_map(
 
     ``modified`` says what happens to modified peptides (a modified residue in the modX
     sequence, or a composition change): ``'separate'`` (the default) gives
-    each modified form a state of its own, ``'<sample> <sites>'`` such as ``'WT pS59'``
+    each modified form a state of its own, ``'<sample> <sites>'`` such as ``'WT pS12'``
     (:func:`separate_modified`), so the sample's values come from its unmodified peptides;
     ``'combined'`` averages every peptide of a sample together.
 

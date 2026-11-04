@@ -1069,9 +1069,9 @@ def test_one_item_of_a_list_may_be_written_with_single_brackets(tmp_path):
         assert [r.sample for r in p.input.runs] == ["WT"]
     folder = '[input]\nformat = "specexport"\ndata_dir = "d"\n'
     p = project(folder + '[analysis.regions]\nname = "N"\nstart = 1\nend = 63\n'
-                '[analysis.sites]\nresidue = 19\nlabel = "S19"\n')
+                '[analysis.sites]\nresidue = 12\nlabel = "S12"\n')
     assert [r.name for r in p.analysis.annotations.regions] == ["N"]
-    assert [s.residue for s in p.analysis.annotations.sites] == [19]
+    assert [s.residue for s in p.analysis.annotations.sites] == [12]
     p = project(folder + '[run.registry.residues]\nlabel = "meK"\nbase = "K"\n'
                 'delta = { C = 1, H = 2 }\n')
     assert "meK" in {r["label"] for r in p.run.registry.to_dict()["residues"]}

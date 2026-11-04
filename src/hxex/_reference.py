@@ -277,7 +277,7 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.regions.start": "first residue (1-based, inclusive)",
     "analysis.regions.end": "last residue (inclusive)",
     "analysis.sites.residue": "the residue number",
-    "analysis.sites.label": 'the label drawn ("S19")',
+    "analysis.sites.label": 'the label drawn ("S12")',
     "analysis.fragments.ion_types": "the fragment ion types analysed (empty: every one of the "
                                     "run)",
     "analysis.fragments.charges": "the fragment charges analysed",

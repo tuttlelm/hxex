@@ -387,7 +387,7 @@ peak picking is a separate stage (next).
 
 Verified: on the Bimodal_HDX_Data test set the 24 spreadsheets give 566 spectra and 496,708
 points, **identical** (m/z, intensity, time, replicate) to pyHXExpress's `allrawdata`. On the
-Chris_B4 SpecExport example the entries (sample, range, charge, sequence from the FASTA) equal
+SpecExport example the entries (sample, range, charge, sequence from the FASTA) equal
 pyHXExpress's `metadf_asrun`, and the (time, replicate) set equals its `alldeutdata`. On two
 real pooled folders (the private pooled dataset, 318 entries each) the entries, candidate lists and classes equal
 the pooled `metadf` columns `sample_matches` and the protein-class column. Those three tests read their
@@ -1423,14 +1423,14 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     model for K=2 decompositions (the Phase 5 choice). Decided (owner): the fit's bound on `n`
     stays a user setting, and the analysis filters K >= 2 descriptions (`SpeciesFilters`): per
     spectrum, populations within 5 to 95 % and no component above fD 1.1; per peptide and time,
-    fD error below 0.25. With them, the WT 4 s residue values against the owner's
-    (`B5phospho_fitsdf_byres`): stored Poisson fits, 106 peptides keep K=2, correlation 0.96
+    fD error below 0.25. With them, the E 4 s residue values against the owner's
+    (the owner's per-residue fits table): stored Poisson fits, 106 peptides keep K=2, correlation 0.96
     (K=1), 0.94 (rank 1), 0.84 (rank 2; medians 0.63 and 0.62); Gaussian refit, 181 peptides,
     0.98, 0.96 and 0.93 (rank 2 medians 0.56 and 0.62). (A first version filtered on the fitted
     `n` above 1.1 times the amides, which kept only 50 peptides and correlated 0.70; the owner
     meant `n * p`, the reported deuteration.) The K=1-between-ranks filter (per peptide and time, K=1 value
     between the K=2 ranks) removes 388 descriptions over the whole benchmark (stored fits) and
-    100 over WT (Gaussian refit), but at WT 4 s only one and none, so the correlations above do
+    100 over E (Gaussian refit), but at E 4 s only one and none, so the correlations above do
     not change. (Setting `SpeciesFilters.k1_between_ranks`.)
 
 50. **The one-or-two-population choice (phase 2; 2026-10-13).** `choose_populations` applies the
@@ -1439,11 +1439,11 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     population error propagated from all three values (checked against numerical derivatives);
     `plot_population_choice` draws the owner's `rfufits` figure (curves solid where chosen and
     dashed elsewhere, chosen markers sized by population, K=1 as open circles, a population
-    panel). Against the owner's choice (`B5phospho_fitsdf_byres`, WT, 156 residues), from the
+    panel). Against the owner's choice (the owner's per-residue fits table, E, 156 residues), from the
     stored fits (Poisson loss, fixed-K bootstraps): two populations at 126, 117, 98 and 100
     residues (4 s, 60 s, 1,800 s, 72,000 s) against 90, 104, 94 and 93, the same choice at 120,
     123, 100 and 105, populations correlated 0.5 to 0.6 (the K=2 split differs with the loss,
-    item 49). The WT Gaussian refit had no bootstrap: its errors came from the scatter of
+    item 49). The E Gaussian refit had no bootstrap: its errors came from the scatter of
     replicates only and two populations passed at 150 to 155 of 156 residues, so the choice
     needs the bootstrap (`species_uptake` now warns without one).
 
@@ -1453,17 +1453,17 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     against each sample residue by residue (the owner's `vsWT_byresidue`), the Woods plot, and
     region bars (`RFUbarplots`). `species_uptake` was split into the per-spectrum records (which
     the Welch test needs) and their combination, with identical output on the benchmark. On the
-    intact-peptide benchmark against WT (K=1): `delta_crit` 0.112 fD (4 replicate spectra
-    typically); significant peptides at 4 s, 60 s, 1,800 s and 72,000 s: S19D 10, 13, 13, 11 of
-    about 175; S45D 8, 9, 16, 18; S59D 11, 11, 12, 14; D3 20, 19, 31, 52 of about 142, mostly
-    higher uptake, in the N-terminal region; at 4 s the S59D residue differences cluster at
+    intact-peptide benchmark against E (K=1): `delta_crit` 0.112 fD (4 replicate spectra
+    typically); significant peptides at 4 s, 60 s, 1,800 s and 72,000 s: B 10, 13, 13, 11 of
+    about 175; C 8, 9, 16, 18; D 11, 11, 12, 14; A 20, 19, 31, 52 of about 142, mostly
+    higher uptake, in the N-terminal region; at 4 s the D residue differences cluster at
     residues 59 to 65. Region values at 4 s match the owner's `RFUbarplots` (FR-A about 0.35,
     the beta regions 0.2 to 0.3, L9,CTR about 0.8; regions from the owner's notebook, used only
     for the private examples).
-    Population-resolved, D3 against WT: at K=2, only 39 to 49 peptides have a description that
+    Population-resolved, A against E: at K=2, only 39 to 49 peptides have a description that
     passes the filters in both samples at a time, and the replicate scatter of each rank's fD is
     larger (`delta_crit` 0.24 and 0.23 against 0.11 at K=1), so 0 to 7 are significant. For 17
-    N-terminal peptides (ending by residue 60) with K=2 in both, D3's average fD is higher by a
+    N-terminal peptides (ending by residue 60) with K=2 in both, A's average fD is higher by a
     median 0.14 at 4 s while the low-D state's fD differs by only 0.03 and its population is
     lower by 0.17 (in 13 of 17): fewer molecules in the protected state rather than more
     deuterium in either; by 20 h no difference. Compared with the hybrid rule, though, the
@@ -1493,7 +1493,7 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     differs; also written within a run), `plot_butterfly`, `[analysis.runs]` and
     `hxex analyse NAME=BUNDLE ...`. Figure file names replace characters a file system refuses
     (the `:`) with `_`. Check on the intact-peptide benchmark loaded twice as runs A and B:
-    `A:WT` against `B:<variant>` reproduces the within-run WT against each variant exactly (3,872
+    `r1:E` against `r2:<variant>` reproduces the within-run E against each variant exactly (3,872
     peptide-time rows; deltas, p values, significance and `delta_crit` 0.1119 identical), with
     no identity or settings differences; 5.6 s against 2.5 s within the run. Only one run of the
     benchmark exists, so differences between genuinely separate runs are not yet measured.
@@ -1502,7 +1502,7 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
 
 54. **By-residue comparison plot from the owner's reference (2026-10-13).** The owner's
     current reference for comparing samples residue by residue is
-    `B5_phospho_2pop_vsWT_byresidue_72000s_26Aug2026` (one panel per variant against WT in
+    the owner's per-residue figure at 72,000 s (one panel per variant against E in
     black, points with capped error bars, no lines, both K=2 values); the owner asked for any of
     low, high and average to be selectable. Built as `plot_residue_overlay` and
     `residue_overlay_figure` (`show`, and `[analysis] overlay`, default `["low", "high"]`; the
@@ -1519,13 +1519,13 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     effect: (1) **The noise model of the stored fits.** The run estimated the noise from
     replicates, so most spectra were fitted with the Poisson loss (item 49), which often puts the
     second component in the high-mass tail (fD 1.4 to 2.4, population 2 to 10 %); the filters then
-    drop that peptide's K=2 description. Around residue 40 this removed most of D3's peptides
+    drop that peptide's K=2 description. Around residue 40 this removed most of A's peptides
     (12 of about 20 between residues 33 and 50), and the residue values came from the few left,
-    which are lower: over residues 35 to 50 the median D3 - WT difference was +0.07 (low) and
+    which are lower: over residues 35 to 50 the median A - E difference was +0.07 (low) and
     -0.01 (high) against the owner's +0.10 and +0.11. Refitted with the Gaussian loss (picked
     spectra at 0 s, 4 s and the fully deuterated control, every sample, K = 1 and 2, 20-draw
-    bootstrap; 7 min on the GPU; `hxex_private/HSPB5_benchmark/gauss_4s`), the peptide fits match
-    pyHXExpress's (for example 33-47 D3: 0.46 and 0.94 against 0.42 and 0.90), the peptides are
+    bootstrap; 7 min on the GPU; a private refit of the intact-peptide benchmark), the peptide fits match
+    pyHXExpress's (for example 33-47 A: 0.46 and 0.94 against 0.42 and 0.90), the peptides are
     kept, and the difference is +0.08 and +0.06, the increase in both populations visible again.
     (2) **Which residues are drawn.** The owner's figure shows only residues `choose_fits` calls
     bimodal (both errors and the lever-rule population's error below 0.25, population 0.10 to
@@ -1534,7 +1534,7 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     errors are about twice hxex's (median 0.08 to 0.11 against 0.04 to 0.05): pyHDX gets the
     per-spectrum `Dabs_std` with replicates and charge states as separate rows, while hxex gives
     the standard error of their mean (about 4 spectra per peptide). Larger errors fail the
-    bimodal test more often. (4) Smaller: some short peptides (33-38, 34-38, 34-48 for D3) still
+    bimodal test more often. (4) Smaller: some short peptides (33-38, 34-38, 34-48 for A) still
     split differently after the refit; pyHXExpress reports the bootstrap mean within `Pop_Thresh`
     rather than the main fit (item 49); the notebook drops spectra with fD below 0.1 after time
     0 and those on the owner's manual quality list. Back-exchange correction is not a source:
@@ -1545,7 +1545,7 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     already the default (`NoiseConfig(model='gaussian', percent=3.0)`, no estimate); the
     benchmark had used `estimate='replicates'`, which fits every series with replicates with the
     Poisson loss. The benchmark is refitted with the Gaussian loss
-    (`hxex_private/HSPB5_benchmark/gauss_full`) and the examples regenerated from it.
+    (a private refit of the intact-peptide benchmark) and the examples regenerated from it.
 
 57. **The replicate noise estimate keeps the Gaussian loss; overlay filter (owner, 2026-10-13).**
     `NoiseConfig(estimate='replicates')` used to fit every series it could estimate with the
@@ -1579,20 +1579,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
 58. **The overlay filter is on by default; the one-vs-two rule by example (owner, 2026-10-13).**
     `overlay_two_only` defaults to true (the user can turn it off). The filter applies per
     sample: each sample's K=2 points are drawn only where its own choice keeps two
-    populations. Example (Gaussian refit, residue 63 at 60 s): WT keeps two populations (low 0.44,
-    high 0.80, average 0.68); D3's average 0.47 lies outside its K=2 values (0.30, 0.46), so it
-    keeps one; the figure shows WT's two points and D3's average, the K=1 values are compared
-    (D3 lower by 0.22 +- 0.02) and `compare_choices` records the disagreement. The peptides over
-    residue 63 contain the S59D site, so their sequences differ between WT and D3 and they are
+    populations. Example (Gaussian refit, residue 63 at 60 s): E keeps two populations (low 0.44,
+    high 0.80, average 0.68); A's average 0.47 lies outside its K=2 values (0.30, 0.46), so it
+    keeps one; the figure shows E's two points and A's average, the K=1 values are compared
+    (A lower by 0.22 +- 0.02) and `compare_choices` records the disagreement. The peptides over
+    residue 63 contain D's mutated site, so their sequences differ between E and A and they are
     not compared as peptides; only the residue level compares that region. The region and site lines of
     every residue plot (profiles, choice, redundancy and resolution, comparisons) are now the
     same grey dashed lines (`hxex.report.coverage.MARK_LINE`; owner).
 
 59. **Back-exchange controls on the benchmark; the buffer's D2O fraction (2026-10-13).** Around
-    residue 60 at 4 s the K=2 values of S59D and D3 were about half the owner's (high 0.45 to
+    residue 60 at 4 s the K=2 values of D and A were about half the owner's (high 0.45 to
     0.6 against 0.8 to 0.88). The peptide fits agree where both use the same correction; the
-    difference is the control: several series over the S59 site (55-62, 55-64, 55-65 in S59D
-    and D3, 49-65 in D3) have a measured retention of 0.475 to 0.50, below `retention_min`
+    difference is the control: several series over D's mutated site (55-62, 55-64, 55-65 in D
+    and A, 49-65 in A) have a measured retention of 0.475 to 0.50, below `retention_min`
     (0.5, item 27), so hxex fell back to full retention, i.e. no correction, while pyHXExpress
     uses the measured value (`UN_TD_corr`, no lower limit) and, when the control is missing, its
     `Dfrac` (0.9, the buffer's D2O fraction). Over the benchmark 250 of 1,372 series (15 % of
@@ -1602,20 +1602,20 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     (default 0.9, pyHXExpress's `Dfrac`), the deuterium fraction of the labelling buffer; a
     missing or rejected fully deuterated control now falls back to `m0 + d2o_fraction *
     n_amides` instead of `n_amides`. Median |hxex - owner| of the K=1 residue values (Gaussian
-    refit): S59D and D3, residues 55 to 68 at 4 s: 0.203 with the old fallback, 0.185 with
+    refit): D and A, residues 55 to 68 at 4 s: 0.203 with the old fallback, 0.185 with
     `d2o_fraction` 0.9, 0.010 with 0.9 and `retention_min` 0.3; every residue, sample and time:
     0.023, 0.020 and 0.015. Retention measures the D2O fraction times what survives
     back-exchange, so here it centres at 0.64, below the buffer's fraction.
 
 60. **Peptides compared by residue range by default (owner, 2026-10-13).** Peptide comparisons
-    matched identical sequences only, so a peptide containing a mutation (S19D, S45D, S59D, D3)
+    matched identical sequences only, so a peptide containing a mutation (B, C, D, A)
     was never compared with the reference's; only the residue level covered those stretches.
     `compare_peptides(match='range')`, now the default (`[analysis] peptide_match`), pairs
     peptides over the same residues and time and records `peptide_reference`,
     `modification_reference` and `same_sequence`; where a sample has more than one species over
     a range (a modified and an unmodified form), only identical sequences are paired.
-    `match='sequence'` keeps identity matching. On the benchmark (Gaussian refit, against WT)
-    this adds 76, 116, 54 and 229 peptide-time comparisons for S19D, S45D, S59D and D3 (13, 20, 9
+    `match='sequence'` keeps identity matching. On the benchmark (Gaussian refit, against E)
+    this adds 76, 116, 54 and 229 peptide-time comparisons for B, C, D and A (13, 20, 9
     and 39 mutated peptides; 5, 28, 17 and 61 of them significant). PTMs, as built: a modified
     residue is written in the modX sequence, so a modified peptide is its own species, compared
     only with the same modified form; at the residue level both forms of a stretch are averaged
@@ -1632,15 +1632,15 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     overlay, residue and population comparisons, Woods, butterfly) mark such residues or
     peptides with a `*` at the top. Modified peptides at the residue level: `residue_map(
     modified='separate')`, the default, makes each modified form a state of its own labelled by
-    its sites (`'WT pS59'`; `modified_state`), so a sample's values come from its unmodified
+    its sites (`'<sample> pS12'`; `modified_state`), so a sample's values come from its unmodified
     peptides; `'combined'` keeps them together (`[analysis] modified_peptides`). The benchmark
-    examples use `HSPB5_benchmark/gauss_full_v2`, the Gaussian refit with controls and quality
+    examples use the second private refit of the benchmark, the Gaussian refit with controls and quality
     recomputed under these defaults: 219 fallbacks instead of 250, and around residue 60 at 4 s
-    the K=2 values of S59D and D3 close to the owner's.
+    the K=2 values of D and A close to the owner's.
 
 62. **The remaining K=2 low-population gap is a filter difference; hxex's filtering kept (owner,
     2026-10-13).** After items 59 to 61, hxex's K=2 low population around residue 60 at 4 s was
-    still about 0.14 below the owner's (WT, S59D, D3). On the same fits (`gauss_full_v2`), only
+    still about 0.14 below the owner's (E, D, A). On the same fits (`gauss_full_v2`), only
     the filtering of K=2 descriptions was varied, against the owner's residue values (median
     hxex - owner, low; residues 55-68 at 4 s / all residues, samples and times): hxex's filters
     (a spectrum's whole K=2 description is dropped when a component fails) -0.142 / -0.038; no
@@ -2001,7 +2001,7 @@ are 1.07 MB (the plan estimated 1.01 MB for this layout), it writes in 0.13 s an
     kinetics is read from the read record (`io.kinetics_spectra`: the runs without a `time`,
     matched by the spectrum ids hxex makes); `Measurements.from_binned(kinetics=...)`, passed
     by `run`. Controls and every other format keep their references.
-    On the probe (ScramPep ETD 3+, gentle and harsh, 12,616 kinetics spectra and 62 controls,
+    On the probe (the private fragment-kinetics ETD 3+ example, gentle and harsh, 12,616 kinetics spectra and 62 controls,
     K = 1 and 2): the kinetics scales rose by a median factor of 47 (10th to 90th percentile 29
     to 60), the controls' were unchanged, and K=2 was selected for 1,048 kinetics spectra
     against 8,849 before. Of the K=1 fits, 659 move by more than 0.05 D: M-NH3 301 of 1,686,
@@ -2185,7 +2185,7 @@ CSVs or mzML if wanted.
     and so every comparison, residues, protection factors, fragment uptake), as rejected
     spectra are (`Results.without_times`; the bundle's fits are kept); a control's time is
     refused. The example leaves out 0.1 and 0.8 s.
-    Example: hxex_private/analysis_examples/protection_factors/b5_disease.
+    Example: a private example folder (the published B5 data).
     Butterfly plot (owner): the "corrected differently" note sat over the middle of the figure;
     it is now an entry of the time legend, as in the residue overlay.
 
@@ -2249,15 +2249,15 @@ CSVs or mzML if wanted.
     sample-sequence rows, 4,042 of 5,261 spectra; 45 of 194 controls without one, at 8.70 min):
     `a` 0.891, `t0` 2,510 s + 2.59 RT (without RT: 0.853, 3,393 s); in-sample scatter 0.045 D
     per amide either way, as item 71's cross-validated gain of about 6 % suggests. Example:
-    hxex_private/analysis_examples/quench_backexchange/b5_disease (`make_rt_table.py`,
+    a private example folder (the published B5 data; `make_rt_table.py`,
     `hxex_kint_rt.toml`).
 
 84. **A project file for analysis only (owner, 2026-10-15; item 80's gap).** `hxex analyse`
     accepts a project file without `[input]` when it has an `[analysis]` table, for comparing
     bundles (`[analysis.runs]`, `merge`, labels): `load_project(path, analysis_only=True)`
     gives `input = None`. `hxex run`, `check` and `resume` still need `[input]`, and their
-    error says that a file with only `[analysis]` is for `hxex analyse`. The ScramPep ETD
-    against EThcD comparison is now such a file (`scrampep_compare/hxex.toml`).
+    error says that a file with only `[analysis]` is for `hxex analyse`. The private fragment-kinetics
+    ETD against EThcD comparison is now such a file.
 
 
 85. **CPU speed, part two, and an exact multimodality screen (owner asked, 2026-10-15).**
@@ -2403,7 +2403,7 @@ CSVs or mzML if wanted.
       counted in the log.
     - `[run] envelope_fallback_time` was already readable from the project file (not a gap,
       contrary to what I told the owner at first).
-    - **Real data** (the private ScramPep ETD example: gentle and harsh scans of one
+    - **Real data** (the private fragment-kinetics ETD example: gentle and harsh scans of one
       undeuterated file, 3 components): with `share` the weights are identical to the
       per-condition ones (the references are the same spectra), no condition disagrees, and the
       run takes the same time. 36 of 68 series are flagged `poor_envelope` (3,686 of 12,678
@@ -2421,7 +2421,7 @@ CSVs or mzML if wanted.
     `estimate_envelope` alternates picking the references with the current weights' bins and
     fitting new weights, but reported the misfit of the last weights to the references picked
     with the previous weights' bins, and used those weights' bins in the run. On a weak
-    reference the rounds do not settle: `c-1:2` 2+ of the ScramPep ETD example cycles with
+    reference the rounds do not settle: `c-1:2` 2+ of the private fragment-kinetics ETD example cycles with
     period four (weights (0, 0, 1), (0, 0, 1), (0.10, 0, 0.90), (0, 0.12, 0.88); misfit on
     their own bins 0.105, 0.155, 0.22, 0.199), so after the default three rounds it reported
     0.105 for weights whose own misfit is 0.22. Now every set of weights (the equal starting
@@ -2443,7 +2443,7 @@ CSVs or mzML if wanted.
     of the peptide's target and of its fragments, in place of the project's; rows without them
     keep the project's. On a private bottom-up dataset (item 64's: an LC-MS file per labelling
     time, 18 targeted precursors, windows from the owner's list; example
-    hxex_private/analysis_examples/fragment_ladders/targeted_lcms): every MS1 parent was
+    a private example folder): every MS1 parent was
     found in all 17 runs (two undeuterated, one fully deuterated, 14 times from 4 s to 27 h),
     and its centroid was compared with that of the precursor M in the peptide's own isolated
     MS2 scans, run by run. For 11 of 18 they agree (median difference 0.01 to 0.09 D; single
@@ -6838,3 +6838,16 @@ CSVs or mzML if wanted.
     over a peptide or bar for details." and, under the Analysis figures only,
     "Right-click a peptide to go to its spectra." (`FigurePanel(hint=...)`). Only figures whose
     bars carry rows (coverage and Woods so far) have the menu.
+
+255. **Private names scrubbed before the first PyPI release (owner, 2026-11-04: "scrub and tag
+    now", to hold the name with a `0.0.1.dev0` placeholder).** Checking the built packages found
+    private names in tracked files (already on GitHub): the benchmark's sample names and
+    private folder paths in the benchmark entries above, a person-named example folder, the
+    fragment dataset's peptide name, two local paths in the audit of 2026-11-01, and a scrubbed
+    run label in a golden-data script. Now: benchmark samples A to E as elsewhere, neutral
+    wording for folders and paths, `classA_run`; the general modified-state example `pS59` and
+    the site label `"S19"` (real benchmark sites) became `pS12` and `"S12"` in the docs, code
+    comments and template. The sdist leaves out `docs/HISTORY.md` and `docs/AUDIT_*.md`
+    (development records; `[tool.hatch.build.targets.sdist]`), and docs/RELEASING.md says to
+    search both built packages before a release. Git history keeps the old text (owner's
+    October decision).

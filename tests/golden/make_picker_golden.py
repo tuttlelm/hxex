@@ -2,7 +2,7 @@
 """Make picker_reference.npz from a pyHXExpress run that has both raw and picked data.
 
 Usage: python tests/golden/make_picker_golden.py RUN_DIR TAG OUT.npz
-e.g. .../batchrun_1pop_06Oct2026/TBA_run 06Oct2026 /path/outside/the/repo/picker_reference.npz
+e.g. .../batchrun_1pop_06Oct2026/classA_run 06Oct2026 /path/outside/the/repo/picker_reference.npz
 
 The output holds raw spectra of the owner's unpublished data and must NOT be committed: keep it
 outside the repository and point HXEX_PICKER_GOLDEN at it (tests/test_picking.py).

@@ -33,6 +33,9 @@ the first publish from GitHub create the project.
   unless `--pre` is given, so an early placeholder release is not installed by accident.
 - Build and check locally before releasing: `uv build` (or `python -m build`), then
   `twine check dist/*`.
+- Before a release, search everything in the built packages (both the sdist and the wheel)
+  for private names. The sdist holds the repository's tracked files, except the development
+  records (`docs/HISTORY.md`, `docs/AUDIT_*.md`), which `pyproject.toml` leaves out.
 - PyPI releases cannot be replaced: a version number can be used only once, and deleting a
   release does not free it.
 

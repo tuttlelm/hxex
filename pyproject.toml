@@ -80,6 +80,10 @@ Issues = "https://github.com/tuttlelm/hxex/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/hxex"]
 
+# the source package leaves out the development records (docs/RELEASING.md)
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/HISTORY.md", "docs/AUDIT_*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

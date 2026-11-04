@@ -286,7 +286,7 @@ in the published work; where it matters, a component is named by its rank.
   peptide_match`). Where a sample has several species over one range (a modified and an
   unmodified form), only identical sequences are paired. Modified residues are written in the
   modX sequence, so a modified peptide is a species of its own; at the residue level each
-  modified form is by default a state of its own (`'WT pS59'`, `residue_map(modified=
+  modified form is by default a state of its own (`'WT pS12'`, `residue_map(modified=
   'separate')`, `[analysis] modified_peptides`), or is averaged with the sample's other peptides
   (`'combined'`; owner 2026-10-13: context dependent). Values corrected differently (one side
   with a fallback control) carry `control_fallback` flags and are marked `*` at the top of the

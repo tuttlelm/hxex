@@ -155,7 +155,7 @@ class AnalysisConfig:
       residues, mutated or not) or ``'sequence'`` (identical sequences only;
       :func:`compare_peptides`).
     - ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the
-      residue level, ``'WT pS59'``) or ``'combined'`` (averaged with the sample's other
+      residue level, ``'WT pS12'``) or ``'combined'`` (averaged with the sample's other
       peptides; :func:`residue_map`).
 
     Outputs and options:

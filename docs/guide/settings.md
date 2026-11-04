@@ -496,7 +496,7 @@ Repeat the table for every site (a modification, a mutation).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `residue` | integer | required | the residue number |
-| `label` | text | `""` | the label drawn ("S19") |
+| `label` | text | `""` | the label drawn ("S12") |
 
 ## `[analysis.fragments]`
 

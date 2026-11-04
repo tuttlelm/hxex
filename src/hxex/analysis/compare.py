@@ -966,7 +966,7 @@ def gated_by_peptides(
     significant on their own: those are the ``residue_test_only`` rows, kept visible.
     ``modified``: how the residue map took modified peptides (``[analysis]
     modified_peptides``): ``'separate'`` keys a modified peptide to its own state (``'WT
-    pS59'``), ``'combined'`` to its sample's."""
+    pS12'``), ``'combined'`` to its sample's."""
     from .residues import modified_state
 
     by_state: dict[tuple[str, str, float], list[int]] = {}
