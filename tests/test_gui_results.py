@@ -70,7 +70,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
         page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
-    assert tabs == ["spectra", "fits at each K", "uptake", "overview"]
+    assert tabs == ["spectra", "fits at each K", "uptake", "table", "overview"]
     qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
     title = page.panel("fits at each K").view.figure.axes[0].get_title()
     assert title.splitlines()[-1].startswith("rep 1: K=")
@@ -78,7 +78,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
         page.tree.setCurrentItem(point.child(0))
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake", "overview"]
+        "spectrum", "fits at each K", "uptake", "table", "overview"]
     qtbot.waitUntil(lambda: page.panel("spectrum").view.figure is not None, timeout=30000)
     sel = page.selection()
     assert sel["charge"] == 2 and sel["spectrum_id"] == point.child(0).toolTip(0)
@@ -134,7 +134,7 @@ def test_the_overview_is_the_first_look_and_a_tab_at_every_level(qtbot, results)
     series = page.tree.topLevelItem(0).child(0)
     page.tree.setCurrentItem(series)
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectra", "uptake", "populations", "overview"]
+        "spectra", "uptake", "populations", "table", "overview"]
     assert page.figures.currentWidget() is overview and overview.view.figure is first
     # new results (as a review decision makes): drawn again
     page.results = dataclasses.replace(results)
@@ -261,7 +261,7 @@ def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_p
     with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
         page.tree.setCurrentItem(fd)
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake", "overview"]
+        "spectrum", "fits at each K", "uptake", "table", "overview"]
     assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name
 
 
@@ -401,3 +401,70 @@ def test_the_search_reads_residue_numbers():
     assert not search_matches("41", *row) and not search_matches("12-23", *row)
     assert search_matches("wt 50", *row) and not search_matches("d109h 50", *row)
     assert search_matches("spfy", *row) and search_matches("z2", *row, "z2")
+
+
+def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
+    """Beside the figures, the selection's rows of the report's tables (owner): a series'
+    uptake.csv rows with its series.csv values said above them, a time point's spectra.csv
+    rows, a spectrum's row as names and values; a row double-clicked opens its spectrum."""
+    from hxex.report.tables import uptake_table
+
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
+    tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
+    assert tabs[-2:] == ["table", "overview"]
+    page.figures.setCurrentWidget(page.table_view)
+    view = page.table_view
+    want = uptake_table(results, data_ids=[0])
+    assert view.model.columns == list(want) and len(view.model.rows) == len(want["data_id"])
+    assert view.note.text().startswith("uptake.csv: this series' rows. series.csv: n_spectra")
+    page.tree.expandItem(series)
+    point = series.child(1)
+    page.tree.setCurrentItem(point)
+    assert page.figures.currentWidget() is view  # the tab stays in view
+    assert {r["spectrum_id"] for r in view.model.rows} == {s.spectrum_id for s in
+                                                            point.data(0, 257)[2].spectra}
+    first = view.model.rows[0]["spectrum_id"]
+    view._double_clicked(view.model.index(0, 0))  # a row: its spectrum
+    assert page.tree.currentItem().toolTip(0) == first
+    leaf = point.child(0)
+    page.tree.setCurrentItem(leaf)
+    assert view.model.columns == ["column", "value"]
+    values = {r["column"]: r["value"] for r in view.model.rows}
+    assert values["spectrum_id"] == leaf.toolTip(0) and "K" in values
+
+
+def test_the_list_shows_the_reports_other_tables(qtbot, page, results, tmp_path):
+    """series.csv, components.csv and uptake.csv in the list too (owner: the Results tables),
+    each made once; a series row opens its series; the rows shown are saved as CSV; after a
+    decision a table other than spectra.csv says it is out of date until Update."""
+    import csv
+    import dataclasses
+
+    from hxex.report.tables import series_table, uptake_table
+
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    lst = page.list
+    page.left_tabs.setCurrentWidget(lst)
+    lst.tables.setCurrentIndex(lst.tables.findData("series"))
+    qtbot.waitUntil(lambda: lst.table_name == "series" and bool(lst.rows), timeout=30000)
+    assert lst.columns == list(series_table(results)) and lst.filter.isHidden()
+    row = lst.model.rows[1]
+    lst._current(lst.model.index(1, 0), None)  # a series row chosen: its series
+    item = page.tree.currentItem()
+    assert item.data(0, 256) == "series" and item.data(0, 257)[1].data_id == row["data_id"]
+    lst.tables.setCurrentIndex(lst.tables.findData("uptake"))
+    qtbot.waitUntil(lambda: lst.table_name == "uptake" and bool(lst.rows), timeout=30000)
+    assert len(lst.rows) == len(uptake_table(results)["data_id"])
+    path = lst.save(tmp_path / "shown.csv")
+    with open(path, encoding="utf-8") as fh:
+        saved = list(csv.reader(fh))
+    assert saved[0] == lst.model.columns and len(saved) == len(lst.model.rows) + 1
+    # a decision (new results): this table is from before it, until Update
+    page.results = dataclasses.replace(page.results)
+    page._reviewed([0])
+    assert not lst.stale_bar.isHidden() and "uptake.csv is from before" in lst.stale.text()
+    lst.update_button.click()
+    qtbot.waitUntil(lambda: lst.stale_bar.isHidden() and bool(lst.rows), timeout=30000)
+    lst.tables.setCurrentIndex(lst.tables.findData("spectra"))  # kept: no rebuild
+    assert lst.table_name == "spectra" and len(lst.rows) == len(results.fit)

@@ -38,6 +38,11 @@ from .data_table import RowsModel, cell_text
 from .results_tree import search_matches
 
 FEW_VALUES = 30  # a column with at most this many values is filtered by ticking them
+# the report's tables the list shows (owner, 2026-11-04: the Results tables, read only)
+TABLES = {"spectra": "spectra.csv: one row per spectrum",
+          "series": "series.csv: one row per series (a peptide at one charge in one sample)",
+          "components": "components.csv: one row per spectrum and population",
+          "uptake": "uptake.csv: replicate averages per series and time"}
 
 # the list's filters: (words, what they keep)
 FILTERS = {"all": ("all spectra", "every spectrum"),
@@ -104,9 +109,27 @@ class SpectraList(QWidget):
     """Every spectrum as a sortable, filtered list; :attr:`chosen` gives the row picked."""
 
     chosen = Signal(dict)
+    table_asked = Signal(str)  # another table chosen: its rows are wanted (set_rows)
+    update_asked = Signal()  # the table shown, made again with the latest decisions
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.table_name = "spectra"
+        self.tables = QComboBox()
+        for i, (name, meaning) in enumerate(TABLES.items()):
+            self.tables.addItem(f"{name}.csv", name)
+            self.tables.setItemData(i, meaning, Qt.ItemDataRole.ToolTipRole)
+        self.tables.setToolTip("which of hxex report's tables the list shows (read only)")
+        self.tables.currentIndexChanged.connect(
+            lambda _i: self.table_asked.emit(self.tables.currentData()))
+        self.save_button = QPushButton("Save table…")
+        self.save_button.setToolTip("save the rows shown, in the order shown, as a CSV file")
+        self.save_button.clicked.connect(self.save_dialog)
+        self.stale = QLabel()
+        self.stale.setWordWrap(True)
+        self.update_button = QPushButton("Update")
+        self.update_button.setToolTip("make this table again with your latest decisions")
+        self.update_button.clicked.connect(self.update_asked.emit)
         self.columns: list[str] = []
         self.rows: list[dict] = []  # every spectrum's row (the model shows the filtered ones)
         self.filter = QComboBox()
@@ -135,11 +158,20 @@ class SpectraList(QWidget):
         self.search.textChanged.connect(lambda _t: self._apply())
         bar = QHBoxLayout()
         bar.setContentsMargins(0, 0, 0, 0)
+        bar.addWidget(self.tables)
         bar.addWidget(self.filter)
         bar.addWidget(self.sample)
         bar.addWidget(self.search, 1)
         bar.addWidget(self.clear_filters)
         bar.addWidget(self.count)
+        bar.addWidget(self.save_button)
+        stale = QHBoxLayout()
+        stale.setContentsMargins(0, 0, 0, 0)
+        stale.addWidget(self.stale, 1)
+        stale.addWidget(self.update_button)
+        self.stale_bar = QWidget()
+        self.stale_bar.setLayout(stale)
+        self.stale_bar.hide()
         self.model = RowsModel(self)
         self.grid = _Grid()
         self.grid.setModel(self.model)
@@ -159,10 +191,23 @@ class SpectraList(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(bar)
+        layout.addWidget(self.stale_bar)
         layout.addWidget(self.grid, 1)
 
-    def set_rows(self, columns: list[str], rows: list[dict]) -> None:
-        """Show the results' spectra (``list_rows``); the filter, sample and search stay."""
+    def set_rows(self, columns: list[str], rows: list[dict], table: str = "spectra") -> None:
+        """Show a table's rows (``list_rows`` for the spectra); the sample and search stay,
+        and so do the column filters of the same table. The filter list is the spectra's."""
+        if table != self.table_name:
+            self.column_filters = {}
+            self.model.marked = {}
+            self.clear_filters.hide()
+        self.table_name = table
+        self.filter.setVisible(table == "spectra")
+        self.stale_bar.hide()
+        if self.tables.currentData() != table:
+            self.tables.blockSignals(True)
+            self.tables.setCurrentIndex(max(self.tables.findData(table), 0))
+            self.tables.blockSignals(False)
         self.columns, self.rows = columns, rows
         keep = self.sample.currentData()
         samples = sorted({str(r.get("sample", "")) for r in rows})
@@ -184,7 +229,7 @@ class SpectraList(QWidget):
 
     def shown(self, row: dict) -> bool:
         """Whether ``row`` passes the filter, the sample and the search."""
-        how = self.filter.currentData() or "all"
+        how = (self.filter.currentData() or "all") if self.table_name == "spectra" else "all"
         status = str(row.get("review_status", ""))
         if how == "flagged" and not row.get("flags"):
             return False
@@ -268,6 +313,30 @@ class SpectraList(QWidget):
                            self.count.text())
         if current is not None:
             self.select(current["spectrum_id"], emit=False)
+
+    def mark_stale(self) -> None:
+        """The table shown is from before the latest decisions (not made again until asked)."""
+        self.stale.setText(f"{self.table_name}.csv is from before your latest review "
+                           "decisions.")
+        self.stale_bar.show()
+
+    def save_dialog(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        if not self.model.rows:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save table", f"{self.table_name}.csv",
+                                              "CSV (*.csv)")
+        if path:
+            self.save(path if path.lower().endswith(".csv") else path + ".csv")
+
+    def save(self, path):
+        """Write the rows shown, in the order shown (``hxex report``'s CSV writing)."""
+        from ..report.tables import write_csv
+
+        columns = {name: np.array([r.get(name, "") for r in self.model.rows], dtype=object)
+                   for name in self.model.columns}
+        return write_csv(columns, path)
 
     def update_rows(self, rows: list[dict]) -> None:
         """Rows made again (after review decisions): their values replaced in place, the

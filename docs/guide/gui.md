@@ -163,6 +163,12 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
+Every level also has a **table** tab: the selection's rows of the tables `hxex report` writes.
+A charge (series) shows its `uptake.csv` rows (each time, the centroid row and each K and
+population, with errors and fD), with its `series.csv` values in a line above; a time point its
+replicates' `spectra.csv` rows; a spectrum its own `spectra.csv` row, as names and values. Sort,
+copy, and **Save table…** as in the Analysis data tab; double-click a row to open its spectrum.
+
 **List**, the tab beside **Tree**, shows every spectrum as one row with the columns of
 `spectra.csv` (K and the populations at the K in use, the review, the flags, the screens'
 scores, and why the analysis leaves it out). Click a column's header to sort by it, choose a
@@ -177,6 +183,15 @@ through the list in the order shown: sort by a screen score, say, and work down 
 worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
 once; the row stays in view until you change the filter. The list is made in the background
 when the results open (a few seconds for a large run).
+
+The list at the left of its bar chooses which of `hxex report`'s tables the List shows:
+`spectra.csv` (the spectra, as above), `series.csv`, `components.csv`, or `uptake.csv`, each
+made the first time you choose it (`uptake.csv` takes a few seconds on a large run). Sorting,
+the column filters, the sample, and **Find** work on each; the filter list is the spectra's
+only. A row opens its spectrum, or its series for `series.csv` and `uptake.csv`. **Save
+table…** writes the rows shown, in the order shown. After a review decision, `spectra.csv`
+updates its rows at once; another table says it is from before your latest decisions until
+you press **Update**.
 
 Every level also has an **overview** tab, last, and it is what you see first when results
 open: the run's summary pages, as `hxex report --figures` writes them to `overview.pdf`. A

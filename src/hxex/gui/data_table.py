@@ -180,9 +180,13 @@ class DataPanel(QWidget):
                       "Double-click a peptide's row, or right-click it, to go to its spectra.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
+        self.note = QLabel()  # what the rows are (from which table), when said
+        self.note.setWordWrap(True)
+        self.note.hide()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(bar)
+        layout.addWidget(self.note)
         layout.addWidget(self.table, 1)
         layout.addWidget(hint)
         self.show_rows([], [])
@@ -200,6 +204,12 @@ class DataPanel(QWidget):
 
     def clear(self) -> None:
         self.show_rows([], [])
+        self.set_note("")
+
+    def set_note(self, text: str) -> None:
+        """A line above the table saying what its rows are ('' for none)."""
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
 
     def select_row(self, row: dict) -> bool:
         """Select the row equal to ``row`` and scroll to it (False when it is not shown)."""

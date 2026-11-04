@@ -175,18 +175,19 @@ def _populations(results: Results, i: int, k: int):
     return mean, frac, mean_se, population_se, corrected, corrected_se
 
 
-def components_table(results: Results) -> dict[str, np.ndarray]:
+def components_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     """One row per spectrum and population at the K in effect: the index columns (ids, time,
     replicate, sample, peptide, charge, the scan target, ``review_status``, ``flags``), ``K``,
     ``rank``, ``mean``, ``mean_se``, ``mean_corrected``, ``mean_corrected_se``, ``population``,
-    ``population_se``."""
+    ``population_se``. ``rows``: only those spectra (positions in the fit, in order)."""
     index = _index_columns(results)
     ks = results.effective_K
     pick: list[int] = []
     cols: dict[str, list] = {n: [] for n in (
         "K", "rank", "mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
         "population_se")}
-    for i, k in enumerate(ks):
+    for i in (range(len(ks)) if rows is None else (int(r) for r in rows)):
+        k = ks[i]
         mean, frac, mean_se, population_se, cor, cor_se = _populations(results, i, int(k))
         for c in range(int(k)):
             pick.append(i)
@@ -280,7 +281,7 @@ def _screen_columns(results: Results) -> dict[str, np.ndarray]:
             for name in names}
 
 
-def uptake_table(results: Results) -> dict[str, np.ndarray]:
+def uptake_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
     """Replicate averages, per series and time (or control). Each one has a ``centroid`` row
     first (``description``): the mean of every replicate's centroid (its population-weighted
     mean, the deuterium of the whole spectrum) whatever K each replicate chose, with ``K``,
@@ -294,10 +295,13 @@ def uptake_table(results: Results) -> dict[str, np.ndarray]:
     (back-exchange corrected for a series the controls correct, as measured for the others),
     ``mean_se`` (``replicate_sd / sqrt(n_replicates)``) and ``replicate_sd`` (both NaN with one
     replicate), ``fD`` (``mean / n_amides``, only for a corrected series) and ``population``.
-    Spectra are the ones accepted by the reviewer or not yet reviewed."""
+    Spectra are the ones accepted by the reviewer or not yet reviewed. ``data_ids``: only those
+    series (one series' rows for hxex's window, without the whole run's)."""
     from ..analysis.species import _site_counts
 
-    comp = components_table(results)
+    rows = None if data_ids is None else np.flatnonzero(
+        np.isin(results.fit.data_id, np.asarray(list(data_ids), dtype=np.int64)))
+    comp = components_table(results, rows=rows)
     ctrl = results.controls
     corrected = (np.zeros(len(comp["data_id"]), dtype=bool) if ctrl is None else
                  np.isin(comp["data_id"], ctrl.data_id[~np.asarray(ctrl.uncorrected, bool)]))

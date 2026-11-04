@@ -7018,3 +7018,17 @@ CSVs or mzML if wanted.
     "none at a fixed K ([run.bootstrap] ks; the K = 2 comparisons of residues need K = 2)"
     (`cli._bootstrap_text`). The window's Info shows the same. Benchmark and tutorial
     projects: chosen K, 20 resamples; K = 1 and K = 2 for every spectrum.
+
+267. **The report's tables in Results (owner, 2026-11-04; PLAN "Tables in Results").** A
+    **table** tab beside the figures at every level below the peptides shows the selection's
+    rows of `hxex report`'s tables: a series' `uptake.csv` rows with its `series.csv` values in
+    a line above (`DataPanel.set_note`), a time point's `spectra.csv` rows, a spectrum's row as
+    names and values; made only while in view; a row double-clicked opens its spectrum. One
+    series' rows come from `uptake_table(results, data_ids=...)` (and `components_table(rows=
+    ...)`): 0.17 s on the benchmark against 12 s for the whole table, equal to its rows. The
+    List chooses among `spectra.csv`, `series.csv`, `components.csv` and `uptake.csv` (made in
+    the background when first chosen, kept per results); sorting, column filters, sample and
+    Find on each; a series row opens its series (matched by `data_id` when several series share
+    a name); **Save table…** writes the rows shown. After a decision `spectra.csv` updates its
+    rows; another table is marked from before the decisions until **Update** (owner: no
+    recalculation unasked).

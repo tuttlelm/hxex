@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .data_table import DataPanel, cell_text
 from .figure_view import FigurePanel
 from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
 from .review_panel import ReviewPanel
@@ -84,9 +85,9 @@ class ReviewTree(QTreeWidget):
 # the figure tabs of each kind of selection, in their order
 SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex report draws
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
-        "series": (*SERIES_PAGES, "overview"),
-        "point": ("spectra", "fits at each K", "uptake", "overview"),
-        "spectrum": ("spectrum", "fits at each K", "uptake", "overview")}
+        "series": (*SERIES_PAGES, "table", "overview"),
+        "point": ("spectra", "fits at each K", "uptake", "table", "overview"),
+        "spectrum": ("spectrum", "fits at each K", "uptake", "table", "overview")}
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
                   "quality": "quality flags"}
@@ -158,6 +159,9 @@ class ResultsWorkspace(QWidget):
         tree_side.addWidget(self.tree, 1)
         self.list = SpectraList()
         self.list.chosen.connect(self._list_chosen)
+        self.list.table_asked.connect(self._list_table)
+        self.list.update_asked.connect(lambda: self._list_table(self.list.table_name, True))
+        self._list_tables: dict[str, tuple] = {}  # table -> (results, columns, rows) made
         self.list.grid.review_key.connect(self.review.key)
         self._list_task = Latest(self)
         self.left_tabs = QTabWidget()
@@ -217,6 +221,12 @@ class ResultsWorkspace(QWidget):
         self._overview_of = None  # the results those figures were drawn from
         self.figures = QTabWidget()
         self.figures.currentChanged.connect(lambda _i: self._draw_overview())
+        # the selection's rows of the report's tables (owner, 2026-11-04): a spectrum's
+        # spectra.csv row, a time point's replicates', a series' uptake.csv rows
+        self.table_view = DataPanel()
+        self.table_view.activated.connect(self._table_row_chosen)
+        self._table_for = None  # (results, kind, payload) the table shows
+        self.figures.currentChanged.connect(lambda _i: self._fill_table())
         self.panels: dict[str, FigurePanel] = {}
         self.render = getattr(window, "render", "matplotlib")
         self.kind = None
@@ -262,7 +272,7 @@ class ResultsWorkspace(QWidget):
         while self.figures.count():
             self.figures.removeTab(0)
         for name in TABS[kind]:
-            self.figures.addTab(self.panel(name), name)
+            self.figures.addTab(self.table_view if name == "table" else self.panel(name), name)
         if current in TABS[kind]:
             self.figures.setCurrentIndex(TABS[kind].index(current))
         self.figures.blockSignals(False)
@@ -281,6 +291,8 @@ class ResultsWorkspace(QWidget):
             left = _left_out_or_none(results, analysis)
         self.left = left
         self.left_bar.hide()  # worked out as the results were read
+        self._selection, self._table_for = (None, None), None  # the table: nothing selected
+        self.table_view.clear()
         for panel in self.panels.values():
             panel.clear()
         self.tree_data = [] if results is None else peptides(results, left)
@@ -292,6 +304,61 @@ class ResultsWorkspace(QWidget):
         self._fill_overview_pages()
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
+
+    # --- the table tab ---------------------------------------------------------------------------
+
+    def _fill_table(self) -> None:
+        """The table tab, when it is in view: the selection's rows of the report's tables, as
+        ``hxex report`` writes them (made again when the selection or the results change)."""
+        from ..report.tables import series_table, spectra_table, uptake_table
+
+        if self.figures.currentWidget() is not self.table_view or self.results is None:
+            return
+        kind, payload = getattr(self, "_selection", (None, None))
+        if kind is None:
+            return
+        key = (self.results, kind, id(payload))
+        if self._table_for == key:
+            return
+        self._table_for = key
+        results, series = self.results, payload[1]
+        if kind == "spectrum":
+            table = spectra_table(results, rows=[payload[3].index])
+            rows = [{"column": name, "value": _plain_value(values[0])}
+                    for name, values in table.items()]
+            self.table_view.show_rows(["column", "value"], rows,
+                                      f"{payload[3].spectrum_id}_spectrum")
+            self.table_view.set_note("spectra.csv: this spectrum's row")
+        elif kind == "point":
+            table = spectra_table(results, rows=[s.index for s in payload[2].spectra])
+            self._show_columns(table, f"{payload[0].peptide_range}_z{series.charge}_"
+                                      f"{payload[2].label}_spectra")
+            self.table_view.set_note("spectra.csv: this time point's spectra")
+        else:
+            row = series_table(results)
+            at = int(np.flatnonzero(np.asarray(row["data_id"]) == series.data_id)[0])
+            about = ", ".join(f"{name} {_cell(row[name][at])}" for name in row
+                              if name not in ("data_id", "sample", "peptide_range", "peptide",
+                                              "charge") and _cell(row[name][at]))
+            self._show_columns(uptake_table(results, data_ids=[series.data_id]),
+                               f"{payload[0].sample}_{payload[0].peptide_range}_z"
+                               f"{series.charge}_uptake")
+            self.table_view.set_note(f"uptake.csv: this series' rows. series.csv: {about}")
+
+    def _show_columns(self, table: dict, name: str) -> None:
+        columns = list(table)
+        n = len(next(iter(table.values()))) if table else 0
+        rows = [{c: _plain_value(table[c][i]) for c in columns} for i in range(n)]
+        self.table_view.show_rows(columns, rows, name)
+
+    def _table_row_chosen(self, row: dict) -> None:
+        """A row of the table double-clicked: its spectrum, when it names one."""
+        sid = row.get("spectrum_id")
+        if sid and self.results is not None:
+            i = int(np.flatnonzero(self.results.fit.spectrum_id == sid)[0])
+            leaf = self._leaves.get(i)
+            if leaf is not None:
+                self.tree.setCurrentItem(leaf)
 
     # --- the spectra pages of a series ---------------------------------------------------------
 
@@ -347,25 +414,53 @@ class ResultsWorkspace(QWidget):
         """The list's rows, made in the background (seconds on a large run; the tree is ready
         meanwhile)."""
         results, left = self.results, self.left
+        self._list_tables = {}
         if results is None:
             self.list.clear("No results open.")
             return
         self.list.clear("Building the list…")
         self._list_task.submit(lambda: list_rows(results, left),
-                               lambda made: self._list_built(results, made),
+                               lambda made: self._list_built(results, "spectra", made),
                                lambda message: self.list.clear(
                                    f"The list could not be made: {message}"))
 
-    def _list_built(self, results, made) -> None:
-        if results is self.results:  # not other results opened meanwhile
-            self.list.set_rows(*made)
+    def _list_built(self, results, table: str, made) -> None:
+        if results is not self.results:  # other results opened meanwhile
+            return
+        self._list_tables[table] = (results, *made)
+        if self.list.tables.currentData() == table:
+            self.list.set_rows(*made, table=table)
+
+    def _list_table(self, table: str, again: bool = False) -> None:
+        """Another of the report's tables in the list: made once per results, in the
+        background (seconds for components.csv and uptake.csv on a large run); ``again``: made
+        anew, with the latest decisions."""
+        results = self.results
+        if results is None:
+            return
+        kept = self._list_tables.get(table)
+        if kept is not None and not again:
+            self.list.set_rows(kept[1], kept[2], table=table)
+            if kept[0] is not results:  # made before the latest decisions
+                self.list.mark_stale()
+            return
+        self.list.clear(f"Making {table}.csv…")
+        left = self.left
+        self._list_task.submit(lambda: _table_rows(results, table, left),
+                               lambda made: self._list_built(results, table, made),
+                               lambda message: self.list.clear(
+                                   f"{table}.csv could not be made: {message}"))
 
     def _list_chosen(self, row: dict) -> None:
-        """A row chosen in the list: that spectrum selected in the tree (its figures, the
-        review panel)."""
-        self.select({"sample": str(row.get("sample")), "peptide_range":
-                     str(row.get("peptide_range")), "charge": int(row.get("charge") or 0),
-                     "spectrum_id": str(row.get("spectrum_id"))})
+        """A row chosen in the list: its spectrum selected in the tree (its figures, the
+        review panel), or its series for a table of series (series.csv, uptake.csv)."""
+        where = {"sample": str(row.get("sample")), "peptide_range": str(row.get("peptide_range")),
+                 "charge": int(row.get("charge") or 0)}
+        if row.get("spectrum_id"):
+            where["spectrum_id"] = str(row.get("spectrum_id"))
+        elif row.get("data_id") is not None:  # one series of several with the same name
+            where["data_id"] = int(row["data_id"])
+        self.select(where)
 
     # --- the overview -------------------------------------------------------------------------
 
@@ -595,6 +690,8 @@ class ResultsWorkspace(QWidget):
                                                                         mz_range=mz_range))
             self.panel("uptake").draw(uptake)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
+        self._selection = (kind, payload)
+        self._fill_table()
         self.selection_changed.emit()
         if self.window is not None:
             self.window.changed()
@@ -716,9 +813,17 @@ class ResultsWorkspace(QWidget):
             item.setText(COLUMN["K > 1"], str(multi or ""))
             self._sum_children(item.parent(), ("rejected", "K > 1"))
         self._redraw()
-        if self.list.rows:  # the decided spectra's rows, made again (K, populations, review)
-            self.list.update_rows(list_rows(results, self.left, rows=sorted(
-                int(i) for i in changed))[1])
+        kept = self._list_tables.get("spectra")
+        if kept is not None:  # the decided spectra's rows, made again (K, populations, review)
+            fresh = list_rows(results, self.left, rows=sorted(int(i) for i in changed))[1]
+            by_index = {r["_index"]: r for r in fresh}
+            for row in kept[2]:
+                row.update(by_index.get(row["_index"], {}))
+            self._list_tables["spectra"] = (results, kept[1], kept[2])
+            if self.list.table_name == "spectra":
+                self.list.update_rows(fresh)
+        if self.list.table_name != "spectra" and self.list.rows:
+            self.list.mark_stale()  # the other tables: made again only when asked
         # a decision can change what the analysis leaves out (an accepted spectrum is kept; a
         # rejected one changes its replicates' median): said, and worked out again when asked
         self._left_stale("your latest review decisions")
@@ -856,7 +961,9 @@ class ResultsWorkspace(QWidget):
                 return True
             for j in range(top.childCount()):
                 child = top.child(j)
-                if child.data(0, PAYLOAD)[1].charge != selection["charge"]:
+                found = child.data(0, PAYLOAD)[1]
+                if found.charge != selection["charge"] or (
+                        "data_id" in selection and found.data_id != selection["data_id"]):
                     continue
                 if "point" not in selection and "spectrum_id" not in selection:
                     self.tree.setCurrentItem(child)
@@ -884,6 +991,31 @@ def _residues(peptide_range: str) -> tuple[int, int] | None:
         return int(first), int(last)
     except ValueError:
         return None
+
+
+def _table_rows(results, table: str, left) -> tuple[list[str], list[dict]]:
+    """A report table's columns and rows for the list (``spectra``: :func:`list_rows`)."""
+    from ..report.tables import components_table, series_table, uptake_table
+    from .spectra_list import _plain
+
+    if table == "spectra":
+        return list_rows(results, left)
+    made = {"series": series_table, "components": components_table,
+            "uptake": uptake_table}[table](results)
+    columns = list(made)
+    n = len(next(iter(made.values()))) if made else 0
+    return columns, [{c: _plain(made[c][i]) for c in columns} for i in range(n)]
+
+
+def _plain_value(value):
+    """A table value as Python's own (numbers, text, booleans)."""
+    from .spectra_list import _plain
+
+    return _plain(value)
+
+
+def _cell(value) -> str:
+    return cell_text(_plain_value(value))
 
 
 def _counts(c: dict) -> list[str]:
