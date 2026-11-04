@@ -33,8 +33,13 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     window.open_project(project)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     page = window.analysis_page
-    window.tabs.setCurrentWidget(page)  # shown with results: computed at once
+    window.tabs.setCurrentWidget(page)
     window.show()
+    # shown: nothing computed until asked (owner: half a minute on a large run)
+    assert page.outputs is None and not page.computing
+    assert page.status.text().startswith("Not computed yet")
+    assert page.compute_button.text() == "Compute" and page.compute_button.isEnabled()
+    page.compute_button.click()
     qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
     items = _items(page)
     assert items["woods"].childCount() >= 1 and "figure(s)" in items["woods"].text(1)
@@ -55,9 +60,17 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     page.refresh()
     assert "Out of date: the results changed" in page.status.text()
     assert page.outputs is shown and page.compute_button.text() == "Recompute"
+    woods = _items(page)["woods"].child(0)
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(woods)
+    before, stem = page.panel.view.figure, woods.data(0, 257)
+    assert before is not None
     page.compute()
     qtbot.waitUntil(lambda: not page.computing and page.outputs is not shown, timeout=120000)
     assert "as hxex analyse would write them" in page.status.text()
+    # the figure shown is drawn again from the new analysis (owner: it was not)
+    qtbot.waitUntil(lambda: page.panel.view.figure not in (None, before), timeout=60000)
+    assert page.panel.save_name == stem
     # so does a change of [analysis]
     project.write_text(project.read_text() + "alpha = 0.01\n", encoding="utf-8")
     page.refresh()
@@ -85,16 +98,55 @@ def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
+    page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
     assert page.reference.isVisibleTo(page) and page.reference.count() == 2
     assert page.shown_reference == "S" and "against S" in page.status.text()
     first = page.outputs
-    page.reference.setCurrentIndex(1)  # V: computed when first chosen
+    page.reference.setCurrentIndex(1)  # V: computed when asked
+    assert page.outputs is None and "Not computed yet against V" in page.status.text()
+    page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
     assert page.shown_reference == "V" and page.outputs is not first
     assert any(stem.startswith("woods_S_") for stem, _ in page.outputs.figures)
     page.reference.setCurrentIndex(0)  # back to S: kept, not computed again
     assert page.outputs is first and not page.computing
+
+
+def test_a_changed_review_table_marks_the_analysis_and_is_read_before_recomputing(
+        qtbot, tmp_path, project):
+    """A review table changed outside the review panel (the Tables view, a spreadsheet) after
+    the analysis was computed: the analysis says it may change, and Recompute reads the results
+    again with the table first."""
+    from hxex.gui.review import make_review_table
+
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    table = make_review_table(project, window.results_page.results)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)  # [review] table: read again
+    window._project_file_changed()
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    assert page.why_out_of_date() == ""
+    results = window.results_page.results
+    lines = table.read_text(encoding="utf-8").splitlines()
+    header = lines[0].split(",")
+    row = lines[1].split(",")
+    row[header.index("review_status")] = "rejected"
+    table.write_text("\n".join([lines[0], ",".join(row), *lines[2:]]) + "\n", encoding="utf-8")
+    page.refresh()
+    assert "review table changed since it was computed" in page.status.text()
+    assert "may change" in page.status.text()
+    page.compute()
+    qtbot.waitUntil(lambda: window.results_page.results is not results and not window.loading
+                    and page.outputs is not None and not page.computing, timeout=120000)
+    assert page.why_out_of_date() == ""
+    assert (window.results_page.results.review_status == "rejected").sum() == 1
 
 
 def test_setting_tables():

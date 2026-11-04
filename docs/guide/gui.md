@@ -120,9 +120,25 @@ the user review table. Choose one on the left to edit it as a grid.
 **Results** shows a run's results as a tree: each peptide of each sample, under it its charges
 (each a series), under a charge its time points (the undeuterated controls first, the fully
 deuterated last), and under a time point its replicates, which are the spectra. Each row
-counts its spectra, how many have a quality flag, how many you rejected, and how many have
-more than one population; a time point lists the K of its replicates, and a replicate its K,
-review status, and flags. Click a row, or move through the tree with the arrow keys, to see:
+counts its spectra, how many have a quality flag, how many are rejected, how many the analysis
+leaves out, and how many have more than one population; a time point lists the K of its
+replicates. A replicate's row says "yes" when it is flagged or rejected, why the analysis
+leaves it out, its K, its review status, and its flags. Rest the pointer on a column's header
+to see what it counts.
+
+- **rejected** counts the spectra the review rejected: your review table, your
+  `[[review.exclude]]` rules, and the bundle's own review. Nothing else rejects a spectrum.
+- **left out** gives the spectra `hxex analyse` leaves out with the project file's
+  `[analysis]` settings (`[analysis.filters]`, `exclude_flagged`, and `exclude_times`), with
+  the reason, as `left_out_spectra.csv` lists them: "off its m/z", "replicate outlier",
+  "spectrum quality (...)", and so on. A quality flag on its own leaves nothing out; the ones
+  that do are named here. "kept at K = 1" marks a spectrum the analysis uses only as one
+  population; it is not counted. Accepting a spectrum in the review keeps it against
+  `[analysis.filters]` (not against `exclude_flagged` or `exclude_times`), and the column
+  follows your decisions and changes to `[analysis]`. Results opened as a bundle on their own
+  use the default settings.
+
+Click a row, or move through the tree with the arrow keys, to see:
 
 - **a peptide or a charge**: the series' pages, as `hxex report` draws them: the spectra, the
   uptake plot, and the population map (when a spectrum has more than one population);
@@ -144,7 +160,7 @@ change, at the same place in the tree. Other settings change what the next **Run
 results already made. The commands read the project file when they start.
 
 The list above the tree shows only some series (flagged, more than one population, rejected,
-or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
+left out, or not reviewed yet), and **Find** narrows them to a peptide, residues, or sample. Opening the
 results through the project file applies your review table and exclusion rules, as `hxex
 report hxex.toml` does.
 
@@ -189,14 +205,33 @@ file), so what you see here is what the command writes.
   lists every kind, with what each shows and needs; `hxex figures hxex.toml` prints the same
   list in a terminal.
 - Select a figure to see it; **Save figure…** suggests the name `hxex analyse` gives it.
-- The analysis is computed when you first open **Analysis** with results: a few seconds for a
-  small dataset, about half a minute for 25,000 spectra. Then every figure shows at once.
-- When the results change (a new run, a review decision) or the `[analysis]` settings do, the
-  line at the top says the figures are out of date and why; they stay until you press
-  **Recompute**. Opening other results starts afresh.
+- The **data** tab beside the figure lists what the figure draws, one row per bar: on a coverage
+  map each peptide's sample, time, residues, sequence, fD and its error, and how many spectra
+  and charge states it comes from; on a Woods plot both samples' values, the difference and
+  its error, and whether it is significant (with the reason when it was not tested). The
+  columns are named as in the analysis tables (`species_uptake.csv`, `compare_peptides.csv`).
+  Click a column's header to sort (a crowded Woods plot is easier to read sorted by residue or
+  by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
+  rows, in the order shown, as a CSV file named after the figure. Figures of other kinds have
+  no data table yet.
+- Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
+  choose one to see them in **Results** (the peptide is selected in the tree, its charge
+  states under it). Where bars overlap, the menu lists every peptide under the pointer, top
+  to bottom; on a Woods plot each peptide is offered in both samples. A left click selects the
+  peptide's row in the data tab. In the data tab, double-click a row, or right-click it, for
+  the same.
+- The analysis is computed when you press **Compute**, at the top beside the reference list:
+  a few seconds for a small dataset, about half a minute for 25,000 spectra. Then every figure
+  shows at once. Nothing is written to disk.
+- When the results change (a new run, a review decision), the `[analysis]` settings change,
+  or your review table changes (in **Tables**, or in a spreadsheet), the line at the top says
+  the figures are out of date and why; they stay until you press **Recompute**, which draws the
+  figure you are looking at again. When the review table changed, **Recompute** reads the
+  results again with it first. Opening other results starts afresh.
 - When `[analysis] reference` names several samples, or `"all"`, a list at the top chooses
-  which reference's analysis is shown. Each is computed the first time you choose it and then
-  kept, so switching back is instant; `hxex analyse` writes a folder for each.
+  which reference's analysis is shown. Each is computed when you press **Compute** with it
+  chosen, and then kept, so switching back is instant; `hxex analyse` writes a folder for
+  each.
 - Results opened alone (a bundle, not through the project file) use the default settings.
   A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
   `hxex analyse` writes it.
@@ -244,7 +279,7 @@ of a series), which stays readable however far you zoom:
 - **Double-click** a panel of a page (one spectrum of the spectra page, say) to magnify it to
   fill the space; double-click again for the whole page. The panel is the same drawing made
   bigger, sharp at any size.
-- **Rest the pointer** on a peptide of a coverage, Woods, or protection-factor figure, on a bar
+- **Mouse over** a peptide of a coverage, Woods, or protection-factor figure, on a bar
   of the regions figure, or on a peptide of the two-populations figure, and a note says what it
   is: the peptide's sequence and residues, its value with its standard error, and, on a
   comparison, both samples' values, the difference, and whether it is significant.

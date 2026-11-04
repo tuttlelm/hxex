@@ -46,6 +46,25 @@ def table_path(project: Path) -> Path | None:
     return path if path.is_absolute() else project.parent / path
 
 
+def table_stamp(project: Path | None) -> tuple | None:
+    """When the project's review table last changed, to tell a change of it: (path, modified
+    time in nanoseconds, size), with None for a table not made yet; None without a project or
+    a table named."""
+    if project is None:
+        return None
+    try:
+        path = table_path(project)
+    except (OSError, ValueError):
+        return None
+    if path is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return (str(path), None, None)
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
 def make_review_table(project: Path, results) -> Path:
     """A user review table made from the results' spectra (a copy of ``spectra.csv``) beside the
     project file, named in its ``[review] table``. A table already named is returned as it is."""

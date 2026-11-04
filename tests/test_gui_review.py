@@ -117,6 +117,13 @@ def window_on(qtbot, tmp_path):
     return window, project, open_
 
 
+def _col(name):
+    """The tree's column ``name`` (Qt is imported only once the window's tests run)."""
+    from hxex.gui.results_workspace import COLUMN
+
+    return COLUMN[name]
+
+
 def _first_spectrum(page):
     series = page.tree.topLevelItem(0).child(0)
     page.tree.expandItem(series)
@@ -136,7 +143,8 @@ def test_a_key_in_the_tree_rejects_and_the_table_and_tree_show_it(qtbot, window_
     sid = leaf.toolTip(0)
     sheet = read_review_table(project.parent / "user_review_table.csv")
     assert dict(zip(sheet.spectrum_id, sheet.status, strict=True))[sid] == "rejected"
-    assert leaf.text(7) == "rejected" and series.text(4) == "1"
+    assert leaf.text(_col("review")) == "rejected" and series.text(_col("rejected")) == "1"
+    assert leaf.text(_col("rejected")) == "yes" and leaf.parent().text(_col("rejected")) == "1"
     assert panel.status.checkedId() == 2 and "Saved" in panel.message.text()
     # the note, then accepted with the A key
     panel.note.setText("checked by eye")
@@ -144,7 +152,7 @@ def test_a_key_in_the_tree_rejects_and_the_table_and_tree_show_it(qtbot, window_
     qtbot.keyClick(page.tree, Qt.Key.Key_A)
     sheet = read_review_table(project.parent / "user_review_table.csv")
     got = dict(zip(sheet.spectrum_id, zip(sheet.status, sheet.note, strict=True), strict=True))
-    assert got[sid] == ("accepted", "checked by eye") and series.text(4) == ""
+    assert got[sid] == ("accepted", "checked by eye") and series.text(_col("rejected")) == ""
 
 
 def test_a_decision_on_a_series_reaches_every_spectrum(qtbot, window_on):
@@ -155,7 +163,7 @@ def test_a_decision_on_a_series_reaches_every_spectrum(qtbot, window_on):
     assert "a decision applies to each" in page.review.heading.text()
     page.review.decide(status="rejected")
     n = int(series.text(2))
-    assert series.text(4) == str(n)
+    assert series.text(_col("rejected")) == str(n)
     sheet = read_review_table(project.parent / "user_review_table.csv")
     assert sum(s == "rejected" for s in sheet.status) == n
 
@@ -179,7 +187,7 @@ def test_a_held_table_keeps_the_decision_until_it_can_be_written(qtbot, window_o
     assert page.review.retry.isVisibleTo(page.review) and page.review.pending
     monkeypatch.setattr(review_module, "write_table", real)
     page.review.retry.click()
-    assert not page.review.pending and leaf.text(7) == "rejected"
+    assert not page.review.pending and leaf.text(_col("review")) == "rejected"
 
 
 def test_a_bundle_opened_alone_cannot_be_reviewed(qtbot, window_on):

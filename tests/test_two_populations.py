@@ -144,6 +144,15 @@ def test_the_number_of_populations_compared():
     assert hover_text(bars["count:sample:5-15"]) == (
         "residues 5–15\ntwo populations in M only\nborderline")
     assert hover_text(bars["count:both:12-20"]).endswith("in M and WT")
+    # the window finds each bar where it is drawn (owner: no tooltips on this panel;
+    # broken_barh's collections report no extent of their own)
+    from hxex.gui.figures import figure_marks
+
+    marks = {m.gid: m for m in figure_marks(fig)}
+    assert set(bars) <= set(marks)
+    sample, both = marks["count:sample:5-15"].box, marks["count:both:12-20"].box
+    assert sample[0] < both[0] and sample[1] < both[1]  # 5-15 left of 12-20, and above it
+    assert all(0 < v < 1 for v in sample)
     labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
     assert labels == ["M only", "WT only", "both"]
     assert fig.axes[0].get_title(loc="left").startswith("Two Populations Selected")

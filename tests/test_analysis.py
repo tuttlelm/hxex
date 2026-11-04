@@ -359,6 +359,14 @@ def test_coverage_plots():
     first = next(b for b in bars if b.get_gid() == "peptide:2-9")
     assert hover_text(first).splitlines()[:3] == ["AKLPGSTV", "residues 2–9", "fD 0.30 ± 0.02"]
     assert "fD not known" in hover_text(nan_bar)
+    # its data table (the window's data tab): one row per bar, what the figure draws
+    from hxex.report.hover import row_of
+
+    row = row_of(first)
+    assert {k: row[k] for k in ("sample", "time", "time_label", "start", "end", "peptide")} == {
+        "sample": "S", "time": 4.0, "time_label": "4 s", "start": 2, "end": 9,
+        "peptide": "AKLPGSTV"}
+    assert row["fD"] == pytest.approx(0.3) and np.isnan(row_of(nan_bar)["fD"])
     assert fig.axes[0].get_xlim() == (0.0, 19.0) and len(fig.axes) == 2  # and the colour bar
     grid = coverage_figure(up, samples=["S", "T"], times=[4.0])
     assert len([a for a in grid.axes if a.patches]) == 2
@@ -700,6 +708,13 @@ def test_comparison_plots():
         "AKLPGSTV", "residues 2–9", "fD, V 0.50 ± 0.01", "fD, R 0.30 ± 0.01",
         "difference +0.20 ± 0.01", "significant"]
     assert hover_text(lines["peptide:6-11"]).endswith("not significant")
+    from hxex.report.hover import row_of
+
+    row = row_of(lines["peptide:2-9"])
+    assert (row["sample"], row["reference"], row["measure"], row["significant"]) == (
+        "V", "R", "fD", True)
+    assert row["delta"] == pytest.approx(0.2) and row["value_reference"] == pytest.approx(0.3)
+    assert row_of(lines["peptide:6-11"])["significant"] is False
     bars = plot_region_bars(region_summary(rm, ann), 4.0, samples=["R", "V"])
     patches = {p.get_gid(): p for p in bars.axes[0].patches}
     assert {"region:R:long region name", "region:V:long region name"} <= set(patches)

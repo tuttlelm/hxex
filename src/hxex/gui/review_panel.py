@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
 )
 
-from .review import Decision, make_review_table, write_decisions
+from .review import Decision, make_review_table, table_stamp, write_decisions
 from .user_tables import TableLocked
 
 log = logging.getLogger(__name__)
@@ -241,6 +241,8 @@ class ReviewPanel(QGroupBox):
             self.message.setText(f"Not saved: {exc}")
             log.error("the review decision was not saved: %s", exc)
             return False
+        if self.workspace.window is not None:  # the results shown have this table's decisions
+            self.workspace.window.results_review_stamp = table_stamp(project)
         changed = self._lay_over(self.pending)
         log.info("review: %d spectra in %s", len(self.pending), path.name)
         self.pending = {}

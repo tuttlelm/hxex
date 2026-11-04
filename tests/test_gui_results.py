@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from hxex.gui.results_tree import peptides, points, shown  # noqa: E402
-from hxex.gui.results_workspace import ResultsWorkspace  # noqa: E402
+from hxex.gui.results_workspace import COLUMN, ResultsWorkspace  # noqa: E402
 from hxex.report import Results  # noqa: E402
 from hxex.report.series import plot_series_spectra  # noqa: E402
 from test_run import config, raw_spectra, run  # noqa: E402
@@ -66,7 +66,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     assert [series.child(i).text(0) for i in range(series.childCount())] == ["UN", "1 min",
                                                                               "FD"]
     point = series.child(1)
-    assert point.childCount() == 3 and point.text(6) == "1 1 1"
+    assert point.childCount() == 3 and point.text(COLUMN["K"]) == "1 1 1"
     with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
         page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
@@ -160,6 +160,42 @@ def test_a_change_to_the_projects_figures_reaches_the_results_shown(qtbot, tmp_p
     set_setting(project, "run.bootstrap.n_boot", "7")
     window.project_page.editor._file_changed(str(project))
     assert loads == []
+    # [analysis]: no reload, the tree's 'left out' column worked out again with the settings
+    told = []
+    page.analysis_changed = told.append
+    set_setting(project, "analysis.exclude_flagged", "true")
+    window.project_page.editor._file_changed(str(project))
+    assert loads == [] and len(told) == 1 and told[0].exclude_flagged
+
+
+def test_what_the_analysis_leaves_out_is_shown_at_every_level(qtbot, page, results):
+    """Each spectrum says why the analysis settings leave it out (owner: which flags exclude a
+    spectrum); its time point, series and peptide count them; a replicate's row says whether it
+    is flagged or rejected; a change of settings is shown on the rows already made."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.gui.results_tree import left_out
+
+    left = left_out(results, AnalysisConfig(exclude_times=(60,)))
+    one_min = np.isclose(results.fit.time, 60)
+    assert all(w == "time left out (exclude_times)" for w in np.asarray(left)[one_min])
+    assert not any(np.asarray(left)[~one_min])
+    peps = peptides(results, left)
+    assert peps[0].series[0].n_left_out == 3 and shown(peps[0], peps[0].series[0], "left_out")
+    assert left_out(results, AnalysisConfig(filters=None)) == [""] * len(results.fit)
+
+    series = _open_series(page)
+    point = series.child(1)
+    assert point.text(COLUMN["left out"]) == "" and series.text(COLUMN["left out"]) == ""
+    page.analysis_changed(AnalysisConfig(exclude_times=(60,)))
+    qtbot.waitUntil(lambda: point.text(COLUMN["left out"]) == "3", timeout=30000)
+    assert point.child(0).text(COLUMN["left out"]) == "time left out (exclude_times)"
+    assert series.text(COLUMN["left out"]) == "3"
+    assert page.tree.topLevelItem(0).text(COLUMN["left out"]) == "6"  # both series' 1 min
+    page.filter.setCurrentIndex(page.filter.findData("left_out"))
+    assert page.count.text() == "2 of 2 series"
+    page.analysis_changed(AnalysisConfig(exclude_times=(1e6,)))  # no such time
+    qtbot.waitUntil(lambda: page.tree.topLevelItem(0) is None
+                    or page.tree.topLevelItem(0).text(COLUMN["left out"]) == "", timeout=30000)
 
 
 def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_path):

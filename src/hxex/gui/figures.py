@@ -51,11 +51,13 @@ def figure_svg(fig: Figure) -> bytes:
 class Mark:
     """A drawn element the window knows: its ``gid`` (what a click reports; may be empty), its
     tooltip ``text`` (:func:`hxex.report.hover.set_hover`; may be empty) and its ``box``
-    (left, top, width, height, as fractions of the figure from its top left corner)."""
+    (left, top, width, height, as fractions of the figure from its top left corner); ``row``,
+    its data-table row (:func:`hxex.report.hover.set_row`), if it has one."""
 
     gid: str
     text: str
     box: tuple[float, float, float, float]
+    row: dict | None = None
 
     def contains(self, x: float, y: float, gx: float = 0.0, gy: float = 0.0) -> bool:
         """Whether the point ``(x, y)`` (fractions, from the top left) is on the mark, allowing
@@ -74,9 +76,10 @@ def figure_marks(fig: Figure) -> list[Mark]:
     Agg renderer) to know where things are."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-    from ..report.hover import hover_text
+    from ..report.hover import hover_text, row_of
 
-    found = [a for a in fig.findobj() if a.get_visible() and (a.get_gid() or hover_text(a))]
+    found = [a for a in fig.findobj()
+             if a.get_visible() and (a.get_gid() or hover_text(a) or row_of(a))]
     if not found:
         return []
     canvas = FigureCanvasAgg(fig)
@@ -85,14 +88,57 @@ def figure_marks(fig: Figure) -> list[Mark]:
     width, height = canvas.get_width_height()
     marks = []
     for artist in found:
-        try:
-            bb = artist.get_window_extent(renderer)
-        except Exception:  # noqa: BLE001 - an artist without an extent
+        bb = _extent(artist, renderer)
+        if bb is None:
             continue
         box = (bb.x0 / width, 1 - bb.y1 / height, bb.width / width, bb.height / height)
         if all(math.isfinite(v) for v in box):
-            marks.append(Mark(artist.get_gid() or "", hover_text(artist), box))
+            marks.append(Mark(artist.get_gid() or "", hover_text(artist), box, row_of(artist)))
     return marks
+
+
+def figure_rows(fig: Figure | None) -> tuple[list[str], list[dict]]:
+    """The data table of ``fig``: the rows its visible artists carry
+    (:func:`hxex.report.hover.set_row`), in the order they are drawn, and their columns in the
+    order first met (a row without a column leaves it empty). Nothing is drawn."""
+    from ..report.hover import row_of
+
+    if fig is None:
+        return [], []
+    rows = [row_of(a) for a in fig.findobj() if a.get_visible() and row_of(a)]
+    columns = list(dict.fromkeys(name for row in rows for name in row))
+    return columns, rows
+
+
+def _extent(artist, renderer):
+    """Where ``artist`` is drawn, in display pixels (None when it cannot tell). A collection
+    drawn in data units without offsets (``broken_barh``'s bars, ``fill_between``) reports an
+    empty, infinite extent: its shapes' own extent is used instead."""
+    from matplotlib.collections import Collection
+    from matplotlib.transforms import Bbox
+
+    try:
+        bb = artist.get_window_extent(renderer)
+    except Exception:  # noqa: BLE001 - an artist without an extent
+        return None
+    if all(math.isfinite(v) for v in bb.bounds) or not isinstance(artist, Collection):
+        return bb
+    transform = artist.get_transform()
+    boxes = [path.get_extents(transform) for path in artist.get_paths() if len(path.vertices)]
+    return Bbox.union(boxes) if boxes else None
+
+
+def rows_at(marks: list[Mark], x: float, y: float, gx: float = 0.0,
+            gy: float = 0.0) -> list[dict]:
+    """The data-table rows of every mark at ``(x, y)`` (as :func:`mark_at`), top to bottom as
+    they are drawn, each once: overlapping bars (a crowded Woods plot) are all there."""
+    found = sorted((m for m in marks if m.row and m.contains(x, y, gx, gy)),
+                   key=lambda m: (m.box[1], m.box[0]))
+    out: list[dict] = []
+    for mark in found:
+        if mark.row not in out:
+            out.append(mark.row)
+    return out
 
 
 def mark_at(marks: list[Mark], x: float, y: float, gx: float = 0.0, gy: float = 0.0, *,

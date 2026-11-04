@@ -469,8 +469,10 @@ def residue_overlay_figure(
     return fig
 
 
-def _difference_hover(artist, comparison: PeptideComparison, i: int, sample: str) -> None:
-    """A Woods bar's tooltip: the peptide, both values, the difference and the verdict."""
+def _difference_hover(artist, comparison: PeptideComparison, i: int, sample: str,
+                      time_scale: str = "seconds") -> None:
+    """A Woods bar's tooltip (the peptide, both values, the difference and the verdict) and its
+    data-table row (the columns of ``compare_peptides.csv``)."""
     name = (f"{comparison.share}-D share" if comparison.quantity == "population"
             else "fD" if comparison.K == 1 else
             f"fD ({hover.population(comparison.K, comparison.rank)})")
@@ -486,6 +488,18 @@ def _difference_hover(artist, comparison: PeptideComparison, i: int, sample: str
                                else "not significant"),
         "corrected differently (one side with a fallback control)"
         if comparison.corrected_differently[i] else "")
+    time = float(comparison.time[i])
+    hover.set_row(artist, {
+        "sample": sample, "reference": str(comparison.reference), "time": time,
+        "time_label": hover.time_label(time, time_scale), "measure": name,
+        "start": int(comparison.start[i]), "end": int(comparison.end[i]),
+        "peptide": str(comparison.peptide[i]), "modification": str(comparison.modification[i]),
+        "value": float(comparison.value[i]), "value_se": float(comparison.value_se[i]),
+        "value_reference": float(comparison.value_reference[i]),
+        "value_reference_se": float(comparison.value_reference_se[i]),
+        "delta": float(comparison.delta[i]), "delta_se": float(comparison.delta_se[i]),
+        "significant": bool(comparison.significant[i]), "reason": reason,
+        "corrected_differently": bool(comparison.corrected_differently[i])})
 
 
 def plot_peptide_differences(
@@ -525,7 +539,7 @@ def plot_peptide_differences(
                           color=colour, linewidth=2.2, solid_capstyle="butt",
                           zorder=3 if comparison.significant[i] else 2)
         line.set_gid(f"peptide:{comparison.start[i]}-{comparison.end[i]}")
-        _difference_hover(line, comparison, i, sample)
+        _difference_hover(line, comparison, i, sample, time_scale)
         mid = (comparison.start[i] + comparison.end[i]) / 2
         ax.plot([mid, mid], [d - comparison.delta_se[i], d + comparison.delta_se[i]],
                 color=colour, linewidth=0.7, zorder=2)

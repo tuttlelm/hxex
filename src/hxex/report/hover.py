@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""What a drawn mark is, in words, for the window's tooltips (docs/PLAN.md, "GUI"): a plot
-function names a bar or a region with :func:`set_hover`, and the window shows the text when the
-pointer rests on it. The text travels with the figure (an attribute of the artist), so it
-changes nothing in a saved file."""
+"""What a drawn mark is, for the window (docs/PLAN.md, "GUI"): a plot function names a bar or a
+region in words with :func:`set_hover`, which the window shows when the pointer rests on it, and
+gives it its values with :func:`set_row`, a row of the figure's data table (the window's data
+tab, saved as CSV). Both travel with the figure (attributes of the artist), so they change
+nothing in a saved file."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import math
 from matplotlib.artist import Artist
 
 _ATTRIBUTE = "hxex_hover"
+_ROW = "hxex_row"
 
 
 def set_hover(artist: Artist, *lines: str) -> None:
@@ -21,6 +23,28 @@ def set_hover(artist: Artist, *lines: str) -> None:
 def hover_text(artist: Artist) -> str:
     """The tooltip of ``artist`` ('' when it has none)."""
     return getattr(artist, _ATTRIBUTE, "")
+
+
+def set_row(artist: Artist, row: dict) -> None:
+    """Give ``artist`` its row of the figure's data table: column name -> value (the names of
+    the analysis tables: ``sample``, ``time``, ``start``, ``fD_se``, ...)."""
+    setattr(artist, _ROW, dict(row))
+
+
+def row_of(artist: Artist) -> dict | None:
+    """The data-table row of ``artist`` (None when it has none)."""
+    return getattr(artist, _ROW, None)
+
+
+def time_label(time, scale: str = "seconds") -> str:
+    """A time as the figures write it: ``30 min``, ``point 3`` when the times only order the
+    points (``scale='order'``), ``undeuterated`` for NaN."""
+    from ..io.times import format_time
+
+    time = float(time)
+    if not math.isfinite(time):
+        return "undeuterated"
+    return f"point {format_time(time, scale)}" if scale == "order" else format_time(time)
 
 
 def peptide(sequence, modification="") -> str:

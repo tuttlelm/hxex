@@ -13,10 +13,21 @@ import logging
 from collections.abc import Callable
 
 from matplotlib.figure import Figure
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QImage, QPainter, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -36,6 +47,7 @@ from .figures import (
     figure_svg,
     figure_title,
     mark_at,
+    rows_at,
     save_figure,
 )
 from .tasks import Latest, drawing_pool
@@ -56,7 +68,9 @@ DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a 
 CLICK_ALLOWANCE = 4
 HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
         "Double-click a panel: magnify it (double-click again: the whole figure). "
-        "Rest the pointer on a peptide or a bar: what it is.")
+        "Mouse over a peptide or bar for details.")
+# added under the figures whose peptides lead to their spectra (the Analysis workspace's)
+SPECTRA_HINT = " Right-click a peptide to go to its spectra."
 
 
 class FigureView(QWidget):
@@ -68,6 +82,9 @@ class FigureView(QWidget):
     into moving and magnifying."""
 
     clicked = Signal(str)
+    clicked_row = Signal(dict)  # the clicked element's data-table row, when it has one
+    # a right click on elements with data-table rows: those rows, and where (the screen's)
+    rows_asked = Signal(list, QPoint)
     dragged = Signal(float, float)
     double_clicked = Signal(QPointF)
 
@@ -80,6 +97,14 @@ class FigureView(QWidget):
         self._panels: list[QRectF] = []  # each panel (matplotlib's axes) in the SVG's units
         self._press: QPointF | None = None
         self._dragging = False
+        # a click acts once the double-click time has passed without a second click: the clicks
+        # of a double-click (which magnifies) must not also open what is under the pointer
+        self._clicked_mark: Mark | None = None
+        self._after_double = False  # the release that ends a double-click is not a click
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(QApplication.styleHints().mouseDoubleClickInterval())
+        self._click_timer.timeout.connect(self._click)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setAutoFillBackground(True)
         pal = self.palette()
@@ -195,6 +220,22 @@ class FigureView(QWidget):
         mark = self.mark_at(point)
         return mark.gid if mark is not None else None
 
+    def rows_at(self, point: QPointF) -> list[dict]:
+        """The data-table rows of every element under ``point`` (in the view's coordinates),
+        top to bottom."""
+        if not self._marks or self.width() == 0 or self.height() == 0:
+            return []
+        return rows_at(self._marks, point.x() / self.width(), point.y() / self.height(),
+                       CLICK_ALLOWANCE / self.width(), CLICK_ALLOWANCE / self.height())
+
+    def contextMenuEvent(self, event):  # noqa: N802 - Qt's name
+        rows = self.rows_at(QPointF(event.pos()))
+        if rows:
+            self.rows_asked.emit(rows, event.globalPos())
+            event.accept()
+        else:
+            event.ignore()
+
     def tooltip_at(self, point: QPointF) -> str:
         """The tooltip of the drawn element under ``point`` ('' when none has one)."""
         mark = self.mark_at(point, text=True)
@@ -233,16 +274,28 @@ class FigureView(QWidget):
 
     def mouseReleaseEvent(self, event):  # noqa: N802 - Qt's name
         if event.button() == Qt.MouseButton.LeftButton:
-            if not self._dragging:  # a click, not the end of a drag
-                gid = self.element_at(event.position())
-                if gid is not None:
-                    self.clicked.emit(gid)
+            if self._after_double:
+                self._after_double = False
+            elif not self._dragging:  # a click, not the end of a drag: acted on unless a
+                mark = self.mark_at(event.position())  # second click makes it a double-click
+                if mark is not None:
+                    self._clicked_mark = mark
+                    self._click_timer.start()
             self._press, self._dragging = None, False
             self.unsetCursor()
         super().mouseReleaseEvent(event)
 
+    def _click(self) -> None:
+        mark, self._clicked_mark = self._clicked_mark, None
+        if mark is not None:
+            self.clicked.emit(mark.gid)
+            if mark.row:
+                self.clicked_row.emit(mark.row)
+
     def mouseDoubleClickEvent(self, event):  # noqa: N802 - Qt's name
         if event.button() == Qt.MouseButton.LeftButton:
+            self._click_timer.stop()  # its first click was not a click on what is there
+            self._clicked_mark, self._after_double = None, True
             self.double_clicked.emit(event.position())
         super().mouseDoubleClickEvent(event)
 
@@ -340,9 +393,11 @@ class FigurePanel(QWidget):
     drawn = Signal()  # a figure is shown
     failed = Signal(str)
     clicked = Signal(str)  # the gid of what was clicked (whichever view draws the figure)
+    clicked_row = Signal(dict)  # the data-table row of what was clicked, when it has one
+    rows_asked = Signal(list, QPoint)  # right-clicked: the rows there, and where
 
     def __init__(self, parent=None, pool: QThreadPool | None = None,
-                 render: str = "matplotlib"):
+                 render: str = "matplotlib", hint: str = HINT):
         super().__init__(parent)
         self.render = render
         self.view = VIEWS[render]()
@@ -390,7 +445,7 @@ class FigurePanel(QWidget):
         layout.addWidget(self.bar)
         layout.addWidget(self.scroll)
         # how to move about, under the figure (as a tooltip it covered the figure: owner)
-        self.hint = QLabel(HINT)
+        self.hint = QLabel(hint)
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: palette(placeholder-text);")
         layout.addWidget(self.hint)
@@ -402,6 +457,8 @@ class FigurePanel(QWidget):
         view.dragged.connect(self._drag)
         view.double_clicked.connect(self._double_clicked)
         view.clicked.connect(self.clicked)
+        view.clicked_row.connect(self.clicked_row)
+        view.rows_asked.connect(self.rows_asked)
 
     def set_render(self, render: str) -> None:
         """Draw with Qt's SVG renderer (``'svg'``) or with matplotlib (``'matplotlib'``); the

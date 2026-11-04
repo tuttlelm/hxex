@@ -8,11 +8,13 @@ under each kind its figures, once computed. On the right, the figure selected, d
 ``hxex analyse``'s own list of figures (:func:`hxex.report.analysis_outputs`), so the window and
 the files cannot differ, and saved under the name the command gives it.
 
-The analysis is computed in the background once, when the workspace is first shown with
-results, and kept: a change of the results (a new run, a review decision) or of ``[analysis]``
-marks it out of date, keeping the figures, and Recompute computes it again. With several
-references (``[analysis] reference`` a list, or ``"all"``), a list chooses which one is shown;
-each is computed when first chosen and kept, as ``hxex analyse`` writes a folder for each.
+The analysis is computed in the background when asked (Compute, beside the reference list:
+half a minute for a large run), and kept: a change of the results (a new run, a review
+decision), of the review table (in the Tables view or another program) or of ``[analysis]``
+marks it out of date, keeping the figures, and Recompute computes it again, reading the review
+table again first when it changed. With several references (``[analysis] reference`` a list,
+or ``"all"``), a list chooses which one is shown; each is computed when asked and kept, as
+``hxex analyse`` writes a folder for each.
 """
 
 from __future__ import annotations
@@ -30,13 +32,16 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .figure_view import FigurePanel
+from .data_table import DataPanel, spectra_menu
+from .figure_view import HINT, SPECTRA_HINT, FigurePanel
+from .review import table_stamp
 from .tasks import Latest
 
 log = logging.getLogger(__name__)
@@ -58,10 +63,11 @@ class AnalysisWorkspace(QWidget):
         super().__init__()
         self.window = window
         # each reference's analysis: (hxex.report.AnalysisOutputs, (results object, [analysis]
-        # text, results path) it was computed from)
+        # text, results path, review table's stamp) it was computed from)
         self._analyses: dict[str, tuple] = {}
         self._cancel: threading.Event | None = None
         self._computing = Latest(self)
+        self._compute_when_loaded = False  # Recompute waits for results read again
         self.render = getattr(window, "render", "matplotlib")
 
         self.status = QLabel("No results open.")
@@ -83,9 +89,9 @@ class AnalysisWorkspace(QWidget):
         top = QHBoxLayout()
         top.addWidget(self.reference_label)
         top.addWidget(self.reference)
-        top.addWidget(self.status, 1)
-        top.addWidget(self.busy)
         top.addWidget(self.compute_button)
+        top.addWidget(self.busy)
+        top.addWidget(self.status, 1)
 
         self.list = QTreeWidget()
         self.list.setColumnCount(2)
@@ -109,10 +115,21 @@ class AnalysisWorkspace(QWidget):
         side.addWidget(self.about)
         side.addWidget(self.change)
 
-        self.panel = FigurePanel(render=self.render)
+        self.panel = FigurePanel(render=self.render, hint=HINT + SPECTRA_HINT)
+        self.panel.drawn.connect(self._show_data)
+        self.panel.clicked_row.connect(self._clicked_row)
+        self.panel.rows_asked.connect(self._rows_asked)
+        # beside the figure, its values: what it draws, one row per bar (owner, 2026-11-04)
+        self.data = DataPanel()
+        self.data.activated.connect(self.go_to_spectra)
+        self.views = QTabWidget()
+        self.views.addTab(self.panel, "figure")
+        self.views.addTab(self.data, "data")
+        self.views.setTabToolTip(1, "the values of what the figure draws, one row per bar: "
+                                    "sort, copy or save them as CSV")
         split = QSplitter()
         split.addWidget(left)
-        split.addWidget(self.panel)
+        split.addWidget(self.views)
         split.setStretchFactor(1, 1)
         split.setSizes([400, 800])
         layout = QVBoxLayout(self)
@@ -194,7 +211,7 @@ class AnalysisWorkspace(QWidget):
         """Why the analysis shown no longer matches the results and settings (empty: it does)."""
         if self.outputs is None or self._made_from is None:
             return ""
-        results, text, _ = self._made_from
+        results, text, _, stamp = self._made_from
         if self.results is not results:
             return "the results changed (a new run or resume, or a review decision)"
         try:
@@ -203,13 +220,16 @@ class AnalysisWorkspace(QWidget):
             return "the project file does not read"
         if now != text:
             return "the project's [analysis] settings changed"
+        if table_stamp(self._project()) != stamp:
+            return ("the review table changed since it was computed, so the analysis may "
+                    "change")
         return ""
 
     # --- the list ---------------------------------------------------------------------------
 
     def refresh(self) -> None:
         """Show the plan of the current results and settings, the figures computed, and whether
-        they are out of date; compute when shown with results and nothing computed yet."""
+        they are out of date (computed only when asked: Compute)."""
         self._fill()
         if self.results is None:
             self.status.setText("No results open: open a project file whose results exist, or "
@@ -222,8 +242,13 @@ class AnalysisWorkspace(QWidget):
         why = self.why_out_of_date()
         if self.outputs is None:
             self.compute_button.setText("Compute")
-            if self.isVisible() and self._error is None:
-                self.compute()
+            if self._error is None:
+                ref = self.shown_reference
+                self.status.setText(
+                    "Not computed yet" + (f" against {ref}" if ref else "") + ": Compute "
+                    f"makes the figures hxex analyse would write for {len(self.results.fit):,} "
+                    "spectra (about half a minute for 25,000; nothing is written)."
+                    + self._settings_note())
         elif why:
             self.status.setText(f"Out of date: {why}. The figures shown are the earlier "
                                 "analysis's; Recompute to see the new one.")
@@ -314,14 +339,58 @@ class AnalysisWorkspace(QWidget):
             stem = item.child(0).data(0, STEM)
         if stem is None:  # a kind with no figure: why, in the figure's place
             self.panel.save_name = ""
-            self.panel.clear(self._off_text(self._planned.get(item.data(0, KIND)))
+            self._clear_figure(self._off_text(self._planned.get(item.data(0, KIND)))
                              or "no figure of this kind for these results")
             return
         draw = dict(self.outputs.figures).get(stem)
-        if draw is not None:
-            self.panel.save_name = stem
-            self._drawn_reference = self.shown_reference
-            self.panel.draw(draw)
+        self._drawn_reference = self.shown_reference
+        if draw is None:  # a figure of an earlier analysis this one does not draw
+            self.panel.save_name = ""
+            self._clear_figure("this figure is not in the analysis computed now")
+            return
+        self.panel.save_name = stem
+        self.panel.draw(draw)
+
+    def _clear_figure(self, message: str = "") -> None:
+        self.panel.clear(message)
+        self.data.clear()
+        self.views.setTabText(1, "data")
+
+    def _show_data(self) -> None:
+        """The figure drawn: its data table."""
+        from .figures import figure_rows
+
+        columns, rows = figure_rows(self.panel.view.figure)
+        self.data.show_rows(columns, rows, self.panel.save_name)
+        self.views.setTabText(1, f"data ({len(rows)})" if rows else "data")
+
+    def _clicked_row(self, row: dict) -> None:
+        """A peptide clicked in the figure: its row selected in the data tab (its spectra are a
+        right click away)."""
+        self.data.select_row(row)
+
+    def rows_menu(self, rows: list[dict]):
+        """The right-click menu of the peptides ``rows`` under the pointer: each one's spectra
+        (None when there is nothing to offer)."""
+        return spectra_menu(rows, self.go_to_spectra, self)
+
+    def _rows_asked(self, rows: list, where) -> None:
+        menu = self.rows_menu(rows)
+        if menu is not None:
+            menu.exec(where)
+            menu.deleteLater()
+
+    def go_to_spectra(self, row: dict) -> bool:
+        """Show the spectra of the peptide of ``row`` (a data-table row with ``sample``,
+        ``start`` and ``end``) in Results; False (said in the status line) when it has none."""
+        if self.window is None or not {"sample", "start", "end"} <= set(row):
+            return False
+        found = self.window.show_peptide(str(row["sample"]), int(row["start"]), int(row["end"]),
+                                         str(row.get("peptide", "")))
+        if not found:
+            self.status.setText(f"{row['sample']} {row['start']}-{row['end']} is not in the "
+                                "results tree.")
+        return found
 
     def _describe(self, item) -> None:
         """What the selected kind shows, and, when it is off, why, with its setting."""
@@ -380,6 +449,17 @@ class AnalysisWorkspace(QWidget):
         ref = self.shown_reference
         if not config.single_reference:
             config = config.with_reference(ref)
+        stamp = table_stamp(self._project())
+        if self._project() is not None and self.window is not None \
+                and stamp != getattr(self.window, "results_review_stamp", stamp):
+            # the review table changed since the results were read: read them again first
+            log.info("the review table changed: the results are read again before the analysis")
+            self._compute_when_loaded = True
+            self.status.setText("Reading the results again with the review table's changes…")
+            self.busy.show()
+            self.compute_button.setEnabled(False)
+            self.window.open_results(self._project())
+            return
         if self._cancel is not None:
             self._cancel.set()  # an older computation still running stops
         cancel = self._cancel = threading.Event()
@@ -393,19 +473,21 @@ class AnalysisWorkspace(QWidget):
         log.info("computing the analysis (as hxex analyse, nothing written)")
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
-            lambda outputs: self._computed(outputs, results, text, path, ref),
+            lambda outputs: self._computed(outputs, results, text, path, ref, stamp),
             self._failed)
 
     @property
     def computing(self) -> bool:
         return self._computing.running
 
-    def _computed(self, outputs, results, text, path, ref) -> None:
+    def _computed(self, outputs, results, text, path, ref, stamp) -> None:
         self.busy.hide()
-        self._analyses[ref] = (outputs, (results, text, path))
+        self._analyses[ref] = (outputs, (results, text, path, stamp))
         log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
         self.refresh()
-        if self.list.currentItem() is None:  # the first figure drawn
+        if self.list.currentItem() is not None:  # the figure shown, from the new analysis
+            self._selected(self.list.currentItem())
+        else:  # the first figure drawn
             for i in range(self.list.topLevelItemCount()):
                 item = self.list.topLevelItem(i)
                 if item.childCount():
@@ -414,6 +496,7 @@ class AnalysisWorkspace(QWidget):
                     break
 
     def _failed(self, message: str) -> None:
+        self._compute_when_loaded = False
         self.busy.hide()
         self.compute_button.setEnabled(True)
         self._error = message
@@ -431,9 +514,22 @@ class AnalysisWorkspace(QWidget):
             if self._cancel is not None:
                 self._cancel.set()
             self._analyses.clear()
-            self.panel.clear()
+            self._clear_figure()
         self._error = None
+        if not self.computing:
+            self.busy.hide()
         self.refresh()
+        if self._compute_when_loaded:  # Recompute asked for the results read again
+            self._compute_when_loaded = False
+            if self.results is not None:
+                self.compute()
+
+    def load_failed(self) -> None:
+        """The results could not be read again (for a Recompute): nothing is computed."""
+        if self._compute_when_loaded:
+            self._compute_when_loaded = False
+            self.busy.hide()
+            self.refresh()
 
     def set_render(self, render: str) -> None:
         self.render = render

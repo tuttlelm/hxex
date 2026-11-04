@@ -198,6 +198,13 @@ def plot_coverage(
                         hover.residues(uptake.start[i], uptake.end[i]),
                         hover.value("fD", uptake.fD[i], uptake.fD_se[i]),
                         hover.counted(uptake.n_spectra[i], uptake.n_charges[i]))
+        hover.set_row(rect, {
+            "sample": sample, "time": float(time),
+            "time_label": hover.time_label(time, time_scale), "K": int(K), "rank": int(rank),
+            "start": int(uptake.start[i]), "end": int(uptake.end[i]),
+            "peptide": str(uptake.peptide[i]), "modification": str(uptake.modification[i]),
+            "fD": float(uptake.fD[i]), "fD_se": float(uptake.fD_se[i]),
+            "n_spectra": int(uptake.n_spectra[i]), "n_charges": int(uptake.n_charges[i])})
         ax.add_patch(rect)
     top = length if length is not None else int(end.max())
     ax.set_xlim(0, top)

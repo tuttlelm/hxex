@@ -104,7 +104,10 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 4)
     ax.set_ylim(0, 3)
-    ax.bar([1], [2], width=1.6, gid="box", hatch="//")
+    (bar,) = ax.bar([1], [2], width=1.6, gid="box", hatch="//")
+    from hxex.report.hover import set_row
+
+    set_row(bar, {"start": 1, "end": 9})
     panel = FigurePanel()
     qtbot.addWidget(panel)
     panel.resize(600, 500)
@@ -122,9 +125,21 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
     panel.actual_size()
     # the bar spans x 0.2-1.8 of 0-4 and y 0-2 of 0-3 (y down in the view)
     w, h = view.width(), view.height()
-    with qtbot.waitSignal(view.clicked, timeout=1000) as clicked:
+    with qtbot.waitSignal(view.clicked, timeout=1000) as clicked, \
+            qtbot.waitSignal(panel.clicked_row, timeout=1000) as row:
         qtbot.mouseClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.25, h * 0.8).toPoint())
-    assert clicked.args == ["box"]
+    assert clicked.args == ["box"] and row.args == [{"start": 1, "end": 9}]
+    # a double-click magnifies, and its clicks do not open what is under the pointer (owner:
+    # it went straight to the peptide's spectra)
+    at = QPointF(w * 0.25, h * 0.8).toPoint()
+    with qtbot.assertNotEmitted(view.clicked, wait=1000):
+        # as a mouse sends it (QTest's double-click alone sends only the double-click event)
+        qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=at)
+        qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=at)
+        qtbot.mouseDClick(view, Qt.MouseButton.LeftButton, pos=at)
+        qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=at)
+    assert panel.magnified
+    panel.actual_size()
     assert view.element_at(QPointF(w * 0.9, h * 0.1)) is None
     panel.fit()
     assert view.width() <= panel.scroll.viewport().width()
@@ -496,7 +511,7 @@ def test_the_matplotlib_view_clips_what_qts_svg_renderer_does_not(qtbot):
     panel.clicked.connect(clicks.append)
     w, h = view.width(), view.height()
     qtbot.mouseClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.6, h * 0.5).toPoint())
-    assert clicks == ["line"]
+    qtbot.waitUntil(lambda: clicks == ["line"], timeout=2000)  # once no second click came
     qtbot.mouseDClick(view, Qt.MouseButton.LeftButton, pos=QPointF(w * 0.6, h * 0.5).toPoint())
     assert panel.magnified
     # drawn again at the new size once the zoom settles

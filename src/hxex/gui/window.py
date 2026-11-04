@@ -33,7 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from .analysis_workspace import AnalysisWorkspace
-from .results_workspace import ResultsWorkspace
+from .results_workspace import ResultsWorkspace, _left_out_or_none
+from .review import table_stamp
 from .run_workspace import RunWorkspace
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
 from .tasks import Latest
@@ -45,6 +46,22 @@ RECENT = 8  # sessions remembered in the File menu
 SERIES_KINDS = ("spectra", "uptake", "populations")
 PEPTIDE_WIDTH = 170  # pixels: the widest the peptide column starts
 ABOUT_LOGO_WIDTH = 220  # pixels: the logo in the About box
+
+
+def _analysis_settings(project: Path | None):
+    """The ``[analysis]`` settings of ``project`` (their defaults without one, or when the file
+    does not read: the run workspace says why)."""
+    from ..analysis import AnalysisConfig
+
+    if project is not None:
+        from ..config import load_project
+
+        try:
+            return load_project(project, analysis_only=True).analysis or AnalysisConfig()
+        except Exception as exc:  # noqa: BLE001 - the defaults, said in the log
+            log.warning("the project's [analysis] settings do not read (%s): the tree's 'left "
+                        "out' column uses the defaults", exc)
+    return AnalysisConfig()
 
 
 def _note(text: str) -> QLabel:
@@ -199,6 +216,9 @@ class MainWindow(QMainWindow):
         self.project_page.file_changed.connect(self.run_page.show_device)
         self.project_page.file_changed.connect(self._project_file_changed)
         self._view_settings: dict | None = None  # the [figures] and [review] the results have
+        self._analysis_text: dict | None = None  # the [analysis] the tree's 'left out' follows
+        # the review table as the results shown read it (gui.review.table_stamp)
+        self.results_review_stamp: tuple | None = None
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace(self)
         # settings that list samples offer the samples of the results open
@@ -476,20 +496,29 @@ class MainWindow(QMainWindow):
         from ..report.notebook import load_results
 
         path = path.absolute()
+        project = self.project if path == self.project else None
         self.statusBar().showMessage(f"loading {path}…")
-        self._loading.submit(lambda: load_results(path),
-                             lambda results: self._results_loaded(results, path),
+
+        def load():
+            stamp = table_stamp(project)  # before reading: a change while it reads shows later
+            results = load_results(path)
+            analysis = _analysis_settings(project)
+            return results, analysis, _left_out_or_none(results, analysis), stamp
+
+        self._loading.submit(load, lambda loaded: self._results_loaded(*loaded, path),
                              lambda message: self._results_failed(path, message))
 
     @property
     def loading(self) -> bool:
         return self._loading.running
 
-    def _results_loaded(self, results, path: Path) -> None:
+    def _results_loaded(self, results, analysis, left, stamp, path: Path) -> None:
         self.results_path = path
+        self.results_review_stamp = stamp
         if path == self.project:
             self._view_settings = self._figure_and_review_settings()
-        self.results_page.show_results(results, path)
+            self._analysis_text = self._figure_and_review_settings(("analysis",))
+        self.results_page.show_results(results, path, left, analysis)
         self.analysis_page.results_changed()
         self.statusBar().showMessage(f"opened {path}", 5000)
         pending = dict(self._pending_selection)
@@ -529,8 +558,17 @@ class MainWindow(QMainWindow):
         self.project_page.editor.search.clear()
         self.project_page.editor.show_table(table)
 
-    def _figure_and_review_settings(self) -> dict | None:
-        """The project file's [figures] and [review] settings (the ones loaded results carry)."""
+    def show_peptide(self, sample: str, start: int, end: int, peptide: str = "") -> bool:
+        """The Results workspace with the peptide ``start``-``end`` of ``sample`` selected (its
+        series' pages: the spectra); False, staying where it is, when the tree lacks it."""
+        if not self.results_page.select_peptide(sample, start, end, peptide):
+            return False
+        self.tabs.setCurrentIndex(WORKSPACES.index("results"))
+        return True
+
+    def _figure_and_review_settings(self, keep=("figures", "review")) -> dict | None:
+        """The project file's [figures] and [review] settings (the ones loaded results carry),
+        or those of the tables ``keep``."""
         if self.project is None:
             return None
         from ..project_edit import live_settings
@@ -539,15 +577,21 @@ class MainWindow(QMainWindow):
             values, tables = live_settings(self.project.read_text(encoding="utf-8-sig"))
         except Exception:  # noqa: BLE001 - a file that does not read: nothing to compare
             return None
-        keep = ("figures", "review")
         return {"values": {k: v for k, v in values.items() if k.split(".")[0] in keep},
                 "tables": sorted(n for n in tables if n.split(".")[0] in keep)}
 
     def _project_file_changed(self) -> None:
         """The project file changed: when the results shown are the project's and its
         [figures] or [review] changed, load them again (they carry those settings), keeping the
-        place in the tree. Other settings do not change results already made."""
+        place in the tree; when its [analysis] changed, the tree's 'left out' column is worked
+        out again. Other settings do not change results already made."""
+        analysis = self._figure_and_review_settings(("analysis",))
+        analysis_before, self._analysis_text = self._analysis_text, analysis
         now = self._figure_and_review_settings()
+        if (analysis_before is not None and analysis != analysis_before
+                and self.results_path == self.project and self.project is not None
+                and now == self._view_settings and not self.loading):
+            self.results_page.analysis_changed(_analysis_settings(self.project))
         before, self._view_settings = self._view_settings, now
         if before is None or now == before or self.results_path != self.project \
                 or self.project is None or self.loading:
@@ -566,6 +610,7 @@ class MainWindow(QMainWindow):
 
     def _results_failed(self, path: Path, message: str) -> None:
         self.statusBar().clearMessage()
+        self.analysis_page.load_failed()
         log.error("cannot open the results %s: %s", path, message)
         if self._restoring:
             self._mark_saved()

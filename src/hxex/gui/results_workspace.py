@@ -36,15 +36,32 @@ from PySide6.QtWidgets import (
 )
 
 from .figure_view import FigurePanel
-from .results_tree import FILTERS, Peptide, peptides, points, shown
+from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
 from .review_panel import ReviewPanel
+from .tasks import Latest
 
 log = logging.getLogger(__name__)
 
 TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
              "index": "time points evenly spaced"}
 COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "rejected",
-           "K > 1", "K", "review", "flags")
+           "left out", "K > 1", "K", "review", "flags")
+COLUMN = {name: i for i, name in enumerate(COLUMNS)}
+# what each column holds, as its header's tooltip
+COLUMN_TIPS = {
+    "spectra": "how many spectra (replicates) were fitted",
+    "flagged": "spectra with a quality flag (named in the last column); a flag alone leaves "
+               "nothing out",
+    "rejected": "spectra rejected in the review (the review table, [[review.exclude]] rules, "
+                "or the bundle's own review); the analysis leaves them out",
+    "left out": "spectra the analysis settings leave out, and why ([analysis.filters], "
+                "exclude_flagged, exclude_times; the project file's settings, else the "
+                "defaults), as hxex analyse lists them in left_out_spectra.csv; accepting one "
+                "in the review keeps it against [analysis.filters]. 'kept at K = 1' is not counted",
+    "K > 1": "spectra fitted with more than one population (rejected ones not counted)",
+    "K": "the number of populations of each replicate's fit",
+    "review": "the review's decision: accepted, rejected or none yet",
+    "flags": "the quality flags of the spectrum"}
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 DEPTH = {"peptide": 0, "series": 1, "point": 2, "spectrum": 3}  # a kind of row's level
 
@@ -78,6 +95,9 @@ class ResultsWorkspace(QWidget):
         super().__init__()
         self.window = window
         self.results = None
+        self.left: list[str] | None = None  # why the analysis settings leave each spectrum out
+        self.analysis_config = None  # the settings that says so
+        self._left_task = Latest(self)
         self.tree_data: list[Peptide] = []
         self.path_label = QLabel("No results open.")
         open_button = QPushButton("Open results…")
@@ -107,6 +127,8 @@ class ResultsWorkspace(QWidget):
         self.tree = ReviewTree()
         self.tree.setColumnCount(len(COLUMNS))
         self.tree.setHeaderLabels(list(COLUMNS))
+        for name, tip in COLUMN_TIPS.items():
+            self.tree.headerItem().setToolTip(COLUMN[name], tip)
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.itemExpanded.connect(self._expanded)
@@ -185,11 +207,19 @@ class ResultsWorkspace(QWidget):
 
     # --- the tree --------------------------------------------------------------------------
 
-    def show_results(self, results, path: Path | None) -> None:
+    def show_results(self, results, path: Path | None, left: list[str] | None = None,
+                     analysis=None) -> None:
+        """Show ``results`` (from ``path``); ``left``: why the analysis settings ``analysis``
+        leave each spectrum out (:func:`~hxex.gui.results_tree.left_out`; worked out here when
+        not given)."""
         self.results = results
+        self.analysis_config = analysis
+        if results is not None and left is None:
+            left = _left_out_or_none(results, analysis)
+        self.left = left
         for panel in self.panels.values():
             panel.clear()
-        self.tree_data = [] if results is None else peptides(results)
+        self.tree_data = [] if results is None else peptides(results, left)
         self._fill_time_axis()
         self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
@@ -243,7 +273,7 @@ class ResultsWorkspace(QWidget):
             if not series:
                 continue
             counts = {n: sum(getattr(s, n) for s in series)
-                      for n in ("n_spectra", "n_flagged", "n_rejected", "n_multi")}
+                      for n in ("n_spectra", "n_flagged", "n_rejected", "n_left_out", "n_multi")}
             top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample,
                                    *_counts(counts), "", "", ""])
             top.setData(0, KIND, "peptide")
@@ -273,21 +303,25 @@ class ResultsWorkspace(QWidget):
         if item.data(0, KIND) != "series" or item.childCount():
             return
         pep, series = item.data(0, PAYLOAD)
-        for point in points(self.results, series.data_id):
-            flagged = sum(bool(s.flags) for s in point.spectra)
-            child = QTreeWidgetItem([point.label, "", str(len(point.spectra)),
-                                     str(flagged) if flagged else "", "", "", point.ks, "", ""])
+        for point in points(self.results, series.data_id, self.left):
+            child = QTreeWidgetItem([point.label, "", str(len(point.spectra))]
+                                    + [""] * (len(COLUMNS) - 3))
+            child.setText(COLUMN["K"], point.ks)
             child.setData(0, KIND, "point")
             child.setData(0, PAYLOAD, (pep, series, point))
             for spectrum in point.spectra:
-                leaf = QTreeWidgetItem([f"rep {spectrum.rep}", "", "", "", "", "",
-                                        str(spectrum.K), spectrum.status,
-                                        spectrum.flags.replace(";", ", ")])
+                leaf = QTreeWidgetItem([f"rep {spectrum.rep}"] + [""] * (len(COLUMNS) - 1))
+                leaf.setText(COLUMN["flagged"], "yes" if spectrum.flags else "")
+                leaf.setText(COLUMN["K"], str(spectrum.K))
+                leaf.setText(COLUMN["flags"], spectrum.flags.replace(";", ", "))
                 leaf.setData(0, KIND, "spectrum")
                 leaf.setData(0, PAYLOAD, (pep, series, point, spectrum))
                 leaf.setToolTip(0, spectrum.spectrum_id)
                 child.addChild(leaf)
                 self._leaves[spectrum.index] = leaf
+                self._show_status(leaf, spectrum.status)
+                self._show_left_out(leaf, spectrum.left_out)
+            self._sum_children(child)
             item.addChild(child)
 
     # --- selection -------------------------------------------------------------------------
@@ -446,26 +480,91 @@ class ResultsWorkspace(QWidget):
         status = np.asarray(results.review_status).astype(str)
         ks = results.effective_K
         series_ids = {int(results.fit.data_id[i]) for i in changed}
+        k = COLUMN["K"]
         for i in changed:
             leaf = self._leaves.get(int(i))
             if leaf is not None:
-                leaf.setText(6, str(int(ks[i])))
-                leaf.setText(7, "" if status[i] in ("unreviewed", "None") else status[i])
+                leaf.setText(k, str(int(ks[i])))
+                self._show_status(leaf, status[i])
                 point = leaf.parent()
-                point.setText(6, " ".join(point.child(j).text(6)
+                point.setText(k, " ".join(point.child(j).text(k)
                                           for j in range(point.childCount())))
+                self._sum_children(point)
         for data_id in series_ids:
             item = self._series_items.get(data_id)
             if item is None:
                 continue
             rejected, multi = counts(results, data_id)
-            item.setText(4, str(rejected or ""))
-            item.setText(5, str(multi or ""))
-            top = item.parent()
-            for col in (4, 5):
-                total = sum(int(top.child(j).text(col) or 0) for j in range(top.childCount()))
-                top.setText(col, str(total or ""))
+            item.setText(COLUMN["rejected"], str(rejected or ""))
+            item.setText(COLUMN["K > 1"], str(multi or ""))
+            self._sum_children(item.parent(), ("rejected", "K > 1"))
         self._redraw()
+        # a decision changes what the analysis leaves out (an accepted spectrum is kept; a
+        # rejected one changes its replicates' median): worked out again, off the window's
+        # thread
+        config = self.analysis_config
+        self._left_task.submit(lambda: _left_out_or_none(results, config),
+                               lambda left: self._left_out_known(results, left),
+                               lambda message: log.warning(
+                                   "what the analysis leaves out is not known: %s", message))
+
+    def analysis_changed(self, config) -> None:
+        """The project's [analysis] settings changed: what they leave out, worked out again."""
+        self.analysis_config = config
+        results = self.results
+        if results is None:
+            return
+        self._left_task.submit(lambda: _left_out_or_none(results, config),
+                               lambda left: self._left_out_known(results, left),
+                               lambda message: log.warning(
+                                   "what the analysis leaves out is not known: %s", message))
+
+    def _left_out_known(self, results, left: list[str] | None) -> None:
+        """What the analysis leaves out, worked out again after a decision: shown on every row
+        made so far."""
+        if results is not self.results:  # newer results (or decisions) are shown
+            return
+        self.left = left
+        n_left = left_out_counts(results, left)
+        for pep in self.tree_data:
+            for series in pep.series:
+                series.n_left_out = n_left.get(series.data_id, 0)
+        for i, leaf in self._leaves.items():
+            spectrum = leaf.data(0, PAYLOAD)[3]
+            spectrum.left_out = left[i] if left is not None else ""
+            self._show_left_out(leaf, spectrum.left_out)
+        points = {id(leaf.parent()): leaf.parent() for leaf in self._leaves.values()}
+        for point in points.values():
+            self._sum_children(point, ("left out",))
+        for data_id, item in self._series_items.items():
+            item.setText(COLUMN["left out"], str(n_left.get(data_id, 0) or ""))
+        for t in range(self.tree.topLevelItemCount()):
+            self._sum_children(self.tree.topLevelItem(t), ("left out",))
+
+    @staticmethod
+    def _show_status(leaf: QTreeWidgetItem, status: str) -> None:
+        status = "" if status in ("", "unreviewed", "None") else status
+        leaf.setText(COLUMN["review"], status)
+        leaf.setText(COLUMN["rejected"], "yes" if status == "rejected" else "")
+
+    @staticmethod
+    def _show_left_out(leaf: QTreeWidgetItem, why: str) -> None:
+        leaf.setText(COLUMN["left out"], why)
+        leaf.setToolTip(COLUMN["left out"], why)
+
+    @staticmethod
+    def _sum_children(item: QTreeWidgetItem,
+                      names: tuple[str, ...] = ("flagged", "rejected", "left out")) -> None:
+        """``item``'s counts in the columns ``names``: its rows' counts added up (a
+        replicate's row counts as one when it says anything; 'kept at K = 1' does not)."""
+        for name in names:
+            col = COLUMN[name]
+            total = 0
+            for j in range(item.childCount()):
+                text = item.child(j).text(col)
+                total += (int(text) if text.isdigit() else
+                          int(bool(text) and not text.startswith("kept")))
+            item.setText(col, str(total or ""))
 
     def selection(self) -> dict:
         """What is selected, by what outlasts a rerun: sample, residues and charge, and the
@@ -489,6 +588,16 @@ class ResultsWorkspace(QWidget):
         """How the figures are shown, for the session (only what differs from the project)."""
         key = self.time_axis.currentData()
         return {"time_axis": key} if key else {}
+
+    def select_peptide(self, sample: str, start: int, end: int, peptide: str = "") -> bool:
+        """Select the peptide ``start``-``end`` of ``sample`` (its sequence ``peptide`` first,
+        when two share the residues, a modified one say); False when the tree lacks it."""
+        found = [p for p in self.tree_data
+                 if p.sample == sample and _residues(p.peptide_range) == (start, end)]
+        if not found:
+            return False
+        pep = next((p for p in found if p.peptide == peptide), found[0])
+        return self.select({"sample": pep.sample, "peptide_range": pep.peptide_range})
 
     def select(self, selection: dict) -> bool:
         """Select what ``selection`` names (as :meth:`selection` gives it); False when the
@@ -530,9 +639,28 @@ class ResultsWorkspace(QWidget):
         return False
 
 
+def _residues(peptide_range: str) -> tuple[int, int] | None:
+    """``'0001-0013'`` as ``(1, 13)`` (None when it does not read so)."""
+    try:
+        first, last = peptide_range.split("-")[:2]
+        return int(first), int(last)
+    except ValueError:
+        return None
+
+
 def _counts(c: dict) -> list[str]:
     return [str(c["n_spectra"]), str(c["n_flagged"] or ""), str(c["n_rejected"] or ""),
-            str(c["n_multi"] or "")]
+            str(c["n_left_out"] or ""), str(c["n_multi"] or "")]
+
+
+def _left_out_or_none(results, config) -> list[str] | None:
+    """:func:`~hxex.gui.results_tree.left_out`, or None (said in the log) when the results do
+    not allow it (no picked table, say)."""
+    try:
+        return left_out(results, config)
+    except Exception as exc:  # noqa: BLE001 - the tree is still useful without the column
+        log.warning("what the analysis leaves out is not known: %s", exc)
+        return None
 
 
 __all__ = ["ResultsWorkspace"]

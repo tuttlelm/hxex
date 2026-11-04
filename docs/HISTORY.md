@@ -6766,3 +6766,75 @@ CSVs or mzML if wanted.
     (Python 3.11 only) fails for any version that does the same, so a 6.12.1 with the bug
     fails CI's 3.11 jobs instead of users' windows. `.venv` and `.venv-gpu` now have 6.11.3.
     A known PySide6 bug (owner): not reported again.
+
+250. **The Results tree: replicate rows, and what the analysis leaves out (owner, 2026-11-04:
+    the replicate level did not show the flagged column; can it say whether a flag excluded the
+    spectrum; does `rejected` come only from the review).** A replicate's row showed its flags
+    only in the last column and left the count columns empty; it now says "yes" under
+    `flagged` and `rejected`, and its time point counts them. `rejected` is the review only
+    (the review table, `[[review.exclude]]`, the bundle's own review layer; header tooltip says
+    so). New column `left out`: why the project's `[analysis]` settings leave each spectrum out
+    (`gui.results_tree.left_out`: the reasons of `left_out_spectra.csv`, plus
+    `exclude_flagged`, `exclude_times`, and "kept at K = 1 (spectrum quality)", not counted),
+    counted at every level, with a filter. Of the quality flags only `off_mz` leaves a
+    spectrum out (`[analysis.filters] off_mz`); the screens' scores, replicate outliers and
+    stand-in controls are the other reasons. Worked out in the loading thread (tutorial 0.3 s,
+    26,164 spectra 1.9 s), again after each review decision and when `[analysis]` changes in
+    the file (no reload). A bundle opened on its own uses the default settings. Columns are
+    named (`results_workspace.COLUMN`), with header tooltips. Tutorial project: 72 spectra in
+    13 series left out, as `hxex analyse` lists them.
+
+251. **The Analysis workspace computes when asked (owner, 2026-11-04: opening the tab started
+    the computation; figures did not follow a Recompute; a changed review table should say the
+    analysis may change).** Opening **Analysis** no longer computes: a **Compute** button sits
+    beside the reference list (status "Not computed yet", with the spectrum count and the
+    expected time); each reference is computed when asked. After a computation the figure
+    selected is drawn again from the new analysis (before, the list kept its selection and the
+    old figure stayed until another was clicked; one the new analysis lacks says so). The
+    review table's stamp (path, modified time, size; `gui.review.table_stamp`) is kept with
+    each analysis and with the results read: an edit made outside the review panel (Tables
+    view, a spreadsheet) marks the analysis "the review table changed since it was computed,
+    so the analysis may change", and Recompute reads the results again before computing
+    (decisions made in the review panel already reach the results in memory, and update the
+    stamp). The Results tree itself still shows such an edit only once the results are read
+    again.
+
+252. **A data tab beside the analysis figures, and from a peptide to its spectra (owner,
+    2026-11-04: "go to spectra" from the coverage maps; Woods plots overlap too much to pick a
+    peptide; a read-only table of only what is in the plot, exportable as CSV).** A plot
+    function gives each bar its row with `hxex.report.hover.set_row` (an attribute, like the
+    tooltip: saved files unchanged); `gui.figures.figure_rows` gathers the visible ones, so the
+    table holds exactly what the figure draws (its sample, time, K, filters). Built for the
+    coverage maps (the `species_uptake.csv` columns, with `time_label`) and the Woods
+    difference bars (the `compare_peptides.csv` columns, with `measure` naming the value);
+    other figures have none yet. `gui.data_table.DataPanel` in a "data" tab beside the
+    Analysis figure: sort by a header (missing values last), Ctrl+C copies the selected rows
+    with the header, **Save table…** writes the rows in the order shown with
+    `report.tables.write_csv` (named after the figure). A bar clicked (`Mark.row`, signal
+    `clicked_row`) or a row double-clicked selects that peptide in Results
+    (`window.show_peptide`, `ResultsWorkspace.select_peptide`, by sample and residues, the
+    sequence first when two share them). Tutorial: 315 coverage rows on one page, 61 on a
+    Woods page. Not built: rows for the K=2 counts, regions, protection and residue figures;
+    the Results view's figures.
+
+253. **Two window fixes (owner, 2026-11-04).** (1) A double-click to magnify a panel also
+    opened the peptide under the pointer: a double-click arrives as press, release,
+    double-click, release, and each release was taken as a click. A click now acts once the
+    double-click interval has passed without a second click (`FigureView._click_timer`), and
+    the release ending a double-click is not a click. QTest's `mouseDClick` sends only the
+    double-click event, so the test sends the whole sequence (it fails without the fix).
+    (2) The "Two Populations Selected" panel had no tooltips: its bars are `broken_barh`
+    collections, which report an empty, infinite extent (matplotlib), so `figure_marks` left
+    them out; a collection's extent now comes from its shapes (`gui.figures._extent`).
+
+254. **Right-click for a peptide's spectra (owner, 2026-11-04: "yes" to a right-click menu
+    instead of a left click; hint reworded by the owner).** A right click on a figure offers the
+    spectra of every peptide under the pointer, top to bottom as drawn (`gui.figures.rows_at`,
+    `FigureView.rows_asked`), each in its sample and, on a Woods bar, in the reference too
+    (`gui.data_table.spectra_choices`, `spectra_menu`; at most 12 peptides, then "and N more:
+    see the data tab"): overlapping Woods bars are all reachable. A left click now only selects
+    the peptide's row in the data tab (it went to Results, HISTORY 252). The data tab's rows have
+    the same right-click menu; a double click still goes. The hint under a figure reads "Mouse
+    over a peptide or bar for details." and, under the Analysis figures only,
+    "Right-click a peptide to go to its spectra." (`FigurePanel(hint=...)`). Only figures whose
+    bars carry rows (coverage and Woods so far) have the menu.

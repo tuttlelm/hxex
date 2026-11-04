@@ -448,10 +448,14 @@ calls the library in the GUI's own process. Details:
   analyse` writes with the project's settings: the catalogue's list (each kind drawn, left to
   the data, or off with the reason and Change… to the setting), the figures drawn from
   `analyse`'s own list of figures (so the window and the files cannot differ), its tables, and
-  saving any figure; clicking a peptide opens its series in the results view. The analysis is
-  computed once per window in the background (measured: 5.5 s on the tutorial, 28 s on the
+  saving any figure; clicking a peptide opens its series in the results view (built for the
+  coverage and Woods figures, HISTORY 252), and a data tab beside the figure lists what it
+  draws (rows the plot functions attach to their bars; sort, copy, save as CSV). The analysis is
+  computed when asked (a Compute button beside the reference list; owner, 2026-11-04: not on
+  opening the tab), once per window, in the background (measured: 5.5 s on the tutorial, 28 s on the
   intact-peptide benchmark; a figure then draws in under a second) and kept in memory; a
-  change of the results, of `[analysis]`, or of the review marks it out of date (the figures
+  change of the results, of `[analysis]`, or of the review (decisions, or the review table
+  edited elsewhere: Recompute then reads the results again first) marks it out of date (the figures
   stay, with the reason and a Recompute button) rather than recomputing at once. Reopening
   the window computes again; storing the computed analysis on disk waits until the wait is a
   nuisance (the analysis tables are written for people, not read back, and some figures use
