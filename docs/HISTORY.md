@@ -6746,3 +6746,17 @@ CSVs or mzML if wanted.
     when the pointer leaves the mark. Not yet: the residue figures (their marks are whole
     lines, so the position in data units is the way there, proposal 2). Tests: test_gui
     (both views, two panels), test_analysis, test_protection, test_two_populations.
+
+249. **PySide6 6.12.0 excluded: on Python 3.11 the window aborts (owner, 2026-11-03: "yes").**
+    A scratch script showing a figure aborted with "Fatal Python error: none_dealloc:
+    deallocating None", while running, in a loop calling `processEvents`. Measured: with
+    PySide6 6.12.0 on Python 3.11, every call of a Qt function that returns nothing
+    (`processEvents`, `QWidget.update`, `QWidget.resize`) takes one reference from None (100
+    calls: -99 to -100); None starts with a few thousand, so the window aborts after some
+    minutes of use. 6.7.3, 6.11.0 and 6.11.3 do not (0 to +2); on Python 3.12 and later None's
+    count never changes, so 6.12.0 is harmless there. The CI jobs on 3.11 installed 6.12.0 and
+    passed (the tests end before None runs out). `pyproject.toml`: `!=6.12.0` in the gui and dev
+    extras (no 6.12.1 exists yet). `test_gui.test_qt_calls_leave_the_reference_count_of_none_alone`
+    (Python 3.11 only) fails for any version that does the same, so a 6.12.1 with the bug
+    fails CI's 3.11 jobs instead of users' windows. `.venv` and `.venv-gpu` now have 6.11.3.
+    A known PySide6 bug (owner): not reported again.

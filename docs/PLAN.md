@@ -345,7 +345,8 @@ command line and the Python interface stay as they are, and nothing is possible 
 - **Qt for Python, `PySide6-Essentials`** (LGPL-3.0, compatible with GPL v3), as the optional
   extra `hxex[gui]`; the core install does not change. Started by `hxex gui [PROJECT]` and by a
   `gui-scripts` entry point `hxex-gui` (no console window on Windows). Lower bound measured in
-  G0 (Python 3.11 to 3.14 on the three systems).
+  G0 (Python 3.11 to 3.14 on the three systems); 6.12.0 excluded (it aborts on Python 3.11,
+  HISTORY 249).
 - **Figures are shown as SVG**: each figure is saved to SVG in memory and drawn by Qt's SVG
   renderer (`QtSvg`), so it stays sharp at any size. Measured on a tutorial series page
   (HISTORY 231): every element renders as in matplotlib, hatching included, in about 0.05 s

@@ -3,6 +3,7 @@
 zooms, saves and tells what was clicked, and the window opens results and sessions. Run offscreen
 (no screen needed)."""
 import os
+import sys
 
 import pytest
 
@@ -38,6 +39,25 @@ def _window(qtbot, settings) -> MainWindow:
 @pytest.fixture
 def window(qtbot, tmp_path):
     return _window(qtbot, tmp_path / "gui.ini")
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 12), reason="None has no reference count to lose")
+def test_qt_calls_leave_the_reference_count_of_none_alone(qtbot):
+    """PySide6 6.12.0 on Python 3.11 took a reference from None at each call of a function
+    that returns nothing, and the window aborted ("deallocating None") once None had none left
+    (HISTORY 249): pyproject.toml excludes it; this fails for any version that does the same."""
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    app = QApplication.instance()
+    calls = (app.processEvents, widget.update, lambda: widget.resize(10, 10))
+    before = sys.getrefcount(None)
+    for _ in range(200):
+        for call in calls:
+            call()
+    # a few references may come or go with what the calls do; one per call (600) may not
+    assert abs(sys.getrefcount(None) - before) < 50
 
 
 @pytest.fixture(scope="module")
