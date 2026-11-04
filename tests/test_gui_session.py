@@ -6,7 +6,7 @@ import logging
 import pytest
 from matplotlib.figure import Figure
 
-from hxex.gui.figures import figure_ids, figure_svg, save_figure
+from hxex.gui.figures import figure_marks, figure_svg, save_figure
 from hxex.gui.session import (
     VERSION,
     FigureState,
@@ -90,7 +90,7 @@ def _figure():
 def test_figures_save_as_svg_pdf_and_png(tmp_path):
     fig = _figure()
     assert figure_svg(fig) == figure_svg(fig)  # no date: the same figure, the same bytes
-    assert set(figure_ids(fig)) == {"line", "bar"}
+    assert {m.gid for m in figure_marks(fig)} == {"line", "bar"}
     for suffix, start in ((".svg", b"<?xml"), (".pdf", b"%PDF"), (".PNG", b"\x89PNG")):
         path = save_figure(fig, tmp_path / f"f{suffix}")
         assert path.read_bytes().startswith(start)

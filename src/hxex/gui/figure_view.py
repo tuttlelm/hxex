@@ -24,11 +24,20 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
-from .figures import SAVE_FORMATS, figure_ids, figure_svg, figure_title, save_figure
+from .figures import (
+    SAVE_FORMATS,
+    Mark,
+    figure_marks,
+    figure_svg,
+    figure_title,
+    mark_at,
+    save_figure,
+)
 from .tasks import Latest, drawing_pool
 
 log = logging.getLogger(__name__)
@@ -46,15 +55,17 @@ DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a 
 # own: a click had to land on its one pixel row)
 CLICK_ALLOWANCE = 4
 HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
-        "Double-click a panel: magnify it (double-click again: the whole figure).")
+        "Double-click a panel: magnify it (double-click again: the whole figure). "
+        "Rest the pointer on a peptide or a bar: what it is.")
 
 
 class FigureView(QWidget):
     """A figure as SVG. ``zoom`` is relative to the figure's own size (1 = as matplotlib sizes
     it); ``fit`` scales it to the space the view has. Clicking an element with a ``gid`` emits
-    :attr:`clicked` with it; dragging emits :attr:`dragged` (how far, in pixels) and a double
-    click :attr:`double_clicked` (where), which :class:`FigurePanel` turns into moving and
-    magnifying."""
+    :attr:`clicked` with it, and resting the pointer on one with a tooltip
+    (:func:`hxex.report.hover.set_hover`) shows it; dragging emits :attr:`dragged` (how far, in
+    pixels) and a double click :attr:`double_clicked` (where), which :class:`FigurePanel` turns
+    into moving and magnifying."""
 
     clicked = Signal(str)
     dragged = Signal(float, float)
@@ -63,7 +74,7 @@ class FigureView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._renderer = QSvgRenderer(self)
-        self._ids: list[str] = []
+        self._marks: list[Mark] = []  # what can be clicked or has a tooltip, and where
         self.figure: Figure | None = None
         self.zoom = 1.0
         self._panels: list[QRectF] = []  # each panel (matplotlib's axes) in the SVG's units
@@ -75,10 +86,11 @@ class FigureView(QWidget):
         pal.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)  # figures are on white
         self.setPalette(pal)
 
-    def set_figure(self, fig: Figure, svg: bytes | None = None) -> None:
-        """Show ``fig`` (``svg`` when already drawn, as by a worker thread)."""
+    def set_figure(self, fig: Figure, svg: bytes | None = None,
+                   marks: list[Mark] | None = None) -> None:
+        """Show ``fig`` (``svg`` and ``marks`` when already drawn, as by a worker thread)."""
         self.figure = fig
-        self._ids = figure_ids(fig)
+        self._marks = marks if marks is not None else figure_marks(fig)
         self._renderer.load(svg if svg is not None else figure_svg(fig))
         self._panels = self._panel_boxes(fig)
         self._resize()
@@ -104,7 +116,7 @@ class FigureView(QWidget):
         return boxes
 
     def clear(self) -> None:
-        self.figure, self._ids, self._panels = None, [], []
+        self.figure, self._marks, self._panels = None, [], []
         self._renderer.load(b"")
         self.setFixedSize(QSize(0, 0))
         self.update()
@@ -165,25 +177,40 @@ class FigureView(QWidget):
         return QRectF((box.x() - view.x()) * sx, (box.y() - view.y()) * sy,
                       box.width() * sx, box.height() * sy)
 
+    def mark_at(self, point: QPointF, *, text: bool = False) -> Mark | None:
+        """The drawn element under ``point`` (in the view's coordinates), the smallest when
+        several overlap; ``text``: only those with a tooltip."""
+        if not self._marks or self.width() == 0 or self.height() == 0:
+            return None
+        return mark_at(self._marks, point.x() / self.width(), point.y() / self.height(),
+                       CLICK_ALLOWANCE / self.width(), CLICK_ALLOWANCE / self.height(),
+                       text=text)
+
     def element_at(self, point: QPointF) -> str | None:
         """The ``gid`` of the drawn element under ``point`` (in the view's coordinates), the
         smallest when several overlap."""
-        own = self.figure_size()
-        if not self._ids or own.width() == 0:
-            return None
-        at = self._figure_point(point)
-        view = self._view_box()
-        grow_x = CLICK_ALLOWANCE * view.width() / max(self.width(), 1)
-        grow_y = CLICK_ALLOWANCE * view.height() / max(self.height(), 1)
-        best, area = None, None
-        for gid in self._ids:
-            if not self._renderer.elementExists(gid):
-                continue
-            box = self._renderer.transformForElement(gid).mapRect(
-                self._renderer.boundsOnElement(gid)).adjusted(-grow_x, -grow_y, grow_x, grow_y)
-            if box.contains(at) and (area is None or box.width() * box.height() < area):
-                best, area = gid, box.width() * box.height()
-        return best
+        mark = self.mark_at(point)
+        return mark.gid if mark is not None else None
+
+    def tooltip_at(self, point: QPointF) -> str:
+        """The tooltip of the drawn element under ``point`` ('' when none has one)."""
+        mark = self.mark_at(point, text=True)
+        return mark.text if mark is not None else ""
+
+    def event(self, event):
+        if event.type() == QEvent.Type.ToolTip:
+            mark = self.mark_at(QPointF(event.pos()), text=True)
+            if mark is None:
+                QToolTip.hideText()
+                event.ignore()
+                return True
+            left, top, width, height = mark.box  # gone once the pointer leaves the mark
+            area = QRectF(left * self.width(), top * self.height(), width * self.width(),
+                          height * self.height()).adjusted(
+                -CLICK_ALLOWANCE, -CLICK_ALLOWANCE, CLICK_ALLOWANCE, CLICK_ALLOWANCE)
+            QToolTip.showText(event.globalPos(), mark.text, self, area.toAlignedRect())
+            return True
+        return super().event(event)
 
     def mousePressEvent(self, event):  # noqa: N802 - Qt's name
         if event.button() == Qt.MouseButton.LeftButton:
@@ -226,7 +253,7 @@ class RasterView(FigureView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._image: QImage | None = None
-        self._boxes: dict[str, tuple[float, float, float, float]] = {}  # gid -> fractions
+        self._marks_known = False  # found when first drawn (in the worker thread)
         self._size_pt = QSize(0, 0)
         self._drawing = Latest(self, drawing_pool())
         self._again = QTimer(self)
@@ -234,18 +261,19 @@ class RasterView(FigureView):
         self._again.setInterval(REDRAW_AFTER_MS)
         self._again.timeout.connect(self._render)
 
-    def set_figure(self, fig: Figure, svg: bytes | None = None) -> None:
+    def set_figure(self, fig: Figure, svg: bytes | None = None,
+                   marks: list[Mark] | None = None) -> None:
         self.figure = fig
-        self._ids = figure_ids(fig)
+        self._marks, self._marks_known = list(marks or []), marks is not None
         w, h = fig.get_size_inches()
         self._size_pt = QSize(round(w * 72), round(h * 72))  # as the SVG's points
-        self._image, self._boxes = None, {}
+        self._image = None
         self._panels = self._panel_boxes(fig)
         self._resize()
 
     def clear(self) -> None:
-        self.figure, self._ids, self._panels = None, [], []
-        self._image, self._boxes, self._size_pt = None, {}, QSize(0, 0)
+        self.figure, self._marks, self._panels = None, [], []
+        self._image, self._marks_known, self._size_pt = None, False, QSize(0, 0)
         self.setFixedSize(QSize(0, 0))
         self.update()
 
@@ -272,40 +300,24 @@ class RasterView(FigureView):
         pixels = self.width() * ratio * self.height() * ratio
         scale = min(1.0, (MAX_PIXELS / pixels) ** 0.5) if pixels else 1.0
         dpi = 72 * self.zoom * ratio * scale
-        need_boxes = not self._boxes
+        find = not self._marks_known
 
         def work():
-            from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-            boxes = {}
-            if need_boxes and self._ids:  # where each gid is, as fractions of the figure
-                canvas = FigureCanvasAgg(fig)
-                canvas.draw()
-                renderer = canvas.get_renderer()
-                width, height = canvas.get_width_height()
-                for artist in fig.findobj():
-                    gid = artist.get_gid()
-                    if gid in self._ids and gid not in boxes:
-                        try:
-                            bb = artist.get_window_extent(renderer)
-                        except Exception:  # noqa: BLE001 - an artist without an extent
-                            continue
-                        boxes[gid] = (bb.x0 / width, 1 - bb.y1 / height,
-                                      bb.width / width, bb.height / height)
+            marks = figure_marks(fig) if find else None
             buf = io.BytesIO()
             fig.savefig(buf, format="png", dpi=dpi)
-            return buf.getvalue(), boxes
+            return buf.getvalue(), marks
 
         self._drawing.submit(work, self._rendered, lambda message: log.error(
             "could not draw the figure: %s", message))
 
     def _rendered(self, done) -> None:
-        png, boxes = done
+        png, marks = done
         image = QImage.fromData(png, "PNG")
         image.setDevicePixelRatio(self.devicePixelRatioF())
         self._image = image
-        if boxes:
-            self._boxes = boxes
+        if marks is not None:
+            self._marks, self._marks_known = marks, True
         self.update()
 
     def paintEvent(self, event):  # noqa: N802 - Qt's name
@@ -315,18 +327,6 @@ class RasterView(FigureView):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawImage(QRectF(self.rect()), self._image)
         painter.end()
-
-    def element_at(self, point: QPointF) -> str | None:
-        if not self._boxes or self.width() == 0:
-            return None
-        fx, fy = point.x() / self.width(), point.y() / self.height()
-        gx, gy = CLICK_ALLOWANCE / self.width(), CLICK_ALLOWANCE / self.height()
-        best, area = None, None
-        for gid, (x, y, w, h) in self._boxes.items():
-            if x - gx <= fx <= x + w + gx and y - gy <= fy <= y + h + gy \
-                    and (area is None or w * h < area):
-                best, area = gid, w * h
-        return best
 
 
 class FigurePanel(QWidget):
@@ -420,8 +420,12 @@ class FigurePanel(QWidget):
             else:
                 self.view.set_zoom(zoom)
 
-    def show_figure(self, fig: Figure, svg: bytes | None = None) -> None:
-        self.view.set_figure(fig, svg if self.render == "svg" else None)
+    def show_figure(self, fig: Figure, svg: bytes | None = None,
+                    marks: list[Mark] | None = None) -> None:
+        if self.render == "svg":
+            self.view.set_figure(fig, svg, marks)
+        else:
+            self.view.set_figure(fig, marks=marks)
         self.set_title(figure_title(fig))
         self.save_button.setEnabled(True)
         self.status.setText("")
@@ -436,7 +440,9 @@ class FigurePanel(QWidget):
 
         def work():
             fig = draw()
-            return fig, figure_svg(fig) if svg else None
+            if not svg:
+                return fig, None, None
+            return fig, figure_svg(fig), figure_marks(fig)
 
         self.status.setText("drawing…")
         self._drawing.submit(work, lambda done: self.show_figure(*done), self._failed)

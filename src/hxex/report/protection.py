@@ -20,6 +20,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MultipleLocator
 
+from . import hover
 from .coverage import FD_CMAP, autowrap
 
 PROTECTION_CMAP = FD_CMAP.reversed().with_extremes(bad="#d0d0d0")
@@ -30,12 +31,14 @@ def _panels(table, sample):
     return [(k, r, name) for k, r, name in _PANELS if table.where(sample=sample, K=k, rank=r).any()]
 
 
-def _bars(ax, table, rows, colour, hatch, length, wrap):
+def _bars(ax, table, rows, colour, hatch, tip, length, wrap):
     order = rows[np.lexsort((table.end[rows], table.start[rows]))]
     for n, i in enumerate(order):
         rect = Rectangle((table.start[i] - 0.5, -(n % wrap) - 1), table.end[i] - table.start[i] + 1,
                          1, facecolor=colour(i), edgecolor="k", linewidth=0.3, hatch=hatch(i))
         rect.set_gid(f"peptide:{table.start[i]}-{table.end[i]}")
+        hover.set_hover(rect, hover.peptide(table.peptide[i], table.modification[i]),
+                        hover.residues(table.start[i], table.end[i]), *tip(i))
         ax.add_patch(rect)
     ax.set_xlim(0, length)
     ax.set_ylim(-wrap, 0)
@@ -83,8 +86,15 @@ def protection_figure(
     def hatch(i):
         return "////" if table.bound[i] else None
 
+    def tip(i):
+        if table.bound[i]:
+            sign = "≤" if table.bound[i] == "upper" else "≥"
+            return (f"log10 protection factor {sign} {np.log10(table.limit[i]):.1f} (a bound)",)
+        return (hover.value("log10 protection factor", table.log10_protection[i],
+                            table.log10_protection_se[i]),)
+
     for ax, sel, (_, _, name) in zip(axes, rows, panels, strict=True):
-        _bars(ax, table, sel, colour, hatch, top, wrap)
+        _bars(ax, table, sel, colour, hatch, tip, top, wrap)
         ax.set_title(f"{sample}, {name}", fontsize=10)
         ax.set_xlabel("residue")
     bar = fig.colorbar(ScalarMappable(norm=norm, cmap=PROTECTION_CMAP), ax=axes, pad=0.01,
@@ -126,8 +136,14 @@ def protection_difference_figure(
     def hatch(i):
         return "////" if comparison.note[i] else None
 
+    def tip(i):
+        return (hover.value("difference in log10 protection factor", comparison.delta[i],
+                            comparison.delta_se[i], signed=True),
+                "significant" if comparison.significant[i] else "not significant",
+                str(comparison.note[i]))
+
     for ax, sel, (_, _, name) in zip(axes, rows, panels, strict=True):
-        _bars(ax, comparison, sel, colour, hatch, top, wrap)
+        _bars(ax, comparison, sel, colour, hatch, tip, top, wrap)
         ax.set_title(f"{sample} - {comparison.reference}, {name}", fontsize=10)
         ax.set_xlabel("residue")
     bar = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=axes, pad=0.01, fraction=0.03,

@@ -26,6 +26,7 @@ from ..picking.binned import MZ_CHECK_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
+from . import hover
 from .results import Results
 from .series import _control_row, _reps, _time_text
 
@@ -367,13 +368,7 @@ def _description(k: int, rank: int) -> str:
     """What an ``uptake.csv`` row averages: ``centroid`` (K 0: every replicate), ``K=1``, or
     the population of a K: ``K=2 low-D``, ``K=2 high-D``, ``K=3 mid-D``, and by rank beyond
     three, ``K=4 rank 2``."""
-    if k == 0:
-        return "centroid"
-    if k == 1:
-        return "K=1"
-    if k > 3:
-        return f"K={k} rank {rank}"
-    return f"K={k} {'low-D' if rank == 1 else 'high-D' if rank == k else 'mid-D'}"
+    return "centroid" if k == 0 else hover.population(k, rank)
 
 
 def _median_rt(binned, where, ids) -> float:

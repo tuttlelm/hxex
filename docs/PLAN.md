@@ -981,7 +981,7 @@ Planned, not built:
    results and review, and analysis views (section "GUI", phases G0-G4). G0 to G2 built
    (HISTORY 232-236); G3 parts 1 and 2 (the tree, the review panel; HISTORY 237-242); the
    figure catalogue with `figures.md` and `hxex figures` (HISTORY 243); G4 part 1, the
-   Analysis workspace (HISTORY 244); sample colours (245); several references (246); samples in order (247). Next: the analysis tables and click-through to Results,
+   Analysis workspace (HISTORY 244); sample colours (245); several references (246); samples in order (247); tooltips on the figures' peptides and bars (248). Next: the analysis tables and click-through to Results,
    or the rest of G3 (flat list, series review table, Results tables).
 
 ## Risks and open decisions

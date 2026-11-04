@@ -27,6 +27,7 @@ from matplotlib.ticker import MultipleLocator
 from ..analysis import CoverageTable, SpeciesUptake
 from ..io.times import format_time
 from ..spectra import UNDEUT
+from . import hover
 
 # CET-L20 "gouldian", a perceptually uniform map by Peter Kovesi (colorcet.com, CC BY 4.0),
 # sampled at 17 points: the map pyHDX uses for relative uptake
@@ -193,6 +194,10 @@ def plot_coverage(
         rect = Rectangle((uptake.start[i] - 0.5, y), uptake.end[i] - uptake.start[i] + 1, 1,
                          facecolor=colour, edgecolor="k", linewidth=0.3)
         rect.set_gid(f"peptide:{uptake.start[i]}-{uptake.end[i]}")
+        hover.set_hover(rect, hover.peptide(uptake.peptide[i], uptake.modification[i]),
+                        hover.residues(uptake.start[i], uptake.end[i]),
+                        hover.value("fD", uptake.fD[i], uptake.fD_se[i]),
+                        hover.counted(uptake.n_spectra[i], uptake.n_charges[i]))
         ax.add_patch(rect)
     top = length if length is not None else int(end.max())
     ax.set_xlim(0, top)

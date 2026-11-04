@@ -139,6 +139,11 @@ def test_the_number_of_populations_compared():
     assert set(bars) == {"count:reference:1-10", "count:sample:5-15", "count:both:12-20"}
     face = bars["count:sample:5-15"].get_facecolor()
     assert len(face) == 0 or face[0][3] == 0  # borderline: an outline only
+    from hxex.report.hover import hover_text
+
+    assert hover_text(bars["count:sample:5-15"]) == (
+        "residues 5–15\ntwo populations in M only\nborderline")
+    assert hover_text(bars["count:both:12-20"]).endswith("in M and WT")
     labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
     assert labels == ["M only", "WT only", "both"]
     assert fig.axes[0].get_title(loc="left").startswith("Two Populations Selected")

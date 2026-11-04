@@ -6729,3 +6729,20 @@ CSVs or mzML if wanted.
     selected sample, Remove, and Add with the samples of the results open
     (`MainWindow.sample_names`, through `analysis_references` with `"all"`) or one typed; an
     emptied list goes back to the default. Test: test_gui_project.
+
+248. **Tooltips on the figures' peptides and bars (owner, 2026-11-03: "start with 1", of two
+    proposals: tooltips on drawn elements, then the pointer's position in data units).** A plot
+    function gives an artist a tooltip with `hxex.report.hover.set_hover` (an attribute of the
+    artist, so saved files do not change); the coverage bars (sequence, residues, fD ± se,
+    spectra and charge states), the protection bars and their differences, the Woods bars
+    (both samples' values, the difference, significant or not, the comparison's reason, a
+    fallback-corrected pair; K=2 pages name the population as uptake.csv does, through
+    `hover.population`, which `tables._description` now uses), the K=2 counts and the region
+    bars have one. The window knows each drawn element by a `gui.figures.Mark` (gid, tooltip,
+    box as fractions of the figure, from one Agg draw in the drawing thread: 0.1-0.3 s per
+    tutorial page) in BOTH views: the SVG view no longer asks Qt's renderer where an element
+    is, so a peptide drawn in several panels (the same gid) is found in each, for clicks too
+    (before, only the first was). `figure_ids` removed (marks replace it). A tooltip leaves
+    when the pointer leaves the mark. Not yet: the residue figures (their marks are whole
+    lines, so the position in data units is the way there, proposal 2). Tests: test_gui
+    (both views, two panels), test_analysis, test_protection, test_two_populations.

@@ -315,8 +315,15 @@ def test_protection_figures_and_settings(tmp_path):
     assert ax.get_title() == "M, average (K=1)"
     hatched = [p.get_hatch() for p in ax.patches]
     assert sorted(hatched, key=str) == ["////", None]
+    from hxex.report.hover import hover_text
+
+    tips = sorted(hover_text(p) for p in ax.patches)
+    assert all(t.splitlines()[1] in ("residues 2–9", "residues 10–20") for t in tips)
+    assert any("(a bound)" in t for t in tips) and any("± " in t for t in tips)
     fig = protection_difference_figure(compare_protection(table, "WT"), "M")
     assert [a.get_title() for a in fig.axes if a.get_title()] == ["M - WT, average (K=1)"]
+    assert all("difference in log10 protection factor" in hover_text(p)
+               for a in fig.axes for p in a.patches if p.get_gid())
     with pytest.raises(ValueError, match="no protection"):
         protection_figure(table, "other")
 

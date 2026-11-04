@@ -28,6 +28,7 @@ from ..analysis import (
     ResidueMap,
 )
 from ..analysis.settings import OVERLAY_VALUES
+from . import hover
 from .coverage import MARK_LINE, SampleStyle, sample_hatch, sample_style
 from .residues import _when
 
@@ -468,6 +469,25 @@ def residue_overlay_figure(
     return fig
 
 
+def _difference_hover(artist, comparison: PeptideComparison, i: int, sample: str) -> None:
+    """A Woods bar's tooltip: the peptide, both values, the difference and the verdict."""
+    name = (f"{comparison.share}-D share" if comparison.quantity == "population"
+            else "fD" if comparison.K == 1 else
+            f"fD ({hover.population(comparison.K, comparison.rank)})")
+    reason = str(comparison.reason[i])
+    hover.set_hover(
+        artist, hover.peptide(comparison.peptide[i], comparison.modification[i]),
+        hover.residues(comparison.start[i], comparison.end[i]),
+        hover.value(f"{name}, {sample}", comparison.value[i], comparison.value_se[i]),
+        hover.value(f"{name}, {comparison.reference}", comparison.value_reference[i],
+                    comparison.value_reference_se[i]),
+        hover.value("difference", comparison.delta[i], comparison.delta_se[i], signed=True),
+        reason if reason else ("significant" if comparison.significant[i]
+                               else "not significant"),
+        "corrected differently (one side with a fallback control)"
+        if comparison.corrected_differently[i] else "")
+
+
 def plot_peptide_differences(
     comparison: PeptideComparison,
     sample: str,
@@ -505,6 +525,7 @@ def plot_peptide_differences(
                           color=colour, linewidth=2.2, solid_capstyle="butt",
                           zorder=3 if comparison.significant[i] else 2)
         line.set_gid(f"peptide:{comparison.start[i]}-{comparison.end[i]}")
+        _difference_hover(line, comparison, i, sample)
         mid = (comparison.start[i] + comparison.end[i]) / 2
         ax.plot([mid, mid], [d - comparison.delta_se[i], d + comparison.delta_se[i]],
                 color=colour, linewidth=0.7, zorder=2)
@@ -606,6 +627,11 @@ def plot_population_counts(
                                   facecolors="none" if borderline else COUNT_GREY,
                                   edgecolors=COUNT_GREY, linewidth=0.8)
             bars.set_gid(f"count:{band}:{a}-{b}")
+            hover.set_hover(bars, hover.residues(a, b), {
+                "sample": f"two populations in {sample} only",
+                "reference": f"two populations in {counts.reference} only",
+                "both": f"two populations in {sample} and {counts.reference}"}[band],
+                "borderline" if borderline else "")
     ax.axhline(0, color="#999999", linewidth=0.8)
     ax.axhline(base + COUNT_GAP / 2, color="#cccccc", linewidth=0.8)
     ax.set_ylim(base - COUNT_STEP * n_both - 0.04, COUNT_STEP * n_up + 0.04)
@@ -697,8 +723,9 @@ def plot_region_bars(
                       color=colour, label=sample, yerr=np.nan_to_num(errors), hatch=hatch,
                       edgecolor="white" if hatch else None,
                       error_kw={"elinewidth": 0.7, "ecolor": "#555555"}, alpha=0.9)
-        for patch, name in zip(bars.patches, names, strict=True):
+        for patch, name, v, se in zip(bars.patches, names, values, errors, strict=True):
             patch.set_gid(f"region:{sample}:{name}")
+            hover.set_hover(patch, f"{sample}, region {name}", hover.value("fD", v, se))
         top = max(top, _top(values, errors))
     labels = [textwrap.fill(name.replace(",", ", "), 10).replace(", ", ",") for name in names]
     ax.set_xticks(x, labels, rotation=0, fontsize=8)

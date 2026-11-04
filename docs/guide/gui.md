@@ -244,6 +244,10 @@ of a series), which stays readable however far you zoom:
 - **Double-click** a panel of a page (one spectrum of the spectra page, say) to magnify it to
   fill the space; double-click again for the whole page. The panel is the same drawing made
   bigger, sharp at any size.
+- **Rest the pointer** on a peptide of a coverage, Woods, or protection-factor figure, on a bar
+  of the regions figure, or on a peptide of the two-populations figure, and a note says what it
+  is: the peptide's sequence and residues, its value with its standard error, and, on a
+  comparison, both samples' values, the difference, and whether it is significant.
 - **Save figure…** saves the figure as SVG or PDF (sharp at any size, for papers and slides
   you edit further) or PNG (a picture).
 

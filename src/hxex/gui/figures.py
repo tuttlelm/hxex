@@ -6,7 +6,9 @@ the same :class:`~matplotlib.figure.Figure`. This module does not use Qt."""
 from __future__ import annotations
 
 import io
+import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -45,15 +47,60 @@ def figure_svg(fig: Figure) -> bytes:
     return qt_ready(buf.getvalue())
 
 
-def figure_ids(fig: Figure) -> list[str]:
-    """The ``gid`` of every drawn artist that has one: they are the SVG's element ids, which the
-    view uses to tell what was clicked."""
-    ids = []
-    for artist in fig.findobj():
-        gid = artist.get_gid()
-        if gid and gid not in ids:
-            ids.append(gid)
-    return ids
+@dataclass(frozen=True)
+class Mark:
+    """A drawn element the window knows: its ``gid`` (what a click reports; may be empty), its
+    tooltip ``text`` (:func:`hxex.report.hover.set_hover`; may be empty) and its ``box``
+    (left, top, width, height, as fractions of the figure from its top left corner)."""
+
+    gid: str
+    text: str
+    box: tuple[float, float, float, float]
+
+    def contains(self, x: float, y: float, gx: float = 0.0, gy: float = 0.0) -> bool:
+        """Whether the point ``(x, y)`` (fractions, from the top left) is on the mark, allowing
+        ``gx`` and ``gy`` around it."""
+        left, top, width, height = self.box
+        return left - gx <= x <= left + width + gx and top - gy <= y <= top + height + gy
+
+    @property
+    def area(self) -> float:
+        return self.box[2] * self.box[3]
+
+
+def figure_marks(fig: Figure) -> list[Mark]:
+    """Every visible artist of ``fig`` with a ``gid`` or a tooltip, where it is drawn (each one,
+    so a peptide drawn in several panels is found in each). Draws the figure once (matplotlib's
+    Agg renderer) to know where things are."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    from ..report.hover import hover_text
+
+    found = [a for a in fig.findobj() if a.get_visible() and (a.get_gid() or hover_text(a))]
+    if not found:
+        return []
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    width, height = canvas.get_width_height()
+    marks = []
+    for artist in found:
+        try:
+            bb = artist.get_window_extent(renderer)
+        except Exception:  # noqa: BLE001 - an artist without an extent
+            continue
+        box = (bb.x0 / width, 1 - bb.y1 / height, bb.width / width, bb.height / height)
+        if all(math.isfinite(v) for v in box):
+            marks.append(Mark(artist.get_gid() or "", hover_text(artist), box))
+    return marks
+
+
+def mark_at(marks: list[Mark], x: float, y: float, gx: float = 0.0, gy: float = 0.0, *,
+            text: bool = False) -> Mark | None:
+    """The smallest of ``marks`` at ``(x, y)`` (fractions of the figure, from its top left;
+    ``gx``, ``gy`` allowed around each); ``text``: only marks with a tooltip."""
+    found = [m for m in marks if (m.text if text else m.gid) and m.contains(x, y, gx, gy)]
+    return min(found, key=lambda m: m.area) if found else None
 
 
 def figure_title(fig: Figure) -> str:

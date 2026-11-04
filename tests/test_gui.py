@@ -113,6 +113,43 @@ def test_the_figure_view_zooms_saves_and_tells_what_was_clicked(qtbot, tmp_path)
     assert view.size() == QSize(0, 0)
 
 
+@pytest.mark.parametrize("render", ["matplotlib", "svg"])
+def test_resting_the_pointer_on_a_mark_shows_its_tooltip(qtbot, render):
+    """A peptide drawn in two panels (the same gid twice) has its tooltip in each, in both
+    views; elsewhere there is none."""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent
+    from PySide6.QtWidgets import QApplication, QToolTip
+
+    from hxex.report.hover import set_hover
+
+    fig = Figure(figsize=(4, 3), dpi=100)
+    for n, x0 in enumerate((0.0, 0.5)):
+        ax = fig.add_axes((x0, 0, 0.5, 1))
+        ax.set_xlim(0, 4)
+        ax.set_ylim(0, 3)
+        (bar,) = ax.bar([1], [2], width=1.6, gid="peptide:1-9")
+        set_hover(bar, f"panel {n}", "residues 1–9")
+    panel = FigurePanel(render=render)
+    qtbot.addWidget(panel)
+    panel.resize(600, 500)
+    with qtbot.waitSignal(panel.drawn, timeout=10000):
+        panel.draw(lambda: fig)
+    view: FigureView = panel.view
+    qtbot.waitUntil(lambda: view.ready and bool(view._marks), timeout=10000)
+    w, h = view.width(), view.height()
+    # each bar spans x 0.2-1.8 of 0-4 in its half and y 0-2 of 0-3 (y down in the view)
+    assert view.tooltip_at(QPointF(w * 0.125, h * 0.8)) == "panel 0\nresidues 1–9"
+    assert view.tooltip_at(QPointF(w * 0.625, h * 0.8)) == "panel 1\nresidues 1–9"
+    assert view.element_at(QPointF(w * 0.625, h * 0.8)) == "peptide:1-9"
+    assert view.tooltip_at(QPointF(w * 0.45, h * 0.1)) == ""
+    panel.show()
+    at = QPoint(round(w * 0.625), round(h * 0.8))
+    QApplication.sendEvent(view, QHelpEvent(QEvent.Type.ToolTip, at, view.mapToGlobal(at)))
+    qtbot.waitUntil(lambda: QToolTip.text() == "panel 1\nresidues 1–9", timeout=2000)
+    QToolTip.hideText()
+
+
 def test_garbage_collection_waits_for_the_windows_thread(qtbot):
     """A reference cycle holding a window object, freed by a collection in a drawing thread,
     crashed Qt (macOS CI): automatic collection is paused while work runs off the window's
