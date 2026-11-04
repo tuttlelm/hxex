@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hxex"
-version = "0.0.1.dev0"
+version = "0.0.1.dev1"
 description = "Multimodal binomial-mixture analysis of HDX-MS spectra"
 readme = "README.md"
 requires-python = ">=3.11"

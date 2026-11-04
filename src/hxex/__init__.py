@@ -91,7 +91,7 @@ def commit() -> str:
 
 
 def version_text() -> str:
-    """``'hxex 0.0.1.dev0 (3ed39ac, 2026-11-02)'``, without the parentheses when the commit
+    """``'hxex 0.0.1.dev1 (3ed39ac, 2026-11-02)'``, without the parentheses when the commit
     is not known."""
     known = commit()
     return f"hxex {__version__}" + (f" ({known})" if known else "")

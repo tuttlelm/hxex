@@ -22,14 +22,14 @@ the first publish from GitHub create the project.
 
 1. Set `version` in `pyproject.toml` and commit it to `main`.
 2. On GitHub, **Releases, Draft a new release**: create a tag `v<version>` (for example
-   `v0.0.1.dev0`) targeting `main`, then publish the release.
+   `v0.0.1.dev1`) targeting `main`, then publish the release.
 3. The workflow checks that the tag matches the version, builds the sdist and wheel, runs
    `twine check`, and publishes. The first successful publish creates the PyPI project and
    claims the name.
 
 ## Notes
 
-- A version such as `0.0.1.dev0` is a pre-release: `pip install hxex` will not select it
+- A version such as `0.0.1.dev1` is a pre-release: `pip install hxex` will not select it
   unless `--pre` is given, so an early placeholder release is not installed by accident.
 - Build and check locally before releasing: `uv build` (or `python -m build`), then
   `twine check dist/*`.

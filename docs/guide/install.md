@@ -73,7 +73,7 @@ hxex --version
 ```
 
 It prints `hxex`, its version number, and the code version it was built from, for example
-`hxex 0.0.1.dev0 (3ed39ac, 2026-11-02)`: give that line when you report results or a problem.
+`hxex 0.0.1.dev1 (3ed39ac, 2026-11-02)`: give that line when you report results or a problem.
 If it says the command is not found (in PowerShell: `hxex : The term 'hxex' is not recognized
 as the name of a cmdlet, function, script file, or operable program`), close and reopen the
 terminal once more; if that does not help, run step 4 again.

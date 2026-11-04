@@ -6850,4 +6850,6 @@ CSVs or mzML if wanted.
     comments and template. The sdist leaves out `docs/HISTORY.md` and `docs/AUDIT_*.md`
     (development records; `[tool.hatch.build.targets.sdist]`), and docs/RELEASING.md says to
     search both built packages before a release. Git history keeps the old text (owner's
-    October decision).
+    October decision). Released as `0.0.1.dev1` (owner): the GitHub release `v0.0.1.dev0` of
+    9 October points at the initial scaffold, made before `publish.yml` existed, so nothing was
+    uploaded and the tag is left as it is.
