@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from hxex.gui.data_table import DataPanel, cell_text  # noqa: E402
 from hxex.gui.figures import figure_rows  # noqa: E402
+from hxex.gui.tasks import drawing_pool  # noqa: E402
 from hxex.report.hover import set_row  # noqa: E402
 from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
 from test_gui import _window  # noqa: E402
@@ -213,7 +214,11 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     assert len(one) == sum(r["figure"] == stems[1] for r in gathered)
     # a new selection stops a gathering under way: its result is never shown
     page.list.setCurrentItem(coverage)
-    page.list.setCurrentItem(coverage.child(0))
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(coverage.child(0))
+    # both jobs done in the drawing thread, their results delivered, before the check
+    assert drawing_pool().waitForDone(60000)
+    qtbot.wait(50)  # their results delivered
     page._rows_gathered("coverage", None)  # a stopped gathering returns nothing
     assert "figure" not in page.data.model.columns
 

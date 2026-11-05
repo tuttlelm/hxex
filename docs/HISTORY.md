@@ -7224,3 +7224,13 @@ CSVs or mzML if wanted.
     and two populations on both sides but neither a share nor a position difference: 15 / 54 /
     65 / 38 -> 1 / 9 / 2 / 0 (samples A to D against E); the remaining ones are the peptide gate.
     The built code reproduces the evaluation exactly.
+
+282. **CI: drawings left running between tests (CI runs for ee00b44 and 699d83a; owner pasted
+    the logs).** One test, `test_the_populations_go_on_over_the_spectras_pages`, failed on a
+    different platform in each run (lowest versions, macOS 3.12/3.14, Windows 3.11/3.14) with a
+    mathtext `ParseException` on `$\times10^{4}$` (an axis offset). The test before it leaves a
+    page drawing in the window's drawing thread (`gui.tasks.drawing_pool`) while this one draws
+    figures in the main thread; matplotlib's mathtext parser is not thread-safe. Reproduced
+    locally (1 of 6 runs). The window itself draws only in that thread, so hxex is not changed:
+    `tests/conftest.py` waits for the drawing thread to finish after every test (12 of 12 runs
+    pass). The data-tab test of HISTORY 279 also waits for its drawings before its last check.
