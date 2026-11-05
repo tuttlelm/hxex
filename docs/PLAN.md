@@ -994,8 +994,8 @@ Planned, not built:
    filters in the list; the details beside the figures (a spectrum's `spectra.csv` row, a
    series' `uptake.csv` rows) and a read-only Tables view in Results; the series review table;
    the analysis tables. Panel limits for the other figures (owner, 2026-11-04): done for the
-   analysis figures by `[analysis] page_size` (HISTORY 276); still to do: the Results
-   populations page (paged like the spectra pages) and the fragment ladder and closure
+   analysis figures by `[analysis] page_size` (HISTORY 276) and the Results populations
+   page (on the spectra's pages, HISTORY 277); still to do: the fragment ladder and closure
    figures. Also to
    do: a data tab for every figure (HISTORY 252): done for the residue figures and region
    bars (HISTORY 273), the K=2 counts, butterfly, and protection figures, and in Results the

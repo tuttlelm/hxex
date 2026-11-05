@@ -170,11 +170,13 @@ KINDS: tuple[FigureKind, ...] = (
                     "[figures] page_columns", "[figures] max_points")),
     FigureKind(
         "series_populations", "Populations of a series", REPORT,
-        ("{series}", "{series}_populations"),
-        "each population's mean and share, one panel per spectrum, and the replicates overlaid",
+        ("{series}", "{series}_populations", "{series}_populations_{page}"),
+        "each population's mean and share, one panel per spectrum, and the replicates overlaid, "
+        "on the same pages as the series' spectra",
         _RUN_PAGE, (_kinds_include("populations"),),
         data=_SERIES_DATA + "; left out when every spectrum has one population",
-        changed_by=("[figures] series", "[figures] k", "[figures] corrected")),
+        changed_by=("[figures] series", "[figures] k", "[figures] corrected",
+                    "[figures] page_rows", "[figures] page_columns", "[figures] max_points")),
     FigureKind(
         "series_uptake", "Uptake of a series", REPORT, ("{series}", "{series}_uptake"),
         "deuteration against time, a marker per population sized by its share, the controls "

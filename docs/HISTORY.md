@@ -7156,3 +7156,13 @@ CSVs or mzML if wanted.
     the fixed-name maps, `[analysis] page_size` among their settings. With the default, a
     coverage map of more than three points wraps to three a row (the tutorial draws none). Not
     yet: the Results populations page, the fragment ladder and closure figures.
+
+277. **A series' populations page on the spectra's pages (owner, 2026-11-04: figures that grow
+    with the data go on over pages).** `plot_populations` takes a page of `spectra_pages`
+    (`rows`, `max_columns`, `note`, `layout`, as `plot_series_spectra`; the replicate markers
+    follow the series' replicate list, not the page's), so the populations page goes on over the
+    same pages, with the same time points (`max_points`): `populations_1`, `populations_2` in
+    `series_figures`, `<series>_populations_<n>` files (one PDF per series as before). Window:
+    the populations tab has a page list of its own, kept in step with the spectra tab's (either
+    turns both; both drawn per page); ◀ ▶ step through the pages from either tab. `[figures]`
+    `page_rows`, `page_columns`, and `max_points` now say they set both pages.

@@ -205,3 +205,35 @@ def test_the_arrows_go_through_a_series_pages_before_the_next_series(qtbot):
     # on another tab the arrows go from series to series
     page.figures.setCurrentWidget(page.panel("uptake"))
     assert page.step_spectrum(1, "series") and where()[0] == 1
+
+
+def test_the_populations_go_on_over_the_spectras_pages(qtbot, results, tmp_path):
+    """The populations page of a series goes on over the same pages as its spectra (owner,
+    2026-11-04: figures that grow with the data go on over pages), in the files and in the
+    window, where its list follows the spectra's."""
+    cfg = PlotConfig(page_rows=1, k=2, kinds=("spectra", "populations"), format="png",
+                     overview=False, series="all", dpi=40)
+    figures = series_figures(results, 0, cfg)
+    assert [n for n in figures if n.startswith("populations")] == [
+        "populations_1", "populations_2", "populations_3"]
+    assert figures["populations_2"]._suptitle.get_text().endswith("(page 2 of 3)")
+    written = sorted(p.name for p in write_figures(results, tmp_path / "png", cfg))
+    assert len([n for n in written if "_populations_" in n]) == 3
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from hxex.gui.results_workspace import ResultsWorkspace
+
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(dataclasses.replace(results, figures=cfg), None)
+    populations = page.panel("populations")
+    with qtbot.waitSignal(populations.drawn, timeout=30000):
+        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+    box = page.population_page
+    assert not box.isHidden() and box.count() == 3
+    with qtbot.waitSignal(populations.drawn, timeout=30000):
+        box.setCurrentIndex(1)  # the populations' list turns the spectra's page too
+    assert page.spectra_page.currentIndex() == 1
+    assert populations.view.figure._suptitle.get_text().endswith("(page 2 of 3)")

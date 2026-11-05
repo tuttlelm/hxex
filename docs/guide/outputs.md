@@ -196,7 +196,9 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     spectra page), with a last column that overlays the replicates (one marker shape per
     replicate); the star is the population-weighted mean of the spectrum. The axis reaches the
     largest population drawn, so a population above the amide count is shown, not cut off.
-    The page is left out when every spectrum has K=1;
+    The page is left out when every spectrum has K=1. It goes on over the same pages as the
+    spectra (`<series>_populations_1.png`, `_populations_2.png`, ...), with the same time
+    points;
   - **uptake**: deuteration against time (or index with `time_scale = "order"`), corrected by
     default when there are controls. The marker's area grows with the population; each
     replicate has its own colour (and, beyond six replicates, its own marker as well). A

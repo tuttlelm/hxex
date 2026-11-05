@@ -648,15 +648,28 @@ def plot_populations(
     reference: Reference | None = None,
     columns: int | None = None,
     cell: tuple[float, float] = (4.0, 3.0),
+    rows: Sequence[int] | None = None,
+    max_columns: int = PAGE_COLUMNS,
+    note: str = "",
+    layout: tuple | None = None,
 ) -> Figure:
     """The population map of a series, laid out like :func:`plot_series_spectra`: each cell the
     population against the deuterium level of every component (bootstrap draws when kept, mean
     with standard errors, the centroid as a star), and, in the time by replicate layout with
     ``overlay``, a last column that superimposes the replicates. ``reference`` marks the known
-    populations (open circles)."""
+    populations (open circles). ``rows``, ``max_columns``, ``note`` and ``layout``: a page of
+    :func:`spectra_pages`, as :func:`plot_series_spectra` takes them (the populations page goes
+    on over the same pages as the spectra; owner, 2026-11-04)."""
     info = series_info(results, data_id)
-    nrows, ncols_cells, positions, by_rep = _layout(info, columns)
-    reps = np.unique(info["reps"])
+    if rows is not None:
+        keep = np.isin(info["rows"], np.asarray(list(rows), dtype=int))
+        if not keep.any():
+            raise ValueError(f"none of the rows {list(rows)} is a spectrum of series {data_id}")
+        info = {k: (v[keep] if isinstance(v, np.ndarray) and len(v) == len(keep) else v)
+                for k, v in info.items()}
+    nrows, ncols_cells, positions, by_rep = _layout(info, columns, max_columns, layout or None)
+    reps = (np.asarray(layout[1]) if layout and layout[0] == "replicates"  # the series' own
+            else np.unique(info["reps"]))
     ncols = ncols_cells + (1 if overlay and by_rep else 0)
     fig = Figure(figsize=(cell[0] * ncols, cell[1] * nrows))
     axes = fig.subplots(nrows, ncols, squeeze=False)
@@ -705,8 +718,8 @@ def plot_populations(
                 if known is not None and not drawn:
                     ov.scatter(known[0], known[1], s=70, facecolors="none", edgecolors="darkred",
                                lw=1.5, zorder=6, gid="reference")
-    _page_header(fig, info["label"], _population_legend(fig, reps if ncols > ncols_cells
-                                                         else ()))
+    _page_header(fig, f"{info['label']} ({note})" if note else info["label"],
+                 _population_legend(fig, reps if ncols > ncols_cells else ()))
     return fig
 
 

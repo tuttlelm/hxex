@@ -172,9 +172,14 @@ def series_figures(
             for page in pages:  # "spectra", or "spectra_1", "spectra_2", ... over pages
                 name = kind if len(pages) == 1 else f"{kind}_{page.number}"
                 out[name] = plot_spectra_page(results, data_id, config, page)
-        elif kind == "populations":
-            out[kind] = plot_populations(results, data_id, k=config.k,
-                                         corrected=config.corrected, reference=reference)
+        elif kind == "populations":  # on the spectra's pages: "populations_1", ...
+            pages = series_spectra_pages(results, data_id, config)
+            for page in pages:
+                name = kind if len(pages) == 1 else f"{kind}_{page.number}"
+                out[name] = plot_populations(
+                    results, data_id, k=config.k, corrected=config.corrected,
+                    reference=reference, rows=page.rows, max_columns=config.page_columns,
+                    note=page.note, layout=page.layout)
         else:
             out[kind] = plot_uptake(results, data_id, x=uptake_axis(results, config),
                                     scale=config.scale, corrected=config.corrected,
@@ -293,7 +298,7 @@ def write_figures(
         else:
             for kind in series_kinds(results, data_id, config):
                 pages = (len(series_spectra_pages(results, data_id, config))
-                         if kind == "spectra" else 1)  # page files: <stem>_spectra_<n>
+                         if kind in ("spectra", "populations") else 1)  # <stem>_spectra_<n>
                 names += ([f"{stem}_{kind}.{config.format}"] if pages == 1 else
                           [f"{stem}_{kind}_{n}.{config.format}" for n in range(1, pages + 1)])
     made = {"": results.settings.created if results.settings is not None else ""}

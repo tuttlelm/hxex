@@ -1790,10 +1790,12 @@ _COMMENTS: dict[str, str] = {
     "figures.residual": "a residual panel under every spectrum",
     "figures.k": "draw every series at this number of populations (unset: each spectrum at "
                "its own K, the fit's or the review's choice)",
-    "figures.page_rows": "the most rows of a spectra page; more go on further pages",
-    "figures.page_columns": "the most columns of a spectra page (more replicates of a time "
-                            "point go on over the next row)",
-    "figures.max_points": "the most time points a series' spectra pages draw, spread over "
+    "figures.page_rows": "the most rows of a spectra page (and of the populations page, which "
+                         "goes on over the same pages); more go on further pages",
+    "figures.page_columns": "the most columns of a spectra or populations page (more "
+                            "replicates of a time point go on over the next row)",
+    "figures.max_points": "the most time points a series' spectra and populations pages draw, "
+                          "spread over "
                           "log time (a kinetics run's hundreds thinned; every one is still "
                           "fitted); false: every time point",
     "run.envelope.mode": '"theory" (the ion type\'s isotope clusters), "mixed" (ion types a '

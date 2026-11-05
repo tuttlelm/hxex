@@ -217,9 +217,17 @@ class ResultsWorkspace(QWidget):
                                      "and page_columns; max_points thins a long time course)")
         self.spectra_page.currentIndexChanged.connect(lambda _i: self._draw_spectra_page())
         self.spectra_page.hide()
+        # the populations tab goes on over the same pages: its own list, kept in step
+        self.population_page = QComboBox()
+        self.population_page.setToolTip("which page of the series' populations (the same pages "
+                                        "as its spectra)")
+        self.population_page.currentIndexChanged.connect(self.spectra_page.setCurrentIndex)
+        self.population_page.hide()
+        self._populations_paged = False  # the series' populations page is drawn per page
         self._spectra_job = None  # (results, data_id, config, pages) of the series shown
         self._land_on_last_page = False  # stepping back into a series: its last page
-        for box in (self.time_axis, self.overview_page, self.spectra_page):  # as wide as needed
+        for box in (self.time_axis, self.overview_page, self.spectra_page,
+                    self.population_page):  # as wide as needed
             box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._overview_figures: dict[str, object] = {}  # page -> figure, for _overview_of
         self._overview_of = None  # the results those figures were drawn from
@@ -263,6 +271,8 @@ class ResultsWorkspace(QWidget):
                 panel.add_option(self.overview_page)
             if name == "spectra":
                 panel.add_option(self.spectra_page)
+            if name == "populations":
+                panel.add_option(self.population_page)
             if self.window is not None:
                 panel.clicked.connect(
                     lambda gid: self.window.statusBar().showMessage(gid, 5000))
@@ -396,8 +406,8 @@ class ResultsWorkspace(QWidget):
         (-1) page; False at either end (the step then goes to the next series)."""
         item = self.tree.currentItem()
         if self._spectra_job is None or item is None or item.data(0, KIND) not in (
-                "series", "peptide") or self.figures.currentWidget() is not self.panels.get(
-                "spectra"):
+                "series", "peptide") or self.figures.currentWidget() not in (
+                self.panels.get("spectra"), self.panels.get("populations")):
             return False
         at = self.spectra_page.currentIndex() + step
         if not 0 <= at < self.spectra_page.count():
@@ -405,10 +415,12 @@ class ResultsWorkspace(QWidget):
         self.spectra_page.setCurrentIndex(at)
         return True
 
-    def _show_spectra_pages(self, results, data_id: int, config) -> None:
+    def _show_spectra_pages(self, results, data_id: int, config,
+                            populations: bool = False) -> None:
         """The series' spectra pages: the list in the tab's bar (shown when there are several;
         the page kept when the same series is drawn again; the last one when stepping back
-        into the series), and the chosen page drawn."""
+        into the series), and the chosen page drawn; with ``populations``, its populations page
+        too, on the same pages."""
         from ..report.figures import series_spectra_pages
 
         pages = series_spectra_pages(results, data_id, config)
@@ -418,13 +430,16 @@ class ResultsWorkspace(QWidget):
             keep = len(pages) - 1
         self._land_on_last_page = False
         self._spectra_job = (results, data_id, config, pages)
-        self.spectra_page.blockSignals(True)
-        self.spectra_page.clear()
-        for page in pages:
-            self.spectra_page.addItem(f"page {page.number} of {page.of}")
-        self.spectra_page.setCurrentIndex(min(max(keep, 0), len(pages) - 1))
-        self.spectra_page.blockSignals(False)
+        self._populations_paged = populations
+        for box in (self.spectra_page, self.population_page):
+            box.blockSignals(True)
+            box.clear()
+            for page in pages:
+                box.addItem(f"page {page.number} of {page.of}")
+            box.setCurrentIndex(min(max(keep, 0), len(pages) - 1))
+            box.blockSignals(False)
         self.spectra_page.setVisible(len(pages) > 1)
+        self.population_page.setVisible(len(pages) > 1 and populations)
         self._draw_spectra_page()
 
     def _draw_spectra_page(self) -> None:
@@ -433,9 +448,19 @@ class ResultsWorkspace(QWidget):
         if self._spectra_job is None:
             return
         results, data_id, config, pages = self._spectra_job
-        page = pages[max(self.spectra_page.currentIndex(), 0)]
+        at = max(self.spectra_page.currentIndex(), 0)
+        page = pages[at]
         self.panel("spectra").draw(
             lambda: plot_spectra_page(results, data_id, config, page))
+        if self._populations_paged:  # the same page of the populations
+            from ..report.series import plot_populations
+
+            self.population_page.blockSignals(True)
+            self.population_page.setCurrentIndex(at)
+            self.population_page.blockSignals(False)
+            self.panel("populations").draw(lambda: plot_populations(
+                results, data_id, k=config.k, corrected=config.corrected, rows=page.rows,
+                max_columns=config.page_columns, note=page.note, layout=page.layout))
 
     # --- the list of spectra -------------------------------------------------------------------
 
@@ -688,14 +713,19 @@ class ResultsWorkspace(QWidget):
                 if name not in drawn:
                     panel.clear("one population in every spectrum: no population map")
                     continue
-                if name == "spectra":  # on pages: the one chosen (the first for a new series)
-                    self._show_spectra_pages(results, data_id, config)
+                if name == "spectra":  # on pages: the one chosen (the first for a new series),
+                    # the populations on the same pages
+                    self._show_spectra_pages(results, data_id, config,
+                                             populations="populations" in drawn)
+                    continue
+                if name == "populations":  # drawn with its spectra's page
                     continue
                 one = dataclasses.replace(config, kinds=(name,))
                 panel.draw(lambda one=one, name=name: series_figures(results, data_id,
                                                                      one)[name])
         elif kind == "point":
             self.spectra_page.hide()
+            self.population_page.hide()
             self._spectra_job = None
             point = payload[2]
             rows = [s.index for s in point.spectra]
