@@ -1977,3 +1977,30 @@ def test_info_says_what_the_bootstraps_cover():
     both = _bootstrap_text(Bundle(boot([20] * 4), {1: boot([20] * 4), 2: boot([20, 0, 0, 20])}), 4)
     assert both == ("at each spectrum's chosen K, 20 resamples; at K = 1 for every spectrum; "
                     "at K = 2 for 2 of 4 spectra (chosen in the review)")
+
+
+def test_a_specexport_project_without_analysis_fasta_is_told_where_its_sequences_are(
+        tmp_path, capsys):
+    """The analysis stays explicit (owner, 2026-11-04): with no [analysis] fasta, hxex check
+    says in one line that the sequence comes from the peptides and names the FASTA files to
+    give; hxex info lists the sequences a SpecExport read recorded."""
+    data = tmp_path / "SpecExport"
+    for name in ("WT", "M1"):
+        (data / name / "0002-0005-KVLA").mkdir(parents=True)
+        (data / name / "0002-0005-KVLA" / "Non-1-z2.csv").write_text("300.1,5\n300.2,4\n")
+        (data / f"{name}.fasta").write_text(f">{name}\nMKVLAGHEDW\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n')
+    cli.main(["check", str(path)])
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if x.startswith("sequences"))
+    assert "[analysis] fasta is not set: the analysis takes the sequence from the peptides" in line
+    assert 'name M1.fasta, WT.fasta there (fasta = { M1 = "SpecExport/M1.fasta", ... })' in line
+    path.write_text(path.read_text() + '[analysis]\nfasta = "SpecExport/WT.fasta"\n')
+    cli.main(["check", str(path)])
+    assert "[analysis] fasta is not set" not in capsys.readouterr().out
+    seqs = {"WT": {"sequence": "MKVLAGHEDW", "first": 1, "file": "WT.fasta"},
+            "M1": {"sequence": "MKVLAGHEDW", "first": 1, "file": "M1.fasta"},
+            "M2": {"sequence": "acKVLA", "first": 5, "file": "M2.fasta"}}
+    assert cli._sequences_text(seqs) == ("WT (WT.fasta), M1 (M1.fasta): residues 1-10; "
+                                         "M2 (M2.fasta): residues 5-8")

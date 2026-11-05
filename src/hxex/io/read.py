@@ -305,6 +305,29 @@ def folder_name_disagreements(entries: Sequence[PeptideEntry], fmt: str, *,
     return out
 
 
+def _fasta_sequences(root: Path, entries) -> dict[str, dict]:
+    """The protein sequence each sample's peptides were read against (SpecExport: its
+    ``SAMPLE.fasta``), kept in the read record so a bundle says which protein and numbering its
+    peptides come from (owner, 2026-11-04): sample -> ``sequence``, ``first`` (the number of its
+    first residue, from a ``>NAME/START-END`` header) and ``file``."""
+    from .entries import read_fasta_numbered
+    from .specexport import _fasta_files
+
+    fasta = {p.stem: p for p in _fasta_files(root)}
+    out = {}
+    for sample in sorted({str(e.sample) for e in entries}):
+        path = fasta.get(sample)
+        if path is None:
+            continue
+        try:
+            sequence, first = read_fasta_numbered(path)
+        except Exception as exc:  # noqa: BLE001 - the read did; a record is not worth a stop
+            log.debug("%s: not recorded: %s", path.name, exc)
+            continue
+        out[sample] = {"sequence": sequence, "first": int(first), "file": path.name}
+    return out
+
+
 def _read(entries, root: Path, fmt: str, *, project, samples,
           peptide_ranges, recorded_dir: str, record_paths: str, known: Mapping | None,
           peptide_region=None,
@@ -347,6 +370,7 @@ def _read(entries, root: Path, fmt: str, *, project, samples,
         "peptide_ranges": None if peptide_ranges is None else list(peptide_ranges),
         **({} if peptide_region is None else {"peptide_region": [int(x) for x in peptide_region]}),
         "files": files,
+        **({"sequences": _fasta_sequences(root, kept)} if fmt == "specexport" else {}),
     }
     return SpectrumSet.from_spectra(
         (replace(s, spectrum_id=qualify_spectrum_id(project, s.spectrum_id)) for s in spectra),
@@ -380,7 +404,7 @@ def read_spectra_source(
     if "undeut_time" in source or "fulldeut_time" in source:  # records before the roles
         log.info("the record's control times (undeut_time, fulldeut_time) are no longer used: "
                  "the control labels give their spectra a role")
-    return _read(
+    data = _read(
         [PeptideEntry.from_dict(e) for e in source["entries"]], root, fmt,
         project=source["project"], samples=source.get("samples"),
         peptide_ranges=source.get("peptide_ranges"), recorded_dir=source["data_dir"],
@@ -388,6 +412,19 @@ def read_spectra_source(
         record_paths=source.get("record_paths", "path"), known=source.get("files", {}),
         on_change=on_change, progress=progress, cancel=cancel,
     )
+    if "sequences" not in source:  # records before the sequences were kept
+        return data
+    # the recorded peptides were read against the recorded sequences: keep both together
+    now = (data.source or {}).get("sequences", {})
+    for sample, kept in source["sequences"].items():
+        found = now.get(sample)
+        if found is not None and (found["sequence"], found["first"]) != (kept["sequence"],
+                                                                         kept["first"]):
+            log.warning("%s differs from the sequence recorded when the spectra were first "
+                        "read: the recorded one is kept with the recorded peptides (run from "
+                        "the project file to read the peptides against the new file)",
+                        kept.get("file") or f"{sample}.fasta")
+    return replace(data, source={**data.source, "sequences": source["sequences"]})
 
 
 def read_source(source: Mapping, **kwargs) -> SpectrumSet:

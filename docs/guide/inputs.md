@@ -202,7 +202,10 @@ SpecExport/
   beside its folder, not inside it, and `data_dir` is the folder that holds the samples, not a
   sample folder itself. The suffix is `.fasta` in any case (`WT.FASTA` too); `.fa` is not
   looked for. If the FASTA has several records, the last is used (with a warning). A sequence
-  written wholly in lower case is read in capitals.
+  written wholly in lower case is read in capitals. The run keeps each sample's sequence in its
+  results (`hxex info` lists them). The analysis does not take its sequence from these files
+  unless you name them in `[analysis] fasta` (without it, the sequence comes from the
+  peptides); `hxex check` and `hxex analyse` say so in one line, naming the files.
 - **A peptide** is a folder named `START-END-...`. Its sequence is cut from the sample's FASTA by
   the range, and the sequence in the folder name is checked against the FASTA (the residues
   only: modified residues and terminal groups are not compared). Other folders (for example an

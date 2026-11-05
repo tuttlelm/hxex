@@ -63,3 +63,34 @@ def test_the_view_shows_the_project_and_describes_a_click(qtbot, tmp_path):
     assert view.about.text().startswith("M1: residue 6, H")
     view.show_project(None)
     assert "No project file open" in view.text.toPlainText()
+
+
+def test_the_sequences_a_run_stored_stand_in_for_missing_files(tmp_path):
+    """A SpecExport run keeps each sample's sequence in its bundle (owner, 2026-11-04): the
+    files come first, a file that no longer matches is said, and the stored copies are shown
+    when the files are gone."""
+    import json
+
+    from hxex.io.bundle import KIND, MANIFEST
+
+    data = tmp_path / "SpecExport"
+    data.mkdir()
+    (data / "WT.fasta").write_text(">WT/3-12\nMKPLAAGDKE\n", encoding="utf-8")
+    (data / "M1.fasta").write_text(">M1/3-12\nMKPLAHGDKE\n", encoding="utf-8")
+    (tmp_path / "out").mkdir()
+    stored = {"WT": {"sequence": "MKPLAAGDKE", "first": 3, "file": "WT.fasta"},
+              "M1": {"sequence": "MKPLAAGDKE", "first": 3, "file": "M1.fasta"}}
+    (tmp_path / "out" / MANIFEST).write_text(json.dumps(
+        {"kind": KIND, "configs": {"spectra_source": {"reader": "specexport",
+                                                      "sequences": stored}}}))
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "seq"\n\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
+                    '\n[output]\nbundle = "out"\n', encoding="utf-8")
+    rows, _, message = project_sequences(path)
+    assert [r.samples for r in rows] == [["M1"], ["WT"]]  # the files, as they are now
+    assert message.startswith("M1.fasta differs from the copy the run stored")
+    for f in data.iterdir():
+        f.unlink()
+    rows, _, message = project_sequences(path)
+    assert [r.samples for r in rows] == [["M1", "WT"]] and rows[0].first == 3
+    assert "the sequences the run stored in its bundle are shown" in message

@@ -138,7 +138,10 @@ prolines (which have no amide hydrogen to exchange) are in grey. The regions of
 `[[analysis.regions]]` are coloured bars under their residues and the sites of
 `[analysis.sites]` are underlined, with a key above. Click a residue to see its number, what it
 is, how the other samples differ there, and its regions and site. **Read again** reads the
-FASTA files again after you change one.
+FASTA files again after you change one. A run of SpecExport data keeps each sample's sequence in
+its results, so the view still shows them when the FASTA files have moved (it says so), and it
+says when a FASTA no longer matches the copy the run kept (the file is shown; run again to read
+the peptides against it).
 
 ## Results
 

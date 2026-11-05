@@ -30,7 +30,7 @@ import signal
 import sys
 import threading
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -540,6 +540,13 @@ def cmd_check(args) -> int:
             if not entries:
                 problems.append(f"no spectra of format {inp.format} in {inp.data_dir}"
                                 + _format_hint(project))
+            if inp.format == "specexport" and (project.analysis is None
+                                               or project.analysis.fasta is None):
+                from .io.specexport import _fasta_files
+
+                _say(f"{'sequences':14s} "
+                     + _fasta_note(inp.data_dir, ({"file": p.name}
+                                                  for p in _fasta_files(inp.data_dir))))
             problems += _check_peptides(project, entries)
             problems += _check_folder_files(project, entries)
             problems += _check_controls_present(project, roles)
@@ -1453,6 +1460,33 @@ def _same_folder(a: Path, b: Path) -> bool:
         return Path(a) == Path(b)
 
 
+def _fasta_note(folder, sequences) -> str:
+    """The one line saying that a SpecExport project's analysis has no sequence of its own:
+    the reader's FASTA files are used to read the peptides, the analysis only those named in
+    ``[analysis] fasta`` (owner, 2026-11-04: the analysis stays explicit)."""
+    files = [str(v["file"]) for v in sequences if v.get("file")]
+    where = Path(str(folder)).name or str(folder)
+    example = f'fasta = {{ {Path(files[0]).stem} = "{where}/{files[0]}", ... }}' if files else ""
+    return ("[analysis] fasta is not set: the analysis takes the sequence from the peptides"
+            + (f"; to give it the sequences the peptides were read against, name "
+               f"{', '.join(files)} there ({example})" if files else ""))
+
+
+def _sequences_text(sequences: Mapping) -> str:
+    """The ``hxex info`` line of the sequences a SpecExport read recorded: each sample's
+    residue range and FASTA file, samples with the same sequence on one entry."""
+    import re
+
+    groups: dict[tuple, list[str]] = {}
+    for sample, v in sequences.items():
+        n = len(re.findall(r"[a-z]*[A-Z]", str(v["sequence"])))  # by residues (modX labels)
+        first = int(v.get("first", 1))
+        groups.setdefault((str(v["sequence"]), first, first + n - 1), []).append(
+            f"{sample} ({v['file']})" if v.get("file") else str(sample))
+    return "; ".join(f"{', '.join(names)}: residues {lo}-{hi}"
+                     for (_, lo, hi), names in groups.items())
+
+
 def _peak_measure_text(measure) -> str:
     """What the bins took (heights or areas) and why, for ``hxex info``."""
     if measure is None:
@@ -1595,6 +1629,8 @@ def cmd_info(args) -> int:
              + (f" ({m['versions']['hxex_commit']})"
                 if m.get("versions", {}).get("hxex_commit") else "")),
             ("input", source.get("reader", source.get("format", "(not recorded)"))),
+            *([("sequences", _sequences_text(source["sequences"]))]
+              if source.get("sequences") else []),
             ("bin values", _peak_measure_text(b.peak_measure())),
             ("measurements", str(len(fit))),
             ("series", str(len(set(fit.data_id.tolist())))),
@@ -1868,6 +1904,12 @@ def cmd_analyse(args) -> int:
                 log.warning("%s is waiting for its %s; the analysis uses what it holds",
                             path, ", ".join(b.pending))
             opened[name] = Results.from_bundle(b)
+        if config.fasta is None:
+            for r in opened.values():
+                if (src := r.settings.spectra_source or {}).get("reader") == "specexport":
+                    log.info("%s", _fasta_note(src.get("data_dir", "the data folder"),
+                                               (src.get("sequences") or {}).values()))
+                    break
         results = RunSet(opened, merge=config.merge) if several else opened[""]
         if not outs:
             from .report import analysis_references

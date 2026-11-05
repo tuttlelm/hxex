@@ -139,8 +139,12 @@ differs is read with a warning, or refused with `on_change="error"`, and its new
 `files` keeps the old identity under `previous`; for `read_spectra` (HX-Express, SpecExport,
 pooled) the format, project, data directory, entries, filters and `files` (each
 entry's input: an HX-Express file, or a SpecExport folder identified as a whole; the controls'
-roles come from the labels, so no control time is recorded), repeated by
-`hxex.io.read_spectra_source`; `hxex.io.read_source` repeats either kind). Every record
+roles come from the labels, so no control time is recorded), and for SpecExport `sequences`
+(each sample's `sequence` from its `SAMPLE.fasta`, the number of its `first` residue, and the
+`file` name; since 2026-11-04: the sequence the peptides were read against, listed by `hxex info`
+and shown by the GUI's Sequence view when the files are gone), repeated by
+`hxex.io.read_spectra_source` (which keeps the recorded `sequences` with the recorded entries,
+warning when a FASTA has changed since); `hxex.io.read_source` repeats either kind). Every record
 carries `time_scale` (`seconds`, or `order` when the times only order the points,
 `[input] time_scale`), read back as `Results.time_scale`; a rerun from stored spectra keeps
 it unless the project file sets it. A scan-file

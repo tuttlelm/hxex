@@ -336,3 +336,19 @@ def test_a_missing_charge_names_the_charges_found(tmp_path):
         f.unlink()
     with pytest.raises(hio.ReadError, match=r"\(no spectrum files of any charge\)"):
         hio.read_specexport_dir(folder, entry)
+
+
+def test_a_specexport_read_records_its_sequences(tmp_path, caplog):
+    """Each sample's FASTA goes into the read record (owner, 2026-11-04), numbered as the
+    header says; a repeated read keeps the recorded one with the recorded peptides and warns
+    when the file has changed since."""
+    sample(tmp_path, "WT", "MKVLAGHEDW", ["0002-0005-KVLA"], header="WT/1-10")
+    entries = hio.scan(tmp_path, "specexport")
+    source = hio.read_spectra(entries, tmp_path, "specexport", project="p").source
+    assert source["sequences"] == {"WT": {"sequence": "MKVLAGHEDW", "first": 1,
+                                          "file": "WT.fasta"}}
+    (tmp_path / "WT.fasta").write_text(">WT/1-10\nMKVLAGHEDY\n")
+    with caplog.at_level(logging.WARNING):
+        again = hio.read_spectra_source(source).source
+    assert again["sequences"] == source["sequences"]
+    assert "WT.fasta differs from the sequence recorded" in caplog.text

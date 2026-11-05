@@ -8,7 +8,9 @@ marked. A residue clicked says what it is. Basic to start (owner): coverage come
 
 The sequences are those the analysis reads: ``[analysis] fasta`` (one file, or one per sample),
 else, for SpecExport, the ``SAMPLE.fasta`` files beside the sample folders; a FASTA numbered by
-its header (``>NAME/START-END``) starts at START.
+its header (``>NAME/START-END``) starts at START. The files come first; a SpecExport run also
+keeps each sample's sequence in its bundle (the read record's ``sequences``), shown when the
+files are not found, and a file that no longer matches it is said (owner, 2026-11-04).
 """
 
 from __future__ import annotations
@@ -57,18 +59,38 @@ def residues_of(sequence: str) -> tuple[str, ...]:
         return tuple(re.findall(r"[a-z]*[A-Z]", str(sequence)))
 
 
+def stored_sequences(bundle: Path | None) -> dict[str, tuple[str, int, str]]:
+    """The sequences a SpecExport run stored in ``bundle`` (sample -> (sequence, first residue
+    number, FASTA file name)); none without a bundle or for another format."""
+    from ..io.bundle import bundle_manifest
+
+    if bundle is None:
+        return {}
+    try:
+        manifest = bundle_manifest(bundle) or {}
+    except Exception:  # noqa: BLE001 - no bundle to read: nothing stored
+        return {}
+    source = (manifest.get("configs") or {}).get("spectra_source") or {}
+    return {str(name): (str(v["sequence"]), int(v.get("first", 1)), str(v.get("file", "")))
+            for name, v in (source.get("sequences") or {}).items()}
+
+
 def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
-    """The rows of the project's sequences, its annotations, and what to say when there is no
-    sequence (else '')."""
+    """The rows of the project's sequences, its annotations, and a message: why there is no
+    sequence when there are no rows, else what to say of where they came from ('' when the
+    files were read as they are)."""
     from ..analysis.compare import Annotations
     from ..config import load_project
     from ..io import read_fasta_numbered
     from ..project_edit import live_settings
 
+    notes: list[str] = []
     try:
-        config = load_project(project, analysis_only=True).analysis
+        loaded = load_project(project, analysis_only=True)
+        config = loaded.analysis
     except Exception as exc:  # noqa: BLE001 - said in the view
         return [], Annotations(), f"The project file does not read: {exc}"
+    stored = stored_sequences(loaded.output.bundle)
     annotations = config.annotations if config is not None else Annotations()
     found: dict[str, tuple[tuple[str, ...], int]] = {}
     if config is not None and config.fasta is not None:
@@ -99,6 +121,16 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
                         log.warning("%s does not read: %s", path.name, exc)
                         continue
                     found[path.stem] = (residues_of(seq), first)
+                    kept = stored.get(path.stem)
+                    if kept is not None and (residues_of(kept[0]), kept[1]) != (
+                            residues_of(seq), first):
+                        notes.append(f"{path.name} differs from the copy the run stored in its "
+                                     "bundle (the file is shown; rerun to read the peptides "
+                                     "against it)")
+    if not found and stored:  # the files gone: the run's copies
+        found = {name: (residues_of(seq), first) for name, (seq, first, _) in stored.items()}
+        notes.append("The FASTA files are not found: the sequences the run stored in its bundle "
+                     "are shown.")
     if not found:
         return [], annotations, ("No sequence: name the FASTA file(s) in [analysis] fasta (or, "
                                  "for SpecExport data, put SAMPLE.fasta beside each sample's "
@@ -120,7 +152,7 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
     for row in rows[1:]:
         row.differs = {n for n in range(row.first, row.last + 1)
                        if base.at(n) and row.at(n) and row.at(n) != base.at(n)}
-    return rows, annotations, ""
+    return rows, annotations, " ".join(notes)
 
 
 def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE) -> str:
@@ -260,13 +292,14 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
             self.text.setPlainText("No project file open.")
             return
         self.rows, self.annotations, message = project_sequences(project)
-        if message:
+        if not self.rows:
             self.text.setPlainText(message)
             return
         self.text.setHtml(sequence_html(self.rows, self.annotations))
         n = sum(len(r.samples) for r in self.rows)
-        self.about.setText(f"{n} sample(s), {len(self.rows)} distinct sequence(s). Click a "
-                           "residue to see what it is.")
+        self.about.setText(f"{n} sample(s), {len(self.rows)} distinct sequence(s). "
+                           + (f"{message} " if message else "")
+                           + "Click a residue to see what it is.")
 
     def _clicked(self, url: QUrl) -> None:
         text = url.toString()
@@ -277,4 +310,4 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
 
 
 __all__ = ["SequenceRow", "SequenceView", "describe", "project_sequences", "residues_of",
-           "sequence_html"]
+           "sequence_html", "stored_sequences"]

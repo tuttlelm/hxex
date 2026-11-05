@@ -7087,3 +7087,19 @@ CSVs or mzML if wanted.
     clicked described (number, residue, the other rows' residues there, region, site). HTML in
     a `QTextBrowser`, each residue a link. Tutorial: WT, D109H (H at 109), R120G (G at 120).
     Not yet (owner: basic first): coverage under the sequence once results exist.
+
+272. **SpecExport sequences kept in the bundle; the analysis stays explicit (owner, 2026-11-04:
+    "follow your recommendations").** A SpecExport read records each sample's FASTA in its read
+    record (`spectra_source.sequences`: `sequence`, `first`, `file`; `io.read._fasta_sequences`),
+    so the bundle says which sequence its peptides were read against. The files take
+    precedence: the Sequence view shows them, says when one differs from the stored copy, and
+    falls back on the stored copies when the files are gone (`gui.sequence_view.
+    stored_sequences`, from the manifest alone). `read_spectra_source` keeps the recorded
+    sequences with the recorded entries and warns when a FASTA changed since. `hxex info` lists
+    them (samples with one sequence on one entry, with the residue range). The analysis still
+    reads only `[analysis] fasta` (a fallback on the files would save a setting, but the
+    analysis's sequence would then depend on the input format, and moving a file would change
+    its numbering without a word); with none set on SpecExport data, `hxex check` (a `sequences` line) and `hxex
+    analyse` (one INFO line) say the sequence comes from the peptides and name the FASTA files
+    to give. Bundles made before keep no `sequences`; `hxex run` on such a project lists
+    `spectra_source` among the changed settings once.
