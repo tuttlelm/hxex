@@ -415,8 +415,11 @@ calls the library in the GUI's own process. Details:
   Beside the tree (owner, 2026-11-03): a flat list of every spectrum (the columns of
   `spectra.csv`), sorted by any column and filtered (flagged, a K, a sample, not yet
   reviewed, a screen score above a value, ...), with the same spectrum view and review panel,
-  for working through a dataset's problems one spectrum after another. Series review (owner,
-  2026-11-03, confirmed): a second user table, a copy of `series.csv` named in `[review]
+  for working through a dataset's problems one spectrum after another. Series review
+  (NOT BUILT; owner, 2026-11-04: "the current mechanism is okay for now": a decision or note
+  made on a series or time point in the review panel is written for each of its spectra, which
+  did not exist when this was designed; kept here in case it is wanted later): a second user
+  table, a copy of `series.csv` named in `[review]
   series_table` (suggested `user_series_review.csv`), read by the series' identity (sample,
   peptide_range, peptide, charge; `data_id` can change on a rerun), its `note`, and its
   `review_status` (`rejected`: every spectrum of the series is treated as rejected, as an
@@ -992,7 +995,8 @@ Planned, not built:
    spectra, the Analysis list in two sections, the overview tab, Undo in the project editor, the
    sortable Tables grid, the flat list of spectra, and a series' spectra on pages. Next: column
    filters in the list; the details beside the figures (a spectrum's `spectra.csv` row, a
-   series' `uptake.csv` rows) and a read-only Tables view in Results; the series review table;
+   series' `uptake.csv` rows) and a read-only Tables view in Results; (the series review table:
+   not for now, owner 2026-11-04);
    the analysis tables. Panel limits for the other figures (owner, 2026-11-04): done for the
    analysis figures by `[analysis] page_size` (HISTORY 276) and the Results populations
    page (on the spectra's pages, HISTORY 277) and the fragment ladder (HISTORY 278); the

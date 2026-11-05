@@ -7186,3 +7186,10 @@ CSVs or mzML if wanted.
     project: a ladder page draws in 0.1 to 0.9 s; Compute takes about 3 min, nearly all of it
     the ladder rate fits (`ladder_rates`, 737 decay fits, 4,697 `curve_fit` calls), unchanged
     by the paging.
+
+280. **No series review table for now (owner, 2026-11-04: "I think the current mechanism is okay
+    for now, when we considered this I dont think I knew there would be the apply to all in
+    series functionality").** The second user table of the G3 design (one note and status per
+    series, `[review] series_table`) is not built: a decision or note made on a series or a
+    time point in the review panel is written for each of its spectra in the user review
+    table. The design stays in PLAN.md "GUI", marked not built.
