@@ -123,12 +123,15 @@ class AnalysisWorkspace(QWidget):
         self.data = DataPanel()
         self._kind_rows = None  # a kind selected: the rows of all its figures are shown
         self._rows_task = Latest(self, drawing_pool())
+        self._rows_wanted = None  # (kind, stems, outputs) to gather when the data tab is shown
+        self._gathering = 0  # which gathering is current; a stale one stops between figures
         self.data.activated.connect(self.go_to_spectra)
         self.views = QTabWidget()
         self.views.addTab(self.panel, "figure")
         self.views.addTab(self.data, "data")
         self.views.setTabToolTip(1, "the values of what the figure draws, one row per bar: "
                                     "sort, copy or save them as CSV")
+        self.views.currentChanged.connect(lambda _i: self._gather_if_shown())
         split = QSplitter()
         split.addWidget(left)
         split.addWidget(self.views)
@@ -411,11 +414,19 @@ class AnalysisWorkspace(QWidget):
             return
         stem = item.data(0, STEM)
         self._kind_rows = None
+        self._rows_wanted = None
+        self._gathering += 1  # a gathering under way stops at its next figure
         if stem is None and item.childCount():  # a kind: its first figure, every figure's rows
             item.setExpanded(True)
             stem = item.child(0).data(0, STEM)
             stems = [item.child(i).data(0, STEM) for i in range(item.childCount())]
-            self._gather_rows(item.data(0, KIND), stems, outputs)
+            self._kind_rows = item.data(0, KIND)
+            self._rows_wanted = (item.data(0, KIND), stems, outputs)
+            self.data.show_rows([], [], self._kind_rows)
+            self.data.set_note(f"The rows of the {len(stems)} figures of this kind are gathered "
+                               "when this tab is shown.")
+            self.views.setTabText(1, "data")
+            self._gather_if_shown()
         if stem is None:  # a kind with no figure: why, in the figure's place
             self.panel.save_name = ""
             self._clear_figure(self._off_text(self._planned.get(item.data(0, KIND)))
@@ -446,24 +457,41 @@ class AnalysisWorkspace(QWidget):
         self.data.set_note("")
         self.views.setTabText(1, f"data ({len(rows)})" if rows else "data")
 
+    def _gather_if_shown(self) -> None:
+        """A kind selected and the data tab in view: gather its figures' rows (only then: it
+        draws every figure of the kind, minutes for a run with hundreds)."""
+        if self._rows_wanted is None or self.views.currentWidget() is not self.data:
+            return
+        kind, stems, outputs = self._rows_wanted
+        self._rows_wanted = None
+        self._gather_rows(kind, stems, outputs)
+
     def _gather_rows(self, kind: str, stems: list[str], outputs) -> None:
         """A kind selected: the rows of every one of its figures in the data tab, a ``figure``
         column naming each one's file (owner, 2026-11-04: the first time point alone was
-        confusing). Made in the drawing thread (matplotlib is used by one thread at a time)."""
+        confusing). Made in the drawing thread (matplotlib is used by one thread at a time);
+        a new selection stops it between figures (a figure chosen meanwhile waits for one
+        figure, not for all), and a kind whose first figure carries no rows has none."""
         from .figures import figure_rows
 
         figures = dict(outputs.figures)
         self._kind_rows = kind
+        self._gathering += 1
+        mine = self._gathering
         self.data.show_rows([], [], kind)
         self.data.set_note(f"Gathering the rows of the {len(stems)} figures of this kind…")
 
         def work():
             columns, rows = ["figure"], []
-            for stem in stems:
+            for n, stem in enumerate(stems):
+                if self._gathering != mine:  # another selection since: stop
+                    return None
                 draw = figures.get(stem)
                 if draw is None:
                     continue
                 names, found = figure_rows(draw())
+                if n == 0 and not found:  # the kind's figures carry no rows
+                    break
                 columns += [n for n in names if n not in columns]
                 rows += [{"figure": stem, **r} for r in found]
             return columns, rows
@@ -473,7 +501,7 @@ class AnalysisWorkspace(QWidget):
                                    f"The rows could not be gathered: {message}"))
 
     def _rows_gathered(self, kind: str, made) -> None:
-        if self._kind_rows != kind:  # another selection since
+        if made is None or self._kind_rows != kind:  # another selection since
             return
         columns, rows = made
         if not rows:

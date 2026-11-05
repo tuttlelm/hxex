@@ -308,7 +308,9 @@ file), so what you see here is what the command writes.
   by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
   rows, in the order shown, as a CSV file named after the figure. Choose a kind of figure
   rather than one figure (the coverage maps, say) and the data tab gathers the rows of all its
-  figures, with a `figure` column naming each one's file.
+  figures, with a `figure` column naming each one's file. It does so when you open the data
+  tab, since it draws every figure of the kind (minutes for a run with hundreds); choosing
+  another figure meanwhile stops it.
 - Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
   choose one to see them in **Results** (the peptide is selected in the tree, its charge
   states under it). Where bars overlap, the menu lists every peptide under the pointer, top

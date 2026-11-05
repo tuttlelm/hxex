@@ -198,6 +198,10 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     stems = [coverage.child(i).data(0, 257) for i in range(coverage.childCount())]
     assert len(stems) == 2
     page.list.setCurrentItem(coverage)
+    # gathered only when the data tab is shown (it draws every figure of the kind: minutes
+    # for a run with hundreds; owner, 2026-11-04, ladders "stuck on drawing")
+    assert page.data.note.text().endswith("gathered when this tab is shown.")
+    page.views.setCurrentWidget(page.data)
     qtbot.waitUntil(lambda: page.data.model.columns[:1] == ["figure"], timeout=60000)
     gathered = page.data.model.rows
     assert {r["figure"] for r in gathered} == set(stems)
@@ -207,6 +211,11 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     one = page.data.model.rows
     assert "figure" not in page.data.model.columns and page.data.note.isHidden()
     assert len(one) == sum(r["figure"] == stems[1] for r in gathered)
+    # a new selection stops a gathering under way: its result is never shown
+    page.list.setCurrentItem(coverage)
+    page.list.setCurrentItem(coverage.child(0))
+    page._rows_gathered("coverage", None)  # a stopped gathering returns nothing
+    assert "figure" not in page.data.model.columns
 
 
 def test_the_data_tabs_menu_copies(qtbot):

@@ -7176,3 +7176,13 @@ CSVs or mzML if wanted.
     `ladder_..._z1_2`. `fragment_outputs(page_size=)`. The closure figure (a panel per
     condition) stays one page. Three fragment tests now give a tall page (their subject is
     not the paging).
+
+279. **A kind's rows gathered only on the data tab (owner, 2026-11-04: ladders "stuck on
+    drawing" on the private targeted fragment project).** Selecting a kind drew every one of
+    its figures to gather their rows, in the one drawing thread: 157 ladder pages there, none
+    of which carries rows, so a ladder chosen meanwhile waited behind them all. Now the
+    gathering starts only when the data tab is shown, a new selection stops it between
+    figures, and a kind whose first figure carries no rows stops at once. Measured on that
+    project: a ladder page draws in 0.1 to 0.9 s; Compute takes about 3 min, nearly all of it
+    the ladder rate fits (`ladder_rates`, 737 decay fits, 4,697 `curve_fit` calls), unchanged
+    by the paging.
