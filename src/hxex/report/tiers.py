@@ -21,6 +21,7 @@ from ..analysis import ResidueMap
 from ..analysis.residues import TIERS
 from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT
+from . import hover
 
 # no sign, undecided, two, two localised (the owner's), three, three localised
 TIER_COLOURS = ("#c3c8d0", "#e8b928", "#6b9be6", "#173f86", "#d77fa1", "#8e1f4f")
@@ -55,7 +56,8 @@ def plot_population_tiers(
         samples = list(dict.fromkeys(str(s) for s in residues.sample[k1]))
     code_of = {name: j for j, name in enumerate(TIERS)}
     n = int(length if length is not None else residues.residue[k1].max())
-    rows, labels, first_of_sample = [], [], []
+    rows, labels, first_of_sample, table = [], [], [], []
+    three_columns = residues.test_strength_3 is not None
     for s in samples:
         here = k1 & (residues.sample == s)
         points = {}
@@ -69,12 +71,22 @@ def plot_population_tiers(
             sel = here & (residues.role == role)
             sel &= (np.isnan(residues.time) if t is None else residues.time == t)
             line = np.full(n, np.nan)
+            point = _point_label(np.nan if t is None else t, role, time_scale)
             for i in np.flatnonzero(sel):
                 r = int(residues.residue[i])
                 if 1 <= r <= n and not residues.no_amide[i] and residues.population_tier[i]:
                     line[r - 1] = code_of[str(residues.population_tier[i])]
+                    row = {"sample": s, "time": np.nan if t is None else t,
+                           "time_label": point, "residue": r,
+                           "population_tier": str(residues.population_tier[i]),
+                           "test_strength_2": float(residues.test_strength_2[i]),
+                           "test_agreement_2": float(residues.test_agreement_2[i])}
+                    if three_columns:
+                        row["test_strength_3"] = float(residues.test_strength_3[i])
+                        row["test_agreement_3"] = float(residues.test_agreement_3[i])
+                    table.append(row)
             rows.append(line)
-            labels.append(f"{s}  {_point_label(np.nan if t is None else t, role, time_scale)}")
+            labels.append(f"{s}  {point}")
             first_of_sample.append(j == 0)
     image = np.ma.masked_invalid(np.array(rows))
     three = bool(np.isfinite(residues.test_strength_3[k1]).any())
@@ -82,8 +94,9 @@ def plot_population_tiers(
     cmap = ListedColormap(list(TIER_COLOURS)).with_extremes(bad="white")
     fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), 0.2 * len(rows) + 1.7))
     ax = fig.add_subplot()
-    ax.imshow(image, aspect="auto", cmap=cmap, vmin=-0.5, vmax=len(TIERS) - 0.5,
-              interpolation="nearest", extent=(0.5, n + 0.5, len(rows) - 0.5, -0.5))
+    cells = ax.imshow(image, aspect="auto", cmap=cmap, vmin=-0.5, vmax=len(TIERS) - 0.5,
+                      interpolation="nearest", extent=(0.5, n + 0.5, len(rows) - 0.5, -0.5))
+    hover.set_rows(cells, table)
     ax.set_yticks(range(len(rows)))
     ax.set_yticklabels(labels, fontsize=7)
     ax.tick_params(axis="y", length=2)

@@ -100,12 +100,21 @@ def figure_marks(fig: Figure) -> list[Mark]:
 def figure_rows(fig: Figure | None) -> tuple[list[str], list[dict]]:
     """The data table of ``fig``: the rows its visible artists carry
     (:func:`hxex.report.hover.set_row`), in the order they are drawn, and their columns in the
-    order first met (a row without a column leaves it empty). Nothing is drawn."""
+    order first met (a row without a column leaves it empty); a row drawn twice (the reference
+    in each panel of an overlay) is kept once. Nothing is drawn."""
     from ..report.hover import rows_of
 
     if fig is None:
         return [], []
-    rows = [row for a in fig.findobj() if a.get_visible() for row in rows_of(a)]
+    rows, seen = [], set()
+    for a in fig.findobj():
+        if not a.get_visible():
+            continue
+        for row in rows_of(a):
+            key = tuple((k, repr(v)) for k, v in row.items())
+            if key not in seen:
+                seen.add(key)
+                rows.append(row)
     columns = list(dict.fromkeys(name for row in rows for name in row))
     return columns, rows
 

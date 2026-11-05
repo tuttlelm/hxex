@@ -38,6 +38,7 @@ from matplotlib.ticker import MultipleLocator
 
 from ..analysis import ChoiceComparison, RegionComparison, ResidueComparison
 from ..io.times import format_time
+from . import hover
 
 STEPS = (2.0, 4.0)  # the size steps, in multiples of the threshold: 1-2, 2-4, above 4
 # not significant; less deuterium (light to dark); more deuterium (light to dark)
@@ -355,10 +356,12 @@ def plot_residue_significance(
         legend.append(_block_patch(block_outline))
     reference = comparison.reference or "the reference"
     quantity = "fD" if comparison.quantity == "fD" else "low-D population"
-    return _draw([("", *section)], n, legend,
-                 f"Residues different from {reference} ({quantity}): significant on the "
-                 "peptides both samples measured; colour = direction and size of that "
-                 "difference in multiples of the threshold", block_outline)
+    fig = _draw([("", *section)], n, legend,
+                f"Residues different from {reference} ({quantity}): significant on the "
+                "peptides both samples measured; colour = direction and size of that "
+                "difference in multiples of the threshold", block_outline)
+    hover.set_table(fig, comparison.columns(), np.isin(comparison.sample, samples))
+    return fig
 
 
 def plot_residue_significance_k2(
@@ -454,7 +457,12 @@ def plot_residue_significance_k2(
                 "direction and size in multiples of the threshold" if tested else
                 "where the number differs (differences in share and position need a bootstrap "
                 "at K = 2: [run.bootstrap] ks = [1, 2])"))
-    return _draw(sections, n, legend, title, block_outline)
+    fig = _draw(sections, n, legend, title, block_outline)
+    for name, table in (("populations: choice", choices), ("populations: share", population),
+                        ("low-D position", low), ("high-D position", high)):
+        if table is not None and len(table):
+            hover.set_table(fig, table.columns(), np.isin(table.sample, samples), section=name)
+    return fig
 
 
 def plot_region_significance(
@@ -513,8 +521,10 @@ def plot_region_significance(
         _hatch_patch(NOT_TESTED_HATCH, "not tested (no residue of the region compared)")]
     reference = comparison.reference or "the reference"
     names = [f"{r} ({a}-{b})" for a, b, r in order]
-    return _draw([("", labels, first, rows, hatches, outlines)], n, legend,
+    fig = _draw([("", labels, first, rows, hatches, outlines)], n, legend,
                  f"Regions different from {reference} (fD): the mean of their residues on the "
                  "peptides both samples measured; colour = direction and size in multiples of "
                  "the threshold", columns=names)
+    hover.set_table(fig, comparison.columns(), np.isin(comparison.sample, samples))
+    return fig
 

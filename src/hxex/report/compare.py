@@ -125,9 +125,10 @@ def _label(quantity: str) -> str:
     return "population (low D)" if quantity == "population" else "fD"
 
 
-def _rank_points(ax: Axes, x, y, se, colour: str, marker: str, zorder: float, gid: str) -> None:
+def _rank_points(ax: Axes, x, y, se, colour: str, marker: str, zorder: float, gid: str):
     """Points with capped standard-error bars, as every residue figure draws them: a 65 %
-    fill with a solid outline, error bars at the same opacity."""
+    fill with a solid outline, error bars at the same opacity. Returns the points (for their
+    data-table rows)."""
     small = marker == "o"
     bars = ax.errorbar(x, y, yerr=np.nan_to_num(se), fmt=marker,
                        markersize=3.5 if small else 5.0, color=colour,
@@ -135,6 +136,20 @@ def _rank_points(ax: Axes, x, y, se, colour: str, marker: str, zorder: float, gi
                        markeredgewidth=0.7, ecolor=to_rgba(colour, FILL), elinewidth=0.9,
                        capsize=2.0, capthick=0.9, zorder=zorder)
     bars.lines[0].set_gid(gid)
+    return bars.lines[0]
+
+
+def _value_rows(artist, sample: str, reference: str, time: float, time_scale: str,
+                measure: str, x, y, se) -> None:
+    """Give ``artist`` (a sample's points of a residue overlay) one data-table row per residue:
+    the sample, the figure's reference, the time, what is drawn (``measure``), the residue and
+    its value with its standard error."""
+    hover.set_rows(artist, [
+        {"sample": sample, "reference": reference, "time": float(time),
+         "time_label": hover.time_label(time, time_scale), "measure": measure,
+         "residue": int(r), "value": float(v), "value_se": float(e)}
+        for r, v, e in zip(np.asarray(x), np.asarray(y, dtype=float),
+                           np.asarray(se, dtype=float), strict=True)])
 
 
 def _top(value, se=None) -> float:
@@ -357,8 +372,12 @@ def plot_residue_overlay(
                 fell_back[name].update(choice.residue[rows & choice.control_fallback].tolist())
                 pop = choice.population_low[rows]
                 pop = pop if value == "pop_low" else 1 - pop
-                _rank_points(ax, choice.residue[rows], pop, choice.population_low_se[rows],
-                             colour, K2_MARKERS[value], 3 + n, f"overlay:{name}:{value}")
+                points = _rank_points(ax, choice.residue[rows], pop,
+                                      choice.population_low_se[rows], colour, K2_MARKERS[value],
+                                      3 + n, f"overlay:{name}:{value}")
+                _value_rows(points, name, reference, time, time_scale,
+                            "low-D share" if value == "pop_low" else "high-D share",
+                            choice.residue[rows], pop, choice.population_low_se[rows])
                 top = max(top, _top(pop, choice.population_low_se[rows]))
                 continue
             k, rank = OVERLAY_VALUES[value]
@@ -381,9 +400,15 @@ def plot_residue_overlay(
                                   markeredgecolor=colour, markeredgewidth=0.6,
                                   zorder=1.9 + 0.1 * n)
                 line.set_gid(f"overlay:{name}:avg")
+                _value_rows(line, name, reference, time, time_scale, "fD (K=1)",
+                            residues.residue[rows], residues.fD[rows], residues.fD_se[rows])
                 continue
-            _rank_points(ax, residues.residue[rows], residues.fD[rows], residues.fD_se[rows],
-                         colour, K2_MARKERS[value], 3 + n, f"overlay:{name}:{value}")
+            points = _rank_points(ax, residues.residue[rows], residues.fD[rows],
+                                  residues.fD_se[rows], colour, K2_MARKERS[value], 3 + n,
+                                  f"overlay:{name}:{value}")
+            _value_rows(points, name, reference, time, time_scale,
+                        f"fD ({hover.population(k, rank)})", residues.residue[rows],
+                        residues.fD[rows], residues.fD_se[rows])
     if not drawn:
         raise ValueError(f"no residue values of {reference!r} or {sample!r} at time {time:g}")
     both = shown[reference] & shown[sample]
@@ -828,9 +853,13 @@ def plot_region_bars(
                       color=colour, label=sample, yerr=np.nan_to_num(errors), hatch=hatch,
                       edgecolor="white" if hatch else None,
                       error_kw={"elinewidth": 0.7, "ecolor": "#555555"}, alpha=0.9)
+        table = regions.columns()
         for patch, name, v, se in zip(bars.patches, names, values, errors, strict=True):
             patch.set_gid(f"region:{sample}:{name}")
             hover.set_hover(patch, f"{sample}, region {name}", hover.value("fD", v, se))
+            hover.set_table(patch, table, sel & (regions.sample == sample)
+                            & (regions.region == name),
+                            time_label=hover.time_label(time, time_scale))
         top = max(top, _top(values, errors))
     labels = [textwrap.fill(name.replace(",", ", "), 10).replace(", ", ",") for name in names]
     ax.set_xticks(x, labels, rotation=0, fontsize=8)

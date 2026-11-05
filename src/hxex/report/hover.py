@@ -49,6 +49,27 @@ def rows_of(artist: Artist) -> list[dict]:
     return [one] if one else list(getattr(artist, _ROWS, []) or [])
 
 
+def set_table(artist: Artist, columns: dict, keep=None, **extra) -> None:
+    """Give ``artist`` the rows of a table's ``columns`` (name -> array, as an analysis table's
+    ``columns()``), those where ``keep`` is true (default: all), each with the ``extra`` columns
+    first (a map drawn from a whole table: its cells are not drawn one artist each). Added to
+    the rows ``artist`` already has."""
+    import numpy as np
+
+    names = list(columns)
+    arrays = [np.asarray(columns[n]) for n in names]
+    n = len(arrays[0]) if arrays else 0
+    chosen = np.ones(n, dtype=bool) if keep is None else np.asarray(keep, dtype=bool)
+    rows = [{**extra, **{name: _plain(a[i]) for name, a in zip(names, arrays, strict=True)}}
+            for i in np.flatnonzero(chosen)]
+    setattr(artist, _ROWS, list(getattr(artist, _ROWS, []) or []) + rows)
+
+
+def _plain(value):
+    """A table cell as a plain Python value (a NumPy scalar's ``item()``)."""
+    return value.item() if hasattr(value, "item") else value
+
+
 def time_label(time, scale: str = "seconds") -> str:
     """A time as the figures write it: ``30 min``, ``point 3`` when the times only order the
     points (``scale='order'``), ``undeuterated`` for NaN."""

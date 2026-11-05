@@ -316,12 +316,16 @@ def plot_redundancy_resolution(
         n_res = max(n_res, int(res.max()))
         prolines |= set(res[coverage.proline[rows]].tolist())
         shown = coverage.covered[rows]
+        # the table: the sample's rows of the coverage table, carried by its upper line
+        table_of = coverage.columns(), rows
         for ax, values, name in ((top, coverage.redundancy[rows], "redundancy"),
                                  (bottom, coverage.resolution[rows], "resolution")):
             y = np.where(shown, values, np.nan).astype(float)
             (line,) = ax.plot(res, y, color=colour, marker=marker, markersize=size,
                               linewidth=1.2, alpha=0.9, label=sample, zorder=10 - size / 2)
             line.set_gid(f"{name}:{sample}")
+            if name == "redundancy":
+                hover.set_table(line, *table_of)
     for ax, label in ((top, "redundancy"), (bottom, "resolution")):
         ax.set_ylabel(label)
         ax.set_ylim(bottom=0)

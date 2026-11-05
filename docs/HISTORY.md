@@ -7103,3 +7103,17 @@ CSVs or mzML if wanted.
     analyse` (one INFO line) say the sequence comes from the peptides and name the FASTA files
     to give. Bundles made before keep no `sequences`; `hxex run` on such a project lists
     `spectra_source` among the changed settings once.
+
+273. **Data tables for the residue figures (owner, 2026-11-04: "let's go in order", the residue
+    figures first).** Each residue figure now carries the rows it draws (`report.hover`; the
+    GUI's data tab, sortable, copied, saved as CSV): the profile one row per line and residue
+    (`description` as the tables name populations, `K`, `rank`, `fD`, `fD_se`); the choice one
+    row per residue (`two_populations`, `reason`, `fD_avg`/`fD_low`/`fD_high` with errors,
+    `population_low` with its error); the overlays one row per sample and residue (`measure`,
+    `value`, `value_se`, the figure's `reference`); the significance maps (K = 1, K = 2 with a
+    `section` column, regions) the rows of the comparison they colour; the tier map each
+    residue's tier and test strength and agreement; redundancy and resolution each sample's
+    coverage rows; the region bars their region rows. Maps drawn from a whole table carry it
+    on the figure (`hover.set_table`), not per cell. `gui.figures.figure_rows` keeps a row drawn
+    twice once (the reference in every panel of an overlay). Still without a table: the K=2
+    counts, butterfly, protection figures, and the Results uptake and populations pages.

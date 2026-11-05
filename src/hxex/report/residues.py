@@ -21,6 +21,7 @@ from scipy.stats import norm
 
 from ..analysis import ResidueMap
 from ..io.times import format_time
+from . import hover
 from .coverage import MARK_LINE
 
 # (K, rank) -> colour of its line and band, and its legend label (the owner's figures)
@@ -111,6 +112,12 @@ def plot_residue_profile(
                             step=None, zorder=2)
         (line,) = ax.plot(x, y, color=colour, linewidth=2.0, label=label, zorder=3)
         line.set_gid(f"fD:K{k}:rank{rank}")
+        hover.set_rows(line, [
+            {"sample": sample, "time": float(time),
+             "time_label": hover.time_label(time, time_scale),
+             "description": hover.population(k, rank), "K": int(k), "rank": int(rank),
+             "residue": int(r), "fD": float(v), "fD_se": float(e)}
+            for r, v, e in zip(x, y, se, strict=True)])
         finite = y[np.isfinite(y)]
         if len(finite):
             top = max(top, float(finite.max()))
@@ -148,6 +155,28 @@ def _segments(x: np.ndarray, y: np.ndarray, chosen: np.ndarray):
     for s in np.flatnonzero(chosen[1:] != chosen[:-1]):  # the dashed part reaches the solid one
         dashed[s : s + 2] = y[s : s + 2]
     return solid, dashed
+
+
+def _choice_rows(artist, choice, rows, order, sample: str, time: float,
+                 time_scale: str) -> None:
+    """The data-table rows of a population-choice figure (``hover.set_rows`` on ``artist``):
+    per residue, the choice, its reason, and the K=1 and K=2 values with their errors."""
+    def col(name):
+        return np.asarray(getattr(choice, name))[rows][order]
+
+    two, reason = col("two_populations"), col("reason")
+    values = {n: (col(f"fD_{n}"), col(f"fD_{n}_se")) for n in ("avg", "low", "high")}
+    pop, pop_se = col("population_low"), col("population_low_se")
+    out = []
+    for i, r in enumerate(col("residue")):
+        row = {"sample": sample, "time": float(time),
+               "time_label": hover.time_label(time, time_scale), "residue": int(r),
+               "two_populations": bool(two[i]), "reason": str(reason[i])}
+        for n in ("avg", "low", "high"):
+            row[f"fD_{n}"], row[f"fD_{n}_se"] = float(values[n][0][i]), float(values[n][1][i])
+        row["population_low"], row["population_low_se"] = float(pop[i]), float(pop_se[i])
+        out.append(row)
+    hover.set_rows(artist, out)
 
 
 def plot_population_choice(
@@ -197,6 +226,8 @@ def plot_population_choice(
         solid, dashed = _segments(x, y, chosen & np.isfinite(y))
         (line,) = top.plot(x, solid, color=colour, linewidth=2.0, label=label, zorder=3)
         line.set_gid(f"fD:{name}")
+        if name == "avg":  # the table: one row per residue, every description and the choice
+            _choice_rows(line, choice, rows, order, sample, time, time_scale)
         top.plot(x, dashed, color=colour, linewidth=2.0, linestyle=(0, (4, 3)), zorder=3)
     avg = choice.fD_avg[rows][order]
     pts = top.scatter(x[~two], avg[~two], s=40, facecolors="none", linewidths=1.6, zorder=4,

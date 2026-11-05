@@ -411,6 +411,11 @@ def test_residue_profile():
     k1 = next(line for line in ax.lines if line.get_gid() == "fD:K1:rank1")
     y = np.asarray(k1.get_ydata(), dtype=float)
     assert np.isnan(y[4]) and y[7] == pytest.approx(rm.fD[(rm.residue == 8) & (rm.K == 1)][0])
+    from hxex.gui.figures import figure_rows
+
+    columns, lines = figure_rows(fig)  # a row per line and residue, named by its description
+    assert columns[:7] == ["sample", "time", "time_label", "description", "K", "rank", "residue"]
+    assert {r["description"] for r in lines} == {"K=1", "K=2 low-D", "K=2 high-D"}
     no_band = plot_residue_profile(rm, "S", 4.0, band=0, show=((1, 1),))
     assert len(no_band.axes[0].collections) == 0
     with pytest.raises(ValueError, match="no residue values"):
@@ -2723,3 +2728,37 @@ def test_every_samples_residue_values_on_one_axis():
     assert held > own and held >= 1.3
     with pytest.raises(ValueError, match="no residue values"):
         plot_residue_samples(rm, ["WT"], 60.0)
+
+
+def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
+    """The data tab beside a figure (owner, 2026-11-04: the residue figures first): each
+    residue figure of an analysis carries the rows it draws, in the analysis tables' column
+    names; a row drawn twice (the reference in every panel of an overlay) is kept once."""
+    from hxex.analysis import AnalysisConfig, Annotations, Region
+    from hxex.gui.figures import figure_rows
+    from hxex.io import open_bundle
+    from hxex.report import Results
+    from hxex.report.analysis import analysis_outputs
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    outputs = analysis_outputs(results, AnalysisConfig(
+        reference="S", annotations=Annotations(regions=(Region("A", 1, 5),))))
+    drawn = {stem.split("_1min")[0]: figure_rows(make()) for stem, make in outputs.figures}
+    expected = {  # the figure -> columns its rows must have
+        "redundancy_resolution": {"sample", "residue", "redundancy", "resolution"},
+        "choice_S": {"residue", "two_populations", "fD_avg", "fD_low_se", "population_low"},
+        "residues_all": {"sample", "residue", "fD", "fD_se"},
+        "overlay_residues": {"sample", "reference", "measure", "residue", "value", "value_se"},
+        "residue_significance": {"sample", "residue", "delta", "significant"},
+        "residue_significance_K2": {"section", "sample", "residue", "two", "two_reference"},
+        "region_significance": {"sample", "region", "significant"},
+        "regions": {"sample", "region", "fD", "fD_se", "time_label"},
+    }
+    for name, need in expected.items():
+        columns, rows = drawn[name]
+        assert rows, f"{name} carries no rows"
+        assert need <= set(columns), f"{name}: {need - set(columns)}"
+    _, overlay = drawn["overlay_residues"]
+    keys = [tuple(sorted((k, repr(v)) for k, v in r.items())) for r in overlay]
+    assert len(keys) == len(set(keys))

@@ -289,7 +289,14 @@ file), so what you see here is what the command writes.
   map each peptide's sample, time, residues, sequence, fD and its error, and how many spectra
   and charge states it comes from; on a Woods plot both samples' values, the difference and
   its error, and whether it is significant (with the reason when it was not tested). The
-  columns are named as in the analysis tables (`species_uptake.csv`, `compare_peptides.csv`).
+  residue figures list one row per residue: a profile or overlay each line's values and their
+  errors, a choice figure the one- and two-population values with the choice and its reason,
+  a significance map the residue comparison it colours, the tier map each residue's tier and
+  test values, and redundancy and resolution each sample's coverage. This is the way to read
+  their values, since a line names no peptide. The region bars and the region map list their
+  regions. The columns are named as in the analysis tables (`species_uptake.csv`,
+  `compare_peptides.csv`, `residues.csv`, `compare_residues.csv`, `regions.csv`); a row that a
+  figure draws twice (the reference in every panel of an overlay) is listed once.
   Click a column's header to sort (a crowded Woods plot is easier to read sorted by residue or
   by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
   rows, in the order shown, as a CSV file named after the figure. Choose a kind of figure

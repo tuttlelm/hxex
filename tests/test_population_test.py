@@ -439,6 +439,17 @@ def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):
                            tmp_path / "a")
     names = {p.name for p in files}
     assert "population_tiers.pdf" in names
+    # the tier map's data table: a row per sample, point and residue with a tier
+    from hxex.analysis import residue_map, species_uptake
+    from hxex.gui.figures import figure_rows
+    from hxex.report.tiers import plot_population_tiers
+
+    rm = residue_map(species_uptake(Results.from_run(tested_run),
+                                    populations="population_test"))
+    columns, table = figure_rows(plot_population_tiers(rm))
+    assert columns[:7] == ["sample", "time", "time_label", "residue", "population_tier",
+                           "test_strength_2", "test_agreement_2"]
+    assert table and all(r["population_tier"] for r in table)
     with open(tmp_path / "a" / "species_uptake.csv") as fh:
         row = next(csv.DictReader(fh))
     assert row["set_p_1"] != "" and row["best_set_reason"].startswith("set test")
