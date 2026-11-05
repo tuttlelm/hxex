@@ -7193,3 +7193,34 @@ CSVs or mzML if wanted.
     series, `[review] series_table`) is not built: a decision or note made on a series or a
     time point in the review panel is written for each of its spectra in the user review
     table. The design stays in PLAN.md "GUI", marked not built.
+
+281. **Population differences on shared positions (owner, 2026-11-04: "this seems to support
+    it"; build: yes).** In the per-bin benchmark run against the reference, one sample differed
+    at K=1 over its N-terminal residues with two populations on both sides, but the K=2
+    significance map showed neither a share nor a position difference there. Cause: the share's
+    error (`lever_population`) carries both positions' errors, about four times its K=1 term
+    (4 s, 36 residues: share difference 0.030, se 0.053, threshold 0.040), so it contradicted
+    the owner's expectation of HISTORY 128 (fD or population may lose significance, not both).
+    Now, where neither K=2 position differs (peptides: the K=2 rank comparisons' `significant`;
+    residues: the position calls the K=2 map shows), the difference is judged on the positions
+    averaged over both samples (`analysis.compare.shared_lever`): `delta = (fD_avg_ref -
+    fD_avg) / S`, the positions' errors only through `S`; peptides take the K=1 comparison's
+    verdict (`t`, `p`, `significant`), residues the z test with the K=1 errors, then the usual
+    gate. Elsewhere each side keeps its own positions. Values stay each sample's own; column
+    `positions` (shared / own) in compare_peptides.csv (population rows) and
+    compare_populations.csv; `compare_populations(..., positions=)` takes the K=2 position
+    comparisons, `compare_peptides(..., comparisons=)` the K=1 and K=2 ones (the report passes
+    them: computing them again tripled the population comparison's time). Evaluated before
+    building on the noise simulation (one seed, Q-TOF; three arms, both population rules) and
+    the benchmark (private README k2_share_vs_k1): residue false share decisions never rose (0 %
+    in NULL everywhere; 10.8 / 7.6 % -> 0 in SMALL / OBVIOUS when the data noise grows with
+    intensity and the fit assumes a constant sd, from position noise entering through own
+    positions); small share changes found 52-64 -> 59-69 % (residues), 24-41 -> 39-69 %
+    (peptides); peptide NULL false 0-4 -> 2-6 %, exactly the K=1 comparison's own false
+    decisions repeated. A plain z test on the shared-position difference at the peptide level
+    was looser (SMALL false 9 -> 16 %: the K=1 error has no replicate check), and judging
+    "positions differ" by an ungated test left position shifts the map does not show
+    (blocked by the peptide gate) to block the share. Benchmark, residues with K=1 significant
+    and two populations on both sides but neither a share nor a position difference: 15 / 54 /
+    65 / 38 -> 1 / 9 / 2 / 0 (samples A to D against E); the remaining ones are the peptide gate.
+    The built code reproduces the evaluation exactly.

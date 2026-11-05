@@ -775,6 +775,47 @@ def test_population_comparison_per_residue():
     np.testing.assert_array_equal(cmp.two, True)
 
 
+def test_population_comparison_per_residue_on_shared_positions():
+    """Where no K=2 position differs, a residue's population difference is judged on the
+    positions averaged over both samples: their errors cancel, so a clear K=1 difference with
+    the same states is a population difference (HISTORY 281); where one differs, each side keeps
+    its own positions."""
+    import dataclasses
+
+    from hxex.analysis import ResidueMap, choose_populations, compare_populations, compare_residues
+
+    rows = []
+    for avg in (0.4, 0.5):  # R, then V: the same states (0.2, 0.6), V more deuterated
+        for r in (1, 2):
+            rows += [(r, 1, 1, avg, 0.01), (r, 2, 1, 0.2, 0.05), (r, 2, 2, 0.6, 0.05)]
+    m, v = choice_map(rows[:6]), choice_map(rows[6:])
+    both = ResidueMap(**{f.name: np.concatenate([getattr(m, f.name), getattr(v, f.name)])
+                         for f in dataclasses.fields(ResidueMap)})
+    both = dataclasses.replace(both, sample=np.array(["R"] * 6 + ["V"] * 6))
+    ch = choose_populations(both)
+    own = compare_populations(ch, "R")
+    np.testing.assert_array_equal(own.positions, ["own", "own"])
+    assert not own.significant.any()  # the positions' errors hide the difference
+    low = compare_residues(both, "R", K=2, rank=1, choice=ch)
+    high = compare_residues(both, "R", K=2, rank=2, choice=ch)
+    assert not low.significant.any() and not high.significant.any()
+    shared = compare_populations(ch, "R", positions=[low, high])
+    np.testing.assert_array_equal(shared.positions, ["shared", "shared"])
+    np.testing.assert_allclose(shared.delta, (0.4 - 0.5) / 0.4)
+    se_sep = 0.5 * np.sqrt(4 * 0.05**2)
+    np.testing.assert_allclose(shared.delta_se, np.hypot(np.hypot(0.01, 0.01) / 0.4,
+                                                         0.25 * se_sep / 0.4))
+    assert shared.significant.all()
+    np.testing.assert_allclose(shared.value, own.value)  # each sample's own values
+    # a position called different at residue 2: own positions there
+    moved = dataclasses.replace(low, significant=np.array([False, True]))
+    mixed = compare_populations(ch, "R", positions=[moved, high])
+    np.testing.assert_array_equal(mixed.positions, ["shared", "own"])
+    assert mixed.delta[1] == own.delta[1] and not mixed.significant[1]
+    assert "positions" in mixed.columns()
+    assert "positions" not in low.columns()
+
+
 def test_residue_comparison_records_each_sides_choice():
     import dataclasses
 
@@ -1689,7 +1730,9 @@ def test_times_that_only_order_the_points(two_sample_bundle, tmp_path):
 
 def test_peptide_populations_by_the_lever_rule(monkeypatch):
     """Each replicate's K=1 value between the sample's mean K=2 positions; the threshold is the
-    K=1 one divided by the separation; pairs that fail the choice's tests say why."""
+    K=1 one divided by the separation; pairs that fail the choice's tests say why. Where no
+    position differs the difference is judged on shared positions with the K=1 test's verdict,
+    elsewhere on each side's own positions with their errors (HISTORY 281)."""
     from hxex.analysis import compare, compare_peptides
     from hxex.analysis.species import Point
 
@@ -1711,9 +1754,12 @@ def test_peptide_populations_by_the_lever_rule(monkeypatch):
     # states too close to tell apart (on the reference)
     species("S", "PEPTIDEB", [0.50, 0.50, 0.50], [0.45, 0.30, 0.60], [0.55, 0.70, 0.40])
     species("V", "PEPTIDEB", [0.50, 0.51, 0.49], [0.20, 0.21, 0.19], [0.80, 0.79, 0.81])
+    # the low-D state itself moves in V: each side keeps its own positions
+    species("S", "PEPTIDEC", [0.50, 0.52, 0.48], [0.20, 0.21, 0.19], [0.80, 0.79, 0.81])
+    species("V", "PEPTIDEC", [0.60, 0.62, 0.58], [0.35, 0.36, 0.34], [0.80, 0.81, 0.79])
     monkeypatch.setattr(compare, "_records", lambda *a, **k: (groups, {}, 1))
     every_two = {("", s, p, "", 1, 10, 60.0): (2, -50.0) for s in ("S", "V")
-                 for p in ("PEPTIDEA", "PEPTIDEB")}  # every set two populations
+                 for p in ("PEPTIDEA", "PEPTIDEB", "PEPTIDEC")}  # every set two populations
     pop = compare_peptides(None, "S", K=2, rank=1, quantity="population", best_sets=every_two)
     a = np.flatnonzero(pop.peptide == "PEPTIDEA")[0]
     b = np.flatnonzero(pop.peptide == "PEPTIDEB")[0]
@@ -1723,20 +1769,40 @@ def test_peptide_populations_by_the_lever_rule(monkeypatch):
     # the typical sd is robust: the median of the variances scaled by the chi-square median
     from scipy import stats
 
-    k1 = [[0.50, 0.52, 0.48], [0.62, 0.64, 0.60], [0.50, 0.50, 0.50], [0.50, 0.51, 0.49]]
+    k1 = [[0.50, 0.52, 0.48], [0.62, 0.64, 0.60], [0.50, 0.50, 0.50], [0.50, 0.51, 0.49],
+          [0.50, 0.52, 0.48], [0.60, 0.62, 0.58]]
     sd = np.sqrt(np.median([np.var(v, ddof=1) * 2 / stats.chi2.median(2) for v in k1]))
     assert pop.delta_crit == pytest.approx(stats.t.ppf(0.975, 4) * sd * np.sqrt(2 / 3))
     assert pop.threshold[a] == pytest.approx(pop.delta_crit / 0.6)
     assert pop.significant[a] and pop.reason[a] == ""
-    # the test takes each population's whole error, the positions' included (HISTORY 144)
-    z = pop.delta[a] / pop.delta_se[a]
-    assert pop.t[a] == pytest.approx(z) and pop.p[a] == pytest.approx(2 * stats.norm.sf(abs(z)))
+    # the same states: the K=1 difference over the shared separation, with the K=1 verdict
+    k1_cmp = compare_peptides(None, "S", best_sets=every_two)
+    one = np.flatnonzero(k1_cmp.peptide == "PEPTIDEA")[0]
+    assert pop.positions[a] == "shared"
+    assert pop.delta[a] == pytest.approx((0.50 - 0.62) / 0.6)
+    assert pop.t[a] == pytest.approx(-abs(k1_cmp.t[one])) and pop.p[a] == k1_cmp.p[one]
+    assert pop.significant[a] == k1_cmp.significant[one]
+    # where the positions differ, each population's whole error, the positions' included
+    # (HISTORY 144)
+    c = np.flatnonzero(pop.peptide == "PEPTIDEC")[0]
+    assert pop.positions[c] == "own"
+    assert pop.delta[c] == pytest.approx(pop.value[c] - pop.value_reference[c])
+    z = pop.delta[c] / pop.delta_se[c]
+    assert pop.t[c] == pytest.approx(z) and pop.p[c] == pytest.approx(2 * stats.norm.sf(abs(z)))
+    assert pop.positions[b] == ""
+    # the comparisons handed in, as the report does, give the same rows
+    given = compare_peptides(None, "S", K=2, rank=1, quantity="population", best_sets=every_two,
+                             comparisons=[k1_cmp, *(compare_peptides(
+                                 None, "S", K=2, rank=r, best_sets=every_two) for r in (1, 2))])
+    np.testing.assert_array_equal(given.positions, pop.positions)
+    np.testing.assert_array_equal(given.significant, pop.significant)
     assert pop.reason[b] == "not separated (reference)" and np.isnan(pop.value[b])
     assert not pop.significant[b] and np.isnan(pop.threshold[b])
     assert pop.columns()["delta_crit"][a] == pop.threshold[a]
     # rank 2: the high-D component's share
     high = compare_peptides(None, "S", K=2, rank=2, quantity="population", best_sets=every_two)
     assert high.value[np.flatnonzero(high.peptide == "PEPTIDEA")[0]] == pytest.approx(0.7)
+    assert high.delta[np.flatnonzero(high.peptide == "PEPTIDEA")[0]] == pytest.approx(0.2)
 
 
 def test_charge_states_of_a_replicate_are_averaged_before_replicates_are_combined(monkeypatch):

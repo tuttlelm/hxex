@@ -7,8 +7,13 @@ default), or in the lever-rule population of the K=2 low-D component (``quantity
 whether a sample shifts the balance between the populations rather than their deuteration. The
 population is ``(fD_high - fD_avg) / (fD_high - fD_low)``: each replicate spectrum's K=1 value (a
 precise proxy of the average deuteration while the K=1 fit spans the envelope) between the sample's
-K=2 positions averaged over its replicates (each sample keeps its own positions: whether the states
-themselves differ is the K=2 ``fD`` comparison's question). Per residue,
+K=2 positions averaged over its replicates. Each sample's population is shown on its own
+positions, but a difference between two samples is judged on SHARED positions wherever the K=2
+``fD`` comparison finds no difference in either position (the states are the same, differently
+populated: owner, HISTORY 128; HISTORY 281): the positions averaged over both samples, so that
+their errors cancel and the difference is the K=1 difference divided by the separation
+(``positions`` says which). Where a position differs, each sample keeps its own positions (the
+states themselves differ). Per residue,
 :func:`compare_populations` compares the lever-rule population of the choice between one and two
 populations. Per peptide and time a difference is significant by the hybrid rule (Hageman and Weis,
 Anal. Chem. 2019): Welch's t-test on the replicate spectra of the two samples gives ``p < alpha``,
@@ -149,7 +154,13 @@ class PeptideComparison:
     each side's back-exchange correction used a fallback control; where they differ the two
     values were corrected differently. ``separation``: for a population, the fD between the
     peptide's two K=2 positions (the mean of the two samples'; NaN for fD rows and populations
-    not compared); ``scaled``: True for :meth:`scaled_by_separation`'s copy."""
+    not compared); ``scaled``: True for :meth:`scaled_by_separation`'s copy. ``positions``: for
+    a population compared, ``'shared'`` where neither K=2 position differs between the two
+    samples (``delta`` is then the difference of the shares on the positions averaged over both,
+    ``(fD_avg_reference - fD_avg) / separation`` for the low-D share, and the row takes the K=1
+    comparison's ``t``, ``p`` and ``significant``: the same measurement; HISTORY 281) and
+    ``'own'`` where one does (each side's own positions, the positions' errors included); empty
+    for fD rows and populations not compared."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -186,8 +197,11 @@ class PeptideComparison:
     separation: np.ndarray | None = None
     scaled: bool = False
     share: str = "low"  # a population comparison: of the low-D share, or the high-D one
+    positions: np.ndarray | None = None
 
     def __post_init__(self):  # built without the reference's sequences: the same as the sample's
+        if self.positions is None:
+            object.__setattr__(self, "positions", np.full(len(self.sample), "", dtype=object))
         if self.threshold is None:
             object.__setattr__(self, "threshold", np.full(len(self.sample), self.delta_crit))
         if self.separation is None:
@@ -303,6 +317,7 @@ def compare_peptides(
     two_population_sets: bool | None = None,
     populations: str | None = None,
     k2_averages: Collection[tuple] | None = None,
+    comparisons: Sequence[PeptideComparison] | None = None,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
     ``K`` and ``rank``, in ``quantity`` (``'fD'``, or ``'population'`` for K >= 2; see the module
@@ -348,7 +363,11 @@ def compare_peptides(
     ``k2_averages`` (:func:`hxex.analysis.species.k2_average_sets` of the species table) names
     the sets whose average is the K = 2 description's population-weighted mean, each replicate
     spectrum's own (two populations far apart, where the K = 1 fit settles on one; HISTORY
-    210): their K = 1 values, and the average of the lever rule, are taken from it."""
+    210): their K = 1 values, and the average of the lever rule, are taken from it.
+
+    ``comparisons`` (a population only): the K=1 comparison and the K=2 rank 1 and rank 2
+    comparisons made with the same settings, which decide where the positions are shared (see
+    :class:`PeptideComparison` ``positions``); computed when None."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     if match not in MATCHES:
@@ -375,7 +394,7 @@ def compare_peptides(
     if quantity == "population":
         return _compare_populations_peptides(results, reference, samples, rank, alpha,
                                              exclude_flagged, filters, match, controls, choice,
-                                             best_sets, k2_averages)
+                                             best_sets, k2_averages, comparisons)
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
     ks = (1, K) if K != 1 else ((1, 2) if k2_averages else (1,))
     # quiet: species_uptake reports what the filters left out
@@ -457,7 +476,8 @@ def compare_peptides(
                          "control_fallback": fell_back[(*state, *key)], "reason": why})
     cols = _columns(PeptideComparison, rows) if rows else {
         f.name: np.array([]) for f in fields(PeptideComparison)
-        if f.name not in _SCALAR_FIELDS and f.name not in ("threshold", "reason", "separation")}
+        if f.name not in _SCALAR_FIELDS
+        and f.name not in ("threshold", "reason", "separation", "positions")}
     if rows:
         cols["run"] = cols["run"].astype(object)
         cols["reason"] = cols["reason"].astype(object)
@@ -480,6 +500,38 @@ def _replicate_mean(spectra: list[dict]) -> dict | None:
         out[kr] = (float(values.mean()), se, *spectra[0][kr][2:7],
                    any(s[kr][7] for s in spectra), spectra[0][kr][8])
     return out
+
+
+def _by_pair(comparison: PeptideComparison) -> dict:
+    """``(run, sample, peptide, modification, start, end, time) -> {t, p, significant}`` of a
+    peptide comparison's compared rows."""
+    out = {}
+    for i in range(len(comparison)):
+        if np.isfinite(comparison.delta[i]):
+            out[(str(comparison.run[i]), str(comparison.sample[i]), str(comparison.peptide[i]),
+                 str(comparison.modification[i]), int(comparison.start[i]),
+                 int(comparison.end[i]), float(comparison.time[i]))] = {
+                "t": float(comparison.t[i]), "p": float(comparison.p[i]),
+                "significant": bool(comparison.significant[i])}
+    return out
+
+
+def shared_lever(reference, sample) -> tuple[float, float, float]:
+    """The difference in the low-D share (sample minus reference) on positions shared by the two
+    sides, each ``(avg, avg_se, low, low_se, high, high_se)`` (the K=1 value and the K=2
+    positions, fD): the positions averaged over both, ``S = high - low``, and the difference
+    ``(avg_reference - avg) / S``, whose error takes the two K=1 errors over ``S`` and the
+    separation's error through ``|difference| se_S / S`` only (the positions' errors cancel;
+    HISTORY 281). Returns the difference, its error and ``S`` (NaN where ``S <= 0``)."""
+    a_avg, a_avg_se, a_low, a_low_se, a_high, a_high_se = (float(x) for x in reference)
+    b_avg, b_avg_se, b_low, b_low_se, b_high, b_high_se = (float(x) for x in sample)
+    sep = 0.5 * (a_high + b_high) - 0.5 * (a_low + b_low)
+    if not sep > 0:
+        return np.nan, np.nan, np.nan
+    delta = (a_avg - b_avg) / sep
+    sep_se = 0.5 * float(np.sqrt(a_low_se**2 + b_low_se**2 + a_high_se**2 + b_high_se**2))
+    se = float(np.hypot(np.hypot(a_avg_se, b_avg_se) / sep, abs(delta) * sep_se / sep))
+    return float(delta), se, float(sep)
 
 
 def _lever_sides(groups, choice: ChoiceConfig) -> dict:
@@ -538,6 +590,8 @@ def _lever_sides(groups, choice: ChoiceConfig) -> dict:
                      ("population", bool(lo <= pop <= 1 - lo)))
             info["reason"] = next((why for why, ok in tests if not ok), "")
             info["sep"] = float(sep)
+            info["lever"] = (float(avg_mean), float(avg_se), float(low), float(low_se),
+                             float(high), float(high_se))
             if not info["reason"]:
                 info.update(values=(high - avg) / sep, value=float(pop), se=float(pop_se))
     return out
@@ -591,9 +645,18 @@ def _one_population(best_sets: Mapping, state, key, reference, rkey) -> str:
 
 
 def _compare_populations_peptides(results, reference, samples, rank, alpha, exclude_flagged,
-                                  filters, match, controls, choice, best_sets, k2_averages=None
-                                  ) -> PeptideComparison:
+                                  filters, match, controls, choice, best_sets, k2_averages=None,
+                                  comparisons=None) -> PeptideComparison:
     """:func:`compare_peptides` with ``quantity='population'``."""
+    # the K=1 comparison and the K=2 positions' decide where the positions are shared
+    same = dict(samples=samples, alpha=alpha, exclude_flagged=exclude_flagged, filters=filters,
+                match=match, controls=controls, choice=choice, best_sets=best_sets,
+                two_population_sets=best_sets is not None, k2_averages=k2_averages)
+    if comparisons is None:
+        comparisons = [compare_peptides(results, reference, **same),
+                       *(compare_peptides(results, reference, K=2, rank=r, **same)
+                         for r in (1, 2))]
+    at_k1, *at_k2 = (_by_pair(c) for c in comparisons)
     groups, *_ = _records(results, (1, 2), exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
     groups = _k2_average_records(groups, k2_averages)
@@ -625,36 +688,55 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
                       or (gate if not more else "")
                       or (f"{a['reason']} (reference)" if a["reason"]
                           else f"{b['reason']} (sample)" if b["reason"] else ""))
-            t = p = delta = np.nan
+            t = p = delta = dse = np.nan
             ma = mb = sa = sb = threshold = sep = np.nan
+            sig, positions = False, ""
             if not reason:
                 ma, sa, mb, sb = flip(a["value"]), a["se"], flip(b["value"]), b["se"]
-                delta = mb - ma
-                # the test takes the whole error of each population, the K=2 positions' as
-                # well as the replicates' (a Welch test on the replicates alone, with the
-                # positions held fixed, overstated it: HISTORY 128, 144)
-                dse = float(np.hypot(sa, sb))
-                if np.isfinite(dse) and dse > 0:
-                    t = delta / dse
-                    p = float(2 * stats.norm.sf(abs(t)))
-                sep = 0.5 * (a["sep"] + b["sep"])
-                threshold = delta_crit / sep
-            sig = bool(np.isfinite(p) and p < alpha and abs(delta) > threshold)
+                pair = (*state, *key)
+                one = at_k1.get(pair)
+                shared = (one is not None and all(c.get(pair) is not None for c in at_k2)
+                          and not any(c[pair]["significant"] for c in at_k2))
+                d = np.nan
+                if shared:  # the same states: the K=1 difference over the shared separation
+                    d, dse, sep = shared_lever(a["lever"], b["lever"])
+                if np.isfinite(d):
+                    delta = d if rank == 1 else -d  # rank 2: the high-D share
+                    t = float(np.sign(delta) * abs(one["t"]))
+                    p, sig, positions = one["p"], bool(one["significant"]), "shared"
+                    threshold = delta_crit / sep
+                else:
+                    delta = mb - ma
+                    # the test takes the whole error of each population, the K=2 positions'
+                    # as well as the replicates' (a Welch test on the replicates alone, with
+                    # the positions held fixed, overstated it: HISTORY 128, 144)
+                    dse = float(np.hypot(sa, sb))
+                    if np.isfinite(dse) and dse > 0:
+                        t = delta / dse
+                        p = float(2 * stats.norm.sf(abs(t)))
+                    sep = 0.5 * (a["sep"] + b["sep"])
+                    threshold = delta_crit / sep
+                    sig = bool(np.isfinite(p) and p < alpha and abs(delta) > threshold)
+                    positions = "own"
             rows.append({"run": state[0], "sample": state[1], "peptide": key[0],
                          "modification": key[1], "start": key[2], "end": key[3], "time": key[4],
                          "value_reference": ma, "value_reference_se": sa, "value": mb,
-                         "value_se": sb, "delta": delta, "delta_se": float(np.hypot(sa, sb)),
+                         "value_se": sb, "delta": delta,
+                         "delta_se": float(dse) if positions else float(np.hypot(sa, sb)),
                          "t": t, "p": p, "n_reference": len(a["values"]), "n": len(b["values"]),
                          "significant": sig, "peptide_reference": rkey[0],
                          "modification_reference": rkey[1], "same_sequence": rkey[:2] == key[:2],
                          "control_fallback_reference": a["fell_back"],
                          "control_fallback": b["fell_back"], "threshold": threshold,
-                         "reason": reason or more, "separation": sep})
+                         "reason": reason or more, "separation": sep, "positions": positions})
+    for row in rows:  # the rows of pairs not described at K = 2
+        row.setdefault("positions", "")
     names = [f.name for f in fields(PeptideComparison) if f.name not in _SCALAR_FIELDS]
     cols = ({name: np.array([r[name] for r in rows]) for name in names} if rows
             else {name: np.array([]) for name in names})
     cols["run"] = cols["run"].astype(object)
     cols["reason"] = cols["reason"].astype(object)
+    cols["positions"] = cols["positions"].astype(object)
     return PeptideComparison(**cols, reference=reference[1], reference_run=reference[0], K=2,
                              rank=rank, alpha=alpha, delta_crit=delta_crit, quantity="population")
 
@@ -681,7 +763,10 @@ class ResidueComparison:
     residue test passed without that support (then not ``significant``); ``None`` otherwise.
     ``block_start`` and ``block_end``: the block of the sample's residue map the residue lies in
     (:class:`ResidueMap`; with :func:`judged_on_shared`, the block of the shared peptides the
-    test used); NaN where unknown, ``None`` for a population comparison."""
+    test used); NaN where unknown, ``None`` for a population comparison. ``positions``: for a
+    population comparison, ``'shared'`` where the difference was judged on the K=2 positions
+    averaged over both samples (no position differs there) and ``'own'`` where each side kept
+    its own (:func:`compare_populations`); ``None`` for an fD comparison."""
 
     sample: np.ndarray
     time: np.ndarray
@@ -713,6 +798,7 @@ class ResidueComparison:
     residue_test_only: np.ndarray | None = None
     block_start: np.ndarray | None = None
     block_end: np.ndarray | None = None
+    positions: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback, one run
         if self.threshold is None:
@@ -818,12 +904,15 @@ def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **s
                                 "peptide_support", "residue_test_only")  # and the gate's
              and (with_choice or f.name not in ("two_reference", "two"))
              and (not rows or f.name not in ("block_start", "block_end")
-                  or "block_start" in rows[0])]
+                  or "block_start" in rows[0])
+             and (f.name != "positions" or (rows and "positions" in rows[0]))]
     scalars.update(reference=reference[1], reference_run=reference[0])
     if not rows:
         return ResidueComparison(**{name: np.array([]) for name in names}, **scalars)
     cols = {name: np.array([r[name] for r in rows]) for name in names}
     cols["run"] = cols["run"].astype(object)
+    if "positions" in cols:
+        cols["positions"] = cols["positions"].astype(object)
     return ResidueComparison(**cols, **scalars)
 
 
@@ -906,12 +995,15 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
     peptides both samples measured (:func:`paired_residue_maps`; owner, 2026-10-31, HISTORY
     202): the values and ``delta`` stay each sample's own, ``z``, ``significant`` and
     ``threshold`` are the shared test's, and ``delta_shared`` and ``delta_shared_se`` are the
-    difference and error it used. A residue no shared peptide covers keeps its values and is
-    not significant (``delta_shared`` NaN); how many is logged."""
+    difference and error it used (for a population, ``positions`` too). A residue no shared
+    peptide covers keeps its values and is not significant (``delta_shared`` NaN); how many is
+    logged."""
     n = len(own)
     z, sig = np.full(n, np.nan), np.zeros(n, dtype=bool)
     d_shared, se_shared = np.full(n, np.nan), np.full(n, np.nan)
     blocks = np.full((n, 2), np.nan)
+    positions = (None if shared is None or shared.positions is None
+                 else np.full(n, "", dtype=object))
     threshold = np.asarray(own.threshold, dtype=float).copy()
     index = ({} if shared is None else
              {key: j for j, key in enumerate(zip(shared.run, shared.sample, shared.time,
@@ -922,6 +1014,8 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
             z[i], sig[i] = shared.z[j], bool(shared.significant[j])
             d_shared[i], se_shared[i] = shared.delta[j], shared.delta_se[j]
             threshold[i] = shared.threshold[j]
+            if positions is not None:
+                positions[i] = shared.positions[j]
             if shared.block_start is not None:
                 blocks[i] = shared.block_start[j], shared.block_end[j]
     lost = int(np.sum(np.isnan(d_shared)))
@@ -931,6 +1025,7 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
     with_blocks = shared is not None and shared.block_start is not None
     return replace(own, z=z, significant=sig, threshold=threshold, delta_shared=d_shared,
                    delta_shared_se=se_shared,
+                   positions=positions if positions is not None else own.positions,
                    block_start=blocks[:, 0] if with_blocks else own.block_start,
                    block_end=blocks[:, 1] if with_blocks else own.block_end)
 
@@ -1038,7 +1133,9 @@ def compare_residues(
 
 
 def compare_populations(choice, reference: str, *, alpha: float = 0.05,
-                        delta_crit: float = 0.0) -> ResidueComparison:
+                        delta_crit: float = 0.0,
+                        positions: Sequence[ResidueComparison] | None = None
+                        ) -> ResidueComparison:
     """Every sample against ``reference`` residue by residue in the lever-rule population of the
     low-D component (:func:`hxex.analysis.choose_populations`), where both have one (the K=1
     value between the K=2 ranks). ``delta_crit`` is the peptides' K=1 threshold
@@ -1046,7 +1143,16 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
     the two sides' K=2 values at the residue (see the module docstring). Each row records
     whether each side's choice keeps two populations (``two_reference``, ``two``): the lever
     rule can apply where the choice keeps one, but a difference is significant only where both
-    keep two (HISTORY 137)."""
+    keep two (HISTORY 137).
+
+    ``positions``: the K=2 position comparisons (:func:`compare_residues` at K = 2, rank 1 and
+    rank 2, as the report judges them: on shared peptides and gated by the peptides). Where
+    neither is significant at a residue the two samples' states are taken as the same, and the
+    difference is judged on the positions averaged over both (:func:`shared_lever`: ``delta``
+    is ``(fD_avg_reference - fD_avg) / S``, its error the K=1 errors over ``S``, its threshold
+    ``delta_crit / S``; ``positions`` ``'shared'``; HISTORY 281); elsewhere, and everywhere
+    without ``positions``, each side keeps its own positions (``'own'``) and the error includes
+    theirs. The values stay each sample's own."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb))
@@ -1058,9 +1164,35 @@ def compare_populations(choice, reference: str, *, alpha: float = 0.05,
                                                 choice.residue, choice.fD_low, choice.fD_high,
                                                 strict=True)}
     reference = resolve_sample(choice.run, choice.sample, reference, "reference sample")
+    two = _choices(choice)
+    rows = _residue_rows(value, reference, alpha, delta_crit, two, separation, both_two=True)
+    differ = None
+    if positions is not None:  # residues where a position differs: the states differ
+        differ = {(str(u), str(s), float(t), int(r))
+                  for c in positions if c is not None
+                  for u, s, t, r, sig in zip(c.run, c.sample, c.time, c.residue,
+                                             c.significant, strict=True) if sig}
+    lever = {(str(u), str(s), float(t), int(r)): x for u, s, t, r, *x in zip(
+        choice.run, choice.sample, choice.time, choice.residue, choice.fD_avg,
+        choice.fD_avg_se, choice.fD_low, choice.fD_low_se, choice.fD_high, choice.fD_high_se,
+        strict=True)}
+    z_crit = float(stats.norm.ppf(1 - alpha / 2))
+    for row in rows:
+        row["positions"] = "own"
+        key = (row["time"], row["residue"])
+        if differ is None or (row["run"], row["sample"], *key) in differ:
+            continue
+        d, se, sep = shared_lever(lever[(*reference, *key)],
+                                  lever[(row["run"], row["sample"], *key)])
+        if not (np.isfinite(d) and np.isfinite(se) and se > 0):
+            continue
+        threshold = delta_crit / sep
+        both = two.get((*reference, *key), False) and two.get(
+            (row["run"], row["sample"], *key), False)
+        row.update(delta=d, delta_se=se, z=d / se, threshold=threshold, positions="shared",
+                   significant=bool(both and abs(d / se) > z_crit and abs(d) > threshold))
     return _residue_comparison(
-        _residue_rows(value, reference, alpha, delta_crit, _choices(choice), separation,
-                      both_two=True), True,
+        rows, True,
         reference=reference, K=2, rank=1, alpha=alpha, delta_crit=delta_crit,
         quantity="population")
 

@@ -454,7 +454,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                                      **kw)
             comparisons["K=2 rank 1 (low D) population"] = compare_peptides(
                 results, ref, K=2, rank=1, quantity="population",
-                choice=config.choice_limits, **kw)
+                choice=config.choice_limits, comparisons=list(comparisons.values()), **kw)
         rows = {}
         for title, c in comparisons.items():
             cols = c.columns()
@@ -507,10 +507,29 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
             k2_tested = all(r.bootstrap_by_k.get(2) is not None for r in (
                 results.runs.values() if isinstance(results, RunSet) else [results]))
+            if k2_tested:  # the two positions, each with its own K=2 threshold
+                k2_positions = {}
+                for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
+                    k2_crit = comparisons[title].delta_crit
+                    k2_positions[rank] = gated_by_peptides(judged_on_shared(
+                        compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
+                                         delta_crit=k2_crit, choice=choice),
+                        concat_tables([compare_residues(m, ref, K=2, rank=rank,
+                                                        alpha=config.alpha,
+                                                        delta_crit=k2_crit,
+                                                        choice=pair_choice[s])
+                                       for s, m in pairs.items()])), comparisons[title],
+                        nterm_subtract=nterm, modified=config.modified_peptides)
+                tables["compare_residues_K2"] = _ranked(k2_positions)
+            # where the map shows no position difference the states are the same, and the
+            # populations are compared on positions shared by both samples (HISTORY 281)
+            shown = list(k2_positions.values()) if k2_positions is not None else None
             pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
-                compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit),
+                compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit,
+                                    positions=shown),
                 concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
-                                                   delta_crit=crit) for s in pairs]))
+                                                   delta_crit=crit, positions=shown)
+                               for s in pairs]))
             if k2_tested:
                 pop_cmp = gated_by_peptides(
                     pop_cmp, comparisons["K=2 rank 1 (low D) population"],
@@ -530,20 +549,6 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             tables["compare_choices"] = choices_cmp.columns()
             # the K = 2 map decides one or two on the shared peptides too, as its test does
             shared_choices = concat_tables([compare_choices(pair_choice[s], ref) for s in pairs])
-            if k2_tested:  # the two positions, each with its own K=2 threshold
-                k2_positions = {}
-                for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
-                    k2_crit = comparisons[title].delta_crit
-                    k2_positions[rank] = gated_by_peptides(judged_on_shared(
-                        compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
-                                         delta_crit=k2_crit, choice=choice),
-                        concat_tables([compare_residues(m, ref, K=2, rank=rank,
-                                                        alpha=config.alpha,
-                                                        delta_crit=k2_crit,
-                                                        choice=pair_choice[s])
-                                       for s, m in pairs.items()])), comparisons[title],
-                        nterm_subtract=nterm, modified=config.modified_peptides)
-                tables["compare_residues_K2"] = _ranked(k2_positions)
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
         res_cmp = _display(res_cmp, labels, reference)
         if reg_cmp is not None:

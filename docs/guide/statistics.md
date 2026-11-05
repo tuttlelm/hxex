@@ -62,9 +62,11 @@ What it lacks:
   the bootstrap, 97.5 % of the tutorial's residue calls agreed with the full analysis, but only
   89 % on the larger dataset.
 - **The population comparison** (the lower panel of the second Woods figure): whether a sample
-  holds more or less of the low-deuterium population than the reference. Its test uses the
-  errors of both population positions, so without the bootstrap it cannot be made for most
-  peptides.
+  holds more or less of the low-deuterium population than the reference. Where the two
+  populations sit at the same places in both samples, it is judged as the K = 1 difference is
+  (see [Same states, different shares](#same-states-different-shares)); where they do not, its
+  test uses the errors of both population positions, so without the bootstrap it cannot be made
+  for most of those peptides.
 - **The residue-level comparisons at K = 2** (`compare_populations.csv`, `compare_residues_K2.csv`,
   and the coloured parts of `residue_significance_K2_<sample>`): whether a sample differs from the
   reference in the share of the low-deuterium population or in the positions of the two
@@ -107,6 +109,29 @@ independent, which is too large: small real differences in such peptides are the
 often (on simulated data 7 to 16 percentage points fewer); run its bootstrap again (`hxex
 resume`) to use the right error. On simulated data with the right error, these peptides' small
 differences were found as often as before the switch, with no more false ones.
+
+## Same states, different shares
+
+When both samples have two populations at the same places (no difference in either position
+is found), a difference in the K = 1 average can only come from a different share: the share
+difference is the K = 1 difference divided by the distance between the two populations. *hxex*
+then compares the shares on positions shared by both samples (each position averaged over the
+two), so that the positions' own errors cancel. At a peptide the share difference then takes
+the K = 1 comparison's verdict, and at a residue the residue test is made the same way with the
+K = 1 errors. Where a position does differ, each sample keeps its own positions and the test
+includes their errors, as before. The column `positions` (`shared` or `own`) says which, in
+`compare_peptides.csv` and `compare_populations.csv`. Each sample's own share is still the one
+shown; only the difference and its test use the shared positions.
+
+Two things follow. First, where the positions are shared, the K = 1 difference and the share
+difference of a peptide are one measurement written two ways: they do not confirm each other.
+Second, a clear K = 1 difference between two two-population samples now shows as a difference in
+the share or in a position, as expected, instead of disappearing at K = 2 because the share's
+error carried the positions' errors (about four times larger). On simulated data analysed with
+the default noise model, no residue was wrongly called different (none, with or without this),
+more of the small true share changes were found (59 to 69 %, from 56 %), and at the peptide
+level the share was wrongly called different in 2 to 3 % of unchanged peptides, which are
+exactly the K = 1 comparison's own wrong calls (HISTORY 281).
 
 **Which numbers of populations to bootstrap.** The analysis uses each peptide's K = 1 and K = 2
 values, whatever number its spectra chose, so bootstrap both for every spectrum:

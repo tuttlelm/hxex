@@ -232,7 +232,17 @@ in the published work; where it matters, a component is named by its rank.
   HISTORY 210); there the K=2 shares are reliable, the populations being far enough apart. Per peptide (`compare_peptides(..., quantity='population')`)
   each replicate's K=1 value sits between the sample's K=2 positions averaged over its
   replicates; each sample keeps its own positions, so the K=2 fD comparisons say whether the
-  states differ and the population comparison whether they are populated differently. A pair
+  states differ and the population comparison whether they are populated differently. Where
+  neither K=2 position comparison is significant (peptides: the K=2 rank comparisons'
+  `significant`; residues: the K=2 map's position calls, judged on shared peptides and gated),
+  the difference is judged on positions shared by both samples (each averaged over the two;
+  HISTORY 281): `delta = (fD_avg_ref - fD_avg) / S`, the positions' errors entering only through
+  `S`, and a peptide takes the K=1 comparison's `t`, `p`, and `significant` (the same
+  measurement), a residue the z test with the K=1 errors; `positions` = `shared` / `own`. The
+  values stay each sample's own. Reason: with the positions' errors in the share (about four
+  times the K=1 term), clear K=1 differences between samples with the same two states vanished
+  at K=2 (the owner's expectation, HISTORY 128: fD or population may lose significance, not
+  both). A pair
   is compared only where, on both sides, the positions pass the choice's separation and error
   tests, every replicate's K=1 value lies between them, and the population is within the
   choice's limits; otherwise `reason` names the first failing test and side. The test is
