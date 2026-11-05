@@ -162,6 +162,10 @@ class AnalysisConfig:
 
     - ``format``: of the figure files (``'pdf'``, ``'png'``, ``'svg'``); ``out``: the output
       directory (None: beside the bundle).
+    - ``page_size``: the largest page of a figure, ``(width, height)`` in inches (16 by 12).
+      A figure that grows with the data (a coverage map's time points, a significance or tier
+      map's rows, an overlay's samples) wraps and goes on over further pages, ``NAME_2``,
+      ``NAME_3``, each filled with as many of its own panels as fit (owner, 2026-11-04).
     - ``fragments``: the fragment outputs of a run with fragment series
       (:class:`FragmentAnalysis`; ladder figures and rates, closure, per-residue rates; written
       whenever the run has fragments; None turns them off; fragment series are left out of the
@@ -191,6 +195,7 @@ class AnalysisConfig:
     annotations: Annotations = Annotations()  # noqa: RUF009
     exclude_flagged: bool = False
     format: str = "pdf"
+    page_size: tuple[float, float] = (16.0, 12.0)
     out: str | None = None
     runs: Mapping[str, str] | None = None
     overlay: tuple[str, ...] = DEFAULT_OVERLAY
@@ -258,6 +263,15 @@ class AnalysisConfig:
             raise ValueError(f"redundancy must be one of {', '.join(COUNTS)}")
         if self.format not in FORMATS:
             raise ValueError(f"format must be one of {', '.join(FORMATS)}")
+        try:
+            width, height = (float(v) for v in self.page_size)
+        except (TypeError, ValueError):
+            raise ValueError(f"page_size = {self.page_size!r}: give the width and height in "
+                             "inches, [16, 12]") from None
+        if width < 6 or height < 4:
+            raise ValueError(f"page_size = {self.page_size!r}: at least 6 inches wide and 4 "
+                             "high (a page holds one panel at least)")
+        object.__setattr__(self, "page_size", (width, height))
         if not 0 < self.alpha < 1:
             raise ValueError(f"alpha = {self.alpha}: write the significance level as a number "
                              "between 0 and 1 (5 % is 0.05)")

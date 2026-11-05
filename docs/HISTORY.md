@@ -7139,3 +7139,20 @@ CSVs or mzML if wanted.
     K=2 Woods page now draws the population panel first, then the low-D and high-D positions,
     the order of the map's sections. Analysis folders written before keep a
     `residue_significance_K2` file until analysed again.
+
+276. **Analysis figures over pages of `[analysis] page_size` (owner, 2026-11-04: "Not all plots
+    have the same aspect ratio so a fixed grid doesn't make sense"; "page size, setting").**
+    `[analysis] page_size = [16, 12]` (inches, at least 6 by 4) is the largest page of an
+    analysis figure; each kind fills it with as many of its own panels as fit, and goes on over
+    pages named `NAME`, `NAME_2`, `NAME_3` (the first keeps today's name, so short runs do not
+    change). Coverage maps (`coverage_<sample>`: the undeuterated control and the times, 4.2 by
+    3.2 in each) wrap into rows of the page's width (`coverage_figure` `columns`,
+    `undeuterated`) and then page; the significance maps (K = 1, K = 2 per sample with a row
+    per section, regions) and the tier map keep every sample on each page and page the time
+    axis at 0.2 in a row (`times` on `plot_residue_significance`, `_k2`, `plot_region_significance`,
+    `plot_population_tiers`, NaN standing for the tier map's control rows); the residue and
+    population overlays page their samples (3 in each). The page counts are made in
+    `report.analysis` (`_pages`, `_map_pages`) without drawing. Catalogue: `_{page}` stems for
+    the fixed-name maps, `[analysis] page_size` among their settings. With the default, a
+    coverage map of more than three points wraps to three a row (the tutorial draws none). Not
+    yet: the Results populations page, the fragment ladder and closure figures.

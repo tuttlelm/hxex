@@ -422,6 +422,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `alpha` | number | `0.05` | significance level of the comparisons |
 | `exclude_flagged` | true/false | `false` | leave out spectra with a quality flag |
 | `format` | text | `"pdf"` | of the figure files: "pdf", "png" or "svg" |
+| `page_size` | list | `[16.0, 12.0]` | the largest page of a figure, [width, height] in inches: a figure that grows with the data (a coverage map's time points, a map's rows, an overlay's samples) goes on over further pages, NAME_2, NAME_3 |
 | `out` | text | unset | the output directory (unset: beside the bundle, named after it and the reference: results_analysis_WT, or results_analysis without a reference) |
 | `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares); by default "low", "high", and "avg" ("avg" alone when ks has no 2) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |

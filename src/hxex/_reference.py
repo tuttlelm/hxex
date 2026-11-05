@@ -192,6 +192,10 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.sites": "single residues to mark: [[analysis.sites]] (below)",
     "analysis.exclude_flagged": "leave out spectra with a quality flag",
     "analysis.format": 'of the figure files: "pdf", "png" or "svg"',
+    "analysis.page_size": "the largest page of a figure, [width, height] in inches: a figure "
+                          "that grows with the data (a coverage map's time points, a map's "
+                          "rows, an overlay's samples) goes on over further pages, NAME_2, "
+                          "NAME_3",
     "analysis.out": "the output directory (unset: beside the bundle, named after it and the "
                     "reference: results_analysis_WT, or results_analysis without a reference)",
     "analysis.runs": "separate runs to compare: [analysis.runs] (below)",

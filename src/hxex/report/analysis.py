@@ -79,6 +79,7 @@ from ..analysis.settings import ALL_REFERENCES, OVERLAY_VALUES, UNDEUTERATED, po
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
 from ..io.times import format_time
+from ..spectra import UNDEUT
 from .compare import (
     plot_butterfly,
     plot_region_bars,
@@ -134,6 +135,30 @@ def _time_label(time: float, scale: str = "seconds") -> str:
     without a time, NaN; the number alone when the times only order the points)."""
     return ("undeuterated" if not np.isfinite(time)
             else format_time(time, scale).replace(" ", ""))
+
+
+MAP_ROW = 0.2  # inches per row of a significance or tier map
+OVERLAY_PANEL = 3.0  # inches per sample of an overlay figure
+COVERAGE_CELL = (4.2, 3.2)  # inches per panel of a coverage figure
+
+
+def _pages(items: list, per_page: int) -> list[list]:
+    """``items`` in pages of ``per_page`` (at least one each; one empty page for none)."""
+    per_page = max(1, int(per_page))
+    return [items[i:i + per_page] for i in range(0, len(items), per_page)] or [[]]
+
+
+def _page_stem(stem: str, n: int) -> str:
+    """Page ``n`` (from 0) of a figure: its own name first, then ``NAME_2``, ``NAME_3``."""
+    return stem if n == 0 else f"{stem}_{n + 1}"
+
+
+def _map_pages(page: tuple[float, float], times: list, rows_per_time: int,
+               overhead: float) -> list[list]:
+    """The times of a map in pages of ``page`` (width, height in inches): each time takes
+    ``rows_per_time`` rows of :data:`MAP_ROW`, the title, axis and legend ``overhead``."""
+    rows = max(1, int(round((page[1] - overhead) / MAP_ROW, 6)))
+    return _pages(times, rows // max(1, rows_per_time))
 
 
 def _stem(name: str) -> str:
@@ -560,9 +585,15 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     states = states_shown
 
     jobs = []  # (file stem, function drawing the figure)
-    for s in in_order:
-        jobs.append((f"coverage_{s}", lambda s=s: coverage_figure(
-            up, samples=[s], times=times, length=length, **when)))
+    page = config.page_size
+    per_row = max(1, int((page[0] - 0.8) // COVERAGE_CELL[0]))
+    per_page = per_row * max(1, int(page[1] // COVERAGE_CELL[1]))
+    for s in in_order:  # the undeuterated control, then the times, wrapped and paged
+        points = (["UN"] if up.where(sample=s, role=UNDEUT).any() else []) + list(times)
+        for n, chunk in enumerate(_pages(points, per_page)):
+            jobs.append((_page_stem(f"coverage_{s}", n), lambda s=s, chunk=chunk: coverage_figure(
+                up, samples=[s], times=[t for t in chunk if t != "UN"], length=length,
+                columns=per_row, undeuterated="UN" in chunk, cell=COVERAGE_CELL, **when)))
     jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
         coverage, samples=in_order, marks=marks, styles=styles)))
     runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
@@ -595,8 +626,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                              residues, w, t, styles=styles, annotations=ann, length=length,
                              top=highest, delta_crit=k1_crit, **when)))
     if config.populations == "population_test" and (residues.population_tier != "").any():
-        jobs.append(("population_tiers", lambda: plot_population_tiers(
-            residues, in_order + states, length=length, **when)))
+        tiered = (residues.K == 1) & (residues.population_tier != "")
+        points = [np.nan] + sorted({float(t) for t in residues.time[tiered]
+                                    if np.isfinite(t)})  # NaN: the controls' rows
+        for n, chunk in enumerate(_map_pages(config.page_size, points,
+                                             len(in_order + states), 2.2)):
+            jobs.append((_page_stem("population_tiers", n), lambda chunk=chunk:
+                         plot_population_tiers(residues, in_order + states, length=length,
+                                               times=chunk, **when)))
     if config.reference:
         others = [s for s in samples if s != reference]
         residue_others = others + states  # the residue comparisons include the states
@@ -616,22 +653,24 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             only = choice if config.overlay_two_only else None
             shown = [s for s in residue_others
                      if _has_overlay(residues, s, t, config.overlay, only)]
+            per_page = int(config.page_size[1] // OVERLAY_PANEL)  # samples on a page
             if shown and _has_overlay(residues, reference, t, config.overlay, only):
-                jobs.append((f"overlay_residues_{when_}", lambda t=t, shown=shown, only=only:
-                             residue_overlay_figure(
-                                 residues, reference, shown, t, show=config.overlay,
-                                 choice=only, annotations=ann, length=length, styles=styles,
-                                 **when)))
+                for n, part in enumerate(_pages(shown, per_page)):
+                    jobs.append((_page_stem(f"overlay_residues_{when_}", n),
+                                 lambda t=t, part=part, only=only: residue_overlay_figure(
+                                     residues, reference, part, t, show=config.overlay,
+                                     choice=only, annotations=ann, length=length,
+                                     styles=styles, **when)))
             # the populations, drawn as the K=2 values are: each sample where it keeps two; the
             # high-D share, as the Woods plot draws it (above = more D; owner, 2026-11-02)
             ref_pop = choice is not None and _has_overlay(residues, reference, t, ("pop_high",),
                                                           choice)
             with_pop = [s for s in residue_others if choice is not None and (
                 ref_pop or _has_overlay(residues, s, t, ("pop_high",), choice))]
-            if with_pop:
-                jobs.append((f"overlay_populations_{when_}",
-                             lambda t=t, with_pop=with_pop: residue_overlay_figure(
-                                 residues, reference, with_pop, t, show=("pop_high",),
+            for n, part in enumerate(_pages(with_pop, per_page) if with_pop else []):
+                jobs.append((_page_stem(f"overlay_populations_{when_}", n),
+                             lambda t=t, part=part: residue_overlay_figure(
+                                 residues, reference, part, t, show=("pop_high",),
                                  choice=choice, annotations=ann, length=length, styles=styles,
                                  **when)))
             for s in others:
@@ -652,21 +691,37 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         # which residues differ from the reference, judged on the shared peptides (HISTORY 203)
         compared = [s for s in residue_others if res_cmp.where(sample=s).any()]
         if compared:
-            jobs.append(("residue_significance", lambda compared=compared:
-                         plot_residue_significance(res_cmp, compared, length=length, **when)))
+            map_times = sorted({float(t) for t in res_cmp.time[res_cmp.where(sample=compared)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, map_times, len(compared),
+                                                 2.4)):
+                jobs.append((_page_stem("residue_significance", n),
+                             lambda compared=compared, chunk=chunk: plot_residue_significance(
+                                 res_cmp, compared, length=length, times=chunk, **when)))
         if reg_cmp is not None and len(reg_cmp):
             in_regions = [s for s in residue_others if reg_cmp.where(sample=s).any()]
-            jobs.append(("region_significance", lambda in_regions=in_regions:
-                         plot_region_significance(reg_cmp, in_regions, **when)))
+            region_times = sorted({float(t) for t in reg_cmp.time[reg_cmp.where(
+                sample=in_regions)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, region_times,
+                                                 len(in_regions), 2.8)):
+                jobs.append((_page_stem("region_significance", n),
+                             lambda in_regions=in_regions, chunk=chunk: plot_region_significance(
+                                 reg_cmp, in_regions, times=chunk, **when)))
         with_two = [s for s in residue_others
                     if shared_choices is not None and shared_choices.where(sample=s).any()]
         positions = k2_positions or {}
+        sections = 1 + sum(positions.get(r) is not None and len(positions[r]) > 0
+                           for r in (1, 2))
         for s in with_two:  # one figure per sample: five samples on one page overwhelm (owner)
-            jobs.append((f"residue_significance_K2_{s}",
-                         lambda s=s, positions=positions: plot_residue_significance_k2(
-                             shared_choices, pop_cmp, positions.get(1), positions.get(2),
-                             [s], length=length, blocks=res_cmp, own_choices=choices_cmp,
-                             **when)))
+            k2_times = sorted({float(t) for t in shared_choices.time[
+                shared_choices.where(sample=s)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, k2_times, sections,
+                                                 2.4 + MAP_ROW * sections)):
+                jobs.append((_page_stem(f"residue_significance_K2_{s}", n),
+                             lambda s=s, positions=positions, chunk=chunk:
+                             plot_residue_significance_k2(
+                                 shared_choices, pop_cmp, positions.get(1), positions.get(2),
+                                 [s], length=length, blocks=res_cmp, own_choices=choices_cmp,
+                                 times=chunk, **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
         for s in others:

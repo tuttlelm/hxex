@@ -436,6 +436,14 @@ shows, the settings it needs, and the settings that change it.
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
+`[analysis] page_size` sets the largest page, width and height in inches (`[16, 12]`). A figure
+that grows with the data goes on over further pages rather than growing past it: a coverage
+map's time points wrap into rows and then onto `coverage_WT_2`, `coverage_WT_3`; the
+significance and tier maps keep every sample on each page and give each page as many time
+points as fit (`residue_significance`, `residue_significance_2`); an overlay with many samples
+goes on to `overlay_residues_1min_2`. Each kind fills a page with as many of its own panels as
+fit, since they differ in shape. A short time course fits on one page, named as before.
+
 A sample keeps its colour in every figure that colours samples (the residue overlays, the
 every-sample residue figure, the region bars, and redundancy and resolution), whichever samples
 a figure shows and whichever

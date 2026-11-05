@@ -450,6 +450,12 @@ def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):
     assert columns[:7] == ["sample", "time", "time_label", "residue", "population_tier",
                            "test_strength_2", "test_agreement_2"]
     assert table and all(r["population_tier"] for r in table)
+    # a page of a long time course: NaN stands for the controls' rows, else the times given
+    labels = [t.get_text() for t in plot_population_tiers(rm, times=[np.nan]).axes[0]
+              .get_yticklabels()]
+    assert labels and all("deuterated" in label for label in labels)
+    later = plot_population_tiers(rm, times=[60.0])
+    assert {r["time"] for r in figure_rows(later)[1]} == {60.0}
     with open(tmp_path / "a" / "species_uptake.csv") as fh:
         row = next(csv.DictReader(fh))
     assert row["set_p_1"] != "" and row["best_set_reason"].startswith("set test")

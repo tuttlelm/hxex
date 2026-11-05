@@ -108,17 +108,17 @@ def _blocks_of(table) -> dict:
     return out
 
 
-def _cells(table, samples, n, code_of, time_scale, blocks=None, mark_of=None):
+def _cells(table, samples, n, code_of, time_scale, blocks=None, mark_of=None, times=None):
     """One grid row per sample and time of ``table``: (labels, first-of-sample flags, codes
     (NaN: white), per hatch the residues to hatch, and the residue blocks to outline),
     ``code_of(i)`` giving row ``i``'s code (a number) or hatch (a string), or None for white;
     ``blocks`` (:func:`_blocks_of`) default the table's own; ``mark_of(i)`` True marks row
-    ``i``'s residue with the :data:`DIFFERS` stroke."""
+    ``i``'s residue with the :data:`DIFFERS` stroke; ``times``: only those (a page's)."""
     blocks = _blocks_of(table) if blocks is None else blocks
     labels, first, rows, hatches, outlines = [], [], [], [], []
     for s in samples:
         here = table.sample == s
-        for j, t in enumerate(sorted({float(t) for t in table.time[here]})):
+        for j, t in enumerate(_page_times(table.time[here], times)):
             line = np.full(n, np.nan)
             marks: dict[str, np.ndarray] = {}
             for i in np.flatnonzero(here & (table.time == t)):
@@ -142,6 +142,12 @@ def _cells(table, samples, n, code_of, time_scale, blocks=None, mark_of=None):
             outlines.append(sorted(b for b in blocks.get((str(s), t), ())
                                    if drawn[max(b[0], 1) - 1:min(b[1], n)].any()))
     return labels, first, rows, hatches, outlines
+
+
+def _page_times(values, times) -> list[float]:
+    """The times of ``values`` in order, only those of ``times`` (a page's) when given."""
+    found = sorted({float(t) for t in values})
+    return found if times is None else [t for t in found if t in {float(x) for x in times}]
 
 
 def _split(first: int, last: int, blocks) -> list[tuple[int, int]]:
@@ -317,9 +323,10 @@ def _code(c: int):
     return {-1: NOT_TESTED_HATCH, -2: UNCONFIRMED_MORE, -3: UNCONFIRMED_LESS}.get(c, int(c))
 
 
-def _graded(comparison: ResidueComparison, samples, n, time_scale, more_d_positive=True):
+def _graded(comparison: ResidueComparison, samples, n, time_scale, more_d_positive=True,
+            times=None):
     classes = significance_classes(comparison, more_d_positive=more_d_positive)
-    return _cells(comparison, samples, n, lambda i: _code(classes[i]), time_scale)
+    return _cells(comparison, samples, n, lambda i: _code(classes[i]), time_scale, times=times)
 
 
 def _samples(table, samples):
@@ -333,18 +340,20 @@ def plot_residue_significance(
     length: int | None = None,
     time_scale: str = "seconds",
     block_outline: str | None = BLOCK_OUTLINE,
+    times: Sequence[float] | None = None,
 ) -> Figure:
     """The K = 1 significance map of ``comparison`` (a residue comparison, usually from
     :func:`hxex.analysis.judged_on_shared`) for ``samples`` (default: all, in table order): one
     row per sample and time, one cell per residue (see the module docstring). White cells: a
     residue not compared (uncovered in either sample, or without an amide). Each row's residue
     blocks (``block_start``, ``block_end``: the stretches the shared peptides cannot divide, the
-    resolution) are outlined in ``block_outline`` (a colour; None: not drawn)."""
+    resolution) are outlined in ``block_outline`` (a colour; None: not drawn). ``times``: only
+    those (a page of a long time course; its rows carry those times' rows of the table)."""
     if not len(comparison):
         raise ValueError("the residue comparison is empty")
     samples = _samples(comparison, samples)
     n = int(length if length is not None else comparison.residue.max())
-    section = _graded(comparison, samples, n, time_scale)
+    section = _graded(comparison, samples, n, time_scale, times=times)
     if not section[2]:
         raise ValueError(f"no comparison of {', '.join(samples)}")
     legend = _graded_legend("more D", "less D") + [
@@ -360,8 +369,14 @@ def plot_residue_significance(
                 f"Residues different from {reference} ({quantity}): significant on the "
                 "peptides both samples measured; colour = direction and size of that "
                 "difference in multiples of the threshold", block_outline)
-    hover.set_table(fig, comparison.columns(), np.isin(comparison.sample, samples))
+    hover.set_table(fig, comparison.columns(), _drawn(comparison, samples, times))
     return fig
+
+
+def _drawn(table, samples, times) -> np.ndarray:
+    """The rows of ``table`` a map draws: its ``samples``, at ``times`` when given."""
+    keep = np.isin(table.sample, samples)
+    return keep if times is None else keep & np.isin(table.time, np.asarray(times, float))
 
 
 def plot_residue_significance_k2(
@@ -376,6 +391,7 @@ def plot_residue_significance_k2(
     blocks: ResidueComparison | None = None,
     block_outline: str | None = BLOCK_OUTLINE,
     own_choices: ChoiceComparison | None = None,
+    times: Sequence[float] | None = None,
 ) -> Figure:
     """The K = 2 significance map: section 1 from ``choices`` (:func:`hxex.analysis.compare_choices`
     of the choices made on the peptides both samples measured, so that they agree with the test
@@ -390,7 +406,8 @@ def plot_residue_significance_k2(
     both samples keep two populations (by ``choices``). White: one population in both, or not
     compared. Residue
     blocks are outlined as in :func:`plot_residue_significance`: the position sections' own, the
-    populations section's from ``blocks`` (the K = 1 comparison; none without it)."""
+    populations section's from ``blocks`` (the K = 1 comparison; none without it). ``times``:
+    only those (a page)."""
     if not len(choices):
         raise ValueError("the choice comparison is empty")
     samples = _samples(choices, samples)
@@ -426,7 +443,7 @@ def plot_residue_significance_k2(
                "blue = a larger one" if population is not None else "populations")
     sections = [(heading, *_cells(choices, samples, n, counts, time_scale,
                                   blocks=_blocks_of(blocks) if blocks is not None else {},
-                                  mark_of=differs if own else None))]
+                                  mark_of=differs if own else None, times=times))]
     for name, comparison in (("low-D position", low), ("high-D position", high)):
         if comparison is not None and len(comparison):
             both = np.array([shared_both.get(k, False) for k in zip(
@@ -434,7 +451,8 @@ def plot_residue_significance_k2(
             classes = significance_classes(comparison)
             sections.append((name, *_cells(
                 comparison, samples, n,
-                lambda i, c=classes, b=both: None if not b[i] else _code(c[i]), time_scale)))
+                lambda i, c=classes, b=both: None if not b[i] else _code(c[i]), time_scale,
+                times=times)))
     legend = [_hatch_patch(SAMPLE_ONLY_HATCH, "two populations in the sample only"),
               _hatch_patch(REFERENCE_ONLY_HATCH, "two populations in the reference only"),
               Patch(facecolor="white", edgecolor="0.6", label="one population in both")]
@@ -461,7 +479,7 @@ def plot_residue_significance_k2(
     for name, table in (("populations: choice", choices), ("populations: share", population),
                         ("low-D position", low), ("high-D position", high)):
         if table is not None and len(table):
-            hover.set_table(fig, table.columns(), np.isin(table.sample, samples), section=name)
+            hover.set_table(fig, table.columns(), _drawn(table, samples, times), section=name)
     return fig
 
 
@@ -470,13 +488,14 @@ def plot_region_significance(
     samples: Sequence[str] | None = None,
     *,
     time_scale: str = "seconds",
+    times: Sequence[float] | None = None,
 ) -> Figure:
     """The region significance map of ``comparison`` (:func:`hxex.analysis.compare_regions`):
     one row per sample and time, one column per region (in order of their start), coloured as
     the residue map (:func:`plot_residue_significance`) by the region's shared difference over
     the threshold where it is significant; grey not significant, grey with dots the region test
     only (no peptide inside the region carries the difference), cross-hatched not tested (no
-    residue of the region compared)."""
+    residue of the region compared). ``times``: only those (a page)."""
     if not len(comparison):
         raise ValueError("the region comparison is empty")
     samples = _samples(comparison, samples)
@@ -494,7 +513,7 @@ def plot_region_significance(
     labels, first, rows, hatches, outlines = [], [], [], [], []
     for s in samples:
         here = comparison.sample == s
-        for j, t in enumerate(sorted({float(t) for t in comparison.time[here]})):
+        for j, t in enumerate(_page_times(comparison.time[here], times)):
             line = np.full(n, np.nan)
             marks = {h: np.zeros(n, dtype=bool)
                      for h in (NOT_TESTED_HATCH, UNCONFIRMED_MORE, UNCONFIRMED_LESS)}
@@ -525,6 +544,6 @@ def plot_region_significance(
                  f"Regions different from {reference} (fD): the mean of their residues on the "
                  "peptides both samples measured; colour = direction and size in multiples of "
                  "the threshold", columns=names)
-    hover.set_table(fig, comparison.columns(), np.isin(comparison.sample, samples))
+    hover.set_table(fig, comparison.columns(), _drawn(comparison, samples, times))
     return fig
 

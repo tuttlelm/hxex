@@ -44,10 +44,12 @@ def plot_population_tiers(
     *,
     length: int | None = None,
     time_scale: str = "seconds",
+    times: Sequence[float] | None = None,
 ) -> Figure:
     """The tier map of ``residues`` (a residue map made with the population test) for
     ``samples`` (default: all, in table order). White cells: a residue no peptide covers, or
-    one without an amide."""
+    one without an amide. ``times``: only those points (a page of a long time course; NaN
+    stands for the controls' rows)."""
     k1 = (residues.K == 1) & (residues.population_tier != "")
     if not k1.any():
         raise ValueError("the residue map has no population tiers (made without the "
@@ -67,6 +69,11 @@ def plot_population_tiers(
             points.setdefault(key, i)
         order = sorted(points, key=lambda k: ({UNDEUT: 0, FULLDEUT: 1}.get(k[0], 2),
                                                -1.0 if k[1] is None else k[1]))
+        if times is not None:
+            wanted = [float(x) for x in times]
+            controls = any(not np.isfinite(x) for x in wanted)
+            order = [(role, t) for role, t in order
+                     if (controls if t is None or role in (UNDEUT, FULLDEUT) else t in wanted)]
         for j, (role, t) in enumerate(order):
             sel = here & (residues.role == role)
             sel &= (np.isnan(residues.time) if t is None else residues.time == t)

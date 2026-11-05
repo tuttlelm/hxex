@@ -985,7 +985,7 @@ def _figures_from(data) -> Any:
 ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta",
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
-                 "exclude_flagged", "format", "out", "runs", "overlay",
+                 "exclude_flagged", "format", "page_size", "out", "runs", "overlay",
                  "overlay_two_only", "peptide_match", "populations", "borderline_evidence",
                  "modified_peptides",
                  "controls", "merge", "colours",

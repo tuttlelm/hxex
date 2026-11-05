@@ -993,9 +993,10 @@ Planned, not built:
    sortable Tables grid, the flat list of spectra, and a series' spectra on pages. Next: column
    filters in the list; the details beside the figures (a spectrum's `spectra.csv` row, a
    series' `uptake.csv` rows) and a read-only Tables view in Results; the series review table;
-   the analysis tables. TODO (owner, 2026-11-04): panel limits for the other figures too, as for
-   the spectra pages (HISTORY 263): figures that grow with the data should wrap to rows and go
-   on over pages, e.g. the coverage maps of a kinetics run (one panel per time point). Also to
+   the analysis tables. Panel limits for the other figures (owner, 2026-11-04): done for the
+   analysis figures by `[analysis] page_size` (HISTORY 276); still to do: the Results
+   populations page (paged like the spectra pages) and the fragment ladder and closure
+   figures. Also to
    do: a data tab for every figure (HISTORY 252): done for the residue figures and region
    bars (HISTORY 273), the K=2 counts, butterfly, and protection figures, and in Results the
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now

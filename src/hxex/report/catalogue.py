@@ -185,7 +185,7 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "coverage", "Coverage", ANALYSE, ("coverage_{sample}",),
         "one bar per peptide, coloured by fD, for every time and rank", _ANALYSIS_PAGE,
-        changed_by=("[analysis.filters]",)),
+        changed_by=("[analysis.filters]", "[analysis] page_size")),
     FigureKind(
         "redundancy_resolution", "Redundancy and resolution", ANALYSE,
         ("redundancy_resolution",), "redundancy and resolution per residue", _ANALYSIS_PAGE,
@@ -212,23 +212,25 @@ KINDS: tuple[FigureKind, ...] = (
                              "(no K=2 values there, or [analysis] ks without 2)",
         changed_by=("[analysis] weight_exponent",)),
     FigureKind(
-        "population_tiers", "Population tiers", ANALYSE, ("population_tiers",),
+        "population_tiers", "Population tiers", ANALYSE,
+        ("population_tiers", "population_tiers_{page}"),
         "the residue tiers of the population test, one row per sample and time point",
         "population-test.md#the-residue-tiers", (_TEST,),
-        data="where a residue has a tier"),
+        data="where a residue has a tier", changed_by=("[analysis] page_size",)),
     FigureKind(
         "overlay_residues", "Residue overlay", ANALYSE, ("overlay_residues_{time}",),
         "each sample's residue values drawn over the reference's (values only, no "
         "significance)", _ANALYSIS_PAGE, (_REFERENCE,),
         data="where the reference and a sample have the values to draw at that time",
         changed_by=("[analysis] overlay", "[analysis] overlay_two_only",
-                    "[analysis.colours]")),
+                    "[analysis.colours]", "[analysis] page_size")),
     FigureKind(
         "overlay_populations", "Population overlay", ANALYSE, ("overlay_populations_{time}",),
         "the share of the high-D population by residue, each sample over the reference",
         _ANALYSIS_PAGE, (_REFERENCE, _K2),
         data="where a sample has two populations at that time",
-        changed_by=("[analysis] populations", "[analysis.choice]", "[analysis.colours]")),
+        changed_by=("[analysis] populations", "[analysis.choice]", "[analysis.colours]",
+                    "[analysis] page_size")),
     FigureKind(
         "woods", "Woods plot", ANALYSE, ("woods_{sample}_{time}",),
         "peptide differences from the reference at K=1, and where the number of populations "
@@ -242,11 +244,11 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] alpha", "[analysis] peptide_match", "[analysis] populations")),
     FigureKind(
         "residue_significance", "Residue significance map", ANALYSE,
-        ("residue_significance",),
+        ("residue_significance", "residue_significance_{page}"),
         "which residues differ significantly from the reference: one row per sample and "
         "time, one cell per residue", _ANALYSIS_PAGE, (_REFERENCE,),
         data="where a residue could be compared",
-        changed_by=("[analysis] alpha", "[analysis] peptide_match")),
+        changed_by=("[analysis] alpha", "[analysis] peptide_match", "[analysis] page_size")),
     FigureKind(
         "residue_significance_K2", "Residue significance map at K=2", ANALYSE,
         ("residue_significance_K2_{sample}",),
@@ -256,12 +258,13 @@ KINDS: tuple[FigureKind, ...] = (
         _ANALYSIS_PAGE, (_REFERENCE, _K2),
         data="where a sample has two populations; the share and position sections need a "
              "bootstrap at K=2 ([run.bootstrap] ks)",
-        changed_by=("[analysis] populations", "[analysis.choice]")),
+        changed_by=("[analysis] populations", "[analysis.choice]", "[analysis] page_size")),
     FigureKind(
-        "region_significance", "Region significance map", ANALYSE, ("region_significance",),
+        "region_significance", "Region significance map", ANALYSE,
+        ("region_significance", "region_significance_{page}"),
         "which regions differ significantly from the reference: one row per sample and time, "
         "one column per region", _ANALYSIS_PAGE, (_REFERENCE, _REGIONS),
-        changed_by=("[analysis] alpha", "[[analysis.regions]]")),
+        changed_by=("[analysis] alpha", "[[analysis.regions]]", "[analysis] page_size")),
     FigureKind(
         "butterfly", "Butterfly plot", ANALYSE, ("butterfly_{sample}",),
         "the reference above, the sample below, a line per time, the differences underneath",

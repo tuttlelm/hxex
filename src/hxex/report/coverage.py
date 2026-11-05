@@ -234,11 +234,14 @@ def coverage_figure(
     length: int | None = None,
     cell: tuple[float, float] = (4.2, 3.2),
     time_scale: str = "seconds",
+    columns: int | None = None,
+    undeuterated: bool = True,
 ) -> Figure:
     """Coverage maps of several samples (rows) and points (columns: the undeuterated control
-    when there is one, then the ``times``, by default every time point), all with one colour
-    scale and the same number of rows per stack. Empty cells (no peptide of that sample at
-    that point) are left blank.
+    when there is one and ``undeuterated``, then the ``times``, by default every time point),
+    all with one colour scale and the same number of rows per stack. Empty cells (no peptide of
+    that sample at that point) are left blank. ``columns``: each sample's points wrap into
+    rows of at most that many (a long time course on a page of its size).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -246,7 +249,7 @@ def coverage_figure(
     samples = list(samples) if samples is not None else sorted(set(pep.sample.tolist()))
     times = (list(times) if times is not None
              else sorted({float(t) for t in pep.time if np.isfinite(t)}))
-    if (pep.role == UNDEUT).any():
+    if undeuterated and (pep.role == UNDEUT).any():
         times = [np.nan, *times]  # the undeuterated control's column (its time is NaN)
 
     def at(s, t):
@@ -262,19 +265,23 @@ def coverage_figure(
                 wraps.append(autowrap(pep.start[o], pep.end[o]))
     wrap = max(wraps) if wraps else None
     top = length if length is not None else (int(pep.end.max()) if len(pep) else None)
-    fig = Figure(figsize=(cell[0] * len(times) + 0.8, cell[1] * len(samples)),
+    per_row = len(times) if columns is None else max(1, min(int(columns), len(times)))
+    lines = -(-len(times) // per_row) if times else 1  # grid rows per sample
+    fig = Figure(figsize=(cell[0] * per_row + 0.8, cell[1] * len(samples) * lines),
                  layout="constrained")
-    axes = fig.subplots(len(samples), len(times), squeeze=False)
+    axes = fig.subplots(len(samples) * lines, per_row, squeeze=False)
     for r, s in enumerate(samples):
         for c, t in enumerate(times):
-            ax = axes[r][c]
+            ax = axes[r * lines + c // per_row][c % per_row]
             if not at(s, t).any():
                 ax.set_axis_off()
                 continue
             plot_coverage(uptake, s, t, K=K, rank=rank, length=top, wrap=wrap, ax=ax,
                           colorbar=False, time_scale=time_scale)
-            if r < len(samples) - 1:
+            if r * lines + c // per_row < len(samples) * lines - 1:
                 ax.set_xlabel("")
+        for c in range(len(times), lines * per_row):  # the last row's empty places
+            axes[r * lines + c // per_row][c % per_row].set_axis_off()
     from matplotlib.cm import ScalarMappable
 
     bar = fig.colorbar(ScalarMappable(norm=Normalize(0, 1), cmap=FD_CMAP), ax=axes, pad=0.01,

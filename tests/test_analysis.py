@@ -2293,6 +2293,21 @@ def test_residue_significance_map():
     ax = fig.axes[0]
     assert [p.get_gid() for p in ax.patches] == ["xxxx:V  4 s:7-7"]
     assert len(SIGNIFICANCE_COLOURS) == 7
+    # a page of a long time course: its times only, its rows only
+    import dataclasses
+
+    from hxex.gui.figures import figure_rows
+
+    two = ResidueComparison(**{
+        f.name: (np.concatenate([getattr(rc, f.name)] * 2) if f.name != "time" else
+                 np.concatenate([rc.time, np.full(n, 60.0)]))
+        if isinstance(getattr(rc, f.name), np.ndarray) else getattr(rc, f.name)
+        for f in dataclasses.fields(ResidueComparison)})
+    page = plot_residue_significance(two, times=[60.0])
+    assert [t.get_text() for t in page.axes[0].get_yticklabels()] == ["V  1 min"]
+    assert {r["time"] for r in figure_rows(page)[1]} == {60.0}
+    with pytest.raises(ValueError, match="no comparison"):
+        plot_residue_significance(two, times=[999.0])
     with pytest.raises(ValueError, match="empty"):
         plot_residue_significance(ResidueComparison(**{
             name: np.array([]) for name in ("sample", "time", "residue", "value_reference",
@@ -2767,3 +2782,36 @@ def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
     _, overlay = drawn["overlay_residues"]
     keys = [tuple(sorted((k, repr(v)) for k, v in r.items())) for r in overlay]
     assert len(keys) == len(set(keys))
+
+
+def test_figures_that_grow_go_on_over_pages_of_the_page_size(two_sample_bundle):
+    """[analysis] page_size (owner, 2026-11-04: a page size, as a setting; plots differ in
+    shape, so no fixed grid): a figure that grows with the data goes on over pages NAME,
+    NAME_2, each holding as many of its own panels as fit; the maps keep only a page's times."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import Results
+    from hxex.report.analysis import _map_pages, _pages, analysis_outputs
+    from hxex.report.catalogue import kind_of
+
+    assert _pages([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]] and _pages([], 3) == [[]]
+    # a map's rows: (12 - 2.4) / 0.2 = 48 rows, 4 samples: 12 times a page
+    assert [len(p) for p in _map_pages((16.0, 12.0), list(range(30)), 4, 2.4)] == [12, 12, 6]
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    small = analysis_outputs(results, AnalysisConfig(reference="S", page_size=(6, 4)))
+    stems = [stem for stem, _ in small.figures]
+    # a panel a page: the undeuterated control's coverage, then the time point's
+    assert {"coverage_S", "coverage_S_2"} <= set(stems)
+    assert kind_of("coverage_S_2").name == "coverage"
+    assert kind_of("residue_significance_2").name == "residue_significance"
+    assert kind_of("population_tiers_3").name == "population_tiers"
+    first = dict(small.figures)["coverage_S"]()
+    assert [ax.get_title() for ax in first.axes if ax.get_title()][0].endswith("undeuterated")
+    default = analysis_outputs(results, AnalysisConfig(reference="S"))
+    assert not any(stem.endswith("_2") for stem, _ in default.figures)  # one page each
+    with pytest.raises(ValueError):
+        AnalysisConfig(page_size=(3, 2))
+    with pytest.raises(ValueError, match="width and height"):
+        AnalysisConfig(page_size="big")
+    assert AnalysisConfig.from_dict({"page_size": [20, 15]}).page_size == (20.0, 15.0)
