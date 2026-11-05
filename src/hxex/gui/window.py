@@ -623,6 +623,7 @@ class MainWindow(QMainWindow):
                 or stamp == self.results_review_stamp:
             return
         log.info("the review table changed: the results are read again with it")
+        self.results_page.review.commit_note()  # a note being typed is kept
         self._pending_selection = {**self.results_page.selection(),
                                    **self.results_page.view_settings()}
         self.open_results(self.project)
@@ -644,6 +645,7 @@ class MainWindow(QMainWindow):
                 or self.project is None or self.loading:
             return
         log.info("the project's [figures] or [review] changed: the results shown again with them")
+        self.results_page.review.commit_note()  # a note being typed is kept
         self._pending_selection = {**self.results_page.selection(),
                                    **self.results_page.view_settings()}
         self.open_results(self.project)

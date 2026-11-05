@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Review decisions from hxex's window written to the user review table (hxex.gui.review): the
 table made from the results and named in the project, decisions in the spectrum's row, the
-user's own columns kept, and every command reading them as typed. No Qt."""
+user's own columns kept, and every command reading them as typed. The window's tests run
+offscreen (set before pytest-qt makes the application, so a run of this file alone opens no
+window on the screen)."""
+import os
 import tomllib
 
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from hxex.cli import main
 from hxex.gui.review import Decision, make_review_table, table_path, write_decisions
@@ -33,6 +38,9 @@ def test_the_first_decision_makes_the_table_and_names_it(project_run):
     table = read_table(path)
     assert {"spectrum_id", "review_status", "review_K", "note"} <= set(table.columns)
     assert len(table.rows) == len(results.fit)  # a copy of spectra.csv
+    text = path.read_text(encoding="utf-8")  # numbers as spectra.csv writes them
+    assert "np." not in text and "float64" not in text
+    assert read_table(project.parent / "out_tables" / "spectra.csv").rows == table.rows
     assert make_review_table(project, results) == path  # named already: kept
 
 
@@ -93,9 +101,6 @@ def test_the_commands_read_the_windows_decisions(project_run, capsys):
 
 @pytest.fixture
 def window_on(qtbot, tmp_path):
-    import os
-
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QMessageBox
@@ -169,6 +174,202 @@ def test_a_decision_on_a_series_reaches_every_spectrum(qtbot, window_on):
     assert series.text(_col("rejected")) == str(n)
     sheet = read_review_table(project.parent / "user_review_table.csv")
     assert sum(s == "rejected" for s in sheet.status) == n
+
+
+def _typing_ready(qtbot, window, open_, project):
+    """The window active (so focus moves as a person moves it), the review table made and named
+    (its first decision reads the results again), the first series' first spectrum accepted
+    with a note of its own."""
+    page = open_(project)
+    window.show()
+    window.windowHandle().requestActivate()
+    qtbot.waitUntil(window.isActiveWindow, timeout=5000)
+    _, leaf = _first_spectrum(page)
+    page.tree.setCurrentItem(leaf)
+    page.review.decide(status="accepted", note="its own note")
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.results_page
+    series, leaf = _first_spectrum(page)
+    return page, series, leaf
+
+
+def _notes(project) -> dict:
+    """Every note in the table as written (the reader leaves out rows without a decision)."""
+    table = read_table(project.parent / "user_review_table.csv")
+    sid, note = table.columns.index("spectrum_id"), table.columns.index("note")
+    return {row[sid]: row[note] for row in table.rows if row[note]}
+
+
+def _type_note(qtbot, panel, text):
+    panel.note.setFocus()
+    qtbot.waitUntil(panel.note.hasFocus, timeout=5000)
+    qtbot.keyClicks(panel.note, text)
+
+
+def test_a_series_note_is_kept_after_enter_and_leaving_the_box(qtbot, window_on):
+    """Owner, 2026-11-04: a series note saved with Enter was wiped, with the spectra's own notes,
+    when the box was left (the box emptied for the series read as an edit). Now the note stays
+    and the series shows it."""
+    from PySide6.QtCore import Qt
+
+    window, project, open_ = window_on
+    page, series, leaf = _typing_ready(qtbot, window, open_, project)
+    assert set(_notes(project).values()) == {"its own note"}
+    page.tree.setCurrentItem(series)
+    n = int(series.text(2))
+    panel = page.review
+    _type_note(qtbot, panel, "series note")
+    qtbot.keyClick(panel.note, Qt.Key.Key_Return)
+    assert panel.note.text() == "series note"  # every spectrum's note, shown for the series
+    rect = page.tree.visualItemRect(series)
+    qtbot.mouseClick(page.tree.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    panel.status.buttons()[2].setFocus()  # and on to a status
+    panel.decide(status="rejected")
+    notes = _notes(project)
+    assert len(notes) == n and set(notes.values()) == {"series note"}
+
+
+def test_notes_that_differ_are_kept_when_the_box_is_left_empty(qtbot, window_on):
+    """A series whose spectra have different notes shows none (and says so); leaving the empty
+    box, or finishing it, writes nothing, so each keeps its own."""
+    from PySide6.QtCore import Qt
+
+    window, project, open_ = window_on
+    page, series, leaf = _typing_ready(qtbot, window, open_, project)
+    page.tree.setCurrentItem(series)
+    panel = page.review
+    assert panel.note.text() == "" and "differ" in panel.note.placeholderText()
+    panel.note.setFocus()
+    qtbot.waitUntil(panel.note.hasFocus, timeout=5000)
+    rect = page.tree.visualItemRect(series)
+    qtbot.mouseClick(page.tree.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    panel.note.editingFinished.emit()
+    assert _notes(project) == {leaf.toolTip(0): "its own note"}
+
+
+def test_a_note_being_typed_is_kept_when_the_results_are_read_again(qtbot, window_on):
+    """The review table saved elsewhere while a note is typed: the note is written to the
+    spectra it was typed for before the results are read again, not lost."""
+    window, project, open_ = window_on
+    page, series, _ = _typing_ready(qtbot, window, open_, project)
+    page.tree.setCurrentItem(series)
+    n = int(series.text(2))
+    _type_note(qtbot, page.review, "typed while saved elsewhere")
+    table = project.parent / "user_review_table.csv"
+    table.write_text(table.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    qtbot.waitUntil(lambda: window.loading, timeout=10000)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    notes = _notes(project)
+    assert len(notes) == n and set(notes.values()) == {"typed while saved elsewhere"}
+
+
+def test_a_note_on_its_own_is_shown_again_after_a_reload(qtbot, window_on):
+    """A note on a spectrum with no status and no K is read back with the table (owner,
+    2026-11-05: it had been written but not shown once the results were read again)."""
+    from hxex.report.notebook import load_results
+
+    window, project, open_ = window_on
+    page, series, leaf = _typing_ready(qtbot, window, open_, project)
+    other = leaf.parent().child(1) if leaf.parent().childCount() > 1 else \
+        series.child(1).child(0)
+    sid = other.toolTip(0)
+    page.tree.setCurrentItem(other)
+    page.review.note.setText("only a note")
+    page.review.note.editingFinished.emit()
+    window.open_results(project)  # read again, as reopening the project does
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.results_page
+    results = page.results
+    i = results.find(sid)
+    assert results.review.get(sid)["note"] == "only a note"
+    assert results.review_status[i] == "unreviewed"
+    assert load_results(project).review.get(sid)["note"] == "only a note"
+
+
+def test_the_windows_decisions_give_the_same_report_tables_as_a_spreadsheet(
+        qtbot, window_on, tmp_path_factory):
+    """The G3 exit check (docs/PLAN.md, "Phases of the GUI"): review edits made in the window
+    give the same `hxex report` tables as the same edits typed into a copy of spectra.csv (with
+    a spreadsheet's BOM and semicolons). Checked by hand on the tutorial data too (HISTORY 285:
+    window edits against a table saved by LibreOffice, every table identical)."""
+    import csv
+    import shutil
+
+    window, project, open_ = window_on
+    sheet = tmp_path_factory.mktemp("sheet") / "p"
+    shutil.copytree(project.parent, sheet)  # before any decision: no review table yet
+    page = open_(project)
+    edits = []
+
+    def act(selection, **decision):
+        assert window.results_page.select(selection)
+        panel = window.results_page.review
+        ids = [str(window.results_page.results.fit.spectrum_id[i]) for i in panel.rows]
+        if set(decision) == {"note"}:
+            panel.note.setText(decision["note"])
+            panel.note.editingFinished.emit()
+        else:
+            panel.decide(**decision)
+        qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+        edits.append((ids, decision))
+
+    series, leaf = _first_spectrum(page)
+    page.tree.setCurrentItem(leaf)
+    where = page.selection()
+    page.tree.expandItem(series.child(1))
+    one, other = leaf.toolTip(0), series.child(1).child(0).toolTip(0)  # two time points
+    page.tree.setCurrentItem(series.child(2))
+    point = page.selection()  # a time point, by what outlasts reading the results again
+    whole = {k: where[k] for k in ("sample", "peptide_range", "charge")}
+    act({**where, "spectrum_id": one}, status="rejected")  # makes and names the table
+    act(point, status="accepted")
+    act(point, note="a time point's note")
+    act(whole, k=1, k_given=True)
+    act(whole, note="a charge's note")
+    act({**where, "spectrum_id": other}, note="a note on its own")
+    act({**where, "spectrum_id": one}, status="")  # back to not reviewed
+    act({**where, "spectrum_id": one}, k=None, k_given=True)  # back to the fit's choice
+    # the same edits typed into a copy of spectra.csv
+    with (sheet / "out_tables" / "spectra.csv").open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.reader(fh))
+    col = {name: rows[0].index(name) for name in ("spectrum_id", "review_status", "review_K",
+                                                   "note")}
+    at = {row[col["spectrum_id"]]: row for row in rows[1:]}
+    for ids, decision in edits:
+        for sid in ids:
+            if "status" in decision:
+                at[sid][col["review_status"]] = decision["status"]
+            if decision.get("k_given"):
+                at[sid][col["review_K"]] = "" if decision["k"] is None else str(decision["k"])
+            if "note" in decision:
+                at[sid][col["note"]] = decision["note"]
+    with (sheet / "my_review.csv").open("w", encoding="utf-8-sig", newline="") as fh:
+        csv.writer(fh, delimiter=";").writerows(rows)
+    assert main(["-q", "set", str(sheet / "hxex.toml"), "review.table", "my_review.csv"]) == 0
+    for folder in (project.parent, sheet):
+        assert main(["-q", "report", str(folder / "hxex.toml"), "--overwrite"]) == 0
+
+    def tables(folder):
+        out = {}
+        for path in sorted((folder / "out_tables").glob("*.csv")):
+            with path.open(encoding="utf-8", newline="") as fh:
+                got = list(csv.reader(fh))
+            if path.name == "review.csv":  # the date of each decision differs
+                j = got[0].index("updated")
+                got = [row[:j] + row[j + 1:] for row in got]
+            out[path.name] = got
+        return out
+
+    window_side, sheet_side = tables(project.parent), tables(sheet)
+    assert {"spectra.csv", "review.csv", "uptake.csv"} <= set(window_side)
+    assert window_side == sheet_side
+    spectra = {row[0]: row for row in window_side["spectra.csv"][1:]}
+    head = window_side["spectra.csv"][0]
+    note, status = head.index("note"), head.index("review_status")
+    assert spectra[other][note] == "a note on its own" and spectra[one][status] == "unreviewed"
+    assert sum(row[status] == "accepted" for row in spectra.values()) == len(edits[1][0])
+    n = len(edits[4][0])  # every spectrum of the charge but the one with its own note
+    assert n > 2 and sum(row[note] == "a charge's note" for row in spectra.values()) == n - 1
 
 
 def test_a_held_table_keeps_the_decision_until_it_can_be_written(qtbot, window_on,

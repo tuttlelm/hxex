@@ -261,7 +261,12 @@ or every spectrum of a time point or a charge.
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted).
   When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
   resume`, which adds it.
-- **Note**: anything you want to keep with the decision.
+- **Note**: anything you want to keep with the spectrum. It is saved when you press Enter or
+  leave the box. With a time point or a charge selected, the box shows the note its spectra
+  share, and a note typed there replaces each spectrum's own. When their notes differ, the box
+  is empty and says so; leaving it empty keeps each one's note. A note needs no decision: on a
+  spectrum you leave not reviewed, it is kept and shown again, and it changes nothing in the
+  fits or the analysis.
 
 Each decision is written at once to your review table, the same file you could edit in a
 spreadsheet ([Excluding spectra](excluding-spectra.md)): its `review_status`, `review_K`, and

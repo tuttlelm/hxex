@@ -76,8 +76,10 @@ class ReviewSheet:
         accepted = sum(s == "accepted" for s in self.status)
         chosen = sum(k > 0 for k in self.k)
         cleared = sum(k == CLEARED for k in self.k)
+        noted = sum(not s and not k for s, k in zip(self.status, self.k, strict=True))
         return (f"{len(self)} spectra: {rejected} rejected, {accepted} accepted, {chosen} with "
-                "a chosen K" + (f", {cleared} with a chosen K cleared" if cleared else ""))
+                "a chosen K" + (f", {cleared} with a chosen K cleared" if cleared else "")
+                + (f", {noted} with a note only" if noted else ""))
 
 
 def _delimiter(header: str) -> str:
@@ -90,8 +92,9 @@ def _delimiter(header: str) -> str:
 def read_review_table(path: str | Path) -> ReviewSheet:
     """The decisions of the user review table at ``path`` (a CSV with a ``spectrum_id`` column
     and any of ``review_status``, ``review_K`` and ``note``; other columns are ignored). Rows
-    with neither a status nor a K are left out. A value that cannot be read raises ValueError
-    naming its row (the header is row 1)."""
+    with no status, no K and no note are left out (a note on its own is kept: it changes
+    nothing in the fits or the analysis, but it is the reviewer's; owner, 2026-11-05). A value
+    that cannot be read raises ValueError naming its row (the header is row 1)."""
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8-sig")  # a spreadsheet's "CSV UTF-8" has a BOM
@@ -124,7 +127,7 @@ def read_review_table(path: str | Path) -> ReviewSheet:
         status, k_text, note = cell("review_status").lower(), cell("review_K"), cell("note")
         if status == "unreviewed":  # spectra.csv's word for no decision
             status = ""
-        if not sid or (not status and not k_text):
+        if not sid or (not status and not k_text and not note):
             continue
         if status not in ("", *STATUSES):
             problems.append(f"row {row_number}: review_status {status!r} (rejected, accepted, "

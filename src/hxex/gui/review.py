@@ -88,11 +88,10 @@ def make_review_table(project: Path, results) -> Path:
 
 
 def _text(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, float):
-        return "" if value != value else repr(value)
-    return str(value)
+    """A cell as spectra.csv writes it (numpy's repr would write ``np.float64(4.0)``)."""
+    from ..report.tables import _cell
+
+    return "" if value is None else _cell(value)
 
 
 def write_decisions(path: Path, decisions: dict[str, Decision], bundle_k: dict[str, int]

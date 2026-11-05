@@ -14,19 +14,21 @@ from test_cli import mzml_project  # noqa: I001
 
 def test_the_table_is_read_as_spreadsheets_write_it(tmp_path):
     """Only spectrum_id, review_status, review_K and note are read; a BOM, a semicolon separator,
-    capitals and "2.0" are accepted; rows without a decision are left out; a bad value names its
-    row."""
+    capitals and "2.0" are accepted; rows without a decision or a note are left out (a note on
+    its own is kept: owner, 2026-11-05); a bad value names its row."""
     path = tmp_path / "t.csv"
     path.write_text("﻿spectrum_id;sample;review_status;review_K;note;mean_1\n"
                     "p:a;WT;Rejected;;bad injection;3.1\n"
                     "p:b;WT;;2.0;;4.0\n"
                     "p:c;WT;unreviewed;;just looked;5.0\n"
-                    "p:d;WT;accepted;1;;5.5\n", encoding="utf-8")
+                    "p:d;WT;accepted;1;;5.5\n"
+                    "p:e;WT;unreviewed;;;6.0\n", encoding="utf-8")
     sheet = read_review_table(path)
-    assert sheet.spectrum_id == ("p:a", "p:b", "p:d")
-    assert sheet.status == ("rejected", "", "accepted") and sheet.k == (0, 2, 1)
-    assert sheet.note[0] == "bad injection"
-    assert sheet.describe() == "3 spectra: 1 rejected, 1 accepted, 2 with a chosen K"
+    assert sheet.spectrum_id == ("p:a", "p:b", "p:c", "p:d")
+    assert sheet.status == ("rejected", "", "", "accepted") and sheet.k == (0, 2, 0, 1)
+    assert sheet.note[0] == "bad injection" and sheet.note[2] == "just looked"
+    assert sheet.describe() == ("4 spectra: 1 rejected, 1 accepted, 2 with a chosen K, 1 with a "
+                                "note only")
     # a quoted note may hold a line break; the rows after it are still read
     path.write_text('spectrum_id,review_status,note\np:a,rejected,"two\nlines"\n'
                     "p:b,accepted,\n", encoding="utf-8")
@@ -77,6 +79,11 @@ def test_review_k_zero_clears_a_chosen_k(tmp_path):
     path.write_text(f"spectrum_id,review_K\n{c},0\n")
     view = apply_review_table(stored, read_review_table(path))
     assert c not in set(map(str, view.review.spectrum_id))
+    # a note on its own comes back as the spectrum's note, with no decision
+    path.write_text(f"spectrum_id,review_status,review_K,note\n{c},,,looked twice\n")
+    view = apply_review_table(stored, read_review_table(path))
+    assert view.review.get(c)["note"] == "looked twice"
+    assert view.review_status[5] == "unreviewed" and view.review.get(c)["k_override"] == 0
     for bad in ("inf", "nan", "1e400"):
         path.write_text(f"spectrum_id,review_K\n{a},{bad}\n")
         with pytest.raises(ValueError, match=f"row 2: review_K '{bad}'"):

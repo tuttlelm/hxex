@@ -1004,7 +1004,23 @@ Planned, not built:
    do: a data tab for every figure (HISTORY 252): done for the residue figures and region
    bars (HISTORY 273), the K=2 counts, butterfly, and protection figures, and in Results the
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now
-   lists its rows.
+   lists its rows. G3's exit check passes (HISTORY 285): review edits made in the window give
+   the same `hxex report` tables as the same edits made in a spreadsheet.
+19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled).
+   HDXBoxeR (Janowska et al. 2024, Bioinformatics, doi:10.1093/bioinformatics/btae479; R,
+   GPL >= 2) applies the same Welch plus critical-interval test to HDExaminer uptake tables.
+   Four of its outputs are worth adding, drawn from tables *hxex* already writes, with its
+   plots as general templates and *hxex*'s figure style: (1) a dataset summary table per
+   sample as Masson et al. 2019 ask for it (time points, replicates, peptides, coverage,
+   mean peptide length, redundancy, mean replicate sd, `delta_crit`, back-exchange mean and
+   range); (2) a volcano plot per time and sample from `compare_peptides.csv`; (3) structure
+   colouring scripts (PyMOL, and a ChimeraX attribute file) from `compare_residues.csv` with
+   the significance maps' colours, significant residues only; (4) a per-peptide uptake
+   overlay of every sample with error bars from `species_uptake.csv`. Not copied: the
+   maximum-of-significant-peptides residue reduction, equal-replicate trimming, the critical
+   interval multiplier, percentage heat maps, boxplots, HX-Express input files. Its plain
+   pooled critical interval at alpha 0.01 differs from *hxex*'s robust `delta_crit`
+   (HISTORY 140) and stays different.
 
 ## Risks and open decisions
 

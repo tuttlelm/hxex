@@ -71,6 +71,10 @@ class ReviewPanel(QGroupBox):
         self.note = QLineEdit()
         self.note.setPlaceholderText("a note (kept with the decision)")
         self.note.editingFinished.connect(self._noted)
+        # the note the box shows for the selection: only a different text is written (Qt
+        # reports a box emptied by the program as edited when it loses focus, and an empty
+        # note written to a series wiped its notes; owner, 2026-11-04)
+        self._shown_note = ""
         self.message = QLabel()
         self.message.setWordWrap(True)
         self.retry = QPushButton("Try again")
@@ -155,6 +159,7 @@ class ReviewPanel(QGroupBox):
         self.k.clear()
         self.note.blockSignals(True)
         self.note.setText("")
+        self._shown_note = ""
         if results is None or not self.rows:
             self.k.blockSignals(False)
             self.note.blockSignals(False)
@@ -177,15 +182,23 @@ class ReviewPanel(QGroupBox):
         else:
             self.k.insertItem(0, "(differs between the spectra)", "mixed")
             self.k.setCurrentIndex(0)
-        if len(self.rows) == 1:
-            entry = results.review.get(str(results.fit.spectrum_id[self.rows[0]])) \
-                if results.review is not None else None
-            self.note.setText(entry["note"] if entry else "")
-            self.note.setPlaceholderText("a note (kept with the decision)")
-        else:
-            self.note.setPlaceholderText("a note for each of these spectra")
+        notes = {self._note_of(i) for i in self.rows}
+        if len(notes) == 1:  # one spectrum, or every one with the same note: shown
+            self._shown_note = notes.pop()
+            self.note.setText(self._shown_note)
+            self.note.setPlaceholderText("a note (kept with the decision)" if len(self.rows) == 1
+                                         else "a note for each of these spectra")
+        else:  # left empty: a note typed here replaces each one's, leaving it empty keeps them
+            self.note.setPlaceholderText("their notes differ: a note typed here replaces them "
+                                         "all")
         self.k.blockSignals(False)
         self.note.blockSignals(False)
+
+    def _note_of(self, i: int) -> str:
+        review = self.workspace.results.review
+        entry = review.get(str(self.workspace.results.fit.spectrum_id[i])) \
+            if review is not None else None
+        return str(entry["note"] or "") if entry else ""
 
     def _chosen_k(self, i: int):
         results = self.workspace.results
@@ -203,7 +216,16 @@ class ReviewPanel(QGroupBox):
             self.decide(k=data, k_given=True)
 
     def _noted(self) -> None:
-        self.decide(note=self.note.text().strip())
+        self.commit_note()
+
+    def commit_note(self) -> bool:
+        """Write the note typed for the spectra shown, when it differs from the one shown (the
+        window calls it before reading the results again, so a note being typed is kept).
+        False when there was nothing to write or it is waiting."""
+        text = self.note.text().strip()
+        if not self.rows or text == self._shown_note.strip():
+            return False
+        return self.decide(note=text)
 
     def decide(self, status: str | None = None, k: int | None = None, k_given: bool = False,
                note: str | None = None) -> bool:

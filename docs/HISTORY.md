@@ -7234,3 +7234,43 @@ CSVs or mzML if wanted.
     locally (1 of 6 runs). The window itself draws only in that thread, so hxex is not changed:
     `tests/conftest.py` waits for the drawing thread to finish after every test (12 of 12 runs
     pass). The data-tab test of HISTORY 279 also waits for its drawings before its last check.
+
+283. **Review notes for a time point or a series wiped (owner, 2026-11-04).** A note typed for
+    several spectra and saved with Enter was written to each, then the panel emptied the box
+    (it never showed a note for several spectra) while the cursor stayed in it; Qt reports such
+    a box as edited when it loses focus, so the next click anywhere wrote an empty note to every
+    spectrum, wiping the series note and the spectra's own notes (reproduced offscreen: 6 of 6
+    notes after Enter, 0 after a click in the tree or a status). The panel now remembers the
+    note it shows and writes only a different one (`ReviewPanel.commit_note`); for several
+    spectra it shows the note they share, or nothing with "their notes differ" (leaving it empty
+    keeps each one's); and the window writes a note being typed before it reads the same
+    project's results again (the review table saved elsewhere, `[review]` or `[figures]`
+    changed, including the first decision naming the table). Notes already wiped cannot be
+    recovered (the table keeps no history). A note on a spectrum with neither a status nor a K
+    was written but not read back (item 284 reads it). `tests/test_gui_review.py` now selects Qt's offscreen platform at import: run
+    alone, its fixture set it after pytest-qt had made the application, and windows opened on
+    the screen.
+
+284. **A note on its own is read back; the window's review table writes numbers as spectra.csv
+    does (owner, 2026-11-05).** `read_review_table` left out every row with neither a status
+    nor a K, so a note typed on a spectrum left not reviewed was written to the table but gone
+    once the results were read again. Rows are now left out only when they have no status, no
+    K, and no note; a note on its own comes back as the spectrum's note with no decision (it
+    changes nothing in the fits or the analysis), and `hxex check` counts such rows ("N with a
+    note only"). The review table the window makes (a copy of the results' spectra table) wrote
+    numpy numbers through `repr` (`np.float64(4.0)`); it now writes each cell as `spectra.csv`
+    does, and the test compares the two files' rows.
+
+285. **G3's exit check passes (owner's order, 2026-11-05).** docs/PLAN.md's G3 row: review edits
+    made in the GUI give the same `hxex report` tables as the same edits made in a spreadsheet.
+    Checked on the tutorial's results (3,874 spectra, its review table with one accepted
+    spectrum): ten edits through the review panel, offscreen (a spectrum rejected; a time point
+    rejected, then given a note; a charge given K = 2; one spectrum K = 1; a note on its own; the
+    accepted spectrum back to not reviewed; one spectrum back to the fit's choice; a charge
+    accepted, then given a note), and the same edits typed into the table's cells and saved
+    through LibreOffice (CSV to xlsx and back). The two tables' decision columns were identical,
+    and so were `spectra.csv`, `series.csv`, `uptake.csv`, `components.csv`, and `review.csv`
+    (dates aside) after `hxex report`; 46 rows of `spectra.csv` changed from the tutorial's. The
+    spectrum set back to not reviewed kept its note, which item 284 now reads. The check is also
+    a test on the test project (`test_the_windows_decisions_give_the_same_report_tables_as_a_
+    spreadsheet`: the window's edits against a copy of `spectra.csv` with a BOM and semicolons).
