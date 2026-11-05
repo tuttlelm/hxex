@@ -177,9 +177,10 @@ _DESCRIPTIONS: dict[str, str] = {
                               "the fits are kept)",
     "analysis.ks": ("the fixed K values analysed (1 is needed); left at the default, a K "
                     "the run did not fit is dropped (a k_max = 1 run is analysed at K = 1)"),
-    "analysis.fasta": "one sequence file for every sample, or a table of sample = file (a "
-                      "run's own under its name; a header >NAME/START-END numbers its first "
-                      "residue START); unset: the sequence comes from the peptides",
+    "analysis.fasta": "one FASTA file whose sequence every sample shares; for one file per "
+                      "sample use [analysis.fasta] (below) instead (a header >NAME/START-END "
+                      "numbers its first residue START); unset: the sequence comes from the "
+                      "peptides",
     "analysis.coverage_times": '"undeuterated" (judged on the undeuterated controls), "all", '
                                "or a list of times",
     "analysis.redundancy": 'what the redundancy counts: "peptides" or "spectra"',
@@ -374,6 +375,10 @@ _INTROS: dict[str, str] = {
                         "default, the same in every figure and against every reference: in "
                         "the order of [analysis] samples (the first black), from the colours "
                         "not chosen here.",
+    "analysis.fasta": "One FASTA file per sample: `sample = \"file\"` (a run's samples under its "
+                      "name, `[analysis.fasta.RUN]`). Use either this table or [analysis] fasta "
+                      "(one file for every sample), not both. A file holds one sequence; a "
+                      "header >NAME/START-END numbers its first residue START.",
     "analysis.regions": "Repeat the table for every region (regions may overlap).",
     "analysis.sites": "Repeat the table for every site (a modification, a mutation).",
     "analysis.fragments": "The fragment outputs of a run with fragment series (ladders, rates, "
@@ -575,7 +580,7 @@ def tables() -> list[Table]:
                      _INTROS["analysis.filters"]))
     out.append(Table("analysis.choice", False, _settings(ChoiceConfig, "analysis.choice"),
                      _INTROS["analysis.choice"]))
-    for name in ("controls", "runs", "merge", "colours"):
+    for name in ("fasta", "controls", "runs", "merge", "colours"):
         out.append(Table(f"analysis.{name}", False, (), _INTROS[f"analysis.{name}"]))
     out.append(Table("analysis.regions", True, _settings(Region, "analysis.regions"),
                      _INTROS["analysis.regions"]))

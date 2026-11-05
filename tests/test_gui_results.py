@@ -70,7 +70,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
         page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
-    assert tabs == ["spectra", "fits at each K", "uptake", "table", "overview"]
+    assert tabs == ["spectra", "fits at each K", "uptake", "data", "overview"]
     qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
     title = page.panel("fits at each K").view.figure.axes[0].get_title()
     assert title.splitlines()[-1].startswith("rep 1: K=")
@@ -78,7 +78,7 @@ def test_each_level_draws_its_figures(qtbot, page):
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
         page.tree.setCurrentItem(point.child(0))
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake", "table", "overview"]
+        "spectrum", "fits at each K", "uptake", "data", "overview"]
     qtbot.waitUntil(lambda: page.panel("spectrum").view.figure is not None, timeout=30000)
     sel = page.selection()
     assert sel["charge"] == 2 and sel["spectrum_id"] == point.child(0).toolTip(0)
@@ -134,7 +134,7 @@ def test_the_overview_is_the_first_look_and_a_tab_at_every_level(qtbot, results)
     series = page.tree.topLevelItem(0).child(0)
     page.tree.setCurrentItem(series)
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectra", "uptake", "populations", "table", "overview"]
+        "spectra", "uptake", "populations", "data", "overview"]
     assert page.figures.currentWidget() is overview and overview.view.figure is first
     # new results (as a review decision makes): drawn again
     page.results = dataclasses.replace(results)
@@ -261,7 +261,7 @@ def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_p
     with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
         page.tree.setCurrentItem(fd)
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
-        "spectrum", "fits at each K", "uptake", "table", "overview"]
+        "spectrum", "fits at each K", "uptake", "data", "overview"]
     assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name
 
 
@@ -403,7 +403,7 @@ def test_the_search_reads_residue_numbers():
     assert search_matches("spfy", *row) and search_matches("z2", *row, "z2")
 
 
-def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
+def test_the_data_tab_holds_the_selections_report_rows(qtbot, page, results):
     """Beside the figures, the selection's rows of the report's tables (owner): a series'
     uptake.csv rows with its series.csv values said above them, a time point's spectra.csv
     rows, a spectrum's row as names and values; a row double-clicked opens its spectrum."""
@@ -412,11 +412,14 @@ def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
     series = page.tree.topLevelItem(0).child(0)
     page.tree.setCurrentItem(series)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
-    assert tabs[-2:] == ["table", "overview"]
+    assert tabs[-2:] == ["data", "overview"]
     page.figures.setCurrentWidget(page.table_view)
     view = page.table_view
     want = uptake_table(results, data_ids=[0])
     assert view.model.columns == list(want) and len(view.model.rows) == len(want["data_id"])
+    # named with its rows, as the Analysis data tab (owner, 2026-11-05)
+    at = page.figures.indexOf(view)
+    assert page.figures.tabText(at) == f"data ({len(want['data_id'])})"
     assert view.note.text().startswith("uptake.csv: this series' rows. series.csv: n_spectra")
     assert not page.series_table.isHidden()
     # its populations page's rows (components.csv), or its spectra's (spectra.csv)
@@ -440,6 +443,7 @@ def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
     leaf = point.child(0)
     page.tree.setCurrentItem(leaf)
     assert view.model.columns == ["column", "value"]
+    assert page.figures.tabText(page.figures.indexOf(view)) == "data (1)"
     values = {r["column"]: r["value"] for r in view.model.rows}
     assert values["spectrum_id"] == leaf.toolTip(0) and "K" in values
 

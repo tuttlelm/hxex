@@ -114,6 +114,8 @@ def test_the_run_workspace_runs_hxex_and_offers_to_replace_earlier_results(qtbot
         page.buttons["run"].click()
     assert page.bar.value() == 1000 and (tmp_path / "out").exists()
     assert "@hxex-progress" not in page.console.toPlainText()
+    # the total run time beside the bar, kept when the command has ended (owner, 2026-11-05)
+    assert page.elapsed.text().startswith("total ") and not page._clock.isActive()
     # again: hxex refuses to write over the bundle; the window offers to replace it
     asked = []
 

@@ -32,7 +32,7 @@ from .config import ProjectError
 # its default): the window offers to switch these on and off
 SWITCHABLE = ("review", "run.controls", "run.bootstrap", "run.population_test", "run.quality",
               "analysis", "analysis.controls", "analysis.filters", "analysis.choice",
-              "analysis.runs", "analysis.merge", "analysis.fragments",
+              "analysis.fasta", "analysis.runs", "analysis.merge", "analysis.fragments",
               "analysis.fragments.labels", "analysis.fragments.exchange", "analysis.labelling")
 
 _KEY = re.compile(r"[A-Za-z0-9_-]+")

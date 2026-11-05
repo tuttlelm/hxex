@@ -935,6 +935,40 @@ def with_control_roles(data, config: RunConfig):
                                                               where="[run.controls]"))
 
 
+def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunConfig,
+                    source: Mapping | None) -> dict[str, Any]:
+    """What :func:`hxex.controls.fit_controls` takes besides the fit, as :func:`run` makes it
+    from the picked spectra (``picked``, those measured) and the read record (``source``):
+    ``rates``, ``rt``, ``groups``, ``charges``, ``fragments``, ``residues``, ``screened`` and
+    ``deamidation``. :func:`resume_bootstrap` makes them again from a bundle to recompute its
+    controls."""
+    from .analysis.screening import control_removal
+    from .io.mzml import fragment_series
+
+    rates = control_rates(picked, config)
+    scan_fragments = fragment_series(source)
+    charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
+                            picked.data_id, scan_fragments)
+    fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
+    residues = series_residues(picked.peptide, picked.modification, picked.start_seq,
+                               picked.data_id, nterm_subtract=config.picker.nterm_subtract,
+                               rules=config.picker.amide_rules, registry=config.registry,
+                               fragments=scan_fragments)
+    screened = control_removal(picked, fragments)
+    deamidation = None
+    if config.controls is not None and config.controls.deamidation:
+        from .deamidation import deamidation_from_picked
+        deamidation = deamidation_from_picked(
+            picked, measurements.spectrum_id, measurements.role, ~screened, charges, residues,
+            min_share=config.controls.deamidation_min_share, registry=config.registry)
+    return {"rates": rates,
+            "rt": series_rt(picked.data_id, picked.rt) if rates is not None else None,
+            "groups": series_groups(picked.peptide, picked.modification, picked.charge,
+                                    picked.data_id),
+            "charges": charges, "fragments": fragments, "residues": residues,
+            "screened": screened, "deamidation": deamidation}
+
+
 def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
     """The exchangeable sites of every spectrum of ``binned``, ``(M,)`` integers: the backbone
     amides of its peptide and ion type plus its user ``Hex`` sites (they stand for exchangeable
@@ -1125,37 +1159,20 @@ def run(
     noise_curve = bundle_noise(picked, measurements, config)
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
-    rates = control_rates(picked, config)
-    rt = series_rt(picked.data_id, picked.rt) if rates is not None else None
-    groups = series_groups(picked.peptide, picked.modification, picked.charge, picked.data_id)
-    from .io.mzml import fragment_series
     from .io.retention_search import moved_series
 
-    scan_fragments = fragment_series(None if raw is None else raw.source)
-    charges = charge_groups(picked.sample, picked.peptide, picked.modification, picked.charge,
-                            picked.data_id, scan_fragments)
-    fragments = fragment_ids(picked.modification, picked.data_id, scan_fragments)
-    residues = series_residues(picked.peptide, picked.modification, picked.start_seq,
-                               picked.data_id, nterm_subtract=config.picker.nterm_subtract,
-                               rules=config.picker.amide_rules, registry=config.registry,
-                               fragments=scan_fragments)
-    from .analysis.screening import control_removal
-
-    screened = control_removal(picked, fragments)
-    deamidation = None
-    if config.controls is not None and config.controls.deamidation:
-        from .deamidation import deamidation_from_picked
-        deamidation = deamidation_from_picked(
-            picked, measurements.spectrum_id, measurements.role, ~screened, charges, residues,
-            min_share=config.controls.deamidation_min_share, registry=config.registry)
+    inputs = _control_inputs(picked, measurements, config,
+                             None if raw is None else raw.source)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality, test = _fit_part(measurements, config, plan, progress, cancel,
-                                             binned.mz_offset_ppm[kept], rates,
-                                             site_counts(picked, config), rt=rt,
-                                             poor_envelope=poor, groups=groups,
-                                             charges=charges, fragments=fragments,
-                                             residues=residues, deamidation=deamidation,
-                                             screened=screened,
+                                             binned.mz_offset_ppm[kept], inputs["rates"],
+                                             site_counts(picked, config), rt=inputs["rt"],
+                                             poor_envelope=poor, groups=inputs["groups"],
+                                             charges=inputs["charges"],
+                                             fragments=inputs["fragments"],
+                                             residues=inputs["residues"],
+                                             deamidation=inputs["deamidation"],
+                                             screened=inputs["screened"],
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),
@@ -1386,6 +1403,7 @@ def resume_bootstrap(
     view_exclude: Sequence = (),
     chosen_k: Mapping[str, int] | None = None,
     population_test: PopulationTestConfig | None = None,
+    run_controls: ControlConfig | None = None,
     project_file: Mapping | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
@@ -1419,6 +1437,12 @@ def resume_bootstrap(
     the fixed-K bootstrap where there is one); the result is the one a run with the test gives.
     The null draws the noise the bundle was fitted with. The bundle's fits must carry the test
     (``k_min`` 1, ``k_max`` at least 2, the Gaussian noise model), else ValueError: run again.
+
+    With ``run_controls`` (``[run.controls]`` settings other than the bundle's) the controls are
+    worked out again from the stored K = 1 fits with them, as a run with them would (no refit:
+    the fits do not depend on the controls), the quality flags that use them are assessed again,
+    and the bundle's run settings record them (owner, 2026-11-05: a D2O fraction corrected
+    after the run).
     The manifest's provenance records the resume (``resumed``), and ``project_file``
     (:func:`hxex.config.project_record`), when given, replaces the bundle's record of the
     project file (its ``run_settings_used.toml``)."""
@@ -1432,12 +1456,17 @@ def resume_bootstrap(
         held = None if redo else {k: b.bootstrap(k) for k in b.bootstrap_ks()}
         unfitted = _unfitted_choices(b.fit(), merge_choices(chosen_k)).any()
         testing = population_test is not None
-        if not redo and not unfitted and not testing and (
+        stored_run = b.manifest["configs"].get("run") or {}
+        stored_controls = (ControlConfig.from_dict(stored_run["controls"])
+                           if stored_run.get("controls") else None)
+        new_controls = run_controls is not None and run_controls != stored_controls
+        if not redo and not unfitted and not testing and not new_controls and (
                 b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)):
             raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
                              "every K chosen in the review has one; to add or redo the "
-                             "bootstrap or the population test, give the project file with "
-                             "its [run.bootstrap] or [run.population_test] "
+                             "bootstrap or the population test, or to work the controls out "
+                             "again, give the project file with its [run.bootstrap], "
+                             "[run.population_test] or changed [run.controls] "
                              "(hxex resume hxex.toml)")
         if add and bootstrap is None:
             raise ValueError("adding a bootstrap needs its settings (bootstrap=)")
@@ -1456,6 +1485,8 @@ def resume_bootstrap(
             except ValueError as err:
                 raise ValueError(f"{path}: the bundle's fits cannot carry the population test "
                                  f"({err}): run again with the test") from None
+        if new_controls:
+            config = dataclasses.replace(config, controls=run_controls)
         if config.bootstrap is None and (redo or b.bootstrap() is not None):
             raise ValueError("the run had no bootstrap settings: give bootstrap=")
         measurements, fit, binned = b.measurements(), b.fit(), b.binned()
@@ -1466,7 +1497,7 @@ def resume_bootstrap(
             fit = dataclasses.replace(fit, config=dataclasses.replace(fit.config, backend=backend))
         if binned is None:
             raise ValueError(f"{path}: the bundle has no picked spectra")
-        controls, quality, envelopes = b.controls(), b.quality(), b.envelopes()
+        stored_controls_table, quality, envelopes = b.controls(), b.quality(), b.envelopes()
         spectra = b.spectra() if b.has("spectra") else None
         review = b.review() if b.has("review") else None
         source, project, notes = b.spectra_source(), b.project, b.manifest.get("notes", "")
@@ -1495,12 +1526,35 @@ def resume_bootstrap(
                                record=chunk_plan)
         if config.quality is not None:
             quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
-                                  controls)
+                                  stored_controls_table)
         if review is not None:
             review = review.mark_stale(fit)
         provenance = _resumed(provenance, "population test", project_file is not None)
         if project_file is not None:
             project_record = dict(project_file)
+    if new_controls:
+        log.info("%s: working the controls out again with the project's [run.controls] (the "
+                 "fits are kept)", path)
+        picked = binned.select(kept)
+        inputs = _control_inputs(picked, measurements, config, source)
+        controls_table = fit_controls(
+            fit, site_counts(picked, config), config.controls,
+            uncorrected=inputs["fragments"],
+            **{k: v for k, v in inputs.items() if k != "fragments"})
+        if config.quality is not None:
+            quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
+                                  controls_table)
+        if test is not None and not testing and (stored_controls is None or (
+                stored_controls.d2o_fraction != config.controls.d2o_fraction)):
+            log.warning("%s: the population test's narrow_component flags used the former "
+                        "d2o_fraction; add [run.population_test] to make the test again with "
+                        "the new one", path)
+        controls = controls_table
+        provenance = _resumed(provenance, "controls", project_file is not None)
+        if project_file is not None:
+            project_record = dict(project_file)
+    else:
+        controls = stored_controls_table
     if redo:
         plan = dataclasses.replace(
             _plan(measurements, config, (tested, float(UNITS - _FINISH)), record=chunk_plan),

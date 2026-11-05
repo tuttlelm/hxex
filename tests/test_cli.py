@@ -1182,6 +1182,35 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input
 
 
+def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_path, capsys):
+    """A [run.controls] setting changed after the run (a D2O fraction corrected, owner,
+    2026-11-05): hxex report says the corrected values follow the bundle's controls, and
+    hxex resume works them out again from the stored K = 1 fits (no refit), records the new
+    settings and the resume, and rewrites the tables."""
+    path = mzml_project(tmp_path, output="[run.controls]\nd2o_fraction = 0.9")
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        before, fit = b.controls(), b.fit()
+    assert before.config.d2o_fraction == 0.9
+    assert cli.main(["-q", "set", str(path), "run.controls.d2o_fraction", "0.8"]) == 0
+    capsys.readouterr()
+    assert cli.main(["report", str(path), "--overwrite"]) == 0
+    err = capsys.readouterr().err
+    assert "hxex resume" in err and "[run.controls]" in err
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        after = b.controls()
+        assert after.config.d2o_fraction == 0.8
+        assert b.manifest["configs"]["run"]["controls"]["d2o_fraction"] == 0.8
+        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["controls"]
+        np.testing.assert_array_equal(b.fit().fits[1].n, fit.fits[1].n)  # no refit
+    # the fully deuterated level this run has no control for follows the D2O fraction
+    stand_in = ~np.asarray(after.fd_measured, dtype=bool)
+    assert stand_in.any()
+    np.testing.assert_allclose(after.mfd[stand_in] - after.m0[stand_in],
+                               (before.mfd[stand_in] - before.m0[stand_in]) * 0.8 / 0.9)
+
+
 def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys):
     """hxex resume PROJECT adds the project's [run.population_test] to a bundle without one (or
     makes it again with other settings), keeping its fits; the bundle's settings file and

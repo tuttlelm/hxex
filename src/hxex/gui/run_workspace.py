@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -115,6 +115,14 @@ class RunWorkspace(QWidget):
         self.bar.setRange(0, 1000)
         self.bar.setTextVisible(False)
         self.state = QLabel("")
+        # the command's total run time, counted while it runs and kept when it ends (owner,
+        # 2026-11-05)
+        self.elapsed = QLabel("")
+        self.elapsed.setToolTip("the total run time of the command")
+        self._started_at: float | None = None
+        self._clock = QTimer(self)
+        self._clock.setInterval(1000)
+        self._clock.timeout.connect(self._tick)
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setFont(QFont("monospace"))
@@ -129,6 +137,7 @@ class RunWorkspace(QWidget):
         clear.clicked.connect(self.console.clear)
         progress = QHBoxLayout()  # the bar and its words together (owner)
         progress.addWidget(self.bar, 3)
+        progress.addWidget(self.elapsed)
         progress.addWidget(self.state, 2)
         bottom = QHBoxLayout()
         bottom.addStretch()
@@ -220,6 +229,9 @@ class RunWorkspace(QWidget):
         self.bar.setValue(0)
         self.bar.setRange(0, 0)  # busy until the first progress record
         self.state.setText("running…")
+        self._started_at = time.monotonic()
+        self._tick()
+        self._clock.start()
         self._tail: list[str] = []
         self._open_log(typed)
         self.runner.start(self.args, self.project.parent)
@@ -293,7 +305,13 @@ class RunWorkspace(QWidget):
             text = f"{stage}: done"
         self.state.setText(text)
 
+    def _tick(self) -> None:
+        if self._started_at is not None:
+            self.elapsed.setText(f"total {format_duration(time.monotonic() - self._started_at)}")
+
     def _finished(self, code: int, how: str) -> None:
+        self._tick()  # the final total stays shown
+        self._clock.stop()
         command = self.args[0] if self.args else ""
         self._close_log(how)
         self.bar.setRange(0, 1000)

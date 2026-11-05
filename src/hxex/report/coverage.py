@@ -152,6 +152,28 @@ def _title(sample: str, time: float, k: int, rank: int, scale: str = "seconds") 
     return f"{sample}{which}, {when}"
 
 
+# steps of the residue axis's labelled ticks, the smallest that leaves room for the labels
+RESIDUE_STEPS = (5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000)
+LABELS_PER_INCH = 1.6  # at most this many residue numbers per inch of the axis
+
+
+def residue_step(last: float, width_in: float) -> int:
+    """The step of a residue axis running to ``last`` on ``width_in`` inches: the smallest of
+    :data:`RESIDUE_STEPS` that keeps its labels apart (owner, 2026-11-05: the fixed 25 crowded
+    the labels of a long protein)."""
+    most = max(3, int(width_in * LABELS_PER_INCH))
+    return next((s for s in RESIDUE_STEPS if last / s <= most), RESIDUE_STEPS[-1])
+
+
+def residue_ticks(ax, last: float) -> None:
+    """Residue numbers on ``ax``'s x axis spaced for its width (:func:`residue_step`), with
+    minor ticks at a fifth of the step from 25 up (a half below)."""
+    width = ax.get_position().width * ax.figure.get_figwidth()
+    step = residue_step(last, width)
+    ax.xaxis.set_major_locator(MultipleLocator(step))
+    ax.xaxis.set_minor_locator(MultipleLocator(step / (5 if step >= 25 else 2)))
+
+
 def plot_coverage(
     uptake: SpeciesUptake,
     sample: str,
@@ -210,7 +232,7 @@ def plot_coverage(
     ax.set_xlim(0, top)
     ax.set_ylim(-wrap, 0)
     ax.set_yticks([])
-    ax.xaxis.set_major_locator(MultipleLocator(25))
+    residue_ticks(ax, top)
     ax.grid(axis="x", color="#dddddd", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xlabel("residue")
@@ -269,6 +291,8 @@ def coverage_figure(
     lines = -(-len(times) // per_row) if times else 1  # grid rows per sample
     fig = Figure(figsize=(cell[0] * per_row + 0.8, cell[1] * len(samples) * lines),
                  layout="constrained")
+    # room between the panels, so one's last residue number does not meet the next's first
+    fig.get_layout_engine().set(w_pad=0.08, wspace=0.06)
     axes = fig.subplots(len(samples) * lines, per_row, squeeze=False)
     for r, s in enumerate(samples):
         for c, t in enumerate(times):

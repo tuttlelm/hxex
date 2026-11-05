@@ -34,6 +34,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[analysis]`](#analysis)
 - [`[analysis.filters]`](#analysisfilters)
 - [`[analysis.choice]`](#analysischoice)
+- [`[analysis.fasta]`](#analysisfasta)
 - [`[analysis.controls]`](#analysiscontrols)
 - [`[analysis.runs]`](#analysisruns)
 - [`[analysis.merge]`](#analysismerge)
@@ -415,7 +416,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |
-| `fasta` | text or table | unset | one sequence file for every sample, or a table of sample = file (a run's own under its name; a header >NAME/START-END numbers its first residue START); unset: the sequence comes from the peptides |
+| `fasta` | text or table | unset | one FASTA file whose sequence every sample shares; for one file per sample use [analysis.fasta] (below) instead (a header >NAME/START-END numbers its first residue START); unset: the sequence comes from the peptides |
 | `coverage_times` | text or list | `"undeuterated"` | "undeuterated" (judged on the undeuterated controls), "all", or a list of times |
 | `redundancy` | text | `"peptides"` | what the redundancy counts: "peptides" or "spectra" |
 | `weight_exponent` | number | `1.0` | exponent of the residue averaging's weights |
@@ -459,6 +460,11 @@ The limits of the choice between one and two populations. With populations = "bo
 | `max_fD_se` | number | `0.25` | both K=2 standard errors below this |
 | `min_population` | number | `0.05` | the low-D population (lever rule) within [min_population, 1 - min_population]; default 0.05 with populations = "best_set", 0.10 with "bootstrap" |
 | `tier` | text | `"two"` | with populations = "population_test": the least residue tier with two populations, "two" (strong evidence and a third of the covering weight agrees) or "localised" (half); the other limits of this table do not apply then |
+
+## `[analysis.fasta]`
+
+One FASTA file per sample: `sample = "file"` (a run's samples under its name, `[analysis.fasta.RUN]`). Use either this table or [analysis] fasta (one file for every sample), not both. A file holds one sequence; a header >NAME/START-END numbers its first residue START.
+
 
 ## `[analysis.controls]`
 

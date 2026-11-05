@@ -224,6 +224,12 @@ class SettingRow(QWidget):
 
 # list settings whose order matters, edited as a list with up and down
 ORDERED = ("analysis.samples",)
+# settings that are a value or a table of their own (one FASTA for every sample, or one per
+# sample: owner, 2026-11-05): the value's row stays on its table's page, the table has a page,
+# and writing one form takes the other out of the file (TOML holds one)
+BOTH_FORMS = ("analysis.fasta",)
+# tables whose values are files: shown and typed without quotes, with Browse
+PATH_TABLES = ("analysis.fasta",)
 
 
 class OrderedList(QWidget):
@@ -613,7 +619,8 @@ class ProjectEditor(QWidget):
             form.addWidget(self.list_editor)
             return
         names = {t.name for t in self.tables}  # a key that is a table has a page of its own
-        settings = [s for s in table.settings if f"{name}.{s.key}" not in names]
+        settings = [s for s in table.settings
+                    if f"{name}.{s.key}" not in names or f"{name}.{s.key}" in BOTH_FORMS]
         if name == "input" and not self.every_format.isChecked():
             hidden = [s for s in settings if not applies(s, self.format)]
             settings = [s for s in settings if applies(s, self.format)]
@@ -628,6 +635,11 @@ class ProjectEditor(QWidget):
         row = SettingRow(table.name, setting, self.path.parent if self.path else None,
                          names=self.sample_names)
         row.show_value(self.values.get(row.name))
+        if row.name in BOTH_FORMS and isinstance(row.editor, QLineEdit):
+            entries = [k for k in self.values if k.startswith(row.name + ".")]
+            row.editor.setPlaceholderText(
+                f"one file per sample ({len(entries)} set): the [{row.name}] page; a file "
+                "typed here replaces them" if entries else row.default)
         row.edited.connect(self._edit)
         self.rows[row.name] = row
         if prefix:
@@ -660,6 +672,14 @@ class ProjectEditor(QWidget):
         if self.path is None:
             return
         changes = [(setting, value)]
+        table_off = None  # a table form switched off before the value is written
+        for both in BOTH_FORMS:  # one form replaces the other (said in the log)
+            entries = [k for k in self.values if k.startswith(both + ".")]
+            if setting == both and value is not None and entries:
+                table_off = both
+            elif (setting.startswith(both + ".") and value is not None
+                  and self.values.get(both) is not None):
+                changes = [(both, None)] + changes
         if setting == "input.format" and value is not None:
             fmt = value.strip('"')
             others = self.other_format_settings(fmt)
@@ -670,8 +690,15 @@ class ProjectEditor(QWidget):
                 changes = [(name, None) for name in others] + changes
         try:
             with self.own_write() as step:
+                said = ""
+                if table_off is not None:
+                    from ..project_edit import switch_table
+
+                    said = switch_table(self.path, table_off, False)
+                    log.info("%s (%s replaces it)", said, setting)
                 done = set_settings(self.path, changes, unfinished=True)
-                step.what = "; ".join(_change_words(c) for c in done if not c.unchanged)
+                step.what = "; ".join([said] * bool(said) + [
+                    _change_words(c) for c in done if not c.unchanged])
         except ProjectError as exc:
             log.warning("%s", exc)
             self.problem.setText(str(exc))
@@ -711,10 +738,12 @@ class ProjectEditor(QWidget):
 
     def _switch(self, table: str, on: bool) -> None:
         from ..config import ProjectError
-        from ..project_edit import switch_table
+        from ..project_edit import set_settings, switch_table
 
         try:
             with self.own_write() as step:
+                if on and table in BOTH_FORMS and self.values.get(table) is not None:
+                    set_settings(self.path, [(table, None)], unfinished=True)  # one form
                 said = switch_table(self.path, table, on)
                 step.what = str(said)
             log.info("%s", said)
@@ -850,10 +879,11 @@ class NamesEditor(QWidget):
         self.grid.horizontalHeader().setStretchLastSection(True)
         self.grid.cellChanged.connect(self._changed)
         self.grid.setMinimumHeight(160)
+        self.paths = table.name in PATH_TABLES  # values are files: no quotes to type, Browse
         self.name = QLineEdit()
-        self.name.setPlaceholderText("a new name")
+        self.name.setPlaceholderText("a sample" if self.paths else "a new name")
         self.value = QLineEdit()
-        self.value.setPlaceholderText("its value")
+        self.value.setPlaceholderText("its FASTA file" if self.paths else "its value")
         add = QPushButton("Add")
         add.clicked.connect(self.add)
         self.remove = QPushButton("Remove the selected name")
@@ -861,6 +891,11 @@ class NamesEditor(QWidget):
         line = QHBoxLayout()
         line.addWidget(self.name)
         line.addWidget(self.value, 1)
+        if self.paths:
+            browse = QPushButton("Browse…")
+            browse.setToolTip("choose the file")
+            browse.clicked.connect(self._browse)
+            line.addWidget(browse)
         line.addWidget(add)
         line.addWidget(self.remove)
         layout = QVBoxLayout(self)
@@ -882,7 +917,7 @@ class NamesEditor(QWidget):
             key = QTableWidgetItem(name)
             key.setFlags(key.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.grid.setItem(r, 0, key)
-            cell = QTableWidgetItem(_shown(value))
+            cell = QTableWidgetItem(str(value) if self.paths else _shown(value))
             swatch = _swatch(value) if self.table.name == "analysis.colours" else None
             if swatch is not None:  # a colour shown as itself beside its name
                 cell.setData(Qt.ItemDataRole.DecorationRole, swatch)
@@ -890,17 +925,28 @@ class NamesEditor(QWidget):
         self.grid.blockSignals(False)
         self.remove.setEnabled(bool(items))
 
+    def _toml(self, raw: str) -> str:
+        """A value as written: a file in quotes (typed without them), else as typed."""
+        return _quoted(raw.strip('"')) if self.paths else raw
+
     def _changed(self, row: int, column: int) -> None:
         name = self.grid.item(row, 0).text()
         raw = self.grid.item(row, 1).text().strip()
-        self.owner.write(f"{self.table.name}.{name}", raw or None)
+        self.owner.write(f"{self.table.name}.{name}", self._toml(raw) if raw else None)
 
     def add(self) -> None:
         name, raw = self.name.text().strip(), self.value.text().strip()
         if name and raw:
-            self.owner.write(f"{self.table.name}.{name}", raw)
+            self.owner.write(f"{self.table.name}.{name}", self._toml(raw))
             self.name.clear()
             self.value.clear()
+
+    def _browse(self) -> None:
+        folder = self.owner.path.parent if self.owner.path else None
+        chosen, _ = QFileDialog.getOpenFileName(self, "FASTA file", str(folder or ""),
+                                                "FASTA (*.fasta *.fa *.faa *.txt);;All files (*)")
+        if chosen:
+            self.value.setText(relative(Path(chosen), folder))
 
     def remove_selected(self) -> None:
         row = self.grid.currentRow()

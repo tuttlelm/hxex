@@ -218,8 +218,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("hxex")
         self.resize(1200, 800)
 
-        # how figures are drawn: matplotlib (as saved files; the default, owner) or Qt's SVG
-        # renderer, which ignores clipping (HISTORY 237)
+        # how figures are drawn: matplotlib (its raster renderer, as for PNG; the default, owner)
+        # or Qt's SVG renderer, which ignores clipping (HISTORY 237)
         self.render = str(self.settings.value("render", "matplotlib"))
         if self.render not in ("svg", "matplotlib"):
             self.render = "matplotlib"
@@ -244,6 +244,9 @@ class MainWindow(QMainWindow):
         self.review_watcher.fileChanged.connect(lambda _path: self._review_settle.start())
         self.results_page = ResultsWorkspace(self)
         self.analysis_page = AnalysisWorkspace(self)
+        # the sequence view's coverage follows the review (a rejected spectrum's peptide may
+        # leave a residue uncovered)
+        self.results_page.review.decided.connect(lambda _rows: self._show_coverage())
         # settings that list samples offer the samples of the results open
         self.project_page.editor.sample_names = self.sample_names
         self.tabs = QTabWidget()
@@ -303,7 +306,7 @@ class MainWindow(QMainWindow):
         draw = view.addMenu("Draw the figures with")
         group = QActionGroup(self)
         for mode, text in (("svg", "Qt's SVG renderer (vector)"),
-                           ("matplotlib", "matplotlib (as saved files)")):
+                           ("matplotlib", "matplotlib (raster, as PNG)")):
             action = QAction(text, self, checkable=True)
             action.setChecked(mode == self.render)
             action.triggered.connect(lambda checked=False, m=mode: self.set_render(m))
@@ -399,6 +402,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = {}
         self.results_path = None
         self.results_page.show_results(None, None)
+        self._show_coverage()
         self.analysis_page.results_changed()
         self.open_project(project)
         self._mark_saved()
@@ -473,6 +477,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = dict(session.selection)
         self.results_path = None
         self.results_page.show_results(None, None)
+        self._show_coverage()
         self.analysis_page.results_changed()
         if project is not None:
             self.open_project(project, load_results=results is None)
@@ -544,6 +549,7 @@ class MainWindow(QMainWindow):
             self._analysis_text = self._figure_and_review_settings(("analysis",))
         self.results_page.show_results(results, path, left, analysis)
         self.analysis_page.results_changed()
+        self._show_coverage()
         self.statusBar().showMessage(f"opened {path}", 5000)
         pending = dict(self._pending_selection)
         self.results_page.set_time_axis(pending.pop("time_axis", None))
@@ -555,6 +561,15 @@ class MainWindow(QMainWindow):
         if self._restoring:
             self._mark_saved()
         self.changed()
+
+    def _show_coverage(self) -> None:
+        """The coverage of the project's results under its sequences (none for results opened
+        on their own, or none open)."""
+        from .sequence_view import coverage_of
+
+        results = self.results_page.results
+        mine = results is not None and self.results_path == self.project
+        self.project_page.sequence.show_coverage(coverage_of(results) if mine else None)
 
     def sample_names(self) -> list[str]:
         """The samples of the results open, named as the analysis settings name them (none

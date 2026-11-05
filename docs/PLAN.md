@@ -1021,6 +1021,18 @@ Planned, not built:
    interval multiplier, percentage heat maps, boxplots, HX-Express input files. Its plain
    pooled critical interval at alpha 0.01 differs from *hxex*'s robust `delta_crit`
    (HISTORY 140) and stays different.
+20. **Population positions capped at full deuteration** (owner, 2026-11-05: to be considered,
+   not now). `n_max` (1.2 x the amides) bounds a population's sites `n`, not its position
+   `n p`, so a K = 2 fit may put a population above the series' fully deuterated level
+   (`max_fD` only drops such fits from the population test afterwards, HISTORY 178-179). A cap
+   in the model, `p <= mFD / n` (the series' measured fully deuterated level, or its stand-in),
+   would make the fit find the best physically possible description instead. Checked outside
+   *hxex* on 68-75 z2 of the tutorial data (HISTORY 290): capped, the two-population fits keep
+   their advantage at 4 s and 1 min and become two states at fixed positions (a protected one
+   near 1.2 D, an open one at full deuteration) whose shares move with time, where the
+   uncapped fits had shown fixed 50:50 shares and a high position above full deuteration. To
+   evaluate before building, with the usual yardsticks (known-answer K, controls read as two,
+   calibration), and the series without a measured fully deuterated control.
 
 ## Risks and open decisions
 

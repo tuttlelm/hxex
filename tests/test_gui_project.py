@@ -208,6 +208,36 @@ def test_a_table_of_names_is_edited(editor, project):
         "d2o_fraction" not in _data(project)["analysis"]["controls"]
 
 
+def test_one_fasta_for_every_sample_or_one_per_sample(editor, project):
+    """[analysis] fasta is one file for every sample; [analysis.fasta] one per sample, on a page
+    of its own, typed without quotes; writing one form takes the other out of the file (TOML
+    holds one), and the single-file row says when the table is in use (owner, 2026-11-05: the
+    row's description read as if the table could be typed there)."""
+    _page(editor, "analysis")
+    row = editor.rows["analysis.fasta"]
+    assert "for one file per sample use [analysis.fasta]" in row.about.text()
+    row.editor.setText("combined.fasta")
+    row.editor.editingFinished.emit()
+    assert _data(project)["analysis"]["fasta"] == "combined.fasta"
+    _page(editor, "analysis.fasta")
+    per = editor.list_editor
+    per.name.setText("WT")
+    per.value.setText("SpecExport/WT.fasta")
+    per.add()
+    per.name.setText("D109H")
+    per.value.setText("SpecExport/D109H.fasta")
+    per.add()
+    assert _data(project)["analysis"]["fasta"] == {"WT": "SpecExport/WT.fasta",
+                                                   "D109H": "SpecExport/D109H.fasta"}
+    assert per.grid.item(0, 1).text().endswith(".fasta")  # shown without quotes
+    _page(editor, "analysis")
+    row = editor.rows["analysis.fasta"]
+    assert "one file per sample (2 set)" in row.editor.placeholderText()
+    row.editor.setText("one.fasta")
+    row.editor.editingFinished.emit()
+    assert _data(project)["analysis"]["fasta"] == "one.fasta"  # the table taken out
+
+
 def test_the_samples_are_a_list_in_order(editor, project):
     editor.sample_names = lambda: ["S", "V", "WT"]  # the results' samples, as the window gives
     _page(editor, "analysis")

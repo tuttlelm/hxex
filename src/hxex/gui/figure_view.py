@@ -28,6 +28,7 @@ from PySide6.QtGui import QImage, QPainter, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -394,6 +395,39 @@ class RasterView(FigureView):
         painter.end()
 
 
+class TitleLabel(QLabel):
+    """A figure's title on a row of its own above the figure, centred, shortened with "…" to
+    the width there is (the whole title on hover; selectable)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        font = self.font()
+        font.setBold(True)
+        self.setFont(font)
+
+    def set_full(self, text: str) -> None:
+        self._full = text
+        self.setToolTip(text)
+        self.setVisible(bool(text))
+        self._elide()
+
+    def full(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt's name
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        room = max(0, self.width() - 8)
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight,
+                                                   room))
+
+
 class FigurePanel(QWidget):
     """A :class:`FigureView` in a scroll area, with buttons to zoom, fit and save. Give it a
     figure (:meth:`show_figure`) or a function that draws one (:meth:`draw`, run in a worker
@@ -436,17 +470,14 @@ class FigurePanel(QWidget):
         self.save_button = button  # the last one
         self._bar_layout = buttons
         self._options: list[QWidget] = []  # a figure's own choices, after the buttons
+        self._steppers: dict[QComboBox, tuple[QPushButton, QPushButton]] = {}
         buttons.addStretch(1)
         buttons.addWidget(self.status)
-        # the figure's title, readable at any zoom: centred on the whole bar (so on the figure
-        # below), moved aside only to clear the buttons; placed by hand, outside the layout
-        self.title = QLabel(self.bar)
-        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        font = self.title.font()
-        font.setBold(True)
-        self.title.setFont(font)
-        self._title_text = ""
+        # the figure's title, readable at any zoom: on a row of its own between the buttons and
+        # the figure, centred on it (owner, 2026-11-05: placed among the buttons, it could
+        # cover them when the window was resized)
+        self.title = TitleLabel()
+        self.title.setVisible(False)
         self.bar.installEventFilter(self)
         # watched only once the bar exists: PySide6 6.7 delivered an event of the scroll area
         # while the panel was being made, before the bar (lowest-versions CI)
@@ -454,6 +485,7 @@ class FigurePanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.bar)
+        layout.addWidget(self.title)
         layout.addWidget(self.scroll)
         # how to move about, under the figure (as a tooltip it covered the figure: owner)
         self.hint = QLabel(hint)
@@ -616,42 +648,53 @@ class FigurePanel(QWidget):
             self.fit()
 
     def add_option(self, widget: QWidget) -> None:
-        """A choice of this figure's own (the uptake page's time axis), after the buttons."""
-        self._bar_layout.insertWidget(self._bar_layout.indexOf(self.save_button) + 1
-                                      + len(self._options), widget)
-        self._options.append(widget)
-        self._place_title()
+        """A choice of this figure's own (the uptake page's time axis), after the buttons. A list
+        (a page, the overview's pages) gets ◀ and ▶ beside it, which step through its entries
+        and go round from the last to the first (owner, 2026-11-05)."""
+        if isinstance(widget, QComboBox):
+            prev, nxt = QPushButton("◀"), QPushButton("▶")
+            for button, step, words in ((prev, -1, "the previous one (from the first: the last)"),
+                                        (nxt, 1, "the next one (from the last: the first)")):
+                button.setFixedWidth(30)
+                button.setToolTip(words)
+                button.clicked.connect(lambda _c=False, b=widget, d=step: self._step(b, d))
+            group = [prev, widget, nxt]
+            self._steppers[widget] = (prev, nxt)
+            widget.installEventFilter(self)
+            model = widget.model()
+            for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+                signal.connect(lambda *_a, b=widget: self._sync_steppers(b))
+        else:
+            group = [widget]
+        at = self._bar_layout.indexOf(self.save_button) + 1 + len(self._options)
+        for k, w in enumerate(group):
+            self._bar_layout.insertWidget(at + k, w)
+        self._options.extend(group)
+        if isinstance(widget, QComboBox):
+            self._sync_steppers(widget)
+
+    @staticmethod
+    def _step(box: QComboBox, step: int) -> None:
+        """The entry of ``box`` before (-1) or after (+1) the current one, going round."""
+        if box.count():
+            box.setCurrentIndex((box.currentIndex() + step) % box.count())
+
+    def _sync_steppers(self, box: QComboBox) -> None:
+        """◀ ▶ shown with their list, and usable only when it has more than one entry."""
+        for button in self._steppers[box]:
+            button.setVisible(not box.isHidden())
+            button.setEnabled(box.count() > 1)
 
     def set_title(self, text: str) -> None:
-        self._title_text = text
-        self.title.setToolTip(text)
-        self._place_title()
-
-    def _place_title(self) -> None:
-        """Centre the title on the bar, clear of the buttons on the left and the status on
-        the right; shortened with "…" when there is no room for all of it."""
-        gap = 12
-        last = self._options[-1] if self._options else self.save_button
-        left = last.geometry().right() + gap
-        right = (self.status.geometry().left() - gap if self.status.text()
-                 else self.bar.width() - gap)
-        room = max(0, right - left)
-        metrics = self.title.fontMetrics()
-        text = metrics.elidedText(self._title_text, Qt.TextElideMode.ElideRight, room)
-        width = min(metrics.horizontalAdvance(text) + 4, room)
-        x = round(self.bar.width() / 2 - width / 2)
-        x = max(left, min(x, right - width))
-        self.title.setText(text)
-        self.title.setGeometry(x, 0, width, self.bar.height())
+        self.title.set_full(text)
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
         if not hasattr(self, "view") or not hasattr(self, "bar"):  # still being made
             return False
         if watched is self.bar:
-            if event.type() == QEvent.Type.Resize:
-                self._place_title()
-            elif event.type() == QEvent.Type.LayoutRequest:  # the status changed: once laid out
-                QTimer.singleShot(0, self._place_title)
+            return False
+        if watched in self._steppers and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+            self._sync_steppers(watched)  # the list shown or hidden: its ◀ ▶ with it
             return False
         if event.type() == QEvent.Type.Wheel and self.view.figure is not None:
             notches = event.angleDelta().y() / 120

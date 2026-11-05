@@ -7314,3 +7314,55 @@ CSVs or mzML if wanted.
     per spectrum 1,536 against 64). Spectra whose K = 1 fit covers less than half their
     intensity: benchmark 201 of 26,191 with per-bin noise against 132 with one sd per spectrum
     (undeuterated 23 against 5), tutorial 5 of 3,874.
+
+287. **`hxex resume` works the controls out again when only `[run.controls]` changed (owner,
+    2026-11-05: a D2O fraction corrected after the run).** The run's tables kept the controls
+    stored at run time, and a changed `[run.controls]` setting needed `hxex run --overwrite`
+    (a refit). Now `hxex resume hxex.toml` works them out again from the stored K = 1 fits with
+    the project's settings, as a run would (`pipeline._control_inputs`, shared with the run),
+    assesses the quality flags that use them again, records the new settings and the resume
+    (`resumed: controls`), and rewrites the tables; `hxex report` warns when `[run.controls]`
+    differ from those the bundle's controls were made with. The D2O fraction changes corrected
+    values only for series without a measured fully deuterated control (and the population
+    test's `narrow_component`, said in a warning).
+
+288. **Window (owner, 2026-11-05).** The Project workspace's sequence view shows each sample's
+    coverage under its sequence when the project's results are open (a block per residue as
+    high as the peptides covering it, a dot where none does; peptides with a spectrum not
+    rejected; a click lists them; follows review decisions; `sequence_view.coverage_of`). A
+    figure's title has a row of its own between the buttons and the figure (among the buttons,
+    placed by hand, it could cover them on a resize). The Run tab shows the command's total run
+    time beside the bar. Every list in a figure's bar has ◀ ▶ that step through it and go round
+    (`FigurePanel.add_option`). The Results "table" tab is "data", with its rows counted as in
+    Analysis ("data (12)"). The default drawing is named "matplotlib (raster, as PNG)" (it
+    saves nothing). Coverage and protection maps space their residue numbers for the panel's
+    width (`report.coverage.residue_step`; every 25 crowded long proteins and met the next
+    panel's numbers at the joins), with more room between coverage panels.
+
+289. **One FASTA for every sample, or one per sample, in the window (owner, 2026-11-05: "the
+    settings fasta line makes it seem like you can give the table name there").** The settings
+    form showed `[analysis] fasta` as one file field, described as "one sequence file for every
+    sample, or a table of sample = file", but the table form (`[analysis.fasta]`, a file per
+    sample) could not be typed there, and a combined FASTA gave every sample its last record.
+    Now `[analysis.fasta]` has a page of its own (a row per sample with its file, typed without
+    quotes, Browse; a Use switch), the `fasta` row stays on the `[analysis]` page with a
+    description that sends one file per sample there, and says so when the table is in use;
+    writing one form switches the other off (TOML holds one: `BOTH_FORMS` in
+    `gui.project_editor`; `analysis.fasta` is switchable in `project_edit`). Not built (offered):
+    a combined FASTA whose record names are the samples.
+
+290. **68-75 z2 of the tutorial data: two states once the positions are capped (owner,
+    2026-11-05; scratch only, no hxex change).** The owner asked whether the bright 68-75 spectra's
+    two populations could be a protected part of the population rather than an envelope wider
+    than one binomial. *hxex*'s K = 2 fits put the high population above full deuteration (about
+    4.5 D against mFD 3.57) at 50:50 at every time. Refitting every spectrum at K = 1, K = 2 free,
+    and K = 2 with each position at most mFD (BIC; per-bin noise with the model error at the
+    fit's prediction, a change still being evaluated):
+    the capped fits keep nearly all of the gain at 4 s (dBIC -16 to -111) and 1 min (-20 to -55),
+    with a low state fixed near 1.1-1.5 D and a high state at mFD, the low share falling with
+    time (WT 0.50 / 0.32 / 0.15 / 0.12 at 4 s / 1 min / 30 min / 20 h; D109H 0.64 / 0.33 / 0.11 /
+    0.11; R120G 0.35 / 0.23 / 0.08 / 0.06); undeuterated and fully deuterated controls gain
+    nothing. That is the pattern of two states (fixed positions, moving shares), which the
+    uncapped fits had hidden. The high state sits on the cap every time, so some heavy-side
+    width remains (brightness or a low mFD). A cap in the model is PLAN Next steps 20.
+

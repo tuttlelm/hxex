@@ -4,7 +4,9 @@ the protein sequence of each sample as the analysis numbers it, in blocks of ten
 one row per distinct sequence (samples with the same one share a row), a residue that differs
 from the first row's highlighted, prolines (no amide to exchange) in grey, the regions of
 ``[[analysis.regions]]`` as bars under the residues and the sites of ``[analysis.sites]``
-marked. A residue clicked says what it is. Basic to start (owner): coverage comes later.
+marked. A residue clicked says what it is. With results open for the project, each sample's
+coverage runs under its row: a block per residue as high as the number of peptides covering it
+(those with a spectrum not rejected), a dot where none does (owner, 2026-11-05).
 
 The sequences are those the analysis reads: ``[analysis] fasta`` (one file, or one per sample),
 else, for SpecExport, the ``SAMPLE.fasta`` files beside the sample folders; a FASTA numbered by
@@ -21,11 +23,15 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 PER_LINE = 50  # residues a line: five blocks of ten
 REGION_COLOURS = ("#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#76b7b2", "#edc948", "#9c755f")
 DIFFERS, PROLINE, SITE = "#ffd54f", "#9e9e9e", "#c62828"
+COVER, UNCOVERED = "#546e7a", "#e57373"  # coverage blocks, and the dot of a residue not covered
+BLOCKS = "▁▂▃▄▅▆▇█"
 
 
 @dataclass
@@ -155,25 +161,75 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
     return rows, annotations, " ".join(notes)
 
 
-def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE) -> str:
+def coverage_of(results) -> dict[str, list[tuple[int, int, str]]]:
+    """Each sample's peptides in ``results`` (:class:`hxex.report.Results`) with at least one
+    spectrum the review did not reject: ``(first residue, last residue, peptide_range)``,
+    each peptide once whatever its charges, in residue order."""
+    fit, b = results.fit, results.binned
+    if b is None:
+        return {}
+    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    status = np.asarray(results.review_status).astype(str)
+    sample = np.asarray(b.sample).astype(str)
+    start, end = np.asarray(b.start_seq), np.asarray(b.end_seq)
+    ranges = np.asarray(b.peptide_range).astype(str)
+    out: dict[str, set[tuple[int, int, str]]] = {}
+    for i, sid in enumerate(map(str, fit.spectrum_id)):
+        j = index.get(sid)
+        if j is None or status[i] == "rejected":
+            continue
+        out.setdefault(sample[j], set()).add((int(start[j]), int(end[j]), ranges[j]))
+    return {s: sorted(v) for s, v in sorted(out.items())}
+
+
+def _coverage_samples(row: SequenceRow, coverage) -> list[str]:
+    """The samples of ``coverage`` that a row's names stand for: a sample's own name, the
+    sample part of ``run:sample``, or every sample for one sequence shared by all."""
+    if not coverage:
+        return []
+    if row.samples == ["every sample"]:
+        return list(coverage)
+    out = []
+    for name in row.samples:
+        sample = name.split(":", 1)[1] if ":" in name and name not in coverage else name
+        if sample in coverage and sample not in out:
+            out.append(sample)
+    return out
+
+
+def depth(peptides, number: int) -> int:
+    """How many of ``peptides`` (:func:`coverage_of`) cover residue ``number``."""
+    return sum(1 for a, b, _ in peptides if a <= number <= b)
+
+
+def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE,
+                  coverage=None) -> str:
     """The sequences as HTML for Qt's text view: monospace lines of ``per_line`` residues in
     blocks of ten, a ruler above each line, each row named on the left, every residue a link
-    (``res:<row>:<number>``) for the view to say what it is."""
+    (``res:<row>:<number>``) for the view to say what it is. ``coverage``
+    (:func:`coverage_of`) adds each sample's coverage under its row."""
     if not rows:
         return ""
     first = min(r.first for r in rows)
     last = max(r.last for r in rows)
-    label = max(len(", ".join(r.samples)) for r in rows)
-    label = min(max(label, 6), 28)
+    shown = {k: _coverage_samples(r, coverage) for k, r in enumerate(rows)}
+    names = [", ".join(r.samples) for r in rows] + [s for v in shown.values() for s in v]
+    label = min(max(max(len(n) for n in names), 6), 28)
+    top = max((depth(coverage[s], n) for v in shown.values() for s in v
+               for n in range(first, last + 1)), default=0)
     regions = list(getattr(annotations, "regions", ()))
     sites = {s.residue: s.label for s in getattr(annotations, "sites", ())}
     colour = {id(reg): REGION_COLOURS[i % len(REGION_COLOURS)] for i, reg in enumerate(regions)}
     out = ['<div style="font-family: monospace; font-size: 11pt; white-space: pre;">']
-    if regions or sites:
+    if regions or sites or top:
         keys = [f'<span style="color:{colour[id(r)]};">━━</span> {html.escape(r.name)} '
                 f'({r.start}–{r.end})' for r in regions]
         if sites:
             keys.append(f'<span style="color:{SITE};">▲</span> site')
+        if top:
+            keys.append(f'<span style="color:{COVER};">{BLOCKS[0]}…{BLOCKS[-1]}</span> '
+                        f'peptides covering a residue (1 to {top}), '
+                        f'<span style="color:{UNCOVERED};">·</span> none')
         out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
                    + "    ".join(keys) + "</span>\n\n")
     start = first - ((first - 1) % per_line)  # lines begin at 1, 51, 101, ...
@@ -201,6 +257,10 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
                 if (n - start + 1) % 10 == 0:
                     cells.append(" ")
             out.append(f"{html.escape(name):<{label}}  {''.join(cells)}\n")
+            for sample in shown[k]:
+                cover = _coverage_line(numbers, row, coverage[sample], top, start)
+                out.append(f'<span style="color:{COVER};">{html.escape(sample[:label]):<{label}}'
+                           f'</span>  {cover}\n')
         bars = _region_line(numbers, regions, colour, start)
         if bars.strip():
             out.append(f"{'':<{label}}  {bars}\n")
@@ -224,6 +284,25 @@ def _ruler(numbers: range, label: int) -> str:
     return f'<span style="color:#757575;">{"":<{label}}  {html.escape(ruler)}</span>'
 
 
+def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: int) -> str:
+    """A sample's coverage under its row: a block per residue as high as the peptides covering
+    it (scaled to ``top``, the most over every sample), a dot where none does."""
+    cells = []
+    for n in numbers:
+        if not row.at(n):
+            cells.append(" ")
+        else:
+            d = depth(peptides, n)
+            if d:
+                level = BLOCKS[min(len(BLOCKS) - 1, max(0, -(-d * len(BLOCKS) // top) - 1))]
+                cells.append(f'<span style="color:{COVER};">{level}</span>')
+            else:
+                cells.append(f'<span style="color:{UNCOVERED};">·</span>')
+        if (n - start + 1) % 10 == 0:
+            cells.append(" ")
+    return "".join(cells)
+
+
 def _region_line(numbers: range, regions, colour: dict, start: int) -> str:
     """Bars under the residues of each region (the first region's colour where they overlap)."""
     cells = []
@@ -235,9 +314,11 @@ def _region_line(numbers: range, regions, colour: dict, start: int) -> str:
     return "".join(cells)
 
 
-def describe(rows: list[SequenceRow], annotations, row: int, number: int) -> str:
+def describe(rows: list[SequenceRow], annotations, row: int, number: int,
+             coverage=None) -> str:
     """What a residue clicked is: its sample(s), number and residue, how the other rows differ
-    there, and the regions and site it belongs to."""
+    there, the regions and site it belongs to, and (``coverage``) the peptides covering it in
+    each sample of its row."""
     here = rows[row]
     parts = [f"{', '.join(here.samples)}: residue {number}, {here.at(number)}"]
     if here.at(number).endswith("P"):
@@ -253,6 +334,11 @@ def describe(rows: list[SequenceRow], annotations, row: int, number: int) -> str
     site = next((s for s in getattr(annotations, "sites", ()) if s.residue == number), None)
     if site is not None:
         parts.append(f"site {site.label}".rstrip())
+    for sample in _coverage_samples(here, coverage):
+        over = [f"{a}-{b}" for a, b, _ in coverage[sample] if a <= number <= b]
+        parts.append(f"{sample}: " + (f"{len(over)} peptide(s), " + ", ".join(over[:8])
+                                       + (", ..." if len(over) > 8 else "")
+                                       if over else "not covered"))
     return "; ".join(parts)
 
 
@@ -271,6 +357,8 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.rows: list[SequenceRow] = []
         self.annotations = None
         self.project: Path | None = None
+        self.coverage: dict | None = None  # the open results' peptides (coverage_of)
+        self._message = ""
         self.text = QTextBrowser()
         self.text.setOpenLinks(False)
         self.text.anchorClicked.connect(self._clicked)
@@ -295,10 +383,25 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         if not self.rows:
             self.text.setPlainText(message)
             return
-        self.text.setHtml(sequence_html(self.rows, self.annotations))
+        self._message = message
+        self._draw()
+
+    def show_coverage(self, coverage: dict | None) -> None:
+        """The peptides of the project's results (:func:`coverage_of`; None: no results), drawn
+        under the sequences."""
+        self.coverage = coverage or None
+        if self.rows:
+            self._draw()
+
+    def _draw(self) -> None:
+        bar = self.text.verticalScrollBar().value()
+        self.text.setHtml(sequence_html(self.rows, self.annotations, coverage=self.coverage))
+        self.text.verticalScrollBar().setValue(bar)
         n = sum(len(r.samples) for r in self.rows)
         self.about.setText(f"{n} sample(s), {len(self.rows)} distinct sequence(s). "
-                           + (f"{message} " if message else "")
+                           + (f"{self._message} " if self._message else "")
+                           + ("Coverage from the open results (rejected spectra left out). "
+                              if self.coverage else "")
                            + "Click a residue to see what it is.")
 
     def _clicked(self, url: QUrl) -> None:
@@ -306,8 +409,9 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         if not text.startswith("res:"):
             return
         _, row, number = text.split(":")
-        self.about.setText(describe(self.rows, self.annotations, int(row), int(number)))
+        self.about.setText(describe(self.rows, self.annotations, int(row), int(number),
+                                    self.coverage))
 
 
-__all__ = ["SequenceRow", "SequenceView", "describe", "project_sequences", "residues_of",
-           "sequence_html", "stored_sequences"]
+__all__ = ["SequenceRow", "SequenceView", "coverage_of", "depth", "describe",
+           "project_sequences", "residues_of", "sequence_html", "stored_sequences"]

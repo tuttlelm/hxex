@@ -137,7 +137,11 @@ a residue that differs from the reference's is highlighted, so a mutation stands
 prolines (which have no amide hydrogen to exchange) are in grey. The regions of
 `[[analysis.regions]]` are coloured bars under their residues and the sites of
 `[analysis.sites]` are underlined, with a key above. Click a residue to see its number, what it
-is, how the other samples differ there, and its regions and site. **Read again** reads the
+is, how the other samples differ there, and its regions and site. When the project's results
+are open, each sample's coverage runs under its sequence: a block under each residue, as high as
+the number of peptides covering it, and a red dot where no peptide does. A peptide counts when
+at least one of its spectra is not rejected, so the coverage follows your review. Clicking a
+residue then also lists the peptides covering it. **Read again** reads the
 FASTA files again after you change one. A run of SpecExport data keeps each sample's sequence in
 its results, so the view still shows them when the FASTA files have moved (it says so), and it
 says when a FASTA no longer matches the copy the run kept (the file is shown; run again to read
@@ -180,7 +184,8 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
-Every level also has a **table** tab: the selection's rows of the tables `hxex report` writes.
+Every level also has a **data** tab, named with its number of rows as in Analysis
+(**data (12)**): the selection's rows of the tables `hxex report` writes.
 A charge (series) shows its `uptake.csv` rows (each time, the centroid row and each K and
 population, with errors and fD: the values of its uptake page), with its `series.csv` values in
 a line above; the list beside **Save table…** switches to its `components.csv` rows (each
@@ -230,6 +235,10 @@ bar to choose the page; only the page shown is drawn. The populations tab goes o
 same pages, with a list of its own that keeps in step: choosing a page in either turns both.
 Stepping by series with **◀ ▶** goes through its pages before the next series (backwards, the
 previous series' last page first), from the spectra or the populations tab.
+
+Every such list in a figure's bar (the overview's pages, the spectra and populations pages, the
+uptake page's time axis) has small **◀ ▶** buttons beside it: they step to the previous or next
+entry, and go round from the last to the first.
 
 The uptake page has a list of its own in its bar, for how it spreads the times: the project
 file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
@@ -353,7 +362,8 @@ and **Info**. Each runs that command on the project file, in the project's folde
 would type it. One command runs at a time.
 
 - The messages appear as the command writes them, and the bar shows how far it is, with the
-  step it is on and the time left when *hxex* can tell.
+  step it is on and the time left when *hxex* can tell. Beside the bar, **total** counts the
+  command's run time, and keeps it when the command has ended.
 - **Stop** stops the command after the step it is on, as Ctrl-C does in a terminal: what is
   finished is kept, and a bootstrap stopped part way is finished later with **Resume**. Press
   it again (**Abort now**) to end the command at once; one that still does not end is ended by
@@ -378,8 +388,8 @@ would type it. One command runs at a time.
 
 ## Figures
 
-Each figure has buttons above it, and its title beside them (the peptide, sample, and charge
-of a series), which stays readable however far you zoom:
+Each figure has buttons above it, and its title on a line of its own under them (the peptide,
+sample, and charge of a series), which stays readable however far you zoom:
 
 - **Fit page** shows the whole figure in the space there is (the figure follows the window's
   size); **−**, **+**, and **100 %** zoom out, zoom in, and show the figure at its own size.
@@ -397,7 +407,9 @@ of a series), which stays readable however far you zoom:
 
 The figures are those `hxex report` draws, drawn by the same program (matplotlib), so the
 same peptide gives the same figure in the window and in the figures folder. A line under each
-figure says how to move about it. (**View > Draw the figures with** can switch to Qt's SVG
+figure says how to move about it. The window draws each figure as a picture at the size shown
+(**matplotlib (raster, as PNG)** in the View menu); nothing is saved unless you press **Save
+figure…**. (**View > Draw the figures with** can switch to Qt's SVG
 renderer, which zooms without redrawing but draws past the panels' frames anything that runs
 beyond the axis limits, such as a raw profile wider than the m/z range shown.) Changing a figure in the window (axis ranges, labels,
 colours) will come later.

@@ -86,9 +86,9 @@ class ReviewTree(QTreeWidget):
 SERIES_TABLES = ("uptake.csv", "components.csv", "spectra.csv")  # a series' rows of these
 SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex report draws
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
-        "series": (*SERIES_PAGES, "table", "overview"),
-        "point": ("spectra", "fits at each K", "uptake", "table", "overview"),
-        "spectrum": ("spectrum", "fits at each K", "uptake", "table", "overview")}
+        "series": (*SERIES_PAGES, "data", "overview"),
+        "point": ("spectra", "fits at each K", "uptake", "data", "overview"),
+        "spectrum": ("spectrum", "fits at each K", "uptake", "data", "overview")}
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
                   "quality": "quality flags"}
@@ -288,17 +288,26 @@ class ResultsWorkspace(QWidget):
     def _show_tabs(self, kind: str) -> None:
         if kind == self.kind:
             return
-        current = self.figures.tabText(self.figures.currentIndex()) \
-            if self.figures.count() else None
+        keys = getattr(self, "_tab_keys", ())
+        at = self.figures.currentIndex()
+        current = keys[at] if 0 <= at < len(keys) else None
         self.figures.blockSignals(True)
         while self.figures.count():
             self.figures.removeTab(0)
         for name in TABS[kind]:
-            self.figures.addTab(self.table_view if name == "table" else self.panel(name), name)
+            self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
+        self._tab_keys = TABS[kind]  # the data tab's text carries its count
         if current in TABS[kind]:
             self.figures.setCurrentIndex(TABS[kind].index(current))
         self.figures.blockSignals(False)
         self.kind = kind
+
+    def _data_count(self, n: int | None) -> None:
+        """The data tab named with its rows, ``data (12)``, as in Analysis (owner, 2026-11-05);
+        ``data`` before it is filled."""
+        at = self.figures.indexOf(self.table_view)
+        if at >= 0:
+            self.figures.setTabText(at, f"data ({n})" if n else "data")
 
     # --- the tree --------------------------------------------------------------------------
 
@@ -327,7 +336,7 @@ class ResultsWorkspace(QWidget):
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
 
-    # --- the table tab ---------------------------------------------------------------------------
+    # --- the data tab ----------------------------------------------------------------------------
 
     def _fill_table(self) -> None:
         """The table tab, when it is in view: the selection's rows of the report's tables, as
@@ -351,6 +360,7 @@ class ResultsWorkspace(QWidget):
                     for name, values in table.items()]
             self.table_view.show_rows(["column", "value"], rows,
                                       f"{payload[3].spectrum_id}_spectrum")
+            self._data_count(1)
             self.table_view.set_note("spectra.csv: this spectrum's row")
         elif kind == "point":
             table = spectra_table(results, rows=[s.index for s in payload[2].spectra])
@@ -389,6 +399,7 @@ class ResultsWorkspace(QWidget):
         n = len(next(iter(table.values()))) if table else 0
         rows = [{c: _plain_value(table[c][i]) for c in columns} for i in range(n)]
         self.table_view.show_rows(columns, rows, name)
+        self._data_count(n)
 
     def _table_row_chosen(self, row: dict) -> None:
         """A row of the table double-clicked: its spectrum, when it names one."""
@@ -754,6 +765,7 @@ class ResultsWorkspace(QWidget):
             self.panel("uptake").draw(uptake)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
         self._selection = (kind, payload)
+        self._data_count(None)  # until the tab is filled for this selection
         self._fill_table()
         self.selection_changed.emit()
         if self.window is not None:

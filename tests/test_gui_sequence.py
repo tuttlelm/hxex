@@ -94,3 +94,34 @@ def test_the_sequences_a_run_stored_stand_in_for_missing_files(tmp_path):
     rows, _, message = project_sequences(path)
     assert [r.samples for r in rows] == [["M1", "WT"]] and rows[0].first == 3
     assert "the sequences the run stored in its bundle are shown" in message
+
+
+def test_coverage_runs_under_each_samples_sequence(tmp_path):
+    """With results open, each sample's coverage runs under its row (owner, 2026-11-05): a block
+    as high as the peptides covering a residue, a dot where none does; a click lists them; a
+    peptide whose every spectrum the review rejected does not cover."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from hxex.gui.sequence_view import coverage_of, depth
+
+    project = _project(tmp_path, "/3-12")
+    rows, annotations, _ = project_sequences(project)
+    binned = SimpleNamespace(
+        spectrum_id=np.array(["a", "b", "c", "d"]), sample=np.array(["WT", "WT", "M1", "WT"]),
+        start_seq=np.array([3, 5, 3, 9]), end_seq=np.array([7, 8, 12, 12]),
+        peptide_range=np.array(["0003-0007", "0005-0008", "0003-0012", "0009-0012"]))
+    results = SimpleNamespace(binned=binned, fit=SimpleNamespace(spectrum_id=binned.spectrum_id),
+                              review_status=np.array(["", "", "", "rejected"]))
+    coverage = coverage_of(results)
+    assert coverage == {"M1": [(3, 12, "0003-0012")],
+                        "WT": [(3, 7, "0003-0007"), (5, 8, "0005-0008")]}  # 9-12 rejected
+    assert [depth(coverage["WT"], n) for n in (3, 5, 9)] == [1, 2, 0]
+    text = sequence_html(rows, annotations, coverage=coverage)
+    assert "peptides covering a residue (1 to 2)" in text and "·" in text
+    assert text.count("█") >= 1  # residues 5-7 of WT, at the most
+    said = describe(rows, annotations, 0, 6, coverage)
+    assert "WT: 2 peptide(s), 3-7, 5-8" in said
+    assert "WT: not covered" in describe(rows, annotations, 0, 10, coverage)
+    assert "covering" not in sequence_html(rows, annotations)  # without results: none

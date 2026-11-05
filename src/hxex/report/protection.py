@@ -18,10 +18,9 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
-from matplotlib.ticker import MultipleLocator
 
 from . import hover
-from .coverage import FD_CMAP, autowrap
+from .coverage import FD_CMAP, autowrap, residue_ticks
 
 PROTECTION_CMAP = FD_CMAP.reversed().with_extremes(bad="#d0d0d0")
 _PANELS = ((1, 1, "average (K=1)"), (2, 1, "K=2 rank 1 (low D)"), (2, 2, "K=2 rank 2 (high D)"))
@@ -45,7 +44,7 @@ def _bars(ax, table, rows, colour, hatch, tip, length, wrap):
     ax.set_xlim(0, length)
     ax.set_ylim(-wrap, 0)
     ax.set_yticks([])
-    ax.xaxis.set_major_locator(MultipleLocator(25))
+    residue_ticks(ax, length)  # the coverage map's residue axis
     ax.grid(axis="x", color="#dddddd", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 

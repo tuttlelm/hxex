@@ -1648,3 +1648,17 @@ def test_several_spectra_fitted_at_each_k_one_row_each(results):
     assert len(framed) == 3  # each row's chosen K
     with pytest.raises(ValueError, match="no spectra"):
         plot_k_comparisons([], results)
+
+
+def test_the_residue_axis_spaces_its_labels_for_the_length():
+    """Coverage maps: the residue numbers are spaced for the axis's width (owner, 2026-11-05:
+    every 25 crowded them, and met the next panel's at the joins)."""
+    from hxex.report.coverage import LABELS_PER_INCH, residue_step
+
+    assert residue_step(175, 3.6) == 50  # the tutorial's protein in one coverage panel
+    assert residue_step(175, 6.0) == 20  # a wider panel keeps more numbers
+    assert residue_step(600, 3.6) == 200
+    assert residue_step(60, 3.6) == 20
+    width = 3.6
+    for last in (100, 175, 400, 900, 3000):
+        assert last / residue_step(last, width) <= max(3, int(width * LABELS_PER_INCH))

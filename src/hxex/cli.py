@@ -112,8 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
     _threads_option(p)
 
     p = sub.add_parser("resume", help="complete a bundle's bootstrap (finish a stopped one, add "
-                                      "or redo one, or bootstrap the review's chosen K), or add "
-                                      "the population test")
+                                      "or redo one, or bootstrap the review's chosen K), add "
+                                      "the population test, or work the controls out again")
     p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
                    help="the project file (hxex.toml), or a results bundle (a folder, or .zip) "
                         "waiting for its bootstrap. With the project file, its [output] bundle "
@@ -121,7 +121,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "[run.bootstrap] settings (redone only if they changed), one at the "
                         "K its [review] table chooses where that is missing, and the population "
                         "test with its [run.population_test] settings (made again only if they "
-                        "changed); the fits kept")
+                        "changed), and its controls are worked out again when its "
+                        "[run.controls] changed; the fits kept")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -1139,6 +1140,22 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
         _say(f"tables: {tables}")
 
 
+def _changed_controls(project, bundle):
+    """The project's ``[run.controls]`` when they differ from those the bundle's controls were
+    worked out with (``hxex resume`` works them out again; no refit), else None."""
+    from .controls import ControlConfig
+    from .io.bundle import bundle_manifest
+
+    if project.run.controls is None:
+        return None
+    stored = (((bundle_manifest(bundle) or {}).get("configs") or {}).get("run") or {}).get(
+        "controls")
+    if not stored:
+        return None  # a run without controls: run again to have them
+    return None if ControlConfig.from_dict(stored) == project.run.controls else \
+        project.run.controls
+
+
 def cmd_resume(args) -> int:
     from .io.bundle import bundle_manifest
     from .pipeline import NothingToResume, resume_bootstrap
@@ -1165,23 +1182,29 @@ def cmd_resume(args) -> int:
         if problem := _choices_not_fitted(chosen, project.output.bundle):
             log.error("%s", problem)
             return EXIT_ERROR
-        if project.run.bootstrap is None and project.run.population_test is None and not chosen:
-            log.error("%s has no [run.bootstrap] or [run.population_test] table: add one with "
-                      "its settings", bundle)
+        changed = _changed_controls(project, project.output.bundle)
+        if (project.run.bootstrap is None and project.run.population_test is None
+                and not chosen and changed is None):
+            log.error("%s has no [run.bootstrap] or [run.population_test] table, and its "
+                      "[run.controls] are the bundle's: add one with its settings", bundle)
             return EXIT_ERROR
         bundle, review = project.output.bundle, project.review
         threads = threads if threads is not None else project.threads
         test = _test_to_resume(project, bundle)
         if isinstance(test, int):
             return test
-        if test is not None:
+        if test is not None or changed is not None:
             record = project_record(dataclasses.replace(project, threads=threads))
             if project.input is None:  # a file for the analysis: the bundle's input stays
                 held_file = ((bundle_manifest(bundle) or {}).get("configs") or {}).get(
                     "project_file") or {}
                 if held_file.get("input"):
                     record["input"] = held_file["input"]
-            extra.update(population_test=test, project_file=record)
+            extra.update(project_file=record)
+        if test is not None:
+            extra["population_test"] = test
+        if changed is not None:
+            extra["run_controls"] = changed
         held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
         # the bootstrap there is kept when it has the project's settings: only what the
         # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
@@ -1333,6 +1356,11 @@ def cmd_report(args) -> int:
         if problem := _bundle_problem(bundle, "report"):  # the bundle itself, before its folders
             log.error("%s", problem)
             return EXIT_ERROR
+        if _changed_controls(project, bundle) is not None:
+            log.warning("%s: [run.controls] differ from the settings the bundle's controls were "
+                        "worked out with, so the corrected values follow the bundle's; 'hxex "
+                        "resume %s' works them out again with the project's (no refit)",
+                        args.bundle, args.bundle)
     figures = _beside(bundle, args.figures, "_figures")
     tables = _beside(bundle, args.tables if args.tables is not None
                      else None if own_tables is False else own_tables, "_tables")

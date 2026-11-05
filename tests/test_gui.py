@@ -406,25 +406,27 @@ def test_wheel_zooms_drag_moves_and_double_click_magnifies_a_panel(qtbot):
     assert bar.value() > before and clicks == []
 
 
-def test_the_title_is_centred_on_the_bar_clear_of_the_buttons(qtbot):
+def test_the_title_has_a_row_of_its_own_above_the_figure(qtbot):
+    """The title sits on its own row between the buttons and the figure, centred (owner,
+    2026-11-05: among the buttons it could cover them when the window was resized); a narrow
+    panel shortens it, the whole title on hover."""
     fig = Figure(figsize=(4, 3))
     fig.add_subplot().set_title("WT 0042-0054 TSLSPFYLRPPSF z=2")
     panel = FigurePanel()
     qtbot.addWidget(panel)
-    panel.resize(1900, 500)  # room on every system's fonts (Windows' buttons are wider)
+    panel.resize(1900, 500)
     panel.show()
     panel.show_figure(fig)
     title, bar = panel.title, panel.bar
-    assert title.text() == "WT 0042-0054 TSLSPFYLRPPSF z=2"
-    assert abs(title.geometry().center().x() - bar.width() / 2) <= 2  # the whole bar's centre
-    # a narrow bar: moved aside to clear the buttons, shortened, the whole title on hover; the
-    # width from the buttons' own (Windows' are wider: a fixed width cannot be reached there)
-    narrow = panel.save_button.geometry().right() + 150
-    panel.resize(narrow + 20, 500)
-    qtbot.waitUntil(lambda: bar.width() <= narrow + 40, timeout=5000)
-    assert title.geometry().left() > panel.save_button.geometry().right()
-    assert title.geometry().right() <= bar.width()
-    assert title.text().endswith("…") and title.toolTip() == "WT 0042-0054 TSLSPFYLRPPSF z=2"
+    qtbot.waitUntil(lambda: title.text() == "WT 0042-0054 TSLSPFYLRPPSF z=2", timeout=5000)
+    assert title.geometry().top() >= bar.geometry().bottom()  # below the buttons, never on them
+    assert abs(title.geometry().center().x() - panel.width() / 2) <= 2
+    long = "WT 0042-0054 TSLSPFYLRPPSF z=2, " * 12  # wider than the panel can be
+    panel.set_title(long)
+    panel.resize(160, 500)  # as narrow as the buttons let it be
+    qtbot.waitUntil(lambda: title.text().endswith("…"), timeout=5000)
+    assert title.toolTip() == long and title.width() <= panel.width()
+    assert title.geometry().top() >= bar.geometry().bottom()
 
 
 def test_opening_another_project_or_session_asks_to_save_a_changed_one(qtbot, window, bundle,
@@ -518,3 +520,33 @@ def test_the_matplotlib_view_clips_what_qts_svg_renderer_does_not(qtbot):
     qtbot.waitUntil(lambda: abs(view._image.width() - view.width()) <= 1, timeout=10000)
     panel.set_render("svg")
     assert panel.view.figure is fig and panel.render == "svg"
+
+
+def test_a_figures_list_has_steps_that_go_round(qtbot):
+    """◀ ▶ beside a figure's list (pages, the overview's pages) step through it and go round
+    from the last entry to the first and back (owner, 2026-11-05); they hide with the list and
+    do nothing with one entry."""
+    from PySide6.QtWidgets import QComboBox
+
+    panel = FigurePanel()
+    qtbot.addWidget(panel)
+    box = QComboBox()
+    box.addItems(["page 1", "page 2", "page 3"])
+    panel.add_option(box)
+    panel.show()
+    prev, nxt = panel._steppers[box]
+    assert prev.isVisible() and nxt.isEnabled()
+    seen = []
+    box.currentIndexChanged.connect(seen.append)
+    for _ in range(3):
+        nxt.click()
+    assert seen == [1, 2, 0]  # round from the last to the first
+    prev.click()
+    assert box.currentIndex() == 2  # and back from the first to the last
+    box.hide()
+    assert not prev.isVisible() and not nxt.isVisible()
+    box.show()
+    assert prev.isVisible()
+    box.clear()
+    box.addItem("one page")
+    assert not nxt.isEnabled() and not prev.isEnabled()
