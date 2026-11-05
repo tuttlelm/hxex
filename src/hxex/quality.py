@@ -60,6 +60,14 @@ signal never reach the fit and are handled before it.
   single replicate's tail is noisy), and only the brighter half of the run's undeuterated
   controls (tallest stick at or above their median) is judged: the signs belong to bright
   spectra, and a weak control's peak ratios are noise.
+- ``undeut_high``: an undeuterated control whose K=1 mean is above ``[run.controls] m0_max``
+  (deuterons): an undeuterated peptide sits near 0, so the spectrum holds another species or
+  a wrong pick. Judged one spectrum at a time, so a series without replicates is flagged too
+  (owner, 2026-11-05). The controls leave it out of their mean when the series has a good
+  undeuterated spectrum, and the analysis then leaves it out of its undeuterated rows (an
+  ``accepted`` review keeps it there); a series whose every undeuterated spectrum is above it is
+  ``m0_high``, which ``[analysis.filters] stand_in_controls`` decides. Not assessed for series
+  the controls leave uncorrected (fragment ions) nor without controls.
 - ``bright``: a labelled spectrum or fully deuterated control whose tallest stick is at least as
   high as that of a control of its series flagged ``saturated`` or ``tails_low``: likely
   distorted the same way. Their own shape cannot be checked, since it is not known in advance.
@@ -81,7 +89,7 @@ from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
 from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
-              "poor_envelope", "saturated", "tails_low", "bright", "rt_found")
+              "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high")
 
 
 @dataclass(frozen=True)
@@ -173,13 +181,14 @@ class QualityFlags:
     envelope_offset: np.ndarray | None = None
     off_mz: np.ndarray | None = None
     rt_found: np.ndarray | None = None
+    undeut_high: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset"):  # or a flag
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
-                     "rt_found"):
+                     "rt_found", "undeut_high"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -192,6 +201,20 @@ class QualityFlags:
         for name in FLAG_NAMES:
             out |= np.asarray(getattr(self, name), dtype=bool)
         return out
+
+
+def undeut_high(fit: FitResult, controls) -> np.ndarray:
+    """The ``undeut_high`` flag of every measurement: an undeuterated control (``fit.role``)
+    whose K=1 mean is above ``controls.config.m0_max``; False without controls or a K=1 fit,
+    and for the series ``controls`` leaves uncorrected."""
+    m = len(fit)
+    if controls is None or 1 not in fit.fits or fit.role is None:
+        return np.zeros(m, dtype=bool)
+    means = np.asarray(fit.fits[1].means, dtype=float)[:, 0]
+    raw = np.asarray(controls.uncorrected, dtype=bool)[controls.rows(fit.data_id)]
+    with np.errstate(invalid="ignore"):
+        return ((np.asarray(fit.role, dtype=str) == UNDEUT) & ~raw & np.isfinite(means)
+                & (means > controls.config.m0_max))
 
 
 def reduced_deviance(meas: Measurements, fit: FitResult) -> np.ndarray:
@@ -335,6 +358,7 @@ def assess_quality(
     envelope_offset_ppm: np.ndarray | None = None,
     envelope_offset_limit_ppm: np.ndarray | None = None,
     rt_found_series: np.ndarray | None = None,
+    controls=None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -343,7 +367,9 @@ def assess_quality(
     (:attr:`~hxex.picking.BinnedSet.envelope_offset_ppm`; NaN or None: not assessed).
     ``poor_envelope_series`` lists the series (``data_id``) whose envelope is poor
     (:attr:`hxex.picking.EnvelopeTable.poor`); ``rt_found_series`` those read at the
-    retention time found for their exact m/z (:mod:`hxex.io.retention_search`)."""
+    retention time found for their exact m/z (:mod:`hxex.io.retention_search`). ``controls``
+    (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
+    assessed)."""
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
         raise ValueError("the measurements and the fit must be for the same spectra")
     m = len(fit)
@@ -408,5 +434,6 @@ def assess_quality(
             [] if poor_envelope_series is None else poor_envelope_series, dtype=np.int64)),
         rt_found=np.isin(fit.data_id, np.asarray(
             [] if rt_found_series is None else rt_found_series, dtype=np.int64)),
+        undeut_high=undeut_high(fit, controls),
         **brightness,
     )

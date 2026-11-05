@@ -645,7 +645,7 @@ def _fit_part(
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
                                  envelope_offset_limit_ppm=envelope_offset[1],
-                                 rt_found_series=rt_found)
+                                 rt_found_series=rt_found, controls=controls)
     return fits, fit, controls, quality, test
 
 
@@ -1345,7 +1345,8 @@ def _finish(result: RunResult, out, *, spectra, project, notes, overwrite, progr
 
 
 def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: BinnedSet,
-                kept: np.ndarray, envelopes: EnvelopeTable | None, source) -> QualityFlags:
+                kept: np.ndarray, envelopes: EnvelopeTable | None, source,
+                controls=None) -> QualityFlags:
     """The quality flags of ``fit`` from what a bundle stores, as :func:`run` assesses them."""
     from .io.retention_search import moved_series
 
@@ -1355,7 +1356,8 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         poor_envelope_series=None if envelopes is None else envelopes.data_id[envelopes.poor],
         envelope_offset_ppm=binned.envelope_offset_ppm[kept],
         envelope_offset_limit_ppm=binned.envelope_offset_limit_ppm[kept],
-        rt_found_series=moved_series((source or {}).get("retention_search")))
+        rt_found_series=moved_series((source or {}).get("retention_search")),
+        controls=controls)
 
 
 def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict:
@@ -1492,7 +1494,8 @@ def resume_bootstrap(
         fit, test = _test_part(measurements, config, fit, progress, cancel, (0.0, tested),
                                record=chunk_plan)
         if config.quality is not None:
-            quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source)
+            quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
+                                  controls)
         if review is not None:
             review = review.mark_stale(fit)
         provenance = _resumed(provenance, "population test", project_file is not None)

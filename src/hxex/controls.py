@@ -125,7 +125,13 @@ class ControlConfig:
       ``*_at``, leaves them out: the control is then the spectra at that time alone (a
       measured fully deuterated file that reads low, replaced by the plateau of the time
       course). Those spectra stay fitted and keep their role in the tables.
-    - ``m0_max`` (deuterons): the largest mean of a good undeuterated control.
+    - ``m0_max`` (deuterons): the largest mean of a good undeuterated control. Each
+      undeuterated spectrum is judged too, with or without replicates: one whose K=1 mean is
+      above it (another species, or a wrong pick: an undeuterated peptide sits near 0) is left
+      out of the control's mean when the series has an undeuterated spectrum at or below it, so
+      that one good replicate is not outvoted by bad ones (flagged ``m0_replicate_left_out``;
+      the spectrum's own quality flag is ``undeut_high``; owner, 2026-11-05). When every one is
+      above it, the series' mean is, and the series is flagged ``m0_high``.
     - ``retention_min``, ``retention_max`` (fractions): the range of a good fully deuterated
       control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) sets
       no fixed floor: a control is then judged against the run (``outlier_sd``) or, with
@@ -367,7 +373,11 @@ class ControlTable:
     before the run screened its controls). ``deamidation`` is the assessment of the fully
     deuterated controls' Asn-Gly peptides (:class:`hxex.deamidation.Deamidation`; None when
     ``deamidation`` is off); ``mfd_measured`` is then the replicate mean less the deamidated
-    share for the series flagged ``fd_deamidated``.
+    share for the series flagged ``fd_deamidated``. ``left_out`` is the spectrum ids of the
+    control spectra left out of their control's mean (an undeuterated one above ``m0_max``
+    beside a good one, one above the amide count, one far from its replicates; not the screened
+    ones, nor noise outliers); None in bundles written before it (the analysis then works the
+    controls out again).
     """
 
     config: ControlConfig
@@ -388,6 +398,7 @@ class ControlTable:
     limits: Mapping[str, Any] | None = None
     screened: tuple[str, ...] | None = None
     deamidation: Deamidation | None = None
+    left_out: tuple[str, ...] | None = None
 
     def __len__(self) -> int:
         return len(self.data_id)
@@ -828,6 +839,7 @@ def fit_controls(
         fallback=np.array(cols["fallback"], dtype=bool),
         flags=np.array(cols["flags"], dtype=str),
         fd_model=fd_model, limits=limits, screened=screened_ids, deamidation=deamidation,
+        left_out=tuple(str(x) for x in np.asarray(fit.spectrum_id)[left_out]),
     )
 
 
@@ -835,14 +847,22 @@ def _control_replicates_left_out(fit, means: np.ndarray, n_amides: np.ndarray,
                                  usable: np.ndarray, serves: Mapping, uncorrected,
                                  config: ControlConfig) -> np.ndarray:
     """The control spectra left out of their control's mean (``replicate_outlier``): a K=1 mean
-    above the amide count, or a replicate far from the median of its series' replicates of
-    that control (three or more), measured in typical replicate standard deviations of the
-    run's time points (deuterons per amide, uncorrected); that scatter needs
-    :data:`REPLICATE_MIN_GROUPS` replicated time points, else only the first rule applies, and
-    the limit is never below :data:`REPLICATE_FLOOR` deuterons per amide."""
+    above the amide count; an undeuterated spectrum above ``m0_max`` when its series has an
+    undeuterated spectrum at or below it (judged one by one, so without replicates too, and
+    before the replicates are compared, so that bad ones cannot outvote a good one; owner,
+    2026-11-05); or a replicate far from the median of its series' replicates of that control
+    (three or more), measured in typical replicate standard deviations of the run's time points
+    (deuterons per amide, uncorrected); that scatter needs :data:`REPLICATE_MIN_GROUPS`
+    replicated time points, else only the first two rules apply, and the limit is never below
+    :data:`REPLICATE_FLOOR` deuterons per amide."""
     role_rows = (serves[UNDEUT] | serves[FULLDEUT]) & usable & np.isfinite(means)
     skip = np.isin(np.asarray(fit.data_id), list(uncorrected))
     out = role_rows & ~skip & (means > n_amides + 1e-9)
+    undeut = role_rows & ~skip & ~out & serves[UNDEUT]
+    high = undeut & (means > config.m0_max)
+    ids = np.asarray(fit.data_id)
+    good = set(ids[undeut & ~high].tolist())  # series with an undeuterated spectrum below it
+    out |= high & np.isin(ids, list(good))
     if config.replicate_outlier is None:
         return out
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -854,7 +874,6 @@ def _control_replicates_left_out(fit, means: np.ndarray, n_amides: np.ndarray,
         groups.setdefault((int(fit.data_id[i]), points[i]), []).append(i)
     scaled = [float(np.var(per_amide[g], ddof=1)) * (len(g) - 1) / stats.chi2.median(len(g) - 1)
               for g in groups.values() if len(g) >= 2]
-    ids = np.asarray(fit.data_id)
     judged: list[list[int]] = []  # each control's replicates (three or more)
     for label in (UNDEUT, FULLDEUT):
         rows_of: dict[int, list[int]] = {}

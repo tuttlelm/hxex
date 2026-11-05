@@ -2015,6 +2015,57 @@ def test_spectra_left_out_whole_and_why():
         SpeciesFilters(replicate_outlier=0)
 
 
+def test_each_undeuterated_spectrum_above_m0_max_or_set_aside_leaves_the_analysis():
+    """An undeuterated spectrum the controls left out of their mean leaves the analysis's
+    undeuterated rows (owner, 2026-11-05; HISTORY 286), whatever stand_in_controls says, with
+    its reason: above m0_max, or far from its replicates. One above m0_max that the controls kept
+    (every undeuterated spectrum of its series is: m0_high) follows stand_in_controls instead; the
+    review's acceptance keeps them; labelled spectra are not judged so."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from hxex.analysis.species import (
+        UNDEUT_HIGH_REASON,
+        UNDEUT_LEFT_OUT_REASON,
+        SpeciesFilters,
+        _left_out,
+        analysis_controls,
+    )
+
+    results = Results.from_run(run(raw_spectra(n_series=2), config()))
+    fit = results.fit
+    controls = analysis_controls(results, None, quiet=True)
+    assert controls.left_out == ()  # the run's controls list it (clean data: nothing)
+    at = controls.rows(fit.data_id)
+    n_am = np.asarray(controls.n_amides, dtype=float)[at]
+    role = np.asarray(fit.role, dtype=str)
+    undeut = np.flatnonzero(role == "undeut")
+    high, aside, labelled = int(undeut[0]), int(undeut[-1]), int(np.flatnonzero(role == "")[0])
+    means = fit.fits[1].means[:, 0].copy()
+    means[high] = controls.config.m0_max + 1.0
+    means[labelled] = controls.config.m0_max + 1.0  # an early time point may read so
+    fake = SimpleNamespace(fit=SimpleNamespace(**{**{f.name: getattr(fit, f.name)
+                                                     for f in dataclasses.fields(fit)},
+                                                  "fits": {1: SimpleNamespace(
+                                                      means=means[:, None])}}),
+                           binned=results.binned,
+                           review_status=np.asarray(results.review_status).copy())
+    set_aside = dataclasses.replace(controls, left_out=(str(fit.spectrum_id[high]),
+                                                        str(fit.spectrum_id[aside])))
+    keep = np.ones(len(fit), dtype=bool)
+    for filters in (SpeciesFilters(), SpeciesFilters(stand_in_controls="include",
+                                                     replicate_outlier=None)):
+        out, why = _left_out(fake, filters, set_aside, n_am, keep)
+        assert why[high] == UNDEUT_HIGH_REASON and why[aside] == UNDEUT_LEFT_OUT_REASON
+        assert np.flatnonzero(out).tolist() == sorted([high, aside])  # not the labelled one
+    # above m0_max but kept by the controls (the series' every one is): not by these reasons
+    kept = dataclasses.replace(controls, left_out=())
+    assert not _left_out(fake, SpeciesFilters(stand_in_controls="include"), kept, n_am,
+                         keep)[0].any()
+    fake.review_status[high] = "accepted"
+    assert not _left_out(fake, SpeciesFilters(), set_aside, n_am, keep)[0][high]
+
+
 def test_an_undeuterated_control_above_m0_max_leaves_its_series_out(caplog):
     """stand_in_controls = "exclude" also leaves out a series whose undeuterated control read
     above m0_max (m0_high: another species in its windows; owner, 2026-10-25, HISTORY 167), with

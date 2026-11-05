@@ -1689,7 +1689,8 @@ _COMMENTS: dict[str, str] = {
     "run.population_test.seed": "seed of the simulations",
     "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
                         "list of K (fixed-K bootstraps for the analysis)",
-    "run.controls.m0_max": "largest mean (D) of a good undeuterated control",
+    "run.controls.m0_max": "largest mean (D) of a good undeuterated control, and of each "
+                           "undeuterated spectrum (undeut_high)",
     "run.controls.retention_min": "a fixed smallest deuterium retention of a good fully "
                                   "deuterated control, as a fraction (false: none; the "
                                   "controls are judged against the run, outlier_sd, or the "

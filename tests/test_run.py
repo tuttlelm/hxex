@@ -837,3 +837,30 @@ def test_too_few_controls_for_per_bin_noise_are_not_measured_again(monkeypatch, 
         res = run(raw_spectra(n_series=1), cfg)  # one series of controls: fewer than five
     assert calls == [True]  # the bundle's rule only
     assert res.fit.noise_curve is None and "per-bin noise not measured" in caplog.text
+
+
+def test_the_controls_left_out_and_undeut_high_are_kept_in_the_bundle(tmp_path):
+    """The control spectra the controls left out of their mean are stored with them, and the
+    quality flag undeut_high (an undeuterated spectrum above m0_max, HISTORY 286) is stored; a
+    bundle written before them works the flag out from its fit at load, and its controls list
+    nothing (the analysis then works them out again)."""
+    import pyarrow.parquet as pq
+
+    from hxex.io import open_bundle
+    from hxex.quality import FLAG_NAMES
+
+    out = tmp_path / "b"
+    res = run(raw_spectra(n_series=2), config(bootstrap=None), out=out)
+    assert res.controls.left_out == () and "undeut_high" in FLAG_NAMES
+    with open_bundle(out) as b:
+        assert b.controls().left_out == () and not b.quality().undeut_high.any()
+    # as written before: no undeut_high column, no left_out in the controls' metadata
+    q = out / "quality.parquet"
+    pq.write_table(pq.read_table(q).drop_columns(["undeut_high"]), q)
+    c = out / "controls.parquet"
+    table = pq.read_table(c)
+    meta = {k: v for k, v in (table.schema.metadata or {}).items() if k != b"left_out"}
+    pq.write_table(table.replace_schema_metadata(meta or None), c)
+    with open_bundle(out) as b:  # the checksums are checked only by verify()
+        assert b.controls().left_out is None
+        assert b.quality().undeut_high.shape == (len(res.fit),)

@@ -376,6 +376,7 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         envelope_offset=(f("envelope_offset") if "envelope_offset" in table.column_names
                          else None),
         off_mz=b("off_mz") if "off_mz" in table.column_names else None,
+        undeut_high=b("undeut_high") if "undeut_high" in table.column_names else None,
     )
 
 
@@ -398,6 +399,8 @@ def _controls_table(c: ControlTable) -> pa.Table:
         meta[b"screened"] = strict_json(list(c.screened))
     if c.deamidation is not None:  # the fully deuterated controls' deamidation
         meta[b"deamidation"] = strict_json(c.deamidation.to_dict())
+    if c.left_out is not None:  # the control spectra left out of their control's mean
+        meta[b"left_out"] = strict_json(list(c.left_out))
     if meta:
         table = table.replace_schema_metadata(meta)
     return table
@@ -420,6 +423,8 @@ def _read_controls(table: pa.Table, config: dict) -> ControlTable:
         screened=tuple(json.loads(meta[b"screened"])) if meta.get(b"screened") else None,
         deamidation=(Deamidation.from_dict(json.loads(meta[b"deamidation"]))
                      if meta.get(b"deamidation") else None),
+        # written before it: None (the analysis works the controls out again)
+        left_out=(tuple(json.loads(meta[b"left_out"])) if b"left_out" in meta else None),
     )
 
 
@@ -1536,7 +1541,14 @@ class Bundle:
         if "quality" not in self._cache:
             config = self.manifest["configs"]["quality"]
             ids = self.fit().spectrum_id
-            self._cache["quality"] = _read_quality(self._table("quality"), config, ids)
+            table = self._table("quality")
+            quality = _read_quality(table, config, ids)
+            if "undeut_high" not in table.column_names:  # written before it: from the fit
+                from ..quality import undeut_high
+
+                quality = dataclasses.replace(
+                    quality, undeut_high=undeut_high(self.fit(), self.controls()))
+            self._cache["quality"] = quality
         return self._cache["quality"]
 
     def review(self) -> ReviewTable:

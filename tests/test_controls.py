@@ -895,3 +895,27 @@ def test_a_control_replicate_close_to_its_median_is_never_left_out():
     c = table(rows)
     assert c.flags[0] == "" and c.mfd[0] == pytest.approx((8.0 + 8.0 + 8.15) / 3)
     assert c.flags[1] == "fd_replicate_left_out" and c.mfd[1] == pytest.approx(8.0)
+
+
+def test_each_undeuterated_spectrum_is_judged_against_m0_max():
+    """An undeuterated spectrum above m0_max is judged on its own, with or without replicates
+    (owner, 2026-11-05): beside a good one it leaves the mean before the replicates are
+    compared, so two bad replicates cannot outvote a good one; alone, or with only bad ones, the
+    series' mean fails m0_max as before (m0_high). The controls list what they left out, and
+    the spectrum's quality flag is undeut_high."""
+    from hxex.quality import undeut_high
+
+    rows = [(0, 0, 7.0), (0, 0, 0.02), (0, 0, 7.0), (0, 5, 4.0), (0, 1e6, 8.0),  # 2 bad, 1 good
+            (1, 0, 7.0), (1, 5, 4.0), (1, 1e6, 8.0),  # one replicate, bad
+            (2, 0, 0.01), (2, 0, 0.03), (2, 5, 4.0), (2, 1e6, 8.0)]  # good
+    fit = fake_fit(rows)
+    for config in (CFG, ControlConfig(replicate_outlier=None)):  # not part of the scatter rule
+        c = fit_controls(fit, np.full(len(rows), 10.0), config)
+        assert c.m0[0] == pytest.approx(0.02) and c.n_undeut[0] == 1
+        assert "m0_replicate_left_out" in c.flags[0] and not c.fallback[0]
+        assert "m0_high" in c.flags[1] and c.m0[1] == 0.0  # nothing good to keep: as before
+        assert c.m0[2] == pytest.approx(0.02) and "m0" not in c.flags[2]
+        assert set(c.left_out) == {"p:0", "p:2"}
+    flag = undeut_high(fit, c)
+    assert np.flatnonzero(flag).tolist() == [0, 2, 5]
+    assert not undeut_high(fit, None).any()

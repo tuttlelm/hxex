@@ -320,7 +320,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `fulldeut_at` | number | unset | s (or "20 h"): the spectra at this time also serve as the fully deuterated control, e.g. a plateaued late time point (false: only the files marked fulldeut) |
 | `undeut_marked` | true/false | `true` | the files marked undeut serve as the control (false: only the spectra at undeut_at do) |
 | `fulldeut_marked` | true/false | `true` | the files marked fulldeut serve as the control (false: only the spectra at fulldeut_at do, e.g. when the measured file reads low) |
-| `m0_max` | number | `0.5` | largest mean (D) of a good undeuterated control |
+| `m0_max` | number | `0.5` | largest mean (D) of a good undeuterated control, and of each undeuterated spectrum (undeut_high) |
 | `retention_min` | number | unset | a fixed smallest deuterium retention of a good fully deuterated control, as a fraction (false: none; the controls are judged against the run, outlier_sd, or the kint prediction); not a retention time |
 | `retention_max` | number | `1.1` | largest deuterium retention of a good fully deuterated control, as a fraction |
 | `outlier_sd` | number | `4.0` | a fully deuterated control this many robust standard deviations below the median retention of the run's controls is rejected (without retention_min; needs ten controls that pass the other checks, else not applied) |

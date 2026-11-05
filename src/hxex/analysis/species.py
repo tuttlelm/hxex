@@ -44,6 +44,10 @@ from ..spectra import point_order_key
 from .screening import LEVELS as SCREEN_LEVELS
 from .screening import OFF_MZ_REASON, Screening, screening, spectra_source
 
+# the reasons an undeuterated control spectrum leaves the analysis (left_out_spectra.csv)
+UNDEUT_HIGH_REASON = "undeuterated control above m0_max"
+UNDEUT_LEFT_OUT_REASON = "undeuterated replicate the controls left out"
+
 log = logging.getLogger(__name__)
 
 
@@ -377,7 +381,10 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
     screened = np.asarray(screened, dtype=bool) & at_control & ~rejected
     n_screened = int(screened.sum())
     same = set(np.asarray(fit.spectrum_id).astype(str)[screened]) == by_run
-    if stored is not None and not changes and not n_rejected and same:
+    # controls stored before they listed the spectra they left out were made before each
+    # undeuterated spectrum was judged against m0_max: worked out again (HISTORY 286)
+    if stored is not None and not changes and not n_rejected and same \
+            and stored.left_out is not None:
         return stored
     # one analysis asks for the same recomputed controls once per table: compute them once
     key = (id(results), tuple(sorted((str(k), repr(v)) for k, v in (changes or {}).items())),
@@ -685,6 +692,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         reasons = (np.asarray(left_out["reason"]).astype(str)[mine] if left_out is not None
                    else np.array([], dtype=str))
         listed = [OFF_MZ_REASON] if filters.off_mz else []
+        listed += [UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON]
         listed += [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
         if filters.stand_in_controls != "include":
             listed += ["stand-in control", "stand-in control (screened)",
@@ -695,6 +703,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             listed.append("replicate outlier")
         listed += sorted(set(reasons) - set(listed))
         where = {OFF_MZ_REASON: "off_mz = true",
+                 UNDEUT_HIGH_REASON: "[run.controls] m0_max",
+                 UNDEUT_LEFT_OUT_REASON: "[run.controls] m0_max, replicate_outlier",
                  "spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
                  "stand-in control": f"stand_in_controls = \"{filters.stand_in_controls}\"",
                  "above the amide count": "above_amides = true",
@@ -703,6 +713,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         for reason in listed:
             setting = next((v for k, v in where.items() if reason.startswith(k)), "")
             add(name, stage, f"left out: {reason}", np.sum(reasons == reason), "spectra",
+                setting if setting.startswith("[") else
                 f"[analysis.filters] {setting}" if setting else "[analysis.filters]")
         if level != "none":
             gone = set(np.asarray(left_out["spectrum_id"]).astype(str)[mine]) if left_out else set()
@@ -784,10 +795,21 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
         out |= screened
         why[screened] = screen.reason[screened]
     raw = np.zeros(n, dtype=bool)
+    k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
     if controls is not None:
         at = controls.rows(fit.data_id)
         raw = np.asarray(controls.uncorrected, dtype=bool)[at]
         n_amides = np.asarray(controls.n_amides, dtype=float)[at]
+        # an undeuterated spectrum the controls left out of their mean (one above m0_max beside
+        # a good one, or one far from its replicates) is not a value either (owner, 2026-11-05;
+        # HISTORY 286); a series whose undeuterated spectra are all above m0_max is m0_high,
+        # which stand_in_controls decides below
+        undeut = (_analysis_roles(fit, controls) == "undeut") & ~raw
+        set_aside = undeut & np.isin(np.asarray(fit.spectrum_id).astype(str),
+                                     list(controls.left_out or ()))
+        heavy_one = np.isfinite(k1) & (k1 > controls.config.m0_max)
+        mark(set_aside & heavy_one, UNDEUT_HIGH_REASON)
+        mark(set_aside, UNDEUT_LEFT_OUT_REASON)
         if filters.stand_in_controls != "include":
             measured = np.asarray(controls.fd_measured, dtype=bool)[at]
             if filters.stand_in_controls == "other_sample":  # as close as the charge states
@@ -816,7 +838,6 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                                 "m0_max and are left out (stand_in_controls = \"%s\"); "
                                 "is a labelled file marked as undeuterated?", s, n_heavy,
                                 n_series, filters.stand_in_controls)
-    k1 = fit.fits[1].means[:, 0] if 1 in fit.fits else np.full(n, np.nan)
     if filters.above_amides:
         mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, "above the amide count")
     fd = k1.copy()

@@ -25,6 +25,17 @@ that high means the peaks *hxex* picked are not the peptide's alone: most often 
 of almost the same m/z, a few mass units heavier or at another charge, sits in the picking
 windows, and it is usually in the labelled spectra too.
 
+Each undeuterated spectrum is also judged on its own, so a series with a single undeuterated
+spectrum is judged too. A spectrum above `m0_max` is flagged `undeut_high`. When the series has
+another undeuterated spectrum below `m0_max`, the bad one is left out of the control's mean
+before the replicates are compared, so that two bad replicates cannot outvote a good one (the
+series is flagged `m0_replicate_left_out`). When every undeuterated spectrum of the series is
+above `m0_max`, the control is rejected as described above. The analysis leaves the
+undeuterated spectra the controls left out of their mean out of its undeuterated values too
+(they are listed in `left_out_spectra.csv`; a spectrum you mark `accepted` stays in). A series
+whose undeuterated spectra are all above `m0_max` is handled by `[analysis.filters]
+stand_in_controls`, as for any series flagged `m0_high`.
+
 **The fully deuterated control** is judged by its *retention*: the fraction of the label it
 still holds when it is measured, (mFD − m0) / number of amides. Retention is always below the
 D₂O fraction of the labelling buffer, because some deuterium exchanges back during the quench,

@@ -340,7 +340,10 @@ def test_a_time_point_promoted_to_a_control_keeps_its_test(tested_run):
     forced = _forced(res, labelled)
     # a labelled point as the undeuterated control reads high: keep the series to look at it
     keep = SpeciesFilters(stand_in_controls="include")
-    for change, role in (({"fulldeut_at": 60.0}, "fulldeut"), ({"undeut_at": 60.0}, "undeut")):
+    # the undeuterated control is then the point alone (undeut_marked = false): beside the
+    # marked ones, its spectra read above m0_max and are left out of it (HISTORY 286)
+    alone = {"undeut_at": 60.0, "undeut_marked": False}
+    for change, role in (({"fulldeut_at": 60.0}, "fulldeut"), (alone, "undeut")):
         up = species_uptake(forced, populations="population_test", controls=change,
                             filters=keep)
         rows = up.where(K=1, rank=1) & (up.time == 60.0)
@@ -348,8 +351,7 @@ def test_a_time_point_promoted_to_a_control_keeps_its_test(tested_run):
         assert np.isfinite(up.set_p_1[rows]).all()
         assert all(r.startswith("set test: two") for r in up.best_set_reason[rows])
     # a promoted undeuterated set reading two is the peptide's undeuterated_two
-    up = species_uptake(forced, populations="population_test", controls={"undeut_at": 60.0},
-                        filters=keep)
+    up = species_uptake(forced, populations="population_test", controls=alone, filters=keep)
     assert up.undeuterated_two.all()
 
 

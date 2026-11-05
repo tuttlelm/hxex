@@ -7274,3 +7274,43 @@ CSVs or mzML if wanted.
     spectrum set back to not reviewed kept its note, which item 284 now reads. The check is also
     a test on the test project (`test_the_windows_decisions_give_the_same_report_tables_as_a_
     spreadsheet`: the window's edits against a copy of `spectra.csv` with a BOM and semicolons).
+
+286. **Each undeuterated spectrum judged against `m0_max` (owner, 2026-11-05: "this particular
+    issue should stand out even if there are not replicates"; the three recommendations agreed).**
+    Case: in the per-bin benchmark run, one undeuterated replicate of a 9-residue peptide at 2+
+    read 7.0 D of 8 amides at K = 1 while its two replicates read 0.02 and 0.04; the run's
+    replicate check had left it out of m0, but nothing flagged the spectrum, and the analysis
+    still used it, so the coverage figure's undeuterated cell read fD 0.53. At 3+ two of three
+    replicates read 7.0 D: the replicate check left out the good one (0.016 D), the mean failed
+    `m0_max`, and m0 fell back to 0. `m0_max` (0.5 D) tested only the series' mean. Measured on
+    the per-bin runs: undeuterated spectra above 0.5 D, benchmark 40 of 3,249 (29 above 2 D,
+    many near the amide count: another species or a wrong pick; the 99th percentile of the rest
+    is 0.6 D), tutorial 4 of 517. Built: (1) a quality flag `undeut_high` for every
+    undeuterated spectrum whose K=1 mean is above `m0_max` (series the controls leave
+    uncorrected excepted; `hxex.quality.undeut_high`; bundles written before it work it out at
+    load); (2) the controls leave such a spectrum out of the control's mean before the
+    replicates are compared when the series has an undeuterated spectrum at or below `m0_max`
+    (`m0_replicate_left_out`; every one above: `m0_high` as before), and list the control
+    spectra they left out (`ControlTable.left_out`, the controls table's metadata; the analysis
+    works the controls out again for bundles without it); (3) the analysis leaves the undeuterated
+    spectra the controls left out of their mean out of its rows (`left_out_spectra.csv` reasons
+    `undeuterated control above m0_max` and `undeuterated replicate the controls left out`;
+    `accepted` keeps them; not tied to `stand_in_controls`); a series whose every undeuterated
+    spectrum is above `m0_max` stays `m0_high`, decided by `stand_in_controls` as before (a
+    first version left out every `undeut_high` spectrum, which overrode `stand_in_controls =
+    "include"`; a test promoting a labelled time point beside the marked controls now needs
+    `undeut_marked = false`, the documented way to make the point the control alone).
+    Effect, benchmark (the owner's current review applied): 12 series keep their own measured m0
+    instead of the fallback, `m0_high` series 17 -> 7, 18 undeuterated spectra leave the
+    analysis as above `m0_max` beside a good replicate; tutorial: no m0 changes, 2 undeuterated
+    spectra leave the analysis (one above `m0_max`, one far from its replicates). The
+    scripts and the lists of spectra are kept with the private examples.
+
+    Found on the way (not changed; owner to decide): with per-bin noise a K = 1 fit can sit on
+    the smaller of two envelopes. That 7 D replicate's K = 1 fit covers its 7 D envelope (peak
+    6,394) and misses the 0 D one (peak 32,802): the proportional term (`model_error` 9 %)
+    makes a missed bright bin cost about as much as a missed dim one, about (1/0.09)^2 per bin,
+    so the fit weighs bins more than intensity (loss 375 at 7 D against 393 at 0 D; with one sd
+    per spectrum 1,536 against 64). Spectra whose K = 1 fit covers less than half their
+    intensity: benchmark 201 of 26,191 with per-bin noise against 132 with one sd per spectrum
+    (undeuterated 23 against 5), tutorial 5 of 3,874.
