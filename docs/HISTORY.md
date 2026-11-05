@@ -7166,3 +7166,13 @@ CSVs or mzML if wanted.
     the populations tab has a page list of its own, kept in step with the spectra tab's (either
     turns both; both drawn per page); ◀ ▶ step through the pages from either tab. `[figures]`
     `page_rows`, `page_columns`, and `max_points` now say they set both pages.
+
+278. **The fragment ladder over pages (owner, 2026-11-04: "break fragment ladder figure into
+    pages").** A ladder figure has a precursor row and a row per step (2.8 in each), so a
+    24-residue parent was about 70 in tall. `ladder_pages` counts the steps that fit under the
+    precursor row in `[analysis] page_size`'s height (the default 12 in: three) without drawing;
+    `ladder_kinetics_figure(steps_shown=(first, end), note=...)` draws a page, the precursor row
+    repeated at the top of each with "page n of m" in its title; files `ladder_..._z1`,
+    `ladder_..._z1_2`. `fragment_outputs(page_size=)`. The closure figure (a panel per
+    condition) stays one page. Three fragment tests now give a tall page (their subject is
+    not the paging).

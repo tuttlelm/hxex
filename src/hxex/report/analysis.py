@@ -801,7 +801,8 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
             raise ValueError("the fragment analysis (ladder kinetics) needs real times, and "
                              "[input] time_scale = \"order\" says the times only order the "
                              "points (fragments = false leaves it out)")
-        frag_tables, frag_jobs = fragment_outputs(results, config.fragments)
+        frag_tables, frag_jobs = fragment_outputs(results, config.fragments,
+                                                  page_size=config.page_size)
     tables, jobs = {}, []
     if not only_fragments:
         if any_fragments:

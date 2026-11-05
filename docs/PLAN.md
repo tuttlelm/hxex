@@ -995,8 +995,8 @@ Planned, not built:
    series' `uptake.csv` rows) and a read-only Tables view in Results; the series review table;
    the analysis tables. Panel limits for the other figures (owner, 2026-11-04): done for the
    analysis figures by `[analysis] page_size` (HISTORY 276) and the Results populations
-   page (on the spectra's pages, HISTORY 277); still to do: the fragment ladder and closure
-   figures. Also to
+   page (on the spectra's pages, HISTORY 277) and the fragment ladder (HISTORY 278); the
+   closure figure grows only with the conditions (two or three) and stays one page. Also to
    do: a data tab for every figure (HISTORY 252): done for the residue figures and region
    bars (HISTORY 273), the K=2 counts, butterfly, and protection figures, and in Results the
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now

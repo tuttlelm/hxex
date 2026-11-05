@@ -288,8 +288,9 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "ladder", "Fragment ladder", ANALYSE, ("ladder_{parent}_{ion}_z{charge}",),
         "the precursor, then for every ladder step the two fragments and their difference "
-        "with its fit", "fragment-residues.md", (_FRAGMENTS,),
-        changed_by=("[analysis.fragments]",)),
+        "with its fit; a long ladder goes on over pages (_2, _3), the precursor atop each",
+        "fragment-residues.md", (_FRAGMENTS,),
+        changed_by=("[analysis.fragments]", "[analysis] page_size")),
     FigureKind(
         "closure", "Ladder closure", ANALYSE, ("closure_{parent}_{ions}",),
         "the closure miss over time for each split of the parent into an N- and a C-terminal "

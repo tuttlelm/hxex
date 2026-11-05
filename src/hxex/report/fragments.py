@@ -69,6 +69,9 @@ def _title_residues(residues: Sequence[str], first: int, last: int, side: str) -
     return f"({inner})" + "".join(residues[last:])
 
 
+LADDER_PANEL = (3.6, 2.8)  # inches per panel of a ladder figure (two a row)
+
+
 def ladder_kinetics_figure(
     uptake: FragmentUptake,
     ion_type: str,
@@ -84,12 +87,19 @@ def ladder_kinetics_figure(
     precursor_charge: int | None = None,
     min_time: float | None = None,
     fit: bool = True,
-    panel: tuple[float, float] = (3.6, 2.8),
+    panel: tuple[float, float] = LADDER_PANEL,
     right_traces: Callable[[LadderStep | None], Sequence[tuple[str, Trace, bool]]] | None = None,
     right_defaults: bool = True,
     kint: IntrinsicRates | None = None,
+    steps_shown: tuple[int, int] | None = None,
+    note: str = "",
 ) -> Figure:
     """The ladder of ``ion_type`` (fragment ``charge``) of one parent: see the module docstring.
+
+    ``steps_shown`` (first, end): only those ladder steps (in order, from 0), under the
+    precursor row, which every page repeats (a long ladder on pages of ``[analysis]
+    page_size``, :func:`ladder_pages`); ``note`` is said in the precursor row's title
+    (``page 2 of 3``).
 
     ``sample``, ``parent`` (its sequence), ``parent_charge`` and ``run`` (the state's run,
     :attr:`hxex.analysis.FragmentUptake.state_run`: '' for a merged sample) choose the series
@@ -110,18 +120,14 @@ def ladder_kinetics_figure(
     solvent; with its ``conditions.initial_fraction`` set, the theoretical curves are drawn
     (amides without a rate, such as a free N-terminal amine, are left out of them)."""
     pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
-    table = uptake.select(pick & (uptake.time > 0))  # not the undeuterated control (log axis)
-    if not len(table):
-        raise ValueError("no fragment spectra after time 0")
+    table, entry, steps = _ladder(uptake, pick, ion_type, charge)
     shown = display_labels(uptake.state_run, uptake.sample)[(state, sample)]
     conditions, names = _series(table, conditions, labels)
-    entry = table.parent_entry()
     residues = chem.parse_sequence(parent)
     side = chem.ion_terminus(ion_type)
     series = table.where(ion_type=ion_type, charge=charge)
-    lengths = sorted(set(table.length[series].tolist()))
-    steps = ladder_steps(entry, ion_type, lengths, nterm_subtract=table.nterm_subtract,
-                         rules=table.amide_rules)
+    if steps_shown is not None:
+        steps = steps[steps_shown[0]:steps_shown[1]]
     activation = ", ".join(sorted(set(table.activation[series].tolist()))) or ion_type
     head = f"{shown} (Z{pz})  {activation} {ion_type}_z{charge}"
     pre_z = charge if precursor_charge is None else precursor_charge
@@ -137,7 +143,8 @@ def ladder_kinetics_figure(
 
     # the precursor ions
     left, right = axes[0]
-    left.set_title(f"{shown} (Z{pz})  {activation} M_z{pre_z}", fontsize=9)
+    left.set_title(f"{shown} (Z{pz})  {activation} M_z{pre_z}" + (f"  ({note})" if note else ""),
+                   fontsize=9)
     for j, cond in enumerate(conditions):
         colours = _PAIR_COLOURS[j % len(_PAIR_COLOURS)]
         for m, ion in enumerate(precursors):
@@ -211,6 +218,34 @@ def ladder_kinetics_figure(
         for ax in axes.ravel():
             ax.set_xlim(lo / 1.15, hi * 1.15)
     return fig
+
+
+def _ladder(uptake: FragmentUptake, pick, ion_type: str, charge: int):
+    """The rows of one parent after time 0, its entry, and the ladder steps of ``ion_type`` at
+    fragment ``charge``."""
+    table = uptake.select(pick & (uptake.time > 0))  # not the undeuterated control (log axis)
+    if not len(table):
+        raise ValueError("no fragment spectra after time 0")
+    entry = table.parent_entry()
+    series = table.where(ion_type=ion_type, charge=charge)
+    lengths = sorted(set(table.length[series].tolist()))
+    return table, entry, ladder_steps(entry, ion_type, lengths,
+                                      nterm_subtract=table.nterm_subtract,
+                                      rules=table.amide_rules)
+
+
+
+def ladder_pages(uptake: FragmentUptake, ion_type: str, *, charge: int = 1,
+                 page_height: float | None = None, sample: str | None = None,
+                 parent: str | None = None, parent_charge: int | None = None,
+                 run: str | None = None) -> list[tuple[int, int]]:
+    """The pages of a ladder figure (owner, 2026-11-04: "break fragment ladder figure into
+    pages"): (first, end) steps of each, as many as fit under the precursor row in
+    ``page_height`` inches (None: one page)."""
+    pick = _one(uptake, sample, parent, parent_charge, run)[0]
+    n = len(_ladder(uptake, pick, ion_type, charge)[2])
+    per_page = n if page_height is None else max(1, int(page_height // LADDER_PANEL[1]) - 1)
+    return [(a, min(a + per_page, n)) for a in range(0, n, max(1, per_page))] or [(0, 0)]
 
 
 def _extras(ax, right_traces, step, min_time) -> None:
@@ -499,7 +534,8 @@ def _has_fragment_series(results) -> bool:
     return any("fragment" in t.entry.extra for t in mzml_series_targets(source).values())
 
 
-def fragment_outputs(results, config, *, quiet: bool = False):
+def fragment_outputs(results, config, *, quiet: bool = False,
+                     page_size: tuple[float, float] | None = None):
     """The fragment part of an analysis (:class:`hxex.analysis.FragmentAnalysis` ``config``):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
@@ -510,7 +546,8 @@ def fragment_outputs(results, config, *, quiet: bool = False):
     ``results`` may be a
     :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables' ``run``
     column then names each row's run, and the figures of an unmerged sample found in several
-    runs are named ``<run>_<sample>_...``."""
+    runs are named ``<run>_<sample>_...``. ``page_size`` (``[analysis] page_size``): a long
+    ladder goes on over pages ``ladder_..._2``, each under its own precursor row."""
     from ..analysis.fragments import (
         _PARTNERS,
         closure_table,
@@ -578,10 +615,17 @@ def fragment_outputs(results, config, *, quiet: bool = False):
         for ion in ions:
             for z in config.charges:
                 if (rows & uptake.where(ion_type=ion, charge=z) & (uptake.time > 0)).any():
-                    jobs.append((f"ladder_{stem}_{ion}_z{z}",
-                                 lambda ion=ion, z=z, sel=sel, kint=kint: ladder_kinetics_figure(
-                                     uptake, ion, charge=z, labels=config.labels,
-                                     min_time=config.min_time, kint=kint, **sel)))
+                    pages = ladder_pages(uptake, ion, charge=z, page_height=(
+                        None if page_size is None else page_size[1]), **sel)
+                    for n, shown_steps in enumerate(pages):
+                        note = f"page {n + 1} of {len(pages)}" if len(pages) > 1 else ""
+                        jobs.append((
+                            f"ladder_{stem}_{ion}_z{z}" + (f"_{n + 1}" if n else ""),
+                            lambda ion=ion, z=z, sel=sel, kint=kint, shown_steps=shown_steps,
+                            note=note: ladder_kinetics_figure(
+                                uptake, ion, charge=z, labels=config.labels,
+                                min_time=config.min_time, kint=kint, steps_shown=shown_steps,
+                                note=note, **sel)))
         for a, b in pairs:
             have = set(uptake.fragment[rows].tolist())
             n = len(chem.parse_sequence(parent))

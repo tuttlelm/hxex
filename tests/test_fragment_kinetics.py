@@ -221,6 +221,19 @@ def test_ladder_figure_has_a_row_per_step():
     assert rate_labels[0].startswith("D G, rate: 4.00e-03")  # residue 16 (V), exact data
     assert all(ax.get_xscale() == "log" for ax in axes)
     assert len({ax.get_xlim() for ax in axes}) == 1
+    # a long ladder over pages (owner, 2026-11-04): the steps that fit under the precursor
+    # row, which every page repeats; 9 inches hold the precursor and two steps
+    from hxex.report.fragments import ladder_pages
+
+    pages = ladder_pages(u, "c", page_height=9.0)
+    assert pages[0] == (0, 2) and pages[-1][1] == len(steps)
+    assert sum(b - a for a, b in pages) == len(steps)
+    assert ladder_pages(u, "c") == [(0, len(steps))]
+    second = ladder_kinetics_figure(u, "c", labels={"gentle": "G"}, min_time=10.0,
+                                    steps_shown=pages[1], note=f"page 2 of {len(pages)}")
+    page_titles = [ax.get_title() for ax in second.axes[::2]]
+    assert page_titles[0] == f"S (Z3)  ETD M_z1  (page 2 of {len(pages)})"
+    assert page_titles[1:] == titles[3:5] and len(second.axes) == 6
     # traces of one's own in the right column, alone
     seen = []
 
@@ -389,8 +402,8 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     from hxex.report import closure_figure, residue_rates_figure, write_analysis
 
     run = stub_run()
-    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
-                                                                  labels={"gentle": "G"}))
+    cfg = AnalysisConfig(format="png", page_size=(16, 40),  # a ladder a page
+                         fragments=FragmentAnalysis(min_time=10.0, labels={"gentle": "G"}))
     written = write_analysis(run, cfg, tmp_path)
     names = sorted(p.name for p in written)
     assert names == sorted([
@@ -428,7 +441,7 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
 
     run = stub_run()
     cond = ExchangeConditions(2.8, 20.0, 0.05, initial_fraction=0.9)
-    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(
+    cfg = AnalysisConfig(format="png", page_size=(16, 40), fragments=FragmentAnalysis(
         min_time=10.0, kint=True, exchange={"S": cond}))
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
@@ -559,7 +572,8 @@ def test_fragment_outputs_of_several_runs(tmp_path):
         AnalysisConfig(runs={"etd": "a"}, fragments=FragmentAnalysis(
             labels={"uvpd": {"gentle": "U"}}))
 
-    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
+    cfg = AnalysisConfig(format="png", page_size=(16, 40),  # a ladder a page
+                         fragments=FragmentAnalysis(min_time=10.0))
     written = write_analysis(merged, cfg, tmp_path / "merged")
     assert sorted(p.name for p in written) == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",

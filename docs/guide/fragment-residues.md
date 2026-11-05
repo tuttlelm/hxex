@@ -8,6 +8,12 @@ kinetics' solvent in `[analysis.fragments.exchange]`, each step also gets the re
 intrinsic rate and its protection factor with a standard error (`log10_protection`,
 `log10_protection_se`).
 
+**The ladder figure.** `ladder_<parent>_<ion>_z<charge>` shows the precursor in its top
+row, then a row for each step of the ladder, read top to bottom. A ladder too long for
+`[analysis] page_size` (16 by 12 inches: the precursor and three steps) goes on over further
+pages, `..._z1_2`, `..._z1_3`, each with the precursor row again at its top and its page
+number in that row's title. A taller page (`page_size = [16, 30]`) holds more steps a page.
+
 **Which steps count.** A step is `precise` when its decay is visible in the time range and
 its rate's relative error is at most `max_rate_error` (0.5 by default):
 
