@@ -199,17 +199,19 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
 
 - `fragment_uptake.csv`: the K=1 deuteration of every fragment and of the precursor read with
   them.
-- Ladders: consecutive fragments of one ion type differ by one residue. Their difference over
-  time is fitted with `A exp(-kt) + C`, giving one rate per residue (`ladder_rates.csv`, ladder
-  figures with a ±1 standard-error band).
+- Ladders: consecutive fragments of one ion type differ by one residue (ladder figures). With
+  `fit_rates = true` (opt-in, as the fits take minutes on a large run) their difference over
+  time is fitted with `A exp(-kt) + C`, giving one rate per residue (`ladder_rates.csv`, and a
+  fitted curve with a ±1 standard-error band on the ladder figures).
 - Closure: an N-terminal fragment, plus the C-terminal fragment that completes it, minus the
   precursor should be zero; misses beyond `tolerance` are flagged (`closure.csv`).
-- Per-residue rates from both ladders together (`ladder_residues.csv`): an N-terminal and a
-  C-terminal ion type are paired, and where they disagree the residue is marked. Conditions,
-  precursor charges, fragment charges and runs are never pooled, nor are two ion types of one
-  terminus (c and c-1 are the same peaks).
-- With `kint = true` and the kinetics' solvent in `[analysis.fragments.exchange]`: intrinsic
-  rates, protection factors per residue and theoretical curves. See
+- Per-residue rates from both ladders together (`ladder_residues.csv`, with `fit_rates =
+  true`): an N-terminal and a C-terminal ion type are paired, and where they disagree the
+  residue is marked. Conditions, precursor charges, fragment charges and runs are never pooled,
+  nor are two ion types of one terminus (c and c-1 are the same peaks).
+- With `kint = true` and the kinetics' solvent in `[analysis.fragments.exchange]`: theoretical
+  curves on the ladder figures and, with `fit_rates = true`, intrinsic rates and protection
+  factors per residue. See
   [Residue-level rates and protection factors from fragment ladders](fragment-residues.md).
 
 Fragment series are kept out of the peptide analysis (coverage, residue maps); MS1 parents read

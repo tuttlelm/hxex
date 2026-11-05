@@ -303,7 +303,9 @@ def control_shape_ratios(meas: Measurements) -> tuple[np.ndarray, np.ndarray, np
         t = int(np.argmax(rel))
         if rel[t] < 1 or y[ok][t] <= 0:
             continue
-        ratio = y[ok] / (y[ok][t] * shape[k[ok]] / shape.max())
+        # a picked bin can lie where the composition predicts nothing (rel 0): no ratio there
+        ratio = np.full(len(rel), np.nan)
+        ratio[rel > 0] = y[ok][rel > 0] / (y[ok][t] * rel[rel > 0])
         beside = (rel >= 0.3) & (rel < 1)
         tails = (rel >= 0.01) & (rel < 0.1)
         if beside.any():

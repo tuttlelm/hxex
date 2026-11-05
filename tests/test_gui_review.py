@@ -170,7 +170,7 @@ def test_a_decision_on_a_series_reaches_every_spectrum(qtbot, window_on):
     page.tree.setCurrentItem(series)
     assert "a decision applies to each" in page.review.heading.text()
     page.review.decide(status="rejected")
-    n = int(series.text(2))
+    n = int(series.text(_col("spectra")))
     assert series.text(_col("rejected")) == str(n)
     sheet = read_review_table(project.parent / "user_review_table.csv")
     assert sum(s == "rejected" for s in sheet.status) == n
@@ -216,7 +216,7 @@ def test_a_series_note_is_kept_after_enter_and_leaving_the_box(qtbot, window_on)
     page, series, leaf = _typing_ready(qtbot, window, open_, project)
     assert set(_notes(project).values()) == {"its own note"}
     page.tree.setCurrentItem(series)
-    n = int(series.text(2))
+    n = int(series.text(_col("spectra")))
     panel = page.review
     _type_note(qtbot, panel, "series note")
     qtbot.keyClick(panel.note, Qt.Key.Key_Return)
@@ -253,7 +253,7 @@ def test_a_note_being_typed_is_kept_when_the_results_are_read_again(qtbot, windo
     window, project, open_ = window_on
     page, series, _ = _typing_ready(qtbot, window, open_, project)
     page.tree.setCurrentItem(series)
-    n = int(series.text(2))
+    n = int(series.text(_col("spectra")))
     _type_note(qtbot, page.review, "typed while saved elsewhere")
     table = project.parent / "user_review_table.csv"
     table.write_text(table.read_text(encoding="utf-8") + "\n", encoding="utf-8")
@@ -418,7 +418,7 @@ def test_back_and_forward_step_through_every_spectrum(qtbot, window_on):
         if seen and current.toolTip(0) == seen[-1]:
             break  # the end: nothing after the last
         seen.append(current.toolTip(0))
-    n = sum(int(top.child(i).text(2)) for i in range(top.childCount()))
+    n = sum(int(top.child(i).text(_col("spectra"))) for i in range(top.childCount()))
     assert len(seen) == n == len(set(seen))  # every spectrum once, across series and points
     page.review.previous.click()
     assert page.tree.currentItem().toolTip(0) == seen[-2]

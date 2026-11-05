@@ -516,8 +516,9 @@ The fragment outputs of a run with fragment series (ladders, rates, closure, per
 | `min_time` | number | unset | s on the exchange clock: earlier points are drawn but not fitted (not [input.scans] min_time, on the scan clock) |
 | `tolerance` | number | `0.25` | deuterons: a closure c + z - M beyond this is flagged |
 | `precursor_charge` | integer | unset | the closure's precursor charge (unset: the unreacted precursor) |
+| `fit_rates` | true/false | `false` | opt in: fit each ladder step's decay rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the fitted curves on the ladder figures); slow on a large run (minutes) |
 | `max_rate_error` | number | `0.5` | ladder steps with rate_se / rate at most this give the per-residue rates (ladder_residues.csv) |
-| `kint` | true/false | `false` | opt in: intrinsic rates, protection factors and theoretical curves (needs [analysis.fragments.exchange]) |
+| `kint` | true/false | `false` | opt in: intrinsic rates and theoretical curves, and with fit_rates protection factors (needs [analysis.fragments.exchange]) |
 
 ## `[analysis.fragments.labels]`
 

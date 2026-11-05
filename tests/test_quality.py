@@ -210,3 +210,26 @@ def test_flags_written_before_the_brightness_flags_read_as_false(run):
     back = _read_quality(old, q.config.to_dict(), q.spectrum_id)
     assert not back.saturated.any() and not back.tails_low.any() and not back.bright.any()
     assert np.array_equal(back.flagged, q.flagged)
+
+
+
+class _Controls:
+    """The fields of Measurements that control_shape_ratios reads."""
+
+    def __init__(self, observed, bins, shapes):
+        self.role = np.array(["undeut"] * len(observed))
+        self.observed, self.bins, self.shapes = observed, bins, shapes
+
+    def __len__(self):
+        return len(self.observed)
+
+
+def test_a_control_picked_where_its_shape_predicts_nothing_gives_no_warning():
+    from hxex.quality import control_shape_ratios
+
+    # the last picked bin lies beyond the composition's isotope peaks (shape 0 there)
+    meas = _Controls((np.array([100.0, 60.0, 20.0, 0.0]),), (np.array([0, 1, 2, 3]),),
+                     (np.array([0.6, 0.3, 0.1, 0.0]),))
+    with np.errstate(all="raise"):
+        near, tail, top = control_shape_ratios(meas)
+    assert near[0] == pytest.approx(60.0 / 50.0) and top[0] == 100.0

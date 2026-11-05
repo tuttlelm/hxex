@@ -7366,3 +7366,44 @@ CSVs or mzML if wanted.
     uncapped fits had hidden. The high state sits on the cap every time, so some heavy-side
     width remains (brightness or a low mFD). A cap in the model is PLAN Next steps 20.
 
+
+292. **Fragment data in the window and the analysis (owner, 2026-11-05, reanalysing the
+    private targeted fragment dataset with its 27 h run as the fully deuterated control).**
+    - `hxex analyse` stopped with "float division by zero": undeuterated controls carry no time
+      since controls became roles (item 101), and `fragment_uptake` took the NaN in as a time
+      point, whose replicates then averaged an empty group. An undeuterated control without a
+      time is now the start of the exchange, time 0, as the fragment code (log axes,
+      `time > 0` filters, decay fits) expected before item 101.
+    - `fit_decay`: `curve_fit`'s pseudo-inverse gives a parameter the data cannot fix a
+      variance of exactly 0. 42 of 715 ladder steps on that dataset read a rate error of 0; one
+      passed as precise and weighted its residue infinitely (an empty `log10_rate` in
+      `ladder_residues.csv`). A covariance with a variance at or below 0 is now unknown (NaN):
+      such a step is never precise (precise steps 111 -> 110, residue rows 91 -> 90).
+    - `quality.control_shape_ratios` divided by a predicted shape of 0 (a picked bin beyond the
+      composition's isotope peaks): harmless warnings, those ratios were never used; no longer
+      computed.
+    - The ladder rate fits are opt-in: `[analysis.fragments] fit_rates` (default false; owner).
+      On that dataset (17,000 fragment spectra, 48 cores) the fragment tables take 115 s with
+      them and 1 s without; `hxex analyse` takes 7.5 min with them (every ladder figure fits its
+      steps again while drawn) and 3.5 min without (drawing 207 figures). Off: no
+      `ladder_rates.csv`, `ladder_residues.csv` or residue-rate figures, ladder figures without
+      fitted curves; `fragment_uptake.csv` and closure unchanged. With `kint` and no rate fits:
+      theoretical curves, no protection factors. Analysis folders made before read as out of
+      date (their settings lack the key). The window's Analysis page has a **fit ladder rates**
+      box for results with fragment series, which writes the setting to the project file;
+      Compute's time hint names the rate fits only when they are on.
+    - Spectrum titles wrap to the panel or page width at natural breaks (between notes, `/`,
+      before `-ion_type`, `@`), never cut; a line that fits stays one line
+      (`report.spectrum.wrap_title`). The window's title bar joins a wrapped spectrum id back
+      without a space. m/z ticks follow the panel width (`MzLocator`: steps 1, 2, 5, 10, spacing
+      at least the widest label): panels with colliding labels on that dataset at 5 columns 45
+      -> 0. Tick values change on the next redraw (tutorial images included; the notebook did
+      not change).
+    - `spectra.csv` gains `ion_type`, `condition` (the fragment list's label, as
+      `fragment_uptake.csv` names it) and `parent_range` (one fragment can come from two
+      parents). The Results tree names a fragment series `z=1  c-1:3  ETD, MS2` (`from 2-12 z3`
+      added where two parents give the same fragment; the series number only when still
+      ambiguous: none on that dataset, against 59 peptides before), has the columns ion, MS
+      level, condition, and parent and two lists filtering by MS level and ion type (shown for
+      results read from scan files only), and **Find** matches fragments, conditions, and
+      parents. A selection remembers the fragment, so a rerun returns to the same series.

@@ -158,6 +158,13 @@ replicates. A replicate's row says "yes" when it is flagged or rejected, why the
 leaves it out, its K, its review status, and its flags. Rest the pointer on a column's header
 to see what it counts.
 
+For results with fragment ions (read from mzML or Thermo files with fragment lists), a charge
+row also names its fragment, its condition (the fragment list's label), and its MS level, for
+example `z=1  c-1:3  ETD, MS2`; one fragment taken from two parent peptides adds the parent
+(`from 2-12 z3`). The columns **ion**, **MS level**, **condition**, and **parent** show the
+same, and two lists beside the filter show only one MS level or one ion type (**peptides**: the
+peptides read at MS1). **Find** also finds a fragment (`c-1:3`), a condition, or a parent.
+
 - **rejected** counts the spectra the review rejected: your review table, your
   `[[review.exclude]]` rules, and the bundle's own review. Nothing else rejects a spectrum.
 - **left out** gives the spectra `hxex analyse` leaves out with the project file's
@@ -332,8 +339,14 @@ file), so what you see here is what the command writes.
   peptide's row in the data tab. In the data tab, double-click a row, or right-click it, for
   the same.
 - The analysis is computed when you press **Compute**, at the top beside the reference list:
-  a few seconds for a small dataset, about half a minute for 25,000 spectra. Then every figure
-  shows at once. Nothing is written to disk.
+  a few seconds for a small dataset, about half a minute for 25,000 spectra of peptides.
+  With the ladder rate fits on (`[analysis.fragments] fit_rates = true`), every ladder step's
+  decay is fitted first: about 2 minutes for 17,000 fragment spectra, and each ladder figure
+  then takes a second or two to draw. For results with fragment ions, the **fit ladder rates**
+  box beside **Compute** switches them on and off: it writes `fit_rates` to the project file,
+  so `hxex analyse` does the same, and the figures shown are then out of date until you
+  press **Recompute**. The line at the top says which to expect. Then every
+  figure shows at once. Nothing is written to disk.
 - When the results change (a new run, a review decision), the `[analysis]` settings change,
   or your review table changes (in **Tables**, or in a spreadsheet), the line at the top says
   the figures are out of date and why; they stay until you press **Recompute**, which draws the

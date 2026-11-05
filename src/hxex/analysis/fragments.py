@@ -27,7 +27,7 @@ import numpy as np
 
 from .. import chem
 from ..kint import ExchangeConditions, conditions_dict
-from ..spectra import FULLDEUT, PeptideEntry
+from ..spectra import FULLDEUT, UNDEUT, PeptideEntry
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +160,8 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     the review rejected are left out, flagged ones too with ``exclude_flagged``; series that
     are not fragments of a parent (peptides read from MS1) are left out, and so are the fully
     deuterated controls (the spectra with the role ``'fulldeut'``): they are not a point of
-    the kinetics.
+    the kinetics. An undeuterated control without a time of its own is the start of the
+    exchange: its rows have time 0.
 
     From a :class:`hxex.analysis.RunSet`, the fragments of every run read from scan files, in
     one table whose ``run`` column names each row's run; a merged sample (``merge``) keeps the
@@ -197,6 +198,9 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     if exclude_flagged:
         keep &= ~flagged
     means = fit.fits[1].means[:, 0]
+    # controls carry no time (NaN) since they are set by role; the undeuterated one is time 0
+    times = np.asarray(fit.time, dtype=float).copy()
+    times[(np.asarray(fit.role, dtype=str) == UNDEUT) & ~np.isfinite(times)] = 0.0
     amides: dict[tuple, int] = {}
     rows: dict[str, list] = {f.name: [] for f in fields(FragmentUptake)
                              if f.name not in ("nterm_subtract", "amide_rules", "run", "merged")}
@@ -225,7 +229,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
                 chem.parse_sequence(parent.peptide)),
             "charge": int(binned.charge[j]), "activation": target.activation or "",
             "data_id": int(fit.data_id[i]), "rep": int(binned.rep[j]),
-            "time": float(fit.time[i]), "mean": float(means[i]),
+            "time": float(times[i]), "mean": float(means[i]),
             "mean_se": float(boot.mean_se[i, 0]) if boot is not None else np.nan,
             "n_amides": amides[key], "flagged": bool(flagged[i]),
             "spectrum_id": str(fit.spectrum_id[i]),
@@ -681,6 +685,10 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     if best is None:
         return DecayFit(np.nan, np.nan, np.nan, np.nan, len(t), False)
     _, p, cov = best
+    if not (np.all(np.isfinite(cov)) and np.all(np.diag(cov) > 0)):
+        # curve_fit's pseudo-inverse gives a parameter the data cannot fix a variance of 0:
+        # unknown, not exact (a zero rate_se once weighted a residue infinitely)
+        cov = np.full((3, 3), np.nan)
     rate_se = float(np.sqrt(cov[1, 1])) if np.all(np.isfinite(cov)) else np.nan
     rate = float(p[1])
     with np.errstate(over="ignore", invalid="ignore"):  # an unresolved fast decay's amplitude
@@ -1068,6 +1076,10 @@ class FragmentAnalysis:
       under its name, ``{'etd': {'gentle': 'ETD G'}}``, for a merged sample's runs).
     - ``tolerance`` (deuterons): a closure ``c + z - M`` beyond it is flagged.
     - ``precursor_charge``: the closure's precursor; None: the unreacted precursor.
+    - ``fit_rates``: fit every ladder step's decay (:func:`ladder_rates`; opt-in, as the fits
+      take minutes on a large run): ``ladder_rates.csv``, ``ladder_residues.csv``, the
+      ``residue_rates`` figures and the fitted curves on the ladder figures. Off, the ladder
+      figures draw the measured points and differences only.
     - ``max_rate_error``: a ladder step's ``rate_se / rate`` at most this is ``precise`` and
       enters the per-residue rates (:func:`ladder_residues`, ``ladder_residues.csv``: the N-
       and C-terminal ladders combined, fragment charges and conditions kept apart).
@@ -1084,6 +1096,7 @@ class FragmentAnalysis:
     labels: Mapping[str, str] | None = None
     tolerance: float = 0.25
     precursor_charge: int | None = None
+    fit_rates: bool = False
     max_rate_error: float = MAX_RATE_ERROR
     kint: bool = False
     exchange: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None
@@ -1094,6 +1107,8 @@ class FragmentAnalysis:
         object.__setattr__(self, "exchange", read_conditions(self.exchange))
         if not isinstance(self.kint, bool):
             raise ValueError("kint must be true or false")
+        if not isinstance(self.fit_rates, bool):
+            raise ValueError("fit_rates must be true or false")
         if self.kint and not self.exchange:
             raise ValueError("kint needs the samples' exchange conditions (exchange: ph_read, "
                              "temperature, d2o_fraction)")
@@ -1118,7 +1133,8 @@ class FragmentAnalysis:
         return {"ion_types": list(self.ion_types), "charges": list(self.charges),
                 "min_time": self.min_time, "labels": dict(self.labels or {}) or None,
                 "tolerance": self.tolerance, "precursor_charge": self.precursor_charge,
-                "max_rate_error": self.max_rate_error, "kint": self.kint,
+                "fit_rates": self.fit_rates, "max_rate_error": self.max_rate_error,
+                "kint": self.kint,
                 "exchange": conditions_dict(self.exchange)}
 
     @classmethod

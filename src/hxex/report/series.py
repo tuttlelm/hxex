@@ -32,6 +32,7 @@ from .spectrum import (
     plot_spectrum,
     population_style,
     spectrum_notes,
+    wrap_title,
 )
 
 log = logging.getLogger(__name__)
@@ -63,17 +64,22 @@ def _page_header(fig: Figure, label: str, handles: list) -> None:
     keep their size however many rows there are (taken from it, a one-row page lost a third of
     its height and its panels were squashed: owner, 2026-11-03)."""
     width = fig.get_figwidth()
-    top = 0.45  # the title's band (inches)
+    # a long title (a fragment's) wrapped to the page, every piece kept; each line more gives
+    # the band one line's height (10 points and the line spacing)
+    label = wrap_title(label, width - 0.4, 10)
+    extra = 0.17 * label.count("\n")
+    top = 0.45 + extra  # the title's band (inches)
     ncol = rows = 0
     if handles:
         ncol = max(1, min(len(handles), int(width / 2.0)))
         rows = math.ceil(len(handles) / ncol)
-        top = 0.4 + 0.17 * rows + 0.08  # the legend under the title, and a small gap
+        top = 0.4 + extra + 0.17 * rows + 0.08  # the legend under the title, and a small gap
     fig.set_figheight(fig.get_figheight() + top)
     height = fig.get_figheight()
     fig.suptitle(label, fontsize=10, y=1 - 0.1 / height, va="top")
     if handles:
-        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1 - 0.38 / height),
+        fig.legend(handles=handles, loc="upper center",
+                   bbox_to_anchor=(0.5, 1 - (0.38 + extra) / height),
                    ncol=ncol, frameon=False, fontsize=7, handlelength=2.2)
     fig.tight_layout(rect=(0, 0, 1, 1 - top / height))
 
@@ -364,6 +370,13 @@ def _grid(info: dict, size: tuple[float, float], columns: int | None, residual: 
     return fig, cells
 
 
+def _cell_room(fig: Figure, cells: dict) -> float:
+    """The width (inches) a panel's title may take on a page of ``cells``: the page's width
+    over its columns, less the intensity axis's labels."""
+    columns = max(1, len({round(ax.get_position().x0, 6) for ax, _ in cells.values()}))
+    return max(1.0, fig.get_figwidth() / columns - 0.8)
+
+
 def _series_range(results: Results, spectrum_ids: Sequence[str], axes) -> tuple[float, float]:
     """The expected m/z range of a series' spectra: the lowest and highest predicted m/z of
     their picked bins, or without a picked table the union of the ``axes``' current ranges."""
@@ -448,6 +461,7 @@ def plot_series_spectra(
             log.warning("the raw spectra of series %d could not be read: %s", data_id, exc)
             unread = f"raw spectra not read: {exc}"
             results = dataclasses.replace(results, loader=None)
+    room = _cell_room(fig, cells)  # the width a panel's title may take
     for i, (ax, rax) in cells.items():
         sid = str(results.fit.spectrum_id[i])
         try:
@@ -466,7 +480,7 @@ def plot_series_spectra(
         when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
         # the panel keeps what plot_spectrum says of the spectrum: its K, status and flags
         title = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
-        ax.set_title("\n".join(textwrap.wrap(title, 64)), fontsize=8)
+        ax.set_title(wrap_title(title, room, 8), fontsize=8)
     lo, hi = _series_range(results, every, [ax for ax, _ in cells.values()])
     if np.isfinite(lo) and hi > lo:
         pad = padding * (hi - lo)

@@ -46,11 +46,20 @@ log = logging.getLogger(__name__)
 
 TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
              "index": "time points evenly spaced"}
-COLUMNS = ("peptide, charge, time, replicate", "sample", "spectra", "flagged", "rejected",
-           "left out", "K > 1", "K", "review", "flags")
+COLUMNS = ("peptide, charge, time, replicate", "sample", "ion", "MS level", "condition",
+           "parent", "spectra", "flagged", "rejected", "left out", "K > 1", "K", "review", "flags")
+# the columns of fragment series, shown only for results read from mzML or Thermo files
+TARGET_COLUMNS = ("ion", "MS level", "condition", "parent")
 COLUMN = {name: i for i, name in enumerate(COLUMNS)}
 # what each column holds, as its header's tooltip
 COLUMN_TIPS = {
+    "ion": "the fragment ion (c-1:4: ion type and length; M: the precursor), empty for a "
+           "peptide read at MS1",
+    "MS level": "the MS level of the series' scans (1 for peptides, 2 or 3 for fragments)",
+    "condition": "the fragment list's label ([[input.fragments]] label), else its scan "
+                 "conditions",
+    "parent": "the parent peptide the fragment was taken from: its residues and charge (one "
+              "fragment can come from two parents)",
     "spectra": "how many spectra (replicates) were fitted",
     "flagged": "spectra with a quality flag (named in the last column); a flag alone leaves "
                "nothing out",
@@ -122,13 +131,25 @@ class ResultsWorkspace(QWidget):
             self.filter.setItemData(i, meaning, Qt.ItemDataRole.ToolTipRole)
         self.filter.setToolTip("which series the tree shows")
         self.filter.currentIndexChanged.connect(self._fill)
+        # MS level and ion type: shown for results with fragment series
+        self.ms_filter = QComboBox()
+        self.ms_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.ms_filter.setToolTip("the MS level of the series the tree shows")
+        self.ms_filter.currentIndexChanged.connect(self._fill)
+        self.ion_filter = QComboBox()
+        self.ion_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.ion_filter.setToolTip("the ion type of the series the tree shows (peptides: the "
+                                   "peptides read at MS1)")
+        self.ion_filter.currentIndexChanged.connect(self._fill)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Find a peptide, residues, or sample")
+        self.search.setPlaceholderText("Find a peptide, residues, sample, or fragment")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill)
         self.count = QLabel()
         filters = QHBoxLayout()
         filters.addWidget(self.filter)
+        filters.addWidget(self.ms_filter)
+        filters.addWidget(self.ion_filter)
         filters.addWidget(self.search, 1)
         filters.addWidget(self.count)
 
@@ -327,6 +348,7 @@ class ResultsWorkspace(QWidget):
         for panel in self.panels.values():
             panel.clear()
         self.tree_data = [] if results is None else peptides(results, left)
+        self._fill_target_filters()
         self._fill_time_axis()
         self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
@@ -619,29 +641,50 @@ class ResultsWorkspace(QWidget):
     def _redraw(self, *_) -> None:
         self._selected(self.tree.currentItem())
 
+    def _fill_target_filters(self) -> None:
+        """The MS level and ion type lists, from the series of the results (hidden, with the
+        tree's ion, MS level and condition columns, when no series has them)."""
+        every = [s for p in self.tree_data for s in p.series]
+        levels = sorted({s.ms_level for s in every if s.ms_level})
+        ions = sorted({s.ion_type for s in every if s.ms_level})
+        targeted = bool(levels)
+        for box, items in ((self.ms_filter, [("every MS level", None)]
+                            + [(f"MS{m}", m) for m in levels]),
+                           (self.ion_filter, [("every ion", None)]
+                            + [(i or "peptides", i) for i in ions])):
+            box.blockSignals(True)
+            box.clear()
+            for text, value in items:
+                box.addItem(text, value)
+            box.blockSignals(False)
+            box.setVisible(targeted)
+        for name in TARGET_COLUMNS:
+            self.tree.setColumnHidden(COLUMN[name], not targeted)
+
+    def _shown(self, pep: Peptide, s) -> bool:
+        """Whether the tree shows the series ``s`` of ``pep`` under the filters and search."""
+        return shown(pep, s, self.filter.currentData() or "all", self.search.text(),
+                     self.ms_filter.currentData(), self.ion_filter.currentData())
+
     def _fill(self, *_) -> None:
-        how = self.filter.currentData() or "all"
-        text = self.search.text()
         self.tree.blockSignals(True)
         self.tree.clear()
         self._leaves, self._series_items = {}, {}
         n_series = 0
         for pep in self.tree_data:
-            series = [s for s in pep.series if shown(pep, s, how, text)]
+            series = [s for s in pep.series if self._shown(pep, s)]
             if not series:
                 continue
             counts = {n: sum(getattr(s, n) for s in series)
                       for n in ("n_spectra", "n_flagged", "n_rejected", "n_left_out", "n_multi")}
-            top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample,
-                                   *_counts(counts), "", "", ""])
+            top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample, "", "", "",
+                                   "", *_counts(counts), "", "", ""])
             top.setData(0, KIND, "peptide")
             top.setData(0, PAYLOAD, pep)
             top.setToolTip(0, f"{pep.sample} {pep.peptide_range} {pep.peptide}")
-            charges = [s.charge for s in series]
-            for s in series:
-                name = f"z={s.charge}" + (f" (series {s.data_id})" if charges.count(s.charge) > 1
-                                          else "")
-                child = QTreeWidgetItem([name, "", *_counts(dataclasses.asdict(s)), "", "", ""])
+            for s, name in zip(series, _series_names(series), strict=True):
+                child = QTreeWidgetItem([name, "", s.fragment, str(s.ms_level or ""), s.condition,
+                                         s.parent, *_counts(dataclasses.asdict(s)), "", "", ""])
                 child.setData(0, KIND, "series")
                 child.setData(0, PAYLOAD, (pep, s))
                 child.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
@@ -652,7 +695,20 @@ class ResultsWorkspace(QWidget):
         self.tree.blockSignals(False)
         for c in range(1, len(COLUMNS)):
             self.tree.resizeColumnToContents(c)
-        self.tree.setColumnWidth(0, max(self.tree.columnWidth(0), 260))
+        # the series rows are folded, so the sizing above did not see their text: the fragment
+        # columns and the names take the widest of every series
+        metrics = self.tree.fontMetrics()
+        every = [s for p in self.tree_data for s in p.series]
+        pad = 3 * metrics.horizontalAdvance("M")
+        for name, value in (("ion", "fragment"), ("condition", "condition"),
+                            ("parent", "parent")):
+            widest = max((metrics.horizontalAdvance(getattr(s, value)) for s in every), default=0)
+            self.tree.setColumnWidth(COLUMN[name], max(self.tree.columnWidth(COLUMN[name]),
+                                                       widest + pad))
+        names = max((metrics.horizontalAdvance(n) for p in self.tree_data
+                     for n in _series_names(p.series)), default=0)
+        self.tree.setColumnWidth(0, max(self.tree.columnWidth(0), 260,
+                                        min(names + 4 * pad, 480)))
         total = sum(len(p.series) for p in self.tree_data)
         self.count.setText(f"{n_series} of {total} series" if self.results is not None else "")
 
@@ -662,8 +718,9 @@ class ResultsWorkspace(QWidget):
             return
         pep, series = item.data(0, PAYLOAD)
         for point in points(self.results, series.data_id, self.left):
-            child = QTreeWidgetItem([point.label, "", str(len(point.spectra))]
-                                    + [""] * (len(COLUMNS) - 3))
+            child = QTreeWidgetItem([""] * len(COLUMNS))
+            child.setText(0, point.label)
+            child.setText(COLUMN["spectra"], str(len(point.spectra)))
             child.setText(COLUMN["K"], point.ks)
             child.setData(0, KIND, "point")
             child.setData(0, PAYLOAD, (pep, series, point))
@@ -696,9 +753,7 @@ class ResultsWorkspace(QWidget):
         payload = item.data(0, PAYLOAD)
         if kind == "peptide":  # its first charge's pages
             pep = payload
-            series = next((s for s in pep.series if shown(pep, s, self.filter.currentData()
-                                                          or "all", self.search.text())),
-                          pep.series[0])
+            series = next((s for s in pep.series if self._shown(pep, s)), pep.series[0])
             kind, payload = "series", (pep, series)
         if kind == "point" and len(payload[2].spectra) == 1:
             # one replicate: its own view, so stepping into it draws nothing new (owner)
@@ -750,7 +805,7 @@ class ResultsWorkspace(QWidget):
             ids = [s.spectrum_id for s in point.spectra]
             labels = [f"rep {s.rep}" for s in point.spectra]
             title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
-                    f"z={series.charge}, {point.label}"
+                    f"{series.name}, {point.label}"
             self.panel("fits at each K").draw(lambda: plot_k_comparisons(
                 ids, results, labels=labels, title=title, mz_range=mz_range))
             self.panel("uptake").draw(uptake)
@@ -849,7 +904,7 @@ class ResultsWorkspace(QWidget):
 
     def _show_review(self, kind: str, payload) -> None:
         pep, series = payload[0], payload[1]
-        name = f"{pep.sample} {pep.peptide_range} {pep.peptide} z={series.charge}"
+        name = f"{pep.sample} {pep.peptide_range} {pep.peptide} {series.name}"
         if kind == "series":
             rows = list(np.flatnonzero(self.results.fit.data_id == series.data_id))
         elif kind == "point":
@@ -985,8 +1040,9 @@ class ResultsWorkspace(QWidget):
             item.setText(col, str(total or ""))
 
     def selection(self) -> dict:
-        """What is selected, by what outlasts a rerun: sample, residues and charge, and the
-        time point's label or the spectrum's id."""
+        """What is selected, by what outlasts a rerun: sample, residues and charge (and for a
+        fragment its ion, condition and MS level), and the time point's label or the spectrum's
+        id."""
         item = self.tree.currentItem()
         if item is None:
             return {}
@@ -996,6 +1052,9 @@ class ResultsWorkspace(QWidget):
         pep, series = payload[0], payload[1]
         out = {"sample": pep.sample, "peptide_range": pep.peptide_range,
                "charge": series.charge}
+        if series.fragment:
+            out.update(fragment=series.fragment, condition=series.condition,
+                       ms_level=series.ms_level)
         if kind == "point":
             out["point"] = payload[2].label
         elif kind == "spectrum":
@@ -1022,8 +1081,10 @@ class ResultsWorkspace(QWidget):
         results do not have it (the filter and search are cleared to find it)."""
         if not selection:
             return False
-        if self.filter.currentIndex() or self.search.text():
-            self.filter.setCurrentIndex(0)
+        if (self.filter.currentIndex() or self.search.text() or self.ms_filter.currentIndex() > 0
+                or self.ion_filter.currentIndex() > 0):
+            for box in (self.filter, self.ms_filter, self.ion_filter):
+                box.setCurrentIndex(0 if box.count() else -1)
             self.search.clear()
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
@@ -1038,7 +1099,9 @@ class ResultsWorkspace(QWidget):
                 child = top.child(j)
                 found = child.data(0, PAYLOAD)[1]
                 if found.charge != selection["charge"] or (
-                        "data_id" in selection and found.data_id != selection["data_id"]):
+                        "data_id" in selection and found.data_id != selection["data_id"]) or any(
+                        name in selection and getattr(found, name) != selection[name]
+                        for name in ("fragment", "condition", "ms_level")):
                     continue
                 if "point" not in selection and "spectrum_id" not in selection:
                     self.tree.setCurrentItem(child)
@@ -1091,6 +1154,17 @@ def _plain_value(value):
 
 def _cell(value) -> str:
     return cell_text(_plain_value(value))
+
+
+def _series_names(series: list) -> list[str]:
+    """The tree's names of a peptide's series (:attr:`Series.name`); one fragment from two
+    parents adds its parent, and two series still of one name (a peptide read from two lists,
+    say) the series number, as spectra.csv's data_id."""
+    names = [s.name for s in series]
+    names = [n + f"  from {s.parent}" if s.parent and names.count(n) > 1 else n
+             for s, n in zip(series, names, strict=True)]
+    return [n + (f" (series {s.data_id})" if names.count(n) > 1 else "")
+            for s, n in zip(series, names, strict=True)]
 
 
 def _counts(c: dict) -> list[str]:

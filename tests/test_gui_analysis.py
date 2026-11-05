@@ -175,3 +175,69 @@ def test_setting_tables():
     assert setting_table("[analysis] reference") == "analysis"
     assert setting_table("[[analysis.regions]]") == "analysis.regions"
     assert setting_table("[analysis.fragments]") == "analysis.fragments"
+
+
+def test_the_compute_time_hint_says_minutes_for_fragment_ladders():
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis
+    from hxex.gui.analysis_workspace import compute_time
+    from test_fragment_kinetics import stub_run
+
+    run = stub_run(conditions=("gentle",))
+    fits = AnalysisConfig(fragments=FragmentAnalysis(fit_rates=True))
+    hint = compute_time(run, fits)
+    assert "ladder rate fits" in hint and f"{len(run.fit):,} fragment spectra" in hint
+    # without the rate fits (the default), the fragment analysis, or for peptides read from
+    # MS1: the peptides' time only
+    quick = "about half a minute for 25,000 spectra"
+    assert compute_time(run, AnalysisConfig()) == quick
+    assert compute_time(run, AnalysisConfig(fragments=None)) == quick
+    run.settings.spectra_source = None
+    assert compute_time(run, AnalysisConfig()) == quick
+
+
+def test_the_fit_rates_box_writes_the_project_file(qtbot, tmp_path, project):
+    """Results with fragment series show a 'fit ladder rates' box; ticking it writes
+    [analysis.fragments] fit_rates = true to the project file (hxex analyse reads the same),
+    unticking writes false (the default). Peptide results have no box."""
+    import dataclasses as dc
+
+    from hxex.config import load_project
+    from hxex.fit import FitConfig
+    from hxex.io.mzml import MzmlRun, MzmlTarget, read_mzml
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import PickerConfig
+    from hxex.pipeline import RunConfig, run
+    from test_mzml import ENTRY, time_course, write_mzml
+
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    page.refresh()
+    assert page.fit_rates.isHidden()  # peptides only
+
+    path = write_mzml(tmp_path / "f.mzML", time_course(n=6, ms2_every=2))
+    frag = MzmlTarget(dc.replace(ENTRY, extra={"fragment": "c:10"}), ms_level=2,
+                      activation="ETD", precursor_mz=1012.0, precursor_charge=20)
+    spectra = read_mzml([MzmlRun(path, "WT")], [frag, MzmlTarget(ENTRY)], project="p")
+    cfg = RunConfig(picker=PickerConfig(zero_filling=3, noise_threshold=100.0), quality=None,
+                    fit=FitConfig(k_min=1, k_max=1, adam_steps=50, n_restarts=1,
+                                  backend=Backend("cpu", "float64"),
+                                  noise=NoiseConfig("gaussian", percent=3.0)))
+    run(spectra, cfg, out=tmp_path / "frag", keep_spectra=False)
+    frag_project = tmp_path / "frag.toml"
+    bundle = (tmp_path / "frag").as_posix()
+    frag_project.write_text(f'project = "p"\n\n[output]\nbundle = "{bundle}"\n\n[analysis]\n',
+                            encoding="utf-8")
+    window.open_project(frag_project)
+    qtbot.waitUntil(lambda: not window.loading and page.results is not None, timeout=30000)
+    page.refresh()
+    assert page.fit_rates.isVisibleTo(page) and not page.fit_rates.isChecked()
+    assert page.fit_rates.isEnabled()
+    page.fit_rates.click()
+    analysis = load_project(frag_project, analysis_only=True).analysis
+    assert analysis.fragments.fit_rates and "fit_rates = true" in frag_project.read_text()
+    page.fit_rates.click()
+    assert "fit_rates = true" not in frag_project.read_text()
+    assert not load_project(frag_project, analysis_only=True).analysis.fragments.fit_rates

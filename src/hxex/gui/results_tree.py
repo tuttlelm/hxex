@@ -59,6 +59,23 @@ class Series:
     n_multi: int
     n_reviewed: int
     n_left_out: int = 0
+    # how the series' scans were chosen (spectra read from mzML or Thermo files; empty or 0
+    # otherwise): the fragment ('c-1:4'; '' for a peptide), its ion type, the fragment list's
+    # label (or the scan conditions), the MS level and the parent ('1-12 z3')
+    fragment: str = ""
+    ion_type: str = ""
+    condition: str = ""
+    ms_level: int = 0
+    parent: str = ""
+
+    @property
+    def name(self) -> str:
+        """The series as the tree names it under its peptide: the charge, and for a fragment
+        its ion, condition and MS level (``z=1  c-1:4  ETD, MS2``)."""
+        if not self.fragment:
+            return f"z={self.charge}"
+        return f"z={self.charge}  {self.fragment}  " + ", ".join(
+            p for p in (self.condition, f"MS{self.ms_level}" if self.ms_level else "") if p)
 
 
 @dataclass
@@ -82,6 +99,7 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
     rows = series_table(results)
     reviewed = _reviewed(results)
     n_left = left_out_counts(results, left)
+    targets = series_targets(results)
     out: dict[tuple, Peptide] = {}
     for r in range(len(rows["data_id"])):
         key = (str(rows["sample"][r]), str(rows["peptide_range"][r]), str(rows["peptide"][r]))
@@ -90,10 +108,35 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
         pep.series.append(Series(
             data_id, int(rows["charge"][r] or 0), int(rows["n_spectra"][r]),
             int(rows["n_flagged"][r]), int(rows["n_rejected"][r]), int(rows["n_multi"][r]),
-            reviewed.get(data_id, 0), n_left.get(data_id, 0)))
+            reviewed.get(data_id, 0), n_left.get(data_id, 0), **targets.get(data_id, {})))
     for pep in out.values():
-        pep.series.sort(key=lambda s: s.charge)
+        pep.series.sort(key=lambda s: (s.charge, s.ms_level, s.condition, s.fragment))
     return [out[k] for k in sorted(out, key=lambda k: (k[0], _start(k[1]), k[1], k[2]))]
+
+
+def series_targets(results) -> dict[int, dict]:
+    """Each series' (by ``data_id``) fragment, ion type, condition and MS level, as
+    ``spectra.csv`` gives them (:func:`hxex.report.tables._target_columns`); empty for results
+    not read from mzML or Thermo files."""
+    from ..io.mzml import mzml_series_targets
+    from ..report.tables import _target_columns
+
+    cols = _target_columns(results)
+    if not cols:
+        return {}
+    targets = mzml_series_targets(results.settings.spectra_source)
+    out: dict[int, dict] = {}
+    for i, d in enumerate(results.fit.data_id):
+        if int(d) not in out:
+            target = targets.get(int(d))
+            z = dict(target.entry.extra).get("parent_charge", "") if target is not None else ""
+            parent = str(cols["parent_range"][i])
+            out[int(d)] = {"fragment": str(cols["fragment"][i]),
+                           "ion_type": str(cols["ion_type"][i]),
+                           "condition": str(cols["condition"][i]),
+                           "ms_level": int(cols["ms_level"][i]),
+                           "parent": f"{parent} z{z}" if parent and z != "" else parent}
+    return out
 
 
 def _start(peptide_range: str) -> int:
@@ -245,12 +288,19 @@ def _span(peptide_range: str) -> tuple[int, int] | None:
     return (int(both[1]), int(both[2])) if both else None
 
 
-def shown(pep: Peptide, series: Series, how: str = "all", text: str = "") -> bool:
-    """Whether a series is shown under the filter ``how`` (:data:`FILTERS`) and the search
-    ``text`` (:func:`search_matches`: residues by number, else the sample, residues, peptide
-    or charge as text)."""
+def shown(pep: Peptide, series: Series, how: str = "all", text: str = "",
+          ms_level: int | None = None, ion_type: str | None = None) -> bool:
+    """Whether a series is shown under the filter ``how`` (:data:`FILTERS`), the search
+    ``text`` (:func:`search_matches`: residues by number, else the sample, residues, peptide,
+    charge, fragment or condition as text), the MS level ``ms_level`` and the ion type
+    ``ion_type`` (None: any; ``''``: peptides, not fragments)."""
     if text and not search_matches(text, pep.sample, pep.peptide_range, pep.peptide,
-                                   f"z{series.charge}"):
+                                   f"z{series.charge} {series.fragment} {series.condition} "
+                                   f"{series.parent}"):
+        return False
+    if ms_level is not None and series.ms_level != ms_level:
+        return False
+    if ion_type is not None and series.ion_type != ion_type:
         return False
     if how == "flagged":
         return series.n_flagged > 0

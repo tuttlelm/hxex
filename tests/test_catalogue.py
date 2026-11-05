@@ -71,11 +71,22 @@ def test_every_analysis_figure_has_an_entry_and_the_plan_agrees(two_sample_bundl
 
 def test_fragment_figures_have_their_entries(tmp_path):
     run = stub_run()
-    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
+    cfg = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
+                                                                  fit_rates=True))
     write_analysis(run, cfg, tmp_path)
     drawn = _drawn(tmp_path, ANALYSE)
     assert {"ladder", "closure", "residue_rates"} <= drawn.keys()
     _agrees(Situation.of(analysis=cfg, results=run), drawn, ANALYSE)
+    # the rate fits are opt-in: without them no residue-rates figure, and the plan says why
+    plain = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0))
+    write_analysis(run, plain, tmp_path / "plain")
+    drawn = _drawn(tmp_path / "plain", ANALYSE)
+    assert {"ladder", "closure"} <= drawn.keys() and "residue_rates" not in drawn
+    _agrees(Situation.of(analysis=plain, results=run), drawn, ANALYSE)
+    (rates,) = [p for p in plan(Situation.of(analysis=plain, results=run))
+                if p.kind.name == "residue_rates"]
+    assert rates.state == "off"
+    assert [n.setting for n in rates.missing] == ["[analysis.fragments] fit_rates"]
     off = Situation.of(analysis=dataclasses.replace(cfg, fragments=None), results=run)
     assert {p.kind.name for p in plan(off) if p.state == "off"} >= {"ladder", "closure"}
 

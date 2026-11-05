@@ -7,7 +7,9 @@ step of one ion series, in residue order: on the left the two fragments of the s
 condition and their difference, on the right the difference with a fit of
 ``A exp(-k t) + C`` and its rate. A step whose difference holds several exchanging residues
 (``block``) is drawn without a fit; a residue that no step covers keeps an empty row that says
-why. Time is on a log axis in seconds. With intrinsic rates (:mod:`hxex.kint`) and the
+why. With ``fit`` False (``hxex analyse`` unless ``[analysis.fragments] fit_rates = true``)
+nothing is fitted and the right column shows the points only. Time is on a log axis in
+seconds. With intrinsic rates (:mod:`hxex.kint`) and the
 fraction the amides started from, the right column also shows, dashed in black, the
 theoretical curve of the unprotected amides: the step's residue, or all the parent's amides in
 the precursor row.
@@ -542,7 +544,9 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     ``ladder_..._<ion>_z<charge>``, ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``;
     tables ``fragment_uptake``, ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
     read at several precursor charges has one ``residue_rates_<sample>_<range>`` (no charge)
-    for all of them.
+    for all of them. The rate fits are opt-in (``config.fit_rates``): without them there are
+    no ``ladder_rates``, ``ladder_residues`` or ``residue_rates_...``, and the ladder figures
+    draw no fitted curves (no decay is fitted at all).
     ``results`` may be a
     :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables' ``run``
     column then names each row's run, and the figures of an unmerged sample found in several
@@ -574,18 +578,21 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     if not len(uptake):
         return {}, []
     ions = list(config.ion_types) or fragment_ion_types(uptake)
+    fit_rates = config.fit_rates
     rates = ladder_rates(uptake, ion_types=ions, charges=config.charges,
                          min_time=config.min_time,
                          conditions=config.exchange if config.kint else None,
-                         max_rate_error=config.max_rate_error)
+                         max_rate_error=config.max_rate_error) if fit_rates else None
     pairs = [(a, b) for a in ions for b in ions
              if chem.ion_terminus(a) == "N" and chem.ion_terminus(b) == "C"
              and _PARTNERS[a[0]] == b[0]]
     closures = [closure_table(uptake, a, b, precursor_charge=config.precursor_charge,
                               min_time=config.min_time, tolerance=config.tolerance)
                 for a, b in pairs]
-    tables = {"fragment_uptake": uptake.columns(), "ladder_rates": rates.columns(),
-              "ladder_residues": ladder_residues(rates).columns()}
+    tables = {"fragment_uptake": uptake.columns()}
+    if rates is not None:
+        tables |= {"ladder_rates": rates.columns(),
+                   "ladder_residues": ladder_residues(rates).columns()}
     if closures:
         cols = [c.columns() for c in closures]
         tables["closure"] = {name: np.concatenate([c[name] for c in cols]) for name in cols[0]}
@@ -625,7 +632,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                             note=note: ladder_kinetics_figure(
                                 uptake, ion, charge=z, labels=config.labels,
                                 min_time=config.min_time, kint=kint, steps_shown=shown_steps,
-                                note=note, **sel)))
+                                note=note, fit=fit_rates, **sel)))
         for a, b in pairs:
             have = set(uptake.fragment[rows].tolist())
             n = len(chem.parse_sequence(parent))
@@ -635,7 +642,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                     tolerance=config.tolerance, precursor_charge=config.precursor_charge,
                     **sel)))
     # the rates: one figure per parent, its precursor charges together
-    for state, sample, parent in sorted({g[:3] for g in groups}):
+    for state, sample, parent in sorted({g[:3] for g in groups}) if rates is not None else ():
         have = rates.where(sample=sample, parent=parent) & (rates.state_run == state)
         if not have.any():
             continue

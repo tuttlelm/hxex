@@ -154,6 +154,28 @@ def test_decay_fit_edge_cases():
     assert not fit_decay(Trace(t, t * 0, t * 0), min_time=2000.0).ok
 
 
+def test_a_rate_the_data_cannot_fix_has_an_unknown_error_not_zero(monkeypatch):
+    """curve_fit's pseudo-inverse gives such a parameter a variance of 0 (seen on four time
+    points): the error is unknown, so the step is never precise."""
+    import scipy.optimize
+
+    from hxex.analysis import Trace
+
+    real = scipy.optimize.curve_fit
+
+    def degenerate(*args, **kwargs):
+        p, cov = real(*args, **kwargs)
+        cov = cov.copy()
+        cov[1, :] = cov[:, 1] = 0.0
+        return p, cov
+
+    monkeypatch.setattr(scipy.optimize, "curve_fit", degenerate)
+    t = np.geomspace(1, 1000, 50)
+    f = fit_decay(Trace(t, -0.8 * np.exp(-0.01 * t) + 0.8, t * 0))
+    assert f.ok and f.resolved and f.rate == pytest.approx(0.01, rel=1e-4)
+    assert np.isnan(f.rate_se) and np.isnan(f.amplitude_se) and np.isnan(f.curve_se(t)).all()
+
+
 def test_residues_by_least_squares():
     values = {label: sum(0.7 if r in (12, 15) else 0.2 for r in fragment_amides(PARENT, label))
               for label in ("c:1", "c:2", "c:4", "c:5", "M:8")}
@@ -201,6 +223,10 @@ def test_fragment_uptake_from_a_run():
     assert u.n_amides[c4][0] == len(fragment_amides(PARENT, "c:4")) == 3
     assert np.isnan(u.mean_se).all() and u.parent_entry().start_seq == 11
     assert u.select(c4).time.tolist() == [30.0]
+    # an undeuterated control set by role carries no time: it is the start, time 0
+    results.fit.role = np.full(n, "undeut")
+    results.fit.time = np.full(n, np.nan)
+    assert fragment_uptake(results).time.tolist() == [0.0] * n
     # the fully deuterated control is not a point of the kinetics
     results.fit.role = np.full(n, "fulldeut")
     assert len(fragment_uptake(results)) == 0
@@ -403,7 +429,8 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
 
     run = stub_run()
     cfg = AnalysisConfig(format="png", page_size=(16, 40),  # a ladder a page
-                         fragments=FragmentAnalysis(min_time=10.0, labels={"gentle": "G"}))
+                         fragments=FragmentAnalysis(min_time=10.0, labels={"gentle": "G"},
+                                                    fit_rates=True))
     written = write_analysis(run, cfg, tmp_path)
     names = sorted(p.name for p in written)
     assert names == sorted([
@@ -442,14 +469,14 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
     run = stub_run()
     cond = ExchangeConditions(2.8, 20.0, 0.05, initial_fraction=0.9)
     cfg = AnalysisConfig(format="png", page_size=(16, 40), fragments=FragmentAnalysis(
-        min_time=10.0, kint=True, exchange={"S": cond}))
+        min_time=10.0, kint=True, exchange={"S": cond}, fit_rates=True))
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
     assert header.endswith("kint,protection,log10_protection,log10_protection_se,merged")
     assert len(written) == 9  # 4 tables, 4 figures, the settings used
     # without the opt-in the same conditions change nothing
-    off = AnalysisConfig(format="png", fragments=FragmentAnalysis(min_time=10.0,
-                                                                  exchange={"S": cond}))
+    off = AnalysisConfig(format="png", fragments=FragmentAnalysis(
+        min_time=10.0, exchange={"S": cond}, fit_rates=True))
     write_analysis(run, off, tmp_path / "off")
     assert "kint" not in (tmp_path / "off" / "ladder_rates.csv").read_text().splitlines()[0]
 
@@ -497,7 +524,7 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
     from hxex.report.fragments import fragment_outputs
 
     run = stub_run(conditions=("gentle",))
-    cfg = FragmentAnalysis(min_time=10.0)
+    cfg = FragmentAnalysis(min_time=10.0, fit_rates=True)
     assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
                                                      "ladder_residues", "closure"}
     no_source = SimpleNamespace(**{**vars(run), "settings": SimpleNamespace(
@@ -573,7 +600,7 @@ def test_fragment_outputs_of_several_runs(tmp_path):
             labels={"uvpd": {"gentle": "U"}}))
 
     cfg = AnalysisConfig(format="png", page_size=(16, 40),  # a ladder a page
-                         fragments=FragmentAnalysis(min_time=10.0))
+                         fragments=FragmentAnalysis(min_time=10.0, fit_rates=True))
     written = write_analysis(merged, cfg, tmp_path / "merged")
     assert sorted(p.name for p in written) == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
@@ -722,3 +749,69 @@ def test_a_trace_point_takes_the_larger_of_bootstrap_and_replicate_errors():
     np.testing.assert_allclose(large.mean_se, [np.sqrt(1.0 / 2)])  # the bootstrap wins
     one = _average(t[:1], np.array([3.0]), np.array([0.2]))
     np.testing.assert_allclose(one.mean_se, [0.2])
+
+
+def test_ladder_rates_of_a_run_with_its_undeuterated_control_by_role():
+    """The undeuterated control (role, no time) enters the traces at time 0; it once made a
+    NaN time whose replicates averaged to an empty group (a division by zero)."""
+    from hxex.analysis import ladder_rates
+
+    run = stub_run(conditions=("gentle",))
+    fit = run.fit
+    first = np.flatnonzero(fit.time == TIMES[0])  # one spectrum per fragment: the control
+    fit.time = fit.time.copy()
+    fit.time[first] = np.nan
+    fit.fits[1].means[first] = 0.0
+    fit.role = np.where(np.isin(np.arange(len(fit)), first), "undeut", "")
+    u = fragment_uptake(run)
+    assert np.isfinite(u.time).all() and (u.time == 0).sum() == len(first)
+    rates = ladder_rates(u, min_time=10.0)
+    assert len(rates) and set(rates.ion_type) == {"c", "z"}
+
+
+def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
+    """Owner, 2026-11-05: the rate fits take minutes on a large run and most figures do not
+    need them, so ``[analysis.fragments] fit_rates`` is off by default: no decay is fitted, no
+    rate tables or residue-rates figures, and the ladder figures carry no fitted curves."""
+    from matplotlib.collections import PolyCollection
+
+    import hxex.analysis.fragments as analysis_fragments
+    import hxex.report.fragments as report_fragments
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis
+    from hxex.report import write_analysis
+    from hxex.report.fragments import fragment_outputs
+
+    assert FragmentAnalysis().fit_rates is False
+    assert FragmentAnalysis.from_dict({"fit_rates": True}).fit_rates is True
+    assert FragmentAnalysis.from_dict(FragmentAnalysis(fit_rates=True).to_dict()).fit_rates
+    with pytest.raises(ValueError, match="fit_rates must be true or false"):
+        FragmentAnalysis(fit_rates="yes")
+
+    def fitted(fig):
+        """The fitted curves and bands of a ladder figure."""
+        return [a for ax in fig.axes for a in [*ax.get_lines(), *ax.collections]
+                if isinstance(a, PolyCollection) or "rate" in str(a.get_label())]
+
+    run = stub_run()
+    on = dict(fragment_outputs(run, FragmentAnalysis(min_time=10.0, fit_rates=True))[1])
+    ladder = next(name for name in on if name.startswith("ladder_"))
+    assert fitted(on[ladder]())
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a decay was fitted with fit_rates off")
+
+    monkeypatch.setattr(analysis_fragments, "fit_decay", refuse)
+    monkeypatch.setattr(report_fragments, "fit_decay", refuse)
+    tables, jobs = fragment_outputs(run, FragmentAnalysis(min_time=10.0))
+    assert tables.keys() == {"fragment_uptake", "closure"}
+    jobs = dict(jobs)
+    assert not any(name.startswith("residue_rates_") for name in jobs)
+    assert ladder in jobs and not fitted(jobs[ladder]())
+
+    cfg = AnalysisConfig(format="png", page_size=(16, 40),
+                         fragments=FragmentAnalysis(min_time=10.0, labels={"gentle": "G"}))
+    names = sorted(p.name for p in write_analysis(run, cfg, tmp_path))
+    assert names == sorted([
+        "fragment_uptake.csv", "closure.csv",
+        "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
+        "closure_S_11-18_z3_c+z.png", "analysis_settings_used.toml"])

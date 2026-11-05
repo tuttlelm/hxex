@@ -148,6 +148,8 @@ _PROTECTION = Need("[analysis] protection", "true (with [analysis.labelling])",
                    lambda s: bool(s.analysis.protection))
 _FRAGMENTS = Need("[analysis.fragments]", "not false",
                   lambda s: s.analysis.fragments is not None)
+_FIT_RATES = Need("[analysis.fragments] fit_rates", "true (the ladder rate fits, opt-in)",
+                  lambda s: bool(getattr(s.analysis.fragments, "fit_rates", False)))
 
 _SERIES_DATA = "for the series [figures] series chooses (\"flagged\" by default)"
 
@@ -288,9 +290,11 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "ladder", "Fragment ladder", ANALYSE, ("ladder_{parent}_{ion}_z{charge}",),
         "the precursor, then for every ladder step the two fragments and their difference "
-        "with its fit; a long ladder goes on over pages (_2, _3), the precursor atop each",
+        "(with its fit when [analysis.fragments] fit_rates is true); a long ladder goes on "
+        "over pages (_2, _3), the precursor atop each",
         "fragment-residues.md", (_FRAGMENTS,),
-        changed_by=("[analysis.fragments]", "[analysis] page_size")),
+        changed_by=("[analysis.fragments]", "[analysis.fragments] fit_rates",
+                    "[analysis] page_size")),
     FigureKind(
         "closure", "Ladder closure", ANALYSE, ("closure_{parent}_{ions}",),
         "the closure miss over time for each split of the parent into an N- and a C-terminal "
@@ -300,7 +304,7 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "residue_rates", "Residue rates", ANALYSE, ("residue_rates_{parent}",),
         "per-residue rates, amplitudes and, with kint, protection, from the fragment ladders",
-        "fragment-residues.md", (_FRAGMENTS,),
+        "fragment-residues.md", (_FRAGMENTS, _FIT_RATES),
         changed_by=("[analysis.fragments]", "[analysis.fragments.exchange]")),
 )
 

@@ -522,3 +522,13 @@ def test_the_list_copies_a_row_or_every_row_shown(qtbot, page):
     assert one.text() == "Copy row" and every.text().startswith("Copy rows shown")
     every.trigger()
     assert len(QApplication.clipboard().text().splitlines()) == len(lst.model.rows) + 1
+
+
+def test_the_fragment_columns_and_filters_show_only_for_fragment_runs(page):
+    """Peptides read from a table (no scan targets): no ion, MS level or condition columns and no
+    MS level or ion type lists; those come with mzML/Thermo results (tested in test_mzml)."""
+    from hxex.gui.results_workspace import TARGET_COLUMNS
+
+    assert all(page.tree.isColumnHidden(COLUMN[name]) for name in TARGET_COLUMNS)
+    assert page.ms_filter.isHidden() and page.ion_filter.isHidden()
+    assert not page.tree.isColumnHidden(COLUMN["spectra"])

@@ -764,6 +764,18 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
         assert set(t["fragment"][ms2]) == {"c:10"} and set(t["fragment"][~ms2]) == {""}
         assert set(t["activation"][ms2]) == {"ETD"} and set(t["precursor_charge"][ms2]) == {20}
         assert set(t["precursor_mz"][ms2]) == {1012.0} and np.isnan(t["precursor_mz"][~ms2]).all()
+        assert set(t["ion_type"][ms2]) == {"c"} and set(t["ion_type"][~ms2]) == {""}
+        assert set(t["condition"][ms2]) == {"ETD"} and set(t["condition"][~ms2]) == {""}
+        # the window's tree names the fragment series by its ion, not by a series number, and
+        # filters by MS level and ion type (results_tree has no Qt)
+        from hxex.gui.results_tree import peptides, shown
+
+        (pep,) = peptides(results)
+        z = ENTRY.charge
+        assert [s.name for s in pep.series] == [f"z={z}", f"z={z}  c:10  ETD, MS2"]
+        assert [s.ms_level for s in pep.series if shown(pep, s, ms_level=2)] == [2]
+        assert [s.fragment for s in pep.series if shown(pep, s, ion_type="")] == [""]
+        assert [s.fragment for s in pep.series if shown(pep, s, text="c:10")] == ["c:10"]
         # a fragment known only from its scan target is not screened (HISTORY 152)
         from hxex.analysis.screening import screening
         from hxex.picking.screen import SCREEN_SCORES

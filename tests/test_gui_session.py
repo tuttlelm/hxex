@@ -118,6 +118,10 @@ def test_the_title_shown_above_a_figure():
     page.subplots(1, 2)[0].set_title("rep 1")
     page.suptitle("WT 0042-0054  TSLSPFYLRPPSF\nz=2")
     assert figure_title(page) == "WT 0042-0054 TSLSPFYLRPPSF z=2"  # one line
+    # a spectrum id the figure wrapped is given back whole
+    sid = "p:S/run.raw/137-138-IS-z1-ion_type:c-1@ETD-pz3-ETD/scans1-9"
+    page.suptitle("p:S/\nrun.raw/137-138-IS-z1\n-ion_type:c-1\n@ETD-pz3-ETD/scans1-9\nK 1")
+    assert figure_title(page) == sid + " K 1"
     one = Figure()
     one.add_subplot().set_title("WT 0042-0054 z=2")
     assert figure_title(one) == "WT 0042-0054 z=2"  # a figure of one plot: its title

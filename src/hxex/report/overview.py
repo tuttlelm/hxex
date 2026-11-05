@@ -18,7 +18,7 @@ from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
 from .results import Results
 from .series import _control_role
-from .spectrum import COLORS, FIT_COLOR, plot_spectrum
+from .spectrum import COLORS, FIT_COLOR, plot_spectrum, wrap_title
 from .tables import _index_columns
 
 FALLBACK_REASONS = ("m0_missing", "m0_high", "fd_missing", "retention_low",
@@ -128,7 +128,8 @@ def plot_k_comparison(
     skipped for the spectrum shows the picked spectrum alone. Keyword arguments go to
     :func:`plot_spectrum`."""
     fig = plot_k_comparisons([spectrum_id], results, ks=ks, show=show, cell=cell, **kwargs)
-    fig.suptitle(spectrum_id, fontsize=9)  # constrained layout places it with the legends
+    # constrained layout places it with the legends; a fragment's long id on two lines
+    fig.suptitle(wrap_title(spectrum_id, fig.get_figwidth() - 0.4, 9), fontsize=9)
     return fig
 
 
@@ -163,6 +164,7 @@ def plot_k_comparisons(
     fig = Figure(figsize=(cell[0] * len(ks), height), layout="constrained")
     axes = np.atleast_2d(fig.subplots(len(rows), len(ks), sharey="row", squeeze=False))
     kwargs.setdefault("legend", False)
+    room = max(1.0, cell[0] - 0.8)  # the width a panel's title may take (a long label wraps)
     for r, (sid, d) in enumerate(zip(spectrum_ids, rows, strict=True)):
         fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
         lead = f"{labels[r]}: " if many else ""
@@ -170,7 +172,8 @@ def plot_k_comparisons(
             j = d["k_values"].index(k)
             if not fitted[k]:  # the screen skipped it: the spectrum alone
                 plot_spectrum(sid, results, show=("picked",), ax=ax, title=False, **kwargs)
-                ax.set_title(f"{lead}K={k} not fitted (screened)", fontsize=8)
+                ax.set_title(wrap_title(f"{lead}K={k} not fitted (screened)", room, 8),
+                             fontsize=8)
                 _legend_below(ax, many)
                 continue
             plot_spectrum(sid, results, k=k, show=show, ax=ax, title=False, **kwargs)
@@ -187,14 +190,15 @@ def plot_k_comparisons(
             score_text = "rejected" if not np.isfinite(delta) else f"Δ{name} {delta:+.1f}"
             # the marks ("selected", ...) above the K line, so every panel's K line sits at the
             # same height (a title grows upwards from its axes; owner)
-            ax.set_title((f"{', '.join(marks)}\n" if marks else "")
-                         + f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}", fontsize=8,
+            ax.set_title(wrap_title((f"{', '.join(marks)}\n" if marks else "")
+                                    + f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}",
+                                    room, 8), fontsize=8,
                          fontweight="bold" if k == d["effective"] else "normal")
             if k == d["effective"]:
                 for spine in ax.spines.values():
                     spine.set_linewidth(2.0)
     if title is not None:
-        fig.suptitle(title, fontsize=9)
+        fig.suptitle(wrap_title(title, fig.get_figwidth() - 0.4, 9), fontsize=9)
     if many:  # the layers, once for the page (from the panel naming the most)
         named = max((ax.get_legend_handles_labels() for ax in axes.flat), key=lambda h: len(h[1]))
         layers = [(h, lab) for h, lab in zip(*named, strict=True) if not lab.startswith("pop ")]

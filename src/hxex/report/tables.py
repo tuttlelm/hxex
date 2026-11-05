@@ -127,25 +127,37 @@ def review_table(results: Results) -> dict[str, np.ndarray]:
     return {name: np.array(values, dtype=object) for name, values in cols.items()}
 
 
-TARGET_COLUMNS = ("fragment", "ms_level", "preactivation", "activation", "precursor_mz",
-                  "precursor_charge")
+TARGET_COLUMNS = ("fragment", "ion_type", "condition", "parent_range", "ms_level", "preactivation",
+                  "activation", "precursor_mz", "precursor_charge")
 
 
 def _target_columns(results: Results) -> dict[str, np.ndarray]:
     """For spectra read from mzML or Thermo raw files, how each measurement's scans were
-    chosen: the fragment (for example ``c-1:4``, empty for a peptide), the MS level, the
-    activation before the last stage (MS3), the activation and the precursor (empty or NaN
-    where the target set none). Nothing for other data."""
+    chosen: the fragment (for example ``c-1:4``, empty for a peptide), its ion type (``c-1``;
+    ``M`` for the precursor), the condition (the fragment list's label, else its scan
+    conditions, as ``fragment_uptake.csv`` names it), the parent peptide's residues (one
+    fragment can come from two parents), the MS level, the activation before the
+    last stage (MS3), the activation and the precursor (empty or NaN where the target set
+    none). Nothing for other data."""
     source = results.settings.spectra_source if results.settings is not None else None
     from ..io.mzml import SCAN_READERS, mzml_series_targets
 
     if not source or source.get("reader") not in SCAN_READERS or "series" not in source:
         return {}
 
+    from ..analysis.fragments import _condition
+
     targets = mzml_series_targets(source)
     rows = [targets.get(int(d)) for d in results.fit.data_id]
+    extra = [dict(t.entry.extra) if t else {} for t in rows]
+    fragment = [e.get("fragment", "") for e in extra]
     return {
-        "fragment": np.array([dict(t.entry.extra).get("fragment", "") if t else "" for t in rows]),
+        "fragment": np.array(fragment),
+        "ion_type": np.array([str(f).rpartition(":")[0] for f in fragment]),
+        "condition": np.array([_condition(t) if t and f else "" for t, f in zip(rows, fragment,
+                                                                                strict=True)]),
+        "parent_range": np.array([str(e.get("parent_range", "")) if f else ""
+                                  for e, f in zip(extra, fragment, strict=True)]),
         "ms_level": np.array([t.ms_level if t else 0 for t in rows], dtype=np.int64),
         "preactivation": np.array([(t.preactivation or "") if t else "" for t in rows]),
         "activation": np.array([(t.activation or "") if t else "" for t in rows]),

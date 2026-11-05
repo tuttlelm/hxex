@@ -170,7 +170,19 @@ def figure_title(fig: Figure) -> str:
         axes = [ax for ax in fig.axes if ax.get_visible()]
         if len(axes) == 1:
             title = axes[0].get_title()
-    return " ".join(title.split())  # one line
+    return _one_line(title)
+
+
+def _one_line(title: str) -> str:
+    """A title on one line: its lines joined by a space, except where the figure broke a
+    spectrum id (the next line starts with ``-``, ``@`` or ``:``, or the line ends with ``/``),
+    which joins without one, giving back the id."""
+    lines = [" ".join(line.split()) for line in title.splitlines()]
+    out = ""
+    for line in (ln for ln in lines if ln):
+        glued = out.endswith("/") or line[0] in "-@:"
+        out += line if not out or glued else " " + line
+    return out
 
 
 def save_figure(fig: Figure, path: str | Path) -> Path:

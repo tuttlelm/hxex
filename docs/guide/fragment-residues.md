@@ -2,11 +2,25 @@
 
 With fragment ions (ETD, ECD, and other low-scrambling activations), consecutive fragments of
 a ladder differ by one residue, so the difference of their deuterium follows that residue
-alone. `hxex analyse` fits an exponential decay (or rise) to every such single-residue step
-and writes the rate to `ladder_rates.csv`. With `[analysis.fragments] kint = true` and the
-kinetics' solvent in `[analysis.fragments.exchange]`, each step also gets the residue's
-intrinsic rate and its protection factor with a standard error (`log10_protection`,
-`log10_protection_se`).
+alone. With `[analysis.fragments] fit_rates = true`, `hxex analyse` fits an exponential decay
+(or rise) to every such single-residue step and writes the rate to `ladder_rates.csv`. With
+`kint = true` as well and the kinetics' solvent in `[analysis.fragments.exchange]`, each step
+also gets the residue's intrinsic rate and its protection factor with a standard error
+(`log10_protection`, `log10_protection_se`).
+
+**The rate fits are opt-in.** Fitting every step takes time: several minutes on a large run.
+Without `fit_rates = true`, `hxex analyse` still writes `fragment_uptake.csv`, `closure.csv`,
+the ladder figures, and the closure figures, but the ladder figures show the measured points
+and differences without fitted curves, and there is no `ladder_rates.csv`,
+`ladder_residues.csv`, or residue-rates figure. Turn the fits on when you want the rates:
+
+```toml
+[analysis.fragments]
+fit_rates = true
+```
+
+Everything below about rates, precise steps, and fitted curves applies only with
+`fit_rates = true`.
 
 **The ladder figure.** `ladder_<parent>_<ion>_z<charge>` shows the precursor in its top
 row, then a row for each step of the ladder, read top to bottom. A ladder too long for
@@ -19,6 +33,7 @@ its rate's relative error is at most `max_rate_error` (0.5 by default):
 
 ```toml
 [analysis.fragments]
+fit_rates = true
 max_rate_error = 0.3      # stricter: rate_se / rate at most 30 %
 ```
 

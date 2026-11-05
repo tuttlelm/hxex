@@ -294,10 +294,15 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.fragments.tolerance": "deuterons: a closure c + z - M beyond this is flagged",
     "analysis.fragments.precursor_charge": "the closure's precursor charge (unset: the "
                                            "unreacted precursor)",
+    "analysis.fragments.fit_rates": "opt in: fit each ladder step's decay rate "
+                                    "(ladder_rates.csv, ladder_residues.csv, the residue_rates "
+                                    "figures, the fitted curves on the ladder figures); slow "
+                                    "on a large run (minutes)",
     "analysis.fragments.max_rate_error": "ladder steps with rate_se / rate at most this give "
                                          "the per-residue rates (ladder_residues.csv)",
-    "analysis.fragments.kint": "opt in: intrinsic rates, protection factors and theoretical "
-                               "curves (needs [analysis.fragments.exchange])",
+    "analysis.fragments.kint": "opt in: intrinsic rates and theoretical curves, and with "
+                               "fit_rates protection factors (needs "
+                               "[analysis.fragments.exchange])",
     "analysis.fragments.exchange": "the kinetics' solvent: [analysis.fragments.exchange] "
                                    "(below)",
     **{f"analysis.fragments.exchange.{k}": v for k, v in _CONDITIONS.items()},

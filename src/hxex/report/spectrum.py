@@ -9,12 +9,14 @@ without the picked table can only be drawn against the deuterium bin.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from functools import lru_cache
 
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.ticker import Formatter
+from matplotlib.ticker import Formatter, MaxNLocator
 
 from ..controls import correct_means
 from ..picking import BinnedSet
@@ -30,6 +32,139 @@ COLORS = ("#0072B2", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#A6A100")
 # after every colour has been used once the populations repeat the colours with another line
 # style (and hollow markers in the population map), so any K stays readable
 LINE_STYLES = ("--", ":", "-.", (0, (6, 2, 1, 2, 1, 2)))
+
+
+# Where a title may be broken, strongest first (owner, 2026-11-05: a fragment's spectrum id
+# goes on two lines, every piece kept). Each level adds its places to the ones before it, and
+# the first level whose lines all fit is used: two spaces (between a title's notes); a comma,
+# semicolon or an opening bracket; a fragment's ion type and a slash (sample/file/ion/scans);
+# a space; the activation, parent charge and MS level of a fragment; and last any hyphen,
+# underscore or colon. A break never drops anything but the spaces at it.
+_BREAKS = (
+    r"(?<=  )",
+    r"(?<=[,;] )|(?= \()",
+    r"(?=-ion_type)|(?<=/)",
+    r"(?<= )",
+    r"(?=@)|(?=-pz\d)|(?=-ms\d)",
+    r"(?=[-_:])",
+)
+# a spectrum's own figure: its width without the legend, and what its title leaves free of it
+# (the title, centred on the axes, may reach over the intensity labels but not the legend)
+OWN_WIDTH, OWN_MARGIN = 5.5, 0.1  # inches
+_TITLE_FIT = 1.03  # a margin over the measured width (the drawn text is ~3 % wider)
+
+
+@lru_cache(maxsize=4096)
+def text_width(text: str, fontsize: float) -> float:
+    """The width of ``text`` drawn at ``fontsize`` points, in inches (from the font's glyphs,
+    without a renderer)."""
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import text_to_path
+
+    if not text:
+        return 0.0
+    width, _, _ = text_to_path.get_text_width_height_descent(
+        text, FontProperties(size=fontsize), ismath=False)
+    return _TITLE_FIT * width / 72.0
+
+
+def _pack(pieces: list[str], width: float, fontsize: float) -> list[str]:
+    lines: list[str] = []
+    line = ""
+    for piece in pieces:
+        if line and text_width((line + piece).strip(), fontsize) > width:
+            lines.append(line.strip())
+            line = piece
+        else:
+            line += piece
+    if line.strip():
+        lines.append(line.strip())
+    return lines
+
+
+def wrap_title(text: str, width: float, fontsize: float) -> str:
+    """``text`` broken into lines no wider than ``width`` inches at ``fontsize`` points, at the
+    most natural places that make every line fit (``_BREAKS``: between notes, after a comma, at
+    a fragment's ion type or a slash of a spectrum id, at a space, ...), so that a fragment's
+    spectrum id goes on two lines (sample, file, residues, peptide and charge; then the ion
+    type, activation, MS level and scans) and a peptide's stays on one. Nothing is cut: a piece
+    with no place to break stays whole (wider than ``width``). Lines already in ``text`` are
+    kept and each is wrapped on its own."""
+    out = []
+    for part in str(text).split("\n"):
+        if text_width(part, fontsize) <= width:
+            out.append(part)
+            continue
+        lines = [part]
+        for level in range(len(_BREAKS)):
+            pattern = "|".join(_BREAKS[: level + 1])
+            pieces = [p for p in re.split(pattern, part) if p]
+            lines = _pack(pieces, width, fontsize)
+            if all(text_width(line, fontsize) <= width for line in lines):
+                break
+        out.extend(lines)
+    return "\n".join(out)
+
+
+def axes_width(ax: Axes) -> float:
+    """The width of ``ax`` in inches, as it is placed now (before a layout engine moves it)."""
+    return float(ax.get_position().width * ax.figure.get_figwidth())
+
+
+class MzLocator(MaxNLocator):
+    """Ticks of an m/z axis that never collide: as many as the axes' width holds with a gap of
+    one character between labels, at steps of 1, 2 or 5 times a power of ten (no 2.5, whose
+    extra decimal widens every label). The width is read when the ticks are placed, so a
+    narrow panel of a page five spectra wide gets fewer ticks than a single spectrum (owner,
+    2026-11-05: the labels overlapped there)."""
+
+    STEPS = (1, 2, 5, 10)
+
+    def __init__(self, most: int = 10):
+        self.most = int(most)
+        super().__init__(nbins=self.most, steps=list(self.STEPS))
+
+    def _fontsize(self) -> float:
+        from matplotlib import rcParams
+        from matplotlib.font_manager import FontProperties
+
+        try:
+            return float(self.axis.majorTicks[0].label1.get_fontsize())
+        except Exception:  # noqa: BLE001 - no tick yet: the default size
+            return FontProperties(size=rcParams["xtick.labelsize"]).get_size_in_points()
+
+    def tick_values(self, vmin, vmax):
+        axis = getattr(self, "axis", None)
+        if axis is None or axis.axes is None or not np.isfinite([vmin, vmax]).all() \
+                or vmax == vmin:
+            return super().tick_values(vmin, vmax)
+        lo, hi = sorted((float(vmin), float(vmax)))
+        room = axes_width(axis.axes)
+        size = self._fontsize()
+        gap = text_width("0", size)
+        ticks = None
+        for n in range(self.most, 0, -1):
+            self.set_params(nbins=n)
+            ticks = super().tick_values(lo, hi)
+            if len(ticks) < 2:
+                break
+            step = float(ticks[1] - ticks[0])
+            shown = ticks[(ticks >= lo - 1e-9 * abs(hi)) & (ticks <= hi + 1e-9 * abs(hi))]
+            # digits are equally wide: every label measured as zeros (a few cached widths)
+            widest = max((text_width(re.sub(r"\d", "0", _tick_text(t, step)), size)
+                          for t in shown), default=0.0)
+            if room * step / (hi - lo) >= widest + gap:
+                break
+        self.set_params(nbins=self.most)
+        return ticks
+
+
+def _tick_text(value: float, step: float) -> str:
+    """A tick's label as the axis's formatter writes it (the decimals of the tick step)."""
+    decimals = 0
+    while decimals < 6 and abs(round(step, decimals) - step) > 1e-9 * max(abs(step), 1e-12):
+        decimals += 1
+    return f"{value:.{decimals}f}"
 
 
 def population_style(rank: int) -> dict:
@@ -358,7 +493,7 @@ def plot_spectrum(
     if ax is None:
         # a figure of its own keeps its legend outside the axes, on the right, so that it
         # covers none of the spectrum (owner, 2026-11-03: the legend hid the envelope)
-        fig = Figure(figsize=(5.5 + (3.2 if legend else 0.0), 4.5 if residual else 3.5),
+        fig = Figure(figsize=(OWN_WIDTH + (3.2 if legend else 0.0), 4.5 if residual else 3.5),
                      layout="constrained" if legend else None)
         if residual:
             ax, rax = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1]})
@@ -431,7 +566,10 @@ def plot_spectrum(
     if not normalize:  # short labels (0.5, 1.0 with x10^6 once): the plot area keeps its size
         ax.yaxis.set_major_formatter(_IntensityFormatter())
     if title:
-        ax.set_title(_title(results, d), fontsize=9)
+        # wrapped to the axes (a figure of its own: its spectrum part, without the legend), so
+        # a fragment's long spectrum id goes on two lines instead of off the figure (owner)
+        room = OWN_WIDTH - OWN_MARGIN if own else axes_width(ax)
+        ax.set_title(wrap_title(_title(results, d), room, 9), fontsize=9)
     if legend and own:
         fig.legend(*ax.get_legend_handles_labels(), loc="outside right upper", fontsize=7,
                    frameon=False)
@@ -440,6 +578,8 @@ def plot_spectrum(
     (rax or ax).set_xlabel("m/z" if xaxis == "mz" else "deuterium level (bin)")
     if mz_range is not None and xaxis == "mz":  # the series' range: the same at every level
         ax.set_xlim(*mz_range)
+    if xaxis == "mz":  # as many m/z labels as the panel's width holds (the residuals share it)
+        (rax or ax).xaxis.set_major_locator(MzLocator())
     if own and not legend:
         try:
             fig.tight_layout()

@@ -8,13 +8,13 @@ under each kind its figures, once computed. On the right, the figure selected, d
 ``hxex analyse``'s own list of figures (:func:`hxex.report.analysis_outputs`), so the window and
 the files cannot differ, and saved under the name the command gives it.
 
-The analysis is computed in the background when asked (Compute, beside the reference list:
-half a minute for a large run), and kept: a change of the results (a new run, a review
-decision), of the review table (in the Tables view or another program) or of ``[analysis]``
-marks it out of date, keeping the figures, and Recompute computes it again, reading the review
-table again first when it changed. With several references (``[analysis] reference`` a list,
-or ``"all"``), a list chooses which one is shown; each is computed when asked and kept, as
-``hxex analyse`` writes a folder for each.
+The analysis is computed in the background when asked (Compute, beside the reference list: half
+a minute for a large run of peptides, minutes with fragment ladder fits), and kept: a change of
+the results (a new run, a review decision), of the review table (in the Tables view or another
+program) or of ``[analysis]`` marks it out of date, keeping the figures, and Recompute computes
+it again, reading the review table again first when it changed. With several references
+(``[analysis] reference`` a list, or ``"all"``), a list chooses which one is shown; each is
+computed when asked and kept, as ``hxex analyse`` writes a folder for each.
 """
 
 from __future__ import annotations
@@ -23,8 +23,10 @@ import logging
 import threading
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -48,6 +50,26 @@ log = logging.getLogger(__name__)
 
 KIND, STEM = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 STATE_WORDS = {"drawn": "drawn", "depends": "if the results have it", "off": "off"}
+
+
+def compute_time(results, config) -> str:
+    """How long Compute takes, for the status line: the peptide analysis is quick (about half
+    a minute for 25,000 spectra); the fragment ladder rate fits (``[analysis.fragments]
+    fit_rates`` on a run with fragment series) take minutes (115 s for 17,000 fragment
+    spectra, measured 2026-11-05 on 48 cores; drawing a ladder figure then refits its steps)."""
+    from ..report.analysis import _fragment_series
+
+    quick = "about half a minute for 25,000 spectra"
+    try:
+        fits = config.fragments is not None and config.fragments.fit_rates
+        series = _fragment_series(results)[0] if fits else set()
+    except Exception:  # noqa: BLE001 - a hint only
+        series = set()
+    if not series:
+        return quick
+    n = int(np.isin(np.asarray(results.fit.data_id), list(series)).sum())
+    return (f"{quick}; the ladder rate fits of its {n:,} fragment spectra take minutes: "
+            "about 2 for 17,000")
 
 
 def setting_table(setting: str) -> str:
@@ -76,6 +98,15 @@ class AnalysisWorkspace(QWidget):
         self.compute_button.setToolTip("compute the analysis as hxex analyse does (nothing is "
                                        "written)")
         self.compute_button.clicked.connect(self.compute)
+        # [analysis.fragments] fit_rates, for results with fragment series: written to the
+        # project file, so hxex analyse does the same (owner, 2026-11-05)
+        self.fit_rates = QCheckBox("fit ladder rates")
+        self.fit_rates.setToolTip(
+            "[analysis.fragments] fit_rates in the project file: fit each ladder step's decay "
+            "rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the "
+            "fitted curves on the ladder figures); minutes on a large run")
+        self.fit_rates.hide()
+        self.fit_rates.toggled.connect(self._set_fit_rates)
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)  # computing: no count to show
         self.busy.setMaximumWidth(120)
@@ -90,6 +121,7 @@ class AnalysisWorkspace(QWidget):
         top.addWidget(self.reference_label)
         top.addWidget(self.reference)
         top.addWidget(self.compute_button)
+        top.addWidget(self.fit_rates)
         top.addWidget(self.busy)
         top.addWidget(self.status, 1)
 
@@ -263,6 +295,7 @@ class AnalysisWorkspace(QWidget):
         """Show the plan of the current results and settings, the figures computed, and whether
         they are out of date (computed only when asked: Compute)."""
         self._fill()
+        self._show_fit_rates()
         if self.results is None:
             self.status.setText("No results open: open a project file whose results exist, or "
                                 "a results bundle.")
@@ -279,10 +312,14 @@ class AnalysisWorkspace(QWidget):
                 shared = self.shared_reference
                 stale = (self.why_out_of_date(self._analyses[shared][1])
                          if shared is not None else "")
+                try:
+                    hint = compute_time(self.results, self._settings()[0])
+                except Exception:  # noqa: BLE001 - the project file does not read: no hint
+                    hint = "about half a minute for 25,000 spectra"
                 self.status.setText(
                     "Not computed yet" + (f" against {ref}" if ref else "") + ": Compute "
                     f"makes the figures hxex analyse would write for {len(self.results.fit):,} "
-                    "spectra (about half a minute for 25,000; nothing is written)."
+                    f"spectra ({hint}; nothing is written)."
                     + (f" The figures the same for every reference are shown from the analysis "
                        f"against {shared}" + (f" (out of date: {stale})" if stale else "") + "."
                        if shared is not None else "")
@@ -301,6 +338,47 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setText("Recompute")
 
     _error: str | None = None
+
+    def _show_fit_rates(self) -> None:
+        """The 'fit ladder rates' box: shown for results with fragment series whose fragment
+        analysis is on, ticked as the project file says, and changeable only with the project
+        file open (a bundle opened alone has no file to write it to) and nothing computing."""
+        from ..report.analysis import _fragment_series
+
+        config = None
+        if self.results is not None:
+            try:
+                config = self._settings()[0]
+            except Exception:  # noqa: BLE001 - the project file does not read: no box
+                config = None
+        try:
+            fragments = bool(config is not None and config.fragments is not None
+                             and _fragment_series(self.results)[0])
+        except Exception:  # noqa: BLE001 - results without scan records
+            fragments = False
+        self.fit_rates.setVisible(fragments)
+        if not fragments:
+            return
+        self.fit_rates.blockSignals(True)
+        self.fit_rates.setChecked(bool(config.fragments.fit_rates))
+        self.fit_rates.blockSignals(False)
+        self.fit_rates.setEnabled(self._project() is not None and not self._computing.running)
+
+    def _set_fit_rates(self, on: bool) -> None:
+        """Write ``[analysis.fragments] fit_rates`` (true or false) to the project file; the
+        analysis shown is then out of date."""
+        from ..project_edit import ProjectError, set_settings
+
+        project = self._project()
+        if project is None:
+            return
+        try:
+            set_settings(project, [("analysis.fragments.fit_rates", "true" if on else "false")],
+                         unfinished=True)
+        except (ProjectError, OSError, ValueError) as exc:
+            log.error("fit_rates was not changed: %s", exc)
+            self.status.setText(f"fit_rates was not changed: {exc}")
+        self.refresh()
 
     def _redraw_if_another(self) -> None:
         """Another reference chosen: the figure selected again, unless it is drawn from the same
@@ -615,9 +693,10 @@ class AnalysisWorkspace(QWidget):
         path = getattr(self.window, "results_path", None)
         self.status.setText(f"Computing the analysis of {n:,} spectra"
                             + (f" against {ref}" if ref else "")
-                            + " (about half a minute for 25,000 spectra)…")
+                            + f" ({compute_time(results, config)})…")
         self.busy.show()
         self.compute_button.setEnabled(False)
+        self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
         log.info("computing the analysis (as hxex analyse, nothing written)")
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
@@ -648,6 +727,7 @@ class AnalysisWorkspace(QWidget):
         self._compute_when_loaded = False
         self.busy.hide()
         self.compute_button.setEnabled(True)
+        self.fit_rates.setEnabled(self._project() is not None)
         self._error = message
         self.status.setText(f"The analysis could not be made: {message}")
         log.error("the analysis could not be made: %s", message)
