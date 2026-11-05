@@ -182,9 +182,12 @@ A time point with a single replicate shows that spectrum's figures, as its repli
 
 Every level also has a **table** tab: the selection's rows of the tables `hxex report` writes.
 A charge (series) shows its `uptake.csv` rows (each time, the centroid row and each K and
-population, with errors and fD), with its `series.csv` values in a line above; a time point its
-replicates' `spectra.csv` rows; a spectrum its own `spectra.csv` row, as names and values. Sort,
-copy, and **Save table…** as in the Analysis data tab; double-click a row to open its spectrum.
+population, with errors and fD: the values of its uptake page), with its `series.csv` values in
+a line above; the list beside **Save table…** switches to its `components.csv` rows (each
+spectrum's populations: the values of its populations page) or its `spectra.csv` rows. A time
+point shows its replicates' `spectra.csv` rows; a spectrum its own `spectra.csv` row, as names
+and values. Sort, copy, and **Save table…** as in the Analysis data tab; double-click a row to
+open its spectrum.
 
 **List**, the tab beside **Tree**, shows every spectrum as one row with the columns of
 `spectra.csv` (K and the populations at the K in use, the review, the flags, the screens'
@@ -296,13 +299,14 @@ file), so what you see here is what the command writes.
   their values, since a line names no peptide. The region bars and the region map list their
   regions. The columns are named as in the analysis tables (`species_uptake.csv`,
   `compare_peptides.csv`, `residues.csv`, `compare_residues.csv`, `regions.csv`); a row that a
-  figure draws twice (the reference in every panel of an overlay) is listed once.
+  figure draws twice (the reference in every panel of an overlay) is listed once. The K=2 panel
+  of a Woods plot, the butterfly plot, and the protection-factor figures list their peptides'
+  rows of `compare_population_counts.csv`, `compare_peptides.csv`, and the protection tables.
   Click a column's header to sort (a crowded Woods plot is easier to read sorted by residue or
   by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
   rows, in the order shown, as a CSV file named after the figure. Choose a kind of figure
   rather than one figure (the coverage maps, say) and the data tab gathers the rows of all its
-  figures, with a `figure` column naming each one's file. Figures of some kinds have no data
-  table yet.
+  figures, with a `figure` column naming each one's file.
 - Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
   choose one to see them in **Results** (the peptide is selected in the tree, its charge
   states under it). Where bars overlap, the menu lists every peptide under the pointer, top

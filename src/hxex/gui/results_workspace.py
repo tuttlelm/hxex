@@ -83,6 +83,7 @@ class ReviewTree(QTreeWidget):
             return
         super().keyPressEvent(event)
 # the figure tabs of each kind of selection, in their order
+SERIES_TABLES = ("uptake.csv", "components.csv", "spectra.csv")  # a series' rows of these
 SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex report draws
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
         "series": (*SERIES_PAGES, "table", "overview"),
@@ -228,6 +229,14 @@ class ResultsWorkspace(QWidget):
         # spectra.csv row, a time point's replicates', a series' uptake.csv rows
         self.table_view = DataPanel()
         self.table_view.activated.connect(self._table_row_chosen)
+        # a series' rows of which table: uptake.csv (its uptake page), components.csv (its
+        # populations page), or spectra.csv (its spectra)
+        self.series_table = QComboBox()
+        self.series_table.addItems(SERIES_TABLES)
+        self.series_table.setToolTip("which of the report's tables to list this series' rows of")
+        self.series_table.currentTextChanged.connect(self._series_table_changed)
+        self.series_table.hide()
+        self.table_view.add_option(self.series_table)
         self._table_for = None  # (results, kind, payload) the table shows
         self.figures.currentChanged.connect(lambda _i: self._fill_table())
         self.panels: dict[str, FigurePanel] = {}
@@ -313,11 +322,12 @@ class ResultsWorkspace(QWidget):
     def _fill_table(self) -> None:
         """The table tab, when it is in view: the selection's rows of the report's tables, as
         ``hxex report`` writes them (made again when the selection or the results change)."""
-        from ..report.tables import series_table, spectra_table, uptake_table
+        from ..report.tables import components_table, series_table, spectra_table, uptake_table
 
         if self.figures.currentWidget() is not self.table_view or self.results is None:
             return
         kind, payload = getattr(self, "_selection", (None, None))
+        self.series_table.setVisible(kind not in (None, "spectrum", "point"))
         if kind is None:
             return
         key = (self.results, kind, id(payload))
@@ -343,10 +353,26 @@ class ResultsWorkspace(QWidget):
             about = ", ".join(f"{name} {_cell(row[name][at])}" for name in row
                               if name not in ("data_id", "sample", "peptide_range", "peptide",
                                               "charge") and _cell(row[name][at]))
-            self._show_columns(uptake_table(results, data_ids=[series.data_id]),
-                               f"{payload[0].sample}_{payload[0].peptide_range}_z"
-                               f"{series.charge}_uptake")
-            self.table_view.set_note(f"uptake.csv: this series' rows. series.csv: {about}")
+            chosen = self.series_table.currentText()
+            stem = f"{payload[0].sample}_{payload[0].peptide_range}_z{series.charge}"
+            if chosen == "components.csv":
+                spectra = np.flatnonzero(results.fit.data_id == series.data_id)
+                self._show_columns(components_table(results, rows=spectra),
+                                   f"{stem}_components")
+                what = "this series' populations, one row per spectrum and population"
+            elif chosen == "spectra.csv":
+                spectra = np.flatnonzero(results.fit.data_id == series.data_id)
+                self._show_columns(spectra_table(results, rows=spectra), f"{stem}_spectra")
+                what = "this series' spectra"
+            else:
+                self._show_columns(uptake_table(results, data_ids=[series.data_id]),
+                                   f"{stem}_uptake")
+                what = "this series' rows"
+            self.table_view.set_note(f"{chosen}: {what}. series.csv: {about}")
+
+    def _series_table_changed(self, _name: str) -> None:
+        self._table_for = None
+        self._fill_table()
 
     def _show_columns(self, table: dict, name: str) -> None:
         columns = list(table)

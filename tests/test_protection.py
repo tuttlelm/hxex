@@ -324,6 +324,11 @@ def test_protection_figures_and_settings(tmp_path):
     assert [a.get_title() for a in fig.axes if a.get_title()] == ["M - WT, average (K=1)"]
     assert all("difference in log10 protection factor" in hover_text(p)
                for a in fig.axes for p in a.patches if p.get_gid())
+    from hxex.gui.figures import figure_rows
+
+    columns, rows = figure_rows(fig)  # each bar its peptide's row of the comparison
+    assert {"sample", "start", "end", "delta", "significant"} <= set(columns)
+    assert {(r["start"], r["end"]) for r in rows} == {(2, 9), (10, 20)}
     with pytest.raises(ValueError, match="no protection"):
         protection_figure(table, "other")
 

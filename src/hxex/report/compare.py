@@ -730,19 +730,22 @@ def plot_population_counts(
     *,
     length: int | None = None,
     ax: Axes | None = None,
+    time_scale: str = "seconds",
 ) -> Figure:
     """Where ``sample`` and the reference differ in the number of populations their peptides
     are best described by (owner, 2026-10-21): a grey bar over each peptide, in the band of the
     side with two populations (``<sample> only`` above the line, ``<reference> only`` below), and
     the peptides where both have two in a band of their own (``both``); outlined, not filled,
     where the difference is borderline (``PopulationCountComparison.borderline``). Overlapping
-    peptides are stacked in lanes. Bars have the gid ``count:<band>:<start>-<end>``."""
+    peptides are stacked in lanes. Bars have the gid ``count:<band>:<start>-<end>`` and carry
+    their peptides' rows of the comparison (``compare_population_counts.csv``)."""
     if ax is None:
         fig = Figure(figsize=(7.5, 1.8))
         ax = fig.add_subplot()
     else:
         fig = ax.figure
     up, down, both = _count_groups(counts, sample, time)
+    here, table = counts.where(sample=sample, time=time), counts.columns()
     n_up, n_dn, n_both = (max(_lanes([(a, b) for a, b, _ in g])) + 1 if g else 1
                           for g in (up, down, both))
     base = -COUNT_STEP * n_dn - COUNT_GAP  # the "both" band begins below the reference's
@@ -762,6 +765,9 @@ def plot_population_counts(
                 "reference": f"two populations in {counts.reference} only",
                 "both": f"two populations in {sample} and {counts.reference}"}[band],
                 "borderline" if borderline else "")
+            hover.set_table(bars, table, here & (counts.start == a) & (counts.end == b),
+                            measure="number of populations",
+                            time_label=hover.time_label(time, time_scale))
     ax.axhline(0, color="#999999", linewidth=0.8)
     ax.axhline(base + COUNT_GAP / 2, color="#cccccc", linewidth=0.8)
     ax.set_ylim(base - COUNT_STEP * n_both - 0.04, COUNT_STEP * n_up + 0.04)
@@ -804,7 +810,7 @@ def woods_populations_figure(
     top_ax.set_title("K=1 fD", fontsize=10, loc="left")
     top_ax.set_xlabel("")
     plot_population_counts(counts, sample, time, length=length or int(max(k1.end)),
-                           ax=bottom_ax)
+                           ax=bottom_ax, time_scale=time_scale)
     return fig
 
 
@@ -888,7 +894,8 @@ def plot_butterfly(
     a time drawn (one with a fallback control; named in the legend). ``times``
     default to every time point of the comparison (the controls are not times). Lines have the
     gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
-    ``difference:<time>``.
+    ``difference:<time>``; each difference line carries its time's rows of the comparison
+    (``compare_peptides.csv``).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -906,6 +913,7 @@ def plot_butterfly(
 
     keys = sorted({key(i) for i in np.flatnonzero(rows)})
     position = {k: n for n, k in enumerate(keys)}
+    table = comparison.columns()
     fig = Figure(figsize=(max(6.0, min(0.12 * len(keys) + 2.0, 16.0)), 5.5),
                  layout="constrained")
     top, bottom = fig.subplots(2, 1, sharex=True, height_ratios=(2, 1))
@@ -930,6 +938,8 @@ def plot_butterfly(
         down.set_gid(f"butterfly:{t:g}:sample")
         (diff,) = bottom.plot(spread(comparison.delta[here]), color=colour, linewidth=0.8)
         diff.set_gid(f"difference:{t:g}")
+        hover.set_table(diff, table, rows & (comparison.time == t),  # the peptides' rows
+                        time_label=hover.time_label(t, time_scale))
         sig = comparison.significant[here].astype(bool)
         bottom.scatter(x[sig], comparison.delta[here][sig], color=colour, s=14, zorder=3)
         bottom.scatter(x[~sig], comparison.delta[here][~sig], marker="x", color=colour, s=14,

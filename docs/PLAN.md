@@ -996,10 +996,10 @@ Planned, not built:
    the analysis tables. TODO (owner, 2026-11-04): panel limits for the other figures too, as for
    the spectra pages (HISTORY 263): figures that grow with the data should wrap to rows and go
    on over pages, e.g. the coverage maps of a kinetics run (one panel per time point). Also to
-   do: the data tab (HISTORY 252) for the figures without one: the K=2 counts, protection
-   factors and their differences, and butterfly plots (a row per peptide); and in Results the
-   uptake page (a row per time and population) and the populations page. Done: the residue
-   figures and the region bars (HISTORY 273).
+   do: a data tab for every figure (HISTORY 252): done for the residue figures and region
+   bars (HISTORY 273), the K=2 counts, butterfly, and protection figures, and in Results the
+   uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now
+   lists its rows.
 
 ## Risks and open decisions
 

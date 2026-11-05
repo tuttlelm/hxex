@@ -7117,3 +7117,14 @@ CSVs or mzML if wanted.
     on the figure (`hover.set_table`), not per cell. `gui.figures.figure_rows` keeps a row drawn
     twice once (the reference in every panel of an overlay). Still without a table: the K=2
     counts, butterfly, protection figures, and the Results uptake and populations pages.
+
+274. **The remaining data tables (owner, 2026-11-04: "let's go in order").** The K=2 counts
+    panel of a Woods plot (each bar its peptides' rows of `compare_population_counts.csv`,
+    `measure` "number of populations"), the butterfly plot (each difference line its time's rows
+    of `compare_peptides.csv`), and the protection-factor figures (each bar its peptide's row of
+    the protection table or comparison) carry their rows. An artist carrying exactly one row
+    is clickable as one with `set_row` (`gui.figures.figure_marks`; never the figure itself,
+    which holds a whole map's table). Results: a series' table tab has a list beside **Save
+    table…**: `uptake.csv` (the uptake page's values, the default), `components.csv` (the
+    populations page's: each spectrum's populations), or `spectra.csv`; `DataPanel.add_option`.
+    With 273, every figure of an analysis and every series page has its values in a table.

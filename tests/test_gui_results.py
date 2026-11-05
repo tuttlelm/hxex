@@ -418,6 +418,15 @@ def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
     want = uptake_table(results, data_ids=[0])
     assert view.model.columns == list(want) and len(view.model.rows) == len(want["data_id"])
     assert view.note.text().startswith("uptake.csv: this series' rows. series.csv: n_spectra")
+    assert not page.series_table.isHidden()
+    # its populations page's rows (components.csv), or its spectra's (spectra.csv)
+    page.series_table.setCurrentText("components.csv")
+    assert {"rank", "mean", "population"} <= set(view.model.columns)
+    assert {r["data_id"] for r in view.model.rows} == {0}
+    assert view.note.text().startswith("components.csv: this series' populations")
+    page.series_table.setCurrentText("spectra.csv")
+    assert "spectrum_id" in view.model.columns and {r["data_id"] for r in view.model.rows} == {0}
+    page.series_table.setCurrentText("uptake.csv")
     page.tree.expandItem(series)
     point = series.child(1)
     page.tree.setCurrentItem(point)
@@ -427,6 +436,7 @@ def test_the_table_tab_holds_the_selections_report_rows(qtbot, page, results):
     first = view.model.rows[0]["spectrum_id"]
     view._double_clicked(view.model.index(0, 0))  # a row: its spectrum
     assert page.tree.currentItem().toolTip(0) == first
+    assert page.series_table.isHidden()  # a time point's rows: its spectra alone
     leaf = point.child(0)
     page.tree.setCurrentItem(leaf)
     assert view.model.columns == ["column", "value"]

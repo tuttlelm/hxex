@@ -153,6 +153,9 @@ def test_the_number_of_populations_compared():
     sample, both = marks["count:sample:5-15"].box, marks["count:both:12-20"].box
     assert sample[0] < both[0] and sample[1] < both[1]  # 5-15 left of 12-20, and above it
     assert all(0 < v < 1 for v in sample)
+    # each bar carries its peptide's row of the comparison, and a click selects it
+    assert marks["count:sample:5-15"].row["peptide"] == "PB"
+    assert marks["count:sample:5-15"].row["measure"] == "number of populations"
     labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
     assert labels == ["M only", "WT only", "both"]
     assert fig.axes[0].get_title(loc="left").startswith("Two Populations Selected")

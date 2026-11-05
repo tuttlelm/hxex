@@ -76,10 +76,14 @@ def figure_marks(fig: Figure) -> list[Mark]:
     Agg renderer) to know where things are."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-    from ..report.hover import hover_text, row_of
+    from ..report.hover import hover_text, row_of, rows_of
+
+    def own_row(a):  # the row a click on ``a`` selects: its one row (a bar), not a line's many
+        rows = rows_of(a)
+        return row_of(a) or (rows[0] if len(rows) == 1 and a is not fig else None)
 
     found = [a for a in fig.findobj()
-             if a.get_visible() and (a.get_gid() or hover_text(a) or row_of(a))]
+             if a is not fig and a.get_visible() and (a.get_gid() or hover_text(a) or own_row(a))]
     if not found:
         return []
     canvas = FigureCanvasAgg(fig)
@@ -93,7 +97,7 @@ def figure_marks(fig: Figure) -> list[Mark]:
             continue
         box = (bb.x0 / width, 1 - bb.y1 / height, bb.width / width, bb.height / height)
         if all(math.isfinite(v) for v in box):
-            marks.append(Mark(artist.get_gid() or "", hover_text(artist), box, row_of(artist)))
+            marks.append(Mark(artist.get_gid() or "", hover_text(artist), box, own_row(artist)))
     return marks
 
 

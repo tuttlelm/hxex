@@ -176,6 +176,7 @@ class DataPanel(QWidget):
         bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(self.save_button)
         bar.addWidget(self.count, 1)
+        self._bar = bar
         hint = QLabel("Click a column's header to sort. Ctrl+C copies the rows selected. "
                       "Double-click a peptide's row, or right-click it, to go to its spectra.")
         hint.setWordWrap(True)
@@ -205,6 +206,10 @@ class DataPanel(QWidget):
     def clear(self) -> None:
         self.show_rows([], [])
         self.set_note("")
+
+    def add_option(self, widget: QWidget) -> None:
+        """Put ``widget`` (a choice of what the rows are) in the bar, after the count."""
+        self._bar.addWidget(widget)
 
     def set_note(self, text: str) -> None:
         """A line above the table saying what its rows are ('' for none)."""

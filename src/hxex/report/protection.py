@@ -33,12 +33,14 @@ def _panels(table, sample):
 
 def _bars(ax, table, rows, colour, hatch, tip, length, wrap):
     order = rows[np.lexsort((table.end[rows], table.start[rows]))]
+    columns = table.columns()  # each bar carries its peptide's row of the table
     for n, i in enumerate(order):
         rect = Rectangle((table.start[i] - 0.5, -(n % wrap) - 1), table.end[i] - table.start[i] + 1,
                          1, facecolor=colour(i), edgecolor="k", linewidth=0.3, hatch=hatch(i))
         rect.set_gid(f"peptide:{table.start[i]}-{table.end[i]}")
         hover.set_hover(rect, hover.peptide(table.peptide[i], table.modification[i]),
                         hover.residues(table.start[i], table.end[i]), *tip(i))
+        hover.set_table(rect, columns, np.arange(len(table)) == i)
         ax.add_patch(rect)
     ax.set_xlim(0, length)
     ax.set_ylim(-wrap, 0)

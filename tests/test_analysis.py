@@ -2754,6 +2754,7 @@ def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
         "residue_significance_K2": {"section", "sample", "residue", "two", "two_reference"},
         "region_significance": {"sample", "region", "significant"},
         "regions": {"sample", "region", "fD", "fD_se", "time_label"},
+        "butterfly_V": {"sample", "start", "end", "peptide", "delta", "time_label"},
     }
     for name, need in expected.items():
         columns, rows = drawn[name]
