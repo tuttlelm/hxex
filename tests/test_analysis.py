@@ -2751,7 +2751,7 @@ def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
         "residues_all": {"sample", "residue", "fD", "fD_se"},
         "overlay_residues": {"sample", "reference", "measure", "residue", "value", "value_se"},
         "residue_significance": {"sample", "residue", "delta", "significant"},
-        "residue_significance_K2": {"section", "sample", "residue", "two", "two_reference"},
+        "residue_significance_K2_V": {"section", "sample", "residue", "two", "two_reference"},
         "region_significance": {"sample", "region", "significant"},
         "regions": {"sample", "region", "fD", "fD_se", "time_label"},
         "butterfly_V": {"sample", "start", "end", "peptide", "delta", "time_label"},
@@ -2760,6 +2760,10 @@ def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
         columns, rows = drawn[name]
         assert rows, f"{name} carries no rows"
         assert need <= set(columns), f"{name}: {need - set(columns)}"
+    # the K=2 Woods page in the order of the K=2 map: the population first (owner)
+    woods = dict(outputs.figures)["woods_K2_V_1min"]()
+    titles = [ax.get_title(loc="left") for ax in woods.axes if ax.get_title(loc="left")]
+    assert titles[0] == "K=2 high-D population" and len(titles) == 3
     _, overlay = drawn["overlay_residues"]
     keys = [tuple(sorted((k, repr(v)) for k, v in r.items())) for r in overlay]
     assert len(keys) == len(set(keys))

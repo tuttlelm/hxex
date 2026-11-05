@@ -7128,3 +7128,14 @@ CSVs or mzML if wanted.
     table…**: `uptake.csv` (the uptake page's values, the default), `components.csv` (the
     populations page's: each spectrum's populations), or `spectra.csv`; `DataPanel.add_option`.
     With 273, every figure of an analysis and every series page has its values in a table.
+
+275. **The K=2 significance map per sample, and one order for the K=2 panels (owner,
+    2026-11-04: "the K=2 residue significance plot should probably be per sample comparison as
+    it gets overwhelming with 5 samples"; "on that figure the population is at top ... on the
+    woods plot the population is at bottom. that should be unified").**
+    `residue_significance_K2_<sample>`: one figure per sample against the reference (was one
+    `residue_significance_K2` for all; catalogue stem changed, tutorial notebook 2 and
+    `make_tutorial.py` follow, so the tutorial zip changes). The K=1 map stays one figure. The
+    K=2 Woods page now draws the population panel first, then the low-D and high-D positions,
+    the order of the map's sections. Analysis folders written before keep a
+    `residue_significance_K2` file until analysed again.

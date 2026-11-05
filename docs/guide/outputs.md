@@ -476,8 +476,9 @@ two (`both`). A bar is outlined, not filled, where the evidence for the differen
 (borderline). A change in the number of populations is a finding in itself: one sample has
 two states where the other has one.
 
-The second figure, `woods_K2_<sample>_<time>`, compares the two populations: the fD of the
-low-D population, of the high-D one, and their populations. It compares only peptides that
+The second figure, `woods_K2_<sample>_<time>`, compares the two populations: their
+populations, then the fD of the low-D population and of the high-D one (the order of the
+sections of `residue_significance_K2_<sample>`). It compares only peptides that
 have two populations in both samples: elsewhere one sample's second "population" is a small
 tail of a single one, and comparing it with the other's second state would compare different
 things.
@@ -557,7 +558,9 @@ same value, so a block coloured as one tells you only that the difference lies s
 A long block means a call that cannot be placed more finely; narrow blocks place it nearly to the
 residue. The blocks come from the pair of samples in that row, so they can differ between rows.
 
-`residue_significance_K2` does the same at K = 2, in up to three sections. The first,
+`residue_significance_K2_<sample>` does the same at K = 2 for one sample against the
+reference (a figure per sample: all of them on one page are too much to read), in up to three
+sections. The first,
 *populations*, shows where only the sample keeps two populations (hatched one way) or only the
 reference does (hatched the other way); white means one population in both. Where both keep two,
 the cell is grey, or, with a bootstrap at K = 2, coloured when the share of the low-D population

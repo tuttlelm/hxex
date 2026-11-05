@@ -249,9 +249,10 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] alpha", "[analysis] peptide_match")),
     FigureKind(
         "residue_significance_K2", "Residue significance map at K=2", ANALYSE,
-        ("residue_significance_K2",),
-        "where the number of populations differs from the reference's, and, with a bootstrap "
-        "at K=2, the differences in the share and in the two populations' positions",
+        ("residue_significance_K2_{sample}",),
+        "one figure per sample: where the number of populations differs from the reference's, "
+        "and, with a bootstrap at K=2, the differences in the share and in the two "
+        "populations' positions",
         _ANALYSIS_PAGE, (_REFERENCE, _K2),
         data="where a sample has two populations; the share and position sections need a "
              "bootstrap at K=2 ([run.bootstrap] ks)",

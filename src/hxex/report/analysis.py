@@ -18,11 +18,11 @@ residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
 :func:`hxex.report.residue_overlay_figure`), ``overlay_populations_<time>``,
 ``residue_significance`` (which residues differ from the reference,
 :func:`hxex.report.plot_residue_significance`), ``region_significance`` (with regions,
-:func:`hxex.report.plot_region_significance`), ``residue_significance_K2``
-(:func:`hxex.report.plot_residue_significance_k2`), ``woods_<sample>_<time>`` (K=1, and where the
-number of populations differs), ``woods_K2_<sample>_<time>`` (the K=2 comparisons),
-``butterfly_<sample>`` and ``regions_<time>``. For a run with fragment series
-(:class:`hxex.analysis.FragmentAnalysis`;
+:func:`hxex.report.plot_region_significance`), ``residue_significance_K2_<sample>``
+(:func:`hxex.report.plot_residue_significance_k2`, one per sample),
+``woods_<sample>_<time>`` (K=1, and where the number of populations differs),
+``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
+``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``ladder_rates.csv``,
 ``ladder_residues.csv``, ``closure.csv`` and per parent
 ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
@@ -609,6 +609,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                  "K=2 high-D fD", "K=2 rank 1 (low D) population": "K=2 high-D population"}
         k2_stack = [(short.get(title, title), c.scaled_by_separation().as_high_share())
                     for title, c in comparisons.items() if title != "K=1 fD"]
+        # the population first, then the positions: the order of the K=2 significance map
+        k2_stack.sort(key=lambda panel: not panel[0].endswith("population"))
         for t in times:
             when_ = _time_label(t, scale)
             only = choice if config.overlay_two_only else None
@@ -658,12 +660,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                          plot_region_significance(reg_cmp, in_regions, **when)))
         with_two = [s for s in residue_others
                     if shared_choices is not None and shared_choices.where(sample=s).any()]
-        if with_two:
-            positions = k2_positions or {}
-            jobs.append(("residue_significance_K2", lambda with_two=with_two, positions=positions:
-                         plot_residue_significance_k2(
+        positions = k2_positions or {}
+        for s in with_two:  # one figure per sample: five samples on one page overwhelm (owner)
+            jobs.append((f"residue_significance_K2_{s}",
+                         lambda s=s, positions=positions: plot_residue_significance_k2(
                              shared_choices, pop_cmp, positions.get(1), positions.get(2),
-                             with_two, length=length, blocks=res_cmp, own_choices=choices_cmp,
+                             [s], length=length, blocks=res_cmp, own_choices=choices_cmp,
                              **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)

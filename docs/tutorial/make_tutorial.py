@@ -91,7 +91,7 @@ ANALYSIS_IMAGES = (
      "tutorial_woods": "woods_R120G_1min.png",
      "tutorial_residues": "residue_significance.png"},
     {"tutorial_woods_k2": "woods_K2_R120G_1min.png",
-     "tutorial_residues_k2": "residue_significance_K2.png",
+     "tutorial_residues_k2": "residue_significance_K2_R120G.png",
      "tutorial_tiers": "population_tiers.png"},
 )
 
