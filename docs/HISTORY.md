@@ -7692,6 +7692,32 @@ CSVs or mzML if wanted.
     four of one early-eluting peptide in the two runs that eluted earliest (73 c-1/z-dot spectra).
     Not measured: the ladder rates against the HDX-NMR with the setting on.
 
+
+306. **Each scan file's m/z offset measured from its own spectra; a second drift peak told
+    apart by the ion's isotope spacing (2026-11-06; PLAN Next steps 22).** On the intact-peptide
+    benchmark's uncorrected ion-mobility files (HDExaminer's retention windows, the drift gate
+    of item 304): the median of the picker's offset over each file's peptide spectra equals the
+    per-file shift HDExaminer applied plus what remained on its axis within 0.5 ppm in all 102
+    files, alike for undeuterated, labelled and fully deuterated files. The uncorrected offset
+    drifts smoothly with acquisition order (+16 to +40 ppm); HDExaminer's two shifts (+17.5,
+    +36) left up to about +-10 ppm per file. Without correction, against HDExaminer's files:
+    same K 97.9 %, centroids more than 0.25 D apart in 2.4 % (5 % of spectra in files 33 ppm or
+    more off: deuterated peaks reach the +-50 ppm window's edge), replicate sd q90 0.258 against
+    0.236 D. BUILT as `[input.scans] mz_calibration = "auto"` (default; mzML and Thermo; each
+    file's MS1 peptide spectra divided by 1 + its offset before picking, at least 10 spectra;
+    fragments not moved; read record `mz_calibration`, spectra.csv `mz_calibration_ppm`,
+    `hxex info`): same K as HDExaminer's files 99.5 %, centroids 0.000 D apart (median; q90
+    0.005), replicate sd 0.080 D (q90 0.230), 16 control fallbacks of 930 series as with
+    HDExaminer's files. Offsets up to 40 ppm (0.8 of the window) were measured correctly; the
+    log warns above 0.9. A first trial applied the offsets before the drift ranges were found
+    and moved one 1+ ion's range to a second drift peak of equal height (0.998 of the apex) whose
+    intensity sat half on and half between the ion's isotope peaks: a 2+ ion at the same m/z.
+    So, BUILT with it: when a second drift peak reaches half the apex, the share of intensity on
+    the ion's isotope peaks rather than at the midpoints between them decides (by 0.2 or more):
+    the 1+ ion's own range (on-share 0.999) is taken and no longer flagged; the other two-peak
+    ion of the benchmark (3+, on-share 0.90 against a similar second peak) stays flagged
+    `drift_unclear`. Scratch (private): the benchmark's ion-mobility working folder, mz_calibration.
+
 307. **Closure against the parent's MS1 spectrum; flag precursor_off (2026-11-06).** The
     closure figures of the targeted Orbitrap dataset sat below zero. Two causes (private scratch,
     K = 1, find_fragment_peak on): (1) the closure's reference, the unreacted precursor ion M read

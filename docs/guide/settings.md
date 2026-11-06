@@ -177,6 +177,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `rt_search_ppm` | number | unset | how far (ppm) a peak top may sit from the calibrated m/z in the retention search (false: 1.25 times the m/z check's limit, measured) |
 | `rt_search_tolerance` | number | unset | s: how far apart the undeuterated injections may put a peak in the retention search (false: the larger of the run's peak width and the injections' 99th percentile disagreement, measured) |
 | `drift_gate` | text or true/false | `"auto"` | scans with ion mobility bins: "auto" sums each peptide over its own drift range, found from its undeuterated controls (a peptide table's drift_start, drift_end columns, ms, take its place); false sums every drift time |
+| `mz_calibration` | text or true/false | `"auto"` | "auto" measures each file's m/z offset from its own peptide spectra and takes it out before picking (fragment ions keep their m/z); false reads the m/z as the file gives it |
 
 ## `[output]`
 

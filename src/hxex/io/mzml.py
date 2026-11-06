@@ -49,7 +49,7 @@ import numpy as np
 
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, plan_bins
+from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, pick_spectrum, plan_bins
 from ..spectra import (
     UNDEUT,
     PeptideEntry,
@@ -1099,6 +1099,11 @@ class MzmlConfig:
       take its place); ``False`` sums every drift time. Files without drift times read the same
       either way. A record written before the setting reads as ``False`` (its spectra were
       summed over every drift time).
+    - ``mz_calibration``: ``'auto'`` measures each file's m/z offset from its own MS1 peptide
+      spectra (the median of the picker's offsets, :func:`file_offsets`) and divides those
+      spectra's m/z by it, so every file is picked on the composition's m/z; ``False`` reads the
+      m/z as the file gives it. Fragment ions are not calibrated. A record written before the
+      setting reads as ``False``.
     """
 
     group: str = "each"
@@ -1120,12 +1125,15 @@ class MzmlConfig:
     rt_search_ppm: float | None = None
     rt_search_tolerance: float | None = None
     drift_gate: str | bool = "auto"
+    mz_calibration: str | bool = "auto"
 
     def __post_init__(self):
         from .retention_search import MODES
 
-        if not (self.drift_gate is False or self.drift_gate == "auto"):
-            raise ValueError(f"drift_gate must be \"auto\" or false, not {self.drift_gate!r}")
+        for name in ("drift_gate", "mz_calibration"):
+            value = getattr(self, name)
+            if not (value is False or value == "auto"):
+                raise ValueError(f"{name} must be \"auto\" or false, not {value!r}")
 
         if self.find_retention_time not in MODES:
             raise ValueError(f"find_retention_time must be one of {', '.join(MODES)}")
@@ -1166,6 +1174,7 @@ class MzmlConfig:
         values = _known(cls, data, "mzML setting")
         values["windows"] = tuple(tuple(w) for w in values.get("windows", ()))
         values.setdefault("drift_gate", False)  # recorded before it: every drift time summed
+        values.setdefault("mz_calibration", False)  # recorded before it: m/z as the files gave it
         return cls(**values)
 
 
@@ -1485,6 +1494,10 @@ def _read_runs(
         moved = decide()
         if moved:
             reread(moved)
+    calibration = None
+    if config.mz_calibration == "auto":
+        calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry)
+        _calibration_text(calibration, recorded, picker)
     spectra = [s for part in per_run for s in part]
     origin = [n for n, part in enumerate(per_run) for _ in part]  # the run of each spectrum
     elution_cut &= {s.spectrum_id for s in spectra}  # a reread replaces a spectrum
@@ -1524,6 +1537,10 @@ def _read_runs(
             log.warning("%d fragment spectra have an elution peak that reaches the first or "
                         "last scan the instrument recorded for their precursor (the "
                         "acquisition cut it): flagged elution_cut", len(elution_cut))
+    if calibration is not None:
+        source["mz_calibration"] = [  # per run, in the order of "runs"
+            {"offset_ppm": None if not np.isfinite(o) else round(o, 3), "n_spectra": n}
+            for o, n in calibration]
     if gates is not None:
         source["drift_gate"] = drift_record(gates, unclear)
         if unclear:
@@ -2035,11 +2052,90 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
     ranges = profiles.ranges()
     n_ions = len({drift_key(targets[i].entry) for i in gated})
     two = sum(r.unclear for r in ranges.values())
+    told = sum(r.decided for r in ranges.values())
     log.info("drift ranges found for %d of %d peptide ions from the undeuterated controls "
-             "(median %.3g ms wide)%s", len(ranges), n_ions,
+             "(median %.3g ms wide)%s%s", len(ranges), n_ions,
              float(np.median([r.end - r.start for r in ranges.values()])) if ranges else 0.0,
+             f"; {told} with a second drift peak told apart by the ion's isotope spacing"
+             if told else "",
              f"; {two} with a second drift peak (flagged drift_unclear)" if two else "")
     return ranges
+
+
+MIN_CALIBRATION_SPECTRA = 10  # a file with fewer MS1 peptide spectra with signal is not moved
+NEAR_WINDOW_EDGE = 0.9  # an offset beyond this share of the picker's window may be cut short
+
+
+def file_offsets(per_run: list[list[Spectrum]], targets: Sequence[MzmlTarget],
+                 series: Mapping[tuple[str, int], int], *, picker: PickerConfig,
+                 registry: chem.ModificationRegistry) -> list[tuple[float, int]]:
+    """Each file's m/z offset (``mz_calibration``), taken out of its MS1 peptide spectra in
+    place (``per_run``: the spectra read from each file): the median, over the file's spectra
+    with signal, of the picker's offset (:func:`hxex.picking.pick.mz_offset_ppm`: the
+    intensity-weighted median of the picked peaks' distance from their predicted m/z). The
+    spectra's m/z are divided by ``1 + offset``. Per file ``(offset ppm, spectra measured)``;
+    NaN, and nothing moved, below :data:`MIN_CALIBRATION_SPECTRA`.
+
+    The offset is measured within the picker's window, so a file further off than the window
+    cannot be measured fully (:func:`_calibration_text` warns). Measured on an intact-peptide
+    dataset of Q-TOF files (HISTORY 306): within 0.5 ppm of the per-file correction HDExaminer
+    applied plus what remained on its axis, alike for undeuterated, labelled and fully
+    deuterated files."""
+    of_data = {d: t_i for (_, t_i), d in series.items()}
+    plans: dict[tuple, object] = {}
+    out = []
+    for part in per_run:
+        mine = [k for k, s in enumerate(part) if _gated_kind(targets[of_data[int(s.data_id)]])]
+        offsets = []
+        for k in mine:
+            s = part[k]
+            e = s.entry
+            key = (e.peptide, e.charge, e.modification)
+            if key not in plans:
+                plans[key] = plan_bins(e.peptide, e.charge, modification=e.modification,
+                                       config=picker, registry=registry)
+            picked = pick_spectrum(
+                s.mz, s.intensity, e.peptide, e.charge, modification=e.modification,
+                config=picker, registry=registry, plan=plans[key],
+                resolving_power=s.resolving_power, resolving_power_mz=s.resolving_power_mz)
+            if not picked.no_signal and np.isfinite(picked.mz_offset_ppm):
+                offsets.append(picked.mz_offset_ppm)
+        if len(offsets) < MIN_CALIBRATION_SPECTRA:
+            out.append((float("nan"), len(offsets)))
+            continue
+        offset = float(np.median(offsets))
+        factor = 1.0 + offset * 1e-6
+        for k in mine:
+            part[k] = replace(part[k], mz=np.asarray(part[k].mz, dtype=np.float64) / factor,
+                              mz_calibration_ppm=offset)
+        out.append((offset, len(offsets)))
+    return out
+
+
+def _calibration_text(calibration, recorded, picker: PickerConfig) -> None:
+    """Log the files' m/z offsets; note files not calibrated, and warn about offsets near
+    the edge of the picker's window (they cannot be measured beyond it; offsets up to 0.8 of
+    the window were measured correctly on the benchmark of HISTORY 306)."""
+    found = np.array([o for o, _ in calibration if np.isfinite(o)])
+    if len(found):
+        log.info("m/z calibration: each file's offset from its own peptide spectra, median "
+                 "%+.1f ppm (%+.1f to %+.1f) over %d files", float(np.median(found)),
+                 float(found.min()), float(found.max()), len(found))
+    left = [_run_file_name(p) for p, (o, _) in zip(recorded, calibration, strict=True)
+            if not np.isfinite(o)]
+    if left:
+        log.info("m/z calibration: %d files have fewer than %d peptide spectra with signal "
+                    "and keep their m/z as read: %s", len(left), MIN_CALIBRATION_SPECTRA,
+                    ", ".join(left[:5]) + (", ..." if len(left) > 5 else ""))
+    limit = NEAR_WINDOW_EDGE * picker.resolution_ppm
+    far = [_run_file_name(p) for p, (o, _) in zip(recorded, calibration, strict=True)
+           if np.isfinite(o) and abs(o) > limit]
+    if far and picker.resolving_power is None:
+        log.warning("m/z calibration: %d files are more than %.0f ppm off, near the edge of "
+                    "the picker's window ([run.picker] resolution_ppm = %g); an offset is "
+                    "measured inside the window, so these may be further off than measured: "
+                    "widen resolution_ppm to check (%s)", len(far), limit,
+                    picker.resolution_ppm, ", ".join(far[:5]) + (", ..." if len(far) > 5 else ""))
 
 
 def _gated_kind(target: MzmlTarget) -> bool:

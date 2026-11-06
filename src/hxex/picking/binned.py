@@ -74,6 +74,7 @@ class BinnedSet:
     rt_end: np.ndarray | None = None
     drift_start: np.ndarray | None = None  # ms: the drift range summed (NaN: not gated)
     drift_end: np.ndarray | None = None
+    mz_calibration_ppm: np.ndarray | None = None  # the file's m/z offset taken out (NaN: none)
     screen_below_mono: np.ndarray | None = None
     screen_off_position: np.ndarray | None = None
     screen_between: np.ndarray | None = None
@@ -93,7 +94,8 @@ class BinnedSet:
         if self.window_shift_ppm is None:  # picked elsewhere or by an older version: not moved
             object.__setattr__(self, "window_shift_ppm", np.zeros(len(self.offsets) - 1))
         # retention times (minutes) and drift ranges (ms) not given: unknown
-        for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end"):
+        for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end",
+                     "mz_calibration_ppm"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.peak_mz is None:

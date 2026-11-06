@@ -501,6 +501,7 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 | `rt_search_ppm` | (measured) | how far a peak top may sit from the peptide's m/z in that search |
 | `rt_search_tolerance` | (measured) | how far apart, in seconds, the undeuterated injections may put the peptide's peak |
 | `drift_gate` | `"auto"` | files with ion mobility: sum each peptide over its own drift-time range, found from its undeuterated controls (`"auto"`), or over every drift time (`false`); see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time) |
+| `mz_calibration` | `"auto"` | measure each file's m/z offset from its own peptide spectra and take it out before picking (`"auto"`), or use the m/z as the file gives it (`false`); see [Each file's m/z offset](#each-files-mz-offset) |
 
 Profile and centroided scans are both read. Summed profile scans are put on a common m/z grid;
 centroided scans are merged peak by peak. Profile data is recommended: when converting Thermo
@@ -517,9 +518,10 @@ msconvert RUN.raw --mzML --64 --zlib --ignoreCalibrationScans --combineIonMobili
 of MSe. Data acquired with ion mobility (HDMS, HDMSe) needs `--combineIonMobilitySpectra`, which
 writes each scan with its drift-time bins together; *hxex* then keeps each peptide's own
 drift-time range (see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time)).
-If the acquisition did not correct the m/z with
-the lockspray, msConvert's `--filter "lockmassRefiner mz=… tol=…"` (with the reference
-compound's m/z) can do it; put it before the other filters.
+Files whose m/z the acquisition did not correct with the lockspray need no correction at
+conversion: *hxex* measures each file's offset itself (see [Each file's m/z offset](#each-files-mz-offset)).
+On a Q-TOF dataset, msConvert's `lockmassRefiner` filter left the files' offsets scattered
+over about 18 ppm, so it is better left out.
 
 ### Fragment ions
 
@@ -750,6 +752,34 @@ against a weak identification, and one cysteine peptide, which the identificatio
 alkylated and the HDX samples had not. Only one Orbitrap dataset has been checked so far, so
 `"automatic"` is not the default.
 
+### Each file's m/z offset
+
+An instrument's m/z scale can be off by some ppm, and the offset can drift from one
+acquisition to the next. With `mz_calibration = "auto"` (the default), *hxex* measures each
+file's offset from its own spectra before picking:
+
+1. Every peptide spectrum of the file is picked once, and the picker notes how far its peaks
+   sit from where the peptide's composition puts them (the intensity-weighted median, in ppm).
+2. The file's offset is the median of those over its spectra with signal: undeuterated,
+   labelled, and fully deuterated spectra alike.
+3. The file's peptide spectra have their m/z divided by that offset, and are picked from there.
+
+No reference compound or instrument setting is needed. The log gives the range of the files'
+offsets, `hxex info` repeats it, and `spectra.csv` gives each spectrum's in
+`mz_calibration_ppm`. A file with fewer than 10 peptide spectra with signal keeps its m/z as
+read. Fragment ions keep their m/z. An offset is measured inside the picker's window, so the
+log warns about files near the edge of the window (more than 45 ppm off with
+`[run.picker] resolution_ppm` at its default of 50 ppm): widen the window to check them.
+
+`mz_calibration = false` uses the m/z as the files give them, as earlier versions of *hxex* did.
+
+On a Q-TOF dataset whose uncorrected files drifted from +16 to +40 ppm over the acquisition,
+each file's measured offset agreed within 0.5 ppm with the correction HDExaminer had applied plus
+what it had left. The fits then agreed with fits of HDExaminer's corrected files (the same number
+of populations in 99.5 % of spectra), and replicates agreed slightly better. Without the
+correction, about 5 % of the spectra in the files furthest off chose a different number of
+populations.
+
 ### Ion mobility: each peptide's drift time
 
 Files converted with their drift-time bins together (Waters HDMS data, msConvert's
@@ -770,12 +800,19 @@ them, in milliseconds; no instrument setting is needed. `spectra.csv` gives each
 range in `drift_start` and `drift_end`, and the log says for how many peptides a range was
 found.
 
+When the undeuterated drift profile has a second peak, at least half as high as the first,
+outside its range, the peptide's own isotope spacing decides between the two. An ion of
+another charge at the same m/z drifts at another time, and its isotope peaks fall between the
+peptide's as well as on them. So *hxex* compares how much of each peak's intensity sits on the
+peptide's isotope peaks rather than half-way between them, and takes the peak where clearly more
+does (by a fifth of the intensity or more), even when it is the lower of the two.
+
 A peptide without an undeuterated control with signal keeps every drift time, and its series
-is flagged `drift_unclear`. So is a peptide whose undeuterated drift profile has a second peak,
-at least half as high as the first, outside its range: another ion at that m/z, or the peptide
-in two shapes. Look at its spectra; if you know its drift time, give it in the peptide table's
-`drift_start` and `drift_end` columns (milliseconds), which take the place of the range found.
-Fragment ions keep every drift time.
+is flagged `drift_unclear`. So is a peptide whose two drift peaks the isotope spacing does not
+tell apart: another ion of the same charge at that m/z, or the peptide in two shapes. Look at
+its spectra; if you know its drift time, give it in the peptide table's `drift_start` and
+`drift_end` columns (milliseconds), which take the place of the range found. Fragment ions keep
+every drift time.
 
 `drift_gate = false` sums every drift time, as earlier versions of *hxex* did. Files without
 drift times are read the same either way.

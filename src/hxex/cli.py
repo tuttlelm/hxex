@@ -1697,6 +1697,8 @@ def cmd_info(args) -> int:
              else "order: the times only order the points"),
             *([("profile", _reduced_profile_info(source["profile"]))]
               if _reduced_profile_info(source.get("profile")) else []),
+            *([("m/z calibration", _mz_calibration_info(source["mz_calibration"]))]
+              if source.get("mz_calibration") else []),
             ("quality flags", "yes" if b.has("quality") else "no"),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
@@ -1730,6 +1732,17 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _mz_calibration_info(records) -> str:
+    """The files' m/z offsets taken out (``[input.scans] mz_calibration``), in one line."""
+    found = [r["offset_ppm"] for r in records if r.get("offset_ppm") is not None]
+    text = (f"{len(found)} of {len(records)} files, offsets {min(found):+.1f} to "
+            f"{max(found):+.1f} ppm (median {float(np.median(found)):+.1f})" if found
+            else f"none of {len(records)} files")
+    left = len(records) - len(found)
+    return text + (f"; {left} with too few peptide spectra kept as read" if left and found
+                   else "")
 
 
 def _reduced_profile_info(records) -> str | None:

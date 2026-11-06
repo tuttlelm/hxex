@@ -565,4 +565,5 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         rt_end=spectra.rt_end,
         drift_start=spectra.drift_start,
         drift_end=spectra.drift_end,
+        mz_calibration_ppm=spectra.mz_calibration_ppm,
     )

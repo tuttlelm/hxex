@@ -1552,12 +1552,12 @@ def test_ion_mobility_bins_are_summed(tmp_path):
 def _drifting(scans, species):
     """``scans`` (dicts with a time) written with their drift bins together: ``species`` are
     ``(center_bin, height, {drift time (ms): share})``, each an envelope of the test peptide's
-    m/z grid spread over its drift times."""
+    m/z grid spread over its drift times, or ``(..., shift)`` moved by ``shift`` (m/z)."""
     out = []
     for s in scans:
         mz, y, d = [], [], []
-        for center, height, drifts in species:
-            m, v = profile_envelope(center, 0.6, height)
+        for center, height, drifts, *shift in species:
+            m, v = profile_envelope(center, 0.6, height, shift=shift[0] if shift else 0.0)
             for t, share in drifts.items():
                 mz.append(m)
                 y.append(share * v)
@@ -1629,6 +1629,18 @@ def test_drift_gate_keeps_each_peptides_drift_range(tmp_path, caplog):
     s = read_mzml([MzmlRun(twin, "WT", role="undeut"), runs[1]], [target], project="p")
     assert s.source["drift_gate"]["unclear"] == [0]
     assert s.source["drift_gate"]["ranges"][0]["second"] == pytest.approx(0.7)
+    assert not s.source["drift_gate"]["ranges"][0]["decided"]
+    # a taller second drift peak of an ion at twice the charge (peaks on the peptide's and
+    # half-way between): the isotope spacing takes the peptide's drift time, not flagged
+    half = 1.00235 / (2 * CHARGE)
+    double = write_mzml(tmp_path / "double.mzML", _drifting(lc, [
+        (1, 1e5, peptide), (1, 1.2e5, {5.8: 1.0}), (1, 1.2e5, {5.8: 1.0}, half)]))
+    with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
+        s = read_mzml([MzmlRun(double, "WT", role="undeut"), runs[1]], [target], project="p")
+    found = s.source["drift_gate"]["ranges"][0]
+    assert (found["apex"], found["decided"], s.source["drift_gate"]["unclear"]) == (5.3, True, [])
+    assert found["second"] > 1 and found["on_share"] > 0.9
+    assert "1 with a second drift peak told apart by the ion's isotope spacing" in caplog.text
     with pytest.raises(ValueError, match="drift_gate must be"):
         MzmlConfig(drift_gate="on")
     with pytest.raises(ValueError, match="drift_start and drift_end"):
@@ -1681,3 +1693,73 @@ def test_drift_ranges_and_the_flag_reach_the_results(tmp_path):
     write_tables(loaded, tmp_path / "u")
     rows = list(csv.DictReader(open(tmp_path / "u" / "spectra.csv")))
     assert "drift_start" not in rows[0] and all("drift_unclear" in r["flags"] for r in rows)
+
+
+def test_each_files_mz_offset_is_taken_out(tmp_path, caplog):
+    """mz_calibration: a file whose peaks sit 30 ppm above the composition's m/z and one at
+    -8 ppm each have their own offset measured from their peptide spectra and divided out, so
+    the picker finds the peaks where the composition puts them; false reads the m/z as given,
+    and so does a record made before the setting. Too few spectra: the file is left as it is."""
+    import csv
+
+    from hxex import load_results
+    from hxex.fit import FitConfig
+    from hxex.io import read_mzml_source
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import pick_spectra
+    from hxex.pipeline import RunConfig, run
+    from hxex.report.tables import write_tables
+
+    pred = plan_bins(PEPTIDE, CHARGE).pred_mz
+
+    def scans(ppm, n=12):  # undeuterated envelopes (deuterated peaks sit further apart)
+        shift = float(pred[0]) * ppm * 1e-6
+        return [{"time": 0.5 + 0.5 * k, "filter": "Full ms",
+                 **dict(zip(("mz", "intensity"),
+                            profile_envelope(1, 1.0, 1e5 * (1 + 0.1 * k), shift=shift),
+                            strict=True))} for k in range(n)]
+
+    runs = [MzmlRun(write_mzml(tmp_path / "a.mzML", scans(30.0)), "WT"),
+            MzmlRun(write_mzml(tmp_path / "b.mzML", scans(-8.0)), "WT", rep=2)]
+    target = MzmlTarget(ENTRY)
+    with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
+        read = read_mzml(runs, [target], project="p")
+    assert "m/z calibration: each file's offset from its own peptide spectra" in caplog.text
+    rec = read.source["mz_calibration"]
+    assert [r["n_spectra"] for r in rec] == [12, 12]
+    assert rec[0]["offset_ppm"] == pytest.approx(30.0, abs=1.0)
+    assert rec[1]["offset_ppm"] == pytest.approx(-8.0, abs=1.0)
+    by_file = np.array([30.0 if "a.mzML" in s else -8.0 for s in read.spectrum_id])
+    np.testing.assert_allclose(read.mz_calibration_ppm, by_file, atol=1.0)
+    assert np.abs(pick_spectra(read).mz_offset_ppm).max() < 1.0
+    plain = read_mzml(runs, [target], project="p", config=MzmlConfig(mz_calibration=False))
+    assert "mz_calibration" not in plain.source and np.isnan(plain.mz_calibration_ppm).all()
+    np.testing.assert_allclose(pick_spectra(plain).mz_offset_ppm, by_file, atol=1.0)
+    # the read repeats from its record; a record from before the setting reads uncalibrated
+    np.testing.assert_array_equal(read_mzml_source(read.source).mz, read.mz)
+    old = {**read.source, "config": {k: v for k, v in read.source["config"].items()
+                                     if k != "mz_calibration"}}
+    np.testing.assert_array_equal(read_mzml_source(old).mz, plain.mz)
+    # too few spectra: left as read
+    few = read_mzml([MzmlRun(write_mzml(tmp_path / "c.mzML", scans(30.0, n=4)), "WT")],
+                    [target], project="p")
+    assert few.source["mz_calibration"] == [{"offset_ppm": None, "n_spectra": 4}]
+    assert np.isnan(few.mz_calibration_ppm).all()
+    with pytest.raises(ValueError, match="mz_calibration must be"):
+        MzmlConfig(mz_calibration="on")
+    from hxex.cli import _mz_calibration_info
+
+    assert _mz_calibration_info(rec + few.source["mz_calibration"]) == (
+        f"2 of 3 files, offsets {rec[1]['offset_ppm']:+.1f} to {rec[0]['offset_ppm']:+.1f} ppm "
+        f"(median {np.median([r['offset_ppm'] for r in rec]):+.1f}); 1 with too few peptide "
+        "spectra kept as read")
+    # the offset taken out reaches spectra.csv
+    fit = FitConfig(k_max=1, adam_steps=40, n_restarts=1, backend=Backend("cpu", "float64"),
+                    noise=NoiseConfig("gaussian", percent=3.0))
+    run(read, RunConfig(fit=fit), out=tmp_path / "bundle")
+    write_tables(load_results(tmp_path / "bundle"), tmp_path / "tables")
+    rows = list(csv.DictReader(open(tmp_path / "tables" / "spectra.csv")))
+    written = np.array([float(r["mz_calibration_ppm"]) for r in rows])
+    np.testing.assert_allclose(written, [30.0 if "a.mzML" in r["spectrum_id"] else -8.0
+                                         for r in rows], atol=1.0)

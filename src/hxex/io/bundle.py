@@ -1471,7 +1471,8 @@ class Bundle:
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
             capped=np.asarray(_col(t, "capped"), dtype=bool),
-            **{**_index_arrays(t, ("rt", "rt_start", "rt_end", "drift_start", "drift_end")),
+            **{**_index_arrays(t, ("rt", "rt_start", "rt_end", "drift_start", "drift_end",
+                                   "mz_calibration_ppm")),
                ROLE: self._roles(t)},
             peak_mz=peak_mz, mz_offset_ppm=offset,
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed

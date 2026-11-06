@@ -1006,6 +1006,7 @@ Planned, not built:
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now
    lists its rows. G3's exit check passes (HISTORY 285): review edits made in the window give
    the same `hxex report` tables as the same edits made in a spreadsheet.
+   Later: retention and drift windows edited in the review (item 26).
 19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled).
    HDXBoxeR (Janowska et al. 2024, Bioinformatics, doi:10.1093/bioinformatics/btae479; R,
    GPL >= 2) applies the same Welch plus critical-interval test to HDExaminer uptake tables.
@@ -1067,8 +1068,12 @@ Planned, not built:
      The undeuterated files are read twice (once for the profiles).
    - *Unclear ranges.* A peptide ion without an undeuterated control with signal keeps every
      drift time; so does a fragment. Flag `drift_unclear` (series): no range, or a second peak
-     >= 50 % of the apex outside the range. The tie-breaker by the charge's drift-m/z trend was
-     NOT built (which peak is right in the two benchmark cases is not known: a flag first).
+     >= 50 % of the apex outside the range that the ion's isotope spacing does not tell apart.
+     BUILT (owner, 2026-11-06; HISTORY 306): with such a second peak, the intensity on the ion's
+     isotope peaks against that at the midpoints between them decides (another charge state at
+     the same m/z drifts elsewhere and puts peaks between the ion's); the peak whose on-peak
+     share is higher by 0.2 or more is taken, whichever is taller, and is not flagged. The
+     drift-m/z trend of the charge was not needed.
    - *Settings and outputs.* `[input.scans] drift_gate` ("auto", the default; false: every drift
      time; a record written before it reads as false); peptide-table `drift_start`, `drift_end`
      (ms, both or neither) take the place of the range found; spectra and spectra.csv columns
@@ -1079,8 +1084,13 @@ Planned, not built:
      (with them, SpecExport would serve). The benchmark's uncorrected files sit about +23 ppm
      from theory (+41 over one stretch of acquisitions), beyond the picking window; HDExaminer
      shifted each file by a constant, msConvert's lockmass correction scatters -11 to +7.5 ppm.
-     The route to evaluate: each file's offset measured from its own data (as the m/z check
-     measures each undeuterated injection's), applied before picking.
+     BUILT (owner, 2026-11-06; HISTORY 306): `[input.scans] mz_calibration = "auto"` (default;
+     mzML and Thermo files, any instrument): each file's offset is the median of the picker's
+     offset over its MS1 peptide spectra with signal (labelled and controls alike; at least 10),
+     divided out of those spectra before picking; fragments keep their m/z. Recorded per run in
+     the read record and per spectrum (`mz_calibration_ppm`, spectra.csv), shown by `hxex info`;
+     a record written before it reads as false. Not done: a slope in m/z within a file (none
+     needed on the benchmark); fragment ions (an ion-type mixture moves their peaks).
 23. **The fragment ions' isotope envelope may be wrong** (owner, 2026-11-05: check carefully,
    on the private targeted Orbitrap dataset). The envelope that places and shapes a fragment's
    bins (`[run.envelope]`: the ion type's composition, or a mixture of ion types a hydrogen
@@ -1189,6 +1199,30 @@ Planned, not built:
      23 s (median), the spectra no longer read are noise (nothing read or below 4 x the noise),
      the uptake's distance from a rising curve 0.205 -> 0.189 D (median), 8 of 612 channels
      flagged (the four of one early-eluting peptide in the two earliest runs).
+26. **Retention and drift windows edited in the review** (owner, 2026-11-06: for the future
+   GUI; HDExaminer lets a user move each spectrum's retention start and end, and that is one of
+   its strengths). Already there: a peptide table row with a `run` column gives that run its own
+   `rt_start`, `rt_end` (one spectrum per peptide ion in a fixed-time run, so per spectrum), and
+   such rows stay one series (HISTORY 297, 301); `find_peak` builds a peptide's retention trace
+   from one file in about a second. To build, in order:
+   - *A trace panel in the review* (read-only first): the selected spectrum's retention trace in
+     its run (its isotope peaks, its drift range for ion-mobility files) with the scans summed
+     shaded, the same peptide's other runs faint behind it (retention moves between files: 7-20
+     s on the Q-TOF benchmark, HISTORY 304), and for ion-mobility files its drift profile with
+     the range. Useful alone: a window on a neighbour's peak shows at once.
+   - *Editing*: drag the edges or type the times; written as that run's row in the peptide table
+     (an input, where it acts; the edited rows listed in the Tables view; Undo as in the project
+     editor). Drift ranges the same way, once `drift_start`, `drift_end` join the row fields that
+     keep a peptide's runs one series (`RUN_ROW_FIELDS`; today a per-run drift row would start a
+     series of its own).
+   - *Applying*: first by a full `hxex run --overwrite` (about 11 minutes on the benchmark);
+     later, if that gets in the way, a partial rerun: read again only the changed spectra (with
+     each file's stored m/z offset and drift ranges, not measured again), pick and fit their
+     series, redo their controls, bootstrap, and population test where they change, and update
+     the bundle in place with a provenance note (as `hxex resume` does).
+   - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
+     gives a new id and its review entries would go stale; they should follow the spectrum by
+     file and peptide ion.
 
 ## Risks and open decisions
 

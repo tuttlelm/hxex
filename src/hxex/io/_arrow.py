@@ -94,7 +94,7 @@ _INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", 
 _INDEX_INT = ("start_seq", "end_seq", "charge", "rep", "data_id")
 # float columns a reader may leave unknown (NaN); absent in files written before them
 _OPTIONAL = ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end", "drift_start",
-             "drift_end")
+             "drift_end", "mz_calibration_ppm")
 # the role column ("undeut", "fulldeut" or ""): absent in files written before the roles, where
 # the controls were known by their times (the reader derives it, see hxex.io.bundle)
 ROLE = "role"

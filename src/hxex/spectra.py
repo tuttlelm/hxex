@@ -161,6 +161,8 @@ class Spectrum:
     the spectrum, for an LC-MS run with a fixed time (NaN otherwise). ``drift_start`` and
     ``drift_end`` (ms) are the drift times summed into it, for scans read with their ion
     mobility bins and a drift range (NaN otherwise: every drift time, or no drift times).
+    ``mz_calibration_ppm`` is the m/z offset of the spectrum's file taken out of its m/z (the
+    m/z read divided by 1 + offset; NaN: not calibrated).
     """
 
     mz: np.ndarray
@@ -179,6 +181,7 @@ class Spectrum:
     rt_end: float = float("nan")
     drift_start: float = float("nan")
     drift_end: float = float("nan")
+    mz_calibration_ppm: float = float("nan")
 
     def __post_init__(self):
         object.__setattr__(self, "role", check_role(self.role))
@@ -285,10 +288,11 @@ class SpectrumSet:
     rt_end: np.ndarray | None = None
     drift_start: np.ndarray | None = None
     drift_end: np.ndarray | None = None
+    mz_calibration_ppm: np.ndarray | None = None
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
         for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end",
-                     "drift_start", "drift_end"):
+                     "drift_start", "drift_end", "mz_calibration_ppm"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.role is None:  # built without roles: time points only
@@ -376,6 +380,8 @@ class SpectrumSet:
             rt_end=np.array([s.rt_end for s in spectra], dtype=np.float64),
             drift_start=np.array([s.drift_start for s in spectra], dtype=np.float64),
             drift_end=np.array([s.drift_end for s in spectra], dtype=np.float64),
+            mz_calibration_ppm=np.array([s.mz_calibration_ppm for s in spectra],
+                                        dtype=np.float64),
             resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
                                         dtype=np.float64),
             role=np.array([s.role for s in spectra], dtype="<U8"),

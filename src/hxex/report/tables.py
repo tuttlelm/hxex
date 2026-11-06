@@ -44,8 +44,10 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         for name in names:
             values = getattr(b, name)
             cols[name] = np.array([values[j] if j >= 0 else "" for j in rows])
-        # minutes: the spectrum's, and its scans'; ms: the drift times summed (ion mobility)
-        for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end"):
+        # minutes: the spectrum's, and its scans'; ms: the drift times summed (ion mobility);
+        # ppm: the file's m/z offset taken out
+        for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end",
+                     "mz_calibration_ppm"):
             values = getattr(b, name, None)
             cols[name] = np.array([float(values[j]) if j >= 0 and values is not None else np.nan
                                    for j in rows])
@@ -54,7 +56,8 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
             cols[name] = np.array([""] * m)
         for name in ("rt", "rt_start", "rt_end"):
             cols[name] = np.full(m, np.nan)
-    for name in ("drift_start", "drift_end"):  # only for spectra read with a drift range
+    # only for spectra read with a drift range, or from calibrated files
+    for name in ("drift_start", "drift_end", "mz_calibration_ppm"):
         if name in cols and not np.isfinite(cols[name]).any():
             del cols[name]
     cols.update(_target_columns(results))

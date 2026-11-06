@@ -1585,6 +1585,9 @@ _COMMENTS: dict[str, str] = {
                               "own drift range, found from its undeuterated controls (a "
                               "peptide table's drift_start, drift_end columns, ms, take its "
                               "place); false sums every drift time",
+    "input.scans.mz_calibration": '"auto" measures each file\'s m/z offset from its own peptide '
+                                  "spectra and takes it out before picking (fragment ions keep "
+                                  "their m/z); false reads the m/z as the file gives it",
     "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
                                   "series' undeuterated controls are missing or poor (false: "
                                   "none)",
