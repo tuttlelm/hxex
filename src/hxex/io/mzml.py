@@ -618,6 +618,13 @@ def _activation_match(column: np.ndarray, activation: str) -> np.ndarray:
     return np.array([any(want in x for x in n) for n in names], dtype=bool)
 
 
+# mzML analysers and detectors: orbitrap, FT-ICR, inductive detector (image current)
+_FT_ANALYSERS = {"MS:1000484", "MS:1000079", "MS:1000624"}
+# others: time-of-flight, quadrupole, ion traps, magnetic sector, and the counting detectors
+_OTHER_ANALYSERS = {"MS:1000084", "MS:1000081", "MS:1000082", "MS:1000264", "MS:1000291",
+                    "MS:1000083", "MS:1000080", "MS:1000114", "MS:1000116", "MS:1000253"}
+
+
 class MzmlFile:
     """An mzML file: its scan table (read once, without arrays) and single scans by index (through
     the file's index when it has one, else by reading through the file)."""
@@ -635,6 +642,27 @@ class MzmlFile:
         if self._table is None:
             self._table = ScanTable.from_scans(list(iter_scans(self.path, read_arrays=False)))
         return self._table
+
+    @property
+    def fourier_transform(self) -> bool | None:
+        """Whether the file's instrument configuration names a Fourier-transform analyser (an
+        orbitrap or FT-ICR analyser, or an inductive detector), from the header before the
+        spectra; None when it names no analyser or detector (a Waters conversion names only
+        the instrument model)."""
+        head = []
+        with self.path.open("rb") as fh:
+            for _ in range(64):  # the header ends well within a few MB
+                chunk = fh.read(1 << 16)
+                if not chunk:
+                    break
+                head.append(chunk)
+                if b"<run" in chunk:
+                    break
+        text = b"".join(head).split(b"<run", 1)[0].decode("utf-8", "replace")
+        found = set(re.findall(r'accession="(MS:\d+)"', text))
+        if found & _FT_ANALYSERS:
+            return True
+        return False if found & _OTHER_ANALYSERS else None
 
     def _index_offsets(self) -> dict[int, int]:
         """Byte offsets of the spectra from an indexedmzML index (empty if there is none)."""
@@ -1303,6 +1331,7 @@ def _read_runs(
     per_run: list[list[Spectrum]] = [[] for _ in runs]
     extra: dict = {}
     instruments: list = [None] * len(runs)  # per file: the instrument, where it quotes its R
+    profiles: list = [None] * len(runs)  # per file: its profile scans reduced or not
     common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry,
                   joins=joins)
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
@@ -1360,6 +1389,7 @@ def _read_runs(
             if fmt.extra is not None and not extra:
                 extra = fmt.extra(f)
             instruments[n_run] = instrument_record(f)
+            profiles[n_run] = profile_record(f)
             width = _read_run(f, run, targets_of(run), windows, series, per_run[n_run],
                               **common)
             if search is not None and search.reads(run):
@@ -1389,9 +1419,12 @@ def _read_runs(
         "series": [{"data_id": d, "sample": sample, "target": t_i}
                    for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
         "instruments": instruments,
+        "profile": profiles,
         **({SAMPLES_TIE: True} if tie else {}),
         **extra,
     }
+    if text := reduced_profile_text(profiles):
+        log.warning("%s", text)
     if search is not None and search.record is not None:
         found = by_target()
         for row in search.record["series"]:  # a series first read at its found time
@@ -1959,6 +1992,90 @@ def instrument_record(f) -> dict | None:
                                         else "/".join(f"{v:g}" for v in values))
     return {"model": model or None, "resolving_power_mz": reference_mz(model),
             "resolving_power": by_level}
+
+
+REDUCED_ZERO_SHARE = 0.2  # profile scans with this share of their points exactly 0 are reduced
+_PROFILE_SAMPLE = 10  # profile scans looked at per MS level
+
+
+def _run_tops(mz: np.ndarray, y: np.ndarray, noise_mz: np.ndarray,
+              noise: np.ndarray) -> list[float]:
+    """The top of each run of non-zero profile points divided by the recorded noise there."""
+    nonzero = y > 0
+    edges = np.flatnonzero(np.diff(np.r_[0, nonzero.astype(int), 0]))
+    keep = noise > 0
+    noise_mz, noise = noise_mz[keep], noise[keep]
+    if len(noise) < 2:
+        return []
+    out = []
+    for a, b in zip(edges[::2], edges[1::2], strict=True):
+        k = a + int(np.argmax(y[a:b]))
+        out.append(float(y[k] / np.interp(mz[k], noise_mz, noise)))
+    return out
+
+
+def profile_record(f) -> dict | None:
+    """Whether a scan file's profile scans are reduced: stored with the points below the
+    instrument's noise threshold set to 0, so that in each scan a peak whose top is below it
+    is deleted (Orbitrap "reduced profile"; docs/HISTORY.md items 299 and 300). Per MS level,
+    over up to ten profile scans spread through the file (a Thermo raw file's ``FTMS`` scans
+    only): the median share of points exactly 0 (``zero_share``) and, when the file records each
+    scan's noise (Thermo raw), the 1st percentile of the tops of the runs of non-zero points over
+    the recorded noise there (``cut``: the weakest peaks kept). ``fourier_transform``: the
+    file's analyser (``f.fourier_transform``; None when the file does not say). ``reduced``: a
+    Fourier-transform file with a level's share at :data:`REDUCED_ZERO_SHARE` or more; other
+    files' zeros (an ion-counting detector's empty channels, on a Q-TOF 40 % of the points) are
+    not this cut. None without profile scans."""
+    table = f.scans()
+    noise_of = getattr(f, "scan_noise", None)
+    ft = getattr(f, "fourier_transform", None)
+    thermo_raw = noise_of is not None
+    ion_trap = np.array([thermo_raw and not str(s).startswith("FTMS") for s in table.filter],
+                        dtype=bool)
+    levels: dict[str, dict] = {}
+    for level in sorted(set(table.ms_level.tolist())):
+        idx = np.flatnonzero((table.ms_level == level) & (table.centroid != 1) & ~ion_trap)
+        if not len(idx):
+            continue
+        shares, tops = [], []
+        for i in idx[np.linspace(0, len(idx) - 1, min(_PROFILE_SAMPLE, len(idx))).astype(int)]:
+            scan = f.scan(int(i))
+            y = np.asarray(scan.intensity, dtype=np.float64)
+            if len(y) < 10:
+                continue
+            shares.append(float(np.mean(y <= 0)))
+            if noise_of is not None:
+                tops += _run_tops(np.asarray(scan.mz, dtype=np.float64), y, *noise_of(int(i)))
+        if shares:
+            levels[str(level)] = {"zero_share": round(float(np.median(shares)), 3),
+                                  "scans": len(shares)}
+            if tops:
+                levels[str(level)]["cut"] = round(float(np.quantile(tops, 0.01)), 2)
+    if not levels:
+        return None
+    return {"reduced": bool(ft) and any(v["zero_share"] >= REDUCED_ZERO_SHARE
+                                        for v in levels.values()),
+            "fourier_transform": ft, "levels": levels}
+
+
+def reduced_profile_text(records: Sequence[dict | None]) -> str | None:
+    """One sentence on the reduced profile scans among a dataset's files (``records``: one
+    :func:`profile_record` per file); None when no file's are reduced."""
+    reduced = [r for r in records if r and r.get("reduced")]
+    if not reduced:
+        return None
+    at = [(level, v) for r in reduced for level, v in r["levels"].items()
+          if v["zero_share"] >= REDUCED_ZERO_SHARE]
+    levels = "/".join(sorted({level for level, _ in at}, key=int))
+    share = float(np.median([v["zero_share"] for _, v in at]))
+    cuts = [v["cut"] for _, v in at if "cut" in v]
+    cut = (f"; the weakest peaks kept are about {np.median(cuts):.1f} x the noise the files "
+           "record" if cuts else "")
+    return (f"{len(reduced)} of {len(records)} files hold reduced profile scans (MS{levels}: "
+            f"{share:.0%} of the points are 0{cut}): the instrument deleted, in each scan, the "
+            "peaks below its noise threshold, so weak isotope peaks (the heavy side of dim "
+            "envelopes, weak fragments) read low or 0 once scans are summed; hxex does not "
+            "correct for this (guide: Inputs, Reduced profile data)")
 
 
 def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:

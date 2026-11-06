@@ -897,6 +897,18 @@ def _instrument_text(record: dict, picker) -> str:
     return "; ".join(parts)
 
 
+def _profile_text(record: dict) -> str:
+    """One line on a scan file's profile scans, reduced or not, for ``hxex check``."""
+    from .io.mzml import REDUCED_ZERO_SHARE
+
+    parts = []
+    for level, v in record["levels"].items():
+        cut = f", weakest peaks kept {v['cut']:.1f} x the recorded noise" if "cut" in v else ""
+        kind = "reduced" if v["zero_share"] >= REDUCED_ZERO_SHARE else "not reduced"
+        parts.append(f"MS{level} {kind} ({v['zero_share']:.0%} of the points 0{cut})")
+    return "profile scans: " + "; ".join(parts)
+
+
 def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
     """List each run's scans per target; the problems found. ``index_rows`` (a list) receives
     the spectra the read would make (:func:`hxex.io.mzml.scan_index_rows`), for the exclusion
@@ -908,6 +920,8 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
         MzmlFile,
         _target_label,
         instrument_record,
+        profile_record,
+        reduced_profile_text,
         scan_index_rows,
         target_applies,
         target_scans,
@@ -927,6 +941,7 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
         return problems
     targets = scan_targets(project)
     _say(f"{'targets':14s} {len(targets)} from {inp.peptides}")
+    profiles = []
     for run in inp.runs:
         path = Path(run.path)
         path = path if path.is_absolute() else inp.data_root / path
@@ -944,6 +959,7 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
             mine = [t for t in targets if target_applies(t, run)]  # its sample's, and blank
             counts = [len(target_scans(table, run, t, inp.scans)) for t in mine]
             instrument = instrument_record(f)
+            profiles.append(profile_record(f))
             if index_rows is not None and _has_rules(project):
                 index_rows += scan_index_rows(table, path.name, run, targets,
                                               project=project.project, config=inp.scans)
@@ -953,6 +969,8 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
              "scans")
         if instrument is not None:
             _say("  " + _instrument_text(instrument, project.run.picker))
+        if profiles[-1] is not None:
+            _say("  " + _profile_text(profiles[-1]))
         for label in none[:10]:
             _say(f"  no scans: {label}")
         if len(none) > 10:
@@ -963,6 +981,8 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
                             "from every run when its sample is empty)")
         elif len(none) == len(mine):
             problems.append(f"run {path.name}: no target has scans")
+    if text := reduced_profile_text(profiles):
+        _say(f"{'profile':14s} warning: {text}")
     return problems
 
 
@@ -1675,6 +1695,8 @@ def cmd_info(args) -> int:
             ("noise", _noise_curve_text(fit)),
             ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
              else "order: the times only order the points"),
+            *([("profile", _reduced_profile_info(source["profile"]))]
+              if _reduced_profile_info(source.get("profile")) else []),
             ("quality flags", "yes" if b.has("quality") else "no"),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
@@ -1708,6 +1730,14 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _reduced_profile_info(records) -> str | None:
+    """``hxex info``'s line on the reduced profile scans of the files read (none recorded:
+    results read before the check existed, or formats without scans)."""
+    from .io.mzml import reduced_profile_text
+
+    return reduced_profile_text(records) if records else None
 
 
 def _project_review_rows(project, path: Path) -> list[tuple[str, str]]:

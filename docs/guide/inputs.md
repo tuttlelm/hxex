@@ -721,10 +721,33 @@ The raw files also record each scan's resolving power and the instrument model. 
 prints them, and with `pick = "window_max"`, `[run.picker] resolving_power = "recorded"` sizes
 the picking window from them (see [The picking window](picking-window.md)). mzML files carry no resolving power.
 
+### Reduced profile data
+
+Orbitrap instruments usually store their profile scans "reduced": to keep the files small, every
+point below the instrument's noise threshold is set to 0. In each scan, a peak whose top is below
+about twice the noise is deleted altogether; stronger peaks keep their full height. *hxex* sums
+the scans of a peptide's retention-time window, so a weak isotope peak loses every scan in which
+it sat under the threshold: it reads too low, or 0. The peaks hit are the small ones: the heavy
+side of a dim envelope, and weak fragment ions. On the one Orbitrap digest measured, isotope
+peaks of under a few percent of the envelope's tallest went missing in most dim spectra, and
+the fits read the missing heavy side as a second population more often.
+
+*hxex* notices reduced profile scans when it reads the files: about half their points are
+exactly 0. `hxex check` and `hxex run` warn once for the dataset, and `hxex info` repeats it.
+For Thermo raw files the warning also gives the weakest peaks kept, as a multiple of the noise
+the files record. *hxex* does not correct for the lost signal. To reduce it when you acquire
+the data, more ions per scan (a higher AGC target or a longer maximum injection time) lifts weak
+peaks above the threshold; whether an instrument can store full profile scans is a question for
+its maker. Only Orbitrap data are checked: Thermo raw files' Orbitrap scans, and mzML files
+that name an Orbitrap (or another Fourier-transform) analyser. Other instruments leave zeros
+too, such as a Q-TOF's empty channels where no ion arrived, but those are not this threshold. An
+mzML file records no noise, so its warning gives no multiple.
+
 ### What `hxex check` shows for scan formats
 
 One line per run: its sample, replicate, time or role, the number of scans, and how many targets
-have scans in it, followed by up to ten targets with none. A run where no target has scans is a
+have scans in it, followed by up to ten targets with none, the instrument (Thermo raw files),
+and whether its profile scans are reduced. A run where no target has scans is a
 problem; the usual causes are a wrong MS level, activation or filter in `[input.target]`, a
 retention window that misses the peptides, or a charge state the file records differently.
 

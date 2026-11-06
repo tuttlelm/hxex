@@ -55,6 +55,22 @@ git-ignored `.venv-gpu` (see the README for the CUDA wheel index).
   address; do not change git configuration or use a private email. Do not push; the owner pushes.
 - Do not publish to PyPI or change repository settings.
 
+## Concurrent sessions
+
+Several sessions may work on this repository at once.
+
+- A session that edits code works in its own git worktree on its own branch
+  (`git worktree add ../hxex-<topic> -b <topic>`); the owner merges. Sessions that only read,
+  analyse data or write scratch outside the repository may stay on `main`.
+- Before editing, run `git status` and `git log -3`. If another session has uncommitted changes
+  in the tree, or commits appear on the branch during the session, stop and tell the owner.
+- Stage with `git add <file>` only after checking (`git diff <file>`) that the file holds only
+  this session's changes; never `git add -A`, `git stash`, `git checkout` or `git reset` in a
+  shared tree.
+- New `docs/HISTORY.md` items are written as `pending.` and numbered only at commit time: the
+  next free number after the last item in `git log` and the file, with cross-references updated.
+- `ListAgents` shows peer sessions; tell an active one which files you are about to touch.
+
 ## Layout
 
 - `src/hxex/`: one placeholder module per planned component (`chem`, `io`, `picking`, `model`,

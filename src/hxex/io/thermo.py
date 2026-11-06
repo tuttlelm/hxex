@@ -303,6 +303,14 @@ class _RawFileReader:
         segmented = self._raw.GetSegmentedScanFromScanNumber(number, stats)
         return _array(segmented.Positions), _array(segmented.Intensities)
 
+    def noise(self, number: int) -> tuple[np.ndarray, np.ndarray]:
+        """The m/z of a scan's centroids and the noise the instrument recorded at each (empty
+        for a scan without a centroid stream, such as an ion-trap scan)."""
+        centroids = self._raw.GetCentroidStream(number, False)
+        if centroids is None or centroids.Length <= 0:
+            return np.zeros(0), np.zeros(0)
+        return _array(centroids.Masses), _array(centroids.Noises)
+
     def close(self) -> None:
         self._raw.Dispose()
 
@@ -397,6 +405,17 @@ class ThermoFile:
     def scan(self, index: int, mz_window: tuple[float, float] | None = None) -> Scan:
         """The scan at position ``index`` (as in the scan table), with its arrays."""
         return self.read_scans([index], None if mz_window is None else [mz_window])[index]
+
+    fourier_transform = True  # its FTMS scans (Orbitrap); profile_record looks at those only
+
+    def scan_noise(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        """The m/z of the centroids of the scan at position ``index`` and the noise the
+        instrument recorded at each (empty when it records none)."""
+        reader = self._open()
+        get = getattr(reader, "noise", None)
+        if get is None:
+            return np.zeros(0), np.zeros(0)
+        return get(reader.first + int(index))
 
     def close(self) -> None:
         if self._reader is not None:

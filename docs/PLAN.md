@@ -1047,6 +1047,18 @@ Planned, not built:
    chosen, the values, and the replicate agreement. If gating matters, the design would follow
    `find_peak`: each peptide's drift range found from its undeuterated control and applied in
    every file, only for files that carry drift times and without instrument settings.
+23. **The fragment ions' isotope envelope may be wrong** (owner, 2026-11-05: check carefully,
+   on the private targeted Orbitrap dataset). The envelope that places and shapes a fragment's
+   bins (`[run.envelope]`: the ion type's composition, or a mixture of ion types a hydrogen
+   apart) looks as if it does not match the fragments' undeuterated spectra. To check before
+   any fix: the undeuterated fragment spectra against their envelope, peak by peak, per ion
+   type, charge, and MS level (MS2, and MS3 with its HCD pre-activation), as was done for the
+   peptides' (HISTORY 186); the ion-type mixture weights (`mode = "mixed"`) and the hydrogen
+   transfers (c-1, c+1, z+1); the charge a scan records (that dataset's MS3 trailer charge is
+   wrong for some precursors). Keep apart what the instrument removes: that dataset's Orbitrap
+   scans are reduced profile (HISTORY 299-300), so a fragment's weak isotope peaks are deleted
+   scan by scan and its summed envelope reads narrower than its composition even when the
+   composition is right.
 
 ## Risks and open decisions
 

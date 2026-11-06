@@ -168,9 +168,12 @@ def test_read_thermo_gives_the_spectra_of_read_mzml_and_repeats(fake_raw, tmp_pa
     assert [s.replace("run.raw", "run.mzML") for s in a.spectrum_id] == list(b.spectrum_id)
     src = a.source
     assert src["reader"] == "thermo" and src["thermo_reader"] == "RawFileReader test"
-    skip = ("reader", "thermo_reader", "runs", "files", "instruments")
+    skip = ("reader", "thermo_reader", "runs", "files", "instruments", "profile")
     assert {k: v for k, v in src.items() if k not in skip} == {
         k: v for k, v in b.source.items() if k not in skip}
+    # the raw file's FTMS scans are Fourier transform; the test mzML names no analyser
+    assert [p["fourier_transform"] for p in (src["profile"][0], b.source["profile"][0])] == [
+        True, None]
     assert src["instruments"][0]["model"] == "Orbitrap Fake" and b.source["instruments"] == [None]
     assert src["files"][0]["name"] == "run.raw" and src["files"][0]["algorithm"] == "sha256"
     assert mzml_series_targets(src)[1] == targets[1]
@@ -185,6 +188,95 @@ def test_read_thermo_gives_the_spectra_of_read_mzml_and_repeats(fake_raw, tmp_pa
         read_mzml_source(src)
     with pytest.raises(ValueError, match="not a Thermo raw read"):
         thermo.read_thermo_source(b.source)
+
+
+def _reduced(scans):
+    """The scans as an instrument's reduced profile stores them: each peak's points framed by
+    zeros (here two zeros per point), so that two thirds of the points are 0."""
+    out = []
+    for s in scans:
+        mz, y = np.asarray(s["mz"], float), np.asarray(s["intensity"], float)
+        pad = np.r_[mz - 0.03, mz + 0.03]
+        order = np.argsort(np.r_[mz, pad], kind="stable")
+        out.append({**s, "mz": np.r_[mz, pad][order], "intensity": np.r_[y, 0 * pad][order]})
+    return out
+
+
+def _with_analyser(path, accession, name):
+    """The mzML file with an instrument configuration naming one analyser (before its run)."""
+    text = path.read_text()
+    config = ('<instrumentConfigurationList count="1"><instrumentConfiguration id="IC1">'
+              '<componentList count="1"><analyzer order="1">'
+              f'<cvParam cvRef="MS" accession="{accession}" name="{name}"/></analyzer>'
+              '</componentList></instrumentConfiguration></instrumentConfigurationList>')
+    path.write_text(text.replace("<run", config + "<run", 1))
+    return path
+
+
+class NoiseReader(FakeReader):
+    """A FakeReader whose scans record a constant noise at their centroids."""
+
+    noise_level = 1e4
+
+    def noise(self, number):
+        mz = np.asarray(self.scans[number - self.first]["mz"], float)
+        return mz, np.full(len(mz), self.noise_level)
+
+
+def test_reduced_profile_scans_are_noticed(tmp_path, monkeypatch, caplog):
+    """Fourier-transform profile scans with many of their points 0 are reduced (the instrument
+    deleted the peaks below its noise threshold): each file's record says so per MS level, a
+    Thermo file's with the weakest kept peak against its recorded noise, ion-trap scans left
+    out; a read
+    warns once for the dataset and records it; full profile scans are not reduced, nor are the
+    zeros of an mzML file that names no Fourier-transform analyser (a Q-TOF's empty channels)."""
+    from hxex.cli import _profile_text, _reduced_profile_info
+    from hxex.io.mzml import profile_record, reduced_profile_text
+
+    full = time_course(n=6, ms2_every=2)
+    reduced = _reduced(full)
+    trap = {**reduced[1], "filter": "ITMS + p ESI Full ms2 1012.0@etd20.00", "time": 9.0}
+    with MzmlFile(write_mzml(tmp_path / "full.mzML", full)) as f:
+        plain = profile_record(f)
+    assert plain["reduced"] is False and set(plain["levels"]) == {"1", "2"}
+    assert plain["levels"]["1"]["zero_share"] == 0 and "cut" not in plain["levels"]["1"]
+    assert reduced_profile_text([plain]) is None and _reduced_profile_info([plain]) is None
+    raw = tmp_path / "run.raw"
+    raw.write_bytes(b"not really a raw file")
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: NoiseReader(
+        reduced + [trap]))
+    with ThermoFile(raw, thermo_dir="dlls") as f:
+        record = profile_record(f)
+    smallest = min(np.max(s["intensity"]) for s in full if s.get("ms_level", 1) == 1)
+    assert record["reduced"] is True and record["levels"]["1"]["zero_share"] == 0.667
+    assert record["levels"]["1"]["scans"] == 6 and record["levels"]["2"]["scans"] == 3  # no trap
+    assert record["levels"]["1"]["cut"] <= smallest / 1e4  # the weakest peaks' tops / noise
+    text = reduced_profile_text([record, plain, None])
+    assert text.startswith("1 of 3 files hold reduced profile scans (MS1/2: 67% of the points")
+    assert "x the noise the files record" in text and "read low or 0" in text
+    assert "MS1 reduced (67% of the points 0, weakest peaks kept" in _profile_text(record)
+    assert "MS1 not reduced (0% of the points 0)" in _profile_text(plain)
+    targets = [MzmlTarget(ENTRY)]
+    with caplog.at_level("WARNING", logger="hxex.io.mzml"):
+        a = read_thermo([MzmlRun(raw, "WT")], targets, project="p", thermo_dir="dlls")
+    assert a.source["profile"] == [record]
+    assert sum("reduced profile scans" in r.getMessage() for r in caplog.records) == 1
+    caplog.clear()
+    orbitrap = _with_analyser(write_mzml(tmp_path / "ot.mzML", reduced), "MS:1000484", "orbitrap")
+    unnamed = write_mzml(tmp_path / "unnamed.mzML", reduced)
+    tof = _with_analyser(write_mzml(tmp_path / "tof.mzML", reduced), "MS:1000084",
+                         "time-of-flight")
+    assert [MzmlFile(x).fourier_transform for x in (orbitrap, unnamed, tof)] == [True, None, False]
+    with caplog.at_level("WARNING", logger="hxex.io.mzml"):
+        b = read_mzml([MzmlRun(tmp_path / "full.mzML", "WT")], targets, project="p")
+        c = read_mzml([MzmlRun(orbitrap, "WT")], targets, project="p")
+        d = read_mzml([MzmlRun(unnamed, "WT"), MzmlRun(tof, "WT", rep=2)], targets, project="p")
+    assert b.source["profile"] == [plain] and c.source["profile"][0]["reduced"] is True
+    assert "cut" not in c.source["profile"][0]["levels"]["1"]  # mzML records no noise
+    assert [r["reduced"] for r in d.source["profile"]] == [False, False]
+    assert [r["fourier_transform"] for r in d.source["profile"]] == [None, False]
+    assert d.source["profile"][0]["levels"]["1"]["zero_share"] == 0.667  # recorded all the same
+    assert sum("reduced profile scans" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeypatch, capsys):

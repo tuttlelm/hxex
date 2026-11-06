@@ -7519,3 +7519,72 @@ CSVs or mzML if wanted.
     `test_find_peak_in_a_project_and_a_runs_own_row` (one series with a general row, and with a
     row per run), `test_fragments_of_a_runs_own_row_join_the_parents_series`. Bundles read
     with per-run rows before this keep their separate series until rerun.
+
+298. **Option 1 of item 294 tried: `b1` from replicate pairs of the controls (2026-11-05; scratch,
+    not adopted).** Disjoint pairs of replicate undeuterated and fully deuterated controls of one
+    series (loose screens passed, tops within 1.5x, below the onset), the difference with the mean
+    shift projected out, per replicate a^2 + z b1 I + c^2 I^2 on intensity groups (undeuterated
+    pairs alone are too few: 53 on the tutorial data). `b1` against the residuals': benchmark x1.18,
+    noisy set x1.03, tutorial x0.35 (its residual value 31 +- 20 was inflated too), Orbitrap x0.10
+    with a floor a = 3.1e4; the known-answer set has no pairs. Refits at 9 % with that `b1` and a^2
+    added to every per-bin variance (patched in): replicate calibration Orbitrap 0.66 -> 1.02,
+    benchmark 1.12 -> 1.07, noisy set 1.09 -> 1.07, tutorial 1.00 -> 1.13; but on the Orbitrap K > 1
+    rises from 21 / 17 / 15 % (undeuterated / fully deuterated / labelled) to 25 / 30 / 26 %
+    (fully deuterated controls should hold one population; Q-TOF 4-9 %); Q-TOF K about unchanged.
+    The inflated residual `b1` had been absorbing the Orbitrap's reproducible shape misfit, which
+    cancels in replicate differences: with the true noise the fit reads it as a second
+    population. So the misfit's cause comes first (option 2, areas). Scripts: `pair_b1.py`,
+    `refit_pairs.py` in `model_error_prediction/recalibration` (private, README).
+
+299. **The Orbitrap's misfit is lost signal from the instrument's per-scan cut (2026-11-05; items
+    294 and 298).** On the published Orbitrap digest's undeuterated controls the weak heavy isotope
+    peaks read low or zero, the same in every replicate (correlation of the residual 0.99; the
+    Q-TOF benchmark 0.58): M+3 / M+4 / M+5 median -13 / -45 / -60 % (dim third -39 / -90 / -100 %);
+    by predicted intensity, peaks of 1e5-1e6 read about 5e4 low, above 3e6 right, and 62 % of those
+    at 3e4-1e5 read 0 (the benchmark: within 2.4 % at every intensity, no zeros). Not the picker's
+    threshold (it keeps values below it), not heights against areas (an areas refit: the same
+    deficit, K > 1 25 / 22 / 19 % against 21 / 17 / 15 %, errors 0.71). Of the zeroed heavy peaks
+    of clean controls, half merged with a co-eluting species 10-40 ppm away (closer than the peak
+    width, about 33 ppm; the merged apex falls outside the +-10 ppm window, so `pick = "peak"`
+    gives 0), a third have another species' peak 40-100 ppm away and none of their own, and a
+    sixth have nothing near. The raw files (a Q Exactive HF) say why the peaks are weak or
+    missing: the stored profile is reduced (half its points 0); in each scan a peak whose top is
+    below about twice the recorded noise (noise ~7.6e3 per scan) is deleted and the flanks of the
+    rest are cut at about the noise; the baseline is about 0. In single scans (isotope peaks
+    against their scan's M+0 and natural abundance) a peak expected below the noise reads 0 in
+    85 % of scans, at 2-3 x the noise in 48 %, at 3-5 x in 21 %, above 10 x in 2 % or less; the
+    kept ones read 0.98-1.02 of expected above 3 x the noise (a cut, not a subtraction) and high
+    just above the cut (1.22 at 2-3 x: only upward fluctuations pass). The cut is 4.3 % of a
+    peptide's own tallest isotope peak in its best scan (median; 1-11 %), 0.85 % of a scan's base
+    peak. Its purpose is documented (Keenan et al., Nat. Commun. 2025: "low-intensity signals are
+    heavily censored to manage the volume of data stored"); no user setting for it was found.
+    *hxex* sums some 10-30 scans (median 26) of a retention-time window, so a weak isotope peak
+    loses every scan in which it sat under the cut: a roughly fixed loss, or the whole peak. This lost signal (taxonomy category 2) is what the
+    residual `b1` absorbs (item 294) and the replicate pairs cannot see (item 298). Options for
+    the owner: flag spectra or bins below the summed scans' cut (the recorded noise is in the raw
+    files); a detection-aware fit (censored bins); fewer, stronger scans per spectrum. Scripts:
+    `model_error_prediction/recalibration` (private, README).
+
+300. **Reduced profile scans noticed when scan files are read: one warning per dataset (owner,
+    2026-11-05; item 299).** Per file, over up to ten profile scans per MS level spread through
+    it (ion-trap `ITMS` scans left out): the median share of points exactly 0 and, for Thermo raw
+    files, the weakest kept peaks (1st percentile of the tops of the non-zero runs) over the noise
+    the file records at each centroid (`ThermoFile.scan_noise`, from the centroid stream); a level
+    is reduced at a share of 0.2 or more (`hxex.io.mzml.profile_record`, `REDUCED_ZERO_SHARE`).
+    The read record gains `profile` (one record per file); the read warns once
+    (`reduced_profile_text`), `hxex check` prints a line per run and the dataset sentence, `hxex
+    info` a `profile` row (results read before have none). On the published Orbitrap digest all
+    45 files read reduced (MS1 52-54 % of the points 0, weakest kept 1.7-1.8 x the recorded
+    noise); the private targeted Orbitrap set's MS1, MS2 and MS3 Orbitrap scans 50-57 %, 1.6-1.8 x
+    (its ion-trap MS2 scans 10 %); the top-down example's mzML 43-49 %; the private fragment
+    dataset's mzML 49 %. Nothing found in the raw files' metadata says a file is reduced (scan event and
+    method say only "Profile"; item 299's notes). The intact-peptide benchmark's Waters mzML (Synapt G2-S,
+    msconvert, drift bins summed) holds 40 % zeros too (ion counting: empty channels), but its
+    non-zero runs end at 0.61 of their top against 0.25-0.33 on the Orbitraps, and the benchmark
+    shows no weak-peak deficit (item 299): so only Fourier-transform data are judged: a Thermo raw
+    file's FTMS scans (`ThermoFile.fourier_transform`), an mzML file whose instrument
+    configuration names an orbitrap or FT-ICR analyser or an inductive detector
+    (`MzmlFile.fourier_transform`; the Waters conversion names only the instrument model: None,
+    no verdict; the zero share is recorded all the same). Not measured: full profile files.
+    Per-spectrum flags held until assessed further (owner). Guide: inputs.md "Reduced profile
+    data".
