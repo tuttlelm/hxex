@@ -7483,3 +7483,23 @@ CSVs or mzML if wanted.
     has them, residuals otherwise; areas on the Orbitrap; adjacent-scan differences from the raw
     files. Guide noise-model.md's Orbitrap sentence updated. Scripts: `orbitrap_forms*.py` in
     `model_error_prediction/recalibration` (private).
+
+295. **Waters ion mobility mzML and the last indexed spectrum (2026-11-05).** Converting Waters
+    HDMS `.raw` folders (a Synapt G2-S) with msConvert's `--combineIonMobilitySpectra` writes each
+    scan's 200 drift bins one after another: m/z out of order, each m/z of the instrument's grid
+    once per bin, plus a raw ion mobility array. *hxex* read such scans as they were, and its
+    profile summing (which assumes sorted points) lost the signal without a warning (a peak of
+    4,562 counts summed to 41). Now a scan with an ion mobility array is summed over its drift
+    time (`sum_mobility_bins`: sorted m/z, equal m/z added; identical to a separate collapse step
+    on a real file), and a scan whose m/z are out of order without one is refused, naming the
+    scan (every real mzML on this machine still reads). Drift gating (a peptide's own drift
+    range, as HDExaminer applies it) is not built: on one undeuterated file, summing every bin
+    instead of HDExaminer's (about 4 bins wide) added 9 % intensity and lowered the worst tenth
+    of shape matches with HDExaminer's spectra from 0.999 to 0.974 (median 1.000 / 0.999);
+    whether that changes the fits is to be measured before deciding (PLAN Next steps 22). Also
+    found: `MzmlFile._indexed_scan` read zero bytes for the last spectrum of an index (no next
+    offset), called the index stale and read every later scan through the whole file, with a
+    warning asking for a reconversion; fixed (reads on to `</spectrum>`), and
+    `test_single_scans_by_index` now checks that no warning is given. Guide inputs.md: the
+    msConvert command for Waters data and what drift summing means. Not changed: a file with an
+    extra non-float array (a deisotoped file's integer charge array) is still refused as a whole.

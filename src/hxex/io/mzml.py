@@ -3,8 +3,12 @@
 
 A small mzML 1.1 reader written with the standard library (no lxml): plain or indexed files,
 uncompressed or zlib-compressed 32- or 64-bit arrays, profile or centroid scans. Numpress
-compression is not supported and is reported. Thermo ``.raw`` files are read directly by
-:mod:`hxex.io.thermo` (with Thermo's RawFileReader), or converted first, for example with
+compression is not supported and is reported. A scan written with its ion mobility bins
+together (an ion mobility array beside the m/z and intensities, as msconvert's
+``--combineIonMobilitySpectra`` writes Waters HDMS data) is summed over its drift time
+(:func:`sum_mobility_bins`); a scan whose m/z are out of order without one is refused. Thermo
+``.raw`` files are read directly by :mod:`hxex.io.thermo` (with Thermo's RawFileReader), or
+converted first, for example with
 ThermoRawFileParser (``mono ThermoRawFileParser.exe -i=FILE.raw -b=FILE.mzML -f=1 -p``; ``-f=1``
 writes mzML and ``-p`` keeps profile data), which gives the same scans.
 
@@ -356,17 +360,41 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None) -> Scan:
     where = f"scan {meta.index} ({meta.id})"
     n = int(elem.get("defaultArrayLength", 0))
     arrays = {}
+    mobility = False
     for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
         kind, values = _decode(bda, n, where, groups)
         if kind:
             arrays[kind] = values
+        else:
+            mobility |= _is_mobility(bda)
     if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
         raise MzmlError(f"{where}: the m/z or the intensity array is missing")
     mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
     if mz_windows is not None:
         keep = in_windows(mz, mz_windows)
         mz, intensity = mz[keep], intensity[keep]
+    if mobility:
+        mz, intensity = sum_mobility_bins(mz, intensity)
+    elif len(mz) > 1 and bool((np.diff(mz) < 0).any()):
+        raise MzmlError(f"{where}: its m/z values are not in increasing order (the file is "
+                        "damaged or unusual: convert it again)")
     return replace(meta, mz=mz, intensity=intensity)
+
+
+def _is_mobility(bda) -> bool:
+    """Whether a binaryDataArray holds ion mobility values (any of the PSI-MS ion mobility
+    arrays: raw, mean or deconvoluted; drift times or inverse reduced mobilities)."""
+    return any("ion mobility" in p.get("name", "") for p in bda.findall(f"{_NS}cvParam"))
+
+
+def sum_mobility_bins(mz: np.ndarray, intensity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The spectrum of a scan written with its ion mobility bins together (msconvert's
+    ``--combineIonMobilitySpectra``): the bins follow one another, so the m/z values are out of
+    order and each m/z of the instrument's grid appears once per bin. Returns the sorted m/z
+    with the intensity of equal m/z summed: the scan summed over its drift time. Centroided
+    peaks are merged only where their m/z are equal."""
+    grid, where = np.unique(mz, return_inverse=True)
+    return grid, np.bincount(where, weights=intensity, minlength=len(grid))
 
 
 def iter_scans(
@@ -662,7 +690,8 @@ class MzmlFile:
         end = self._ends.get(start)
         with self.path.open("rb") as fh:
             fh.seek(start)
-            chunk = fh.read(end - start) if end is not None else b""
+            # the last spectrum has no next offset: read on to its end (the loop below)
+            chunk = fh.read(end - start) if end is not None else fh.read(1 << 20)
             if not chunk.startswith((b"<spectrum ", b"<spectrum>")):
                 raise StaleIndexError(self.path, index, "the index does not point at a spectrum")
             while b"</spectrum>" not in chunk:

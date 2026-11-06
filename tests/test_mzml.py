@@ -34,11 +34,11 @@ PEPTIDE, CHARGE = "RDKVQKEYAL", 2
 ENTRY = PeptideEntry("", "", PEPTIDE, "0001-0010", 1, 10, CHARGE)
 
 
-def _array(values, accession, *, float64=True, compress=True, numpress=False):
+def _array(values, accession, *, float64=True, compress=True, numpress=False, name="array"):
     raw = np.asarray(values, dtype="<f8" if float64 else "<f4").tobytes()
     if compress:
         raw = zlib.compress(raw)
-    params = [f'<cvParam cvRef="MS" accession="{accession}" name="array" value=""/>',
+    params = [f'<cvParam cvRef="MS" accession="{accession}" name="{name}" value=""/>',
               f'<cvParam cvRef="MS" accession="{"MS:1000523" if float64 else "MS:1000521"}" '
               'name="float" value=""/>',
               f'<cvParam cvRef="MS" accession="{"MS:1000574" if compress else "MS:1000576"}" '
@@ -54,7 +54,8 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
                param_groups=False):
     """scans: dicts with mz, intensity, time (minutes unless unit='s'), and optionally ms_level,
     filter, centroid (bool), precursor (m/z, charge, activation accession and name) or
-    precursors (several, first stage to last). ``param_groups``: the ms level and the spectrum
+    precursors (several, first stage to last), mobility (a drift time per point, written as
+    msconvert's raw ion mobility array). ``param_groups``: the ms level and the spectrum
     type given by reference to a ``referenceableParamGroup`` (as the PSI example files do)."""
     parts, groups = [], {}
     for i, s in enumerate(scans):
@@ -96,10 +97,12 @@ def write_mzml(path, scans, *, indexed=False, float64=True, compress=True, numpr
             '<cvParam cvRef="MS" accession="MS:1000512" name="filter string" '
             f'value="{s.get("filter", "")}"/>'
             "</scan></scanList>" + prec +
-            '<binaryDataArrayList count="2">'
+            f'<binaryDataArrayList count="{3 if "mobility" in s else 2}">'
             + _array(s["mz"], "MS:1000514", float64=float64, compress=compress, numpress=numpress)
             + _array(s["intensity"], "MS:1000515", float64=float64, compress=compress,
                      numpress=numpress)
+            + (_array(s["mobility"], "MS:1003007", name="raw ion mobility array")
+               if "mobility" in s else "")
             + "</binaryDataArrayList></spectrum>"
         )
     listed = (f'<referenceableParamGroupList count="{len(groups)}">' + "".join(groups.values())
@@ -239,15 +242,17 @@ def test_parameters_given_by_reference(tmp_path, indexed):
 
 
 @pytest.mark.parametrize("indexed", [True, False])
-def test_single_scans_by_index(tmp_path, indexed):
+def test_single_scans_by_index(tmp_path, indexed, caplog):
     scans = time_course(n=5, ms2_every=2)
     f = MzmlFile(write_mzml(tmp_path / "i.mzML", scans, indexed=indexed))
     assert bool(f._index_offsets()) == indexed
     every = list(iter_scans(f.path))
-    for i in (0, 3, len(scans) - 1):
-        one = f.scan(i)
-        assert one.index == i and one.time == every[i].time
-        np.testing.assert_array_equal(one.mz, every[i].mz)
+    with caplog.at_level(logging.WARNING):
+        for i in (len(scans) - 1, 0, 3):  # the last first: it has no next offset to stop at
+            one = f.scan(i)
+            assert one.index == i and one.time == every[i].time
+            np.testing.assert_array_equal(one.mz, every[i].mz)
+    assert caplog.text == "" and bool(f._index_offsets()) == indexed  # the index is kept
     lo, hi = every[0].mz[3], every[0].mz[10]
     cut = f.scan(0, mz_window=(lo, hi))
     assert cut.mz.min() >= lo and cut.mz.max() <= hi and len(cut.mz) == 8
@@ -1335,3 +1340,48 @@ def test_an_empty_scan_time_or_ms_level_names_the_scan(tmp_path):
     path.write_text(text.replace('name="ms level" value="1"', 'name="ms level" value=""', 1))
     with pytest.raises(MzmlError, match="scan 0 .*its ms level is ''"):
         MzmlFile(path).scans()
+
+
+def test_ion_mobility_bins_are_summed(tmp_path):
+    """A scan written with its drift bins one after another (msconvert's
+    --combineIonMobilitySpectra on Waters HDMS data: m/z out of order, each m/z once per bin,
+    a raw ion mobility array) is read as the scan summed over drift time; without an ion
+    mobility array, m/z out of order is refused."""
+    plain = time_course(n=3)
+    binned = []
+    for s in plain:
+        mz, y = s["mz"], s["intensity"]
+        # three bins on the same grid, the middle one holding most of the signal; each bin
+        # writes only part of the grid, so the sum needs points from every bin
+        parts = [(mz[::2], 0.25 * y[::2]), (mz, 0.5 * y), (mz[1::2], 0.25 * y[1::2])]
+        binned.append({**s, "mz": np.concatenate([p[0] for p in parts]),
+                       "intensity": np.concatenate([p[1] for p in parts]),
+                       "mobility": np.concatenate([np.full(len(p[0]), t)
+                                                   for p, t in zip(parts, (5.1, 5.2, 5.3),
+                                                                    strict=True)])})
+    for indexed in (False, True):
+        f = MzmlFile(write_mzml(tmp_path / f"im{indexed}.mzML", binned, indexed=indexed))
+        for i, s in enumerate(plain):
+            one = f.scan(i)
+            np.testing.assert_array_equal(one.mz, s["mz"])
+            expect = 0.5 * s["intensity"]
+            expect[::2] += 0.25 * s["intensity"][::2]
+            expect[1::2] += 0.25 * s["intensity"][1::2]
+            np.testing.assert_allclose(one.intensity, expect)
+        lo, hi = plain[0]["mz"][3], plain[0]["mz"][10]
+        cut = f.scan(0, mz_window=(lo, hi))
+        np.testing.assert_array_equal(cut.mz, plain[0]["mz"][3:11])
+    # read as spectra: the same as a file of the summed scans
+    summed = [{**s, "intensity": MzmlFile(tmp_path / "imFalse.mzML").scan(i).intensity}
+              for i, s in enumerate(plain)]
+    a = read_mzml([MzmlRun(tmp_path / "imFalse.mzML", "WT")], [MzmlTarget(ENTRY)], project="p")
+    b = read_mzml([MzmlRun(write_mzml(tmp_path / "sum.mzML", summed), "WT")],
+                  [MzmlTarget(ENTRY)], project="p")
+    for i in range(len(a)):
+        np.testing.assert_array_equal(a.spectrum(i)[0], b.spectrum(i)[0])
+        np.testing.assert_allclose(a.spectrum(i)[1], b.spectrum(i)[1])
+    # out of order without an ion mobility array: refused, naming the scan
+    bad = [{k: v for k, v in s.items() if k != "mobility"} for s in binned]
+    with pytest.raises(MzmlError, match=r"scan 0 \(scan=1\): its m/z values are not in "
+                                        "increasing order"):
+        MzmlFile(write_mzml(tmp_path / "bad.mzML", bad)).scan(0)

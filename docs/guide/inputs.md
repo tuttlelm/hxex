@@ -503,6 +503,21 @@ centroided scans are merged peak by peak. Profile data is recommended: when conv
 files to mzML with ThermoRawFileParser, keep profile data (`-p`) and use zlib rather than
 numpress compression (numpress is refused).
 
+Waters `.raw` folders are converted with ProteoWizard's msConvert, for example:
+
+```
+msconvert RUN.raw --mzML --64 --zlib --ignoreCalibrationScans --combineIonMobilitySpectra --filter "msLevel 1"
+```
+
+`--ignoreCalibrationScans` leaves out the lockspray scans, and `msLevel 1` the high-energy scans
+of MSe. Data acquired with ion mobility (HDMS, HDMSe) needs `--combineIonMobilitySpectra`, which
+writes each scan with its drift-time bins together; *hxex* adds the bins up, so each scan is
+read summed over its whole drift time. *hxex* cannot yet keep only a peptide's own drift-time
+range, as some other programs do, so a species that elutes with the peptide at a nearby m/z but
+drifts at another time stays in its spectra. If the acquisition did not correct the m/z with
+the lockspray, msConvert's `--filter "lockmassRefiner mz=… tol=…"` (with the reference
+compound's m/z) can do it; put it before the other filters.
+
 ### Fragment ions
 
 Each `[[input.fragments]]` table adds fragment-ion targets made from every peptide of the table:

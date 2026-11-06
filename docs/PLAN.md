@@ -1033,6 +1033,20 @@ Planned, not built:
    uncapped fits had shown fixed 50:50 shares and a high position above full deuteration. To
    evaluate before building, with the usual yardsticks (known-answer K, controls read as two,
    calibration), and the series without a measured fully deuterated control.
+21. **Bug: the last spectrum of an indexed mzML marked the index stale** (found 2026-11-05 on
+   msconvert output; FIXED the same day, HISTORY 295). `MzmlFile._indexed_scan` read zero bytes
+   for the last spectrum (no next offset), called the index stale and read the file through from
+   then on; it now reads on to `</spectrum>`.
+22. **Drift-time gating for ion mobility data** (owner, 2026-11-05: evaluate first). Scans
+   written with their drift bins together (msConvert's `--combineIonMobilitySpectra`, Waters
+   HDMS) are now read summed over drift time (HISTORY 295). Other programs keep only each
+   peptide's own drift range, which removes co-eluting species at a nearby m/z that drift at
+   another time. Measure first, on the intact-peptide benchmark's Waters files: bundles from
+   drift-summed spectra against bundles from spectra gated as HDExaminer gated them (its
+   results table gives each file's retention and drift range per peptide), comparing the K
+   chosen, the values, and the replicate agreement. If gating matters, the design would follow
+   `find_peak`: each peptide's drift range found from its undeuterated control and applied in
+   every file, only for files that carry drift times and without instrument settings.
 
 ## Risks and open decisions
 
