@@ -204,7 +204,14 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
   time is fitted with `A exp(-kt) + C`, giving one rate per residue (`ladder_rates.csv`, and a
   fitted curve with a ±1 standard-error band on the ladder figures).
 - Closure: an N-terminal fragment, plus the C-terminal fragment that completes it, minus the
-  precursor should be zero; misses beyond `tolerance` are flagged (`closure.csv`).
+  precursor should be zero; misses beyond `tolerance` are flagged (`closure.csv`). The
+  precursor is the parent's MS1 spectrum in the same run, where the project reads the parents
+  (`parents = true`); otherwise the precursor ion read in the fragment scans. The MS1 spectrum
+  is the safer reference: the isolation window can let another species onto the precursor's
+  m/z in the fragment scans (on a targeted dataset, 2+ precursors read 0.6 to 10 D above their
+  MS1 spectra, while 3+ and 4+ ones agreed within 0.1 D). `closure.csv` says which was used
+  (`reference`: `MS1` or `M`), and so does the closure figure's axis. A precursor ion that
+  reads more than 1 D from its MS1 spectrum is flagged `precursor_off`.
 - Per-residue rates from both ladders together (`ladder_residues.csv`, with `fit_rates =
   true`): an N-terminal and a C-terminal ion type are paired, and where they disagree the
   residue is marked. Conditions, precursor charges, fragment charges and runs are never pooled,

@@ -250,6 +250,7 @@ Flags mark spectra for review; nothing is dropped. They appear in the `flags` co
 | `off_mz` | the series' undeuterated controls put its peaks further from the run's calibration than the run's other series: most likely another species (often the retention time points at another peptide of almost the same mass); the analysis leaves the series out ([details](picking-window.md#a-series-whose-peaks-sit-off-its-mz)) |
 | `rt_found` | the series was read at the retention time found for its exact m/z, not the peptide table's (`find_retention_time = "automatic"`; [details](inputs.md#when-the-peptide-tables-time-is-wrong)) |
 | `drift_unclear` | the series was read from files with ion mobility without a clear drift-time range: it had no undeuterated control with signal (every drift time was summed), or its undeuterated drift profile has a second peak ([details](inputs.md#ion-mobility-each-peptides-drift-time)) |
+| `precursor_off` | the precursor ion read in the fragment scans (unreacted, at the parent's charge) is more than `max_precursor_offset` (1 D) from its parent's MS1 spectrum in the same run: most likely another species in the isolation window shares its m/z ([details](experiments.md#fragments)) |
 | `elution_cut` | a fragment spectrum whose elution peak, found in its run (`find_fragment_peak`), reaches the first or last scan the instrument recorded for its precursor: the acquisition missed part of the peak, so the spectrum is dimmer than it should be ([details](inputs.md#finding-each-fragment-channels-peak)) |
 | `poor_envelope` | the fragment envelope could not be measured well |
 | `saturated` | an undeuterated control whose peaks beside the tallest one read higher than natural abundance predicts: the tallest peak reads low, the usual sign of detector saturation |
@@ -432,7 +433,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `fragment_uptake.csv` | per fragment spectrum: the K=1 mean, its error, amides, condition, parent |
 | `ladder_rates.csv` | (with `[analysis.fragments] fit_rates = true`) per one-residue ladder step: rate and amplitude with errors, `resolved`, `precise`; with `kint`, intrinsic rate and protection |
 | `ladder_residues.csv` | (with `[analysis.fragments] fit_rates = true`) per residue and N-/C-terminal ion pair: the combined rate, misfit, `agreement` |
-| `closure.csv` | per complementary pair and split: the miss c + z - M, flagged beyond the tolerance |
+| `closure.csv` | per complementary pair and split: the miss c + z minus the precursor, flagged beyond the tolerance; `reference` says what the precursor was: `MS1` (the parent's MS1 spectrum in the same run) or `M` (its ion in the fragment scans, when the parents were not read) |
 
 ## Figures from `hxex analyse`
 

@@ -8,7 +8,8 @@ deuteration of every fragment-ion spectrum of a run read from mzML or Thermo fil
 :func:`ladder_steps` lists the steps of one ion series and the residues each measures;
 :func:`difference_trace` gives the difference of two fragments over time, matched scan by scan;
 :func:`closure_trace` and :func:`closure_table` test that complementary ions (c and z, a and x,
-b and y) add up to the precursor, a check of the fragments' fits;
+b and y) add up to the precursor (its MS1 spectrum where the run read it, :func:`parent_uptake`;
+else its ion in the fragment scans), a check of the fragments' fits;
 :func:`fit_decay` fits ``A exp(-k t) + C`` to a trace; :func:`fit_residues` fits per-residue
 deuteration (0 to 1) to all fragments of a parent at one time, by bounded least squares.
 
@@ -280,6 +281,109 @@ def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
                           nterm_subtract=first.nterm_subtract, amide_rules=first.amide_rules)
 
 
+@dataclass(frozen=True)
+class ParentUptake:
+    """K = 1 deuteration of the MS1 spectra of the fragments' parents (:func:`parent_uptake`),
+    one row each: ``run``, ``sample``, ``parent`` (its sequence), ``parent_charge``, ``rep``,
+    ``time`` (s; the undeuterated control 0) and ``mean`` (deuterons beyond natural abundance)
+    with ``mean_se`` (K = 1 bootstrap, NaN without one)."""
+
+    run: np.ndarray
+    sample: np.ndarray
+    parent: np.ndarray
+    parent_charge: np.ndarray
+    rep: np.ndarray
+    time: np.ndarray
+    mean: np.ndarray
+    mean_se: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.time)
+
+    def lookup(self, parent: str, parent_charge: int, run=None, sample=None) -> dict[tuple, tuple]:
+        """``(run, sample, parent_charge, rep, time)`` -> ``(mean, mean_se)`` of one parent
+        and charge (and run, sample when given), as :func:`closure_trace` matches them."""
+        keep = (self.parent == parent) & (self.parent_charge == int(parent_charge))
+        if run is not None:
+            keep &= self.run.astype(str) == str(run)
+        if sample is not None:
+            keep &= self.sample.astype(str) == str(sample)
+        return {(str(self.run[i]), str(self.sample[i]), int(self.parent_charge[i]),
+                 int(self.rep[i]), round(float(self.time[i]), 6)):
+                (float(self.mean[i]), float(self.mean_se[i])) for i in np.flatnonzero(keep)}
+
+
+def parent_uptake(results) -> ParentUptake:
+    """The K = 1 deuteration of the MS1 spectra of every peptide that is the parent of a
+    fragment series of ``results`` (read from mzML or Thermo files with ``parents``): the
+    reference of the closure test where the run has it, since the precursor's own ion in the
+    fragment scans can hold another species in the isolation window (on a targeted dataset, 2+
+    precursors read 0.6 to 10 D above their MS1 spectra; HISTORY 307). Rejected spectra and
+    fully deuterated controls are left out, as in :func:`fragment_uptake`. From a
+    :class:`hxex.analysis.RunSet`, every run's, with ``run`` and ``sample`` as there."""
+    from ..io.mzml import mzml_series_targets
+    from .runs import RunSet
+
+    names = ("run", "sample", "parent", "parent_charge", "rep", "time", "mean", "mean_se")
+    kinds = {"parent_charge": np.int64, "rep": np.int64, "time": float, "mean": float,
+             "mean_se": float, "run": object}
+    if isinstance(results, RunSet):
+        parts = []
+        for name, r in results.runs.items():
+            try:
+                u = parent_uptake(r)
+            except ValueError:
+                continue  # not read from scan files
+            if len(u):
+                parts.append({**{n: getattr(u, n) for n in names},
+                              "run": np.full(len(u), name, dtype=object),
+                              "sample": np.array([results.state(name, s)[1] for s in u.sample],
+                                                 dtype=str)})
+        if not parts:
+            return ParentUptake(**{n: np.array([], dtype=kinds.get(n, str)) for n in names})
+        return ParentUptake(**{n: np.concatenate([p[n] for p in parts]) for n in names})
+    settings = results.settings
+    source = settings.spectra_source if settings is not None else None
+    if not source:
+        raise ValueError("parent_uptake needs a run read from mzML or Thermo files")
+    targets = mzml_series_targets(source)
+    fit, binned = results.fit, results.binned
+    rows: dict[str, list] = {n: [] for n in names}
+    if 1 not in fit.fits:
+        return ParentUptake(**{n: np.array(v, dtype=kinds.get(n, str)) for n, v in rows.items()})
+    parents = set()
+    for t in targets.values():
+        extra = dict(t.entry.extra)
+        if "fragment" in extra:
+            parents.add((extra["parent_peptide"], str(extra["parent_range"]),
+                         int(extra["parent_charge"])))
+    keep = np.asarray(fit.role, dtype=str) != FULLDEUT
+    if results.review is not None:
+        keep &= results.review.status_of(fit) != "rejected"
+    times = np.asarray(fit.time, dtype=float).copy()
+    times[(np.asarray(fit.role, dtype=str) == UNDEUT) & ~np.isfinite(times)] = 0.0
+    means = fit.fits[1].means[:, 0]
+    index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
+    for i in np.flatnonzero(keep):
+        target = targets.get(int(fit.data_id[i]))
+        if target is None or target.ms_level != 1:
+            continue
+        e = target.entry
+        if "fragment" in dict(e.extra) or (e.peptide, str(e.peptide_range),
+                                           int(e.charge)) not in parents:
+            continue
+        j = index[str(fit.spectrum_id[i])]
+        boot = results.bootstrap_for(i, 1)
+        for name, value in (("run", ""), ("sample", str(binned.sample[j])),
+                            ("parent", e.peptide), ("parent_charge", int(e.charge)),
+                            ("rep", int(binned.rep[j])), ("time", float(times[i])),
+                            ("mean", float(means[i])),
+                            ("mean_se", float(boot.mean_se[i, 0]) if boot is not None
+                             else np.nan)):
+            rows[name].append(value)
+    return ParentUptake(**{n: np.array(v, dtype=kinds.get(n, str)) for n, v in rows.items()})
+
+
 # --- ladder steps -------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -467,10 +571,14 @@ def closure_trace(
     n_charge: int = 1,
     c_charge: int = 1,
     precursor_charge: int | None = None,
+    parents: ParentUptake | None = None,
     **conditions,
 ) -> Trace:
     """``D(n_fragment) + D(c_fragment) - D(precursor)`` over time, matched scan by scan (the
-    closure test). An N-terminal ion of ``k`` residues and the complementary
+    closure test). With ``parents`` (:func:`parent_uptake`) holding the parent at its charge,
+    the precursor's deuteration is that of its MS1 spectrum in the same run, replicate and time
+    (``precursor`` and ``precursor_charge`` then do not apply; see
+    :func:`closure_reference`). An N-terminal ion of ``k`` residues and the complementary
     C-terminal ion of ``n - k`` (``'c-1:3'`` and ``'z-dot:5'`` of an 8-residue parent) share the
     precursor's atoms, so their deuterium adds up to the precursor's whatever scrambling or
     hydrogen transfer happened; a miss points at the fragments' fits (envelope, ion types,
@@ -483,12 +591,12 @@ def closure_trace(
     c_ion, _, j = c_fragment.rpartition(":")
     _check_partners(n_ion, c_ion)
     rows = uptake.where(**conditions) & (uptake.time > 0)
-    parents = np.unique(uptake.parent[rows])
-    if len(parents) > 1:
-        raise ValueError(f"the rows hold {len(parents)} parents; choose one (parent=...)")
-    if not len(parents):
+    sequences = np.unique(uptake.parent[rows])
+    if len(sequences) > 1:
+        raise ValueError(f"the rows hold {len(sequences)} parents; choose one (parent=...)")
+    if not len(sequences):
         return Trace(np.empty(0), np.empty(0), np.empty(0))
-    n = len(chem.parse_sequence(str(parents[0])))
+    n = len(chem.parse_sequence(str(sequences[0])))
     if int(k) + int(j) != n:
         raise ValueError(f"{n_fragment} and {c_fragment} do not make up the {n}-residue parent")
 
@@ -501,6 +609,7 @@ def closure_trace(
         return {key(i): i for i in sel}
 
     c_rows = index(c_fragment, c_charge)
+    ms1 = _parent_lookup(uptake, rows, parents)
     m_sel = np.flatnonzero(rows & uptake.where(fragment=f"{precursor}:{n}"))
     m_charge = (np.full(len(m_sel), precursor_charge) if precursor_charge is not None
                 else uptake.parent_charge[m_sel])
@@ -508,14 +617,44 @@ def closure_trace(
               if int(uptake.charge[i]) == int(z)}
     t, y, se = [], [], []
     for kk, i in index(n_fragment, n_charge).items():
-        jc, jm = c_rows.get(kk), m_rows.get(kk)
-        if jc is None or jm is None:
+        jc = c_rows.get(kk)
+        if jc is None:
             continue
+        if ms1 is not None:  # the parent's MS1 spectrum (no condition: one per run)
+            ref = ms1.get((kk[0], kk[1], kk[3], kk[4], kk[5]))
+            if ref is None:
+                continue
+            ref_mean, ref_se = ref
+        else:
+            jm = m_rows.get(kk)
+            if jm is None:
+                continue
+            ref_mean, ref_se = uptake.mean[jm], uptake.mean_se[jm]
         t.append(uptake.time[i])
-        y.append(uptake.mean[i] + uptake.mean[jc] - uptake.mean[jm])
-        se.append(np.sqrt(uptake.mean_se[i] ** 2 + uptake.mean_se[jc] ** 2
-                          + uptake.mean_se[jm] ** 2))
+        y.append(uptake.mean[i] + uptake.mean[jc] - ref_mean)
+        se.append(np.sqrt(uptake.mean_se[i] ** 2 + uptake.mean_se[jc] ** 2 + ref_se ** 2))
     return _average(np.array(t, float), np.array(y, float), np.array(se, float))
+
+
+def _parent_lookup(uptake: FragmentUptake, rows: np.ndarray, parents: ParentUptake | None):
+    """The MS1 values of the parent of ``rows`` (one parent, one precursor charge), or None
+    when ``parents`` does not hold it (the closure then takes the precursor ion)."""
+    if parents is None or not len(parents) or not rows.any():
+        return None
+    charges = np.unique(uptake.parent_charge[rows])
+    if len(charges) != 1:
+        return None
+    found = parents.lookup(str(uptake.parent[rows][0]), int(charges[0]))
+    return found or None
+
+
+def closure_reference(uptake: FragmentUptake, parents: ParentUptake | None = None,
+                      **conditions) -> str:
+    """What the closure of the rows selected by ``conditions`` is measured against: ``'MS1'``
+    (the parent's MS1 spectra, :func:`parent_uptake`) or ``'M'`` (the precursor's ion in the
+    fragment scans)."""
+    rows = uptake.where(**conditions) & (uptake.time > 0)
+    return "M" if _parent_lookup(uptake, rows, parents) is None else "MS1"
 
 
 @dataclass(frozen=True)
@@ -524,7 +663,9 @@ class ClosureTable:
     sample, condition, parent, precursor charge and split ``k`` (residues of the N-terminal
     ion): the two fragments, the number of matched scans ``n``, the ``median`` miss (deuterons),
     its ``spread`` (half the interquartile range), the ``mean`` and ``flagged`` (the median
-    beyond ``tolerance``). ``run`` and ``merged`` as in :class:`FragmentUptake`."""
+    beyond ``tolerance``); ``reference``: what the fragments are measured against, ``'MS1'``
+    (the parent's MS1 spectra) or ``'M'`` (the precursor's ion in the fragment scans). ``run``
+    and ``merged`` as in :class:`FragmentUptake`."""
 
     sample: np.ndarray
     condition: np.ndarray
@@ -533,6 +674,7 @@ class ClosureTable:
     k: np.ndarray
     n_fragment: np.ndarray
     c_fragment: np.ndarray
+    reference: np.ndarray
     n: np.ndarray
     median: np.ndarray
     spread: np.ndarray
@@ -567,8 +709,10 @@ def closure_table(
     precursor_charge: int | None = None,
     min_time: float | None = None,
     tolerance: float = 0.25,
+    parents: ParentUptake | None = None,
 ) -> ClosureTable:
-    """The closure test (:func:`closure_trace`) of every split ``k`` with both ions measured,
+    """The closure test (:func:`closure_trace`, against the parent's MS1 spectra where
+    ``parents`` holds them) of every split ``k`` with both ions measured,
     for each sample, condition, parent and precursor charge, from ``min_time`` (s; spurious
     early points). A pair whose median miss is beyond ``tolerance`` deuterons is ``flagged``.
     ``n_ion`` and ``c_ion`` are complementary (c and z for ETD and ECD, a and x for UVPD, b and
@@ -582,20 +726,22 @@ def closure_table(
         n = len(chem.parse_sequence(parent))
         sel = dict(run=run, sample=sample, condition=condition, parent=parent, parent_charge=pz)
         have = set(uptake.fragment[uptake.where(**sel)].tolist())
+        reference = closure_reference(uptake, parents, **sel)
         for k in range(1, n):
             a, b = f"{n_ion}:{k}", f"{c_ion}:{n - k}"
             if a not in have or b not in have:
                 continue
             tr = closure_trace(uptake, a, b, precursor=precursor, n_charge=n_charge,
                                c_charge=c_charge, precursor_charge=precursor_charge,
-                               **sel).after(min_time)
+                               parents=parents, **sel).after(min_time)
             if not len(tr):
                 continue
             q1, med, q3 = np.percentile(tr.mean, [25, 50, 75])
             for name, value in (("run", run), ("merged", merged), ("sample", sample),
                                 ("condition", condition),
                                 ("parent", parent), ("parent_charge", pz), ("k", k),
-                                ("n_fragment", a), ("c_fragment", b), ("n", len(tr)),
+                                ("n_fragment", a), ("c_fragment", b),
+                                ("reference", reference), ("n", len(tr)),
                                 ("median", med), ("spread", (q3 - q1) / 2),
                                 ("mean", float(np.mean(tr.mean))),
                                 ("flagged", bool(abs(med) > tolerance))):

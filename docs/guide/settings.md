@@ -356,6 +356,7 @@ Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, no
 | `max_mz_offset_ppm` | number | `15.0` | mz_shift: a series' m/z offset (ppm) beyond this, for series [run.picker] off_mz_sd does not check (fragment ions; false: screen off) |
 | `saturated_ratio` | number | `1.15` | saturated: an undeuterated control whose peaks beside the tallest read above this times natural abundance (false: off) |
 | `tails_low_ratio` | number | `0.7` | tails_low: an undeuterated control whose tail peaks (1-10 % of the top) read below this times natural abundance (false: off) |
+| `max_precursor_offset` | number | `1.0` | precursor_off: a precursor ion in the fragment scans (unreacted) reading further than this (D) from its parent's MS1 spectrum in the same file (false: off) |
 
 ## `[run.registry]`
 

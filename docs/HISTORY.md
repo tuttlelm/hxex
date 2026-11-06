@@ -7692,3 +7692,22 @@ CSVs or mzML if wanted.
     four of one early-eluting peptide in the two runs that eluted earliest (73 c-1/z-dot spectra).
     Not measured: the ladder rates against the HDX-NMR with the setting on.
 
+307. **Closure against the parent's MS1 spectrum; flag precursor_off (2026-11-06).** The
+    closure figures of the targeted Orbitrap dataset sat below zero. Two causes (private scratch,
+    K = 1, find_fragment_peak on): (1) the closure's reference, the unreacted precursor ion M read
+    in the fragment scans, is wrong for the 2+ EThcD precursors: M minus the same peptide's MS1
+    spectrum in the same run (labelled runs, median over runs) +0.6 to +9.8 D for five of them
+    (one more partly), every 3+ and 4+ ETD precursor within 0.1 D (per spectrum: 90th percentile
+    0.14 D, 2 of 204 beyond 1 D; 2+ EThcD median 2.1 D, 57 of 85 beyond 1 D); most likely another
+    species in the 10 m/z isolation window (the October note on the 2+ EThcD precursors whose M
+    does not follow time). These gave the -4 to -12 D closures. (2) Against the MS1 spectra the
+    miss remains: median -0.30 D, -0.10 to -0.20 D for the brightest fifth of fragment pairs at
+    every deuteration, about -1 D for the middle fifths, as the per-scan cut predicts (PLAN 24;
+    the simulation's -0.04 to -0.12 D per fragment at 32-128 x the noise, -0.2 to -0.3 at 4-8 x).
+    BUILT: `parent_uptake` (the MS1 K = 1 values of the fragments' parents) is the closure's
+    reference where the run read the parents, else M (`closure.csv` column `reference`, the
+    figure's y axis); quality flag `precursor_off` with statistic `precursor_offset` (M minus MS1,
+    same file) beyond `[run.quality] max_precursor_offset` (1 D). On the dataset: pairs with a
+    median miss beyond 2 D 117 -> 76 of 318; 140 of 584 precursor spectra flagged, in the 2+ EThcD
+    channels (31-36, 31-50, 37-50, 73-87, 73-89 nearly all; 110-125 8 of 34), 3+/4+ ETD 1 of 340.
+

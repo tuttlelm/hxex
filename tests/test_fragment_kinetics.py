@@ -316,6 +316,77 @@ def test_closure_of_complementary_ions():
             closure_trace(u, *bad)
 
 
+def test_closure_against_the_parents_ms1_spectra():
+    """Where the run read the parent's MS1 spectra (parent_uptake), the closure is measured
+    against them: a precursor ion that reads another species (here 3 D too heavy) fails the test
+    against M and passes against MS1; the table and the figure say which reference they used."""
+    from hxex.analysis import ParentUptake, closure_reference
+    from hxex.report import closure_figure
+
+    u = synthetic()
+    m = u.where(fragment="M:8")
+    parents = ParentUptake(run=u.run[m], sample=u.sample[m], parent=u.parent[m],
+                           parent_charge=u.parent_charge[m], rep=u.rep[m], time=u.time[m],
+                           mean=u.mean[m].copy(), mean_se=u.mean_se[m])
+    bad = u.select(np.ones(len(u), dtype=bool))
+    bad.mean[m] += 3.0
+    against_m = closure_table(bad, "c", "z", precursor_charge=1)
+    assert set(against_m.reference) == {"M"} and against_m.flagged.all()
+    against_ms1 = closure_table(bad, "c", "z", parents=parents)
+    assert set(against_ms1.reference) == {"MS1"} and not against_ms1.flagged.any()
+    assert np.allclose(against_ms1.median, 0.0, atol=1e-12)
+    assert closure_reference(bad) == "M" and closure_reference(bad, parents) == "MS1"
+    # another parent charge, or none: M
+    other = dataclasses.replace(parents, parent_charge=parents.parent_charge + 1)
+    assert set(closure_table(bad, "c", "z", precursor_charge=1, parents=other).reference) == {"M"}
+    fig = closure_figure(bad, "c", "z", parents=parents)
+    assert "MS1_z3" in fig.axes[0].get_ylabel()
+    fig = closure_figure(bad, "c", "z", precursor_charge=1)
+    assert "M_z1" in fig.axes[0].get_ylabel()
+
+
+def test_parent_uptake_and_the_precursor_offset():
+    """parent_uptake: the MS1 spectra of the fragments' parents (not of other peptides, not the
+    fully deuterated control); precursor_offsets: the unreacted precursor ion minus its parent's
+    MS1 spectrum in the same file, which flags precursor_off beyond max_precursor_offset."""
+    from hxex.analysis import parent_uptake
+    from hxex.io.mzml import MzmlTarget
+    from hxex.quality import QualityConfig, precursor_offsets
+
+    other = PeptideEntry("f", "S", "AKLMR", "30-34", 30, 34, 2)
+    frags = fragment_targets(PARENT, "M:8:3 c:4:1", activation="ETD")  # unreacted M, one c
+    targets = [MzmlTarget(PARENT), MzmlTarget(other)] + frags
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    # two files: a labelled one (M agrees with MS1) and one where M reads 2.5 D too heavy
+    rows = [(d, f) for f in ("a.raw", "b.raw") for d in range(len(targets))]
+    data_id = np.array([d for d, _ in rows])
+    means = np.array([{0: 4.0, 1: 2.0, 2: 4.1, 3: 1.0}[d] + (2.5 if (f, d) == ("b.raw", 2)
+                                                             else 0.0) for d, f in rows])
+    ids = np.array([f"p:S/{f}/{d}/scans1-9" for d, f in rows])
+    labels = np.array([f"{f} scans1-9" for _, f in rows])
+    role = np.array(["" if f == "a.raw" else "fulldeut" for _, f in rows], dtype="<U8")
+    fit = _Fit(means, data_id, np.where(role == "", 60.0, np.nan), ids, role=role)
+    off = precursor_offsets(fit, source, labels)
+    assert np.isfinite(off).sum() == 2  # the two M spectra only
+    assert off[(data_id == 2) & (labels == "a.raw scans1-9")][0] == pytest.approx(0.1)
+    assert off[(data_id == 2) & (labels == "b.raw scans1-9")][0] == pytest.approx(2.6)
+    assert QualityConfig().max_precursor_offset == 1.0
+    with pytest.raises(ValueError, match="max_precursor_offset"):
+        QualityConfig(max_precursor_offset=0)
+    assert np.isnan(precursor_offsets(fit, {"reader": "hxexpress"}, labels)).all()
+    n = len(rows)
+    results = SimpleNamespace(
+        settings=SimpleNamespace(spectra_source=source), fit=fit, review=None,
+        binned=SimpleNamespace(spectrum_id=ids, sample=np.full(n, "S"), rep=np.ones(n, int)),
+        bootstrap_for=lambda i, k: None)
+    p = parent_uptake(results)
+    assert len(p) == 1 and p.parent[0] == PARENT.peptide and p.mean[0] == 4.0  # not the FD file
+    assert p.lookup(PARENT.peptide, 3) == {("", "S", 3, 1, 60.0): (4.0, pytest.approx(np.nan,
+                                                                                      nan_ok=True))}
+
+
 def stub_run(conditions=("gentle", "harsh"), parent=None):
     """A fitted fragment run (the objects fragment_uptake reads) whose fragments are the sums of
     their residues' decays, every fragment of one condition from the same scans."""

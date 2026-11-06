@@ -1788,6 +1788,9 @@ _COMMENTS: dict[str, str] = {
                                      "ions; false: screen off)",
     "run.quality.saturated_ratio": "saturated: an undeuterated control whose peaks beside the "
                                    "tallest read above this times natural abundance (false: off)",
+    "run.quality.max_precursor_offset": "precursor_off: a precursor ion in the fragment scans "
+                                        "(unreacted) reading further than this (D) from its "
+                                        "parent's MS1 spectrum in the same file (false: off)",
     "run.quality.tails_low_ratio": "tails_low: an undeuterated control whose tail peaks (1-10 % "
                                    "of the top) read below this times natural abundance "
                                    "(false: off)",

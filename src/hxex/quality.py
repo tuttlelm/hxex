@@ -47,6 +47,14 @@ signal never reach the fit and are handled before it.
   signal, so every drift time was summed, or its undeuterated drift profile has a second peak
   outside the range (another ion at that m/z, or the peptide in two shapes): check its
   spectra, or give the peptide its own ``drift_start``, ``drift_end``.
+- ``precursor_off``: the precursor's own ion in the fragment scans (``M``, unreacted: at the
+  parent's charge) reads more than ``max_precursor_offset`` deuterons (K = 1 means) from its
+  parent's MS1 spectrum in the same file: most likely another species in the isolation window
+  shares its m/z. Measured on a targeted dataset (HISTORY 307): 3+ and 4+ precursors within
+  0.14 D (90th percentile; 2 of 204 spectra beyond 1 D), 2+ precursors 2.1 D (median; 57 of 85
+  beyond 1 D). The statistic is ``precursor_offset`` (D, M minus MS1); not assessed without the
+  parents' MS1 spectra or the K = 1 fits. The closure test takes the MS1 spectra as its
+  reference where they were read (:func:`hxex.analysis.parent_uptake`).
 - ``elution_cut``: a fragment spectrum whose elution peak, found per run (``[input.scans]
   find_fragment_peak``), reaches the first or last scan the instrument recorded for its
   precursor: the scheduled acquisition cut the peak (retention moved in that run), so part of
@@ -99,7 +107,7 @@ from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
-              "drift_unclear", "elution_cut")
+              "drift_unclear", "elution_cut", "precursor_off")
 
 
 @dataclass(frozen=True)
@@ -118,6 +126,8 @@ class QualityConfig:
       tallest read above this times natural abundance; None: off.
     - ``tails_low_ratio``: ``tails_low`` when an undeuterated control's tail peaks read below
       this times natural abundance; None: off.
+    - ``max_precursor_offset`` (deuterons): ``precursor_off`` when a precursor ion in the
+      fragment scans reads further than this from its parent's MS1 spectrum; None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -128,6 +138,7 @@ class QualityConfig:
     max_mz_offset_ppm: float | None = 15.0
     saturated_ratio: float | None = 1.15
     tails_low_ratio: float | None = 0.7
+    max_precursor_offset: float | None = 1.0
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -142,6 +153,8 @@ class QualityConfig:
             raise ValueError("max_mz_offset_ppm must be > 0 (or None to skip the screen)")
         if self.saturated_ratio is not None and not self.saturated_ratio > 1:
             raise ValueError("saturated_ratio must be > 1 (or None to skip the screen)")
+        if self.max_precursor_offset is not None and not self.max_precursor_offset > 0:
+            raise ValueError("max_precursor_offset must be > 0 (or None to skip the screen)")
         if self.tails_low_ratio is not None and not 0 < self.tails_low_ratio < 1:
             raise ValueError("tails_low_ratio must be between 0 and 1 (or None to skip the screen)")
 
@@ -194,13 +207,17 @@ class QualityFlags:
     undeut_high: np.ndarray | None = None
     drift_unclear: np.ndarray | None = None
     elution_cut: np.ndarray | None = None
+    precursor_offset: np.ndarray | None = None
+    precursor_off: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
-        for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset"):  # or a flag
+        for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag
+                     "precursor_offset"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
-                     "rt_found", "undeut_high", "drift_unclear", "elution_cut"):
+                     "rt_found", "undeut_high", "drift_unclear", "elution_cut",
+                     "precursor_off"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -375,6 +392,7 @@ def assess_quality(
     controls=None,
     drift_unclear_series: np.ndarray | None = None,
     elution_cut_spectra=None,
+    precursor_offset: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -386,7 +404,9 @@ def assess_quality(
     retention time found for their exact m/z (:mod:`hxex.io.retention_search`);
     ``drift_unclear_series`` those read without a clear drift range
     (:mod:`hxex.io.drift_gate`); ``elution_cut_spectra`` the spectra (ids) whose found
-    fragment peak the acquisition cut (:func:`hxex.io.mzml.find_fragment_peaks`). ``controls``
+    fragment peak the acquisition cut (:func:`hxex.io.mzml.find_fragment_peaks`);
+    ``precursor_offset`` every measurement's :func:`precursor_offsets` (None: not assessed).
+    ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
@@ -440,6 +460,13 @@ def assess_quality(
     mz_shift = (np.zeros(m, dtype=bool) if limit is None
                 else (np.abs(np.nan_to_num(mz_offset)) > limit) & ~checked)
     brightness = _brightness_flags(meas, np.asarray(fit.data_id), config)
+    offset = (np.full(m, np.nan) if precursor_offset is None
+              else np.asarray(precursor_offset, dtype=float))
+    if len(offset) != m:
+        raise ValueError("precursor_offset must have one value per measurement")
+    limit_d = config.max_precursor_offset
+    precursor_off = (np.zeros(m, dtype=bool) if limit_d is None
+                     else np.abs(np.nan_to_num(offset)) > limit_d)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -458,5 +485,42 @@ def assess_quality(
         elution_cut=np.isin(np.asarray(fit.spectrum_id, dtype=str), np.asarray(
             [] if elution_cut_spectra is None else list(elution_cut_spectra), dtype=str)),
         undeut_high=undeut_high(fit, controls),
+        precursor_offset=offset, precursor_off=precursor_off,
         **brightness,
     )
+
+
+def precursor_offsets(fit: FitResult, source, labels) -> np.ndarray:
+    """Every measurement's precursor offset (deuterons): for a precursor ion read in fragment
+    scans (ion type ``M`` at its parent's charge: the unreacted precursor), its K = 1 mean
+    minus that of its parent's MS1 spectrum in the same file (``labels``: the spectra's labels,
+    ``'<file> scans...'``); NaN for every other measurement and where the file has no MS1
+    spectrum of the parent, or without the K = 1 fits or a scan-file read record
+    (``source``)."""
+    from .io.mzml import SCAN_READERS, mzml_series_targets
+
+    m = len(fit)
+    out = np.full(m, np.nan)
+    if not source or source.get("reader") not in SCAN_READERS or 1 not in fit.fits:
+        return out
+    targets = mzml_series_targets(source)
+    means = fit.fits[1].means[:, 0]
+    files = [str(label).rsplit(" ", 1)[0] for label in labels]
+    ms1, precursors = {}, []
+    for i in range(m):
+        t = targets.get(int(fit.data_id[i]))
+        if t is None:
+            continue
+        e = t.entry
+        extra = dict(e.extra)
+        if "fragment" not in extra:
+            if t.ms_level == 1:
+                ms1[(files[i], e.peptide, str(e.peptide_range), int(e.charge))] = means[i]
+        elif str(extra["fragment"]).startswith("M:") and int(e.charge) == int(
+                extra["parent_charge"]):
+            precursors.append((i, (files[i], extra["parent_peptide"],
+                                   str(extra["parent_range"]), int(extra["parent_charge"]))))
+    for i, key in precursors:
+        if key in ms1:
+            out[i] = means[i] - ms1[key]
+    return out

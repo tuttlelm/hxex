@@ -345,7 +345,7 @@ def _read_envelopes(table: pa.Table, config: dict) -> EnvelopeTable:
 def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
     for name in ("deviance", "deviance_rel", "misfit", "misfit_rel", "intensity",
-                 "intensity_rel", "mz_offset", "envelope_offset"):
+                 "intensity_rel", "mz_offset", "envelope_offset", "precursor_offset"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
     for name in FLAG_NAMES:
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
@@ -372,7 +372,9 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         # written before the brightness flags or the retention search: False
         **{name: (b(name) if name in table.column_names else None)
            for name in ("saturated", "tails_low", "bright", "rt_found", "drift_unclear",
-                        "elution_cut")},
+                        "elution_cut", "precursor_off")},
+        precursor_offset=(f("precursor_offset") if "precursor_offset" in table.column_names
+                          else None),
         # written before the m/z check: not assessed
         envelope_offset=(f("envelope_offset") if "envelope_offset" in table.column_names
                          else None),

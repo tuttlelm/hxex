@@ -571,7 +571,7 @@ def _fit_part(
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
-    elution_cut=None,
+    elution_cut=None, precursor=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -642,13 +642,17 @@ def _fit_part(
                      int(screened.sum()))
     quality = None
     if config.quality is not None:
+        from .quality import precursor_offsets
+
+        offsets = None if precursor is None else precursor_offsets(fit, *precursor)
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
                                  envelope_offset_limit_ppm=envelope_offset[1],
                                  rt_found_series=rt_found,
                                  drift_unclear_series=drift_unclear,
-                                 elution_cut_spectra=elution_cut, controls=controls)
+                                 elution_cut_spectra=elution_cut,
+                                 precursor_offset=offsets, controls=controls)
     return fits, fit, controls, quality, test
 
 
@@ -1188,7 +1192,8 @@ def run(
                                                  record.get("retention_search")),
                                              drift_unclear=unclear_series(
                                                  record.get("drift_gate")),
-                                             elution_cut=elution_cut_spectra(record))
+                                             elution_cut=elution_cut_spectra(record),
+                                             precursor=(record, binned.label[kept]))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1376,6 +1381,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
     from .io.drift_gate import unclear_series
     from .io.mzml import elution_cut_spectra
     from .io.retention_search import moved_series
+    from .quality import precursor_offsets
 
     return assess_quality(
         data, fit, config.quality,
@@ -1385,7 +1391,8 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         envelope_offset_limit_ppm=binned.envelope_offset_limit_ppm[kept],
         rt_found_series=moved_series((source or {}).get("retention_search")),
         drift_unclear_series=unclear_series((source or {}).get("drift_gate")),
-        elution_cut_spectra=elution_cut_spectra(source), controls=controls)
+        elution_cut_spectra=elution_cut_spectra(source),
+        precursor_offset=precursor_offsets(fit, source, binned.label[kept]), controls=controls)
 
 
 def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict:

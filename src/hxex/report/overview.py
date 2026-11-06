@@ -70,6 +70,7 @@ QUALITY_LABELS = {
     "rt_found": "RT found",
     "drift_unclear": "drift unclear",
     "elution_cut": "elution cut",
+    "precursor_off": "precursor off",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

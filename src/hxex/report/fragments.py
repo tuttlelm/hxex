@@ -368,12 +368,16 @@ def closure_figure(
     min_time: float | None = None,
     tolerance: float = 0.25,
     panel: tuple[float, float] = (4.2, 3.0),
+    parents=None,
 ) -> Figure:
     """The closure test against time (:func:`hxex.analysis.closure_trace`): for every split
     ``k``, ``D(n_ion k) + D(c_ion n-k) - D(precursor)``, one panel per condition, a colour and
     a marker per split, with the band of ``tolerance`` around 0. Points before
-    ``min_time`` are drawn fainter (they are left out of :func:`hxex.analysis.closure_table`)."""
-    from ..analysis.fragments import closure_trace
+    ``min_time`` are drawn fainter (they are left out of :func:`hxex.analysis.closure_table`).
+    The precursor is the parent's MS1 spectrum where ``parents``
+    (:func:`hxex.analysis.parent_uptake`) holds it, else its ion in the fragment scans; the
+    y axis says which."""
+    from ..analysis.fragments import closure_reference, closure_trace
 
     pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
     table = uptake.select(pick & (uptake.time > 0))
@@ -387,14 +391,16 @@ def closure_figure(
     fig = Figure(figsize=(panel[0] * len(conditions), panel[1]), layout="constrained")
     axes = fig.subplots(1, len(conditions), squeeze=False, sharey=True)[0]
     mz = pz if precursor_charge is None else precursor_charge
+    references = set()
     for ax, cond in zip(axes, conditions, strict=True):
+        references.add(closure_reference(table, parents, run=cond[0], condition=cond[1]))
         ax.set_xscale("log")
         ax.axhspan(-tolerance, tolerance, color="0.92", zorder=0)
         ax.axhline(0.0, color="0.5", lw=0.8)
         for m, k in enumerate(splits):
             tr = closure_trace(table, f"{n_ion}:{k}", f"{c_ion}:{n - k}", n_charge=n_charge,
                                c_charge=c_charge, precursor_charge=precursor_charge,
-                               run=cond[0], condition=cond[1])
+                               parents=parents, run=cond[0], condition=cond[1])
             if not len(tr):
                 continue
             colour = _SPLIT_COLOURS[m % len(_SPLIT_COLOURS)]
@@ -411,7 +417,9 @@ def closure_figure(
     handles, names = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, names, loc="outside right center", fontsize=7, markerscale=1.5)
-    axes[0].set_ylabel(f"{n_ion} + {c_ion} − M_z{mz} (D)")
+    reference = (f"MS1_z{pz}" if references == {"MS1"} else f"M_z{mz}" if references == {"M"}
+                 else f"MS1 or M_z{pz}")
+    axes[0].set_ylabel(f"{n_ion} + {c_ion} − {reference} (D)")
     return fig
 
 
@@ -559,6 +567,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
         fragment_uptake,
         ladder_rates,
         ladder_residues,
+        parent_uptake,
     )
     from ..analysis.runs import RunSet
 
@@ -586,8 +595,10 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     pairs = [(a, b) for a in ions for b in ions
              if chem.ion_terminus(a) == "N" and chem.ion_terminus(b) == "C"
              and _PARTNERS[a[0]] == b[0]]
+    parents = parent_uptake(results)  # the closure's reference where the run read the parents
     closures = [closure_table(uptake, a, b, precursor_charge=config.precursor_charge,
-                              min_time=config.min_time, tolerance=config.tolerance)
+                              min_time=config.min_time, tolerance=config.tolerance,
+                              parents=parents)
                 for a, b in pairs]
     tables = {"fragment_uptake": uptake.columns()}
     if rates is not None:
@@ -640,7 +651,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                 jobs.append((f"closure_{stem}_{a}+{b}", lambda a=a, b=b, sel=sel: closure_figure(
                     uptake, a, b, labels=config.labels, min_time=config.min_time,
                     tolerance=config.tolerance, precursor_charge=config.precursor_charge,
-                    **sel)))
+                    parents=parents, **sel)))
     # the rates: one figure per parent, its precursor charges together
     for state, sample, parent in sorted({g[:3] for g in groups}) if rates is not None else ():
         have = rates.where(sample=sample, parent=parent) & (rates.state_run == state)
