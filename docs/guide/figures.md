@@ -21,7 +21,11 @@ Drawn from the results with the settings of `[figures]`; changing them needs no 
 
 ## Figures from `hxex analyse`
 
-Drawn with the settings of `[analysis]`, into the analysis folder. Every one follows `[analysis] samples` and `times` (which samples and time points are drawn), and `[analysis] format`. Results of fragment series alone give only the fragment figures (the last three).
+Drawn with the settings of `[analysis]`, into the analysis folder. Every one follows `[analysis] samples` and `times` (which samples and time points are drawn), and `[analysis] format`. Results of fragment series alone give only the fragment figures.
+
+### Peptides (MS1)
+
+Figures of the peptides, from their MS1 spectra.
 
 | Figure | Files | Shows | Needs | Drawn | Changed by |
 |---|---|---|---|---|---|
@@ -42,6 +46,13 @@ Drawn with the settings of `[analysis]`, into the analysis folder. Every one fol
 | [Regions](outputs.md#figures-from-hxex-analyse) | `regions_{time}` | each region's fD, per sample | [`[[analysis.regions]]`](settings.md#analysisregions) at least one region | always | [`[[analysis.regions]]`](settings.md#analysisregions), [`[analysis.colours]`](settings.md#analysiscolours) |
 | [Protection factors](protection-factors.md) | `protection_{sample}` | the peptides' protection factors | [`[analysis] protection`](settings.md#analysis) true (with [analysis.labelling]) | always | [`[analysis.labelling]`](settings.md#analysislabelling) |
 | [Protection factor differences](protection-factors.md) | `protection_difference_{sample}` | the peptides' protection factors compared with the reference's | [`[analysis] protection`](settings.md#analysis) true (with [analysis.labelling]); [`[analysis] reference`](settings.md#analysis) names a sample to compare the others with | always | [`[analysis.labelling]`](settings.md#analysislabelling), [`[analysis] alpha`](settings.md#analysis) |
+
+### Fragment ions (MS2/MS3)
+
+Figures of the fragment ions read in MS2 and MS3 scans (the Analysis page shows them in a part of their own).
+
+| Figure | Files | Shows | Needs | Drawn | Changed by |
+|---|---|---|---|---|---|
 | [Fragment ladder](fragment-residues.md) | `ladder_{parent}_{ion}_z{charge}` | the precursor, then for every ladder step the two fragments and their difference (with its fit when [analysis.fragments] fit_rates is true); a long ladder goes on over pages (_2, _3), the precursor atop each | [`[analysis.fragments]`](settings.md#analysisfragments) not false | always | [`[analysis.fragments]`](settings.md#analysisfragments), [`[analysis.fragments] fit_rates`](settings.md#analysisfragments), [`[analysis] page_size`](settings.md#analysis) |
 | [Ladder closure](fragment-residues.md) | `closure_{parent}_{ions}` | the closure miss over time for each split of the parent into an N- and a C-terminal fragment | [`[analysis.fragments]`](settings.md#analysisfragments) not false | where both fragments of a split were measured | [`[analysis.fragments]`](settings.md#analysisfragments) |
 | [Residue rates](fragment-residues.md) | `residue_rates_{parent}` | per-residue rates, amplitudes and, with kint, protection, from the fragment ladders | [`[analysis.fragments]`](settings.md#analysisfragments) not false; [`[analysis.fragments] fit_rates`](settings.md#analysisfragments) true (the ladder rate fits, opt-in) | always | [`[analysis.fragments]`](settings.md#analysisfragments), [`[analysis.fragments.exchange]`](settings.md#analysisfragmentsexchange) |

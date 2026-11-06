@@ -45,7 +45,8 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
     items = _items(page)
     assert items["woods"].childCount() >= 1 and "figure(s)" in items["woods"].text(1)
-    assert items["regions"].text(1) == "off" and items["ladder"].text(1) == "off"
+    assert items["regions"].text(1) == "off"
+    assert "ladder" not in items  # no fragment series: no "Fragment ions (MS2/MS3)" part
     # the first figure is drawn, under the name hxex analyse gives it
     qtbot.waitUntil(lambda: page.panel.view.figure is not None, timeout=60000)
     assert page.panel.save_name in dict(page.outputs.figures)
@@ -108,8 +109,9 @@ def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
     # two sections: the figures the same for every reference first, then the comparisons
     heads = [page.list.topLevelItem(i) for i in range(page.list.topLevelItemCount())
              if page.list.topLevelItem(i).data(0, 256) is None]
-    assert [h.text(0) for h in heads] == ["Same for every reference",
-                                          "Compared with the reference S"]
+    assert [h.text(0) for h in heads] == ["Peptides (MS1): same for every reference",
+                                          "Peptides (MS1): compared with the reference S"]
+    # the results hold no fragment series: no fragment section
     names = [page.list.topLevelItem(i).data(0, 256)
              for i in range(page.list.topLevelItemCount())]
     assert names.index("coverage") < names.index(None, 1) < names.index("woods")
@@ -241,3 +243,25 @@ def test_the_fit_rates_box_writes_the_project_file(qtbot, tmp_path, project):
     page.fit_rates.click()
     assert "fit_rates = true" not in frag_project.read_text()
     assert not load_project(frag_project, analysis_only=True).analysis.fragments.fit_rates
+
+
+def test_the_analysis_list_puts_the_fragment_figures_apart():
+    """The Analysis list: the peptides' figures (MS1) in two parts, then the fragment ions'
+    (MS2/MS3) in a part of their own, which results without fragment series do not show."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.gui.analysis_workspace import analysis_sections
+    from hxex.report.catalogue import ANALYSE, Situation, plan
+
+    situation = dataclasses.replace(Situation.of(analysis=AnalysisConfig(reference="S")),
+                                   fragments=True)
+    kinds = [p for p in plan(situation) if p.kind.command == ANALYSE]
+    heads = analysis_sections(kinds, True, "S", "S")
+    assert [h[0] for h in heads] == ["Peptides (MS1): same for every reference",
+                                     "Peptides (MS1): compared with the reference S",
+                                     "Fragment ions (MS2/MS3)"]
+    names = [[p.kind.name for p in h[2]] for h in heads]
+    assert names[2] == ["ladder", "closure", "residue_rates"]
+    assert "coverage" in names[0] and "woods" in names[1]
+    assert not {"ladder", "closure"} & set(names[0] + names[1])
+    assert analysis_sections(kinds, False, "S", "S")[2][2] == []
+

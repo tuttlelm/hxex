@@ -356,13 +356,17 @@ file), so what you see here is what the command writes.
   which reference's analysis is shown. Each is computed when you press **Compute** with it
   chosen, and then kept, so switching back is instant; `hxex analyse` writes a folder for
   each.
-- The list has two parts. **Same for every reference** comes first: coverage, redundancy and
-  resolution, the residue profiles and population choices, the population tiers, regions,
-  protection factors, and the fragment figures. These compare nothing, so they are drawn once,
-  in the order and colours of `[analysis] samples`, from the latest analysis computed, and
-  stay as they are when you choose another reference. A **Recompute** renews them too. **Compared with the
-  reference** follows: the overlays, Woods and butterfly plots, the significance maps, and
-  protection-factor differences, for the reference chosen.
+- The list has up to three parts. **Peptides (MS1): same for every reference** comes first:
+  coverage, redundancy and resolution, the residue profiles and population choices, the
+  population tiers, regions, and protection factors. These compare nothing, so they are drawn
+  once, in the order and colours of `[analysis] samples`, from the latest analysis computed,
+  and stay as they are when you choose another reference. A **Recompute** renews them too.
+  **Peptides (MS1): compared with the reference** follows: the overlays, Woods and butterfly
+  plots, the significance maps, and protection-factor differences, for the reference chosen.
+  When the results hold fragment ions, **Fragment ions (MS2/MS3)** comes last: the ladders, the
+  closure, and the residue rates, from the fragment scans (the closure is measured against the
+  parent's MS1 spectrum where the run read it). Like the first part, they are drawn once
+  whichever reference is chosen.
 - Results opened alone (a bundle, not through the project file) use the default settings.
   A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
   `hxex analyse` writes it.

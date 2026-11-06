@@ -410,7 +410,8 @@ class AnalysisWorkspace(QWidget):
                 self._fill_references(config)
                 if not config.single_reference:
                     config = config.with_reference(self.shown_reference)
-                planned = plan(Situation.of(analysis=config, results=self.results))
+                situation = Situation.of(analysis=config, results=self.results)
+                planned = plan(situation)
             except Exception as exc:  # noqa: BLE001 - settings these results refuse
                 self.list.blockSignals(False)
                 self._error = str(exc)
@@ -424,18 +425,8 @@ class AnalysisWorkspace(QWidget):
                     if kind is not None and kind.compares == compares:
                         by_kind.setdefault(kind.name, []).append(stem)
             kinds = [p for p in planned if p.kind.command == ANALYSE]
-            shared = self.shared_reference
-            sections = (
-                ("Same for every reference",
-                 "these figures do not compare samples with the reference: they are drawn once, "
-                 "from the latest analysis computed (against "
-                 + (shared if shared else "the reference computed") + "), and shown whichever "
-                 "reference is chosen",
-                 [p for p in kinds if not p.kind.compares]),
-                ("Compared with the reference" + (f" {self.shown_reference}"
-                                                  if self.shown_reference else ""),
-                 "these figures compare each sample with the reference chosen above",
-                 [p for p in kinds if p.kind.compares]))
+            sections = analysis_sections(kinds, situation.fragments, self.shown_reference,
+                                         self.shared_reference)
             for heading, tip, group in sections:
                 if not group:
                     continue
@@ -767,3 +758,32 @@ class AnalysisWorkspace(QWidget):
     def showEvent(self, event):  # noqa: N802 - Qt's name
         super().showEvent(event)
         self.refresh()
+
+
+
+def analysis_sections(kinds, fragments: bool | None, shown_reference: str | None,
+                      shared_reference: str | None) -> list[tuple[str, str, list]]:
+    """The parts of the Analysis list: ``(heading, tooltip, planned kinds)`` for the peptides'
+    figures (MS1) the same for every reference, those compared with the reference, and the
+    fragment ions' (MS2/MS3), the last only when the results may hold fragment series
+    (``fragments`` not False)."""
+    drawn_once = ("drawn once, from the latest analysis computed (against "
+                  + (shared_reference if shared_reference else "the reference computed")
+                  + "), and shown whichever reference is chosen")
+    peptides = [p for p in kinds if not p.kind.fragments]
+    return [
+        ("Peptides (MS1): same for every reference",
+         "figures of the peptides, from their MS1 spectra, that do not compare samples with "
+         "the reference: " + drawn_once,
+         [p for p in peptides if not p.kind.compares]),
+        ("Peptides (MS1): compared with the reference"
+         + (f" {shown_reference}" if shown_reference else ""),
+         "figures of the peptides, from their MS1 spectra, that compare each sample with the "
+         "reference chosen above",
+         [p for p in peptides if p.kind.compares]),
+        ("Fragment ions (MS2/MS3)",
+         "figures of the fragment ions read in the MS2 and MS3 scans: the ladders, the closure "
+         "(measured against the parent's MS1 spectrum where the run read it) and the residue "
+         "rates; " + drawn_once,
+         [p for p in kinds if p.kind.fragments] if fragments is not False else []),
+    ]

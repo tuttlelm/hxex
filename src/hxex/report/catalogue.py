@@ -99,6 +99,12 @@ class FigureKind:
             for f in self.files))
 
     @property
+    def fragments(self) -> bool:
+        """Whether its figures are of the fragment ions (read in MS2 or MS3 scans), not of the
+        peptides (MS1)."""
+        return _FRAGMENTS in self.needs
+
+    @property
     def compares(self) -> bool:
         """Whether its figures compare the samples with the reference (they change with
         ``[analysis] reference``); the others are the same against every reference, but for

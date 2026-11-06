@@ -7710,4 +7710,8 @@ CSVs or mzML if wanted.
     same file) beyond `[run.quality] max_precursor_offset` (1 D). On the dataset: pairs with a
     median miss beyond 2 D 117 -> 76 of 318; 140 of 584 precursor spectra flagged, in the 2+ EThcD
     channels (31-36, 31-50, 37-50, 73-87, 73-89 nearly all; 110-125 8 of 34), 3+/4+ ETD 1 of 340.
+    Also (owner: nothing said which figures come from the MS1 parents and which from the MS2/MS3
+    scans): the Analysis panel's list and the guide's figures page now have the peptides' figures
+    (MS1) apart from the fragment ions' (MS2/MS3), the latter only for results with fragment
+    series (`analysis_sections`, `FigureKind.fragments`).
 

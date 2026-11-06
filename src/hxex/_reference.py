@@ -818,19 +818,28 @@ def figures_markdown() -> str:
              "Drawn with the settings of `[analysis]`, into the analysis folder. Every one "
              "follows `[analysis] samples` and `times` (which samples and time points are "
              "drawn), and `[analysis] format`. Results of fragment series alone give only the "
-             "fragment figures (the last three).")):
-        lines += ["", f"## {heading}", "", intro, "",
-                  "| Figure | Files | Shows | Needs | Drawn | Changed by |",
-                  "|---|---|---|---|---|---|"]
-        for kind in KINDS:
-            if kind.command != command:
-                continue
-            needs = "; ".join(f"{_setting_link(n.setting)} {n.words}" for n in kind.needs)
-            files = ", ".join(f"`{f}`" for f in kind.files)
-            changed = ", ".join(_setting_link(c) for c in kind.changed_by)
-            lines.append(f"| [{kind.title}]({kind.guide}) | {files} | {_cell(kind.shows)} | "
-                         f"{_cell(needs) or 'nothing'} | {_cell(kind.data) or 'always'} | "
-                         f"{changed or '—'} |")
+             "fragment figures.")):
+        lines += ["", f"## {heading}", "", intro]
+        parts = [(None, "", lambda k: True)] if command != ANALYSE else [
+            ("Peptides (MS1)", "Figures of the peptides, from their MS1 spectra.",
+             lambda k: not k.fragments),
+            ("Fragment ions (MS2/MS3)",
+             "Figures of the fragment ions read in MS2 and MS3 scans (the Analysis page shows "
+             "them in a part of their own).", lambda k: k.fragments)]
+        for part, words, belongs in parts:
+            if part is not None:
+                lines += ["", f"### {part}", "", words]
+            lines += ["", "| Figure | Files | Shows | Needs | Drawn | Changed by |",
+                      "|---|---|---|---|---|---|"]
+            for kind in KINDS:
+                if kind.command != command or not belongs(kind):
+                    continue
+                needs = "; ".join(f"{_setting_link(n.setting)} {n.words}" for n in kind.needs)
+                files = ", ".join(f"`{f}`" for f in kind.files)
+                changed = ", ".join(_setting_link(c) for c in kind.changed_by)
+                lines.append(f"| [{kind.title}]({kind.guide}) | {files} | {_cell(kind.shows)} | "
+                             f"{_cell(needs) or 'nothing'} | {_cell(kind.data) or 'always'} | "
+                             f"{changed or '—'} |")
     return "\n".join(lines) + "\n"
 
 
