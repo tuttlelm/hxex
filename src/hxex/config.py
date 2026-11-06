@@ -1661,8 +1661,9 @@ _COMMENTS: dict[str, str] = {
     "run.fit.noise.outlier_score": "estimate: a replicate scoring above this is left out and "
                                    "flagged noise_outlier",
     "run.fit.noise.model_error": 'estimate = "controls": allowance for model error, percent of '
-                                 "each bin's intensity; lower: smaller errors and more spectra "
-                                 "split into populations, higher: larger errors and fewer",
+                                 "each bin's fitted intensity; lower: smaller errors and more "
+                                 "spectra split into populations, higher: larger errors and "
+                                 "fewer",
     "run.fit.backend.device": '"auto" (CUDA if available, else CPU), "cpu", "cuda" or "cuda:N"',
     "run.fit.backend.dtype": '"auto" (float32), "float32" or "float64" (the last digits)',
     "run.bootstrap.n_boot": "resamples of every measurement: 20 gives usable standard errors; "

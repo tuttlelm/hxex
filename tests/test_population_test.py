@@ -158,6 +158,24 @@ def test_a_failed_null_draw_is_left_out_not_the_run(mixed, monkeypatch, caplog):
     assert "3 simulations per spectrum" in caplog.text
 
 
+def test_a_null_draw_without_signal_is_left_out_for_that_spectrum(mixed, monkeypatch):
+    """A draw of a nearly empty spectrum may come out with no bin above 0 (with the noise at the
+    fitted curve, HISTORY 291, it did on the benchmark): no K can be judged on it, so it is NaN
+    for that spectrum; the others are fitted, and the run goes on."""
+    import hxex.population_test as module
+
+    data, fit, _ = mixed
+    real = module.scaled_prediction
+
+    def empty_first(*args, **kwargs):
+        pred = real(*args, **kwargs)
+        return [np.full(len(pred[0]), -1e9), *pred[1:]]  # every draw below 0
+
+    monkeypatch.setattr(module, "scaled_prediction", empty_first)
+    sim = module.simulate_null(data, fit, np.arange(3), 1, 3)
+    assert np.isnan(sim[0]).all() and np.isfinite(sim[1:]).all()
+
+
 def test_a_spectrum_is_tested_alone_whatever_else_is_in_the_batch(mixed):
     data, fit, test = mixed
     rows = np.array([7, 2, 9])

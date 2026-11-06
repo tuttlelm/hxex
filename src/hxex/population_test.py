@@ -45,7 +45,7 @@ from .fit import FitConfig, FitError, FitResult, Measurements, fit_models
 from .fit.screen import TOLERANCE_ABS, TOLERANCE_REL
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, shape_weights
-from .noise import NoiseConfig, bin_variances
+from .noise import NoiseConfig, bin_noise
 
 log = logging.getLogger(__name__)
 
@@ -405,8 +405,9 @@ def simulate_null(
 ) -> np.ndarray:
     """``(len(rows), n_sim)`` null statistics ``2 (nll_K - nll_K+1)`` of the measurements at
     ``rows``: data drawn from their K-population fit (noise-scaled curve plus unit Gaussian
-    noise, or with per-bin noise (:attr:`FitResult.noise_curve`) each bin's own sd, the
-    simulations refitted with the same weights), refitted at 1 to K + 1 with the run's fit
+    noise, or with per-bin noise (:attr:`FitResult.noise_curve`) each bin's own sd at the
+    fitted curve, the simulations refitted with the same noise, :class:`hxex.noise.BinNoise`),
+    refitted at 1 to K + 1 with the run's fit
     settings (no screen). Each draw is seeded
     by ``seed``, the simulation and what the spectrum is (``random_id``), so the result does not
     depend on the other spectra or the project's name. The refits' k-means jitter and random
@@ -424,32 +425,41 @@ def simulate_null(
     shapes = [data.shapes[i] for i in rows]
     n_max = data.n_max[rows]
     sd = [np.ones(len(b)) for b in bins]  # noise sd of every bin, in the scaled units
+    noise = None
     if fit.noise_curve is not None:
-        variances = bin_variances([data.observed[i] for i in rows], data.charges()[rows],
-                                  fit.noise_curve)
-        sd = [np.sqrt(v) / fit.obs_scale[i] for v, i in zip(variances, rows, strict=True)]
+        noise = bin_noise([data.observed[i] for i in rows], data.charges()[rows],
+                          fit.noise_curve).scaled(fit.obs_scale[rows])
+        sd = [np.sqrt(v) for v in noise.variances(pred)]
     out = np.full((len(rows), n_sim), np.nan)
     for s in range(n_sim):
         check_cancel(cancel)
         observed = [curve + w * np.random.default_rng([seed, 11, k, s, int(key)]).standard_normal(
             len(curve)) for curve, key, w in zip(pred, keys, sd, strict=True)]
-        ids = [f"null{k}.{s}:{sid}" for sid in data.spectrum_id[rows]]
-        rids = [f"null{k}.{s}:{rid}" for rid in data.random_id[rows]]
-        sim = Measurements.from_arrays(bins, observed, shapes, n_max, spectrum_id=ids,
+        # a draw of a nearly empty spectrum may have no signal at all: no K can be judged on
+        # it, so that draw is left out for it (NaN), as a failed refit is
+        live = np.array([bool(np.any(o > 0)) for o in observed])
+        if not live.any():
+            if on_simulation is not None:
+                on_simulation()
+            continue
+        at = np.flatnonzero(live)
+        ids = [f"null{k}.{s}:{sid}" for sid in data.spectrum_id[rows][at]]
+        rids = [f"null{k}.{s}:{rid}" for rid in data.random_id[rows][at]]
+        sim = Measurements.from_arrays([bins[j] for j in at], [observed[j] for j in at],
+                                       [shapes[j] for j in at], n_max[at], spectrum_id=ids,
                                        random_id=rids)
         try:
             with _quiet_fits():
                 res = fit_models(sim, cfg, cancel=cancel,
-                                 bin_variance=None if fit.noise_curve is None else
-                                 [w * w for w in sd])
+                                 noise=None if noise is None else noise.select(at))
         except FitError as exc:  # every refit of the draw failed: that draw is NaN, as the
             # bootstrap drops a failed resample (audit 2026-11-01 Engine 29)
             log.warning("null simulation %d at K = %d failed for %d spectra (%s): left out",
                         s + 1, k, len(rows), exc)
         else:
             lo, hi = res.fits[k].nll, res.fits[k + 1].nll
-            out[:, s] = np.where(np.isfinite(lo) & np.isfinite(hi), statistic_of(lo, hi),
-                                 np.nan)
+            out[at, s] = np.where(np.isfinite(lo) & np.isfinite(hi), statistic_of(lo, hi),
+                                  np.nan)
         if on_simulation is not None:
             on_simulation()
     return out

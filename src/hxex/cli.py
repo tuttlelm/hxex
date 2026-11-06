@@ -1539,7 +1539,8 @@ def _noise_curve_text(fit) -> str:
         return text
     onset = ("" if not np.isfinite(curve.onset)
              else f", controls with tops of {curve.onset:,.0f} or more left out")
-    text = (f"per bin, z x b1 x I + ({100 * curve.model_error:g} % of I)^2 with b1 = "
+    of = "the fit" if curve.model_error_at == "prediction" else "I"
+    text = (f"per bin, z x b1 x I + ({100 * curve.model_error:g} % of {of})^2 with b1 = "
             f"{curve.b1:.3g} +- {curve.b1_se:.2g} (from {curve.n_controls} undeuterated "
             f"controls of {curve.n_series} series{onset})")
     if curve.by_sample:

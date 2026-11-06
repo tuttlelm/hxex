@@ -268,7 +268,7 @@ Noise model and level of the fit (guide: noise-model.md). The level sets the los
 | `min_replicated` | integer | `3` | estimate: fewest time points with two or more replicates |
 | `min_share` | number | `0.005` | estimate: smallest share of a spectrum's intensity a bin needs |
 | `outlier_score` | number | `4.0` | estimate: a replicate scoring above this is left out and flagged noise_outlier |
-| `model_error` | number | `9.0` | estimate = "controls": allowance for model error, percent of each bin's intensity; lower: smaller errors and more spectra split into populations, higher: larger errors and fewer |
+| `model_error` | number | `9.0` | estimate = "controls": allowance for model error, percent of each bin's fitted intensity; lower: smaller errors and more spectra split into populations, higher: larger errors and fewer |
 
 ## `[run.fit.backend]`
 

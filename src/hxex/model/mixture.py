@@ -300,6 +300,11 @@ class PaddedBatch:
     mask: torch.Tensor
     n_max: torch.Tensor
     weight: torch.Tensor | None = None  # per-bin inverse noise variance (None: all 1)
+    # per-bin noise that follows the prediction (hxex.noise.BinNoise, in the batch's units):
+    # variance max(base_var + (model_error * prediction)^2, floor_var); None: ``weight``
+    base_var: torch.Tensor | None = None
+    floor_var: torch.Tensor | None = None
+    model_error: float | None = None
 
     @classmethod
     def from_arrays(
@@ -309,7 +314,11 @@ class PaddedBatch:
         n_max: Sequence[float],
         backend: Backend,
         weights: Sequence[np.ndarray] | None = None,
+        noise=None,
     ) -> PaddedBatch:
+        """``weights``: each bin's inverse noise variance (fixed); ``noise``
+        (:class:`hxex.noise.BinNoise`, in the units of ``observed``): variances that follow the
+        prediction instead (``weights`` is then not given)."""
         m = len(bins)
         if not (len(observed) == len(n_max) == m):
             raise ValueError("bins, observed and n_max must have one entry per measurement")
@@ -329,12 +338,22 @@ class PaddedBatch:
             for i, w in enumerate(weights):
                 wt[: len(w), i] = w
             weight = backend.tensor(wt)
+        base = floor = None
+        if noise is not None:
+            if weights is not None:
+                raise ValueError("give either weights or noise, not both")
+            bv, fv = np.ones((b_max, m)), np.ones((b_max, m))
+            for i, (bb, ff) in enumerate(zip(noise.base, noise.floor, strict=True)):
+                bv[: len(bb), i] = bb
+                fv[: len(ff), i] = ff
+            base, floor = backend.tensor(bv), backend.tensor(fv)
         return cls(
             b=backend.tensor(b),
             obs=backend.tensor(obs),
             mask=torch.tensor(mask, device=backend.torch_device()),
             n_max=backend.tensor(np.asarray(n_max, dtype=np.float64)),
-            weight=weight,
+            weight=weight, base_var=base, floor_var=floor,
+            model_error=None if noise is None else float(noise.model_error),
         )
 
     @property
@@ -346,6 +365,15 @@ def logit(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     """``log(x / (1 - x))`` with ``x`` clipped to ``[eps, 1 - eps]``."""
     x = np.clip(x, eps, 1.0 - eps)
     return np.log(x / (1.0 - x))
+
+
+def predicted_variance(pred: torch.Tensor, base: torch.Tensor, floor: torch.Tensor,
+                       model_error: float) -> torch.Tensor:
+    """Per-bin noise variance at the prediction ``pred`` (:class:`hxex.noise.BinNoise`), not
+    differentiated through: the fit is iteratively reweighted, each step weighing the bins by
+    the variances of the current prediction."""
+    p = pred.detach().clamp(min=0.0)
+    return torch.maximum(base + (model_error * p) ** 2, floor)
 
 
 def noise_loss(pred: torch.Tensor, obs: torch.Tensor, is_gaussian: torch.Tensor,
@@ -389,6 +417,11 @@ class MixtureBatch(nn.Module):
         self.register_buffer("b", batch.b)
         self.register_buffer("weight", batch.weight if batch.weight is not None
                              else torch.ones_like(batch.obs))
+        # per-bin noise that follows the prediction (None: the fixed ``weight``)
+        self.model_error = batch.model_error
+        self.register_buffer("base_var", batch.base_var)
+        self.register_buffer("floor_var", batch.floor_var)
+        self.frozen_var: torch.Tensor | None = None  # held fixed (L-BFGS: one objective)
         self.register_buffer("shape_w", shape_w)
         self.log_A = nn.Parameter(log_A.clone())
         self.n_raw = nn.Parameter(n_raw.clone())
@@ -435,9 +468,38 @@ class MixtureBatch(nn.Module):
         return self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
                                                        self.grid, self.logit_p)
 
+    @property
+    def follows_prediction(self) -> bool:
+        """Whether the noise variances follow the prediction (:class:`hxex.noise.BinNoise`)."""
+        return self.model_error is not None
+
+    def variance(self, pred: torch.Tensor | None = None) -> torch.Tensor:
+        """The per-bin noise variance at ``pred`` (default: the current prediction), or the held
+        one (:meth:`hold_variance`)."""
+        if self.frozen_var is not None:
+            return self.frozen_var
+        p = self.predict() if pred is None else pred
+        return predicted_variance(p, self.base_var, self.floor_var, self.model_error)
+
+    @torch.no_grad()
+    def hold_variance(self, hold: bool = True) -> None:
+        """Hold the variances of the current prediction fixed (one objective for L-BFGS's line
+        search), or let them follow the prediction again."""
+        self.frozen_var = None
+        if hold and self.follows_prediction:
+            self.frozen_var = self.variance()
+
     def nll(self, obs: torch.Tensor) -> torch.Tensor:
-        """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``."""
-        loss = noise_loss(self.predict(), obs, self.is_gaussian.unsqueeze(0), self.weight)
+        """Loss per measurement, ``(M,)``, against ``obs`` of shape ``(B_max, M)``. With noise that
+        follows the prediction it is the Gaussian negative log-likelihood, ``0.5 sum (r^2 / v +
+        log v)``, so that fits with different variances (other K) compare; the gradient leaves
+        the variances fixed (iteratively reweighted)."""
+        pred = self.predict()
+        if not self.follows_prediction:
+            loss = noise_loss(pred, obs, self.is_gaussian.unsqueeze(0), self.weight)
+            return loss.masked_fill(~self.mask, 0.0).sum(dim=0)
+        var = self.variance(pred)
+        loss = 0.5 * ((pred - obs) ** 2 / var + torch.log(var))
         return loss.masked_fill(~self.mask, 0.0).sum(dim=0)
 
     @torch.no_grad()

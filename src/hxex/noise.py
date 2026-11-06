@@ -20,10 +20,11 @@ A reference is given per measurement as the indices of its reference spectra (re
 averaged), or None for the measurement's own spectrum.
 
 ``estimate='controls'`` (the default) gives every bin its own noise variance instead of one sd per
-spectrum: ``z b1 I + (m I)^2`` at a bin of intensity ``I`` in a spectrum of charge ``z``
-(:class:`ControlsNoise`), at least (0.5 % of the spectrum's tallest bin)^2. ``b1`` (the counting
-noise of the instrument, which grows with the ion's charge) is measured once per bundle from the
-undeuterated controls
+spectrum: ``z b1 I + (m F)^2`` at a bin of intensity ``I`` and fitted intensity ``F`` in a
+spectrum of charge ``z`` (:class:`ControlsNoise`, :class:`BinNoise`: the model error follows the
+fit's prediction, HISTORY 291), at least (0.5 % of the spectrum's tallest bin)^2. ``b1`` (the
+counting noise of the instrument, which grows with the ion's charge) is measured once per bundle
+from the undeuterated controls
 (:func:`controls_noise`); ``m`` (``model_error``, percent) is a fixed allowance for how far real
 envelopes depart from the model's binomial mixtures, the same for every dataset. The scale above
 then only fixes the units. Measurements: docs/HISTORY.md items 187 to 191.
@@ -60,7 +61,8 @@ class NoiseConfig:
     - ``n_eff``: for ``poisson`` only, the effective counts of the tallest peak (alone, or
       without ``percent``).
     - ``estimate``: ``'controls'`` gives every bin its own noise variance, ``z b1 I +
-      (m I)^2``, with ``b1`` measured from the run's undeuterated controls
+      (m F)^2`` (``F`` the fit's prediction), with ``b1`` measured from the run's undeuterated
+      controls
       (:func:`controls_noise`) and ``m`` = ``model_error`` percent (needs the gaussian model;
       ``sd`` or ``percent`` then only fix the units). ``'replicates'`` estimates the noise of
       each series (one peptide at one charge, with its controls and time points) from its
@@ -73,9 +75,9 @@ class NoiseConfig:
       ``outlier_score`` is left out of the estimate and flagged ``noise_outlier``. ``None``:
       one sd per spectrum (``sd`` or ``percent``); the poisson model needs it.
     - ``model_error``: with ``estimate='controls'``, the allowance for model error as percent of
-      each bin's intensity (default 9: the value that calibrated the errors on three Q-TOF
-      datasets, docs/HISTORY.md item 191). Lower: errors smaller and more spectra split into
-      populations; higher: errors larger and fewer splits.
+      each bin's fitted intensity (default 9: calibrated on three Q-TOF datasets, docs/HISTORY.md
+      item 191, and kept under the prediction rule, item 293). Lower: errors smaller and more
+      spectra split into populations; higher: errors larger and fewer splits.
     """
     # why the loss stays Gaussian: docs/HISTORY.md items 49 and 55 to 57
 
@@ -482,7 +484,9 @@ class ControlsNoise:
     from their natural-abundance shape; ``inf``: none found); ``b1_se`` is its standard error
     and ``by_sample`` the same measured per sample. No constant floor is fitted: the controls
     put it at about 0 (docs/HISTORY.md item 187), and with few controls it trades off against
-    ``b1``."""
+    ``b1``. ``model_error_at`` says where the fit evaluates the model-error term:
+    ``'prediction'`` (the fit's curve, :class:`BinNoise`; HISTORY 291) or ``'observed'`` (the
+    spectrum, as fits made before it did: bundles that do not record it)."""
 
     b1: float
     model_error: float
@@ -491,6 +495,7 @@ class ControlsNoise:
     n_series: int
     b1_se: float = float("nan")
     by_sample: tuple[SampleNoise, ...] = ()
+    model_error_at: str = "prediction"
 
     def _key(self) -> tuple:
         """The values compared by ``==``: a NaN (not measured) equals a NaN."""
@@ -498,7 +503,7 @@ class ControlsNoise:
             return None if np.isnan(x) else float(x)
 
         return (num(self.b1), num(self.model_error), num(self.onset), self.n_controls,
-                self.n_series, num(self.b1_se),
+                self.n_series, num(self.b1_se), self.model_error_at,
                 tuple((s.sample, num(s.b1), num(s.b1_se), s.n_series) for s in self.by_sample))
 
     def __eq__(self, other) -> bool:
@@ -531,7 +536,8 @@ class ControlsNoise:
                 "n_controls": self.n_controls, "n_series": self.n_series,
                 "b1_se": num(self.b1_se),
                 "by_sample": [{"sample": s.sample, "b1": num(s.b1), "b1_se": num(s.b1_se),
-                               "n_series": s.n_series} for s in self.by_sample]}
+                               "n_series": s.n_series} for s in self.by_sample],
+                "model_error_at": self.model_error_at}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlsNoise:
@@ -544,7 +550,9 @@ class ControlsNoise:
                    b1_se=num(data.get("b1_se")),
                    by_sample=tuple(SampleNoise(str(s["sample"]), num(s["b1"]), num(s["b1_se"]),
                                                int(s["n_series"]))
-                                   for s in data.get("by_sample", ())))
+                                   for s in data.get("by_sample", ())),
+                   # recorded since HISTORY 291; fits made before put it at the observed intensity
+                   model_error_at=str(data.get("model_error_at", "observed")))
 
 
 def _natural_fit(bins, observed, shape) -> tuple[np.ndarray, np.ndarray] | None:
@@ -753,10 +761,12 @@ def controls_noise(
 def bin_variances(
     observed: Sequence[np.ndarray], charge: Sequence[float], curve: ControlsNoise
 ) -> list[np.ndarray]:
-    """Each measurement's noise variance per bin (raw units) from ``curve``, at its observed
-    intensity smoothed over three bins (so a bin that reads high by chance does not raise its own
-    variance alone; the first and last bins over the two there are), floored at (0.5 % of the
-    spectrum's tallest bin)^2 so empty bins keep a finite weight."""
+    """Each measurement's noise variance per bin (raw units) from ``curve``, both terms at its
+    observed intensity (the fit puts the model-error term at its prediction instead,
+    :class:`BinNoise`; this form describes the spectrum alone), smoothed over three bins (so a
+    bin that reads high by chance does not raise its own variance alone; the first and last
+    bins over the two there are), floored at (0.5 % of the spectrum's tallest bin)^2 so empty
+    bins keep a finite weight."""
     out = []
     for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
         y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
@@ -764,6 +774,60 @@ def bin_variances(
         top = max(float(y.max(initial=0.0)), 1e-12)
         out.append(np.maximum(curve.variance(at, float(z)), (_FLOOR_SHARE * top) ** 2))
     return out
+
+
+@dataclass(frozen=True)
+class BinNoise:
+    """The per-bin noise of measurements as the fit uses it (owner, 2026-11-05; HISTORY 291):
+    variance ``max(base + (model_error * prediction)^2, floor)`` per bin, where ``base`` is the
+    counting term at the observed intensity (``z b1 I``, smoothed over three bins as in
+    :func:`bin_variances`), ``floor`` (0.5 % of the spectrum's tallest bin)^2, and the
+    model-error term follows the fit's own prediction: the misfit of a prediction grows with what
+    it predicts. At the observed intensity instead (:func:`bin_variances`), a bin the fit missed
+    entirely cost about ``1/model_error^2`` however tall it was, so a fit could prefer a smaller
+    envelope spanning more bins to a taller one. One array per measurement in ``base`` and
+    ``floor``, in the measurements' own units (:meth:`scaled` divides them by the noise scale)."""
+
+    base: tuple[np.ndarray, ...]
+    floor: tuple[np.ndarray, ...]
+    model_error: float
+
+    def __len__(self) -> int:
+        return len(self.base)
+
+    def variances(self, predictions: Sequence[np.ndarray]) -> list[np.ndarray]:
+        """Each measurement's variance per bin at ``predictions`` (same units)."""
+        m = self.model_error
+        return [np.maximum(b + (m * np.clip(np.asarray(p, dtype=np.float64), 0.0, None)) ** 2, f)
+                for b, f, p in zip(self.base, self.floor, predictions, strict=True)]
+
+    def scaled(self, scale: Sequence[float]) -> BinNoise:
+        """The same noise for measurements divided by ``scale`` (one value per measurement)."""
+        s = np.asarray(scale, dtype=np.float64)
+        return BinNoise(tuple(b / s[i] ** 2 for i, b in enumerate(self.base)),
+                        tuple(f / s[i] ** 2 for i, f in enumerate(self.floor)), self.model_error)
+
+    def select(self, rows: Sequence[int]) -> BinNoise:
+        return BinNoise(tuple(self.base[int(i)] for i in rows),
+                        tuple(self.floor[int(i)] for i in rows), self.model_error)
+
+
+def bin_noise(observed: Sequence[np.ndarray], charge: Sequence[float],
+              curve: ControlsNoise) -> BinNoise:
+    """The per-bin noise of measurements from ``curve`` (:class:`BinNoise`; raw units). For a
+    curve whose fits put the model-error term at the observed intensity (``model_error_at =
+    'observed'``: bundles made before HISTORY 291) the whole variance is fixed at the observed
+    intensity, as those fits had it (its model error is then 0)."""
+    observed_form = curve.model_error_at == "observed"
+    base, floor = [], []
+    for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
+        y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
+        top = max(float(y.max(initial=0.0)), 1e-12)
+        at = _smoothed(y)
+        base.append(curve.variance(at, float(z)) if observed_form
+                    else float(z) * curve.b1 * at)
+        floor.append(np.full(len(y), (_FLOOR_SHARE * top) ** 2))
+    return BinNoise(tuple(base), tuple(floor), 0.0 if observed_form else float(curve.model_error))
 
 
 def _smoothed(y: np.ndarray) -> np.ndarray:

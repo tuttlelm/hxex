@@ -250,8 +250,8 @@ without it, these figures say which residues have two populations but test no di
 
 Every number above rests on how noisy each peak is taken to be. *hxex* measures it from the
 undeuterated controls of the run: the `noise` line of `hxex info` gives the variance of a peak of
-intensity I as `z x b1 x I + (9 % of I)^2`, a counting part that grows with the charge z and a
-part proportional to the peak ([The noise model](noise-model.md)). Spectra brighter than the
+intensity I as `z x b1 x I + (9 % of the fit)^2`, a counting part that grows with the charge z
+and a part proportional to the fitted peak ([The noise model](noise-model.md)). Spectra brighter than the
 controls the noise was measured on, such as those of step 2, are where this is least certain.
 
 ## What you did

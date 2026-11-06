@@ -34,7 +34,7 @@ from scipy.optimize import linear_sum_assignment
 from .fit import FitError, FitResult, Measurements, Start, fit_batch, prepare
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, convolve, shape_weights
-from .noise import bin_variances
+from .noise import bin_noise
 
 log = logging.getLogger(__name__)
 
@@ -369,7 +369,8 @@ def bootstrap(
 
     ``data`` must be the measurements ``fit`` was made from. The noise model, the noise scale and
     the device come from the fit; with per-bin noise (:attr:`FitResult.noise_curve`) every bin is
-    resampled with its own sd and refitted with the same weights as the fit.
+    resampled with its own sd at the fitted curve (:class:`hxex.noise.BinNoise`) and refitted
+    with the same noise as the fit.
     ``progress(done, total)`` counts resamples; ``cancel`` raises
     :class:`~hxex.hooks.Cancelled`.
     """
@@ -379,10 +380,9 @@ def bootstrap(
     m_total, n_boot = len(fit), config.n_boot
     k_max = max(fit.k_values)
     scale, keys = fit.obs_scale, data.random_keys()
-    bin_sd = None  # per-bin noise sd in the scaled units, with estimate='controls'
+    noise = None  # per-bin noise in the scaled units, with estimate='controls'
     if fit.noise_curve is not None:
-        variances = bin_variances(data.observed, data.charges(), fit.noise_curve)
-        bin_sd = [np.sqrt(v) / scale[i] for i, v in enumerate(variances)]
+        noise = bin_noise(data.observed, data.charges(), fit.noise_curve).scaled(scale)
     # a measurement whose own fit failed (non-finite loss, placeholder parameters) is not resampled
     fit_ok = np.array([np.isfinite(fit.fits[int(k)].nll[i]) for i, k in enumerate(fit.selected_K)])
     groups = {
@@ -411,6 +411,8 @@ def bootstrap(
         ref[k] = {
             "start": Start(kf.log_A[idx], kf.n_raw[idx], kf.logit_p[idx]),
             "pred": [pred[: len(b), j].astype(np.float64) for j, b in enumerate(bins)],
+            "sd": None if noise is None else [np.sqrt(v) for v in noise.select(idx).variances(
+                [pred[: len(b), j].astype(np.float64) for j, b in enumerate(bins)])],
             "means": kf.means[idx], "bins": bins, "batch": batch, "shape_w": shape_w,
         }
 
@@ -423,14 +425,14 @@ def bootstrap(
                 rng = np.random.default_rng([config.seed, 3, it, int(keys[m])])
                 pred = info["pred"][j]
                 if kinds[m] == "gaussian":
-                    sd = 1.0 if bin_sd is None else bin_sd[m]
+                    sd = 1.0 if info["sd"] is None else info["sd"][j]
                     observed.append(pred + sd * rng.standard_normal(len(pred)))
                 else:
                     observed.append(rng.poisson(np.maximum(pred, 0.0)).astype(np.float64))
             prep = prepare(
                 info["bins"], observed, [data.shapes[i] for i in idx], data.n_max[idx],
                 np.ones(len(idx)), [str(kinds[i]) for i in idx], backend, keys=keys[idx],
-                bin_variance=None if bin_sd is None else [bin_sd[i] ** 2 for i in idx],
+                bin_noise=None if noise is None else noise.select(idx),
             )
             try:
                 model, nll = fit_batch(

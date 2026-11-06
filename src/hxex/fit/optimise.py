@@ -14,6 +14,7 @@ import math
 import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -51,6 +52,7 @@ class Prepared:
     noise_kind: tuple[str, ...]  # one per measurement
     keys: np.ndarray  # stable integer per measurement; seeds its random starting points
     weights: Sequence[np.ndarray] | None = None  # per-bin inverse noise variance (scaled units)
+    noise: Any = None  # hxex.noise.BinNoise (scaled units): variances that follow the prediction
 
     @property
     def n_measurements(self) -> int:
@@ -62,10 +64,11 @@ class Prepared:
         bins = [self.bins[i] for i in rows]
         observed = [self.observed[i] for i in rows]
         weights = None if self.weights is None else [self.weights[i] for i in rows]
+        noise = None if self.noise is None else self.noise.select(rows)
         return Prepared(
-            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend, weights), bins,
-            observed, [self.shapes[i] for i in rows], self.n_max[rows],
-            tuple(self.noise_kind[i] for i in rows), self.keys[rows], weights,
+            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend, weights, noise),
+            bins, observed, [self.shapes[i] for i in rows], self.n_max[rows],
+            tuple(self.noise_kind[i] for i in rows), self.keys[rows], weights, noise,
         )
 
 
@@ -84,12 +87,15 @@ def prepare(
     backend: Backend,
     keys: Sequence[int] | None = None,
     bin_variance: Sequence[np.ndarray] | None = None,
+    bin_noise=None,
 ) -> Prepared:
     """Divide each spectrum by its noise scale and pad the batch.
 
     ``bin_variance`` (one array per measurement, in the raw intensity units) gives each bin its
     own noise variance: the Gaussian loss then weighs each bin by ``scale^2 / variance`` (the
     inverse variance in the scaled units); None keeps one sd, the scale, for every bin.
+    ``bin_noise`` (:class:`hxex.noise.BinNoise`, raw units) gives variances that follow the
+    prediction instead (the per-bin noise of the fit; HISTORY 291).
 
     ``keys`` (one integer per measurement, default its position) seed the random starting points
     of that measurement, so its fit does not depend on the other measurements in the batch when
@@ -105,12 +111,13 @@ def prepare(
     if bin_variance is not None:
         weights = [scale[m] ** 2 / np.asarray(v, dtype=np.float64)
                    for m, v in enumerate(bin_variance)]
+    noise = None if bin_noise is None else bin_noise.scaled(scale)
     return Prepared(
-        PaddedBatch.from_arrays(bins, scaled, n_max, backend, weights), bins, scaled, shapes,
-        np.asarray(n_max, dtype=np.float64),
+        PaddedBatch.from_arrays(bins, scaled, n_max, backend, weights, noise), bins, scaled,
+        shapes, np.asarray(n_max, dtype=np.float64),
         (noise_kind,) * len(bins) if isinstance(noise_kind, str) else tuple(noise_kind),
         np.arange(len(bins)) if keys is None else np.asarray(keys, dtype=np.int64),
-        weights,
+        weights, noise,
     )
 
 
@@ -276,7 +283,8 @@ def fit_batch(
         run_adam(model, obs_dev, adam_steps, lr_adam, lr_adam_end, grad_clip, cancel)
         params = list(model.parameters())
 
-        # Phase 2: L-BFGS
+        # Phase 2: L-BFGS, with variances that follow the prediction held at the Adam fit's
+        # (its line search needs one objective); compared with Adam's on the full likelihood
         with torch.no_grad():
             nll_pre = model.nll(obs_dev)
             pre_ok = torch.isfinite(nll_pre)
@@ -295,11 +303,13 @@ def fit_batch(
             _clean_grads(prm)
             return loss
 
+        model.hold_variance()
         try:
             if lbfgs_steps > 0:
                 opt2.step(closure)
         except Exception as exc:  # noqa: BLE001 - L-BFGS may fail; the pre-L-BFGS fit is kept
             log.debug("L-BFGS stopped: %s", exc)
+        model.hold_variance(False)
 
         with torch.no_grad():
             nll_post = model.nll(obs_dev)

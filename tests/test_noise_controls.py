@@ -18,6 +18,7 @@ from hxex.noise import (
     ControlsNoise,
     NoiseConfig,
     SampleNoise,
+    bin_noise,
     bin_variances,
     controls_noise,
     distortion_onset,
@@ -258,7 +259,11 @@ def test_a_run_measures_the_curve_once_and_the_bundle_keeps_it(tmp_path):
     with open_bundle(tmp_path / "b") as b:
         assert b.fit().noise_curve == curve
         text = _noise_curve_text(b.fit())
-        assert text.startswith("per bin, z x b1 x I + (9 % of I)^2") and "S " in text
+        assert text.startswith("per bin, z x b1 x I + (9 % of the fit)^2") and "S " in text
+    # a curve recorded before HISTORY 291 put the model error at the observed intensity
+    old = dataclasses.replace(curve, model_error_at="observed")
+    assert _noise_curve_text(dataclasses.replace(res.fit, noise_curve=old)).startswith(
+        "per bin, z x b1 x I + (9 % of I)^2")
 
 
 def test_per_bin_noise_is_the_default_and_needs_no_noise_reference(tmp_path, caplog):
@@ -324,3 +329,61 @@ def test_curves_with_unmeasured_values_are_equal_across_instances():
     assert a == b and hash(a) == hash(b) and a == ControlsNoise.from_dict(a.to_dict())
     assert a != ControlsNoise(b1=2.5, model_error=0.09, onset=float("inf"), n_controls=30,
                               n_series=12)
+
+
+def test_the_model_error_follows_the_fit_not_the_spectrum():
+    """HISTORY 291 (owner, 2026-11-05: "the fit is clearly wrong"): an undeuterated spectrum with
+    a tall envelope at 0 D and a far smaller one at 7 D over as many bins. With the model error
+    at the observed intensity a bin missed entirely cost about 1/m^2 however tall, and K = 1
+    sat on the small envelope; at the fit's prediction it sits on the tall one."""
+    # the spectrum and its peptide's natural-abundance shape as measured (owner's case)
+    observed = np.array([32802, 19024, 6862, 1307, 568, 30, 31, 6394, 4264, 1661, 425,
+                         0, 0, 0, 0], dtype=float)
+    shape = np.array([0.541, 0.3162, 0.1086, 0.0275, 0.0056, 0.001, 0.0001])
+    n_bins = len(observed)
+    bins = np.arange(n_bins, dtype=float)
+    data = Measurements.from_arrays([bins], [observed], [shape], np.array([9.6]),
+                                    spectrum_id=["u"], role=np.array(["undeut"], dtype=object),
+                                    charge=np.array([2.0]))
+    curve = ControlsNoise(b1=8.08, model_error=0.09, onset=np.inf, n_controls=40, n_series=20)
+    # the default fit, as the run had it (the two placements nearly tie under the old rule, so
+    # the outcome there depends on the optimiser's path)
+    cfg = FitConfig(k_max=1, backend=CPU, noise=NoiseConfig(estimate="controls"))
+    fit = fit_models(data, cfg, noise_curve=curve)
+    assert fit.fits[1].means[0, 0] < 0.5  # the tall, undeuterated envelope
+    # why: the loss of one population at 0 D and at 7 D (best amplitude each). With the model
+    # error at the observed intensity the small envelope scored better (the run's fit sat
+    # there); at the prediction the tall one does
+    from scipy.optimize import minimize_scalar
+
+    from hxex.report.curves import component_curves
+
+    noise = bin_noise([observed], [2.0], curve)
+    fixed = bin_variances([observed], [2.0], curve)[0]
+
+    def best(n, p, follows):
+        unit = component_curves(bins, np.array([1.0]), np.array([n]), np.array([p]), shape)[0]
+
+        def loss(log_a):
+            pred = np.exp(log_a) * unit
+            v = noise.variances([pred])[0] if follows else fixed
+            return 0.5 * np.sum((observed - pred) ** 2 / v + np.log(v))
+
+        return minimize_scalar(loss, bounds=(0.0, 15.0), method="bounded").fun
+
+    at0, at7 = (9.6, 1e-6), (7.0, 0.99999)
+    assert best(*at7, follows=False) < best(*at0, follows=False)
+    assert best(*at0, follows=True) < best(*at7, follows=True)
+    # the variances: counting at the spectrum, the model error at the prediction
+    noise = bin_noise([observed], [2.0], curve)
+    flat = noise.variances([np.zeros(n_bins)])[0]
+    np.testing.assert_allclose(flat, np.maximum(noise.base[0], noise.floor[0]))
+    full = noise.variances([observed])[0]
+    assert np.all(full >= flat) and full[0] > 10 * flat[0]
+    # a curve of a bundle made before keeps the variances at the spectrum, as its fits had them
+    old = dataclasses.replace(curve, model_error_at="observed")
+    np.testing.assert_allclose(bin_noise([observed], [2.0], old).variances([np.zeros(n_bins)])[0],
+                               bin_variances([observed], [2.0], curve)[0])
+    assert ControlsNoise.from_dict({k: v for k, v in curve.to_dict().items()
+                                    if k != "model_error_at"}).model_error_at == "observed"
+    assert ControlsNoise.from_dict(curve.to_dict()) == curve

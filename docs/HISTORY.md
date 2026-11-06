@@ -7366,6 +7366,41 @@ CSVs or mzML if wanted.
     uncapped fits had hidden. The high state sits on the cap every time, so some heavy-side
     width remains (brightness or a low mFD). A cap in the model is PLAN Next steps 20.
 
+291. **The per-bin noise's model error follows the fit's prediction (owner, 2026-11-05: K = 1
+    forced on an undeuterated replicate sat on the smaller of two envelopes, "the fit is
+    clearly wrong").** The variance `z b1 I + (m I)^2` was evaluated at the observed intensity,
+    so a bin the fit missed entirely cost about `1/m^2` (m = 9 %: about 123) however tall it
+    was: the fit counted bins, not intensity. On that spectrum (0 D envelope topping at 32,802, a
+    second species at 7 D topping at 6,394) K = 1 scored 375 at 7 D against 393 at 0 D. Built:
+    the counting term stays at the observed intensity, the model-error term follows the fit's
+    prediction, `z b1 I + (m F)^2` (`hxex.noise.BinNoise`, `bin_noise`); the fit is iteratively
+    reweighted (the optimiser takes the variances of the current prediction at every step,
+    held fixed during L-BFGS; the polish refreshes them every iteration) and reports the Gaussian
+    negative log-likelihood with each bin's log-variance, so the K choice and the population
+    test compare models with their own variances. The bootstrap and the population test's null
+    draw their noise at the fitted curve and refit with the same rule. The screens' loss floors
+    bound fits with fixed variances only, so with this noise they skip nothing (logged). The
+    noise curve records `model_error_at` (`prediction`; bundles made before read as
+    `observed`, and their fits, resumes and nulls keep the old rule); `hxex info` writes "(9 %
+    of the fit)^2". A null draw of a nearly empty spectrum with no bin above 0 is left out for
+    that spectrum (NaN), as a failed refit is: the first benchmark run stopped on one. A
+    prototype (two-pass reweighting) and the built code were measured:
+
+    | | before | built |
+    |---|---|---|
+    | the owner's spectrum, K = 1 | 7.0 D | 0.0 D |
+    | benchmark: K = 1 misses the tallest reachable peak (>= 1,000) | 146 (UN 16) | 98 (UN 4) |
+    | known answer: K correct / true 2 as 1 / true 1 as >1 | 83.2 % / 22 / 11 | 83.2 % / 21 / 12 |
+    | benchmark: K > 1 selected, UN / FD / labelled | 3.6 / 4.2 / 16.8 % | 3.6 / 4.6 / 17.9 % |
+    | tutorial: K > 1 selected, UN / FD / labelled | 0.4 / 3.3 / 21.8 % | 0.8 / 3.8 / 24.8 % |
+    | error calibration, replicate sets (1 = calibrated): benchmark / tutorial | 1.00 / 0.88 | 1.12 / 1.00 |
+    | error calibration, charge sets: benchmark / tutorial | 1.55 / 1.97 | 1.70 / 1.77 |
+
+    With one sd per spectrum the benchmark's K = 1 misses 104 (UN 3); 68 of the 146 are missed by
+    it too: spike-dominated and nearly empty spectra no envelope should follow. The 9 % model
+    error was calibrated under the old rule (item 191): on the benchmark the replicate errors
+    are now 12 % too small, on the tutorial calibrated; its value is the owner's to decide.
+    Not measured: Orbitrap data.
 
 292. **Fragment data in the window and the analysis (owner, 2026-11-05, reanalysing the
     private targeted fragment dataset with its 27 h run as the fully deuterated control).**
@@ -7407,3 +7442,44 @@ CSVs or mzML if wanted.
       level, condition, and parent and two lists filtering by MS level and ion type (shown for
       results read from scan files only), and **Find** matches fragments, conditions, and
       parents. A selection remembers the fragment, so a rerun returns to the same series.
+
+293. **`model_error` recalibrated under item 291's rule: 9 % kept (owner, 2026-11-05).** Refits at
+    7, 8, 9, 10, 11, and 12 % with the K = 1 bootstrap (n_boot 20; K by the criterion, no population
+    test) on the intact-peptide benchmark, the tutorial data, the private noisy unimodal dataset,
+    the published Orbitrap digest, and the known-answer set; the 9 % runs reproduce item 291's
+    exactly. Replicate calibration (1 = calibrated; above 1 the errors are too small), 7 to 12 %:
+    benchmark 1.27 / 1.19 / 1.12 / 1.05 / 1.01 / 0.96, noisy set 1.20 / 1.13 / 1.09 / 1.03 / 0.98 /
+    0.95, tutorial 1.13 / 1.07 / 1.00 / 0.93 / 0.89 / 0.84, Orbitrap 0.68-0.62 (item 294). K > 1 on
+    fully deuterated controls falls with m (benchmark 10.2 / 8.8 / 7.7 % at 7 / 9 / 12 %, tutorial
+    8.3 / 4.7 / 3.8 %, noisy set 23.0 / 20.6 / 18.7 %; undeuterated controls flat); known-answer K
+    correct 83.2 % from 7 to 9 %, 83.0 % at 10 %, 82.5 % at 11-12 % (true two read as one 19 / 21 /
+    22 / 24 at 7 / 9 / 10 / 12 %). About 11 % would calibrate the benchmark and the noisy set, 9 %
+    the tutorial; replicate sets carry labelling-time scatter (an upper bound), so 9 % stays.
+    Quick route (scratch, not built): the delta-method error of the K = 1 mean from each fit's
+    Jacobian under the per-bin variances matches the bootstrap's (median ratio 1.01-1.02 on the
+    Q-TOF data), and only the m term changes with m, so one run gives the calibration at every m
+    without refits or a bootstrap: from the 9 % fits it predicted every refit within 0.04 on the
+    Q-TOF data (45 s for the tutorial). It needs labelled replicate sets and says nothing about
+    the K chosen. Owner: m stays fixed (a per-run m depends on what was submitted, item 189); not
+    estimated with `b1` (from the undeuterated residuals m comes out 2-3 %, item 187). Guide
+    noise-model.md updated. Scripts and every number: `model_error_prediction/recalibration`
+    (private, README).
+
+294. **Why the per-bin noise misses on the Orbitrap: `b1` from the residuals (2026-11-05; item
+    293).** On the published Orbitrap digest `model_error` changes nothing (counting term `z b1 I`
+    with b1 = 1.37e4 outweighs `(m F)^2` up to intensities in the millions) and the errors are
+    1.5 times too large at every m. With item 293's quick route on the 9 % fits, other counting
+    curves with the same 9 % model error: the replicate-pair curve of the undeuterated controls
+    (a 5.3e4, b 1.9e3; item 187) calibrates (0.98), that of the fully deuterated controls with
+    their shift removed 1.06, `b1` x 0.25 1.04; a curve fitted to the undeuterated residuals with
+    a floor added (a 9.3e4, b 6.7e3) does not (0.69). So 9 % holds on the Orbitrap too; what is
+    wrong is `b1`: on the Q-TOF data the residuals' counting term matched the replicate pairs
+    (item 187), on the Orbitrap the undeuterated controls' residuals are 1.3-2 times the pair noise
+    at every intensity, a reproducible misfit (the heavy-side deficit at every brightness and the
+    huge residual tails of item 187) that the estimator reads as counting noise, and the model
+    error then counts it again. The missing floor (a about 0 on the Q-TOF, 5e4 here) is minor.
+    Cause of the misfit unknown (a guess to test: heights missing isotopic fine structure at high
+    resolution). Options (owner to choose): `b1` from replicate pairs of the controls where a run
+    has them, residuals otherwise; areas on the Orbitrap; adjacent-scan differences from the raw
+    files. Guide noise-model.md's Orbitrap sentence updated. Scripts: `orbitrap_forms*.py` in
+    `model_error_prediction/recalibration` (private).

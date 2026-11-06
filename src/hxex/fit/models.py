@@ -12,7 +12,7 @@ from ..model import aic, bic
 from ..noise import (
     ControlsNoise,
     NoiseEstimate,
-    bin_variances,
+    bin_noise,
     controls_noise,
     estimate_noise,
     noise_scale,
@@ -37,6 +37,7 @@ def fit_models(
     test_screen: bool = False,
     noise_curve: ControlsNoise | None = None,
     bin_variance=None,
+    noise=None,
     required_k: np.ndarray | None = None,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
@@ -61,12 +62,16 @@ def fit_models(
     :class:`~hxex.hooks.Cancelled`.
 
     With ``config.noise.estimate == 'controls'`` every bin has its own noise variance
-    (:func:`hxex.noise.bin_variances`) from ``noise_curve``, the bundle's curve
+    (:class:`hxex.noise.BinNoise`: counting at the observed intensity, the model error at the
+    fit's prediction; HISTORY 291) from ``noise_curve``, the bundle's curve
     (:func:`hxex.noise.controls_noise`; :func:`hxex.pipeline.run` measures it once from the
     controls every picker screen passes, before the spectra are fitted in parts); without one
     it is measured here from every undeuterated control in ``data``, and with too few controls
     the noise falls back to one sd per spectrum (logged). ``bin_variance`` (one array per
-    measurement, raw units) gives the variances directly instead (the population test's null).
+    measurement, raw units) gives fixed variances directly instead, and ``noise``
+    (:class:`hxex.noise.BinNoise`, raw units) the per-bin noise (the population test's null).
+    The screens' loss floors bound fits with fixed variances only: with noise that follows the
+    prediction every K is fitted (logged).
     The result keeps the curve (:attr:`FitResult.noise_curve`).
 
     With ``config.screen`` each K above 1 is fitted only for the measurements that could still
@@ -95,7 +100,7 @@ def fit_models(
             raise ValueError(f"{len(negative)} measurement(s) have negative intensities, which "
                              "the Poisson model (counts) cannot take: use model = \"gaussian\" "
                              f"or data that is not baseline-subtracted ({', '.join(negative[:3])})")
-    prep, scale, estimate, curve = _prepared(data, config, noise_curve, bin_variance)
+    prep, scale, estimate, curve = _prepared(data, config, noise_curve, bin_variance, noise)
     sizes = sample_size(prep.observed, prep.noise_kind)
     k_values = config.k_values
     role = (np.full(m, "", dtype=object) if data.role is None
@@ -118,8 +123,12 @@ def fit_models(
 
     floor = None
     if config.screen and any(k > 1 for k in k_values):  # nothing to skip with K = 1 alone
-        floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind,
-                           prep.weights)
+        if prep.noise is not None:
+            log.info("screen: with per-bin noise that follows the prediction the loss floor is "
+                     "not a bound, so every K is fitted")
+        else:
+            floor = loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max,
+                               prep.noise_kind, prep.weights)
     best = np.full(m, np.inf)  # best criterion so far (for the screen)
     fits: dict[int, KFit] = {}
     for k in k_values:
@@ -214,8 +223,8 @@ def fit_models(
 
 
 def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise | None,
-              bin_variance) -> tuple[Prepared, np.ndarray, NoiseEstimate | None,
-                                     ControlsNoise | None]:
+              bin_variance, bin_noise_given=None
+              ) -> tuple[Prepared, np.ndarray, NoiseEstimate | None, ControlsNoise | None]:
     """The data of :func:`fit_models` divided by its noise and padded: ``(prepared, noise
     scale, noise estimate, per-bin noise curve)`` (see :func:`fit_models` for the noise)."""
     backend = config.backend
@@ -225,7 +234,8 @@ def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise 
     estimate = None
     curve = None
     bin_var = bin_variance
-    if bin_var is None and config.noise.estimate == "controls":
+    noise = bin_noise_given
+    if bin_var is None and noise is None and config.noise.estimate == "controls":
         curve = noise_curve
         if curve is None:
             curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
@@ -235,10 +245,10 @@ def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise 
             log.warning("per-bin noise: too few undeuterated controls to measure the noise from "
                         "(at least 5 series are needed); one sd per spectrum is used instead")
         else:
-            bin_var = bin_variances(data.observed, data.charges(), curve)
-            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of I)^2, from %d "
-                     "undeuterated controls of %d series", curve.b1, 100 * curve.model_error,
-                     curve.n_controls, curve.n_series)
+            noise = bin_noise(data.observed, data.charges(), curve)
+            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of the prediction)^2, "
+                     "from %d undeuterated controls of %d series", curve.b1,
+                     100 * curve.model_error, curve.n_controls, curve.n_series)
     elif config.noise.estimate == "replicates":
         # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
         # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the
@@ -268,7 +278,7 @@ def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise 
                        + (", ..." if bad.sum() > 5 else ""))
     prep = prepare(
         data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
-        keys=data.random_keys(), bin_variance=bin_var,
+        keys=data.random_keys(), bin_variance=bin_var, bin_noise=noise,
     )
     return prep, scale, estimate, curve
 
@@ -279,6 +289,8 @@ def screen_floor(data: Measurements, config: FitConfig, *,
     fits with (:func:`hxex.fit.screen.loss_floor`), with the same noise; ``-inf`` where there
     is none."""
     prep, *_ = _prepared(data, config, noise_curve, None)
+    if prep.noise is not None:  # not a bound with variances that follow the prediction
+        return np.full(len(data), -np.inf)
     return loss_floor(prep.bins, prep.observed, prep.shapes, prep.n_max, prep.noise_kind,
                       prep.weights)
 

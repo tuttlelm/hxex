@@ -7,7 +7,10 @@ damping and is rejected), uses second-order information from the Jacobian of the
 treats every measurement on its own, so measurements still do not influence each other.
 
 The Gauss-Newton matrix is ``J' W J`` and the gradient ``J' W r`` with ``r = pred - obs``; ``W``
-is 1 for Gaussian noise and ``1 / pred`` (the Fisher information) for Poisson noise.
+is 1 for Gaussian noise and ``1 / pred`` (the Fisher information) for Poisson noise. With
+per-bin noise that follows the prediction (:class:`hxex.noise.BinNoise`), ``W`` is the inverse
+variance at each iteration's prediction (iteratively reweighted) and a step is taken only if it
+lowers the Gaussian negative log-likelihood ``0.5 sum (r^2 / v + log v)``.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from torch.func import jvp
 
 from ..hooks import CancelHook, check_cancel
 from ..model import MixtureBatch, integer_grid, noise_loss, predict_mixture
+from ..model.mixture import predicted_variance
 
 
 def _predict(theta, b, shape_w, n_max, k, grid):
@@ -33,9 +37,27 @@ def _predict(theta, b, shape_w, n_max, k, grid):
 
 def _loss(pred, obs, mask, is_gaussian, weight=None):
     """Loss per measurement from ``(M, B)`` arrays; ``is_gaussian`` is ``(M,)``; ``weight``
-    ``(M, B)``, the per-bin inverse noise variance of the Gaussian loss (None: 1)."""
-    per_bin = noise_loss(pred, obs, is_gaussian.unsqueeze(1), weight)
+    ``(M, B)``, the per-bin inverse noise variance of the Gaussian loss (None: 1), or a
+    :class:`_Noise` (variances at the prediction: the Gaussian negative log-likelihood)."""
+    if isinstance(weight, _Noise):
+        var = weight.variance(pred)
+        per_bin = 0.5 * ((pred - obs) ** 2 / var + torch.log(var))
+    else:
+        per_bin = noise_loss(pred, obs, is_gaussian.unsqueeze(1), weight)
     return per_bin.masked_fill(~mask, 0.0).sum(dim=1)
+
+
+class _Noise:
+    """Per-bin noise that follows the prediction, ``(M, B)`` arrays (polish's layout)."""
+
+    def __init__(self, base, floor, model_error):
+        self.base, self.floor, self.model_error = base, floor, model_error
+
+    def variance(self, pred):
+        return predicted_variance(pred, self.base, self.floor, self.model_error)
+
+    def __getitem__(self, rows):
+        return _Noise(self.base[rows], self.floor[rows], self.model_error)
 
 
 def lm_polish(
@@ -100,7 +122,8 @@ def lm_polish(
     b, mask, obs_m = model.b.T, model.mask.T, obs_all
     shape_w, n_max = model.shape_w, model.n_max
     is_gauss = model.is_gaussian
-    wgt = model.weight.T
+    wgt = (_Noise(model.base_var.T, model.floor_var.T, model.model_error)
+           if model.follows_prediction else model.weight.T)
     pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt)
     theta = theta_all
     with torch.no_grad():
@@ -115,7 +138,8 @@ def lm_polish(
             pred, jac = pred_and_jac(theta)
             jac = jac * mask.unsqueeze(-1)
             r = (pred - obs_m) * mask
-            w = torch.where(is_gauss.unsqueeze(1), wgt, 1.0 / pred.clamp(min=1e-10))
+            gauss_w = 1.0 / wgt.variance(pred) if isinstance(wgt, _Noise) else wgt
+            w = torch.where(is_gauss.unsqueeze(1), gauss_w, 1.0 / pred.clamp(min=1e-10))
             g = torch.einsum("mbp,mb->mp", jac, w * r)
             h = torch.einsum("mbp,mb,mbq->mpq", jac, w, jac)
             damped = h + lam[:, None, None] * (
