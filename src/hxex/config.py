@@ -1574,6 +1574,10 @@ _COMMENTS: dict[str, str] = {
                                        "a peak in the retention search (false: the larger of "
                                        "the run's peak width and the injections' 99th "
                                        "percentile disagreement, measured)",
+    "input.scans.drift_gate": 'scans with ion mobility bins: "auto" sums each peptide over its '
+                              "own drift range, found from its undeuterated controls (a "
+                              "peptide table's drift_start, drift_end columns, ms, take its "
+                              "place); false sums every drift time",
     "run.envelope_fallback_time": "s: spectra at this time are the envelope references when a "
                                   "series' undeuterated controls are missing or poor (false: "
                                   "none)",

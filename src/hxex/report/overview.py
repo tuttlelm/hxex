@@ -68,6 +68,7 @@ QUALITY_LABELS = {
     "tails_low": "tails low",
     "bright": "bright",
     "rt_found": "RT found",
+    "drift_unclear": "drift unclear",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

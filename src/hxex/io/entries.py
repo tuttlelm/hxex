@@ -13,7 +13,13 @@ from pathlib import Path
 import numpy as np
 
 from ..chem.modifications import SequenceError, split_termini
-from ..spectra import PeptideEntry, SpectrumSet, entry_rt, entry_rt_window
+from ..spectra import (
+    PeptideEntry,
+    SpectrumSet,
+    entry_drift_window,
+    entry_rt,
+    entry_rt_window,
+)
 from ._common import not_text_error, open_text
 from .errors import ReadError
 
@@ -28,7 +34,7 @@ _RANGE = re.compile(r"\s*0*(\d+)\s*-\s*0*(\d+)\s*")
 # or surrounding spaces (Excel capitalises; a user adds a space); other columns keep their
 # names, stripped
 KNOWN_COLUMNS = frozenset((*_REQUIRED, "peptide_range", "modification", "index", "rt",
-                           "rt_start", "rt_end", "run", "not_runs"))
+                           "rt_start", "rt_end", "drift_start", "drift_end", "run", "not_runs"))
 _SEPARATORS = {";": "';' (Excel's regional setting)", "\t": "tabs"}
 
 
@@ -177,6 +183,7 @@ def _entry_from_row(row: dict[str, str]) -> PeptideEntry:
     )
     entry_rt(entry)  # a retention time must be a number
     entry_rt_window(entry)  # and a window both ends, in order
+    entry_drift_window(entry)  # a drift range likewise
     return entry
 
 

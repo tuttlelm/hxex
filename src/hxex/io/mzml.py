@@ -51,14 +51,25 @@ from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, plan_bins
 from ..spectra import (
+    UNDEUT,
     PeptideEntry,
     Spectrum,
     SpectrumSet,
     check_role,
+    entry_drift_window,
     entry_rt,
     qualify_spectrum_id,
     split_spectrum_id,
     time_point,
+)
+from .drift_gate import (
+    DriftProfiles,
+    DriftRange,
+    drift_key,
+    drift_record,
+    drift_times,
+    isotope_peaks,
+    scan_profile,
 )
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
@@ -145,7 +156,11 @@ class Scan:
     isolated from the full scan (the parent: for a bottom-up or top-down experiment, the peptide
     or protein), and the activations of the stages before the last are the pre-activation (an
     MS3 scan that heats the precursor with HCD, isolates it again and fragments it with ETD).
-    An MSn scan whose earlier stages are not stated has fewer than ``ms_level - 1`` stages."""
+    An MSn scan whose earlier stages are not stated has fewer than ``ms_level - 1`` stages.
+
+    A scan written with its ion mobility bins together has its arrays summed over drift time;
+    read with ``drift=True`` it also keeps ``binned``, its points before that sum: m/z,
+    intensity and drift time (ms), in the file's order (None otherwise)."""
 
     index: int
     id: str
@@ -161,6 +176,7 @@ class Scan:
     isolation: tuple[float, float] = (np.nan, np.nan)
     stages: tuple[Stage, ...] = ()
     resolution: float = np.nan  # the instrument's resolving power for the scan, if recorded
+    binned: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
 
 
 # Thermo filter-string activation codes, as mzML activation names
@@ -299,9 +315,10 @@ def _number(value: str, what: str, index: int, sid: str) -> float:
                         "file is damaged or unusual: convert it again)") from None
 
 
-def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
+def _scan_from(elem, read_arrays: bool, mz_windows, groups=None, drift: bool = False) -> Scan:
     """A :class:`Scan` from a ``spectrum`` element (``mz_windows`` merged, as
-    :func:`merge_windows` returns them; ``groups``: the file's parameter groups)."""
+    :func:`merge_windows` returns them; ``groups``: the file's parameter groups; ``drift``: keep
+    the points of a scan with ion mobility bins, :attr:`Scan.binned`)."""
     index = int(elem.get("index", -1))
     sid = elem.get("id", "")
     cv = _cv(elem, groups)
@@ -351,16 +368,17 @@ def _scan_from(elem, read_arrays: bool, mz_windows, groups=None) -> Scan:
             stages = list(written[:ms_level - 1 - len(stages)]) + stages
     meta = Scan(index, sid, ms_level, time, filt, pmz, pz, activation, centroid, np.empty(0),
                 np.empty(0), isolation, tuple(stages))
-    return _with_arrays(meta, elem, mz_windows, groups) if read_arrays else meta
+    return _with_arrays(meta, elem, mz_windows, groups, drift) if read_arrays else meta
 
 
-def _with_arrays(meta: Scan, elem, mz_windows, groups=None) -> Scan:
+def _with_arrays(meta: Scan, elem, mz_windows, groups=None, drift: bool = False) -> Scan:
     """``meta`` (a scan read without arrays from ``elem``) with its arrays decoded (only the
-    points inside ``mz_windows``, merged, when given)."""
+    points inside ``mz_windows``, merged, when given; ``drift``: a scan with ion mobility bins
+    also keeps its points with their drift times, :attr:`Scan.binned`)."""
     where = f"scan {meta.index} ({meta.id})"
     n = int(elem.get("defaultArrayLength", 0))
     arrays = {}
-    mobility = False
+    mobility, drift_times = False, np.empty(0)
     for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
         if not set(_cv(bda, groups)) & {_MZ_ARRAY, _INT_ARRAY} and not _is_mobility(bda):
             continue  # an array not read, with a length of its own (ThermoRawFileParser -N:
@@ -368,20 +386,29 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None) -> Scan:
         kind, values = _decode(bda, int(bda.get("arrayLength") or n), where, groups)
         if kind:
             arrays[kind] = values
-        else:
-            mobility |= _is_mobility(bda)
+        elif _is_mobility(bda):
+            mobility = True
+            drift_times = values
     if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
         raise MzmlError(f"{where}: the m/z or the intensity array is missing")
     mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
+    if mobility and len(drift_times) != len(mz):
+        raise MzmlError(f"{where}: its ion mobility array has {len(drift_times)} values for "
+                        f"{len(mz)} m/z values")
     if mz_windows is not None:
         keep = in_windows(mz, mz_windows)
         mz, intensity = mz[keep], intensity[keep]
+        if mobility:
+            drift_times = drift_times[keep]
+    binned = None
     if mobility:
+        if drift:
+            binned = (mz, intensity, drift_times)
         mz, intensity = sum_mobility_bins(mz, intensity)
     elif len(mz) > 1 and bool((np.diff(mz) < 0).any()):
         raise MzmlError(f"{where}: its m/z values are not in increasing order (the file is "
                         "damaged or unusual: convert it again)")
-    return replace(meta, mz=mz, intensity=intensity)
+    return replace(meta, mz=mz, intensity=intensity, binned=binned)
 
 
 def _is_mobility(bda) -> bool:
@@ -406,11 +433,13 @@ def iter_scans(
     read_arrays: bool = True,
     mz_windows: Sequence[tuple[float, float]] | None = None,
     keep=None,
+    drift: bool = False,
 ) -> Iterator[Scan]:
     """Every scan of an mzML file in file order. ``mz_windows`` keeps only the points inside
     those m/z ranges (much less memory for a few targets); ``keep`` is an optional test on the
     scan's metadata (a :class:`Scan` without arrays) that decides whether its arrays are read and
-    the scan is returned."""
+    the scan is returned; ``drift`` keeps the points of scans with ion mobility bins
+    (:attr:`Scan.binned`)."""
     path = Path(path)
     merged = None if mz_windows is None else merge_windows(mz_windows)
     groups = {}  # the parameter groups, listed before the run
@@ -425,7 +454,8 @@ def iter_scans(
             if elem.tag == f"{_NS}spectrum":
                 meta = _scan_from(elem, False, None, groups)  # the metadata, parsed once
                 if keep is None or keep(meta):
-                    yield _with_arrays(meta, elem, merged, groups) if read_arrays else meta
+                    yield (_with_arrays(meta, elem, merged, groups, drift) if read_arrays
+                           else meta)
                 _drop(elem, parent)
             elif elem.tag == f"{_NS}referenceableParamGroup":
                 groups[elem.get("id", "")] = _cv(elem)
@@ -667,6 +697,19 @@ class MzmlFile:
             return True
         return False if found & _OTHER_ANALYSERS else None
 
+    @property
+    def ion_mobility(self) -> bool:
+        """Whether the file's scans carry ion mobility arrays (scans written with their drift
+        bins together), from the header and its first spectrum."""
+        head = b""
+        with self.path.open("rb") as fh:
+            while b"</spectrum>" not in head:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                head += chunk
+        return b"ion mobility" in head.split(b"</spectrum>", 1)[0]
+
     def _index_offsets(self) -> dict[int, int]:
         """Byte offsets of the spectra from an indexedmzML index (empty if there is none)."""
         if self._offsets is None:
@@ -686,20 +729,22 @@ class MzmlFile:
         return self._offsets
 
     def read_scans(
-        self, indices, mz_windows: Sequence[tuple[float, float]] | None = None
+        self, indices, mz_windows: Sequence[tuple[float, float]] | None = None,
+        drift: bool = False,
     ) -> dict[int, Scan]:
         """The scans at the positions ``indices``, with their arrays (only the points inside
-        ``mz_windows`` when given), by position; read in one pass through the file."""
+        ``mz_windows`` when given), by position; read in one pass through the file. ``drift``
+        keeps the points of scans with ion mobility bins (:attr:`Scan.binned`)."""
         wanted = {int(i) for i in indices}
         offsets = self._index_offsets()
         if wanted and wanted <= offsets.keys():  # through the file's index: wanted scans only
             merged = None if mz_windows is None else merge_windows(mz_windows)
             try:
-                return {i: self._indexed_scan(i, merged) for i in sorted(wanted)}
+                return {i: self._indexed_scan(i, merged, drift) for i in sorted(wanted)}
             except StaleIndexError as exc:
                 self._stale_index(exc)
         return {s.index: s for s in iter_scans(self.path, mz_windows=mz_windows,
-                                               keep=lambda m: m.index in wanted)}
+                                               keep=lambda m: m.index in wanted, drift=drift)}
 
     def _stale_index(self, exc: StaleIndexError) -> None:
         """Give up the file's index (its offsets no longer point at its spectra) and read
@@ -708,7 +753,7 @@ class MzmlFile:
                     "again to make it faster)", self.path, exc.why)
         self._offsets, self._ends = {}, None
 
-    def _indexed_scan(self, index: int, merged) -> Scan:
+    def _indexed_scan(self, index: int, merged, drift: bool = False) -> Scan:
         """The scan at ``index`` read at its offset in the file's index (``merged``: m/z windows
         as :func:`merge_windows` returns them, or None). :class:`StaleIndexError` when the
         bytes at the offset are not that spectrum (the file was changed after it was indexed:
@@ -743,7 +788,7 @@ class MzmlFile:
                                   f"{elem.get('index')}")
         if self._groups is None:
             self._groups = _param_groups(self.path)
-        return _scan_from(elem, True, merged, self._groups)
+        return _scan_from(elem, True, merged, self._groups, drift)
 
     def close(self) -> None:
         """Nothing to release (the file is opened for each read); as :class:`ThermoFile`."""
@@ -1036,6 +1081,12 @@ class MzmlConfig:
     - ``rt_search_tolerance`` (s): how far apart the undeuterated injections may put a peak;
       None: the larger of the run's typical peak width and the 99th percentile of the
       injections' disagreement over the series the m/z check passes.
+    - ``drift_gate``: for scans written with their ion mobility bins, ``'auto'`` sums each
+      peptide's scans over its own drift range, measured on its undeuterated controls
+      (:mod:`hxex.io.drift_gate`; a peptide table's ``drift_start``, ``drift_end`` columns, ms,
+      take its place); ``False`` sums every drift time. Files without drift times read the same
+      either way. A record written before the setting reads as ``False`` (its spectra were
+      summed over every drift time).
     """
 
     group: str = "each"
@@ -1054,9 +1105,13 @@ class MzmlConfig:
     find_retention_time: str = "suggest"
     rt_search_ppm: float | None = None
     rt_search_tolerance: float | None = None
+    drift_gate: str | bool = "auto"
 
     def __post_init__(self):
         from .retention_search import MODES
+
+        if not (self.drift_gate is False or self.drift_gate == "auto"):
+            raise ValueError(f"drift_gate must be \"auto\" or false, not {self.drift_gate!r}")
 
         if self.find_retention_time not in MODES:
             raise ValueError(f"find_retention_time must be one of {', '.join(MODES)}")
@@ -1096,6 +1151,7 @@ class MzmlConfig:
     def from_dict(cls, data: Mapping) -> MzmlConfig:
         values = _known(cls, data, "mzML setting")
         values["windows"] = tuple(tuple(w) for w in values.get("windows", ()))
+        values.setdefault("drift_gate", False)  # recorded before it: every drift time summed
         return cls(**values)
 
 
@@ -1337,6 +1393,16 @@ def _read_runs(
     profiles: list = [None] * len(runs)  # per file: its profile scans reduced or not
     common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry,
                   joins=joins)
+    # drift ranges (drift_gate): measured on the undeuterated controls before anything is read,
+    # when the files have ion mobility bins
+    gates = None
+    if config.drift_gate == "auto" and fmt.reader == "mzml" and any(
+            MzmlFile(p).ion_mobility for p in opened):
+        gates = _drift_profiles(fmt, runs, opened, targets, windows, config=config, tie=tie,
+                                picker=picker, registry=registry, cancel=cancel)
+    unclear: set[int] = set()
+    if gates is not None:
+        common.update(gates=gates, unclear=unclear)
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
     # controls are searched while they are open; "automatic" reads them first, so that the
     # other runs read a series found elsewhere at its found time
@@ -1434,6 +1500,12 @@ def _read_runs(
             if row["data_id"] is None:
                 row["data_id"] = found.get((row["sample"], row["target"]))
         source["retention_search"] = search.record
+    if gates is not None:
+        source["drift_gate"] = drift_record(gates, unclear)
+        if unclear:
+            log.warning("%d series read from scans with ion mobility bins have no clear drift "
+                        "range (no undeuterated control with signal, or a second drift peak): "
+                        "flagged drift_unclear", len(unclear))
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
 
@@ -1724,15 +1796,16 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
     return rows
 
 
-def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
-              tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
-              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
-              only: set[int] | None = None,
-              joins: Mapping[tuple[str, int], int] | None = None) -> float:
-    """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
-    those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
-    series of its sample and target (or the target it joins, :func:`series_targets`). Returns the
-    run's typical peak width (s) when find_peak measured it, else NaN."""
+def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
+               picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+               registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+               only: set[int] | None = None, drift: bool = False, quiet: bool = False):
+    """The scans of every target of this run (:func:`target_applies`; with ``only``, of the
+    targets at these positions) in the open file ``f``: the scan table, whether each target's
+    peak is found (``find_peak``), the plans (:func:`_plans`, narrowed to the peaks found), the
+    scans read by index (``drift``: with their drift times, :attr:`Scan.binned`) and the run's
+    typical peak width (s; NaN when not measured); None when no scan matches. ``quiet``: no
+    warnings or log lines (a second look at the same file)."""
     table = f.scans()
     # the targets whose peak is found (find_peak): planned over their search range first
     find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
@@ -1747,22 +1820,45 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     needed = {int(table.index[p[0][i]]) for p in plans if p is not None for g in p[1]
               for i in g}
     if not needed:
-        if only is None:
+        if only is None and not quiet:
             log.warning("%s: no scan matches any target", f.path.name)
-        return float("nan")
+        return None
     missing = [_target_label(t) for t, p, a in zip(targets, plans, applies, strict=True)
                if a and p is None]
-    if missing:
+    if missing and not quiet:
         # one line per file: in a targeted method each target has scans in some files only
         log.warning("%s: no scan for %d of %d targets, for example %s", f.path.name,
                     len(missing), sum(applies), missing[0])
         for label in missing:
             log.debug("%s: no scan for target %s", f.path.name, label)
-    by_index = f.read_scans(sorted(needed), windows)
+    by_index = (f.read_scans(sorted(needed), windows, drift=True) if drift
+                else f.read_scans(sorted(needed), windows))
     width = float("nan")
     if any(find):
         plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
-                                  registry)
+                                  registry, quiet=quiet)
+    return table, find, plans, by_index, width
+
+
+def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
+              tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+              only: set[int] | None = None,
+              joins: Mapping[tuple[str, int], int] | None = None,
+              gates: Mapping[tuple, DriftRange] | None = None,
+              unclear: set[int] | None = None) -> float:
+    """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
+    those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
+    series of its sample and target (or the target it joins, :func:`series_targets`). With
+    ``gates`` (the drift ranges found, :mod:`hxex.io.drift_gate`; None: drift_gate off), a
+    peptide's scans with ion mobility bins are summed over its drift range only, and the series
+    without a clear one are added to ``unclear``. Returns the run's typical peak width (s) when
+    find_peak measured it, else NaN."""
+    scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
+                         registry=registry, only=only, drift=gates is not None)
+    if scanned is None:
+        return float("nan")
+    table, find, plans, by_index, width = scanned
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     no_spectrum_type: set[Path] = set()  # files warned about scans without a spectrum type
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
@@ -1772,13 +1868,26 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         key = (run.sample, (joins or {}).get((run.sample, t_i), t_i))
         data_id = series.setdefault(key, len(series))
         entry = replace(target.entry, sample=run.sample)
+        gate = None if gates is None else _drift_gate(target, gates)
         order, groups = plan
         for g in groups:
             scans = [by_index[int(table.index[order[i]])] for i in g]
             parts = []
+            gated = False
             for s in scans:
+                if s.binned is not None and gate is not None:  # its drift range only
+                    m, y, d = s.binned
+                    d = drift_times(d)
+                    inside = (m >= lo) & (m <= hi) & (d >= gate[0]) & (d <= gate[1])
+                    parts.append(sum_mobility_bins(m[inside], y[inside]))
+                    gated = True
+                    continue
                 inside = (s.mz >= lo) & (s.mz <= hi)
                 parts.append((s.mz[inside], s.intensity[inside]))
+            if (gates is not None and unclear is not None and _gated_kind(target)
+                    and any(s.binned is not None for s in scans)
+                    and (gate is None or gate[2])):
+                unclear.add(data_id)
             if any(s.centroid is None for s in scans) and f.path not in no_spectrum_type:
                 no_spectrum_type.add(f.path)
                 log.warning("%s: its scans do not say whether they are centroided or profile "
@@ -1831,8 +1940,78 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 role=run.role,
                 rt_start=float(scan_times.min()) if run.fixed else np.nan,
                 rt_end=float(scan_times.max()) if run.fixed else np.nan,
+                drift_start=gate[0] if gated else np.nan,
+                drift_end=gate[1] if gated else np.nan,
             ))
     return width
+
+
+def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
+                    targets, windows, *, config, tie, picker, registry, cancel
+                    ) -> dict[tuple, DriftRange]:
+    """The drift range of every peptide ion with an undeuterated control and signal
+    (``drift_gate``, :mod:`hxex.io.drift_gate`): its scans in every undeuterated control (a run
+    with a fixed time), as its spectra would take them, read with their drift times."""
+    gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
+    profiles = DriftProfiles()
+    for run, path in zip(runs, opened, strict=True):
+        if run.role != UNDEUT or not run.fixed:
+            continue
+        check_cancel(cancel)
+        with fmt.open(path) as f:
+            scanned = _run_scans(f, run, targets, windows, config=config, tie=tie,
+                                 picker=picker, registry=registry, only=gated, drift=True,
+                                 quiet=True)
+            if scanned is None:
+                continue
+            table, _, plans, by_index, _ = scanned
+            r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+            for t_i, plan in enumerate(plans):
+                if plan is None:
+                    continue
+                order, groups = plan
+                scans = [by_index[int(table.index[order[i]])] for g in groups for i in g]
+                if not any(s.binned is not None for s in scans):
+                    continue
+                e = targets[t_i].entry
+                bins = plan_bins(e.peptide, e.charge, modification=e.modification,
+                                 config=picker, registry=registry)
+                peaks = isotope_peaks(bins)
+                recorded = np.array([s.resolution for s in scans], dtype=float)
+                recorded = recorded[np.isfinite(recorded)]
+                half = picker.half_width(
+                    peaks, e.charge, resolving_power=float(np.median(recorded))
+                    if len(recorded) else None, resolving_power_mz=r_mz)
+                found = scan_profile(scans, peaks, half)
+                if found is not None:
+                    profiles.add(drift_key(e), *found, file=str(path))
+    ranges = profiles.ranges()
+    n_ions = len({drift_key(targets[i].entry) for i in gated})
+    two = sum(r.unclear for r in ranges.values())
+    log.info("drift ranges found for %d of %d peptide ions from the undeuterated controls "
+             "(median %.3g ms wide)%s", len(ranges), n_ions,
+             float(np.median([r.end - r.start for r in ranges.values()])) if ranges else 0.0,
+             f"; {two} with a second drift peak (flagged drift_unclear)" if two else "")
+    return ranges
+
+
+def _gated_kind(target: MzmlTarget) -> bool:
+    """Whether a target is read over its drift range (:mod:`hxex.io.drift_gate`): an MS1
+    peptide; a fragment keeps every drift time."""
+    return target.ms_level == 1 and "fragment" not in dict(target.entry.extra)
+
+
+def _drift_gate(target: MzmlTarget, gates: Mapping[tuple, DriftRange]):
+    """The drift range a target is summed over: ``(start, end, unclear)`` (ms; the peptide
+    table's own ``drift_start``, ``drift_end``, else the range found), or None (every drift
+    time: a fragment, or a peptide ion without a range)."""
+    if not _gated_kind(target):
+        return None
+    own = entry_drift_window(target.entry)
+    if own is not None:
+        return float(drift_times(own[0])), float(drift_times(own[1])), False
+    found = gates.get(drift_key(target.entry))
+    return None if found is None else (found.start, found.end, found.unclear)
 
 
 def _finds_peak(target: MzmlTarget) -> bool:
@@ -1906,12 +2085,13 @@ def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
 
 
 def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
-               config: MzmlConfig, picker: PickerConfig, registry):
+               config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False):
     """The plans of the ``find`` targets narrowed to their elution peak (``find_peak``): per
     peptide (its charge states share one chromatogram, the sum of theirs: retention belongs to
     the peptide), the scans of the window :func:`_peak` finds near its ``rt``, smoothed over
     ``peak_smoothing`` (or half the run's typical half-maximum width). A peptide without signal
-    gets no spectrum in this run. Logs the run's peak width and smoothing. Returns the plans and
+    gets no spectrum in this run. Logs the run's peak width and smoothing (not ``quiet``).
+    Returns the plans and
     the run's typical width at half maximum (s; NaN when there is nothing to measure)."""
     plans = list(plans)
     chroms: dict[tuple, list] = {}  # peptide -> [(target position, order, chromatogram)]
@@ -1969,10 +2149,11 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         inside = np.flatnonzero((times >= start - 1e-9) & (times <= end + 1e-9))
         for t_i in members:
             plans[t_i] = (order, [inside]) if len(inside) else None
-    log.info("%s: peaks found for %d peptides%s; typical peak width %.1f s, smoothing over %d "
-             "scans (%.1f s)", Path(f.path).name, len(groups) - missing,
-             f" ({missing} without signal: no spectrum)" if missing else "", run_width,
-             n_smooth, n_smooth * spacing)
+    (log.debug if quiet else log.info)(
+        "%s: peaks found for %d peptides%s; typical peak width %.1f s, smoothing over %d "
+        "scans (%.1f s)", Path(f.path).name, len(groups) - missing,
+        f" ({missing} without signal: no spectrum)" if missing else "", run_width,
+        n_smooth, n_smooth * spacing)
     return plans, run_width
 
 

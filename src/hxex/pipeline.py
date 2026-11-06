@@ -570,7 +570,7 @@ def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
-    chosen=None, residues=None, deamidation=None, rt_found=None,
+    chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -645,7 +645,8 @@ def _fit_part(
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
                                  envelope_offset_limit_ppm=envelope_offset[1],
-                                 rt_found_series=rt_found, controls=controls)
+                                 rt_found_series=rt_found,
+                                 drift_unclear_series=drift_unclear, controls=controls)
     return fits, fit, controls, quality, test
 
 
@@ -1159,8 +1160,10 @@ def run(
     noise_curve = bundle_noise(picked, measurements, config)
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
+    from .io.drift_gate import unclear_series
     from .io.retention_search import moved_series
 
+    record = {} if raw is None or raw.source is None else raw.source
     inputs = _control_inputs(picked, measurements, config,
                              None if raw is None else raw.source)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
@@ -1179,8 +1182,9 @@ def run(
                                              noise_curve=noise_curve,
                                              chosen=merge_choices(chosen_k),
                                              rt_found=moved_series(
-                                                 None if raw is None or raw.source is None
-                                                 else raw.source.get("retention_search")))
+                                                 record.get("retention_search")),
+                                             drift_unclear=unclear_series(
+                                                 record.get("drift_gate")))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1365,6 +1369,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
                 kept: np.ndarray, envelopes: EnvelopeTable | None, source,
                 controls=None) -> QualityFlags:
     """The quality flags of ``fit`` from what a bundle stores, as :func:`run` assesses them."""
+    from .io.drift_gate import unclear_series
     from .io.retention_search import moved_series
 
     return assess_quality(
@@ -1374,6 +1379,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         envelope_offset_ppm=binned.envelope_offset_ppm[kept],
         envelope_offset_limit_ppm=binned.envelope_offset_limit_ppm[kept],
         rt_found_series=moved_series((source or {}).get("retention_search")),
+        drift_unclear_series=unclear_series((source or {}).get("drift_gate")),
         controls=controls)
 
 

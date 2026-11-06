@@ -382,10 +382,12 @@ class ThermoFile:
         return self._table
 
     def read_scans(
-        self, indices, mz_windows: Sequence[tuple[float, float]] | None = None
+        self, indices, mz_windows: Sequence[tuple[float, float]] | None = None,
+        drift: bool = False,
     ) -> dict[int, Scan]:
         """The scans at the positions ``indices``, with their arrays (only the points inside
-        ``mz_windows`` when given), by position."""
+        ``mz_windows`` when given), by position. ``drift`` is :class:`MzmlFile`'s: Thermo files
+        have no ion mobility bins."""
         rows, reader = self._scan_rows(), self._open()
         merged = None if mz_windows is None else merge_windows(mz_windows)
         out = {}

@@ -1049,8 +1049,32 @@ Planned, not built:
    every file, only for files that carry drift times and without instrument settings.
    MEASURED 2026-11-06 (HISTORY 303): gating matters (summed over every drift bin, K differs
    from the gated spectra's in a fifth of the spectra and the replicate sd's q90 doubles), so
-   the design is next (owner, 2026-11-06: go). Its parts: the drift range per peptide from
-   the data (the benchmark's gated arm, HDExaminer's bins, is the yardstick to test it on).
+   the design is next (owner, 2026-11-06: go). HDExaminer's gates on the benchmark (18,898
+   file-peptide-charge rows): 5 bins wide (q95 10 of 200), the same peptide and charge within
+   1 bin across files and samples (median; q90 2), and no shift with deuteration (fully
+   deuterated against undeuterated: median 0 bins). So one range per peptide and charge,
+   measured once, serves every file. Design confirmed (owner, 2026-11-06) and BUILT (HISTORY
+   304; `hxex.io.drift_gate`):
+   - *Reading.* A file whose scans carry an ion mobility array keeps each point's drift time
+     (`Scan.binned`) while a target's scans are cut; the spectrum is summed over the target's
+     range only, then picked as before. Files without drift times read as before (the reader
+     looks at each file's first spectrum, so other data pay nothing).
+   - *Finding the range.* Before anything else is read, the undeuterated controls' scans of
+     each MS1 peptide (as its spectra take them, `find_peak` included): the intensity within the
+     picker's window of the undeuterated isotope peaks (clusters >= 5 % of the tallest) per drift
+     time, summed over scans and every sample's controls; the range is the apex and the drift
+     times either side down to 10 % of it (`SHARE`), one range per peptide ion for every file.
+     The undeuterated files are read twice (once for the profiles).
+   - *Unclear ranges.* A peptide ion without an undeuterated control with signal keeps every
+     drift time; so does a fragment. Flag `drift_unclear` (series): no range, or a second peak
+     >= 50 % of the apex outside the range. The tie-breaker by the charge's drift-m/z trend was
+     NOT built (which peak is right in the two benchmark cases is not known: a flag first).
+   - *Settings and outputs.* `[input.scans] drift_gate` ("auto", the default; false: every drift
+     time; a record written before it reads as false); peptide-table `drift_start`, `drift_end`
+     (ms, both or neither) take the place of the range found; spectra and spectra.csv columns
+     `drift_start`, `drift_end` (written only when a range was used); the read record's
+     `drift_gate` entry lists every range (apex, second peak, files) and the unclear series.
+   - *Not done.* `find_peak`'s chromatogram is still summed over every drift time.
    - *m/z calibration of such files* (owner, 2026-11-06): it must not need HDExaminer's files
      (with them, SpecExport would serve). The benchmark's uncorrected files sit about +23 ppm
      from theory (+41 over one stretch of acquisitions), beyond the picking window; HDExaminer

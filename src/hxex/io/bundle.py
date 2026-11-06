@@ -371,7 +371,7 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         poor_envelope=(b("poor_envelope") if "poor_envelope" in table.column_names else None),
         # written before the brightness flags or the retention search: False
         **{name: (b(name) if name in table.column_names else None)
-           for name in ("saturated", "tails_low", "bright", "rt_found")},
+           for name in ("saturated", "tails_low", "bright", "rt_found", "drift_unclear")},
         # written before the m/z check: not assessed
         envelope_offset=(f("envelope_offset") if "envelope_offset" in table.column_names
                          else None),
@@ -1468,7 +1468,8 @@ class Bundle:
             empty=np.asarray(_col(t, "empty"), dtype=bool),
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
             capped=np.asarray(_col(t, "capped"), dtype=bool),
-            **{**_index_arrays(t, ("rt", "rt_start", "rt_end")), ROLE: self._roles(t)},
+            **{**_index_arrays(t, ("rt", "rt_start", "rt_end", "drift_start", "drift_end")),
+               ROLE: self._roles(t)},
             peak_mz=peak_mz, mz_offset_ppm=offset,
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed
                for name in SCREEN_SCORES if name in t.column_names},

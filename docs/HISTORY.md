@@ -7637,3 +7637,29 @@ CSVs or mzML if wanted.
     301 the 930 series hold their replicates and controls (9 control fallbacks gated, 54 summed).
     So drift-time gating (PLAN Next steps 22) is worth building for ion-mobility data; msConvert's
     lockmass correction did not reproduce HDExaminer's axis (offsets scattered -11 to +7.5 ppm).
+
+304. **Drift ranges found from the undeuterated controls match HDExaminer's gates
+    (2026-11-06; private scratch prototype of PLAN Next steps 22).** On the intact-peptide
+    benchmark's ion-mobility files: per peptide and charge, the drift profile of the undeuterated
+    controls (intensity at the predicted isotope peaks, summed over the retention window and every
+    sample's controls), the range = the bins around the apex down to 10 % of it, the same range in
+    every file. HDExaminer's gates are 5 of 200 bins, mostly the apex -1 to +3; the found ranges
+    the apex -2 to +1 or +2 (4 bins). Fitted on 18,327 spectra against the spectra gated to
+    HDExaminer's bins: same K 97.2 %, corrected centroids 0.009 D apart (median; q90 0.063),
+    replicate sd 0.080 against 0.083 D (q90 0.234 against 0.244); both far from the drift-summed
+    spectra (item 303). Different peaks chosen for 2 of 226 peptide-charges (a 1+ ion, and a 3+
+    ion with two drift peaks of equal height); drift follows m/z within a charge (log-log slope
+    about 1, residual sd 1.6-3.2 bins), a possible tie-breaker (not built).
+    BUILT as `[input.scans] drift_gate = "auto"` (default; `hxex.io.drift_gate`; flag
+    `drift_unclear`; spectra.csv `drift_start`, `drift_end`). On the same files with the same
+    retention windows: ranges for 226 of 226 peptide ions, 2 with a second drift peak (10 series
+    flagged); against the prototype same K 99.4 %, centroids 0.000 D apart (median; q90 0.004);
+    against HDExaminer's gates same K 97.0 %, 0.009 D (q90 0.065); replicate sd 0.080 D (q90
+    0.236); 16 control fallbacks of 930 series. Retention windows from the data instead (one
+    retention time per sample and peptide ion, the median of the export's, `find_peak = true`) did
+    poorly: same K as the gated spectra 89-91 %, centroids more than 0.25 D apart in 15 %,
+    replicate sd q90 0.98-1.01 D, 99-100 control fallbacks, with `peak_width` 0.5 or 1.5. The
+    export's windows (19 s median) are 3x wider than find_peak's at 0.5; its centres sit 6.6 s
+    (median; q90 20 s) from the per-sample median, so retention moves between files on this
+    Q-TOF and the peak nearest one table time is often a neighbour's; find_peak's chromatogram
+    also sums every drift time. Not changed: find_peak stays as it is (HISTORY 165).

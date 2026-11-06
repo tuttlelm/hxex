@@ -158,7 +158,9 @@ class Spectrum:
     ``resolving_power`` is the instrument's resolving power recorded with the scans, quoted at
     ``resolving_power_mz`` (both NaN when the file does not record it; Thermo raw files do).
     ``rt_start`` and ``rt_end`` (minutes) are the times of the first and last scan summed into
-    the spectrum, for an LC-MS run with a fixed time (NaN otherwise).
+    the spectrum, for an LC-MS run with a fixed time (NaN otherwise). ``drift_start`` and
+    ``drift_end`` (ms) are the drift times summed into it, for scans read with their ion
+    mobility bins and a drift range (NaN otherwise: every drift time, or no drift times).
     """
 
     mz: np.ndarray
@@ -175,6 +177,8 @@ class Spectrum:
     role: str = ""
     rt_start: float = float("nan")
     rt_end: float = float("nan")
+    drift_start: float = float("nan")
+    drift_end: float = float("nan")
 
     def __post_init__(self):
         object.__setattr__(self, "role", check_role(self.role))
@@ -214,6 +218,28 @@ def entry_rt_window(entry: PeptideEntry) -> tuple[float, float] | None:
         raise ValueError(f"rt_start {lo:g} and rt_end {hi:g} of {where}: the end must be after "
                          "the start")
     return 60.0 * lo, 60.0 * hi
+
+
+def entry_drift_window(entry: PeptideEntry) -> tuple[float, float] | None:
+    """The drift range (ms, as the scan file records drift times) of a peptide table row's
+    ``drift_start`` and ``drift_end`` columns; None when both are absent or empty. One without
+    the other, a non-number or an end before the start is an error."""
+    extra = dict(entry.extra)
+    values = [str(extra.get(k, "") or "").strip() for k in ("drift_start", "drift_end")]
+    if not any(values):
+        return None
+    where = f"{entry.sample} {entry.peptide} {entry.charge}+"
+    if not all(values):
+        raise ValueError(f"drift_start and drift_end of {where}: give both or neither")
+    try:
+        lo, hi = (float(v) for v in values)
+    except ValueError:
+        raise ValueError(f"drift_start {values[0]!r}, drift_end {values[1]!r} of {where}: not "
+                         "numbers of milliseconds") from None
+    if not lo <= hi:
+        raise ValueError(f"drift_start {lo:g} and drift_end {hi:g} of {where}: the end must not "
+                         "be before the start")
+    return lo, hi
 
 
 @dataclass(frozen=True)
@@ -257,9 +283,12 @@ class SpectrumSet:
     role: np.ndarray | None = None
     rt_start: np.ndarray | None = None
     rt_end: np.ndarray | None = None
+    drift_start: np.ndarray | None = None
+    drift_end: np.ndarray | None = None
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
-        for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end"):
+        for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end",
+                     "drift_start", "drift_end"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.role is None:  # built without roles: time points only
@@ -345,6 +374,8 @@ class SpectrumSet:
             resolving_power=np.array([s.resolving_power for s in spectra], dtype=np.float64),
             rt_start=np.array([s.rt_start for s in spectra], dtype=np.float64),
             rt_end=np.array([s.rt_end for s in spectra], dtype=np.float64),
+            drift_start=np.array([s.drift_start for s in spectra], dtype=np.float64),
+            drift_end=np.array([s.drift_end for s in spectra], dtype=np.float64),
             resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
                                         dtype=np.float64),
             role=np.array([s.role for s in spectra], dtype="<U8"),

@@ -410,6 +410,7 @@ Optional columns:
 | `peptide_range` | the range's label in tables and figures; left out, it is made from `start_seq` and `end_seq` (`0012-0020`) |
 | `rt` | the retention time, minutes (stored with the spectra) |
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
+| `drift_start`, `drift_end` | for files with ion mobility: the peptide's drift-time range, milliseconds (both or neither), in place of the one *hxex* finds (see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time)) |
 | `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`); not allowed in a project that reads fragment ions (see [Fragment ions](#fragment-ions)) |
 | `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, say). The rows are still one peptide: the runs stay replicates of one series, with the same controls, also when every run has a row of its own |
 
@@ -497,6 +498,7 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 | `find_retention_time` | `"suggest"` | with `find_peak`: look for where a peptide's exact m/z elutes when its peptide-table time looks wrong (`"suggest"`, `"automatic"`, or `"off"`; see [When the peptide table's time is wrong](#when-the-peptide-tables-time-is-wrong)) |
 | `rt_search_ppm` | (measured) | how far a peak top may sit from the peptide's m/z in that search |
 | `rt_search_tolerance` | (measured) | how far apart, in seconds, the undeuterated injections may put the peptide's peak |
+| `drift_gate` | `"auto"` | files with ion mobility: sum each peptide over its own drift-time range, found from its undeuterated controls (`"auto"`), or over every drift time (`false`); see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time) |
 
 Profile and centroided scans are both read. Summed profile scans are put on a common m/z grid;
 centroided scans are merged peak by peak. Profile data is recommended: when converting Thermo
@@ -511,10 +513,9 @@ msconvert RUN.raw --mzML --64 --zlib --ignoreCalibrationScans --combineIonMobili
 
 `--ignoreCalibrationScans` leaves out the lockspray scans, and `msLevel 1` the high-energy scans
 of MSe. Data acquired with ion mobility (HDMS, HDMSe) needs `--combineIonMobilitySpectra`, which
-writes each scan with its drift-time bins together; *hxex* adds the bins up, so each scan is
-read summed over its whole drift time. *hxex* cannot yet keep only a peptide's own drift-time
-range, as some other programs do, so a species that elutes with the peptide at a nearby m/z but
-drifts at another time stays in its spectra. If the acquisition did not correct the m/z with
+writes each scan with its drift-time bins together; *hxex* then keeps each peptide's own
+drift-time range (see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time)).
+If the acquisition did not correct the m/z with
 the lockspray, msConvert's `--filter "lockmassRefiner mz=… tol=…"` (with the reference
 compound's m/z) can do it; put it before the other filters.
 
@@ -702,6 +703,43 @@ identification but 0.2 minutes from its scan. Of all 52 proposals elsewhere, 44 
 against a weak identification, and one cysteine peptide, which the identification sample had
 alkylated and the HDX samples had not. Only one Orbitrap dataset has been checked so far, so
 `"automatic"` is not the default.
+
+### Ion mobility: each peptide's drift time
+
+Files converted with their drift-time bins together (Waters HDMS data, msConvert's
+`--combineIonMobilitySpectra`) hold every ion that reaches the detector in a scan, whatever its
+drift time. Another ion at a nearby m/z that elutes with the peptide but drifts at another time
+would then be added to the peptide's spectra. So, with `drift_gate = "auto"` (the default),
+*hxex* keeps only each peptide's own drift time:
+
+1. In the peptide's undeuterated controls (every sample's), it adds up the intensity at the
+   peptide's natural isotope peaks at each drift time, over the scans its spectra take.
+2. The peptide's range is the drift time where that intensity is highest, and the drift times
+   either side of it down to a tenth of that height.
+3. Every spectrum of the peptide, in every file, is summed over that range only. Deuterium
+   does not change the drift time measurably, so one range serves every time point.
+
+Each charge state of a peptide gets its own range. Drift times are used as the file records
+them, in milliseconds; no instrument setting is needed. `spectra.csv` gives each spectrum's
+range in `drift_start` and `drift_end`, and the log says for how many peptides a range was
+found.
+
+A peptide without an undeuterated control with signal keeps every drift time, and its series
+is flagged `drift_unclear`. So is a peptide whose undeuterated drift profile has a second peak,
+at least half as high as the first, outside its range: another ion at that m/z, or the peptide
+in two shapes. Look at its spectra; if you know its drift time, give it in the peptide table's
+`drift_start` and `drift_end` columns (milliseconds), which take the place of the range found.
+Fragment ions keep every drift time.
+
+`drift_gate = false` sums every drift time, as earlier versions of *hxex* did. Files without
+drift times are read the same either way.
+
+On a Q-TOF dataset with five samples, the ranges *hxex* found were mostly four drift bins of
+200, close to the five bins HDExaminer had chosen for the same peptides. The fits agreed with
+fits of HDExaminer's drift-gated spectra: the same number of populations in 97 % of spectra,
+deuterium within 0.01 D (median), and replicates that agreed as closely. Summed over every drift
+time instead, a fifth of the spectra chose a different number of populations and the
+replicates disagreed twice as much at the worst end.
 
 ### Thermo raw files
 

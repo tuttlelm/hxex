@@ -1412,3 +1412,137 @@ def test_ion_mobility_bins_are_summed(tmp_path):
     with pytest.raises(MzmlError, match=r"scan 0 \(scan=1\): its m/z values are not in "
                                         "increasing order"):
         MzmlFile(write_mzml(tmp_path / "bad.mzML", bad)).scan(0)
+
+
+def _drifting(scans, species):
+    """``scans`` (dicts with a time) written with their drift bins together: ``species`` are
+    ``(center_bin, height, {drift time (ms): share})``, each an envelope of the test peptide's
+    m/z grid spread over its drift times."""
+    out = []
+    for s in scans:
+        mz, y, d = [], [], []
+        for center, height, drifts in species:
+            m, v = profile_envelope(center, 0.6, height)
+            for t, share in drifts.items():
+                mz.append(m)
+                y.append(share * v)
+                d.append(np.full(len(m), t))
+        out.append({**s, "mz": np.concatenate(mz), "intensity": np.concatenate(y),
+                    "mobility": np.concatenate(d)})
+    return out
+
+
+def test_drift_gate_keeps_each_peptides_drift_range(tmp_path, caplog):
+    """Scans with ion mobility bins: the peptide (drift 5.2-5.4 ms, apex 5.3) and another ion
+    on the same m/z grid at a later drift time (5.7-5.8 ms, its envelope further up). The drift
+    range is found on the undeuterated control and applied in every file; false sums every
+    drift time; a table's own drift_start, drift_end win; without an undeuterated control the
+    series is summed and flagged."""
+    from dataclasses import replace as _replace
+
+    from hxex.io import read_mzml_source
+    from hxex.io.drift_gate import unclear_series
+
+    lc = [{"time": 1.0 + 0.1 * k, "filter": "Full ms"} for k in range(3)]
+    peptide = {5.1: 0.02, 5.2: 0.4, 5.3: 1.0, 5.4: 0.5, 5.5: 0.05}
+    other = {5.7: 1.0, 5.8: 0.6}
+    un = write_mzml(tmp_path / "un.mzML", _drifting(lc, [(1, 1e5, peptide), (7, 5e4, other)]),
+                    indexed=True)
+    lab = write_mzml(tmp_path / "lab.mzML", _drifting(lc, [(4, 1e5, peptide), (7, 5e4, other)]))
+    assert MzmlFile(un).ion_mobility and not MzmlFile(write_mzml(
+        tmp_path / "plain.mzML", time_course(n=2))).ion_mobility
+    runs = [MzmlRun(un, "WT", role="undeut"), MzmlRun(lab, "WT", time=60.0)]
+    target = MzmlTarget(ENTRY, rt_window=(60.0, 72.0))
+    pred = plan_bins(PEPTIDE, CHARGE).pred_mz
+
+    def at(s, i, b):  # the intensity near bin b of spectrum i
+        mz, y = s.spectrum(i)
+        return float(y[np.abs(mz - pred[b]) < 0.01].sum())
+
+    with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
+        gated = read_mzml(runs, [target], project="p")
+    assert "drift ranges found for 1 of 1 peptide ions" in caplog.text
+    summed = read_mzml(runs, [target], project="p", config=MzmlConfig(drift_gate=False))
+    for i in range(2):
+        assert at(gated, i, 9) == 0 and at(summed, i, 9) > 0  # the other ion is gone
+    assert at(gated, 0, 1) == pytest.approx(at(summed, 0, 1) * 1.9 / 1.97)
+    np.testing.assert_allclose(gated.drift_start, 5.2)
+    np.testing.assert_allclose(gated.drift_end, 5.4)
+    assert np.isnan(summed.drift_start).all() and "drift_gate" not in summed.source
+    rec = gated.source["drift_gate"]
+    assert rec["unclear"] == [] and len(rec["ranges"]) == 1
+    assert rec["ranges"][0]["apex"] == 5.3 and rec["ranges"][0]["n_files"] == 1
+    assert rec["ranges"][0]["second"] == pytest.approx(0.0)
+    # the read is repeated from its record as it was made; a record from before reads summed
+    again = read_mzml_source(gated.source)
+    np.testing.assert_array_equal(again.intensity, gated.intensity)
+    old = {**gated.source, "config": {k: v for k, v in gated.source["config"].items()
+                                      if k != "drift_gate"}}
+    np.testing.assert_array_equal(read_mzml_source(old).intensity, summed.intensity)
+    # the table's own drift range: the other ion only
+    own = MzmlTarget(_replace(ENTRY, extra={"drift_start": "5.7", "drift_end": "5.8"}),
+                     rt_window=(60.0, 72.0))
+    s = read_mzml(runs, [own], project="p")
+    assert at(s, 0, 1) == 0 and at(s, 0, 9) > 0 and s.source["drift_gate"]["unclear"] == []
+    # without an undeuterated control: every drift time, flagged
+    alone = read_mzml(runs[1:], [target], project="p")
+    np.testing.assert_array_equal(alone.intensity, summed.select(summed.role == "").intensity)
+    assert unclear_series(alone.source["drift_gate"]) == [0]
+    # two drift peaks of a similar height in the undeuterated control: flagged
+    twin = write_mzml(tmp_path / "twin.mzML", _drifting(lc, [(1, 1e5, peptide),
+                                                             (1, 7e4, {5.8: 1.0})]))
+    s = read_mzml([MzmlRun(twin, "WT", role="undeut"), runs[1]], [target], project="p")
+    assert s.source["drift_gate"]["unclear"] == [0]
+    assert s.source["drift_gate"]["ranges"][0]["second"] == pytest.approx(0.7)
+    with pytest.raises(ValueError, match="drift_gate must be"):
+        MzmlConfig(drift_gate="on")
+    with pytest.raises(ValueError, match="drift_start and drift_end"):
+        from hxex.spectra import entry_drift_window
+        entry_drift_window(_replace(ENTRY, extra={"drift_start": "5.7"}))
+
+
+def test_drift_ranges_and_the_flag_reach_the_results(tmp_path):
+    """The drift range of each spectrum is stored with the spectra and written in spectra.csv;
+    a series without a clear range is flagged drift_unclear; without drift times neither
+    column is written."""
+    import csv
+
+    from hxex import load_results
+    from hxex.fit import FitConfig
+    from hxex.io import load_spectra, save_spectra
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.pipeline import RunConfig, run
+    from hxex.report.tables import write_tables
+
+    lc = [{"time": 1.0 + 0.1 * k, "filter": "Full ms"} for k in range(3)]
+    peptide = {5.2: 0.4, 5.3: 1.0, 5.4: 0.5}
+    other = {5.7: 1.0, 5.8: 0.6}
+
+    def lab(name, center, rep):
+        return MzmlRun(write_mzml(tmp_path / name, _drifting(
+            lc, [(center, 1e5, peptide), (7, 5e4, other)])), "WT", rep=rep, time=60.0)
+
+    runs = [MzmlRun(write_mzml(tmp_path / "un.mzML", _drifting(
+                lc, [(1, 1e5, peptide), (7, 5e4, other)])), "WT", role="undeut"),
+            lab("a.mzML", 4, 1), lab("b.mzML", 4.2, 2)]
+    target = MzmlTarget(ENTRY, rt_window=(60.0, 72.0))
+    spectra = read_mzml(runs, [target], project="p")
+    save_spectra(spectra, tmp_path / "s.parquet")
+    back = load_spectra(tmp_path / "s.parquet")
+    np.testing.assert_array_equal(back.drift_start, spectra.drift_start)
+    fit = FitConfig(k_max=1, adam_steps=40, n_restarts=1, backend=Backend("cpu", "float64"),
+                    noise=NoiseConfig("gaussian", percent=3.0))
+    run(spectra, RunConfig(fit=fit), out=tmp_path / "b")
+    loaded = load_results(tmp_path / "b")
+    assert not loaded.quality.drift_unclear.any()
+    write_tables(loaded, tmp_path / "t")
+    rows = list(csv.DictReader(open(tmp_path / "t" / "spectra.csv")))
+    assert {(r["drift_start"], r["drift_end"]) for r in rows} == {("5.2", "5.4")}
+    # without the undeuterated control: every drift time, flagged
+    run(read_mzml(runs[1:], [target], project="p"), RunConfig(fit=fit), out=tmp_path / "c")
+    loaded = load_results(tmp_path / "c")
+    assert loaded.quality.drift_unclear.all()
+    write_tables(loaded, tmp_path / "u")
+    rows = list(csv.DictReader(open(tmp_path / "u" / "spectra.csv")))
+    assert "drift_start" not in rows[0] and all("drift_unclear" in r["flags"] for r in rows)

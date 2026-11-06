@@ -44,7 +44,8 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
         for name in names:
             values = getattr(b, name)
             cols[name] = np.array([values[j] if j >= 0 else "" for j in rows])
-        for name in ("rt", "rt_start", "rt_end"):  # minutes: the spectrum's, and its scans'
+        # minutes: the spectrum's, and its scans'; ms: the drift times summed (ion mobility)
+        for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end"):
             values = getattr(b, name, None)
             cols[name] = np.array([float(values[j]) if j >= 0 and values is not None else np.nan
                                    for j in rows])
@@ -53,6 +54,9 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
             cols[name] = np.array([""] * m)
         for name in ("rt", "rt_start", "rt_end"):
             cols[name] = np.full(m, np.nan)
+    for name in ("drift_start", "drift_end"):  # only for spectra read with a drift range
+        if name in cols and not np.isfinite(cols[name]).any():
+            del cols[name]
     cols.update(_target_columns(results))
     cols["review_status"] = np.asarray(results.review_status).astype(str)
     cols["review_K"] = _review_k(results)

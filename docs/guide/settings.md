@@ -174,6 +174,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `find_retention_time` | text | `"suggest"` | with find_peak: "suggest" (look in the undeuterated controls for where the exact m/z of a series off its m/z, or without an undeuterated envelope, elutes: retention_suggestions.csv), "automatic" (also read a series found clearly elsewhere at that time, flagged rt_found) or "off" |
 | `rt_search_ppm` | number | unset | how far (ppm) a peak top may sit from the calibrated m/z in the retention search (false: 1.25 times the m/z check's limit, measured) |
 | `rt_search_tolerance` | number | unset | s: how far apart the undeuterated injections may put a peak in the retention search (false: the larger of the run's peak width and the injections' 99th percentile disagreement, measured) |
+| `drift_gate` | text or true/false | `"auto"` | scans with ion mobility bins: "auto" sums each peptide over its own drift range, found from its undeuterated controls (a peptide table's drift_start, drift_end columns, ms, take its place); false sums every drift time |
 
 ## `[output]`
 
