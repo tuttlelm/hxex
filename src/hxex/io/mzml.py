@@ -1449,8 +1449,9 @@ def series_targets(targets: Sequence[MzmlTarget], runs: Sequence[MzmlRun], tie: 
     controls whichever row each run was read by. The series is recorded under the general row
     when the sample reads one, else under the first own row. Rows are the same peptide when
     their peptide, range, charge and modification and the scans they select (MS level,
-    activation, precursor, filters; not the retention window a row sets); targets without such
-    rows are their own series."""
+    activation, precursor, filters; not the retention window a row sets, nor the table's other
+    columns; a fragment's own fields, its ion, parent and condition, count); targets without
+    such rows are their own series."""
     names: dict[str, set[str]] = {}  # run file name -> the samples of its runs
     for r in runs:
         names.setdefault(run_name(r), set()).add(r.sample)
@@ -1466,11 +1467,14 @@ def series_targets(targets: Sequence[MzmlTarget], runs: Sequence[MzmlRun], tie: 
         if tie and t.entry.sample:
             samples = samples & {t.entry.sample}
         e = t.entry
+        # a peptide is its peptide, range, charge and modification (as the table checks them):
+        # its other columns (a note, a per-run value) do not make another series; a fragment
+        # keeps the fields it was made with (ion, parent, condition)
+        made = ({k: v for k, v in sorted(extra.items()) if k not in RUN_ROW_FIELDS}
+                if "fragment" in extra else {})
         key = (e.peptide, e.start_seq, e.end_seq, e.charge, e.modification,
                json.dumps({**t.to_dict(), "rt_window": None,  # the row's rt_start, rt_end
-                           "entry": {k: v for k, v in sorted(extra.items())
-                                     if k not in RUN_ROW_FIELDS}},
-                          sort_keys=True, default=str))
+                           "entry": made}, sort_keys=True, default=str))
         for sample in sorted(samples):
             joined = first.setdefault((sample, key), i)
             if joined != i:

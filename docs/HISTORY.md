@@ -7588,3 +7588,13 @@ CSVs or mzML if wanted.
     no verdict; the zero share is recorded all the same). Not measured: full profile files.
     Per-spectrum flags held until assessed further (owner). Guide: inputs.md "Reduced profile
     data".
+
+301. **Item 297 completed: a peptide's other table columns do not split its series (2026-11-06).**
+    The benchmark rerun after item 297 still had 457 of 930 peptide-sample pairs in several
+    series: the per-file table carried a column with a different value per file (the drift bins
+    used), and the series key kept every column. A peptide is its peptide, range, charge and
+    modification (as `scan_peptides` checks a table), so `series_targets` now ignores the
+    table's other columns for peptide targets; a fragment still keeps the fields it was made
+    with (ion, parent, condition), which tell conditions apart. Test: the row-per-run case of
+    `test_find_peak_in_a_project_and_a_runs_own_row` gives each run another value in a column
+    of its own.

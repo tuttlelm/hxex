@@ -1631,11 +1631,12 @@ bundle = "out"
     # one series: the run's own row joins the general row's (recorded under the general row)
     assert set(s.data_id.tolist()) == {0} and sorted(s.rep.tolist()) == [1, 2]
     assert [r["target"] for r in s.source["series"]] == [0]
-    # every run with a row of its own (as an export listing each file's window): one series too
+    # every run with a row of its own (as an export listing each file's window, and another
+    # value per file in a column of its own): one series too
     (tmp_path / "peptides.csv").write_text(
-        "peptide,start_seq,end_seq,charge,rt,rt_start,rt_end,run\n"
-        f"{PEPTIDE},1,10,2,0.5,0.40,0.60,a.mzML\n"
-        f"{PEPTIDE},1,10,2,0.5,0.70,0.80,b.mzML\n")
+        "peptide,start_seq,end_seq,charge,rt,rt_start,rt_end,run,drift\n"
+        f"{PEPTIDE},1,10,2,0.5,0.40,0.60,a.mzML,72-78\n"
+        f"{PEPTIDE},1,10,2,0.5,0.70,0.80,b.mzML,72-77\n")
     assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
     with open_bundle(tmp_path / "out") as b:
         s = b.spectra()
