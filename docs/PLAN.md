@@ -1181,6 +1181,14 @@ Planned, not built:
      recover it. Measured: 5 of 306 channels, exactly the two early-eluting precursors in the
      two runs that eluted ~0.3-0.4 min early. A flag (unproven rules ship as flags); brightness
      then decides what the fit can use (item 24).
+   - BUILT (2026-11-06, HISTORY 305): `[input.scans] find_fragment_peak` (opt-in) and
+     `fragment_peak_width` (1.0: whole widths at half maximum; half widths kept a median 77 %
+     of the signal, whole ones 97 %), the search over the parent's window and `peak_search`
+     either side of its `rt`, MS3 channels from their own ladder, flag `elution_cut` (per
+     spectrum). On the targeted dataset (K = 1, against the table's windows): the windows 88 ->
+     23 s (median), the spectra no longer read are noise (nothing read or below 4 x the noise),
+     the uptake's distance from a rising curve 0.205 -> 0.189 D (median), 8 of 612 channels
+     flagged (the four of one early-eluting peptide in the two earliest runs).
 
 ## Risks and open decisions
 

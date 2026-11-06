@@ -492,6 +492,8 @@ peptide its window (`rt_start`, `rt_end` in the table) or a common `rt_window`.
 | `gap_factor` | 3.0 | profile scans: gaps the instrument left out are not bridged when summing |
 | `precursor_tol` | 1.0 | m/z tolerance when matching a scan's precursor |
 | `find_peak` | false | time-point and control runs: find each peptide's elution peak near its `rt` and sum only that peak's scans (see [Finding each peptide's peak](#finding-each-peptides-peak)) |
+| `find_fragment_peak` | false | time-point and control runs: find each fragment channel's elution peak in every run, from all its fragment ions together, and sum only that peak's scans (see [Finding each fragment channel's peak](#finding-each-fragment-channels-peak)) |
+| `fragment_peak_width` | 1.0 | with `find_fragment_peak`: the window is the peak's apex plus and minus this many peak widths at half height |
 | `peak_search` | 30 s | how far either side of `rt` the peak is looked for |
 | `peak_smoothing` | (measured) | the chromatogram's smoothing, in seconds; left out, half the run's typical peak width |
 | `peak_width` | 0.5 | the window: the peak's apex plus and minus this many peak widths at half height |
@@ -631,11 +633,55 @@ The run log reports each run's measured peak width and the smoothing used.
 A peptide with its own `rt_start` and `rt_end` keeps them. To correct one run, add a row for
 that run alone (the `run` column) with the window you want; the other runs keep finding the
 peak. Every peptide needs either `rt` or `rt_start` and `rt_end`; `hxex check` names any that
-has neither. Fragment ions keep their windows.
+has neither. Fragment ions keep their windows; `find_fragment_peak` (next section) finds theirs.
 
 On a whole-cell digest measured on an Orbitrap (563 peptides, 45 runs), the peaks found were
 a median of 0.8 seconds from those HDExaminer used, and the spectra that wrongly needed a second
 population fell by about a third against a fixed window (HISTORY 164).
+
+### Finding each fragment channel's peak
+
+A fragment ion is read from the scans of its precursor, in the window its parent's row in the
+peptide table gives. One table serves every file, but the retention time moves a little from
+run to run: on a targeted dataset (18 precursors, 17 runs) a peptide eluted up to about 0.6
+minutes earlier in some runs than in others. Where it moved out of the window, part of its
+signal was left out, although the instrument had recorded it. To have each run find its own
+peak:
+
+```toml
+[input.scans]
+find_fragment_peak = true
+```
+
+For each run, *hxex* takes the fragments of one precursor that are read from the same scans
+(one condition and MS level: a *channel*) and follows them together: in every scan, the
+intensity at all their predicted peaks, added up. It then finds the peak as `find_peak` does
+for peptides: smoothed over half the typical peak width of the run's fragment channels, the
+peak nearest the parent's `rt` (or the middle of its window when the table gives no `rt`),
+and the scans from its apex to one width at half height either side (`fragment_peak_width`),
+stopping where the trace turns up again. It looks over the parent's window and `peak_search`
+either side of `rt`, whichever reaches further. Every fragment of the channel then sums the
+same scans.
+
+The window is wider than a peptide's (`peak_width`, half a width) on purpose. In reduced profile
+data the scans beside the peak add no noise, while a narrower window leaves signal out: on the
+targeted dataset half widths kept a median 77 % of a fragment's signal and whole widths 97 %,
+and with whole widths the fragments' uptake rose more cleanly with time.
+
+All the fragments are followed together because a single ion can follow another species: on
+that dataset the precursor's own ion peaked 0.6 to 0.8 minutes away from the peptide for one of
+the 18 precursors, in every run, while the fragments together found the peptide within a second
+of where its MS1 parent peaked (median 0.6 s, none beyond 15 s).
+
+A fragment of a run's own row (the `run` column) keeps that row's window.
+
+**When the instrument cut the peak.** A targeted method records each precursor only in a
+scheduled window. When the peptide eluted early or late in a run, the peak can reach the first
+or last scan the instrument recorded for it: the rest of the peak was never measured, and
+*hxex* cannot recover it. Such spectra are flagged `elution_cut`. They are dimmer than their
+elution, and in reduced profile data dim fragment spectra read less reliably (see [Reduced
+profile data](#reduced-profile-data)). On the targeted dataset 8 of 612 channels were cut this
+way: the four channels of one early-eluting peptide, in the two runs that eluted earliest.
 
 ### When the peptide table's time is wrong
 

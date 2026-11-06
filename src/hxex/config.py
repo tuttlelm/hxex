@@ -1557,6 +1557,13 @@ _COMMENTS: dict[str, str] = {
     "input.scans.find_peak": "LC-MS runs with a fixed time: find each peptide's elution peak "
                              "near its rt (peptide table, minutes) and sum that peak's "
                              "scans; rows with rt_start, rt_end keep them",
+    "input.scans.find_fragment_peak": "LC-MS runs with a fixed time: find each fragment "
+                                      "channel's elution peak from its whole ladder near the "
+                                      "parent's rt (the parent's window searched too) and sum "
+                                      "that peak's scans; flags elution_cut",
+    "input.scans.fragment_peak_width": "with find_fragment_peak: the window is the apex +- this "
+                                       "many peak widths at half maximum (wider than peak_width:"
+                                       " beside the peak, reduced profile scans add no noise)",
     "input.scans.peak_search": "s either side of a peptide's rt that its peak is looked for in",
     "input.scans.peak_smoothing": "s: the chromatogram's running mean (false: half the run's "
                                   "typical peak width, measured)",

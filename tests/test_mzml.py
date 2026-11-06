@@ -1211,6 +1211,141 @@ def test_find_peak_width_smoothing_and_no_signal(tmp_path, caplog):
         read_mzml([run], [MzmlTarget(ENTRY)], project="p", config=MzmlConfig(find_peak=True))
 
 
+# --- fragment channels find their own peak in each run (find_fragment_peak) ----------------
+
+def _peaks_at(pred, heights):
+    """Profile peaks of the given heights at the m/z ``pred`` (as _envelope_at)."""
+    mz, y = [], []
+    for pmz, h in zip(pred, heights, strict=True):
+        if h < 1:
+            continue
+        x = pmz + np.arange(-0.012, 0.0121, 0.002)
+        mz.append(x)
+        y.append(h * np.exp(-0.5 * ((x - pmz) / 0.004) ** 2))
+    return mz, y
+
+
+def fragment_lc_run(fragments, apex=30.0, ms2_from=10.0, other=55.0, sigma=2.0, step=0.5,
+                    end=60.0):
+    """MS1 scans of the test peptide and ETD MS2 scans of its precursor every ``step`` s (the
+    MS2 ones from ``ms2_from`` on: the instrument's schedule), the peptide eluting at ``apex``
+    s; in the MS2 scans its ``fragments`` (targets) at their first three bins, and a taller
+    species on the first fragment's first bin at ``other`` s (None: none)."""
+    from hxex.fragments import parent_mz_range
+
+    lo, _ = parent_mz_range(ENTRY)
+    preds = [plan_bins(t.entry.peptide, t.entry.charge, modification=t.entry.modification
+                       ).pred_mz[:3] for t in fragments]
+    scans = []
+    for t in np.arange(0.0, end + 1e-9, step):
+        h = 1e5 * np.exp(-0.5 * ((t - apex) / sigma) ** 2)
+        mz, y = _envelope_at(CHARGE, max(h, 2.0))
+        scans.append({"mz": mz, "intensity": y, "time": t, "unit": "s",
+                      "filter": "FTMS + p ESI Full ms"})
+        if t < ms2_from - 1e-9:
+            continue
+        mz, y = [], []
+        for k, pred in enumerate(preds):
+            heights = h * np.array([1.0, 0.55, 0.2])
+            if k == 0 and other is not None:
+                heights[0] += 3e5 * np.exp(-0.5 * ((t - other) / sigma) ** 2)
+            a, b = _peaks_at(pred, heights)
+            mz += a
+            y += b
+        mz = np.concatenate(mz) if mz else np.array([100.0])
+        y = np.concatenate(y) if y else np.array([0.0])
+        order = np.argsort(mz)
+        scans.append({"mz": mz[order], "intensity": y[order], "time": t + 0.01, "unit": "s",
+                      "ms_level": 2, "filter": "FTMS + p ESI d Full ms2 etd",
+                      "precursors": [(lo + 0.5, CHARGE, *ETD)]})
+    return scans
+
+
+def test_fragment_channels_find_their_peak_in_each_run(tmp_path, caplog):
+    """find_fragment_peak (PLAN Next steps 25): the fragments of one precursor sum the scans of
+    their channel's own elution peak, found on the whole ladder near the parent's rt, also where
+    the peak lies outside the window the peptide table gives (retention moved in that run), and
+    not the other species on one fragment's bin; a run whose MS2 schedule starts within the peak
+    flags its spectra elution_cut; a run's own table row keeps its window; without the setting
+    the window is summed."""
+    from hxex.fragments import fragment_targets
+
+    parent = dataclasses.replace(_with_rt(ENTRY, 36.0 / 60), extra={
+        **dict(_with_rt(ENTRY, 36.0 / 60).extra), "rt_start": str(34.0 / 60),
+        "rt_end": str(60.0 / 60)})
+    frags = fragment_targets(parent, "c:2-4:1", activation="ETD", rt_window=(34.0, 60.0))
+    targets = [MzmlTarget(parent, rt_window=(34.0, 60.0))] + frags
+    moved = write_mzml(tmp_path / "moved.mzML", fragment_lc_run(frags))
+    late = write_mzml(tmp_path / "late.mzML", fragment_lc_run(frags, ms2_from=29.5))
+    runs = [MzmlRun(path=str(moved), sample="S", time=60.0),
+            MzmlRun(path=str(late), sample="S", time=120.0)]
+    config = MzmlConfig(find_fragment_peak=True)
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        found = read_mzml(runs, targets, project="p", config=config)
+    is_frag = np.array(["ion_type" in m for m in found.modification])
+    start, end = 60 * found.rt_start, 60 * found.rt_end
+    first = is_frag & (found.time == 60.0)
+    assert first.sum() == 3
+    assert np.all(start[first] > 24) and np.all(end[first] < 36)  # the peak at 30 s, not 55 s
+    assert len(set(start[first])) == 1 and len(set(end[first])) == 1  # one window per channel
+    assert np.all(start[~is_frag] == 34.0)  # the parent keeps its own window
+    # fragment_peak_width scales the fragments' window (wider than peak_width by default)
+    narrow = read_mzml(runs[:1], targets, project="p",
+                       config=MzmlConfig(find_fragment_peak=True, fragment_peak_width=0.5))
+    frag_narrow = np.array(["ion_type" in m for m in narrow.modification])
+    assert (np.ptp([narrow.rt_start[frag_narrow][0], narrow.rt_end[frag_narrow][0]])
+            < 0.7 * (found.rt_end[first][0] - found.rt_start[first][0]))
+    with pytest.raises(ValueError, match="fragment_peak_width"):
+        MzmlConfig(fragment_peak_width=0)
+    # the acquisition cut the second run's peak: its fragment spectra only
+    cut = set(found.source["fragment_peaks"]["elution_cut"])
+    second = is_frag & (found.time == 120.0)
+    assert cut == set(found.spectrum_id[second]) and len(cut) == 3
+    assert "flagged elution_cut" in caplog.text
+    from hxex.io.mzml import elution_cut_spectra
+
+    assert elution_cut_spectra(found.source) == sorted(cut)
+    # without the setting: the table's window
+    plain = read_mzml(runs[:1], targets, project="p")
+    assert np.all(60 * plain.rt_start == pytest.approx(34.0, abs=0.1))
+    assert "fragment_peaks" not in plain.source
+    # a run's own row keeps its window
+    own = [dataclasses.replace(t, entry=dataclasses.replace(t.entry, extra={
+        **dict(t.entry.extra), "run": "moved.mzML"})) for t in frags]
+    kept = read_mzml(runs[:1], [targets[0]] + own, project="p", config=config)
+    is_frag = np.array(["ion_type" in m for m in kept.modification])
+    assert np.all(60 * kept.rt_start[is_frag] == pytest.approx(34.0, abs=0.1))
+    # the checks of hxex check plan the channel over its search range
+    from hxex.io.mzml import scan_index_rows
+
+    rows = scan_index_rows(MzmlFile(moved).scans(), "moved.mzML", runs[0], targets,
+                           project="p", config=config)
+    assert len(rows) == 4
+    # a fragment without a parent rt or window cannot be searched for
+    bare = fragment_targets(ENTRY, "c:3:1", activation="ETD")
+    with pytest.raises(MzmlError, match="no rt to look near"):
+        read_mzml(runs[:1], bare, project="p", config=config)
+    # the flag reaches the results and spectra.csv
+    import csv
+
+    from hxex import load_results
+    from hxex.fit import FitConfig
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.pipeline import RunConfig, run
+    from hxex.report.tables import write_tables
+
+    fit = FitConfig(k_max=1, adam_steps=40, n_restarts=1, backend=Backend("cpu", "float64"),
+                    noise=NoiseConfig("gaussian", percent=3.0))
+    run(found, RunConfig(fit=fit), out=tmp_path / "b")
+    loaded = load_results(tmp_path / "b")
+    flagged = set(np.asarray(loaded.quality.spectrum_id)[loaded.quality.elution_cut])
+    assert flagged == cut
+    write_tables(loaded, tmp_path / "t")
+    rows = list(csv.DictReader(open(tmp_path / "t" / "spectra.csv")))
+    assert {r["spectrum_id"] for r in rows if "elution_cut" in r["flags"]} == cut
+
+
 # --- audit 2026-11-01, Session A: damaged or edited files, run settings --------------------
 
 def test_a_stale_index_falls_back_to_reading_through(tmp_path, caplog):

@@ -1066,6 +1066,18 @@ class MzmlConfig:
       that peak only (:func:`find_peaks`; PLAN Next steps 10, HISTORY 164-165). A peptide with
       its own ``rt_start``, ``rt_end`` keeps them; fragments keep their windows. Every peptide
       needs one or the other.
+    - ``find_fragment_peak``: in a run with a fixed time, find each fragment channel's elution
+      peak (a parent's fragments read from the same scans: one precursor, condition and MS
+      level) on the trace of its whole ladder, near the parent's ``rt`` (else the middle of its
+      window), and sum that peak's scans (:func:`find_fragment_peaks`; PLAN Next steps 25).
+      The search covers the fragment's window (the parent's ``rt_start``, ``rt_end``) and
+      ``peak_search`` either side of ``rt``. A fragment of a run's own peptide-table row (the
+      ``run`` column) keeps that row's window. A found span that reaches the first or last scan
+      the instrument recorded for the channel marks its spectrum ``elution_cut``.
+    - ``fragment_peak_width``: as ``peak_width``, for the fragment channels. Wider by default
+      (1.0): in reduced profile data the scans beside the peak add no noise, and on a targeted
+      dataset half widths (0.5) kept a median 77 % of a fragment's signal, whole ones 97 %, with
+      the uptake rising more cleanly (PLAN Next steps 25).
     - ``peak_search`` (s): how far either side of ``rt`` the peak is looked for.
     - ``peak_smoothing`` (s): the chromatogram's running mean; None: half the run's typical peak
       width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
@@ -1099,6 +1111,8 @@ class MzmlConfig:
     gap_factor: float = 3.0
     precursor_tol: float = 1.0
     find_peak: bool = False
+    find_fragment_peak: bool = False
+    fragment_peak_width: float = 1.0
     peak_search: float = 30.0
     peak_smoothing: float | None = None
     peak_width: float = 0.5
@@ -1122,10 +1136,10 @@ class MzmlConfig:
             value = getattr(self, name)
             if value is not None and (isinstance(value, bool) or not value > 0):
                 raise ValueError(f"{name} must be positive (or unset: measured)")
-        if self.peak_search <= 0 or self.peak_width <= 0 or (
+        if self.peak_search <= 0 or self.peak_width <= 0 or self.fragment_peak_width <= 0 or (
                 self.peak_smoothing is not None and self.peak_smoothing <= 0):
-            raise ValueError("need peak_search > 0, peak_width > 0 and peak_smoothing > 0 (or "
-                             "unset)")
+            raise ValueError("need peak_search > 0, peak_width > 0, fragment_peak_width > 0 and "
+                             "peak_smoothing > 0 (or unset)")
         if self.group not in ("each", "every", "windows"):
             raise ValueError("group must be 'each', 'every' or 'windows'")
         if self.every < 1:
@@ -1403,6 +1417,9 @@ def _read_runs(
     unclear: set[int] = set()
     if gates is not None:
         common.update(gates=gates, unclear=unclear)
+    elution_cut: set[str] = set()
+    if config.find_fragment_peak:
+        common.update(elution_cut=elution_cut)
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
     # controls are searched while they are open; "automatic" reads them first, so that the
     # other runs read a series found elsewhere at its found time
@@ -1470,6 +1487,7 @@ def _read_runs(
             reread(moved)
     spectra = [s for part in per_run for s in part]
     origin = [n for n, part in enumerate(per_run) for _ in part]  # the run of each spectrum
+    elution_cut &= {s.spectrum_id for s in spectra}  # a reread replaces a spectrum
     if not spectra:
         raise fmt.error("no spectra: no scan matched any target in any run")
     _check_unique_ids(fmt, spectra, origin, runs, opened)
@@ -1500,6 +1518,12 @@ def _read_runs(
             if row["data_id"] is None:
                 row["data_id"] = found.get((row["sample"], row["target"]))
         source["retention_search"] = search.record
+    if config.find_fragment_peak:
+        source["fragment_peaks"] = {"elution_cut": sorted(elution_cut)}
+        if elution_cut:
+            log.warning("%d fragment spectra have an elution peak that reaches the first or "
+                        "last scan the instrument recorded for their precursor (the "
+                        "acquisition cut it): flagged elution_cut", len(elution_cut))
     if gates is not None:
         source["drift_gate"] = drift_record(gates, unclear)
         if unclear:
@@ -1775,6 +1799,10 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
     (in the ids) are those of the range, not of the peak."""
     planned = [_search_target(t, config) if config.find_peak and run.fixed and _finds_peak(t)
                else t for t in targets]
+    if config.find_fragment_peak and run.fixed:
+        rts = _parent_rts(targets)
+        planned = [_fragment_search_target(t, config, rts) if _finds_fragment_peak(t) else p
+                   for t, p in zip(targets, planned, strict=True)]
     _, plans = _plans(table, run, planned, config, tie)
     rows = []
     for target, plan in zip(targets, plans, strict=True):
@@ -1799,18 +1827,27 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
 def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
                picker: PickerConfig = DEFAULT_PICKER_CONFIG,
                registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
-               only: set[int] | None = None, drift: bool = False, quiet: bool = False):
+               only: set[int] | None = None, drift: bool = False, quiet: bool = False,
+               cut: set[int] | None = None):
     """The scans of every target of this run (:func:`target_applies`; with ``only``, of the
     targets at these positions) in the open file ``f``: the scan table, whether each target's
     peak is found (``find_peak``), the plans (:func:`_plans`, narrowed to the peaks found), the
     scans read by index (``drift``: with their drift times, :attr:`Scan.binned`) and the run's
     typical peak width (s; NaN when not measured); None when no scan matches. ``quiet``: no
-    warnings or log lines (a second look at the same file)."""
+    warnings or log lines (a second look at the same file). With ``find_fragment_peak`` the
+    fragment channels' plans are narrowed to their peaks too, and ``cut`` (a set) collects the
+    targets whose peak the acquisition cut (:func:`find_fragment_peaks`)."""
     table = f.scans()
     # the targets whose peak is found (find_peak): planned over their search range first
     find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
     planned = [_search_target(t, config) if fnd else t for t, fnd in zip(targets, find,
                                                                            strict=True)]
+    frag = [bool(config.find_fragment_peak and run.fixed and _finds_fragment_peak(t))
+            for t in targets]
+    if any(frag):
+        rts = _parent_rts(targets)
+        planned = [_fragment_search_target(t, config, rts) if fr else p
+                   for t, p, fr in zip(targets, planned, frag, strict=True)]
     # the scans of every spectrum, per target, before anything is read (so that sampling a
     # large file reads only the scans it keeps)
     applies, plans = _plans(table, run, planned, config, tie)
@@ -1837,6 +1874,11 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     if any(find):
         plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
                                   registry, quiet=quiet)
+    if any(frag):
+        plans, edges = find_fragment_peaks(f, table, run, targets, plans, frag, by_index, config,
+                                           picker, registry, quiet=quiet)
+        if cut is not None:
+            cut.update(edges)
     return table, find, plans, by_index, width
 
 
@@ -1846,16 +1888,19 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
               only: set[int] | None = None,
               joins: Mapping[tuple[str, int], int] | None = None,
               gates: Mapping[tuple, DriftRange] | None = None,
-              unclear: set[int] | None = None) -> float:
+              unclear: set[int] | None = None,
+              elution_cut: set[str] | None = None) -> float:
     """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
     those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
     series of its sample and target (or the target it joins, :func:`series_targets`). With
     ``gates`` (the drift ranges found, :mod:`hxex.io.drift_gate`; None: drift_gate off), a
     peptide's scans with ion mobility bins are summed over its drift range only, and the series
-    without a clear one are added to ``unclear``. Returns the run's typical peak width (s) when
-    find_peak measured it, else NaN."""
+    without a clear one are added to ``unclear``. The spectra whose found fragment peak the
+    acquisition cut (``find_fragment_peak``) are added to ``elution_cut`` (spectrum ids).
+    Returns the run's typical peak width (s) when find_peak measured it, else NaN."""
+    cut: set[int] = set()
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
-                         registry=registry, only=only, drift=gates is not None)
+                         registry=registry, only=only, drift=gates is not None, cut=cut)
     if scanned is None:
         return float("nan")
     table, find, plans, by_index, width = scanned
@@ -1931,6 +1976,8 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             resolutions = np.array([s.resolution for s in scans], dtype=float)
             resolutions = resolutions[np.isfinite(resolutions)]
             scan_times = np.array([s.time for s in scans], dtype=float) / 60.0
+            if t_i in cut and elution_cut is not None:
+                elution_cut.add(qualify_spectrum_id(project, local))
             spectra.append(Spectrum(
                 mz, y, entry, time, run.rep, data_id=data_id,
                 label=f"{f.path.name} {scan_text}",
@@ -2157,6 +2204,173 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
     return plans, run_width
 
 
+def _finds_fragment_peak(target: MzmlTarget) -> bool:
+    """Whether find_fragment_peak applies to ``target``: a fragment, not of a run's own
+    peptide-table row (the ``run`` column: that row's window is kept)."""
+    extra = dict(target.entry.extra)
+    return ("fragment" in extra and target.ms_level >= 2
+            and not str(extra.get("run", "") or "").strip())
+
+
+def _channel(target: MzmlTarget) -> tuple:
+    """A fragment's channel: its parent, condition, MS level and scan conditions (the
+    fragments of one channel are read from the same scans)."""
+    extra = dict(target.entry.extra)
+    return (extra.get("parent_peptide"), extra.get("parent_range"), extra.get("parent_charge"),
+            extra.get("condition"), target.ms_level, target.activation, target.preactivation,
+            target.precursor_charge)
+
+
+def _parent_rts(targets) -> dict[tuple, float]:
+    """The peptide table's ``rt`` (minutes) of every parent among ``targets``, by the key its
+    fragments name it with."""
+    out = {}
+    for t in targets:
+        e = t.entry
+        if "fragment" not in dict(e.extra):
+            rt = entry_rt(e)
+            if np.isfinite(rt):
+                out[(e.peptide, e.peptide_range, str(e.charge))] = rt
+    return out
+
+
+def _fragment_rt(target: MzmlTarget, parent_rts: Mapping[tuple, float]) -> float:
+    """The time (s) a fragment's peak is looked for near: its parent's ``rt``, else the middle
+    of its window; NaN without either."""
+    extra = dict(target.entry.extra)
+    rt = parent_rts.get((extra.get("parent_peptide"), extra.get("parent_range"),
+                         str(extra.get("parent_charge"))), float("nan"))
+    if np.isfinite(rt):
+        return 60.0 * rt
+    if target.rt_window is not None:
+        return 0.5 * (target.rt_window[0] + target.rt_window[1])
+    return float("nan")
+
+
+def _fragment_search_target(target: MzmlTarget, config: MzmlConfig,
+                            parent_rts: Mapping[tuple, float]) -> MzmlTarget:
+    """``target`` with its retention window set to its search range: its window (the parent's
+    ``rt_start``, ``rt_end``) widened to ``peak_search`` either side of its ``rt``."""
+    given = _fragment_rt(target, parent_rts)
+    if not np.isfinite(given):
+        raise MzmlError(f"find_fragment_peak: {_target_label(target)} has no rt to look near "
+                        "(its parent's rt, or rt_start, rt_end, in the peptide table)")
+    lo, hi = given - config.peak_search, given + config.peak_search
+    if target.rt_window is not None:
+        lo, hi = min(lo, target.rt_window[0]), max(hi, target.rt_window[1])
+    return replace(target, rt_window=(lo, hi))
+
+
+def _ladder_trace(scans, pred: np.ndarray, half: np.ndarray) -> np.ndarray:
+    """Per scan, the sum over ``pred`` (m/z, any order, may repeat) of the tallest point within
+    ``half`` (as :func:`_chromatogram`, for the many positions of a whole ladder)."""
+    out = np.zeros(len(scans))
+    half = np.broadcast_to(np.asarray(half, dtype=float), pred.shape)
+    for n, s in enumerate(scans):
+        mz, y = s.mz, np.asarray(s.intensity, dtype=float)
+        if not len(mz):
+            continue
+        a = np.searchsorted(mz, pred - half)
+        z = np.searchsorted(mz, pred + half)
+        size = np.maximum(z - a, 0)
+        total = int(size.sum())
+        if not total:
+            continue
+        seg = np.repeat(np.arange(len(pred)), size)
+        start = np.repeat(a, size)
+        offset = np.arange(total) - np.repeat(np.cumsum(size) - size, size)
+        top = np.zeros(len(pred))
+        np.maximum.at(top, seg, y[start + offset])
+        out[n] = float(top.sum())
+    return out
+
+
+def find_fragment_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
+                        config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False):
+    """The plans of the ``find`` targets (fragments) narrowed to their channel's elution peak
+    (``find_fragment_peak``; PLAN Next steps 25). A channel (:func:`_channel`) is the fragments
+    of one parent read from the same scans; its trace is the sum of every one's predicted bins,
+    scan by scan (the whole ladder: on a targeted dataset it followed the parent's MS1 peak
+    within a second where a single ion could follow another species). The peak is that of
+    :func:`_peak` nearest the parent's ``rt`` (``fragment_peak_width`` widths at half maximum
+    either side of the apex), the trace smoothed over half the typical width
+    at half maximum of the run's fragment channels (or ``peak_smoothing``). A channel without
+    signal gets no spectrum in this run. Returns the plans and the targets whose peak the
+    acquisition cut: the peak's span at half maximum reaches the first or last scan the
+    instrument recorded for the channel (no scan of it before or after, in the whole file)."""
+    plans = list(plans)
+    rts = _parent_rts(targets)
+    r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    channels: dict[tuple, list] = {}
+    for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
+        if not find[t_i] or plan is None:
+            continue
+        key = (_channel(target), np.asarray(plan[0]).tobytes())
+        channels.setdefault(key, []).append(t_i)
+    if not channels:
+        return plans, set()
+    groups = []  # (target positions, order, trace, given time in s)
+    for members in channels.values():
+        order = plans[members[0]][0]
+        scans = [by_index[int(table.index[k])] for k in order]
+        recorded = np.array([s.resolution for s in scans], dtype=float)
+        recorded = recorded[np.isfinite(recorded)]
+        preds, halves = [], []
+        for t_i in members:
+            e = targets[t_i].entry
+            pred = np.asarray(plan_bins(e.peptide, e.charge, modification=e.modification,
+                                        config=picker, registry=registry).pred_mz, dtype=float)
+            preds.append(pred)
+            halves.append(np.broadcast_to(np.asarray(picker.half_width(
+                pred, e.charge, resolving_power=float(np.median(recorded)) if len(recorded)
+                else None, resolving_power_mz=r_mz), dtype=float), pred.shape))
+        trace = _ladder_trace(scans, np.concatenate(preds), np.concatenate(halves))
+        groups.append((members, order, trace, _fragment_rt(targets[members[0]], rts)))
+    # the typical width at half maximum of the run's fragment channels (their tallest, raw)
+    widths = []
+    for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:
+        if c.max() > 0 and len(c) > 2:
+            lo, hi = _half_max_span(c, int(np.argmax(c)))
+            widths.append(float(table.time[order][hi] - table.time[order][lo]))
+    spacings = [float(np.median(np.diff(table.time[g[1]]))) for g in groups if len(g[1]) > 1]
+    spacing = float(np.median(spacings)) if spacings else 1.0
+    run_width = float(np.median(widths)) if widths else 3.0 * spacing
+    missing = 0
+    cut: set[int] = set()
+    for members, order, c, given in groups:
+        times = table.time[order]
+        step = float(np.median(np.diff(times))) if len(times) > 1 else spacing
+        n_smooth = (max(1, int(round(config.peak_smoothing / step)))
+                    if config.peak_smoothing is not None
+                    else max(3, int(round(0.5 * run_width / step))))
+        smooth = np.convolve(c, np.ones(n_smooth) / n_smooth, mode="same") if len(c) >= 3 else c
+        found = _peak(times, smooth, given, config.fragment_peak_width)
+        if found is None:
+            missing += 1
+            for t_i in members:
+                plans[t_i] = None
+            continue
+        inside = np.flatnonzero((times >= found[0] - 1e-9) & (times <= found[1] + 1e-9))
+        for t_i in members:
+            plans[t_i] = (order, [inside]) if len(inside) else None
+        # cut by the acquisition: the half-maximum span reaches a scan with no scan of the
+        # channel before (after) it in the whole file
+        apex = int(np.argmax(np.where((times >= found[0] - 1e-9) & (times <= found[1] + 1e-9),
+                                      smooth, -np.inf)))
+        lo, hi = _half_max_span(smooth, apex)
+        every = target_scans(table, replace(run, usable_from=None), replace(
+            targets[members[0]], rt_window=None), config)
+        all_times = table.time[every]
+        if len(all_times) and ((lo == 0 and times[0] <= all_times.min() + 1e-9)
+                               or (hi == len(times) - 1 and times[-1] >= all_times.max() - 1e-9)):
+            cut.update(members)
+    (log.debug if quiet else log.info)(
+        "%s: fragment peaks found for %d channels%s; typical peak width %.1f s",
+        Path(f.path).name, len(groups) - missing,
+        f" ({missing} without signal: no spectrum)" if missing else "", run_width)
+    return plans, cut
+
+
 def instrument_record(f) -> dict | None:
     """What a scan file says about its instrument: ``model`` and ``resolving_power_mz`` (the
     m/z its resolving power is quoted at; NaN when the model is unknown) plus the distinct
@@ -2297,6 +2511,11 @@ def envelope_groups(source: Mapping | None) -> dict[int, tuple]:
             t.rt_window,
         )
     return out
+
+
+def elution_cut_spectra(source: Mapping | None) -> list[str]:
+    """The spectra (ids) flagged ``elution_cut`` in a read record (``find_fragment_peak``)."""
+    return list(((source or {}).get("fragment_peaks") or {}).get("elution_cut", ()))
 
 
 def fragment_series(source: Mapping | None) -> set[int]:

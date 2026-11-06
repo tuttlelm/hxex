@@ -47,6 +47,10 @@ signal never reach the fit and are handled before it.
   signal, so every drift time was summed, or its undeuterated drift profile has a second peak
   outside the range (another ion at that m/z, or the peptide in two shapes): check its
   spectra, or give the peptide its own ``drift_start``, ``drift_end``.
+- ``elution_cut``: a fragment spectrum whose elution peak, found per run (``[input.scans]
+  find_fragment_peak``), reaches the first or last scan the instrument recorded for its
+  precursor: the scheduled acquisition cut the peak (retention moved in that run), so part of
+  the signal was never recorded and the spectrum is dimmer than its elution. Per spectrum.
 - ``poor_envelope``: the series' ion-type envelope (``mixed`` or ``infer``) was not measured
   well (:attr:`hxex.picking.EnvelopeTable.poor`): left with the theory of one ion type for want
   of usable reference spectra, not describing the spectra it was fitted to, or, shared between
@@ -95,7 +99,7 @@ from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
-              "drift_unclear")
+              "drift_unclear", "elution_cut")
 
 
 @dataclass(frozen=True)
@@ -189,13 +193,14 @@ class QualityFlags:
     rt_found: np.ndarray | None = None
     undeut_high: np.ndarray | None = None
     drift_unclear: np.ndarray | None = None
+    elution_cut: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset"):  # or a flag
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
-                     "rt_found", "undeut_high", "drift_unclear"):
+                     "rt_found", "undeut_high", "drift_unclear", "elution_cut"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
 
@@ -369,6 +374,7 @@ def assess_quality(
     rt_found_series: np.ndarray | None = None,
     controls=None,
     drift_unclear_series: np.ndarray | None = None,
+    elution_cut_spectra=None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -379,7 +385,8 @@ def assess_quality(
     (:attr:`hxex.picking.EnvelopeTable.poor`); ``rt_found_series`` those read at the
     retention time found for their exact m/z (:mod:`hxex.io.retention_search`);
     ``drift_unclear_series`` those read without a clear drift range
-    (:mod:`hxex.io.drift_gate`). ``controls``
+    (:mod:`hxex.io.drift_gate`); ``elution_cut_spectra`` the spectra (ids) whose found
+    fragment peak the acquisition cut (:func:`hxex.io.mzml.find_fragment_peaks`). ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
     if not np.array_equal(meas.spectrum_id, fit.spectrum_id):
@@ -448,6 +455,8 @@ def assess_quality(
             [] if rt_found_series is None else rt_found_series, dtype=np.int64)),
         drift_unclear=np.isin(fit.data_id, np.asarray(
             [] if drift_unclear_series is None else drift_unclear_series, dtype=np.int64)),
+        elution_cut=np.isin(np.asarray(fit.spectrum_id, dtype=str), np.asarray(
+            [] if elution_cut_spectra is None else list(elution_cut_spectra), dtype=str)),
         undeut_high=undeut_high(fit, controls),
         **brightness,
     )

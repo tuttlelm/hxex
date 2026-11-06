@@ -571,6 +571,7 @@ def _fit_part(
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
+    elution_cut=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -646,7 +647,8 @@ def _fit_part(
                                  envelope_offset_ppm=envelope_offset[0],
                                  envelope_offset_limit_ppm=envelope_offset[1],
                                  rt_found_series=rt_found,
-                                 drift_unclear_series=drift_unclear, controls=controls)
+                                 drift_unclear_series=drift_unclear,
+                                 elution_cut_spectra=elution_cut, controls=controls)
     return fits, fit, controls, quality, test
 
 
@@ -1161,6 +1163,7 @@ def run(
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
     from .io.drift_gate import unclear_series
+    from .io.mzml import elution_cut_spectra
     from .io.retention_search import moved_series
 
     record = {} if raw is None or raw.source is None else raw.source
@@ -1184,7 +1187,8 @@ def run(
                                              rt_found=moved_series(
                                                  record.get("retention_search")),
                                              drift_unclear=unclear_series(
-                                                 record.get("drift_gate")))
+                                                 record.get("drift_gate")),
+                                             elution_cut=elution_cut_spectra(record))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1370,6 +1374,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
                 controls=None) -> QualityFlags:
     """The quality flags of ``fit`` from what a bundle stores, as :func:`run` assesses them."""
     from .io.drift_gate import unclear_series
+    from .io.mzml import elution_cut_spectra
     from .io.retention_search import moved_series
 
     return assess_quality(
@@ -1380,7 +1385,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         envelope_offset_limit_ppm=binned.envelope_offset_limit_ppm[kept],
         rt_found_series=moved_series((source or {}).get("retention_search")),
         drift_unclear_series=unclear_series((source or {}).get("drift_gate")),
-        controls=controls)
+        elution_cut_spectra=elution_cut_spectra(source), controls=controls)
 
 
 def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict:

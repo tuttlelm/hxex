@@ -7663,3 +7663,32 @@ CSVs or mzML if wanted.
     (median; q90 20 s) from the per-sample median, so retention moves between files on this
     Q-TOF and the peak nearest one table time is often a neighbour's; find_peak's chromatogram
     also sums every drift time. Not changed: find_peak stays as it is (HISTORY 165).
+
+305. **Fragment channels find their own elution peak in each run (2026-11-06; PLAN Next steps
+    25).** One peptide table drives every file, and on the targeted Orbitrap dataset (18
+    precursors, 17 runs) retention moved up to ~0.6 min between runs: one precursor's elution sat
+    partly before its table window in four runs (17-58 % of the signal outside, recorded by the
+    instrument), another's early signal at its fragments' m/z was another species, and two runs
+    eluted ~0.3-0.4 min early, so the scheduled acquisition cut the front of two early peptides.
+    Scratch (private): a channel's (precursor, condition, MS level) trace from the charge-reduced
+    precursor M alone followed another species 0.6-0.8 min away for one precursor in all 17 files;
+    the whole ladder (M and every fragment row summed per scan) found the MS1 parent's peak within
+    0.6 s (median; 90th percentile 1.0 s, none beyond 15 s).
+    BUILT as `[input.scans] find_fragment_peak` (opt-in): find_peak's rule (smoothed trace, the
+    local maximum nearest the parent's `rt`, else the window's middle) on the whole ladder's
+    trace, searched over the parent's window and `peak_search` either side of `rt`; a run's own
+    table row keeps its window; flag `elution_cut` (per spectrum) when the peak's span at half
+    maximum reaches the first or last scan the instrument recorded for the channel in the file.
+    `fragment_peak_width` (default 1.0) sets the window: on the targeted dataset (K = 1, same code
+    with and without the setting) half widths (0.5) kept a median 77 % of a fragment's signal,
+    whole widths 97 %, 1.5 widths 100 %; the median distance of a fragment's uptake from its best
+    rising curve (forward labelling) went 0.191 -> 0.181 / 0.205 -> 0.189 / 0.218 -> 0.210 D
+    (each against the table's windows on the series both kept), and for the parent whose window
+    held another species 0.151 -> 0.187 / 0.176 -> 0.141 / 0.200 -> 0.200 D. Whole widths chosen:
+    in reduced profile data the scans beside the peak add no noise (PLAN 24). The spectra no
+    longer read (2,695 of 15,572 fragment spectra at 1.0) all had nothing read or were below 4 x
+    the noise in the table window but 3. MS2 against MS3 of the same fragment and file did not
+    change (|difference| median 0.289 -> 0.288 D). Flagged `elution_cut`: 8 of 612 channels, the
+    four of one early-eluting peptide in the two runs that eluted earliest (73 c-1/z-dot spectra).
+    Not measured: the ladder rates against the HDX-NMR with the setting on.
+
