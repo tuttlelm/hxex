@@ -87,6 +87,8 @@ exclude = ["docs/HISTORY.md", "docs/AUDIT_*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# a test still running after 10 minutes prints every thread's traceback (finds a hang in CI)
+faulthandler_timeout = 600
 
 [tool.ruff]
 line-length = 100
