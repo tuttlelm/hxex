@@ -7622,3 +7622,18 @@ CSVs or mzML if wanted.
     mobility arrays, each against its own `arrayLength` when given. Waters `_extern.inf` records
     the ADC thresholds (amplitude 3, ion area 3, offset 10): per-ion thresholds, not this cut.
     Design for fitting through the cut: PLAN 24. Scripts: `fragment_envelope` (private, README).
+
+303. **Waters ion-mobility files against HDExaminer's export: drift gating matters
+    (2026-11-06; private scratch, items 295, 297, 301).** The intact-peptide benchmark's Synapt
+    files (MS1 with 200 drift bins) converted with msConvert and read as mzML, with HDExaminer's
+    retention range per file and peptide (peptide-table rows per run). HDExaminer applied no
+    lockmass correction but one constant m/z shift per file (+17.5 ppm, +36 ppm over one stretch of
+    acquisitions); with that shift and HDExaminer's drift bins (numbered from 0) its spectra are
+    reproduced exactly (shape r 1.000, intensity 1.00). On 18,327 spectra, against the export's:
+    gated to HDExaminer's drift bins, K agrees in 96.5 % and corrected centroids differ by 0.011 D
+    (median); summed over every drift bin (what *hxex* reads today), intensity is 24 % higher
+    (median; up to 3x), K differs in 19 % (K > 1 29 % against 17 %), centroids differ by more than
+    0.25 D in 23 %, and the replicate sd's q90 doubles (0.63 against 0.24 D). After items 297 and
+    301 the 930 series hold their replicates and controls (9 control fallbacks gated, 54 summed).
+    So drift-time gating (PLAN Next steps 22) is worth building for ion-mobility data; msConvert's
+    lockmass correction did not reproduce HDExaminer's axis (offsets scattered -11 to +7.5 ppm).
