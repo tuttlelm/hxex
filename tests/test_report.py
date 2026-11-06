@@ -821,6 +821,10 @@ def test_the_fit_has_its_own_colour_and_populations_keep_theirs(results):
     assert "component_band:2" in gids(one) and "component_band:1" not in gids(one)
     d = spectrum_data(sid, results, k=2, show=("fit",))["fit"]["component_band"]
     assert d.shape[:2] == (2, 2) and np.all(d[:, 0] <= d[:, 1] + 1e-9)
+    # at K = 1 the population is the fit: one band, the fit's (two would blend to grey)
+    single = plot_spectrum(sid, results, k=1, show=("picked", "fit"))
+    assert "band" in gids(single) and not any(g.startswith("component_band")
+                                             for g in gids(single))
 
 
 def test_the_replicate_overlay_keeps_the_population_colours(results):

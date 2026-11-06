@@ -443,7 +443,9 @@ def plot_spectrum(
     effect (the reviewer's choice, else the selected K). ``components`` lists the populations to
     draw as ranks of the mean from 1 (default: all); the total fit and the bootstrap band are
     always those of the whole fit. ``band`` and ``component_band`` switch the bootstrap bands of
-    the total fit and of each drawn population (in its own colour). ``normalize`` divides by the
+    the total fit and of each drawn population (in its own colour; at K = 1 the one population
+    is the total fit, so only the fit's band is drawn: two translucent bands of different colours
+    on the same area read as grey). ``normalize`` divides by the
     tallest peak drawn. ``corrected`` (default: when the results have controls) adds the
     back-exchange-corrected mean to each population's label. ``picked_style`` is ``'window'``
     (each picked bin as a bar spanning the picker's window around the predicted m/z, from the
@@ -552,7 +554,9 @@ def plot_spectrum(
             ax.plot(x, fit["components"][c] * scale, color=color, ls=style["linestyle"], lw=1.2,
                     label=label,
                     gid=f"component:{rank}", zorder=3)
-            if component_band and fit["component_band"] is not None:
+            # at K = 1 the population's band is the fit's band: drawn once, in the fit's colour
+            if (component_band and fit["component_band"] is not None
+                    and len(fit["components"]) > 1):
                 ax.fill_between(x, fit["component_band"][c, 0] * scale,
                                 fit["component_band"][c, 1] * scale, color=color, alpha=0.18,
                                 lw=0, gid=f"component_band:{rank}", zorder=1)
