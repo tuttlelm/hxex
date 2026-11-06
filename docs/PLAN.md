@@ -1058,7 +1058,44 @@ Planned, not built:
    wrong for some precursors). Keep apart what the instrument removes: that dataset's Orbitrap
    scans are reduced profile (HISTORY 299-300), so a fragment's weak isotope peaks are deleted
    scan by scan and its summed envelope reads narrower than its composition even when the
-   composition is right.
+   composition is right. CHECKED 2026-11-05 (HISTORY 302): the envelope is right (single
+   scans: peaks above 10 x the recorded noise read 0.96-0.98 of it for M, c-1 and z-dot, MS2
+   and MS3); the misfit is the cut, which deletes most fragment isotope peaks because they sit
+   near the noise in every scan. Next: item 24.
+24. **Fitting through the instrument's per-scan cut: fragments at K = 1 first** (owner,
+   2026-11-05: needed to fit weak cut data reliably; design to be evaluated before building).
+   - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
+     below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
+     scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high
+     (1.2-1.6 x), peaks above it keep their height. A fragment spectrum sums the scans of its
+     condition (~90 on the targeted dataset), each near the noise; undeuterated fragment
+     centroids read 0.5-2.8 D high in the dimmest third, a few hundredths low in the brightest.
+   - *The model.* Compare like with like: pass the prediction through the same cut. A summed
+     bin's expected value is the sum over its scans s of E[T(F w_s + e_s)], where F is the
+     fit's prediction for the bin, w_s the scan's share of the series' signal (its elution
+     profile), e_s the noise (sd sigma_s, recorded at the bin's m/z), and T keeps a value above
+     the cut kappa sigma_s and gives 0 below; with Gaussian noise and a hard cut, E[T(mu + e)] =
+     mu Phi((mu - kappa sigma)/sigma) + sigma phi((mu - kappa sigma)/sigma), and its variance has
+     a closed form too, which joins the per-bin variance. kappa per instrument or run, fitted to
+     the deletion curve the data show (as measured on two instruments); w_s from the per-scan
+     intensity of the same precursor's charge-reduced ion (M, bright in every scan), shared by
+     all fragments of that precursor and condition.
+   - *First scope.* Fragment series, K = 1 only, opt-in: in this mode fragments are fitted at
+     K = 1 (no K choice: a cut-aware K = 1 cannot be compared with a K = 2 fit that ignores the
+     cut; the fragment analysis uses only K = 1); the K = 1 bootstrap draws and refits with the
+     same model. Mixture fits, the population test and the screens unchanged.
+   - *Inputs.* Each scan's noise at each bin: Thermo raw files (centroid stream); mzML converted
+     with ThermoRawFileParser `-N` (sampled noise arrays, identical to the raw file's noise,
+     HISTORY 302); other mzML: the mode refuses, naming the conversion option. Waters data do not
+     need it (ADC thresholds act on single ions; the benchmark shows no weak-peak loss). Stored
+     per spectrum at read time: its scans' noise at the bins and their elution weights
+     (fragments: ~90 scans x ~15 bins; a quantile summary of w_s / sigma_s per bin if the bundle
+     grows too large).
+   - *Evaluate first.* The noise simulation (phase 2's planned baseline-zeroing switch becomes
+     this per-scan cut): today's fit against the cut-aware one on dim fragment-like envelopes,
+     known positions; on the targeted dataset: undeuterated fragment centroids back on their
+     envelope, the summed bins' zero shares predicted, then the ladder rates against the
+     HDX-NMR again. Later: MS1 peptides at K = 1, then K >= 2 and the population test's null.
 
 ## Risks and open decisions
 

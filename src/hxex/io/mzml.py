@@ -362,7 +362,10 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None) -> Scan:
     arrays = {}
     mobility = False
     for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
-        kind, values = _decode(bda, n, where, groups)
+        if not set(_cv(bda, groups)) & {_MZ_ARRAY, _INT_ARRAY} and not _is_mobility(bda):
+            continue  # an array not read, with a length of its own (ThermoRawFileParser -N:
+            # the sampled noise m/z, intensity and baseline arrays)
+        kind, values = _decode(bda, int(bda.get("arrayLength") or n), where, groups)
         if kind:
             arrays[kind] = values
         else:

@@ -7598,3 +7598,27 @@ CSVs or mzML if wanted.
     with (ion, parent, condition), which tell conditions apart. Test: the row-per-run case of
     `test_find_peak_in_a_project_and_a_runs_own_row` gives each run another value in a column
     of its own.
+
+302. **Fragment envelopes are right; mzML with noise arrays readable (2026-11-05; PLAN 23-24).**
+    The owner suspected the fragment ions' isotope envelope. On the private targeted Orbitrap
+    dataset's undeuterated controls (bundle with `[run.envelope] mode = "mixed"`, heights): in
+    the summed spectra the fragments lose their heavy side (z-dot MS2 1+ M+2 / M+3 / M+4 -17 /
+    -75 / -100 %; the dimmest third -100 % from M+2), the charge-reduced precursor and the MS1
+    parents only at M+4/M+5 (-3 to -14 %); bright c-1 MS2 M+0..M+2 fit within 4 %. A fragment
+    spectrum sums ~470 scans of a label's range, every fifth its condition's, each near the
+    noise (summed top ~1e5 against a recorded MS2 noise ~350 per scan). In single scans (26,985
+    fragment isotope peaks, each against its envelope's reference peak >= 20 x the recorded
+    noise) peaks read 0 in 96 / 79 / 50 / 21 / 5 / 1 / 0 % at < 1 / 1-2 / 2-3 / 3-5 / 5-10 / 10-30
+    / > 30 x the noise and the kept ones 3.2 / 1.60 / 1.17 / 0.98 / 0.95 / 0.97 / 0.98 of
+    expected, the same for M, c-1, z-dot, MS2 and MS3 (lighter positions 1.00-1.02, heavier
+    0.96-0.98): the envelope is right; the misfit is item 299's cut. Undeuterated centroid minus
+    the envelope's: bright third -0.03 to -0.05 D, dimmest third +0.03 (c-1 MS2) to +2.8 D (z-dot
+    MS3), where the real peaks are deleted and what is picked in their bins pushes the centroid
+    up. Noise in converted files: ThermoRawFileParser 1.4.5 writes the scan's sampled noise only
+    with `-N` (PSI-MS "sampled noise m/z / intensity / baseline array", MS:1002743-1002745,
+    ~3,900 points per MS1 scan on the top-down example), and it is the noise the raw file gives
+    per centroid (ratio 1.000 in 20 of 20 scans). The mzML reader refused such files (each array
+    was checked against the spectrum's length): it now reads only the m/z, intensity and ion
+    mobility arrays, each against its own `arrayLength` when given. Waters `_extern.inf` records
+    the ADC thresholds (amplitude 3, ion area 3, offset 10): per-ion thresholds, not this cut.
+    Design for fitting through the cut: PLAN 24. Scripts: `fragment_envelope` (private, README).

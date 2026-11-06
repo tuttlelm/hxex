@@ -1342,6 +1342,33 @@ def test_an_empty_scan_time_or_ms_level_names_the_scan(tmp_path):
         MzmlFile(path).scans()
 
 
+def test_arrays_not_read_may_have_their_own_length(tmp_path):
+    """ThermoRawFileParser's -N writes the sampled noise m/z, intensity and baseline arrays in
+    each spectrum, shorter than its m/z and intensity arrays: they are not read and do not make
+    the spectrum unreadable; an m/z or intensity array of the wrong length still is."""
+    scans = time_course(n=2)
+    path = write_mzml(tmp_path / "plain.mzML", scans)
+    noise = (_array(np.linspace(300, 2000, 7), "MS:1002743", name="sampled noise m/z array")
+             + _array(np.full(7, 1e3), "MS:1002744", name="sampled noise intensity array")
+             + _array(np.zeros(7), "MS:1002745", name="sampled noise baseline array"))
+    with_noise = tmp_path / "noise.mzML"
+    with_noise.write_text(path.read_text().replace("</binaryDataArrayList>",
+                                                   noise + "</binaryDataArrayList>"))
+    a, b = MzmlFile(path), MzmlFile(with_noise)
+    for i in range(2):
+        np.testing.assert_array_equal(b.scan(i).mz, a.scan(i).mz)
+        np.testing.assert_array_equal(b.scan(i).intensity, a.scan(i).intensity)
+    short = tmp_path / "short.mzML"
+    first = _array(scans[0]["intensity"][:5], "MS:1000515", name="intensity array")
+    text = path.read_text()
+    start = text.index('<binaryDataArray encodedLength', text.index("MS:1000514") - 400)
+    stop = text.index("</binaryDataArrayList>")
+    short.write_text(text[:start] + _array(scans[0]["mz"], "MS:1000514", name="m/z array")
+                     + first + text[stop:])
+    with pytest.raises(MzmlError, match="expected"):
+        MzmlFile(short).scan(0)
+
+
 def test_ion_mobility_bins_are_summed(tmp_path):
     """A scan written with its drift bins one after another (msconvert's
     --combineIonMobilitySpectra on Waters HDMS data: m/z out of order, each m/z once per bin,
