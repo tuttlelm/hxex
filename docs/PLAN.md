@@ -1047,6 +1047,16 @@ Planned, not built:
    chosen, the values, and the replicate agreement. If gating matters, the design would follow
    `find_peak`: each peptide's drift range found from its undeuterated control and applied in
    every file, only for files that carry drift times and without instrument settings.
+   MEASURED 2026-11-06 (HISTORY 303): gating matters (summed over every drift bin, K differs
+   from the gated spectra's in a fifth of the spectra and the replicate sd's q90 doubles), so
+   the design is next (owner, 2026-11-06: go). Its parts: the drift range per peptide from
+   the data (the benchmark's gated arm, HDExaminer's bins, is the yardstick to test it on).
+   - *m/z calibration of such files* (owner, 2026-11-06): it must not need HDExaminer's files
+     (with them, SpecExport would serve). The benchmark's uncorrected files sit about +23 ppm
+     from theory (+41 over one stretch of acquisitions), beyond the picking window; HDExaminer
+     shifted each file by a constant, msConvert's lockmass correction scatters -11 to +7.5 ppm.
+     The route to evaluate: each file's offset measured from its own data (as the m/z check
+     measures each undeuterated injection's), applied before picking.
 23. **The fragment ions' isotope envelope may be wrong** (owner, 2026-11-05: check carefully,
    on the private targeted Orbitrap dataset). The envelope that places and shapes a fragment's
    bins (`[run.envelope]`: the ion type's composition, or a mixture of ion types a hydrogen
@@ -1096,6 +1106,15 @@ Planned, not built:
      known positions; on the targeted dataset: undeuterated fragment centroids back on their
      envelope, the summed bins' zero shares predicted, then the ladder rates against the
      HDX-NMR again. Later: MS1 peptides at K = 1, then K >= 2 and the population test's null.
+   - *Merged peaks* (a weak peak merged with a species within a peak width: `pick = "peak"`
+     reads 0 although the window holds signal; a cut-aware model would take such a zero for a
+     deletion). Measured 2026-11-05 on the targeted dataset's undeuterated fragments: 0-1 % of
+     their zero bins (envelope share >= 2 %; c-1 and z-dot, MS2 and MS3), 73-89 % hold nothing
+     near, the rest another species' apex >= 10 ppm away with an empty window. So fragments
+     need no picker change first; on the Orbitrap digest's MS1 about half the zeroed heavy peaks
+     were merged (HISTORY 299), so before peptides the picker must mark such bins unknown (left
+     out of the fit) rather than 0. Deuterated fragment spectra not yet measured: the forward
+     model's unpredicted zeros would show merges there.
 
 ## Risks and open decisions
 
