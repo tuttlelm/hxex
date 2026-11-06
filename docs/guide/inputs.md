@@ -411,7 +411,7 @@ Optional columns:
 | `rt` | the retention time, minutes (stored with the spectra) |
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
 | `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`); not allowed in a project that reads fragment ions (see [Fragment ions](#fragment-ions)) |
-| `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, say) |
+| `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, say). The rows are still one peptide: the runs stay replicates of one series, with the same controls, also when every run has a row of its own |
 
 Other columns are kept with the entry but not used.
 

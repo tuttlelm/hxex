@@ -353,6 +353,30 @@ def test_a_peptides_own_retention_window(tmp_path):
         assert match in str(err.value.__cause__)
 
 
+def test_fragments_of_a_runs_own_row_join_the_parents_series(tmp_path):
+    """A parent with a general row and a row of its own for one run (HISTORY 297): each
+    fragment is read once per run (from the row that run reads) and its two rows are one
+    series, as the parent's are."""
+    from hxex.config import scan_targets
+    from hxex.io.mzml import MzmlRun, series_targets, target_applies
+
+    path = mzml_project(tmp_path, extra_input='[input.fragments]\nions = "c:2-3:1"\n')
+    write_mzml(tmp_path / "run2.mzML", time_course(n=6))
+    path.write_text(path.read_text().replace(
+        "[output]", '[[input.runs]]\npath = "run2.mzML"\nsample = "WT"\n\n[output]'))
+    (tmp_path / "peptides.csv").write_text(
+        "peptide,start_seq,end_seq,charge,rt_start,rt_end,run\n"
+        f"{PEPTIDE},1,10,2,,,\n{PEPTIDE},1,10,2,0.1,0.5,run2.mzML\n")
+    got = scan_targets(load_project(path))
+    runs = [MzmlRun(tmp_path / f"run{n}.mzML", "WT") for n in (1, 2)]
+    half = len(got) // 2  # the general row and its fragments, then the run's own
+    for one in runs:  # each target read once per run
+        read = [t.entry.extra.get("fragment", "") for t in got if target_applies(t, one)]
+        assert len(read) == half and len(set(read)) == half
+    joins = series_targets(got, runs)
+    assert joins == {("WT", half + i): i for i in range(half)}
+
+
 def test_peptides_with_a_modification_and_fragments_are_refused(tmp_path, capsys):
     """A row is both a peptide and the parent of its fragments: with [[input.fragments]], a
     modification is refused for its MS1 spectra too, every line named by check and run alike;
@@ -1560,8 +1584,9 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
 def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):
     """[input.scans] find_peak in a project (PLAN Next steps 10): a peptide row's rt is searched
     near in each run; a row naming one run (the run column) overrides the general row there,
-    here with its own rt_start, rt_end; check refuses a peptide without rt or a window, and a
-    run column naming no run."""
+    here with its own rt_start, rt_end, and its spectra stay in the peptide's series (one
+    series of two replicates, also when every run has a row of its own: HISTORY 297); check
+    refuses a peptide without rt or a window, and a run column naming no run."""
     from test_mzml import lc_run, write_mzml
 
     for name in ("a", "b"):
@@ -1603,6 +1628,19 @@ bundle = "out"
     assert 41.5 <= by_rep[2][0] and by_rep[2][1] <= 48.5
     rows = (tmp_path / "out_tables" / "spectra.csv").read_text().splitlines()
     assert {"rt_start", "rt_end"} <= set(rows[0].split(","))
+    # one series: the run's own row joins the general row's (recorded under the general row)
+    assert set(s.data_id.tolist()) == {0} and sorted(s.rep.tolist()) == [1, 2]
+    assert [r["target"] for r in s.source["series"]] == [0]
+    # every run with a row of its own (as an export listing each file's window): one series too
+    (tmp_path / "peptides.csv").write_text(
+        "peptide,start_seq,end_seq,charge,rt,rt_start,rt_end,run\n"
+        f"{PEPTIDE},1,10,2,0.5,0.40,0.60,a.mzML\n"
+        f"{PEPTIDE},1,10,2,0.5,0.70,0.80,b.mzML\n")
+    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        s = b.spectra()
+    assert set(s.data_id.tolist()) == {0} and sorted(s.rep.tolist()) == [1, 2]
+    assert len((tmp_path / "out_tables" / "series.csv").read_text().splitlines()) == 2
     capsys.readouterr()
     (tmp_path / "peptides.csv").write_text(
         "peptide,start_seq,end_seq,charge\n" f"{PEPTIDE},1,10,2\n")

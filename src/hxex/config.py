@@ -1340,8 +1340,9 @@ def fragment_parent_problems(project: Project, entries) -> list[str]:
 def scan_targets(project: Project) -> list[MzmlTarget]:
     """The targets of an mzML or Thermo project: each peptide of the table (if ``parents``),
     and its fragments (one set per ``[input.fragments]`` table), each read from the runs of its
-    sample (every run when the table gives none; :func:`scan_peptides`). A peptide's
-    ``rt_start`` and ``rt_end`` columns set the retention window of its targets, in place of
+    sample (every run when the table gives none; :func:`scan_peptides`), the fragments from the
+    runs their parent's row is read from (its ``run``, ``not_runs``). A peptide's ``rt_start``
+    and ``rt_end`` columns set the retention window of its targets, in place of
     ``rt_window``."""
     from .fragments import fragment_targets
     from .spectra import entry_rt, entry_rt_window
@@ -1359,8 +1360,10 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
         if inp.parents:
             target = inp.target if window is None else {**inp.target, "rt_window": window}
             targets.append(MzmlTarget(entry, **target))
+        # the fragments are read from the runs their parent's row is read from
+        runs_of = {k: v for k, v in entry.extra.items() if k in ("run", "not_runs") and v}
         for f in inp.fragments:
-            targets += fragment_targets(
+            made = fragment_targets(
                 entry, f.ions, ms_level=f.ms_level, activation=f.activation,
                 preactivation=f.preactivation, parent_mz=f.parent_mz,
                 precursor_mz=f.precursor_mz, precursor_charge=f.precursor_charge,
@@ -1369,6 +1372,8 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
                 limit_charge=f.limit_charge, label=f.label,
                 picker=project.run.picker, registry=project.run.registry,
             )
+            targets += [replace(t, entry=replace(t.entry, extra={**t.entry.extra, **runs_of}))
+                        for t in made] if runs_of else made
     if not targets:
         raise ProjectError(f"{inp.peptides}: no peptides")
     return targets

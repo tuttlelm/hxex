@@ -1298,11 +1298,13 @@ def _read_runs(
     except ValueError as exc:
         raise fmt.error(str(exc)) from None
     windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
-    series: dict[tuple[str, int], int] = {}
+    series: dict[tuple[str, int], int] = {}  # (sample, series target) -> data_id
+    joins = series_targets(targets, runs, tie)
     per_run: list[list[Spectrum]] = [[] for _ in runs]
     extra: dict = {}
     instruments: list = [None] * len(runs)  # per file: the instrument, where it quotes its R
-    common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry)
+    common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry,
+                  joins=joins)
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
     # controls are searched while they are open; "automatic" reads them first, so that the
     # other runs read a series found elsewhere at its found time
@@ -1320,22 +1322,30 @@ def _read_runs(
         return [with_rt(t, moved[(run.sample, i)]) if (run.sample, i) in moved else t
                 for i, t in enumerate(targets)]
 
+    def by_target():
+        """The series by (sample, target position), whichever row of its peptide a target is."""
+        return {(sample, i): series[(sample, joins.get((sample, i), i))]
+                for sample in {r.sample for r in runs} for i in range(len(targets))
+                if (sample, joins.get((sample, i), i)) in series}
+
     def decide():
         undeut = [s for n, run in enumerate(runs) if search.reads(run) for s in per_run[n]]
-        return search.decide(undeut, series)
+        return search.decide(undeut, by_target())
 
     def reread(found):
         """Read the undeuterated controls' series in ``found`` again at their found time."""
         of_data = {d: key for key, d in series.items()}
         for n, run in enumerate(runs):
-            mine = {i for (sample, i) in found if sample == run.sample}
+            mine = {i for (sample, i) in found if sample == run.sample
+                    and target_applies(targets[i], run, tie)}
             if not search.reads(run) or not mine:
                 continue
+            joined = {joins.get((run.sample, i), i) for i in mine}
             with fmt.open(opened[n]) as f:
                 again: list[Spectrum] = []
                 _read_run(f, run, targets_of(run), windows, series, again, only=mine, **common)
             per_run[n] = [s for s in per_run[n]
-                          if of_data.get(int(s.data_id), (None, -1))[1] not in mine
+                          if of_data.get(int(s.data_id), (None, -1))[1] not in joined
                           or of_data[int(s.data_id)][0] != run.sample] + again
 
     for k, n_run in enumerate(order):
@@ -1383,12 +1393,56 @@ def _read_runs(
         **extra,
     }
     if search is not None and search.record is not None:
+        found = by_target()
         for row in search.record["series"]:  # a series first read at its found time
             if row["data_id"] is None:
-                row["data_id"] = series.get((row["sample"], row["target"]))
+                row["data_id"] = found.get((row["sample"], row["target"]))
         source["retention_search"] = search.record
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
+
+
+# the fields of a peptide-table row that say which runs it is read from and when, not what is
+# read: a run's own row (the run column) and the general row it overrides differ in these only
+RUN_ROW_FIELDS = ("run", "not_runs", "rt", "rt_start", "rt_end")
+
+
+def series_targets(targets: Sequence[MzmlTarget], runs: Sequence[MzmlRun], tie: bool = True
+                   ) -> dict[tuple[str, int], int]:
+    """Per (sample, target position), the position of the target whose series the target's
+    spectra join, where that is another target: a peptide's rows of its own for some runs (the
+    peptide table's ``run`` column, :func:`hxex.config.scan_peptides`) and its general row are
+    one series in each sample, so that its runs stay replicates of one series with one set of
+    controls whichever row each run was read by. The series is recorded under the general row
+    when the sample reads one, else under the first own row. Rows are the same peptide when
+    their peptide, range, charge and modification and the scans they select (MS level,
+    activation, precursor, filters; not the retention window a row sets); targets without such
+    rows are their own series."""
+    names: dict[str, set[str]] = {}  # run file name -> the samples of its runs
+    for r in runs:
+        names.setdefault(run_name(r), set()).add(r.sample)
+    every = {r.sample for r in runs}
+    first: dict[tuple, int] = {}
+    out: dict[tuple[str, int], int] = {}
+    rows = [(i, t, dict(t.entry.extra)) for i, t in enumerate(targets)]
+    rows = [(i, t, e) for i, t, e in rows if "run" in e or "not_runs" in e]
+    # general rows first, so that a sample reading one records its series under it
+    for i, t, extra in sorted(rows, key=lambda row: bool(str(row[2].get("run") or "").strip())):
+        own = str(extra.get("run") or "").strip()
+        samples = names.get(own, set()) if own else every
+        if tie and t.entry.sample:
+            samples = samples & {t.entry.sample}
+        e = t.entry
+        key = (e.peptide, e.start_seq, e.end_seq, e.charge, e.modification,
+               json.dumps({**t.to_dict(), "rt_window": None,  # the row's rt_start, rt_end
+                           "entry": {k: v for k, v in sorted(extra.items())
+                                     if k not in RUN_ROW_FIELDS}},
+                          sort_keys=True, default=str))
+        for sample in sorted(samples):
+            joined = first.setdefault((sample, key), i)
+            if joined != i:
+                out[(sample, i)] = joined
+    return out
 
 
 def _run_point(run: MzmlRun) -> str:
@@ -1633,9 +1687,11 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
 def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
               tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
               registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
-              only: set[int] | None = None) -> float:
+              only: set[int] | None = None,
+              joins: Mapping[tuple[str, int], int] | None = None) -> float:
     """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
-    those of the targets at these positions) in the open file ``f`` to ``spectra``. Returns the
+    those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
+    series of its sample and target (or the target it joins, :func:`series_targets`). Returns the
     run's typical peak width (s) when find_peak measured it, else NaN."""
     table = f.scans()
     # the targets whose peak is found (find_peak): planned over their search range first
@@ -1673,7 +1729,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         if plan is None:
             continue
         lo, hi = windows[t_i]
-        key = (run.sample, t_i)
+        key = (run.sample, (joins or {}).get((run.sample, t_i), t_i))
         data_id = series.setdefault(key, len(series))
         entry = replace(target.entry, sample=run.sample)
         order, groups = plan

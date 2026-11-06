@@ -7503,3 +7503,19 @@ CSVs or mzML if wanted.
     `test_single_scans_by_index` now checks that no warning is given. Guide inputs.md: the
     msConvert command for Waters data and what drift summing means. Not changed: a file with an
     extra non-float array (a deisotoped file's integer charge array) is still refused as a whole.
+
+297. **A run's own peptide row stays in the peptide's series (2026-11-05; found reading the
+    benchmark's Waters files as mzML, item 295 on ion mobility).** In mzML and Thermo projects
+    the reader keyed a series by (sample, target), and a peptide-table row naming one run (the
+    `run` column) is a target of its own: each such row became a separate series with one
+    spectrum, its replicates not combined and its controls missing (a table giving every file its
+    own `rt_start`, `rt_end`: 18,898 series of one spectrum, 16,871 on stand-in controls). Now
+    `hxex.io.mzml.series_targets` joins the rows of one peptide (peptide, range, charge,
+    modification and the scans selected; not `run`, `not_runs`, `rt`, `rt_start`, `rt_end` or
+    the window they set) into one series per sample, recorded under the general row when the
+    sample reads one, else the first own row; the retention search maps its targets the same
+    way. Fragments now take their parent row's `run` and `not_runs` (before, the fragments of a
+    run's own row were also read from every other run). Tests:
+    `test_find_peak_in_a_project_and_a_runs_own_row` (one series with a general row, and with a
+    row per run), `test_fragments_of_a_runs_own_row_join_the_parents_series`. Bundles read
+    with per-run rows before this keep their separate series until rerun.
