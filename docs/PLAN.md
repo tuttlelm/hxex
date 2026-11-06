@@ -1112,8 +1112,25 @@ Planned, not built:
      mu Phi((mu - kappa sigma)/sigma) + sigma phi((mu - kappa sigma)/sigma), and its variance has
      a closed form too, which joins the per-bin variance. kappa per instrument or run, fitted to
      the deletion curve the data show (as measured on two instruments); w_s from the per-scan
-     intensity of the same precursor's charge-reduced ion (M, bright in every scan), shared by
-     all fragments of that precursor and condition.
+     intensity of the channel's whole fragment ladder (M and every fragment row summed; the M
+     alone followed another species for one of 18 precursors, item 25), shared by all fragments
+     of that precursor and condition.
+   - *Mixture weights* (`[run.envelope] mode = "mixed"`: c-1 with c, z-dot with z+1). Measured
+     on the targeted dataset (2026-11-06): the weights belong to the fragment (most fragments
+     one ion type, a minority real mixtures, not predicted by length or charge, different
+     between precursors) and agree between its MS2 and MS3 (difference 0.00); in dim series they
+     drift to the heavier component, which is the cut, not chemistry. So: share each fragment's
+     weights across its conditions, fitted from its brightest references; for a fragment dim
+     everywhere, take the typical weights (pure c for the c-1 label, pure z-dot) with the
+     cut-aware fit rather than fitting the weights.
+   - *Usable brightness* (simulation, one z-dot envelope of 8 sites over 90 scans; brightness =
+     the apex scan's tallest expected peak / recorded noise): below ~4 x neither fit recovers the
+     deuteration; at 4-8 x only the cut-aware fit (<= 0.13 D off); today's fit needs ~30 x for
+     ~0.1 D. On the targeted dataset 22 % of fragment spectra have nothing read, 31 % are below
+     4 x, 10 % 4-8 x, 20 % 8-30 x, 16 % above 30 x; within a series the dimmest time point is
+     below 4 x in 71-93 %, so a floor acts per spectrum, not per series. The scan count matters
+     little: in reduced profile the window's empty scans add zeros, and summing only the
+     elution's core leaves today's misfit unchanged.
    - *First scope.* Fragment series, K = 1 only, opt-in: in this mode fragments are fitted at
      K = 1 (no K choice: a cut-aware K = 1 cannot be compared with a K = 2 fit that ignores the
      cut; the fragment analysis uses only K = 1); the K = 1 bootstrap draws and refits with the
@@ -1139,6 +1156,31 @@ Planned, not built:
      were merged (HISTORY 299), so before peptides the picker must mark such bins unknown (left
      out of the fit) rather than 0. Deuterated fragment spectra not yet measured: the forward
      model's unpredicted zeros would show merges there.
+25. **Fragment windows per run, and a flag for an elution cut by the acquisition** (owner,
+   2026-11-06: both agreed; build after the drift-gate work in `io/mzml.py` is merged). Today
+   one peptide table drives every file: fragments always sum their parent's `rt_start`/`rt_end`
+   (`find_peak` covers MS1 peptides given only an `rt`), so a run whose retention moved loses
+   part of the elution or takes in another species.
+   - *Measured* (targeted Orbitrap dataset, 18 precursors x 17 files, MS2 channels): retention
+     moves up to ~0.6 min between runs. One precursor's elution sat partly before its table
+     window in four runs (17-58 % of the signal outside), though the instrument had recorded it;
+     another's early signal at its m/z was another species (its MS1 and fragments elute at the
+     table time in every run).
+   - *Design.* Each fragment channel (precursor, condition, MS level) finds its elution peak in
+     every run with `find_peak`'s rule (smoothed trace, the local maximum nearest the table's
+     `rt`, not the tallest), on a trace from its own scans: the whole ladder's positions summed
+     (M and every fragment row). Measured: apex within 0.6 s (median) and 1.0 s (90th
+     percentile) of the MS1 parent's peak found the same way, none beyond 15 s; the M alone
+     followed another species 0.6-0.8 min away for one precursor in all 17 files. The channel's
+     fragments then sum that span. To choose when built: the span (half height keeps ~0.8 of
+     the signal; in reduced profile a wider one adds no noise, item 24); MS3 channels (their own
+     ladder, or their MS2 sibling's span); fragments with `rt_start`/`rt_end` of their own and
+     per-run rows keep them, as for `find_peak`.
+   - *Edge flag.* A spectrum whose found span reaches the first or last scan the instrument
+     recorded for that channel: the elution was cut by the scheduled acquisition and hxex cannot
+     recover it. Measured: 5 of 306 channels, exactly the two early-eluting precursors in the
+     two runs that eluted ~0.3-0.4 min early. A flag (unproven rules ship as flags); brightness
+     then decides what the fit can use (item 24).
 
 ## Risks and open decisions
 
