@@ -642,9 +642,11 @@ def _fit_part(
                      int(screened.sum()))
     quality = None
     if config.quality is not None:
-        from .quality import precursor_offsets
+        from .quality import ion_overlaps, precursor_offsets
 
-        offsets = None if precursor is None else precursor_offsets(fit, *precursor)
+        offsets = None if precursor is None else precursor_offsets(fit, *precursor[:2])
+        overlaps = None if precursor is None else ion_overlaps(
+            data, fit, precursor[0], precursor[1], precursor[2], config.picker)
         quality = assess_quality(data, fit, config.quality, mz_offset_ppm=mz_offset_ppm,
                                  poor_envelope_series=poor_envelope,
                                  envelope_offset_ppm=envelope_offset[0],
@@ -652,7 +654,8 @@ def _fit_part(
                                  rt_found_series=rt_found,
                                  drift_unclear_series=drift_unclear,
                                  elution_cut_spectra=elution_cut,
-                                 precursor_offset=offsets, controls=controls)
+                                 precursor_offset=offsets, ion_overlap=overlaps,
+                                 controls=controls)
     return fits, fit, controls, quality, test
 
 
@@ -1193,7 +1196,8 @@ def run(
                                              drift_unclear=unclear_series(
                                                  record.get("drift_gate")),
                                              elution_cut=elution_cut_spectra(record),
-                                             precursor=(record, binned.label[kept]))
+                                             precursor=(record, binned.label[kept],
+                                                        _bin_mz(binned, kept)))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1381,7 +1385,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
     from .io.drift_gate import unclear_series
     from .io.mzml import elution_cut_spectra
     from .io.retention_search import moved_series
-    from .quality import precursor_offsets
+    from .quality import ion_overlaps, precursor_offsets
 
     return assess_quality(
         data, fit, config.quality,
@@ -1392,7 +1396,15 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         rt_found_series=moved_series((source or {}).get("retention_search")),
         drift_unclear_series=unclear_series((source or {}).get("drift_gate")),
         elution_cut_spectra=elution_cut_spectra(source),
-        precursor_offset=precursor_offsets(fit, source, binned.label[kept]), controls=controls)
+        precursor_offset=precursor_offsets(fit, source, binned.label[kept]),
+        ion_overlap=ion_overlaps(data, fit, source, binned.label[kept], _bin_mz(binned, kept),
+                                 config.picker),
+        controls=controls)
+
+
+def _bin_mz(binned: BinnedSet, kept: np.ndarray) -> list[np.ndarray]:
+    """The bins' m/z of every kept spectrum (in the measurements' order)."""
+    return [binned.spectrum(int(i))[0] for i in np.flatnonzero(kept)]
 
 
 def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict:

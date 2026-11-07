@@ -7772,3 +7772,27 @@ CSVs or mzML if wanted.
     references without the cut (PLAN 24: they drift to the heavier type in dim series); the
     remaining -0.36 to -0.45 D in the middle fifths may be that; MS1 peptides; K >= 2 and the
     population test's null.
+
+309. **Overlapping ions within a fragment ladder; flag overlapping_ion (2026-11-06).** The owner
+    saw that z-dot 14-30 of parent 13-30 (EThcD 2+) "misses most of the peaks": its picked bins sat
+    on c 13-29's heavy isotopes (c 13-29 mono 1667.778, its M+3 52 ppm from the z-dot's mono
+    1670.702; the file's R 45,000 at m/z 200 gives about 64 ppm FWHM at 1670.7: one peak), and the
+    undeuterated K = 1 mean read 6.3 D. Measured on the private targeted dataset (bundle with
+    find_fragment_peak; scripts in a private folder): in the undeuterated controls, another ion of
+    the same scans puts >= 20 % of a fragment's picked intensity on its bins in 5.5 % of 1,485
+    c-1 / z-dot spectra (44 of 758 series; a, b, c-1, c, c+1, y, z-dot, z+1, z+2 of every length
+    and charge below the precursor's, and M, each scaled by its own peaks free of the fragment's
+    bins). By other ion: c and c+1 of other lengths 40, M 16, z-dot 9, b 6, y 3. 149 spectra hold an
+    ion whose strong peaks all fall on the fragment's bins (cannot be told apart: wider read
+    windows would not help; one case needed 2 m/z more). At every time point (listed ions only, by
+    their own fits scaled by their free bins): 8.1 % of undeuterated and 7.3 % of labelled spectra;
+    series hit 69 / 63, both 49; 14 only once labelled (mostly fragments absent from the
+    undeuterated controls), 20 only undeuterated. BUILT: `[run.quality] max_ion_overlap` (0.2),
+    statistic `ion_overlap` with `ion_overlap_with` (quality table), flag `overlapping_ion`,
+    `spectra.csv` column `overlapping_ion_with` where flagged (`quality.ion_overlaps`): per
+    spectrum, the listed ions of its channel (file, parent, condition, MS level, scan conditions),
+    each by its selected-K curve (through the per-scan cut where fitted so) at the fragment's bins
+    within the picker's window or the recorded FWHM (the larger), scaled by its bins away from the
+    fragment's holding >= 20 % of its curve; coinciding ions are not counted. On the dataset: 8.0 %
+    of fragment spectra flagged (undeuterated 8.6 %, labelled 7.9 %), 14-30 at 0.41; 30 s for
+    15,446 spectra. A flag only (unproven rules ship as flags); b/y/a ions not assessed (not read).

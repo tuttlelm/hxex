@@ -68,6 +68,10 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     cols["flags"] = np.array([  # empty without quality flags, so the columns never change
         ";".join(n for n in FLAG_NAMES if getattr(q, n)[i]) if q is not None else ""
         for i in range(m)])
+    if q is not None and np.asarray(q.overlapping_ion).any():  # which ion, where flagged
+        cols["overlapping_ion_with"] = np.array([
+            f"{q.ion_overlap_with[i]} ({q.ion_overlap[i]:.2f})" if q.overlapping_ion[i] else ""
+            for i in range(m)])
     return cols
 
 

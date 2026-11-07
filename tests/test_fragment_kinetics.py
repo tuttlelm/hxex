@@ -886,3 +886,65 @@ def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
         "fragment_uptake.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "analysis_settings_used.toml"])
+
+
+def test_an_ion_on_a_fragments_bins_flags_it():
+    """ion_overlaps (overlapping_ion): another fragment of the same scans whose envelope falls on
+    a fragment's bins (here two isotope steps below it) gives it the share of its picked
+    intensity it puts there, measured by the other ion's bins away from the fragment's; the other
+    way round the fragment coincides with the ion's bins only (no free bins of its own: not
+    counted); the parent, which is not read in the fragment scans, is not assessed."""
+    from hxex.fit import Measurements
+    from hxex.io.mzml import MzmlTarget
+    from hxex.quality import QualityConfig, ion_overlaps
+    from hxex.report.curves import component_curves
+
+    frags = fragment_targets(PARENT, "c:4:1 c:5:1", activation="ETD")
+    targets = [MzmlTarget(PARENT)] + frags
+    assert len(targets) == 3
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    shape = np.array([1.0, 0.5, 0.2])
+    bins = np.arange(6.0)
+    amp = {1: 100.0, 2: 1000.0}  # the c:4 fragment is dim, the c:5 one bright
+    curve = {d: component_curves(bins, [a], [1e-3], [0.5], shape)[0] for d, a in amp.items()}
+    mz = {0: 400.0 + bins, 2: 500.0 + bins, 1: 502.0 + bins}  # c:4's bins 0.. on c:5's 2..
+    rows = [(d, "a.raw") for d in (0, 1, 2)]
+    observed = []
+    for d, _ in rows:
+        y = np.ones(6) if d == 0 else curve[d].copy()
+        if d == 1:
+            y[:4] += curve[2][2:]  # the bright ion's tail on the dim fragment's bins
+        observed.append(y)
+    data = Measurements.from_arrays([bins] * len(rows), observed, [shape] * len(rows),
+                                    [5.0] * len(rows), data_id=[d for d, _ in rows],
+                                    spectrum_id=[f"p:S/{f}/{d}" for d, f in rows])
+
+    class Fit:
+        data_id = np.array([d for d, _ in rows])
+        selected_K = np.ones(len(rows), dtype=int)
+        spectrum_id = data.spectrum_id
+        fits = {1: SimpleNamespace(A=np.array([[amp.get(d, 1.0)] for d, _ in rows]),
+                                   n=np.full((len(rows), 1), 1e-3),
+                                   p=np.full((len(rows), 1), 0.5),
+                                   nll=np.zeros(len(rows)))}
+
+        def __len__(self):
+            return len(rows)
+
+    labels = np.array([f"{f} scans1-9" for _, f in rows])
+    share, other = ion_overlaps(data, Fit(), source, labels, [mz[d] for d, _ in rows],
+                                PickerConfig())
+    dim_a = rows.index((1, "a.raw"))
+    expect = np.minimum(curve[2][2:], observed[dim_a][:4]).sum() / observed[dim_a].sum()
+    assert share[dim_a] == pytest.approx(expect) and expect > 0.5
+    assert other[dim_a] == "c 11-15 1+"
+    assert share[rows.index((2, "a.raw"))] == 0.0  # the dim one coincides: not counted
+    assert np.isnan(share[rows.index((0, "a.raw"))])  # the parent
+    assert np.isnan(ion_overlaps(data, Fit(), {"reader": "hxexpress"}, labels,
+                                 [mz[d] for d, _ in rows], PickerConfig())[0]).all()
+    assert QualityConfig().max_ion_overlap == 0.2
+    with pytest.raises(ValueError, match="max_ion_overlap"):
+        QualityConfig(max_ion_overlap=0)
+

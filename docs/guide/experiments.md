@@ -212,6 +212,18 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
   MS1 spectra, while 3+ and 4+ ones agreed within 0.1 D). `closure.csv` says which was used
   (`reference`: `MS1` or `M`), and so does the closure figure's axis. A precursor ion that
   reads more than 1 D from its MS1 spectrum is flagged `precursor_off`.
+- Overlapping ions: one fragment scan holds dozens of ions of the same peptide, and some fall
+  almost on top of each other: a c ion and a z ion that lack different end residues can differ
+  by close to a whole number of isotope steps (on a targeted dataset, c 13-29 and z 14-30 of
+  one peptide lay 52 parts per million apart where the instrument's peaks were 64 wide), two
+  charges of one ion share every other position, and a bright 3+ or 4+ precursor puts a peak
+  every third or quarter m/z. *hxex* measures, for every fragment spectrum, how much of its
+  picked intensity another ion read from the same scans puts there (from that ion's own fit,
+  scaled by its peaks away from the fragment's), and flags it `overlapping_ion` at 20 % or more
+  (`[run.quality] max_ion_overlap`); `spectra.csv` names the other ion (`overlapping_ion_with`).
+  On the dataset above, 7 to 8 % of fragment spectra were flagged, at every time point. An ion
+  that falls on all of the fragment's strong bins cannot be told apart from it and is not
+  counted, nor are ions that are not read (a, b and y ions).
 - Per-residue rates from both ladders together (`ladder_residues.csv`, with `fit_rates =
   true`): an N-terminal and a C-terminal ion type are paired, and where they disagree the
   residue is marked. Conditions, precursor charges, fragment charges and runs are never pooled,

@@ -55,6 +55,16 @@ signal never reach the fit and are handled before it.
   beyond 1 D). The statistic is ``precursor_offset`` (D, M minus MS1); not assessed without the
   parents' MS1 spectra or the K = 1 fits. The closure test takes the MS1 spectra as its
   reference where they were read (:func:`hxex.analysis.parent_uptake`).
+- ``overlapping_ion``: another ion read from the same scans (a c-1 or z-dot fragment of the same
+  parent with its mixed components, or the precursor ``M``) puts at least ``max_ion_overlap`` of
+  this fragment's picked intensity on its bins: its peaks fall inside the picker's windows. The
+  other ion's fitted curve is scaled by its own bins away from this fragment's (an ion that
+  coincides with every strong bin cannot be told apart and is not counted). The statistic is
+  ``ion_overlap`` (the share), with the other ion in ``ion_overlap_with``. Measured on a targeted
+  dataset (2026-11-06): 7-8 % of fragment spectra at 0.2 or more, at every time point; ions
+  of one ladder whose masses differ by close to whole isotope steps (a c and a z ion lacking
+  different end residues), two charges of one ion type, and the bright precursor at 3+ or 4+.
+  Ions that are not read (a, b and y ions) are not assessed.
 - ``elution_cut``: a fragment spectrum whose elution peak, found per run (``[input.scans]
   find_fragment_peak``), reaches the first or last scan the instrument recorded for its
   precursor: the scheduled acquisition cut the peak (retention moved in that run), so part of
@@ -107,7 +117,7 @@ from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
-              "drift_unclear", "elution_cut", "precursor_off")
+              "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion")
 
 
 @dataclass(frozen=True)
@@ -128,6 +138,8 @@ class QualityConfig:
       this times natural abundance; None: off.
     - ``max_precursor_offset`` (deuterons): ``precursor_off`` when a precursor ion in the
       fragment scans reads further than this from its parent's MS1 spectrum; None: off.
+    - ``max_ion_overlap``: ``overlapping_ion`` when another ion of the same scans puts at least
+      this share of a fragment's picked intensity on its bins; None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -139,6 +151,7 @@ class QualityConfig:
     saturated_ratio: float | None = 1.15
     tails_low_ratio: float | None = 0.7
     max_precursor_offset: float | None = 1.0
+    max_ion_overlap: float | None = 0.2
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -155,6 +168,8 @@ class QualityConfig:
             raise ValueError("saturated_ratio must be > 1 (or None to skip the screen)")
         if self.max_precursor_offset is not None and not self.max_precursor_offset > 0:
             raise ValueError("max_precursor_offset must be > 0 (or None to skip the screen)")
+        if self.max_ion_overlap is not None and not 0 < self.max_ion_overlap <= 1:
+            raise ValueError("max_ion_overlap must be between 0 and 1 (or None to skip the screen)")
         if self.tails_low_ratio is not None and not 0 < self.tails_low_ratio < 1:
             raise ValueError("tails_low_ratio must be between 0 and 1 (or None to skip the screen)")
 
@@ -209,17 +224,23 @@ class QualityFlags:
     elution_cut: np.ndarray | None = None
     precursor_offset: np.ndarray | None = None
     precursor_off: np.ndarray | None = None
+    ion_overlap: np.ndarray | None = None
+    ion_overlap_with: np.ndarray | None = None
+    overlapping_ion: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag
-                     "precursor_offset"):
+                     "precursor_offset", "ion_overlap"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
                      "rt_found", "undeut_high", "drift_unclear", "elution_cut",
-                     "precursor_off"):
+                     "precursor_off", "overlapping_ion"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
+        if self.ion_overlap_with is None:
+            object.__setattr__(self, "ion_overlap_with",
+                               np.full(len(self.spectrum_id), "", dtype=object))
 
     def __len__(self) -> int:
         return len(self.spectrum_id)
@@ -393,6 +414,7 @@ def assess_quality(
     drift_unclear_series: np.ndarray | None = None,
     elution_cut_spectra=None,
     precursor_offset: np.ndarray | None = None,
+    ion_overlap: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -406,6 +428,7 @@ def assess_quality(
     (:mod:`hxex.io.drift_gate`); ``elution_cut_spectra`` the spectra (ids) whose found
     fragment peak the acquisition cut (:func:`hxex.io.mzml.find_fragment_peaks`);
     ``precursor_offset`` every measurement's :func:`precursor_offsets` (None: not assessed).
+    ``ion_overlap``: :func:`ion_overlaps` (the share and the other ion; None: not assessed).
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
@@ -467,6 +490,14 @@ def assess_quality(
     limit_d = config.max_precursor_offset
     precursor_off = (np.zeros(m, dtype=bool) if limit_d is None
                      else np.abs(np.nan_to_num(offset)) > limit_d)
+    overlap, overlap_with = ((np.full(m, np.nan), np.full(m, "", dtype=object))
+                             if ion_overlap is None else
+                             (np.asarray(ion_overlap[0], dtype=float),
+                              np.asarray(ion_overlap[1], dtype=object)))
+    if len(overlap) != m or len(overlap_with) != m:
+        raise ValueError("ion_overlap must have one value per measurement")
+    overlapping = (np.zeros(m, dtype=bool) if config.max_ion_overlap is None
+                   else np.nan_to_num(overlap) >= config.max_ion_overlap)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -486,6 +517,8 @@ def assess_quality(
             [] if elution_cut_spectra is None else list(elution_cut_spectra), dtype=str)),
         undeut_high=undeut_high(fit, controls),
         precursor_offset=offset, precursor_off=precursor_off,
+        ion_overlap=overlap, ion_overlap_with=np.where(overlapping, overlap_with, ""),
+        overlapping_ion=overlapping,
         **brightness,
     )
 
@@ -524,3 +557,115 @@ def precursor_offsets(fit: FitResult, source, labels) -> np.ndarray:
         if key in ms1:
             out[i] = means[i] - ms1[key]
     return out
+
+
+def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """Every fragment measurement's overlap with the other ions read from the same scans
+    (``overlapping_ion``): the largest share of its picked intensity (all its bins) that one other
+    measurement of its channel (same file, ``labels`` ``'<file> scans...'``, parent, condition,
+    MS level and scan conditions: :func:`hxex.io.mzml._channel`) puts on its bins, and that ion
+    (``'c-1 13-29 1+'``). The other ion's selected-K curve (read through the per-scan cut where
+    it was fitted so) counts at this fragment's bins within the picker's window (``picker``:
+    :meth:`~hxex.picking.PickerConfig.half_width`; ``mz``, the bins' m/z of every measurement) or
+    within one peak width at half maximum, from the resolving power the file records (two peaks
+    closer than that read as one, whichever the window takes),
+    scaled by the other ion's own bins that are not near this fragment's and hold at least 20 %
+    of its curve: a fit of a coinciding ion is made of the same peaks. An ion with no such bins
+    is not counted. NaN for measurements that are not fragments, and without a scan-file read
+    record (``source``)."""
+    from .io.mzml import SCAN_READERS, _channel, mzml_series_targets
+    from .report.curves import component_curves, cut_curves
+
+    m = len(fit)
+    share = np.full(m, np.nan)
+    other = np.full(m, "", dtype=object)
+    if not source or source.get("reader") not in SCAN_READERS:
+        return share, other
+    targets = mzml_series_targets(source)
+    files = [str(label).rsplit(" ", 1)[0] for label in labels]
+    recorded = _recorded_resolution(source)
+    channels: dict[tuple, list[int]] = {}
+    for i in range(m):
+        t = targets.get(int(fit.data_id[i]))
+        if t is not None and "fragment" in dict(t.entry.extra) and t.ms_level >= 2:
+            channels.setdefault((files[i], _channel(t)), []).append(i)
+
+    def curve(i):
+        k = int(fit.selected_K[i])
+        kf = fit.fits.get(k)
+        if kf is None or not np.isfinite(kf.nll[i]):
+            return None
+        c = component_curves(data.bins[i], kf.A[i], kf.n[i], kf.p[i], data.shapes[i])
+        cut = None if data.scan_cut is None else data.scan_cut[i]
+        return (cut_curves(c, cut) if cut is not None else c).sum(axis=0)
+
+    for members in channels.values():
+        curves = {i: curve(i) for i in members}
+        bins_mz = {i: np.asarray(mz[i], dtype=float) for i in members}
+        for f in members:
+            e = targets[int(fit.data_id[f])].entry
+            if str(dict(e.extra).get("fragment", "")).startswith("M:"):
+                continue  # the precursor is only another ion
+            obs = np.asarray(data.observed[f], dtype=float)
+            share[f] = 0.0
+            if obs.sum() <= 0:
+                continue
+            fmz = bins_mz[f]
+            half = np.broadcast_to(np.asarray(picker.half_width(fmz, int(e.charge)), float),
+                                   fmz.shape)
+            r0, r_mz = recorded.get((files[f], int(targets[int(fit.data_id[f])].ms_level)),
+                                    (np.nan, np.nan))
+            if np.isfinite(r0) and np.isfinite(r_mz):  # the peak width at half maximum
+                width = fmz / (r0 * (r_mz / fmz) ** picker.resolving_power_exponent)
+                half = np.maximum(half, width)
+            lo, hi = float(np.min(fmz - half)), float(np.max(fmz + half))
+            for o in members:
+                pred = curves[o]
+                if o == f or pred is None:
+                    continue
+                omz = bins_mz[o]
+                if omz.max() < lo or omz.min() > hi:
+                    continue
+                near = np.abs(fmz[:, None] - omz[None, :]) <= half[:, None]
+                if not near.any():
+                    continue
+                free = ~near.any(axis=0) & (pred >= 0.2 * pred.max())
+                if not free.any():
+                    continue
+                oobs = np.asarray(data.observed[o], dtype=float)
+                scale = float(np.sum(oobs[free] * pred[free]) / np.sum(pred[free] ** 2))
+                contrib = (near * (scale * pred)[None, :]).sum(axis=1)
+                value = float(np.minimum(contrib, obs).sum() / obs.sum())
+                if value > share[f]:
+                    oe = targets[int(fit.data_id[o])].entry
+                    ion = chem_label(oe)
+                    share[f], other[f] = value, f"{ion} {oe.peptide_range} {oe.charge}+"
+    return share, other
+
+
+def _recorded_resolution(source) -> dict[tuple[str, int], tuple[float, float]]:
+    """(file name, MS level) -> (resolving power, the m/z it is quoted at) from a read record's
+    ``instruments`` (the lowest where the scans of a level differ); empty where none is
+    recorded (mzML files)."""
+    out: dict[tuple[str, int], tuple[float, float]] = {}
+    instruments = source.get("instruments") or []
+    names = [str(f.get("name", "")) for f in source.get("files") or []]
+    for name, inst in zip(names, instruments, strict=False):
+        if not inst or not np.isfinite(float(inst.get("resolving_power_mz") or np.nan)):
+            continue
+        for level, value in (inst.get("resolving_power") or {}).items():
+            try:
+                r0 = min(float(v) for v in str(value).split("/"))
+            except ValueError:
+                continue
+            out[(name, int(level))] = (r0, float(inst["resolving_power_mz"]))
+    return out
+
+
+def chem_label(entry) -> str:
+    """A fragment entry's ion type as the fragment list names it (``c-1``, ``z-dot``, ``M``)."""
+    from .chem import parse_modification
+
+    return parse_modification(entry.modification).ion_type
+

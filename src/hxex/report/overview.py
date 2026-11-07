@@ -71,6 +71,7 @@ QUALITY_LABELS = {
     "drift_unclear": "drift unclear",
     "elution_cut": "elution cut",
     "precursor_off": "precursor off",
+    "overlapping_ion": "overlapping ion",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

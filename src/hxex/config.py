@@ -1800,6 +1800,9 @@ _COMMENTS: dict[str, str] = {
     "run.quality.max_precursor_offset": "precursor_off: a precursor ion in the fragment scans "
                                         "(unreacted) reading further than this (D) from its "
                                         "parent's MS1 spectrum in the same file (false: off)",
+    "run.quality.max_ion_overlap": "overlapping_ion: another ion of the same fragment scans puts "
+                                   "at least this share of a fragment's picked intensity on its "
+                                   "bins (false: off)",
     "run.quality.tails_low_ratio": "tails_low: an undeuterated control whose tail peaks (1-10 % "
                                    "of the top) read below this times natural abundance "
                                    "(false: off)",
