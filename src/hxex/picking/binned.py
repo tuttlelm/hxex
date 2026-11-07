@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..spectra import _check_mask, ragged_mask, time_index
+from ..spectra import _check_mask, _objects, ragged_mask, time_index
 from .screen import SCREEN_SCORES
 
 _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
@@ -83,6 +83,9 @@ class BinnedSet:
     envelope_offset_ppm: np.ndarray | None = None
     envelope_offset_limit_ppm: np.ndarray | None = None
     window_shift_ppm: np.ndarray | None = None
+    # per spectrum, its scans' noise at its bins and shares of the signal (ScanCut; None: not
+    # recorded): such spectra are fitted through the instrument's per-scan cut
+    scan_cut: np.ndarray | None = field(default=None, compare=False)
 
     def __post_init__(self):
         for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
@@ -102,6 +105,8 @@ class BinnedSet:
             object.__setattr__(self, "peak_mz", np.full(len(self.mz), np.nan))
         if self.mz_offset_ppm is None:
             object.__setattr__(self, "mz_offset_ppm", np.full(len(self.offsets) - 1, np.nan))
+        if self.scan_cut is None:  # no scans recorded
+            object.__setattr__(self, "scan_cut", _objects([None] * (len(self.offsets) - 1)))
         if self.role is None:  # built without roles: time points only
             object.__setattr__(self, "role", np.full(len(self.offsets) - 1, "", dtype="<U8"))
         else:

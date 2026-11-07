@@ -422,3 +422,89 @@ def test_trailer_values_written_as_decimals():
     assert trailer_value(2.0, 0) == 2 and trailer_value("", 0) == 0
     assert trailer_value("abc", 0) == 0 and trailer_value(None, 0) == 0
     assert trailer_value("523.25", 0.0) == 523.25 and trailer_value("", 0.0) == 0.0
+
+
+def test_scan_cut_records_each_fragment_scans_noise_and_share(tmp_path, monkeypatch):
+    """[input.scans] scan_cut (PLAN Next steps 24): every fragment spectrum carries its scans'
+    shares of the signal (from the channel's whole ladder: they follow the elution and sum to
+    1; scans without signal left out) and the noise each scan recorded across its window; the
+    parent's MS1 spectrum carries none, nor does a read without the setting; the record goes
+    through a spectra file and is cut down to the bins when picked. mzML files, which record no
+    noise unless converted with -N, are refused; converted with -N they give the same record."""
+    import dataclasses
+
+    from hxex.fragments import fragment_targets
+    from hxex.io import load_spectra, save_spectra
+    from hxex.io.mzml import MzmlConfig, MzmlError
+    from hxex.picking import pick_spectra
+    from test_mzml import _with_rt, fragment_lc_run
+
+    parent = dataclasses.replace(_with_rt(ENTRY, 30.0 / 60), extra={
+        **dict(_with_rt(ENTRY, 30.0 / 60).extra), "rt_start": str(20.0 / 60),
+        "rt_end": str(40.0 / 60)})
+    frags = fragment_targets(parent, "c:2-4:1", activation="ETD", rt_window=(20.0, 40.0))
+    targets = [MzmlTarget(parent, rt_window=(20.0, 40.0))] + frags
+    scans = [{**{k: v for k, v in s.items() if k != "precursors"}, "time": s["time"] / 60,
+              # as a raw file has them (times in minutes, the precursor in the filter)
+              **({"precursor": s["precursors"][0][:3],
+                  "filter": f"FTMS + p ESI d Full ms2 {s['precursors'][0][0]:.4f}@etd20.00"}
+                 if "precursors" in s else {})}
+             for s in fragment_lc_run(frags, other=None)]
+    raw = tmp_path / "run.raw"
+    raw.write_bytes(b"not really a raw file")
+    class Noise500(NoiseReader):
+        noise_level = 500.0
+
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: Noise500(scans))
+    runs = [MzmlRun(path=str(raw), sample="S", time=60.0)]
+    config = MzmlConfig(find_fragment_peak=True, scan_cut=True)
+    read = read_thermo(runs, targets, project="p", config=config, thermo_dir="dlls")
+    is_frag = np.array(["ion_type" in m for m in read.modification])
+    assert is_frag.sum() == 3 and all(r is None for r in read.scans[~is_frag])
+    for i in np.flatnonzero(is_frag):
+        rec = read.scans[i]
+        assert rec.weights.sum() == pytest.approx(1.0) and np.all(rec.weights > 0)
+        assert rec.noise.shape == (len(rec.weights), len(rec.noise_mz)) == (len(rec.weights), 5)
+        np.testing.assert_allclose(rec.noise, 500.0)
+        mz, _ = read.spectrum(i)
+        assert rec.noise_mz[0] <= mz.min() and rec.noise_mz[-1] >= mz.max()
+        # the shares follow the elution: the middle scans hold the most
+        assert np.argmax(rec.weights) in range(len(rec.weights) // 3, 2 * len(rec.weights) // 3 + 1)
+    assert read.source["config"]["scan_cut"] is True
+    # through a spectra file, and down to the bins
+    save_spectra(read, tmp_path / "spectra.parquet")
+    again = load_spectra(tmp_path / "spectra.parquet")
+    for a, b in zip(read.scans, again.scans, strict=True):
+        assert (a is None) == (b is None)
+        if a is not None:
+            np.testing.assert_array_equal(a.noise, b.noise)
+            np.testing.assert_array_equal(a.weights, b.weights)
+    binned = pick_spectra(read)
+    for i in range(len(binned)):
+        cut = binned.scan_cut[i]
+        assert (cut is None) == (not is_frag[i])
+        if cut is not None:
+            assert cut.noise.shape == (len(binned.spectrum(i)[0]), len(cut.weights))
+    # without the setting nothing is recorded
+    plain = read_thermo(runs, targets, project="p", thermo_dir="dlls",
+                        config=MzmlConfig(find_fragment_peak=True))
+    assert all(r is None for r in plain.scans)
+    # an mzML file records no noise, unless converted with -N
+    from test_mzml import _array
+
+    mzml = write_mzml(tmp_path / "run.mzML", fragment_lc_run(frags, other=None))
+    with pytest.raises(MzmlError, match="scan_cut needs the noise"):
+        read_mzml([MzmlRun(path=str(mzml), sample="S", time=60.0)], targets, project="p",
+                  config=config)
+    noise = (_array(np.linspace(100, 2000, 400), "MS:1002743", name="sampled noise m/z array")
+             + _array(np.full(400, 500.0), "MS:1002744", name="sampled noise intensity array"))
+    converted = tmp_path / "converted.mzML"
+    converted.write_text(mzml.read_text().replace("</binaryDataArrayList>",
+                                                  noise + "</binaryDataArrayList>"))
+    from_mzml = read_mzml([MzmlRun(path=str(converted), sample="S", time=60.0)], targets,
+                          project="p", config=config)
+    for a, b in zip(read.scans, from_mzml.scans, strict=True):
+        assert (a is None) == (b is None)
+        if a is not None:
+            np.testing.assert_allclose(b.noise, a.noise)
+            np.testing.assert_allclose(b.weights, a.weights)

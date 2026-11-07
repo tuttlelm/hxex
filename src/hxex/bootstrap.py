@@ -31,9 +31,10 @@ from typing import Any
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from .fit import FitError, FitResult, Measurements, Start, fit_batch, prepare
+from .fit import FitError, FitResult, Measurements, ScanCut, Start, fit_batch, prepare
 from .hooks import CancelHook, ProgressHook, check_cancel, report
 from .model import MixtureBatch, PaddedBatch, convolve, shape_weights
+from .model.mixture import cut_reading
 from .noise import bin_noise
 
 log = logging.getLogger(__name__)
@@ -383,6 +384,10 @@ def bootstrap(
     noise = None  # per-bin noise in the scaled units, with estimate='controls'
     if fit.noise_curve is not None:
         noise = bin_noise(data.observed, data.charges(), fit.noise_curve).scaled(scale)
+    # the per-scan cut in the scaled units (None: no measurement has one)
+    cut = None if data.scan_cut is None or not data.cut.any() else [
+        None if c is None else ScanCut(c.weights, np.asarray(c.noise, float) / scale[i])
+        for i, c in enumerate(data.scan_cut)]
     # a measurement whose own fit failed (non-finite loss, placeholder parameters) is not resampled
     fit_ok = np.array([np.isfinite(fit.fits[int(k)].nll[i]) for i, k in enumerate(fit.selected_K)])
     groups = {
@@ -400,7 +405,9 @@ def bootstrap(
         kf = fit.fits[k]
         bins = [data.bins[i] for i in idx]
         batch = PaddedBatch.from_arrays(
-            bins, [np.zeros(len(b)) for b in bins], data.n_max[idx], backend
+            bins, [np.zeros(len(b)) for b in bins], data.n_max[idx], backend,
+            cut=None if cut is None else [None if cut[i] is None else cut[i].scaled(1.0)
+                                          for i in idx],
         )
         shape_w = shape_weights([data.shapes[i] for i in idx], k, backend)
         model = MixtureBatch(
@@ -433,6 +440,7 @@ def bootstrap(
                 info["bins"], observed, [data.shapes[i] for i in idx], data.n_max[idx],
                 np.ones(len(idx)), [str(kinds[i]) for i in idx], backend, keys=keys[idx],
                 bin_noise=None if noise is None else noise.select(idx),
+                scan_cut=None if cut is None else [cut[i] for i in idx],
             )
             try:
                 model, nll = fit_batch(
@@ -478,7 +486,7 @@ def bootstrap(
     average_se = _nan_stats(average_d, ok, config.ci)[0][:, 0]
 
     curve_lo, curve_hi, offsets, comp_lo, comp_hi, comp_offsets = _curve_band(
-        data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale
+        data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale, cut
     )
     draws = BootstrapDraws(draw_a, draw_n, draw_p, ok) if config.keep_draws else None
     return BootstrapResult(
@@ -492,10 +500,12 @@ def bootstrap(
     )
 
 
-def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale):
+def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale,
+                cut=None):
     """Per-bin percentiles over the resamples (intensity units) of the total curve and of each
     population: ``(lo, hi, offsets, comp_lo, comp_hi, comp_offsets)``; the population arrays hold,
-    for each spectrum, its ``K`` curves one after the other."""
+    for each spectrum, its ``K`` curves one after the other. ``cut`` (per measurement None or a
+    :class:`ScanCut` in the scaled units): the curves are the readings through the cut."""
     sizes = np.array([len(b) for b in data.bins])
     offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64)
     ks = fit.selected_K.astype(np.int64)
@@ -514,7 +524,9 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
             members = idx[rows]
             bins = [ref[k]["bins"][r] for r in rows]
             batch = PaddedBatch.from_arrays(
-                bins, [np.zeros(len(b)) for b in bins], data.n_max[members], backend
+                bins, [np.zeros(len(b)) for b in bins], data.n_max[members], backend,
+                cut=None if cut is None else [None if cut[i] is None else cut[i].scaled(1.0)
+                                              for i in members],
             )
             shape_w = shape_weights([data.shapes[i] for i in members], k, backend)
             curves = np.full((config.n_boot, batch.b.shape[0], len(members)), np.nan)
@@ -529,6 +541,11 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
                     backend.tensor(np.nan_to_num(draw_p[members, it, :k], nan=0.5)), shape_w,
                 ).detach().cpu().numpy()  # (B, M, K)
                 parts = np.nan_to_num(a, nan=0.0)[None] * comp  # (B, M, K)
+                if batch.scan_w is not None:  # each bin scaled by the share read through the cut
+                    total = parts.sum(axis=2)
+                    read = cut_reading(backend.tensor(total), batch.scan_w,
+                                       batch.scan_c).detach().cpu().numpy()
+                    parts = parts * (read / np.maximum(total, 1e-30))[:, :, None]
                 curves[it][:, good] = parts.sum(axis=2)[:, good]
                 parts_all[it][:, good] = parts[:, good]
             enough = ok[members].sum(axis=1) >= 2

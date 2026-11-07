@@ -1479,8 +1479,10 @@ def test_an_empty_scan_time_or_ms_level_names_the_scan(tmp_path):
 
 def test_arrays_not_read_may_have_their_own_length(tmp_path):
     """ThermoRawFileParser's -N writes the sampled noise m/z, intensity and baseline arrays in
-    each spectrum, shorter than its m/z and intensity arrays: they are not read and do not make
-    the spectrum unreadable; an m/z or intensity array of the wrong length still is."""
+    each spectrum, shorter than its m/z and intensity arrays: they do not make the spectrum
+    unreadable, and the noise is read with the scan (for scan_cut; read in m/z windows, the
+    nearest point beyond each end is kept); an m/z or intensity array of the wrong length still
+    is unreadable."""
     scans = time_course(n=2)
     path = write_mzml(tmp_path / "plain.mzML", scans)
     noise = (_array(np.linspace(300, 2000, 7), "MS:1002743", name="sampled noise m/z array")
@@ -1493,6 +1495,11 @@ def test_arrays_not_read_may_have_their_own_length(tmp_path):
     for i in range(2):
         np.testing.assert_array_equal(b.scan(i).mz, a.scan(i).mz)
         np.testing.assert_array_equal(b.scan(i).intensity, a.scan(i).intensity)
+        assert a.scan(i).noise is None
+        np.testing.assert_array_equal(b.scan(i).noise[0], np.linspace(300, 2000, 7))
+        np.testing.assert_array_equal(b.scan(i).noise[1], np.full(7, 1e3))
+    windowed = b.read_scans([0], [(900.0, 1000.0)])[0].noise[0]
+    np.testing.assert_allclose(windowed, np.linspace(300, 2000, 7)[2:4])
     short = tmp_path / "short.mzML"
     first = _array(scans[0]["intensity"][:5], "MS:1000515", name="intensity array")
     text = path.read_text()

@@ -9,7 +9,7 @@ shape, scaled by its amplitude. ``tests/test_report.py`` checks it against the P
 from __future__ import annotations
 
 import numpy as np
-from scipy.special import gammaln, logsumexp
+from scipy.special import expit, gammaln, logsumexp
 
 
 def log_binom(b: np.ndarray, n: float, p: float) -> tuple[np.ndarray, np.ndarray]:
@@ -51,3 +51,19 @@ def component_curves(
             out[k] += w * np.where(valid, np.exp(np.where(valid, log_pmf, 0.0)), 0.0)
         out[k] *= a
     return out
+
+
+def cut_curves(curves: np.ndarray, cut) -> np.ndarray:
+    """``curves`` (``(K, bins)``) as read through the instrument's per-scan cut ``cut`` (a
+    :class:`hxex.spectra.ScanCut`; :func:`hxex.model.mixture.cut_reading`): each bin of every
+    component scaled by the share of the total read there."""
+    from ..model.mixture import CUT_HALF, CUT_STEEPNESS
+
+    total = np.asarray(curves, dtype=float).sum(axis=0)
+    w, c = cut.scaled(1.0)  # (S,), (bins, S): log(w / sigma) in the curves' units
+    with np.errstate(divide="ignore"):
+        log_mu = np.log(np.maximum(total, 1e-300))[:, None] + c
+    kept = expit(CUT_STEEPNESS * (log_mu - np.log(CUT_HALF)))
+    share = (w[None, :] * kept).sum(axis=1)
+    return np.asarray(curves, dtype=float) * share[None, :]
+

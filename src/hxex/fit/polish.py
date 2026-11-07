@@ -23,16 +23,20 @@ from torch.func import jvp
 
 from ..hooks import CancelHook, check_cancel
 from ..model import MixtureBatch, integer_grid, noise_loss, predict_mixture
-from ..model.mixture import predicted_variance
+from ..model.mixture import cut_reading, predicted_variance
 
 
-def _predict(theta, b, shape_w, n_max, k, grid):
+def _predict(theta, b, shape_w, n_max, k, grid, cut=None):
     """Predictions ``(M, B)`` of every measurement from its row of ``theta = [log_A, n_raw,
-    logit_p]`` (``(M, 3K)``); ``b`` is ``(B, M)``."""
+    logit_p]`` (``(M, 3K)``); ``b`` is ``(B, M)``. ``cut``: ``(scan_w, scan_c)`` of the
+    per-scan cut (:func:`hxex.model.mixture.cut_reading`), or None."""
     n = n_max.unsqueeze(1) * torch.sigmoid(theta[:, k : 2 * k])
     logit_p = theta[:, 2 * k :]
     p = torch.sigmoid(logit_p)
-    return predict_mixture(b, theta[:, :k], n, p, shape_w[:, :, 0], grid, logit_p).T
+    pred = predict_mixture(b, theta[:, :k], n, p, shape_w[:, :, 0], grid, logit_p)
+    if cut is not None:
+        pred = cut_reading(pred, *cut)
+    return pred.T
 
 
 def _loss(pred, obs, mask, is_gaussian, weight=None):
@@ -90,12 +94,12 @@ def lm_polish(
     p_dim = theta_all.shape[1]
     eye = torch.eye(p_dim, dtype=theta_all.dtype, device=theta_all.device)
 
-    def make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt):
+    def make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt, cut):
         bt = b.T  # (B, M), as the model holds it
         grid = integer_grid(bt, shape_w.shape[0])
 
         def predict(th):
-            return _predict(th, bt, shape_w, n_max, k, grid)
+            return _predict(th, bt, shape_w, n_max, k, grid, cut)
 
         def pred_and_jac(th):
             # each measurement's prediction depends on its own row only, so one forward-mode
@@ -124,7 +128,8 @@ def lm_polish(
     is_gauss = model.is_gaussian
     wgt = (_Noise(model.base_var.T, model.floor_var.T, model.model_error)
            if model.follows_prediction else model.weight.T)
-    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt)
+    cut = None if model.scan_w is None else (model.scan_w, model.scan_c)
+    pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss, wgt, cut)
     theta = theta_all
     with torch.no_grad():
         loss = loss_of(theta)
@@ -170,8 +175,10 @@ def lm_polish(
                     theta, loss, lam, loss_ref = theta[keep], loss[keep], lam[keep], loss_ref[keep]
                     b, mask, obs_m, wgt = b[keep], mask[keep], obs_m[keep], wgt[keep]
                     shape_w, n_max, is_gauss = shape_w[:, keep], n_max[keep], is_gauss[keep]
+                    if cut is not None:
+                        cut = (cut[0][keep], cut[1][:, keep])
                     pred_and_jac, loss_of = make_fns(b, shape_w, n_max, mask, obs_m, is_gauss,
-                                                     wgt)
+                                                     wgt, cut)
     with torch.no_grad():
         if len(active):
             theta_all[active] = theta

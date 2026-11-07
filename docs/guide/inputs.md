@@ -864,6 +864,43 @@ that name an Orbitrap (or another Fourier-transform) analyser. Other instruments
 too, such as a Q-TOF's empty channels where no ion arrived, but those are not this threshold. An
 mzML file records no noise, so its warning gives no multiple.
 
+#### Fitting fragment ions through the cut
+
+For fragment ions, *hxex* can allow for the lost signal instead of only warning about it. With
+
+```toml
+[input.scans]
+scan_cut = true
+```
+
+*hxex* keeps, for every fragment spectrum, the noise each of its scans recorded and how much of
+the signal each scan holds (from the elution of the fragment's whole ladder, as
+`find_fragment_peak` measures it). The fit then compares the data with what the instrument would
+have kept of the fitted envelope: each predicted peak is split over the scans, every scan loses
+its weak peaks as the instrument does (half of a peak's signal is lost at about twice the noise,
+almost none above 15 times the noise), and the scans are added up again. A dim envelope's
+missing heavy side is then expected, not read as a lower deuteration.
+
+On one targeted Orbitrap dataset, this halved the amount by which a c ion and the matching z
+ion fell short of their parent's deuteration (the closure): a median of 0.31 deuterons short
+became 0.13, and 1.0 to 1.2 short in moderately dim pairs became 0.4. The brightest pairs, which
+the cut hardly touches, moved from 0.14 to 0.07 short.
+
+Things to know:
+
+- Only fragment ions are fitted this way, and only with one population (K = 1): a fit through
+  the cut cannot be compared fairly with a two-population fit that ignores it. Peptides read
+  in MS1 scans are fitted as before.
+- It needs the noise each scan recorded. Thermo raw files have it (`format = "thermo"`). An
+  mzML file has it only when it was converted with ThermoRawFileParser's `-N` option, which
+  writes each scan's noise; without it, `hxex run` stops and says so.
+- The fitted curve drawn over a fragment spectrum is the expected reading, so it follows the
+  data down where weak peaks were lost.
+- The results take more room (the noise of every scan at every peak): on the dataset above,
+  about twice as much.
+- How much of a peak the instrument keeps was measured on one Orbitrap's undeuterated fragment
+  ions. Below about 4 times the noise at the elution's top, no fit recovers the deuteration.
+
 ### What `hxex check` shows for scan formats
 
 One line per run: its sample, replicate, time or role, the number of scans, and how many targets

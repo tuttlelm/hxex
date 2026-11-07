@@ -53,6 +53,7 @@ class Prepared:
     keys: np.ndarray  # stable integer per measurement; seeds its random starting points
     weights: Sequence[np.ndarray] | None = None  # per-bin inverse noise variance (scaled units)
     noise: Any = None  # hxex.noise.BinNoise (scaled units): variances that follow the prediction
+    cut: Sequence | None = None  # per measurement None or (w, log(w / sigma), scaled units)
 
     @property
     def n_measurements(self) -> int:
@@ -65,10 +66,12 @@ class Prepared:
         observed = [self.observed[i] for i in rows]
         weights = None if self.weights is None else [self.weights[i] for i in rows]
         noise = None if self.noise is None else self.noise.select(rows)
+        cut = None if self.cut is None else [self.cut[i] for i in rows]
         return Prepared(
-            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend, weights, noise),
+            PaddedBatch.from_arrays(bins, observed, self.n_max[rows], backend, weights, noise,
+                                    cut),
             bins, observed, [self.shapes[i] for i in rows], self.n_max[rows],
-            tuple(self.noise_kind[i] for i in rows), self.keys[rows], weights, noise,
+            tuple(self.noise_kind[i] for i in rows), self.keys[rows], weights, noise, cut,
         )
 
 
@@ -88,6 +91,7 @@ def prepare(
     keys: Sequence[int] | None = None,
     bin_variance: Sequence[np.ndarray] | None = None,
     bin_noise=None,
+    scan_cut: Sequence | None = None,
 ) -> Prepared:
     """Divide each spectrum by its noise scale and pad the batch.
 
@@ -95,7 +99,9 @@ def prepare(
     own noise variance: the Gaussian loss then weighs each bin by ``scale^2 / variance`` (the
     inverse variance in the scaled units); None keeps one sd, the scale, for every bin.
     ``bin_noise`` (:class:`hxex.noise.BinNoise`, raw units) gives variances that follow the
-    prediction instead (the per-bin noise of the fit; HISTORY 291).
+    prediction instead (the per-bin noise of the fit; HISTORY 291). ``scan_cut`` (per
+    measurement None or a :class:`hxex.fit.measurements.ScanCut`, raw units): the prediction is
+    passed through the instrument's per-scan cut (:func:`hxex.model.mixture.cut_reading`).
 
     ``keys`` (one integer per measurement, default its position) seed the random starting points
     of that measurement, so its fit does not depend on the other measurements in the batch when
@@ -112,12 +118,15 @@ def prepare(
         weights = [scale[m] ** 2 / np.asarray(v, dtype=np.float64)
                    for m, v in enumerate(bin_variance)]
     noise = None if bin_noise is None else bin_noise.scaled(scale)
+    cut = None
+    if scan_cut is not None and any(c is not None for c in scan_cut):
+        cut = [None if c is None else c.scaled(scale[m]) for m, c in enumerate(scan_cut)]
     return Prepared(
-        PaddedBatch.from_arrays(bins, scaled, n_max, backend, weights, noise), bins, scaled,
+        PaddedBatch.from_arrays(bins, scaled, n_max, backend, weights, noise, cut), bins, scaled,
         shapes, np.asarray(n_max, dtype=np.float64),
         (noise_kind,) * len(bins) if isinstance(noise_kind, str) else tuple(noise_kind),
         np.arange(len(bins)) if keys is None else np.asarray(keys, dtype=np.int64),
-        weights, noise,
+        weights, noise, cut,
     )
 
 

@@ -56,6 +56,8 @@ from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
 from ._arrow import (
     ROLE,
     _col,
+    _cut_columns,
+    _cuts,
     _flat_ragged,
     _index_arrays,
     _index_table,
@@ -176,6 +178,7 @@ def _measurements_table(m: Measurements) -> pa.Table:
         "observed": _ragged(list(m.observed), pa.float64()),
         "shape": _ragged(list(m.shapes), pa.float64()),
         "references": _ragged(refs, pa.int64()),
+        **({} if m.scan_cut is None else _cut_columns(m.scan_cut)),
     })
 
 
@@ -1301,7 +1304,7 @@ class Bundle:
                 data_id=np.asarray(_col(t, "data_id"), dtype=np.int64),
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
                 role=self._roles(t), random_id=self._random_id(spectrum_id),
-                charge=self._charges(spectrum_id),
+                charge=self._charges(spectrum_id), scan_cut=_cuts(t, bins),
             )
         return self._cache["measurements"]
 

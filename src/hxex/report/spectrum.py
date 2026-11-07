@@ -22,7 +22,7 @@ from ..controls import correct_means
 from ..picking import BinnedSet
 from ..quality import FLAG_NAMES
 from ..spectra import SpectrumSet
-from .curves import component_curves
+from .curves import component_curves, cut_curves
 from .results import Results
 
 LAYERS = ("raw", "picked", "fit")
@@ -387,6 +387,10 @@ def _fit_data(results: Results, spectrum_id: str, k: int | None, shown) -> dict:
     curves = component_curves(
         bins, kf.A[i][order], kf.n[i][order], kf.p[i][order], results.measurements.shapes[i]
     )
+    cut = (None if results.measurements.scan_cut is None
+           else results.measurements.scan_cut[i])
+    if cut is not None:  # fitted through the per-scan cut: the curve as the scans read it
+        curves = cut_curves(curves, cut)
     mean, frac = kf.means[i][order], kf.populations[i][order]
     nan = np.full(k, np.nan)
     mean_se, population_se, band, component_band = nan, nan, None, None

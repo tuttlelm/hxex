@@ -7741,3 +7741,34 @@ CSVs or mzML if wanted.
     (MS1) apart from the fragment ions' (MS2/MS3), the latter only for results with fragment
     series (`analysis_sections`, `FigureKind.fragments`).
 
+
+308. **Fragments fitted through the instrument's per-scan cut (2026-11-06; PLAN Next steps
+    24, first scope).** Reduced profile Orbitrap scans delete, scan by scan, the peaks below
+    about twice the recorded noise, so a dim fragment envelope summed over its scans reads low
+    on its weak side and its K = 1 mean is biased (PLAN 24; HISTORY 299-302). BUILT, opt-in:
+    `[input.scans] scan_cut` records for every fragment spectrum each scan's share of the signal
+    (the channel's whole-ladder trace, as `find_fragment_peak`; scans without signal left out)
+    and the noise each scan recorded at five m/z across its window (`ScanRecord`, spectra file
+    columns `scan_weights`, `scan_noise_mz`, `scan_noise`); picking takes the noise to each bin
+    (`ScanCut`, measurements columns `cut_weights`, `cut_noise`). The fit passes its prediction
+    through the cut, `E = sum_s F w_s m(F w_s / sigma_s)` with `m(mu) = 1 / (1 + (1.88 /
+    mu)^2.14)` (the response measured on the dataset's undeuterated fragments, plateau
+    normalised; `hxex.model.mixture.cut_reading`), in the Adam/L-BFGS fit, the polish, the
+    bootstrap (resamples around the cut reading, band through the cut) and the drawn curves
+    (`report.curves.cut_curves`). Such spectra are fitted at K = 1 only. The noise comes from
+    Thermo raw files or from mzML files converted with ThermoRawFileParser `-N` (its sampled
+    noise arrays, MS:1002743-1002744, now read with each scan: `Scan.noise`, kept in the m/z
+    windows read plus the nearest point beyond each end); a file without it stops the read,
+    naming `-N`. The variance model is
+    unchanged (the per-bin noise at the cut reading). Check (private targeted dataset, two
+    undeuterated controls, four times and the fully deuterated control, K = 1,
+    find_fragment_peak on; 726 closure points against the MS1 parents, same spectra): median
+    miss -0.305 -> -0.129 D; by the dimmer fragment's brightness (quintiles) +0.73 -> +0.27,
+    -1.20 -> -0.45, -0.97 -> -0.36, -0.30 -> -0.12, -0.14 -> -0.07 D; MS2 -0.30 -> -0.14, MS3
+    -0.33 -> -0.12. Read 45 -> 50 s, bundle 28 -> 50 MB (the noise at every bin and scan).
+    Synthetic (8 sites, 60 scans, measured response): today's fit -0.25 / -0.16 / -0.05 D at
+    p 0.1 and 4 / 8 / 32 x the noise, the cut-aware fit within 0.04 D. Not yet: the ion-type
+    mixture weights of `[run.envelope] mode = "mixed"` are still fitted to the undeuterated
+    references without the cut (PLAN 24: they drift to the heavier type in dim series); the
+    remaining -0.36 to -0.45 D in the middle fifths may be that; MS1 peptides; K >= 2 and the
+    population test's null.

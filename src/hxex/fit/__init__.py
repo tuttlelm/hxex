@@ -6,6 +6,7 @@ Batched across measurements; nested K start; Adam with a cosine schedule, then L
 :class:`FitResult`.
 """
 
+from ..spectra import ScanCut
 from .config import CRITERIA, FitConfig
 from .init import Start, kmeans_start, kmeans_starts, split_start
 from .measurements import Measurements
@@ -20,6 +21,7 @@ __all__ = [
     "FitResult",
     "KFit",
     "Measurements",
+    "ScanCut",
     "Prepared",
     "Start",
     "cosine_lr",

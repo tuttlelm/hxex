@@ -1108,6 +1108,9 @@ Planned, not built:
    near the noise in every scan. Next: item 24.
 24. **Fitting through the instrument's per-scan cut: fragments at K = 1 first** (owner,
    2026-11-05: needed to fit weak cut data reliably; design to be evaluated before building).
+   FIRST SCOPE BUILT 2026-11-06 (HISTORY 308: `[input.scans] scan_cut`, fragments at K = 1,
+   Thermo raw files and mzML converted with `-N`; the response curve measured, not the Gaussian
+   hard cut below; variance unchanged). Next: the mixture weights below, then MS1 peptides.
    - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
      below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
      scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high
@@ -1223,6 +1226,19 @@ Planned, not built:
    - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
      gives a new id and its review entries would go stale; they should follow the spectrum by
      file and peptide ion.
+27. **Review decisions carried over when a rerun changes the spectrum ids** (owner, 2026-11-06:
+   to consider for users). A spectrum id names the scans summed (`.../scans1322-1623`), so a
+   rerun that sums other scans (`find_fragment_peak`, `find_peak`, a moved `rt_start`, item 26)
+   gives new ids, and the review table's entries no longer match (HISTORY 96 keeps them as stale;
+   `hxex run` warns that it skips them). On the private targeted dataset's rerun with
+   `find_fragment_peak`, 15 of 18 entries lost their spectrum; matched by hand on the id without
+   its scan range (file, sample, peptide or fragment ion, charge, condition), 16 of 18 went to
+   one spectrum, one to two, and one to none (that channel had no peak in that run). Proposed:
+   an entry that matches no id is matched on that stem; exactly one spectrum takes the decision
+   (logged), several take it and are listed to be checked, none leaves it stale and named;
+   `hxex check` says which entries would move. A chosen K moved this way needs its bootstrap
+   (`hxex resume`, as today). To decide: whether moving is automatic or a `hxex` command that
+   rewrites the review table (keeping a copy), and the same for the GUI's review.
 
 ## Risks and open decisions
 

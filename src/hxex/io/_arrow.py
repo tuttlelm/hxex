@@ -13,7 +13,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from ..spectra import SpectrumSet
+from ..spectra import ScanCut, ScanRecord, SpectrumSet, _objects
 
 
 def _str(values) -> pa.Array:
@@ -136,7 +136,57 @@ def _spectra_table(s: SpectrumSet) -> pa.Table:
     cols = _index_table(s)
     cols["mz"] = _flat_ragged(s.mz, s.offsets, pa.float64())
     cols["intensity"] = _flat_ragged(s.intensity, s.offsets, pa.float64())
+    if any(r is not None for r in s.scans):  # the scans' record (scan_cut): absent otherwise
+        cols.update(_record_columns(s.scans))
     return pa.table(cols)
+
+
+# the scans' record of each spectrum (hxex.spectra.ScanRecord; [input.scans] scan_cut)
+SCAN_RECORD = ("scan_weights", "scan_noise_mz", "scan_noise")
+# the same at the picked bins (hxex.spectra.ScanCut), in the measurements table
+SCAN_CUT = ("cut_weights", "cut_noise")
+
+
+def _record_columns(records) -> dict[str, pa.Array]:
+    """The list columns of :data:`SCAN_RECORD` (null rows where nothing was recorded)."""
+    def each(get):
+        return [None if r is None else np.asarray(get(r), dtype=np.float64).reshape(-1)
+                for r in records]
+    return {"scan_weights": _ragged(each(lambda r: r.weights), pa.float64()),
+            "scan_noise_mz": _ragged(each(lambda r: r.noise_mz), pa.float64()),
+            "scan_noise": _ragged(each(lambda r: r.noise), pa.float64())}
+
+
+def _records(t: pa.Table) -> np.ndarray | None:
+    """The scans' record of every row of ``t`` (:data:`SCAN_RECORD`), None when not stored."""
+    if "scan_weights" not in t.column_names:
+        return None
+    nulls = np.asarray(t.column("scan_weights").is_null().to_numpy(zero_copy_only=False))
+    w, mz, noise = (_split(*_ragged_read(t, name)) for name in SCAN_RECORD)
+    return _objects([None if nulls[i] else ScanRecord(
+        np.asarray(w[i], float), np.asarray(mz[i], float),
+        np.asarray(noise[i], float).reshape(len(w[i]), len(mz[i])))
+        for i in range(t.num_rows)])
+
+
+def _cut_columns(cuts) -> dict[str, pa.Array]:
+    """The list columns of :data:`SCAN_CUT` (null rows where there is no cut)."""
+    return {"cut_weights": _ragged([None if c is None else np.asarray(c.weights, float)
+                                    for c in cuts], pa.float64()),
+            "cut_noise": _ragged([None if c is None else np.asarray(c.noise, float).reshape(-1)
+                                  for c in cuts], pa.float64())}
+
+
+def _cuts(t: pa.Table, bins: Sequence[np.ndarray]) -> tuple | None:
+    """The cut of every row of ``t`` (:data:`SCAN_CUT`; the noise one row per bin of
+    ``bins``), None when the table has none."""
+    if "cut_weights" not in t.column_names:
+        return None
+    nulls = np.asarray(t.column("cut_weights").is_null().to_numpy(zero_copy_only=False))
+    w, noise = (_split(*_ragged_read(t, name)) for name in SCAN_CUT)
+    return tuple(None if nulls[i] else ScanCut(
+        np.asarray(w[i], float), np.asarray(noise[i], float).reshape(len(bins[i]), len(w[i])))
+        for i in range(t.num_rows))
 
 
 def _spectra_from_table(t: pa.Table) -> SpectrumSet:
@@ -145,5 +195,5 @@ def _spectra_from_table(t: pa.Table) -> SpectrumSet:
     intensity, _ = _ragged_read(t, "intensity")
     return SpectrumSet(
         mz=np.asarray(mz, dtype=np.float64), intensity=np.asarray(intensity, dtype=np.float64),
-        offsets=offsets, **_index_arrays(t),
+        offsets=offsets, **_index_arrays(t), scans=_records(t),
     )

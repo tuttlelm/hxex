@@ -151,6 +151,11 @@ def fit_models(
                          k, int(more.sum()))
                 passed = passed | more
             rows = np.flatnonzero(passed)
+        if k > 1 and data.cut[rows].any():  # fitted through the per-scan cut: K = 1 only
+            cut = data.cut[rows]
+            log.info("K=%d not fitted for %d measurement(s) fitted through the instrument's "
+                     "per-scan cut (K = 1 only)", k, int(cut.sum()))
+            rows = rows[~cut]
         if k > 1:  # at most one deuteron: a mixture of such is one population (Low 57)
             single = np.asarray(data.n_max, dtype=np.float64)[rows] < 2.0
             if single.any():
@@ -279,6 +284,7 @@ def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise 
     prep = prepare(
         data.bins, data.observed, data.shapes, data.n_max, scale, kinds, backend,
         keys=data.random_keys(), bin_variance=bin_var, bin_noise=noise,
+        scan_cut=data.scan_cut,
     )
     return prep, scale, estimate, curve
 

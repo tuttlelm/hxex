@@ -267,6 +267,28 @@ def predict_mixture(
     return _shift_sum(mix, shape, grid, b.shape[0])
 
 
+# The instrument's per-scan cut (reduced profile; PLAN Next steps 24): the mean reading of a peak
+# whose expected height in one scan is mu times the noise the scan records is mu m(mu), with
+# m(mu) = 1 / (1 + (CUT_HALF / mu)^CUT_STEEPNESS): half the signal lost at 1.88 x the noise,
+# 97 % kept above ~15 x (measured on one Orbitrap's undeuterated fragments, 2026-11-06; its
+# plateau, 0.974, is a scale the amplitude takes up).
+CUT_HALF = 1.88
+CUT_STEEPNESS = 2.14
+_NO_CUT = 60.0  # log(mu) of a scan without a cut: m(mu) = 1
+
+
+def cut_reading(pred: torch.Tensor, scan_w: torch.Tensor, scan_c: torch.Tensor,
+                half: float = CUT_HALF, steepness: float = CUT_STEEPNESS) -> torch.Tensor:
+    """The expected summed reading of predicted intensities ``pred`` (``(B, M)``) whose scans
+    each cut the peaks below the noise: ``sum_s pred w_s m(pred w_s / sigma_s)``, with ``scan_w``
+    (``(M, S)``) the scans' shares of the signal (summing to 1; padded scans 0) and ``scan_c``
+    (``(B, M, S)``) ``log(w_s / sigma_s)`` at each bin, in the units of ``pred``, so that
+    ``log mu = log pred + scan_c``. ``m(mu) = sigmoid(steepness (log mu - log half))``."""
+    log_pred = torch.log(pred.clamp(min=1e-30)).unsqueeze(2)
+    kept = torch.sigmoid(steepness * (log_pred + scan_c - float(np.log(half))))
+    return pred * (scan_w.unsqueeze(0) * kept).sum(dim=2)
+
+
 def normalise_shape(shape: np.ndarray | None) -> np.ndarray:
     """A shape scaled to sum to 1 (``None`` is the identity ``[1.0]``)."""
     if shape is None:
@@ -305,6 +327,11 @@ class PaddedBatch:
     base_var: torch.Tensor | None = None
     floor_var: torch.Tensor | None = None
     model_error: float | None = None
+    # the per-scan cut (:func:`cut_reading`): ``scan_w`` ``(M, S)``, ``scan_c`` ``(B_max, M, S)``
+    # in the batch's units; None: no cut (measurements without one get w = (1, 0, ...) and a
+    # log ratio so large that nothing is cut)
+    scan_w: torch.Tensor | None = None
+    scan_c: torch.Tensor | None = None
 
     @classmethod
     def from_arrays(
@@ -315,10 +342,13 @@ class PaddedBatch:
         backend: Backend,
         weights: Sequence[np.ndarray] | None = None,
         noise=None,
+        cut: Sequence | None = None,
     ) -> PaddedBatch:
         """``weights``: each bin's inverse noise variance (fixed); ``noise``
         (:class:`hxex.noise.BinNoise`, in the units of ``observed``): variances that follow the
-        prediction instead (``weights`` is then not given)."""
+        prediction instead (``weights`` is then not given). ``cut``: per measurement None or
+        ``(w, c)``, the scans' shares of its signal ``(S,)`` and ``log(w_s / sigma_s)`` at each
+        bin ``(bins, S)`` in the units of ``observed`` (:func:`cut_reading`)."""
         m = len(bins)
         if not (len(observed) == len(n_max) == m):
             raise ValueError("bins, observed and n_max must have one entry per measurement")
@@ -347,6 +377,23 @@ class PaddedBatch:
                 bv[: len(bb), i] = bb
                 fv[: len(ff), i] = ff
             base, floor = backend.tensor(bv), backend.tensor(fv)
+        scan_w = scan_c = None
+        if cut is not None and any(c is not None for c in cut):
+            if len(cut) != m:
+                raise ValueError("cut must have one entry per measurement")
+            s_max = max(len(c[0]) for c in cut if c is not None)
+            sw = np.zeros((m, s_max))
+            sc = np.full((b_max, m, s_max), _NO_CUT)
+            for i, c in enumerate(cut):
+                if c is None:
+                    sw[i, 0] = 1.0
+                    continue
+                w, lc = np.asarray(c[0], dtype=np.float64), np.asarray(c[1], dtype=np.float64)
+                if lc.shape != (len(bins[i]), len(w)):
+                    raise ValueError(f"measurement {i}: the cut needs one value per bin and scan")
+                sw[i, : len(w)] = w
+                sc[: len(bins[i]), i, : len(w)] = lc
+            scan_w, scan_c = backend.tensor(sw), backend.tensor(sc)
         return cls(
             b=backend.tensor(b),
             obs=backend.tensor(obs),
@@ -354,6 +401,7 @@ class PaddedBatch:
             n_max=backend.tensor(np.asarray(n_max, dtype=np.float64)),
             weight=weight, base_var=base, floor_var=floor,
             model_error=None if noise is None else float(noise.model_error),
+            scan_w=scan_w, scan_c=scan_c,
         )
 
     @property
@@ -423,6 +471,8 @@ class MixtureBatch(nn.Module):
         self.register_buffer("floor_var", batch.floor_var)
         self.frozen_var: torch.Tensor | None = None  # held fixed (L-BFGS: one objective)
         self.register_buffer("shape_w", shape_w)
+        self.register_buffer("scan_w", batch.scan_w)
+        self.register_buffer("scan_c", batch.scan_c)
         self.log_A = nn.Parameter(log_A.clone())
         self.n_raw = nn.Parameter(n_raw.clone())
         self.logit_p = nn.Parameter(logit_p.clone())
@@ -459,14 +509,24 @@ class MixtureBatch(nn.Module):
         return torch.sigmoid(self.logit_p)
 
     def predict(self) -> torch.Tensor:
-        """Predicted intensity at every (padded) bin, ``(B_max, M)``."""
-        return predict_mixture(self.b, self.log_A, self.ns, self.ps, self.shape_w[:, :, 0],
+        """Predicted intensity at every (padded) bin, ``(B_max, M)``: with a per-scan cut, the
+        expected reading (:func:`cut_reading`)."""
+        pred = predict_mixture(self.b, self.log_A, self.ns, self.ps, self.shape_w[:, :, 0],
                                self.grid, self.logit_p)
+        if self.scan_w is None:
+            return pred
+        return cut_reading(pred, self.scan_w, self.scan_c)
 
     def components(self) -> torch.Tensor:
-        """Predicted intensity of every component, ``(B_max, M, K)``."""
-        return self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
+        """Predicted intensity of every component, ``(B_max, M, K)`` (with a per-scan cut, each
+        scaled by its bin's share read, :meth:`predict` over the uncut prediction)."""
+        comp = self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
                                                        self.grid, self.logit_p)
+        if self.scan_w is None:
+            return comp
+        total = comp.sum(dim=2)
+        read = cut_reading(total, self.scan_w, self.scan_c)
+        return comp * (read / total.clamp(min=1e-30)).unsqueeze(2)
 
     @property
     def follows_prediction(self) -> bool:

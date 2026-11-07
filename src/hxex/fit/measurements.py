@@ -11,6 +11,7 @@ import numpy as np
 from .. import chem
 from ..noise import Reference, control_references, kinetics_references
 from ..picking import BinnedSet
+from ..spectra import ScanCut
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,8 @@ class Measurements:
     not depend on the project's name, the file layout or the other spectra. ``charge`` is each
     measurement's charge (the per-bin noise grows with it, :func:`hxex.noise.bin_variances`);
     None when not known (from plain arrays: then every measurement counts as charge 1).
+    ``scan_cut`` (per measurement a :class:`ScanCut` or None; None for all: no cut) fits those
+    measurements through the instrument's per-scan cut, at K = 1 only.
     """
 
     bins: tuple[np.ndarray, ...]
@@ -42,6 +45,7 @@ class Measurements:
     role: np.ndarray | None = None
     random_id: np.ndarray | None = None
     charge: np.ndarray | None = None
+    scan_cut: tuple[ScanCut | None, ...] | None = None
 
     def __post_init__(self):
         m = len(self.bins)
@@ -56,6 +60,9 @@ class Measurements:
         sizes = (len(self.observed), len(self.shapes), len(self.n_max), len(self.references),
                  len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role),
                  len(self.random_id), m if self.charge is None else len(self.charge))
+        if self.scan_cut is not None:
+            object.__setattr__(self, "scan_cut", tuple(self.scan_cut))
+            sizes = (*sizes, len(self.scan_cut))
         if any(s != m for s in sizes):
             raise ValueError("every field needs one entry per measurement")
         for i, (b, o) in enumerate(zip(self.bins, self.observed, strict=True)):
@@ -109,7 +116,15 @@ class Measurements:
             data_id=self.data_id[index], time=self.time[index], role=self.role[index],
             random_id=self.random_id[index],
             charge=None if self.charge is None else self.charge[index],
+            scan_cut=None if self.scan_cut is None else tuple(self.scan_cut[i] for i in index),
         )
+
+    @property
+    def cut(self) -> np.ndarray:
+        """Whether each measurement is fitted through the per-scan cut."""
+        if self.scan_cut is None:
+            return np.zeros(len(self), dtype=bool)
+        return np.array([c is not None for c in self.scan_cut], dtype=bool)
 
     @classmethod
     def from_arrays(
@@ -170,7 +185,8 @@ class Measurements:
         the natural-abundance envelope of the peptide and ion type (``chem.natural_abundance``);
         the references are the undeuterated controls of the same series (``data_id``, role
         ``'undeut'``; :func:`hxex.noise.control_references`).
-        ``nterm_subtract`` and ``amide_rules`` should be those used for picking.
+        ``nterm_subtract`` and ``amide_rules`` should be those used for picking. Spectra picked
+        with their scans' record (``BinnedSet.scan_cut``) are fitted through the per-scan cut.
         """
         if not n_max_factor > 0:
             raise ValueError("n_max_factor must be positive")
@@ -214,6 +230,8 @@ class Measurements:
             spectrum_id=binned.spectrum_id, data_id=binned.data_id, time=binned.time,
             role=binned.role, random_id=measurement_identity(binned),
             charge=np.asarray(binned.charge, dtype=np.float64),
+            scan_cut=(tuple(binned.scan_cut) if any(c is not None for c in binned.scan_cut)
+                      else None),
         )
 
 

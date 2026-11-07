@@ -53,6 +53,7 @@ from ..picking import DEFAULT_PICKER_CONFIG, PickerConfig, pick_spectrum, plan_b
 from ..spectra import (
     UNDEUT,
     PeptideEntry,
+    ScanRecord,
     Spectrum,
     SpectrumSet,
     check_role,
@@ -94,6 +95,9 @@ _MZ_ARRAY = "MS:1000514"
 _INT_ARRAY = "MS:1000515"
 _FLOAT32 = "MS:1000521"
 _FLOAT64 = "MS:1000523"
+# the sampled noise ThermoRawFileParser writes with -N (m/z and intensity; HISTORY 302)
+_NOISE_MZ_ARRAY = "MS:1002743"
+_NOISE_ARRAY = "MS:1002744"
 _ZLIB = "MS:1000574"
 _NO_COMPRESSION = "MS:1000576"
 _NUMPRESS = {"MS:1002312", "MS:1002313", "MS:1002314", "MS:1002746", "MS:1002747", "MS:1002748"}
@@ -160,7 +164,9 @@ class Scan:
 
     A scan written with its ion mobility bins together has its arrays summed over drift time;
     read with ``drift=True`` it also keeps ``binned``, its points before that sum: m/z,
-    intensity and drift time (ms), in the file's order (None otherwise)."""
+    intensity and drift time (ms), in the file's order (None otherwise). ``noise``: the noise
+    the scan recorded, m/z and value (an mzML file converted with ThermoRawFileParser ``-N``; in
+    the windows read, with a margin), None when the file has none."""
 
     index: int
     id: str
@@ -177,6 +183,7 @@ class Scan:
     stages: tuple[Stage, ...] = ()
     resolution: float = np.nan  # the instrument's resolving power for the scan, if recorded
     binned: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    noise: tuple[np.ndarray, np.ndarray] | None = None
 
 
 # Thermo filter-string activation codes, as mzML activation names
@@ -380,9 +387,13 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None, drift: bool = False)
     arrays = {}
     mobility, drift_times = False, np.empty(0)
     for bda in elem.findall(f"{_NS}binaryDataArrayList/{_NS}binaryDataArray"):
-        if not set(_cv(bda, groups)) & {_MZ_ARRAY, _INT_ARRAY} and not _is_mobility(bda):
-            continue  # an array not read, with a length of its own (ThermoRawFileParser -N:
-            # the sampled noise m/z, intensity and baseline arrays)
+        cv = set(_cv(bda, groups))
+        if cv & {_NOISE_MZ_ARRAY, _NOISE_ARRAY}:  # the sampled noise (-N), its own length
+            arrays[_NOISE_MZ_ARRAY if _NOISE_MZ_ARRAY in cv else _NOISE_ARRAY] = _decode(
+                bda, int(bda.get("arrayLength") or 0), where, groups)[1]
+            continue
+        if not cv & {_MZ_ARRAY, _INT_ARRAY} and not _is_mobility(bda):
+            continue  # an array not read, with a length of its own (-N's baseline array)
         kind, values = _decode(bda, int(bda.get("arrayLength") or n), where, groups)
         if kind:
             arrays[kind] = values
@@ -392,6 +403,15 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None, drift: bool = False)
     if _MZ_ARRAY not in arrays or _INT_ARRAY not in arrays:
         raise MzmlError(f"{where}: the m/z or the intensity array is missing")
     mz, intensity = arrays[_MZ_ARRAY], arrays[_INT_ARRAY]
+    noise = None
+    if _NOISE_MZ_ARRAY in arrays and _NOISE_ARRAY in arrays:
+        nm, nv = arrays[_NOISE_MZ_ARRAY], arrays[_NOISE_ARRAY]
+        if len(nm) != len(nv):
+            raise MzmlError(f"{where}: its noise arrays have {len(nm)} m/z and {len(nv)} values")
+        if mz_windows is not None:
+            keep = _around(nm, mz_windows)
+            nm, nv = nm[keep], nv[keep]
+        noise = (nm, nv)
     if mobility and len(drift_times) != len(mz):
         raise MzmlError(f"{where}: its ion mobility array has {len(drift_times)} values for "
                         f"{len(mz)} m/z values")
@@ -408,7 +428,21 @@ def _with_arrays(meta: Scan, elem, mz_windows, groups=None, drift: bool = False)
     elif len(mz) > 1 and bool((np.diff(mz) < 0).any()):
         raise MzmlError(f"{where}: its m/z values are not in increasing order (the file is "
                         "damaged or unusual: convert it again)")
-    return replace(meta, mz=mz, intensity=intensity, binned=binned)
+    return replace(meta, mz=mz, intensity=intensity, binned=binned, noise=noise)
+
+
+def _around(mz: np.ndarray, merged: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    """Which of the sorted ``mz`` lie inside the ranges ``merged`` or are the nearest outside
+    either end of one (so that values there can be interpolated)."""
+    lows, highs = merged
+    out = np.zeros(len(mz) + 1, dtype=np.int64)
+    if not len(lows) or not len(mz):
+        return out[:-1].astype(bool)
+    a = np.maximum(np.searchsorted(mz, lows) - 1, 0)
+    b = np.minimum(np.searchsorted(mz, highs, side="right") + 1, len(mz))
+    np.add.at(out, a, 1)
+    np.add.at(out, b, -1)
+    return np.cumsum(out)[:-1] > 0
 
 
 def _is_mobility(bda) -> bool:
@@ -1078,6 +1112,12 @@ class MzmlConfig:
       (1.0): in reduced profile data the scans beside the peak add no noise, and on a targeted
       dataset half widths (0.5) kept a median 77 % of a fragment's signal, whole ones 97 %, with
       the uptake rising more cleanly (PLAN Next steps 25).
+    - ``scan_cut``: record, for every fragment spectrum, the noise each of its scans recorded
+      and each scan's share of the signal (from its channel's whole ladder, as
+      ``find_fragment_peak``), so that the fit passes its prediction through the instrument's
+      per-scan cut (reduced profile scans: the weak peaks of each scan deleted; PLAN Next steps
+      24). Such spectra are fitted at K = 1 only. Needs the noise the scans recorded: Thermo raw
+      files, or mzML files converted from them with ThermoRawFileParser's ``-N``.
     - ``peak_search`` (s): how far either side of ``rt`` the peak is looked for.
     - ``peak_smoothing`` (s): the chromatogram's running mean; None: half the run's typical peak
       width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
@@ -1118,6 +1158,7 @@ class MzmlConfig:
     find_peak: bool = False
     find_fragment_peak: bool = False
     fragment_peak_width: float = 1.0
+    scan_cut: bool = False
     peak_search: float = 30.0
     peak_smoothing: float | None = None
     peak_width: float = 0.5
@@ -1921,6 +1962,9 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     if scanned is None:
         return float("nan")
     table, find, plans, by_index, width = scanned
+    traces = (_scan_records(f, table, targets, plans, by_index, windows, picker, registry)
+              if config.scan_cut else {})
+    noise_cache: dict[int, tuple] = {}
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     no_spectrum_type: set[Path] = set()  # files warned about scans without a spectrum type
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
@@ -2006,6 +2050,8 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 rt_end=float(scan_times.max()) if run.fixed else np.nan,
                 drift_start=gate[0] if gated else np.nan,
                 drift_end=gate[1] if gated else np.nan,
+                scans=(_scan_record(f, table, order, g, traces[t_i], windows[t_i], noise_cache,
+                                    by_index) if t_i in traces else None),
             ))
     return width
 
@@ -2381,6 +2427,112 @@ def _ladder_trace(scans, pred: np.ndarray, half: np.ndarray) -> np.ndarray:
     return out
 
 
+def _channels(targets, plans, which) -> list[list[int]]:
+    """The positions of the ``which`` targets (with a plan) grouped by channel
+    (:func:`_channel`) and planned scans."""
+    channels: dict[tuple, list] = {}
+    for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
+        if which[t_i] and plan is not None:
+            key = (_channel(target), np.asarray(plan[0]).tobytes())
+            channels.setdefault(key, []).append(t_i)
+    return list(channels.values())
+
+
+def _channel_traces(table: ScanTable, targets, plans, channels, by_index, picker: PickerConfig,
+                    registry, r_mz: float):
+    """``(members, order, trace)`` of every channel (target positions sharing one channel and
+    planned scans, :func:`_channels`): the sum of every member's predicted bins, scan by scan
+    over the planned scans ``order`` (:func:`_ladder_trace`)."""
+    out = []
+    for members in channels:
+        order = plans[members[0]][0]
+        scans = [by_index[int(table.index[k])] for k in order]
+        recorded = np.array([s.resolution for s in scans], dtype=float)
+        recorded = recorded[np.isfinite(recorded)]
+        preds, halves = [], []
+        for t_i in members:
+            e = targets[t_i].entry
+            pred = np.asarray(plan_bins(e.peptide, e.charge, modification=e.modification,
+                                        config=picker, registry=registry).pred_mz, dtype=float)
+            preds.append(pred)
+            halves.append(np.broadcast_to(np.asarray(picker.half_width(
+                pred, e.charge, resolving_power=float(np.median(recorded)) if len(recorded)
+                else None, resolving_power_mz=r_mz), dtype=float), pred.shape))
+        out.append((members, order, _ladder_trace(scans, np.concatenate(preds),
+                                                  np.concatenate(halves))))
+    return out
+
+
+def _scan_records(f, table: ScanTable, targets, plans, by_index, windows, picker: PickerConfig,
+                  registry) -> dict[int, np.ndarray]:
+    """For ``scan_cut``: the trace of every fragment target's channel over its planned scans
+    (target position -> trace, aligned with the plan's scan order), and checks that the file
+    records the scans' noise."""
+    which = [("fragment" in dict(t.entry.extra) and t.ms_level >= 2) for t in targets]
+    if not any(w and p is not None for w, p in zip(which, plans, strict=True)):
+        return {}
+    r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    traces = {}
+    for members, _order, trace in _channel_traces(table, targets, plans,
+                                                  _channels(targets, plans, which), by_index,
+                                                  picker, registry, r_mz):
+        for t_i in members:
+            traces[t_i] = trace
+    return traces
+
+
+_NOISE_POINTS = 5  # m/z points across a spectrum's window where each scan's noise is kept
+
+
+_NO_NOISE = ("scan_cut needs the noise each scan recorded: Thermo raw files (format = "
+             "\"thermo\"), or mzML files converted from them with ThermoRawFileParser's -N "
+             "(its sampled noise arrays)")
+
+
+def _scan_noise(f, scan: Scan, index: int) -> tuple[np.ndarray, np.ndarray] | None:
+    """The noise a scan recorded (m/z, value): from its own arrays (mzML ``-N``) or the raw
+    file; None when there is none."""
+    if scan.noise is not None:
+        return scan.noise
+    get = getattr(f, "scan_noise", None)
+    return None if get is None else get(index)
+
+
+def _scan_record(f, table: ScanTable, order, g, trace, window, noise_cache,
+                 by_index) -> ScanRecord:
+    """The scans' record of one spectrum (the scans ``order[g]``): each scan's share of the
+    channel's trace (equal shares when the trace is empty there; scans without signal left
+    out) and the noise each recorded at :data:`_NOISE_POINTS` m/z across ``window``."""
+    w = np.asarray(trace, dtype=float)[g]
+    keep = np.ones(len(g), dtype=bool) if not (w > 0).any() else w > 0
+    w = np.where(keep, w, 0.0)[keep]
+    w = w / w.sum() if w.sum() > 0 else np.full(len(w), 1.0 / max(len(w), 1))
+    grid = np.linspace(window[0], window[1], _NOISE_POINTS)
+    noise = np.full((len(w), len(grid)), np.nan)
+    for j, i in enumerate(np.asarray(g)[keep]):
+        index = int(table.index[order[i]])
+        if index not in noise_cache:
+            got = _scan_noise(f, by_index[index], index)
+            if got is None:
+                raise MzmlError(f"{Path(f.path).name}: scan {index} records no noise; "
+                                + _NO_NOISE)
+            nm, nv = got
+            ok = np.isfinite(nv) & (np.asarray(nv) > 0)
+            nm, nv = np.asarray(nm, float)[ok], np.asarray(nv, float)[ok]
+            srt = np.argsort(nm)
+            noise_cache[index] = (nm[srt], nv[srt])
+        nm, nv = noise_cache[index]
+        if len(nm):
+            noise[j] = np.interp(grid, nm, nv)
+    if np.isnan(noise).all():
+        raise MzmlError(f"{Path(f.path).name}: scans {int(table.index[order[g[0]]])}-"
+                        f"{int(table.index[order[g[-1]]])} record no noise (scan_cut)")
+    # a scan without a centroid stream (nothing recorded): the median of the others
+    fill = np.nanmedian(noise, axis=0)
+    noise = np.where(np.isnan(noise), fill[None, :], noise)
+    return ScanRecord(w, grid, noise)
+
+
 def find_fragment_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
                         config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False):
     """The plans of the ``find`` targets (fragments) narrowed to their channel's elution peak
@@ -2397,31 +2549,12 @@ def find_fragment_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find,
     plans = list(plans)
     rts = _parent_rts(targets)
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
-    channels: dict[tuple, list] = {}
-    for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
-        if not find[t_i] or plan is None:
-            continue
-        key = (_channel(target), np.asarray(plan[0]).tobytes())
-        channels.setdefault(key, []).append(t_i)
+    channels = _channels(targets, plans, find)
     if not channels:
         return plans, set()
-    groups = []  # (target positions, order, trace, given time in s)
-    for members in channels.values():
-        order = plans[members[0]][0]
-        scans = [by_index[int(table.index[k])] for k in order]
-        recorded = np.array([s.resolution for s in scans], dtype=float)
-        recorded = recorded[np.isfinite(recorded)]
-        preds, halves = [], []
-        for t_i in members:
-            e = targets[t_i].entry
-            pred = np.asarray(plan_bins(e.peptide, e.charge, modification=e.modification,
-                                        config=picker, registry=registry).pred_mz, dtype=float)
-            preds.append(pred)
-            halves.append(np.broadcast_to(np.asarray(picker.half_width(
-                pred, e.charge, resolving_power=float(np.median(recorded)) if len(recorded)
-                else None, resolving_power_mz=r_mz), dtype=float), pred.shape))
-        trace = _ladder_trace(scans, np.concatenate(preds), np.concatenate(halves))
-        groups.append((members, order, trace, _fragment_rt(targets[members[0]], rts)))
+    groups = [(members, order, trace, _fragment_rt(targets[members[0]], rts))
+              for members, order, trace in _channel_traces(
+                  table, targets, plans, channels, by_index, picker, registry, r_mz)]
     # the typical width at half maximum of the run's fragment channels (their tallest, raw)
     widths = []
     for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:

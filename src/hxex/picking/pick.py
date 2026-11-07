@@ -25,7 +25,7 @@ from scipy.stats import binom
 
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
-from ..spectra import SpectrumSet
+from ..spectra import SpectrumSet, _objects
 from .binned import BinnedSet
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .measure import PeakMeasure, area_values, choose_measure
@@ -566,4 +566,6 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         drift_start=spectra.drift_start,
         drift_end=spectra.drift_end,
         mz_calibration_ppm=spectra.mz_calibration_ppm,
+        scan_cut=_objects([None if rec is None else rec.at(p.mz)
+                           for rec, p in zip(spectra.scans, picked, strict=True)]),
     )

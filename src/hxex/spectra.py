@@ -28,6 +28,55 @@ def split_spectrum_id(spectrum_id: str) -> tuple[str, str]:
 
 UNDEUT = "undeut"
 FULLDEUT = "fulldeut"
+
+
+@dataclass(frozen=True)
+class ScanRecord:
+    """The scans summed into a spectrum, as the instrument's per-scan cut needs them (PLAN Next
+    steps 24): each scan's share of the signal, ``weights`` ``(S,)`` (summing to 1), and the noise
+    each scan recorded, ``noise`` ``(S, P)``, at the m/z ``noise_mz`` ``(P,)`` across the
+    spectrum's window."""
+
+    weights: np.ndarray
+    noise_mz: np.ndarray
+    noise: np.ndarray
+
+    def at(self, mz: np.ndarray) -> ScanCut:
+        """The record at the m/z ``mz`` of a spectrum's bins (each scan's noise interpolated
+        there; outside the window, its edge value)."""
+        mz = np.asarray(mz, dtype=np.float64)
+        grid = np.asarray(self.noise_mz, dtype=np.float64)
+        noise = np.asarray(self.noise, dtype=np.float64).reshape(len(self.weights), len(grid))
+        mz = np.where(np.isfinite(mz), mz, float(np.mean(grid)))
+        at = np.stack([np.interp(mz, grid, row) for row in noise], axis=1) if len(noise) else (
+            np.zeros((len(mz), 0)))
+        return ScanCut(np.asarray(self.weights, dtype=np.float64), at)
+
+
+@dataclass(frozen=True)
+class ScanCut:
+    """What the instrument's per-scan cut needs of one picked spectrum: the share of its signal
+    in each scan summed, ``weights`` ``(S,)``, and the noise each scan recorded at each bin,
+    ``noise`` ``(bins, S)``, in the spectrum's intensity units (:class:`ScanRecord`)."""
+
+    weights: np.ndarray
+    noise: np.ndarray
+
+    def scaled(self, scale: float) -> tuple[np.ndarray, np.ndarray]:
+        """``(w, log(w / sigma))`` with the noise divided by ``scale`` (the fit's units; a scan
+        with no recorded noise is never cut, one without signal never counts)."""
+        w = np.asarray(self.weights, dtype=np.float64)
+        sigma = np.asarray(self.noise, dtype=np.float64) / scale
+        with np.errstate(divide="ignore", invalid="ignore"):
+            c = np.log(w)[None, :] - np.log(sigma)
+        return w, np.clip(np.nan_to_num(c, nan=-60.0, posinf=60.0, neginf=-60.0), -60.0, 60.0)
+
+
+def _objects(values) -> np.ndarray:
+    """A one-dimensional object array of ``values`` (None or records)."""
+    out = np.empty(len(values), dtype=object)
+    out[:] = list(values)
+    return out
 ROLES = (UNDEUT, FULLDEUT)
 ROLE_TEXT = "undeut or fulldeut (a control), or empty (a time point)"
 
@@ -162,7 +211,9 @@ class Spectrum:
     ``drift_end`` (ms) are the drift times summed into it, for scans read with their ion
     mobility bins and a drift range (NaN otherwise: every drift time, or no drift times).
     ``mz_calibration_ppm`` is the m/z offset of the spectrum's file taken out of its m/z (the
-    m/z read divided by 1 + offset; NaN: not calibrated).
+    m/z read divided by 1 + offset; NaN: not calibrated). ``scans`` (:class:`ScanRecord`) holds
+    its scans' noise and shares of the signal when they were recorded (``[input.scans]
+    scan_cut``), else None.
     """
 
     mz: np.ndarray
@@ -182,6 +233,7 @@ class Spectrum:
     drift_start: float = float("nan")
     drift_end: float = float("nan")
     mz_calibration_ppm: float = float("nan")
+    scans: ScanRecord | None = field(default=None, compare=False)
 
     def __post_init__(self):
         object.__setattr__(self, "role", check_role(self.role))
@@ -289,12 +341,15 @@ class SpectrumSet:
     drift_start: np.ndarray | None = None
     drift_end: np.ndarray | None = None
     mz_calibration_ppm: np.ndarray | None = None
+    scans: np.ndarray | None = field(default=None, compare=False)  # ScanRecord or None each
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
         for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end",
                      "drift_start", "drift_end", "mz_calibration_ppm"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        if self.scans is None:  # no scans recorded
+            object.__setattr__(self, "scans", _objects([None] * (len(self.offsets) - 1)))
         if self.role is None:  # built without roles: time points only
             object.__setattr__(self, "role", _no_role(len(self.offsets) - 1))
         else:
@@ -385,4 +440,5 @@ class SpectrumSet:
             resolving_power_mz=np.array([s.resolving_power_mz for s in spectra],
                                         dtype=np.float64),
             role=np.array([s.role for s in spectra], dtype="<U8"),
+            scans=_objects([s.scans for s in spectra]),
         )

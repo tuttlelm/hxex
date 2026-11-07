@@ -170,6 +170,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `find_peak` | true/false | `false` | LC-MS runs with a fixed time: find each peptide's elution peak near its rt (peptide table, minutes) and sum that peak's scans; rows with rt_start, rt_end keep them |
 | `find_fragment_peak` | true/false | `false` | LC-MS runs with a fixed time: find each fragment channel's elution peak from its whole ladder near the parent's rt (the parent's window searched too) and sum that peak's scans; flags elution_cut |
 | `fragment_peak_width` | number | `1.0` | with find_fragment_peak: the window is the apex +- this many peak widths at half maximum (wider than peak_width: beside the peak, reduced profile scans add no noise) |
+| `scan_cut` | true/false | `false` | fragments: record each scan's noise and share of the signal and fit through the instrument's per-scan cut (reduced profile; K = 1 only; Thermo raw, or mzML converted with -N) |
 | `peak_search` | number | `30.0` | s either side of a peptide's rt that its peak is looked for in |
 | `peak_smoothing` | number | unset | s: the chromatogram's running mean (false: half the run's typical peak width, measured) |
 | `peak_width` | number | `0.5` | the window: the apex +- this many peak widths at half maximum |
