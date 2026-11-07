@@ -2468,7 +2468,10 @@ def _channel_traces(table: ScanTable, targets, plans, channels, by_index, picker
     out = []
     for members in channels:
         order = plans[members[0]][0]
-        scans = [by_index[int(table.index[k])] for k in order]
+        # a run without a fixed time reads only the scans of its groups (group = "windows"):
+        # the others have no share (no spectrum sums them)
+        read = np.array([int(table.index[k]) in by_index for k in order], dtype=bool)
+        scans = [by_index[int(table.index[k])] for k, r in zip(order, read, strict=True) if r]
         recorded = np.array([s.resolution for s in scans], dtype=float)
         recorded = recorded[np.isfinite(recorded)]
         preds, halves = [], []
@@ -2480,8 +2483,10 @@ def _channel_traces(table: ScanTable, targets, plans, channels, by_index, picker
             halves.append(np.broadcast_to(np.asarray(picker.half_width(
                 pred, e.charge, resolving_power=float(np.median(recorded)) if len(recorded)
                 else None, resolving_power_mz=r_mz), dtype=float), pred.shape))
-        out.append((members, order, _ladder_trace(scans, np.concatenate(preds),
-                                                  np.concatenate(halves))))
+        trace = np.zeros(len(order))
+        if scans:
+            trace[read] = _ladder_trace(scans, np.concatenate(preds), np.concatenate(halves))
+        out.append((members, order, trace))
     return out
 
 

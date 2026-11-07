@@ -2381,7 +2381,11 @@ CSVs or mzML if wanted.
       `z-dot` ions and the precursors agree closely; five UVPD `a`/`x` ions differ in shape, and
       five ions are seen at one energy only. The mixture differs between activations (EThcD's
       `c-1` ions carry more of the lighter type than ETD's), so an envelope is shared across
-      energies, not across activations.
+      energies, not across activations. (Correction, 2026-11-07, item 315: the owner compared
+      energies within each activation only, never across activations. The difference between
+      activations was my reading of separate panels, one peptide, confounded with precursor
+      charge (ETD 3+, EThcD 2+): untested, not shown. Keeping activations apart stays the
+      cautious default.)
     - **Built:** `EnvelopeConfig.share` (opt-in, `[run.envelope] share = true`). The series of
       one sample, ion, charge, parent, activation, pre-activation and precursor that differ only
       in their scan filters or list label (`hxex.io.envelope_groups`) get one envelope from all
@@ -7916,3 +7920,15 @@ CSVs or mzML if wanted.
     dim spectra (interference).
     Projects reading reduced fragment data with noise now fit their fragments at K = 1 through
     the cut unless `scan_cut = false`; others read the same.
+
+315. **scan_cut on a run without a fixed time read in windows (2026-11-07; item 314's
+    default).** A run without a fixed time read with `[input.scans] group = "windows"` reads only
+    the scans inside its windows, but the scans' record (`scan_cut`) built each fragment
+    channel's elution trace over every planned scan of the target and looked up the unread
+    ones: KeyError. With item 314 `"auto"` reaches every reduced file that records its noise, so
+    such a read failed by default (found on the targeted folder's undeuterated
+    scrambling-standard run, read in windows for the fragment-mixture test). The unread scans
+    now have no share (no spectrum sums them); fixed-time runs and `group = "each"` or
+    `"every"` read every planned scan and are unchanged. Test:
+    `test_scan_cut_on_a_run_without_a_fixed_time_read_in_windows`. Also corrected here: item
+    87's sentence on activations (the owner's comparison was within activations only).

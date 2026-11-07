@@ -346,6 +346,44 @@ def test_scan_cut_auto_acts_on_reduced_files_that_record_noise(tmp_path, monkeyp
     assert "ThermoRawFileParser's -N" in text
 
 
+def test_scan_cut_on_a_run_without_a_fixed_time_read_in_windows(tmp_path, monkeypatch):
+    """A run without a fixed time read with group = "windows" reads only the scans inside its
+    windows; scan_cut (here "auto", the files reduced and recording noise) gives each window's
+    fragment spectrum its scans' record from those scans alone (it once looked up the scans
+    outside the windows and failed)."""
+    import dataclasses
+
+    from hxex.fragments import fragment_targets
+    from hxex.io.mzml import MzmlConfig
+    from test_mzml import _with_rt, fragment_lc_run
+
+    parent = dataclasses.replace(_with_rt(ENTRY, 30.0 / 60), extra={
+        **dict(_with_rt(ENTRY, 30.0 / 60).extra), "rt_start": str(20.0 / 60),
+        "rt_end": str(40.0 / 60)})
+    frags = fragment_targets(parent, "c:2-4:1", activation="ETD", rt_window=(20.0, 40.0))
+    targets = [MzmlTarget(parent, rt_window=(20.0, 40.0))] + frags
+    scans = [{**{k: v for k, v in s.items() if k != "precursors"}, "time": s["time"] / 60,
+              **({"precursor": s["precursors"][0][:3],
+                  "filter": f"FTMS + p ESI d Full ms2 {s['precursors'][0][0]:.4f}@etd20.00"}
+                 if "precursors" in s else {})} for s in fragment_lc_run(frags, other=None)]
+
+    class Noise500(NoiseReader):
+        noise_level = 500.0
+
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: Noise500(
+        _reduced(scans)))
+    raw = tmp_path / "run.raw"
+    raw.write_bytes(b"not really a raw file")
+    read = read_thermo([MzmlRun(path=str(raw), sample="S")], targets, project="p",
+                       thermo_dir="dlls",
+                       config=MzmlConfig(group="windows", windows=((27.0, 33.0),)))
+    is_frag = np.array(["ion_type" in m for m in read.modification])
+    assert is_frag.sum() == 3 and read.source["scan_cut"]["files"] == ["run.raw"]
+    for i in np.flatnonzero(is_frag):
+        rec = read.scans[i]
+        assert rec is not None and rec.weights.sum() == pytest.approx(1.0)
+
+
 def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeypatch, capsys):
     """Thermo raw files record the resolving power per scan and the instrument model; the
     spectra carry them (mzML has none), the read record lists them and hxex check shows them."""
