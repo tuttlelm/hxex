@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .order import natural_key
 from .user_tables import (
     Table,
     TableKind,
@@ -339,7 +340,8 @@ class TableEditor(QWidget):
 
     def _apply_sort(self) -> None:
         """The order the rows are shown in: the file's, or by the sorted column (numbers as
-        numbers when every value of the column is one; empty cells last either way)."""
+        numbers when every value of the column is one, else text with its numbers by value:
+        residue ranges 2-12, 13-30, 108-127; empty cells last either way)."""
         n = len(self.table.rows) if self.table is not None else 0
         self._order = list(range(n))
         header = self.grid.horizontalHeader()
@@ -352,7 +354,7 @@ class TableEditor(QWidget):
         try:
             keys = {i: float(values[i]) for i in filled}
         except ValueError:
-            keys = {i: values[i].lower() for i in filled}
+            keys = {i: natural_key(values[i]) for i in filled}
         filled.sort(key=lambda i: keys[i], reverse=not ascending)
         self._order = filled + [i for i in range(n) if not values[i]]
         header.setSortIndicator(column, Qt.SortOrder.AscendingOrder if ascending

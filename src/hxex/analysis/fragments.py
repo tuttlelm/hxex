@@ -698,6 +698,15 @@ class ClosureTable:
         return _columns(self)
 
 
+def _parent_starts(uptake) -> dict[str, int]:
+    """Each parent's first residue on the protein (the order its groups are listed in: by
+    position, not by sequence)."""
+    out: dict[str, int] = {}
+    for p, start in zip(uptake.parent, uptake.parent_start, strict=True):
+        out.setdefault(str(p), int(start))
+    return out
+
+
 def closure_table(
     uptake: FragmentUptake,
     n_ion: str = "c-1",
@@ -719,9 +728,10 @@ def closure_table(
     y for collisional activation)."""
     _check_partners(n_ion, c_ion)
     cols: dict[str, list] = {f.name: [] for f in fields(ClosureTable) if f.name != "tolerance"}
+    first = _parent_starts(uptake)
     groups = sorted({(str(r), str(s), str(c), str(p), int(z), bool(m)) for r, s, c, p, z, m in zip(
         uptake.run, uptake.sample, uptake.condition, uptake.parent, uptake.parent_charge,
-        uptake.merged, strict=True)})
+        uptake.merged, strict=True)}, key=lambda g: (g[0], g[1], g[2], first[g[3]], g[3:]))
     for run, sample, condition, parent, pz, merged in groups:
         n = len(chem.parse_sequence(parent))
         sel = dict(run=run, sample=sample, condition=condition, parent=parent, parent_charge=pz)
@@ -1014,8 +1024,10 @@ def ladder_rates(
     cols: dict[str, list] = {f.name: [] for f in fields(LadderRates)
                              if f.name not in ("min_time", "max_rate_error")}
     state_run = uptake.state_run
+    first = _parent_starts(uptake)
     groups = sorted({(str(u), str(s), str(p), int(z)) for u, s, p, z in zip(
-        state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
+        state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)},
+        key=lambda g: (g[0], g[1], first[g[2]], g[2:]))
     for state, sample, parent, pz in groups:
         rows = uptake.where(sample=sample, parent=parent, parent_charge=pz) & (state_run == state)
         entry = uptake.parent_entry(int(np.flatnonzero(rows)[0]))

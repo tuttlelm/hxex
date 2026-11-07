@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from .data_table import DataPanel, spectra_menu
 from .figure_view import HINT, SPECTRA_HINT, FigurePanel
+from .order import natural_key
 from .review import table_stamp
 from .tasks import Latest, drawing_pool
 
@@ -424,6 +425,10 @@ class AnalysisWorkspace(QWidget):
                     kind = kind_of(stem)
                     if kind is not None and kind.compares == compares:
                         by_kind.setdefault(kind.name, []).append(stem)
+            for stems in by_kind.values():  # fragment figures by parent, residues by value
+                kind = kind_of(stems[0])
+                if kind is not None and kind.fragments:
+                    stems.sort(key=natural_key)
             kinds = [p for p in planned if p.kind.command == ANALYSE]
             sections = analysis_sections(kinds, situation.fragments, self.shown_reference,
                                          self.shared_reference)

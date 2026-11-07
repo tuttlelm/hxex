@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .data_table import RowsModel, cell_text
+from .order import natural_key
 from .results_tree import search_matches
 
 FEW_VALUES = 30  # a column with at most this many values is filtered by ticking them
@@ -279,7 +280,7 @@ class SpectraList(QWidget):
 
     def values_of(self, column: str) -> list[str]:
         """The values of a few-valued column as shown, in a sensible order (numbers by size, a
-        time by time, the rest alphabetically; empty last)."""
+        time by time, the rest with their numbers by value; empty last)."""
         seen: dict[str, object] = {}
         for r in self.rows:
             seen.setdefault(cell_text(r.get(column)), _order_key(r, column))
@@ -573,7 +574,7 @@ def _passes(value, rule: tuple) -> bool:
 def _describe(column: str, rule: tuple) -> str:
     """A column's filter in words, for its header's tooltip."""
     if rule[0] == "values":
-        shown = sorted(t or "(empty)" for t in rule[1])
+        shown = sorted((t or "(empty)" for t in rule[1]), key=natural_key)
         return f"{column}: {', '.join(shown[:8])}" + (" ..." if len(shown) > 8 else "")
     if rule[0] == "range":
         low = "" if rule[1] is None else f"from {rule[1]:g} "
@@ -584,15 +585,16 @@ def _describe(column: str, rule: tuple) -> str:
 
 def _order_key(row: dict, column: str):
     """How a few-valued column's values are ordered in its ticks: a time label by its time
-    (controls at the ends), numbers by size, text alphabetically."""
+    (controls at the ends), numbers by size, text with its numbers by value (residue ranges
+    2-12, 13-30, 108-127: :func:`natural_key`)."""
     if column == "time_label":
         from ..spectra import point_order_key
 
         return point_order_key(_number(row.get("time")), str(row.get("role", "")))
     value = row.get(column)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return (0, float(value) if not math.isnan(float(value)) else math.inf, "")
-    return (1, 0.0, str(value).lower())
+        return (0, float(value) if not math.isnan(float(value)) else math.inf, ())
+    return (1, 0.0, natural_key(value))
 
 
 def _number(value) -> float:

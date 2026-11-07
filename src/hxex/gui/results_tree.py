@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .order import natural_key
+
 # the filters of the tree: (the list's words, what they mean)
 FILTERS = {"all": ("all series", "every series"),
            "flagged": ("flagged", "series with a spectrum that has a quality flag"),
@@ -110,8 +112,10 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
             int(rows["n_flagged"][r]), int(rows["n_rejected"][r]), int(rows["n_multi"][r]),
             reviewed.get(data_id, 0), n_left.get(data_id, 0), **targets.get(data_id, {})))
     for pep in out.values():
-        pep.series.sort(key=lambda s: (s.charge, s.ms_level, s.condition, s.fragment))
-    return [out[k] for k in sorted(out, key=lambda k: (k[0], _start(k[1]), k[1], k[2]))]
+        pep.series.sort(key=lambda s: (s.charge, s.ms_level, natural_key(s.condition),
+                                       natural_key(s.fragment)))
+    return [out[k] for k in sorted(out, key=lambda k: (natural_key(k[0]), natural_key(k[1]),
+                                                       k[2]))]
 
 
 def series_targets(results) -> dict[int, dict]:
@@ -137,13 +141,6 @@ def series_targets(results) -> dict[int, dict]:
                            "ms_level": int(cols["ms_level"][i]),
                            "parent": f"{parent} z{z}" if parent and z != "" else parent}
     return out
-
-
-def _start(peptide_range: str) -> int:
-    try:
-        return int(peptide_range.split("-")[0])
-    except ValueError:
-        return 0
 
 
 def _reviewed(results) -> dict[int, int]:

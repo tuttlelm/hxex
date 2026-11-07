@@ -27,6 +27,7 @@ from ..analysis.fragments import (
     FragmentUptake,
     LadderStep,
     Trace,
+    _parent_starts,
     difference_trace,
     fit_decay,
     fragment_trace,
@@ -619,8 +620,10 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     jobs = []
     state_run = uptake.state_run
     shown = display_labels(state_run, uptake.sample)
+    first = _parent_starts(uptake)
     groups = sorted({(str(u), str(s), str(p), int(z)) for u, s, p, z in zip(
-        state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)})
+        state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)},
+        key=lambda g: (g[0], g[1], first[g[2]], g[2:]))  # parents by position
     for state, sample, parent, pz in groups:
         rows = uptake.where(sample=sample, parent=parent, parent_charge=pz) & (state_run == state)
         start = int(uptake.parent_start[rows][0])
@@ -653,7 +656,9 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                     tolerance=config.tolerance, precursor_charge=config.precursor_charge,
                     parents=parents, **sel)))
     # the rates: one figure per parent, its precursor charges together
-    for state, sample, parent in sorted({g[:3] for g in groups}) if rates is not None else ():
+    for state, sample, parent in (sorted({g[:3] for g in groups},
+                                         key=lambda g: (g[0], g[1], first[g[2]], g[2]))
+                                  if rates is not None else ()):
         have = rates.where(sample=sample, parent=parent) & (rates.state_run == state)
         if not have.any():
             continue

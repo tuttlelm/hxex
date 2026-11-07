@@ -7796,3 +7796,18 @@ CSVs or mzML if wanted.
     fragment's holding >= 20 % of its curve; coinciding ions are not counted. On the dataset: 8.0 %
     of fragment spectra flagged (undeuterated 8.6 %, labelled 7.9 %), 14-30 at 0.41; 30 s for
     15,446 spectra. A flag only (unproven rules ship as flags); b/y/a ions not assessed (not read).
+
+310. **Residue ranges sorted by their numbers (2026-11-06).** The owner: the Results tree
+    sorted ranges numerically, but the column filters (parent range, for one) and the Analysis
+    panel's fragment figures listed them as text (108-127, 13-30, 2-12). A search for every
+    ordering in the window and the fragment analysis found more. Text is now compared with its
+    runs of digits by value (`gui.order.natural_key`, no Qt) in: the lists' column sort, the column
+    filters' ticks and their summary, the Tables view's sort of text columns, the Results tree
+    (peptides with one first residue, 2-9 before 2-12; fragments of a peptide, c-1:4 before
+    c-1:10), and the Analysis panel's fragment figures (by sample, then parent range and charge;
+    the peptides' figures keep the order of `[analysis] samples`). The fragment analysis listed
+    parents by their sequence (alphabetically): `closure.csv`, `ladder_rates.csv`, the closure,
+    ladder and residue-rate figures (their pages) now take them by their first residue
+    (`analysis.fragments._parent_starts`). Left as they are: `fragment_uptake.csv` and the run's
+    tables (the order the peptide table lists the series in), sample lists (alphabetical or as
+    `[analysis] samples` gives them).

@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .order import natural_key
+
 log = logging.getLogger(__name__)
 
 
@@ -84,12 +86,13 @@ def spectra_menu(rows: list[dict], go, parent=None) -> QMenu | None:
 
 
 def _sort_key(value):
-    """Numbers before text, missing values (None, NaN, '') last, whichever the direction."""
+    """Numbers before text, missing values (None, NaN, '') last, whichever the direction; text
+    in :func:`natural_key` order."""
     if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):
-        return (2, 0.0, "")
+        return (2, 0.0, ())
     if isinstance(value, (bool, np.bool_, int, float, np.integer, np.floating)):
-        return (0, float(value), "")
-    return (1, 0.0, str(value).lower())
+        return (0, float(value), ())
+    return (1, 0.0, natural_key(value))
 
 
 class RowsModel(QAbstractTableModel):

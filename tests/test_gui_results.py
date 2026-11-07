@@ -532,3 +532,25 @@ def test_the_fragment_columns_and_filters_show_only_for_fragment_runs(page):
     assert all(page.tree.isColumnHidden(COLUMN[name]) for name in TARGET_COLUMNS)
     assert page.ms_filter.isHidden() and page.ion_filter.isHidden()
     assert not page.tree.isColumnHidden(COLUMN["spectra"])
+
+
+def test_ranges_sort_by_their_numbers():
+    """Residue ranges (and other text with numbers) sort as a person reads them in the list's
+    columns, its filter ticks and the fragment figures: 2-12 before 13-30 before 108-127."""
+    from hxex.gui.data_table import _sort_key
+    from hxex.gui.order import natural_key
+    from hxex.gui.spectra_list import _order_key
+
+    ranges = ["108-127", "13-30", "2-12", "2-13", "0013-0029"]
+    expected = ["2-12", "2-13", "0013-0029", "13-30", "108-127"]
+    assert sorted(ranges, key=natural_key) == expected
+    assert sorted(ranges, key=_sort_key) == expected
+    rows = [{"parent_range": r} for r in ranges]
+    assert [r["parent_range"] for r in sorted(rows, key=lambda r: _order_key(r, "parent_range"))
+            ] == expected
+    stems = ["closure_S_108-127_z3_c-1+z-dot", "closure_S_13-30_z2_c-1+z-dot",
+             "closure_S_2-12_z3_c-1+z-dot", "closure_S_2-12_z2_c-1+z-dot"]
+    assert sorted(stems, key=natural_key) == [
+        "closure_S_2-12_z2_c-1+z-dot", "closure_S_2-12_z3_c-1+z-dot",
+        "closure_S_13-30_z2_c-1+z-dot", "closure_S_108-127_z3_c-1+z-dot"]
+    assert _sort_key(3.0) < _sort_key("a") < _sort_key("")  # numbers, text, then empty
