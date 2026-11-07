@@ -191,6 +191,21 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
+A replicate read from mzML or Thermo raw files also has an **elution** tab: its elution
+trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
+neighbour's. *hxex* opens the spectrum's file again and draws, per scan, the intensity at the
+ion's bins (the tallest point in the picking window of each bin, added up over the bins) over a
+stretch of the run around the scans it summed (shaded). The same series' other runs in the
+sample are drawn behind it in grey, so a run that eluted earlier or later, or a window that
+caught another peak, stands out. For ion-mobility files the trace keeps to the spectrum's drift
+range, and a second panel shows the drift profile of the scans summed, with that range shaded.
+The selected run is drawn first, then the others (about half a second per file, longer the
+first time a large file is opened). The files are read from the project's `data_root`, or,
+for results opened on their own, from the folder that holds them; when a file is missing, the
+tab says so. The tab only shows the traces: to change a window, change the peptide table's
+`rt_start` and `rt_end` (a row with a `run` column sets one run's window; see
+[The peptide table](inputs.md#the-peptide-table)) and run again.
+
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes.
 A charge (series) shows its `uptake.csv` rows (each time, the centroid row and each K and

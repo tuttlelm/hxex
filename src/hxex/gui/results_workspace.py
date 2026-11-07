@@ -97,7 +97,9 @@ SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex 
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
         "series": (*SERIES_PAGES, "data", "overview"),
         "point": ("spectra", "fits at each K", "uptake", "data", "overview"),
-        "spectrum": ("spectrum", "fits at each K", "uptake", "data", "overview")}
+        "spectrum": ("spectrum", "fits at each K", "elution", "uptake", "data", "overview")}
+# shown only for spectra read from scan files (mzML, Thermo raw): read again when in view
+TRACE_TABS = ("elution",)
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
                   "quality": "quality flags"}
@@ -161,7 +163,8 @@ class ResultsWorkspace(QWidget):
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.itemExpanded.connect(self._expanded)
-        self.tree.currentItemChanged.connect(self._selected)
+        self.tree.currentItemChanged.connect(lambda item, _previous: self._selected(
+            item, again=False))
         self.review = ReviewPanel(self)
         self.review.decided.connect(self._reviewed)
         self.review.step.connect(self.step_spectrum)
@@ -268,6 +271,13 @@ class ResultsWorkspace(QWidget):
         self.table_view.add_option(self.series_table)
         self._table_for = None  # (results, kind, payload) the table shows
         self.figures.currentChanged.connect(lambda _i: self._fill_table())
+        # the selected spectrum's elution trace, read from its scan files when in view
+        # (PLAN Next steps 26): the run first, then the sample's other runs behind it
+        self._trace_task = Latest(self)
+        self._trace_reader = None  # (results, TraceReader) for the results shown
+        self._trace_for = None  # (results, spectrum id) the elution tab shows
+        self._drawn = None  # (kind, series, time point or spectrum) the figures show
+        self.figures.currentChanged.connect(lambda _i: self._draw_retention())
         self.panels: dict[str, FigurePanel] = {}
         self.render = getattr(window, "render", "matplotlib")
         self.kind = None
@@ -315,11 +325,12 @@ class ResultsWorkspace(QWidget):
         self.figures.blockSignals(True)
         while self.figures.count():
             self.figures.removeTab(0)
-        for name in TABS[kind]:
+        names = tuple(n for n in TABS[kind] if n not in TRACE_TABS or self._traceable())
+        for name in names:
             self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
-        self._tab_keys = TABS[kind]  # the data tab's text carries its count
-        if current in TABS[kind]:
-            self.figures.setCurrentIndex(TABS[kind].index(current))
+        self._tab_keys = names  # the data tab's text carries its count
+        if current in names:
+            self.figures.setCurrentIndex(names.index(current))
         self.figures.blockSignals(False)
         self.kind = kind
 
@@ -344,6 +355,12 @@ class ResultsWorkspace(QWidget):
         self.left = left
         self.left_bar.hide()  # worked out as the results were read
         self._selection, self._table_for = (None, None), None  # the table: nothing selected
+        self._trace_for, self._drawn = None, None
+        if self._trace_reader is not None:  # the files of the results shown before
+            self._trace_reader[1].close()
+        self._trace_reader = None
+        self.results_path = path
+        self.kind = None  # the tabs again: the elution tab follows the results
         self.table_view.clear()
         for panel in self.panels.values():
             panel.clear()
@@ -357,6 +374,97 @@ class ResultsWorkspace(QWidget):
         self._fill_overview_pages()
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
+
+    # --- the elution tab -----------------------------------------------------------------------
+
+    def _traceable(self) -> bool:
+        """Whether the results shown were read from scan files (an elution trace can be read)."""
+        from ..io.retention_trace import readable
+
+        settings = getattr(self.results, "settings", None)
+        return readable(None if settings is None else settings.spectra_source)
+
+    def _reader(self):
+        """The trace reader of the results shown: their read record, with the data folder of
+        the project they came from (relative run paths start there), else the folder that holds
+        the results."""
+        from ..io.retention_trace import TraceReader
+
+        if self._trace_reader is not None and self._trace_reader[0] is self.results:
+            return self._trace_reader[1]
+        data_root, thermo_dir = None, None
+        path = getattr(self, "results_path", None)
+        if path is not None and Path(path).suffix == ".toml":
+            from ..config import load_project
+
+            try:
+                inp = load_project(path, analysis_only=True).input
+            except Exception as exc:  # noqa: BLE001 (the project file changed: its folder then)
+                log.info("retention traces: %s (%s)", path, exc)
+                inp = None
+            if inp is not None:
+                data_root, thermo_dir = inp.data_root, inp.thermo_dir
+            data_root = data_root or Path(path).parent
+        elif path is not None:
+            data_root = Path(path).parent
+        reader = TraceReader(self.results.settings.spectra_source, data_root=data_root,
+                             thermo_dir=thermo_dir)
+        self._trace_reader = (self.results, reader)
+        return reader
+
+    def _draw_retention(self) -> None:
+        """The retention tab, when it is in view: the selected spectrum's trace in its run
+        (drawn first), then with the sample's other runs of its series behind it."""
+        from ..report.retention import plot_retention
+
+        keys = getattr(self, "_tab_keys", ())
+        at = self.figures.currentIndex()
+        if self.kind != "spectrum" or not (0 <= at < len(keys)) or keys[at] != "elution":
+            return
+        kind, payload = self._selection
+        if kind != "spectrum" or self.results is None:
+            return
+        results, sid = self.results, payload[3].spectrum_id
+        if self._trace_for == (results, sid):
+            return
+        self._trace_for = (results, sid)
+        panel = self.panel("elution")
+        try:
+            reader = self._reader()
+        except (ValueError, KeyError, TypeError) as exc:
+            panel.clear(f"No elution trace: {exc}")
+            return
+        data_id = int(np.asarray(results.fit.data_id)[payload[3].index])
+        ids = np.asarray(results.fit.spectrum_id)
+        same = [str(s) for s in ids[np.asarray(results.fit.data_id) == data_id] if s != sid]
+        drift = {}
+        binned = results.binned
+        if binned is not None and binned.drift_start is not None:
+            for s in (sid, *same):
+                try:
+                    j = binned.find(s)
+                except KeyError:
+                    continue
+                drift[s] = (float(binned.drift_start[j]), float(binned.drift_end[j]))
+        title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
+                f"{payload[1].name}"
+
+        def failed(message: str) -> None:
+            self._trace_for = None  # tried again when next in view
+            panel.clear(f"No elution trace: {message}")
+
+        def others(first) -> None:
+            panel.draw(lambda: plot_retention(
+                first, title=title + ("; reading the sample's other runs…" if same else "")))
+            if same:
+                self._trace_task.submit(
+                    lambda: reader.traces([sid, *same], data_id, drift_ranges=drift),
+                    lambda all_: panel.draw(lambda: plot_retention(all_, title=title)),
+                    failed)
+
+        panel.clear("reading the elution trace…")
+        self._trace_task.submit(lambda: reader.traces([sid], data_id, drift_ranges=drift),
+                                others, failed)
 
     # --- the data tab ----------------------------------------------------------------------------
 
@@ -741,7 +849,10 @@ class ResultsWorkspace(QWidget):
 
     # --- selection -------------------------------------------------------------------------
 
-    def _selected(self, item: QTreeWidgetItem | None, _previous=None) -> None:
+    def _selected(self, item: QTreeWidgetItem | None, again: bool = True) -> None:
+        """Draw what ``item`` shows. Moving to an item that shows the same figures (a
+        peptide and its first charge) draws nothing again unless ``again`` (settings or
+        decisions changed)."""
         from ..report.figures import series_figures, series_kinds
         from ..report.overview import plot_k_comparison, plot_k_comparisons
         from ..report.series import plot_series_spectra, series_mz_range
@@ -759,9 +870,18 @@ class ResultsWorkspace(QWidget):
             # one replicate: its own view, so stepping into it draws nothing new (owner)
             kind, payload = "spectrum", (*payload, payload[2].spectra[0])
         results = self.results
-        config = self._plot_config()
         series = payload[1]
         data_id = series.data_id
+        shown = (payload[3].spectrum_id if kind == "spectrum"
+                 else payload[2].order if kind == "point" else None)
+        drawn = (kind, data_id, shown)
+        if not again and drawn == self._drawn:  # the item moved to, not what it shows
+            self.selection_changed.emit()
+            if self.window is not None:
+                self.window.changed()
+            return
+        self._drawn = drawn
+        config = self._plot_config()
         self._show_tabs(kind)
         self._show_review(kind, payload)
         # one m/z axis for the series at every level: its pages, a time point, a spectrum
@@ -822,6 +942,7 @@ class ResultsWorkspace(QWidget):
         self._selection = (kind, payload)
         self._data_count(None)  # until the tab is filled for this selection
         self._fill_table()
+        self._draw_retention()
         self.selection_changed.emit()
         if self.window is not None:
             self.window.changed()

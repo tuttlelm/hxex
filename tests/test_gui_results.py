@@ -143,6 +143,25 @@ def test_the_overview_is_the_first_look_and_a_tab_at_every_level(qtbot, results)
     assert overview.view.figure is not first
 
 
+def test_a_peptide_and_its_first_charge_are_drawn_once(qtbot, page):
+    """A peptide shows its first charge's pages: moving between the two draws nothing again
+    (owner, 2026-11-07); another time point does."""
+    peptide = page.tree.topLevelItem(0)
+    series = _open_series(page)
+    with qtbot.waitSignals([page.panel(n).drawn for n in ("spectra", "uptake")],
+                           timeout=30000):
+        page.tree.setCurrentItem(series)
+    figure = page.panel("uptake").view.figure
+    with qtbot.assertNotEmitted(page.panel("uptake").drawn, wait=500):
+        page.tree.setCurrentItem(peptide)
+    with qtbot.assertNotEmitted(page.panel("uptake").drawn, wait=500):
+        page.tree.setCurrentItem(series)
+    assert page.panel("uptake").view.figure is figure
+    assert page.selection()["charge"] == 2
+    with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
+        page.tree.setCurrentItem(series.child(1))
+
+
 def test_the_time_axis_is_chosen_in_the_window(qtbot, page):
     """The project's [figures] scale first (named), then log, linear, or by time point; the
     uptake page is drawn again with the choice (owner: uptake usually read on a log axis)."""
@@ -554,3 +573,57 @@ def test_ranges_sort_by_their_numbers():
         "closure_S_2-12_z2_c-1+z-dot", "closure_S_2-12_z3_c-1+z-dot",
         "closure_S_13-30_z2_c-1+z-dot", "closure_S_108-127_z3_c-1+z-dot"]
     assert _sort_key(3.0) < _sort_key("a") < _sort_key("")  # numbers, text, then empty
+
+
+def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
+    """Spectra read from scan files get an elution tab (PLAN Next steps 26): the selected
+    spectrum's run drawn first, then with the sample's other runs; results without scan files
+    (the synthetic ones above) have no such tab."""
+    from hxex.fit import FitConfig
+    from hxex.io import MzmlRun, MzmlTarget, read_mzml
+    from hxex.model import Backend
+    from hxex.noise import NoiseConfig
+    from hxex.picking import PickerConfig
+    from hxex.pipeline import RunConfig, run
+    from test_mzml import write_mzml
+    from test_retention_search import PEPTIDES, _entry, lc_run
+
+    series = _open_series(page)
+    with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
+        page.tree.setCurrentItem(series.child(1).child(0))
+    assert "elution" not in [page.figures.tabText(i) for i in range(page.figures.count())]
+
+    runs = [MzmlRun(str(write_mzml(tmp_path / "un1.mzML", lc_run(1))), "S", rep=1,
+                    role="undeut"),
+            MzmlRun(str(write_mzml(tmp_path / "un2.mzML", lc_run(2, shift=6.0))), "S", rep=2,
+                    role="undeut")]
+    rt = PEPTIDES["VDQIIMAK"]
+    spectra = read_mzml(runs, [MzmlTarget(_entry("VDQIIMAK"), rt_window=(rt - 4, rt + 4))],
+                        project="p")
+    cfg = RunConfig(picker=PickerConfig(noise_threshold=100.0), quality=None,
+                    fit=FitConfig(k_min=1, k_max=1, adam_steps=50, n_restarts=1,
+                                  backend=Backend("cpu", "float64"),
+                                  noise=NoiseConfig("gaussian", percent=3.0, estimate=None)),
+                    bootstrap=None, controls=None)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(Results.from_run(run(spectra, cfg)), None)
+    series = _open_series(w)
+    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
+        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    assert tabs == ["spectrum", "fits at each K", "elution", "uptake", "data", "overview"]
+    panel = w.panel("elution")
+    assert panel.view.figure is None  # read only when in view
+    w.figures.setCurrentIndex(tabs.index("elution"))
+
+    def drawn(n):
+        fig = panel.view.figure
+        return fig is not None and sum(
+            str(line.get_gid()).startswith("trace:") for line in fig.axes[0].get_lines()) == n
+
+    qtbot.waitUntil(lambda: drawn(2), timeout=30000)  # the sample's other run behind it
+    fig = panel.view.figure
+    assert fig._suptitle.get_text() == "S 0001-0008 VDQIIMAK z=2"
+    legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+    assert legend[0] == "this spectrum: undeuterated, rep 2 (un2.mzML)"

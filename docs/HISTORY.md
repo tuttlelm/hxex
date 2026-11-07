@@ -7837,3 +7837,21 @@ CSVs or mzML if wanted.
     trace by drift is not built: on this Q-TOF, one time per sample and time point anchors
     better than a peak chosen per file. Scratch (private): the benchmark's ion-mobility working
     folder, april_windows (README, scripts).
+
+312. **An elution trace for each spectrum in the review (2026-11-06; PLAN Next steps 26,
+    first step).** The Results' **elution** tab (owner: not "retention", which reads as deuterium
+    retention), for spectra read from mzML or Thermo raw files: *hxex* opens the spectrum's file again from the bundle's read record (each file's m/z
+    offset applied to the predicted bins; the project's `data_root`, else the results' folder)
+    and draws, per scan, the intensity at the ion's bins as `find_peak` measures it (the tallest
+    point within the picking window of each bin, summed), around the scans the spectrum summed
+    (shaded; half a minute or one window's width either side), with the same series' other runs
+    in the sample behind it in grey (owner: the same sample, not every sample). For ion-mobility
+    files the trace keeps to the spectrum's drift range, and a second panel shows the drift
+    profile of the scans summed with that range. Read only when the tab is in view: the
+    selected run first, then the others; nothing stored in the bundle. On the intact-peptide
+    benchmark's 200 MB ion-mobility files: a file's scan table 0.3 s, a minute of scans 0.2 s,
+    one series' 20 runs about 10 s the first time. Owner had no reference figure: designed from
+    PLAN 26. Modules `hxex.io.retention_trace` (`TraceReader`), `hxex.report.retention`
+    (`plot_retention`). Not built: editing the windows (PLAN 26's next steps). Also: moving in the
+    Results tree to an item that shows the same figures (a peptide and its first charge) no
+    longer draws every tab again (owner); settings, time-axis and review changes still do.

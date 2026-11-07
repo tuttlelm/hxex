@@ -1215,6 +1215,9 @@ Planned, not built:
      shaded, the same peptide's other runs faint behind it (retention moves between files: 7-20
      s on the Q-TOF benchmark, HISTORY 304), and for ion-mobility files its drift profile with
      the range. Useful alone: a window on a neighbour's peak shows at once.
+     BUILT (HISTORY 312): the Results' **elution** tab (`hxex.io.retention_trace`,
+     `hxex.report.retention`), read when in view; other runs = the same sample's runs of the
+     series (owner); the trace at the ion's predicted bins as `find_peak` measures it.
    - *Editing*: drag the edges or type the times; written as that run's row in the peptide table
      (an input, where it acts; the edited rows listed in the Tables view; Undo as in the project
      editor). Drift ranges the same way, once `drift_start`, `drift_end` join the row fields that
