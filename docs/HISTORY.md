@@ -7932,3 +7932,37 @@ CSVs or mzML if wanted.
     `"every"` read every planned scan and are unchanged. Test:
     `test_scan_cut_on_a_run_without_a_fixed_time_read_in_windows`. Also corrected here: item
     87's sentence on activations (the owner's comparison was within activations only).
+
+316. **Fragment MS2 and MS3 readings, and ion-type weights from dim references (2026-11-07;
+    scratch, no code change).** Two studies on the private targeted Orbitrap dataset, recorded
+    for the fragment cleanup (PLAN 24).
+    - **MS2 against MS3 of one fragment** (MS3 = the same precursor with HCD pre-activation;
+      bundles with and without `scan_cut`). The bright pairs' floor of about 0.18 D is not
+      noise and not the envelope's shape. Not scrambling over the whole peptide: for z-dot the
+      gap's sign follows fragment above or below its parent in 43-60 % of pairs (chance), and
+      the ion-type mixtures are the same in both channels. The precursor ion itself reads
+      +0.02-0.04 D apart at every labelling level (the pre-activation loses no deuterium from
+      the whole ion). In ETD, complementary c-1/z-dot pairs (406 and 326 pairs) show deuterium
+      moved across the cleavage: c -0.12/-0.10 D, z +0.11/+0.18 D, their sum +0.02/+0.04 = the
+      precursor's gap, correlation -0.79/-0.71; the EThcD z-dot gap grows with labelling
+      (0.00 below fD 0.15, +0.22-0.24 above 0.6). Reading: a local, conserved redistribution
+      linked to the pre-activation (hypothesis: the hydrogen moved in the c/z transfer comes
+      from a deuterated site more often after HCD). So MS2 and MS3 are not replicates of one
+      measurement, and the bright floor is not to be counted as noise when calibrating errors.
+      Private: fragment_cut_fit/channel_offset (README).
+    - **Ion-type mixture weights from dim references.** On the dataset, per-series weights drift
+      heavy as the undeuterated references dim (z-dot h = w(+1 H) + 2 w(+2 H) 0.28 bright, 0.60
+      in the middle third, 1.34 dim). Tested on the folder's undeuterated scrambling-standard
+      LC run (two standard peptides of 8 and 9 residues, ETD 3+ and EThcD 2+, MS2 and MS3;
+      bright, ~10 s elution): bright MS2 and MS3 weights of one fragment agree again (49
+      pairs, median difference 0.000); summed elution tails (most scans below the noise) read
+      the 27 real mixtures heavy (+0.41 H below 1 x, +0.12 at 1-4 x, 0.00 from 4 x), pure
+      fragments right whatever is done. Pooling MS2 with MS3 by brightness removes the drift
+      (+0.00, +0.03), better than `share`'s equal averaging; typical weights are 0.3-0.7 H
+      wrong for mixtures. Not built (owner): the gain falls below 4 x, where spectra are
+      flagged `below_noise`, and no fallbacks are made for data below the noise. Open (waiting
+      for the owner's go): the dataset's middle-third references drift at about 5-10 x, which
+      the clean standards do not reproduce (more scans summed, about 90 against 5-10, or
+      interference?): that cause, not pooling, would address the closure's remaining miss of
+      about -0.4 D. The read found item 315's bug. Private: fragment_cut_fit/envelope_weights
+      (README).
