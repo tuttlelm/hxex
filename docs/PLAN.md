@@ -1079,7 +1079,9 @@ Planned, not built:
      (ms, both or neither) take the place of the range found; spectra and spectra.csv columns
      `drift_start`, `drift_end` (written only when a range was used); the read record's
      `drift_gate` entry lists every range (apex, second peak, files) and the unclear series.
-   - *Not done.* `find_peak`'s chromatogram is still summed over every drift time.
+   - *Not done.* `find_peak`'s chromatogram is still summed over every drift time. Gating it
+     was measured (HISTORY 311) and not needed: on the benchmark the found peaks scatter more
+     than a fixed window around one time per sample and time point, gated or not.
    - *m/z calibration of such files* (owner, 2026-11-06): it must not need HDExaminer's files
      (with them, SpecExport would serve). The benchmark's uncorrected files sit about +23 ppm
      from theory (+41 over one stretch of acquisitions), beyond the picking window; HDExaminer

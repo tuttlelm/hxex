@@ -7811,3 +7811,29 @@ CSVs or mzML if wanted.
     (`analysis.fragments._parent_starts`). Left as they are: `fragment_uptake.csv` and the run's
     tables (the order the peptide table lists the series in), sample lists (alphabetical or as
     `[analysis] samples` gives them).
+
+311. **Series without a retention window in HDExaminer's results table: read from its earlier
+    summary table's times; finding the peak per file does worse (2026-11-06; PLAN Next steps
+    22).** The intact-peptide benchmark's HDExaminer export has 445 series (94 peptide ions)
+    beyond the 930 its results table gives a retention window per file; they were probably left
+    out on purpose when the tools to correct them were missing. Every one of the 94 ions is
+    identified in the dataset's search lists, so only the window was missing. HDExaminer's
+    earlier summary table gives one retention time per sample, peptide range and time point (no
+    charge); on the 930 series those times sit on the results table's window centres (median
+    0.000 min, IQR +-0.03, inside the window 93.6 %; windows 0.31 min wide, median). Read with
+    a fixed window of that time +-0.15 min (drift ranges and m/z calibration as items 304 and
+    306), against HDExaminer's windows on the 930 series: same K as HDExaminer's spectra 92.7
+    against 95.0 %, replicate sd q90 0.29 against 0.23 D, 25 against 16 control fallbacks. The
+    445 are poorer in HDExaminer's own spectra too (sd q90 1.05 D, K > 1 in 32 %); read this way,
+    sd q90 1.19 D, same K 82.7 %. After `hxex analyse` with the default filters, 23 % of their
+    spectra are left out (stand-in controls and the quality screens first), 360 of 445 series
+    keep labelled spectra, sd q90 0.47 D (the 930: 3 % left out, 0.26 D). `find_peak` around the
+    same times, its trace summed over every drift time or gated to the ion's drift range (a
+    scratch patch), was worse than the fixed window on the 930: sd q90 0.32 (ungated), 0.32
+    (gated) and 0.36 D (gated, `peak_width` 1.5), same K 91.2-92.1 %; on the 445, 1.90, 1.63
+    and 1.58 D. The wider window brings the median back to HDExaminer's level (sd 0.086 D), but
+    in about a fifth of the files the apex found sits more than 0.1 min from HDExaminer's window
+    centre (the fixed window: 12 %), and those spectra carry the scatter. So gating `find_peak`'s
+    trace by drift is not built: on this Q-TOF, one time per sample and time point anchors
+    better than a peak chosen per file. Scratch (private): the benchmark's ion-mobility working
+    folder, april_windows (README, scripts).
