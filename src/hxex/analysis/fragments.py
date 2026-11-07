@@ -801,10 +801,20 @@ class DecayFit:
         return np.sqrt(np.clip(var, 0.0, None))
 
 
-def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
+DECAY_ERROR_FLOOR = 0.05  # D added in quadrature to each point's error in fit_decay's weights
+
+
+def fit_decay(trace: Trace, *, min_time: float | None = None,
+              error_floor: float = DECAY_ERROR_FLOOR) -> DecayFit:
     """Fit ``A exp(-k t) + C`` (a decay for back-exchange, a rise when ``A`` is negative) to the
     points of ``trace`` at ``min_time`` and later, by least squares from several starting rates
     spread over the time range (``0.1`` to ``1000`` decays across it); ``k`` is kept positive.
+    Each point is weighted by its error, ``sqrt(mean_se**2 + error_floor**2)`` (the floor keeps
+    one bright point with a tiny error from deciding the curve alone); a point without an error
+    takes the median of the others' (all without one: equal weights). The errors set only the
+    points' relative weights: ``rate_se`` and the other errors come from the covariance scaled
+    by the residual scatter about the curve (the spectra's errors are larger than that scatter
+    for dim points).
     The fit is made as ``A' exp(-k (t - t_first)) + C`` (the same curve, conditioned on the
     first fitted point rather than on time 0) and ``A = A' exp(k t_first)`` reported. Times
     here are on the exchange clock (spectrum times: scan time plus the run's ``time_offset``);
@@ -817,6 +827,9 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     t, y = tr.time[ok], tr.mean[ok]
     if len(t) < 4 or np.ptp(t) <= 0:
         return DecayFit(np.nan, np.nan, np.nan, np.nan, len(t), False)
+    sigma = np.hypot(np.asarray(tr.mean_se, float)[ok], error_floor)
+    known = np.isfinite(sigma) & (sigma > 0)
+    sigma = np.where(known, sigma, np.median(sigma[known]) if known.any() else 1.0)
     t_first, t_last = float(t.min()), float(t.max())
     span = float(np.ptp(t))
 
@@ -830,14 +843,14 @@ def fit_decay(trace: Trace, *, min_time: float | None = None) -> DecayFit:
     best = None
     for k0 in np.geomspace(0.1 / span, 1000.0 / span, 7):
         try:
-            p, cov = curve_fit(model, t, y, p0=(a0, k0, c0),
+            p, cov = curve_fit(model, t, y, p0=(a0, k0, c0), sigma=sigma,
                                bounds=([-np.inf, 0.0, -np.inf], [np.inf, np.inf, np.inf]),
                                maxfev=5000)
         except (RuntimeError, ValueError):
             continue
-        sse = float(np.sum((model(t, *p) - y) ** 2))
-        if best is None or sse < best[0]:
-            best = (sse, p, cov)
+        chi2 = float(np.sum(((model(t, *p) - y) / sigma) ** 2))
+        if best is None or chi2 < best[0]:
+            best = (chi2, p, cov)
     if best is None:
         return DecayFit(np.nan, np.nan, np.nan, np.nan, len(t), False)
     _, p, cov = best

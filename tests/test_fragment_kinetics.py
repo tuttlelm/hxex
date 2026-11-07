@@ -154,6 +154,33 @@ def test_decay_fit_edge_cases():
     assert not fit_decay(Trace(t, t * 0, t * 0), min_time=2000.0).ok
 
 
+def test_decay_fit_weights_points_by_their_errors():
+    """A dim point far off the curve, with an error to match, barely moves the fit; without
+    the weights it pulls the rate. A point without an error takes the others' median."""
+    from hxex.analysis import Trace
+
+    t = np.geomspace(5, 5000, 14)
+    y = 0.9 * (1 - np.exp(-0.003 * t))
+    se = np.full(len(t), 0.02)
+    y_off = y.copy()
+    y_off[3] += 2.0  # a dim spectrum's reading, 2 D off
+    se_off = se.copy()
+    se_off[3] = 2.0
+    weighted = fit_decay(Trace(t, y_off, se_off))
+    equal = fit_decay(Trace(t, y_off, se))
+    assert weighted.rate == pytest.approx(0.003, rel=0.05)
+    assert abs(equal.rate - 0.003) > 3 * abs(weighted.rate - 0.003)
+    # the floor: errors of 0 are the floor's, not infinite weights
+    assert fit_decay(Trace(t, y, t * 0)).rate == pytest.approx(0.003, rel=1e-4)
+    # an unknown error weighs as the median one, not as a NaN that breaks the fit
+    se_nan = se_off.copy()
+    se_nan[3] = np.nan
+    unknown = fit_decay(Trace(t, y_off, se_nan))
+    assert unknown.ok and unknown.rate == pytest.approx(equal.rate, rel=1e-6)
+    all_unknown = fit_decay(Trace(t, y_off, np.full(len(t), np.nan)))
+    assert all_unknown.rate == pytest.approx(equal.rate, rel=1e-6)
+
+
 def test_a_rate_the_data_cannot_fix_has_an_unknown_error_not_zero(monkeypatch):
     """curve_fit's pseudo-inverse gives such a parameter a variance of 0 (seen on four time
     points): the error is unknown, so the step is never precise."""

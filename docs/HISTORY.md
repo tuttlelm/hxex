@@ -7855,3 +7855,26 @@ CSVs or mzML if wanted.
     (`plot_retention`). Not built: editing the windows (PLAN 26's next steps). Also: moving in the
     Results tree to an item that shows the same figures (a peptide and its first charge) no
     longer draws every tab again (owner); settings, time-axis and review changes still do.
+
+313. **Ladder-rate fits weighted by the points' errors (2026-11-07).** `fit_decay` was
+    unweighted, so a dim spectrum's reading with a 2 D error counted as much as a bright one
+    with 0.1 D. Each point now weighs by `sqrt(mean_se^2 + 0.05^2)` (`DECAY_ERROR_FLOOR`, D: a
+    guard against one bright point with a tiny error deciding a curve alone); a point without
+    an error takes the median of the others' (all without one: equal weights, as before); the
+    best of the starting rates is chosen by the weighted chi-square. The errors set only the
+    relative weights: `rate_se` stays scaled by the residual scatter, because the points'
+    errors are larger than the scatter about the curves (median reduced chi-square 0.2-0.5 on
+    the private targeted Orbitrap dataset; dim fragments' bootstrap errors over-cover) and the
+    unscaled rate errors over-covered (robust sd of z 0.4-0.8), the scaled ones about right
+    (0.9-1.2). Measured on that dataset's two current bundles (with and without `scan_cut`),
+    642 single-residue steps each, against the unweighted fit: the log10 rates of one step read
+    in MS2 and in MS3 (130 and 128 pairs resolved in every variant) scatter 15 and 20 % less
+    (robust sd 0.52 -> 0.44, 0.64 -> 0.50), resolved steps 401 -> 451 and 400 -> 434, precise
+    121 -> 166 and 100 -> 135, and the precise MS2/MS3 pairs agree as well as or better than
+    before (median |d| 0.18 -> 0.13, 0.16 -> 0.14). Floors of 0, 0.05 and 0.1 D read the same;
+    0.2 D was slightly worse. ETD against EThcD had too few pairs (7-8) to judge. Points
+    without an error occur where `hxex resume` bootstrapped only the reviewed K (a spectrum
+    selected at K = 2 then has no K = 1 error; 473 of 6,316 points in one bundle). The ladder
+    figure's curves use the same fit. Ladder rates are opt-in (`fit_rates`), so no default
+    output changes. Scratch (private): fragment_cut_fit/weighted_decay (README, rates.py,
+    compare.py; built_* = the built code, same counts as the scratch w0.05).

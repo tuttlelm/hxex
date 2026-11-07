@@ -28,6 +28,13 @@ row, then a row for each step of the ladder, read top to bottom. A ladder too lo
 pages, `..._z1_2`, `..._z1_3`, each with the precursor row again at its top and its page
 number in that row's title. A taller page (`page_size = [16, 30]`) holds more steps a page.
 
+**How a step is fitted.** Each point of a step counts by how well it is measured: a point
+from a dim spectrum, with a large error, moves the curve less than one from a bright spectrum.
+Every point's error has 0.05 D added to it, so that one very bright point cannot decide the
+curve alone. A point without an error (when the bootstrap does not cover its spectrum) counts
+as much as a typical point of the same step. The rate's error comes from how far the points
+scatter about the fitted curve.
+
 **Which steps count.** A step is `precise` when its decay is visible in the time range and
 its rate's relative error is at most `max_rate_error` (0.5 by default):
 
