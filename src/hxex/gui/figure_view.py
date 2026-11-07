@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QRubberBand,
     QScrollArea,
     QSizePolicy,
     QToolTip,
@@ -89,9 +90,15 @@ class FigureView(QWidget):
     rows_asked = Signal(list, QPoint)
     dragged = Signal(float, float)
     double_clicked = Signal(QPointF)
+    # in span mode (:attr:`span_mode`), a drag across the figure: where it began and ended
+    # (the view's own coordinates), instead of moving the figure
+    spanned = Signal(QPointF, QPointF)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.span_mode = False
+        self._span_start: QPointF | None = None
+        self._band = QRubberBand(QRubberBand.Shape.Rectangle, self)
         self._renderer = QSvgRenderer(self)
         self._marks: list[Mark] = []  # what can be clicked or has a tooltip, and where
         self.figure: Figure | None = None
@@ -261,12 +268,20 @@ class FigureView(QWidget):
     def mousePressEvent(self, event):  # noqa: N802 - Qt's name
         if event.button() == Qt.MouseButton.LeftButton:
             self._press, self._dragging = event.globalPosition(), False
+            self._span_start = event.position() if self.span_mode else None
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):  # noqa: N802 - Qt's name
         if self._press is not None and event.buttons() & Qt.MouseButton.LeftButton:
             move = event.globalPosition() - self._press
             if self._dragging or move.manhattanLength() >= DRAG_START:
+                if self._span_start is not None:  # a span: shown as a band, the figure stays
+                    self._dragging = True
+                    a, b = sorted((self._span_start.x(), event.position().x()))
+                    self._band.setGeometry(int(a), 0, max(int(b - a), 1), self.height())
+                    self._band.show()
+                    super().mouseMoveEvent(event)
+                    return
                 if not self._dragging:
                     self.setCursor(Qt.CursorShape.ClosedHandCursor)
                 self._dragging = True
@@ -278,13 +293,19 @@ class FigureView(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             if self._after_double:
                 self._after_double = False
+            elif self._dragging and self._span_start is not None:
+                self._band.hide()
+                self.spanned.emit(self._span_start, event.position())
             elif not self._dragging:  # a click, not the end of a drag: acted on unless a
                 mark = self.mark_at(event.position())  # second click makes it a double-click
                 if mark is not None:
                     self._clicked_mark = mark
                     self._click_timer.start()
-            self._press, self._dragging = None, False
-            self.unsetCursor()
+            self._press, self._dragging, self._span_start = None, False, None
+            if self.span_mode:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.unsetCursor()
         super().mouseReleaseEvent(event)
 
     def _click(self) -> None:
@@ -438,6 +459,9 @@ class FigurePanel(QWidget):
     clicked = Signal(str)  # the gid of what was clicked (whichever view draws the figure)
     clicked_row = Signal(dict)  # the data-table row of what was clicked, when it has one
     rows_asked = Signal(list, QPoint)  # right-clicked: the rows there, and where
+    # in span mode, a drag across the figure, as fractions of the figure (x from the left, y
+    # from the bottom, as matplotlib's figure coordinates): where it began and ended
+    spanned = Signal(float, float, float, float)
 
     def __init__(self, parent=None, pool: QThreadPool | None = None,
                  render: str = "matplotlib", hint: str = HINT):
@@ -502,6 +526,23 @@ class FigurePanel(QWidget):
         view.clicked.connect(self.clicked)
         view.clicked_row.connect(self.clicked_row)
         view.rows_asked.connect(self.rows_asked)
+        view.spanned.connect(self._spanned)
+        view.span_mode = getattr(self, "span_mode", False)
+        if view.span_mode:
+            view.setCursor(Qt.CursorShape.CrossCursor)
+
+    def set_span_mode(self, on: bool) -> None:
+        """A drag across the figure selects a span (:attr:`spanned`) instead of moving it."""
+        self.span_mode = on
+        self.view.span_mode = on
+        if on:
+            self.view.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.view.unsetCursor()
+
+    def _spanned(self, start: QPointF, end: QPointF) -> None:
+        w, h = max(self.view.width(), 1), max(self.view.height(), 1)
+        self.spanned.emit(start.x() / w, 1.0 - start.y() / h, end.x() / w, 1.0 - end.y() / h)
 
     def set_render(self, render: str) -> None:
         """Draw with Qt's SVG renderer (``'svg'``) or with matplotlib (``'matplotlib'``); the

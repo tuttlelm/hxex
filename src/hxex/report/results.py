@@ -46,6 +46,8 @@ class Settings:
     # what the bins hold: "height" (a bundle made before the choice was recorded) or "area"
     # (the manifest's ``peak_measure``, :mod:`hxex.picking.measure`)
     peak_measure: str = "height"
+    # the manifest's ``peak_measure`` record in full ({}: not recorded): :attr:`measure`
+    measure_record: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_manifest(cls, manifest: dict[str, Any]) -> Settings:
@@ -55,6 +57,7 @@ class Settings:
             configs=dict(manifest.get("configs", {})),
             excluded=dict(manifest.get("excluded") or {}),
             peak_measure=str((manifest.get("peak_measure") or {}).get("measure", "height")),
+            measure_record=dict(manifest.get("peak_measure") or {}),
         )
 
     @classmethod
@@ -70,6 +73,8 @@ class Settings:
             excluded=dict(run.excluded or {}),
             peak_measure=(run.peak_measure.measure if run.peak_measure is not None
                           else "height"),
+            measure_record=(run.peak_measure.to_dict() if run.peak_measure is not None
+                            else {}),
         )
 
     @property
@@ -79,6 +84,14 @@ class Settings:
 
         data = self.configs.get("run")
         return None if data is None else RunConfig.from_dict(data)
+
+    @property
+    def measure(self):
+        """What the run's bins took (:class:`hxex.picking.measure.PeakMeasure`, with the peak
+        widths for areas); heights for a bundle made before the choice was recorded."""
+        from ..picking.measure import HEIGHTS, PeakMeasure
+
+        return PeakMeasure.from_dict(self.measure_record) if self.measure_record else HEIGHTS
 
     @property
     def spectra_source(self) -> dict | None:

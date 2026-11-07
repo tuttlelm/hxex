@@ -1614,7 +1614,7 @@ def _read_runs(
 
 # the fields of a peptide-table row that say which runs it is read from and when, not what is
 # read: a run's own row (the run column) and the general row it overrides differ in these only
-RUN_ROW_FIELDS = ("run", "not_runs", "rt", "rt_start", "rt_end")
+RUN_ROW_FIELDS = ("run", "not_runs", "rt", "rt_start", "rt_end", "drift_start", "drift_end")
 
 
 def series_targets(targets: Sequence[MzmlTarget], runs: Sequence[MzmlRun], tie: bool = True

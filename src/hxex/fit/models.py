@@ -19,7 +19,7 @@ from ..noise import (
     sample_size,
 )
 from .config import FitConfig
-from .init import split_start
+from .init import Start, split_start
 from .measurements import Measurements
 from .optimise import FitError, Prepared, fit_batch, prepare
 from .result import FitResult, KFit
@@ -39,6 +39,7 @@ def fit_models(
     bin_variance=None,
     noise=None,
     required_k: np.ndarray | None = None,
+    warm: dict[int, Start] | None = None,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
@@ -82,6 +83,9 @@ def fit_models(
     selected K can then differ from fitting every K, and the test chooses it. ``required_k``
     (one K per measurement, 0 for none: a K chosen in a review table) is fitted, with every K
     below it, whatever the screen says (the selected K is not changed by it).
+    ``warm`` (per K, a :class:`~hxex.fit.init.Start` for every measurement, its ``log_A`` the log
+    of the amplitudes in the data's own units) starts that K there instead of from K - 1: an
+    earlier fit of nearly the same spectra (the review's preview of a changed window).
     """
     backend = config.backend
     m = len(data)
@@ -163,14 +167,20 @@ def fit_models(
                          "deuteron (n_max below 2): a mixture of them is one population", k,
                          int(single.sum()))
                 rows = rows[~single]
-        warm = None
-        if config.nested_init and (k - 1) in fits and (k - 1) in config.k_values:
+        start = None
+        if warm is not None and k in warm:  # given (in the data's units: scaled here)
+            given = warm[k]
+            start = Start(np.asarray(given.log_A, dtype=float)[rows]
+                          - np.log(scale[rows])[:, None],
+                          np.asarray(given.n_raw, dtype=float)[rows],
+                          np.asarray(given.logit_p, dtype=float)[rows])
+        elif config.nested_init and (k - 1) in fits and (k - 1) in config.k_values:
             prev = fits[k - 1]
-            warm = split_start(prev.log_A[rows], prev.n_raw[rows], prev.p[rows],
-                               config.split_delta)
+            start = split_start(prev.log_A[rows], prev.n_raw[rows], prev.p[rows],
+                                config.split_delta)
         if len(rows) == 0:
             fits[k] = _unfitted(k, m)
-            for _ in range(config.n_restarts + (1 if warm is not None and extra else 0)):
+            for _ in range(config.n_restarts + (1 if start is not None and extra else 0)):
                 tick()
             continue
         sub = prep if len(rows) == m else prep.select(rows, backend)
@@ -178,7 +188,7 @@ def fit_models(
         model, nll = fit_batch(
             sub, k, backend, n_restarts=config.n_restarts, adam_steps=config.adam_steps_for(k),
             lbfgs_steps=config.lbfgs_steps, lr_adam=config.lr_adam,
-            lr_adam_end=config.lr_adam_end, seed=config.seed, warm=warm,
+            lr_adam_end=config.lr_adam_end, seed=config.seed, warm=start,
             warm_noise=config.warm_noise, kmeans_after_warm=config.kmeans_after_warm,
             grad_clip=config.grad_clip, polish_steps=config.polish_steps,
             cancel=cancel, on_restart=tick,

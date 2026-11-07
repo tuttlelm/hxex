@@ -7967,6 +7967,40 @@ CSVs or mzML if wanted.
       about -0.4 D (answered in item 318: neither). The read found item 315's bug.
       Private: fragment_cut_fit/envelope_weights (README).
 
+317. **Retention windows edited in the review (2026-11-07; PLAN Next steps 26, second
+    step).** The elution tab's **Edit window** switch (owner's choices: a switch with boxes and a
+    drag across the trace or the drift profile, not grabbing the edges; the spectrum now beside
+    the new window's, with a "fits at each K" switch). `TraceReader.spectrum` sums the selected
+    run's scans again over a new window (and drift range) as the reader sums them, the file's m/z
+    offset taken out; over its own window it gives the stored spectrum back exactly (the
+    intact-peptide benchmark's ion-mobility files: largest difference 9e-7 of the tallest peak;
+    0.04 s). `hxex.gui.window_edit.preview` picks it with the run's picker settings and bin
+    measure (`Settings.measure`, the manifest's `peak_measure` record) and fits it with the run's
+    fit settings at every K (no screen) and noise curve, on the CPU (the run may have used a GPU
+    the computer lacks). Picking is drawn at once. The run's fit of one benchmark spectrum takes
+    about 9 s (6 starts, K 1 to 3, 400 Adam steps and a 40-step polish: per-step overhead, not
+    arithmetic; one PyTorch thread 9.5 s against 14 s on 24 under load, so the preview fits on
+    one); owner: much faster. The preview starts every K from the run's fit of the spectrum
+    (`fit_models(warm=...)`, amplitudes scaled by the new over the old intensity) and takes 50
+    Adam steps and a 10-step polish (`PREVIEW_STEPS`): 0.56 s (1.6 s the first time). Measured on
+    32 benchmark spectra (12 K = 1, 12 K = 2, 8 K = 3 in the run): over their own windows the
+    same K as the run for all 32; over windows two scans narrower the same K as a full fit for 29
+    of 32 (of the three, one is a better three-population fit than the full fit found, two hinge
+    on a near tie or the minimum population). Fewer starts from scratch were slower and worse (1
+    start of 100 steps: 1.7 s, 37 of 40 K as the run, chosen-K means up to 7.6 D off); the
+    k-means start beside the warm one added 0.15 s for one more agreement; the polish is most of
+    the remaining time (forward-mode derivatives, one call per parameter).
+    Not redone in the preview: the population test (the criterion's K is shown, said under the
+    figure), the bootstrap, the controls. `save_window` writes the run's own row (`run` = the
+    file name, `rt_start`, `rt_end` rounded outwards to four decimals of a minute so the run
+    reads the same scans, `drift_start`, `drift_end` for ion-mobility files; a copy of the
+    peptide's general row, its other columns kept; an existing row of the run is changed),
+    checked as the project reads it before writing; Undo writes the file's earlier bytes back
+    (refused when the file changed since). A saved window read back (synthetic LC runs) sums the
+    new scans and keeps one series. `drift_start`, `drift_end` joined `RUN_ROW_FIELDS` (they
+    split a fragment's runs into two series). The figure view has a span mode (a drag selects,
+    shown as a band, instead of moving the figure).
+
 318. **Why the targeted dataset's middle-brightness fragment references read heavy (2026-11-07;
     scratch, no code change; answers the open question of item 316).** The middle third's heavier
     ion-type weights are neither scrambling nor a bias of the envelope fit: they are real

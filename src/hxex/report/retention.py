@@ -10,6 +10,8 @@ drift profile with the drift range it was summed over.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -21,6 +23,7 @@ from .spectrum import RAW_DARK
 
 OTHER = "#b3b3b3"  # the other runs' traces
 SUMMED = "#d9d9d9"  # the scans (or drift times) the spectrum summed
+EDITED = "#4d4d4d"  # the outline and hatching of a window being edited
 _SHOWN_SHARE = 0.02  # the drift panel shows the profile down to this share of its apex
 
 
@@ -37,27 +40,143 @@ def run_text(trace: Trace) -> str:
     return f"{when}, rep {trace.rep} ({trace.file})"
 
 
-def plot_retention(traces: RetentionTraces, *, title: str | None = None) -> Figure:
+def plot_retention(traces: RetentionTraces, *, title: str | None = None,
+                   edit: tuple[float, float] | None = None,
+                   drift_edit: tuple[float, float] | None = None) -> Figure:
     """Draw a spectrum's retention traces (:class:`RetentionTraces`, the selected run first).
     Returns the figure; nothing is shown or saved. Without traces the figure says why (the
-    traces' ``note``). Every artist drawn for a run has the ``gid`` ``trace:<spectrum id>``."""
+    traces' ``note``). Every artist drawn for a run has the ``gid`` ``trace:<spectrum id>``.
+    ``edit`` (minutes) and ``drift_edit`` (ms) mark a window being edited (hatched, ``gid``
+    ``edited`` and ``drift_edited``)."""
     with_drift = traces.drift is not None
     fig = Figure(figsize=(9.6 if with_drift else 7.2, 3.6), layout="constrained")
     if not traces.traces:
-        ax = fig.add_subplot()
-        ax.set_axis_off()
-        ax.text(0.5, 0.5, f"No elution trace: {traces.note or 'nothing read'}",
-                ha="center", va="center", wrap=True, transform=ax.transAxes)
+        _nothing(fig.add_subplot(), traces)
         return fig
     if with_drift:
         ax, dax = fig.subplots(1, 2, width_ratios=(2.2, 1))
     else:
         ax, dax = fig.add_subplot(), None
+    _trace_panel(ax, traces, edit)
+    if dax is not None:
+        _drift_panel(dax, traces, drift_edit)
+    _heading(fig, traces, title)
+    return fig
+
+
+def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview, *,
+                     edit: tuple[float, float], drift_edit: tuple[float, float] | None = None,
+                     each_k: bool = False, title: str | None = None,
+                     mz_range: tuple[float, float] | None = None,
+                     waiting: str | None = None) -> Figure:
+    """The retention trace with a window being edited (``edit``, minutes; ``drift_edit``, ms),
+    and under it the spectrum as ``results`` hold it (``spectrum_id``) beside the spectrum
+    summed over the new window (``preview``, :class:`hxex.gui.window_edit.Preview`, or None
+    while it is not ready; picked only while its fit runs), each at its K; with ``each_k``
+    the new window's spectrum at every K the run tried instead. ``mz_range`` is the series'
+    m/z axis; ``waiting`` says why there is no preview or fit (default: it is being made)."""
+    from .spectrum import plot_spectrum
+
+    with_drift = traces.drift is not None
+    fitted = preview is not None and preview.results is not None
+    ks = sorted(preview.results.fit.fits) if each_k and fitted else [None]
+    columns = 1 + len(ks)
+    fig = Figure(figsize=(max(9.6, 3.6 * columns), 7.6), layout="constrained")
+    rows = fig.add_gridspec(2, 1, height_ratios=(1, 1.25))
+    if not traces.traces:
+        _nothing(fig.add_subplot(rows[0]), traces)
+    elif with_drift:
+        top = rows[0].subgridspec(1, 2, width_ratios=(2.2, 1))
+        _trace_panel(fig.add_subplot(top[0]), traces, edit)
+        _drift_panel(fig.add_subplot(top[1]), traces, drift_edit)
+    else:
+        _trace_panel(fig.add_subplot(rows[0]), traces, edit)
+    bottom = rows[1].subgridspec(1, columns)
+    axes = [fig.add_subplot(bottom[c]) for c in range(columns)]
+    i = list(results.fit.spectrum_id).index(spectrum_id)
+    k_now = int(results.effective_K[i])
+    plot_spectrum(spectrum_id, results, ax=axes[0], show=("raw", "picked", "fit"), k=k_now,
+                  mz_range=mz_range, legend=False, title=False)
+    window = traces.traces[0].window if traces.traces else None
+    axes[0].set_title(f"now: {_panel_text(spectrum_id, window)}\n"
+                      f"{_k_text(results.fit, i, k_now)}", fontsize="small")
+    if preview is None:
+        axes[1].set_axis_off()
+        axes[1].text(0.5, 0.5, f"No preview: {waiting}" if waiting
+                     else "summing the new window…", ha="center", va="center", wrap=True,
+                     transform=axes[1].transAxes)
+    else:
+        spectrum = preview.spectrum
+        sid = spectrum.spectrum_id
+        new_window = (spectrum.rt_start, spectrum.rt_end)
+        for ax_k, k in zip(axes[1:], ks, strict=True):
+            if not fitted:  # picked, the fit still running
+                plot_spectrum(sid, spectra=preview.spectra, binned=preview.binned, ax=ax_k,
+                              show=("raw", "picked"), mz_range=mz_range, legend=False,
+                              title=False)
+                ax_k.set_title(f"new window: {_panel_text(sid, new_window)}\n"
+                               f"{waiting or 'fitting…'}", fontsize="small")
+                continue
+            k = preview.k if k is None else k
+            plot_spectrum(sid, preview.results, ax=ax_k, show=("raw", "picked", "fit"), k=k,
+                          mz_range=mz_range, legend=False, title=False)
+            text = (f"new window: {_panel_text(sid, new_window)}\n"
+                    f"{_k_text(preview.results.fit, 0, k)}"
+                    + (" (the criterion's choice)" if each_k and k == preview.k else ""))
+            ax_k.set_title(text, fontsize="small")
+        # under the preview's first panel's x axis
+        notes = ("a preview: the results change when the project is run again",
+                 *preview.notes)
+        axes[1].annotate("; ".join(notes), (0, 0), xycoords="axes fraction",
+                         xytext=(0, -30), textcoords="offset points", va="top",
+                         fontsize="x-small", color="#555555", wrap=True)
+    _heading(fig, traces, title)
+    return fig
+
+
+def _panel_text(spectrum_id: str, window: tuple[float, float] | None) -> str:
+    """A spectrum panel's scans and minutes, from its id and window."""
+    m = re.search(r"/scans?(\d+)(?:-(\d+))?$", spectrum_id)
+    scans = ("" if m is None else
+             f"scan {m.group(1)}" if m.group(2) is None else f"scans {m.group(1)}-{m.group(2)}")
+    if window is not None and np.all(np.isfinite(window)):
+        scans += f" ({window[0]:.2f}-{window[1]:.2f} min)"
+    return scans
+
+
+def _k_text(fit, i: int, k: int) -> str:
+    """K and the populations' deuteration (uncorrected, D) of measurement ``i``."""
+    means = np.sort(np.asarray(fit.fits[k].means[i], dtype=float))
+    return f"K = {k}, D " + " / ".join(f"{m:.2f}" for m in means)
+
+
+def _nothing(ax, traces: RetentionTraces) -> None:
+    ax.set_axis_off()
+    ax.text(0.5, 0.5, f"No elution trace: {traces.note or 'nothing read'}",
+            ha="center", va="center", wrap=True, transform=ax.transAxes)
+
+
+def _heading(fig, traces: RetentionTraces, title: str | None) -> None:
+    head = title if title is not None else traces.label
+    if traces.traces and traces.traces[0].drift is not None:
+        drift = traces.traces[0].drift
+        head += f"; drift {drift[0]:.3g}-{drift[1]:.3g} ms"
+    fig.suptitle(head, fontsize="medium")
+    if traces.note and traces.traces:
+        fig.text(0.01, 0.01, traces.note, fontsize="x-small", color="#7a1f1f")
+
+
+def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) -> None:
+    """The selected run's trace over its window (shaded), the others behind it, and the window
+    being edited (hatched)."""
     selected, others = traces.traces[0], traces.traces[1:]
     for t in others:
         ax.plot(t.times, t.intensity, color=OTHER, lw=0.9, zorder=2,
                 gid=f"trace:{t.spectrum_id}")
     ax.axvspan(*selected.window, color=SUMMED, lw=0, zorder=1, gid="summed")
+    if edit is not None:
+        ax.axvspan(*edit, facecolor="none", edgecolor=EDITED, hatch="///", lw=0.8, zorder=3,
+                   gid="edited")
     ax.plot(selected.times, selected.intensity, color=RAW_DARK, lw=1.6, zorder=4,
             marker="o", ms=2.5, gid=f"trace:{selected.spectrum_id}")
     ax.set_xlabel("retention time (min)")
@@ -67,6 +186,9 @@ def plot_retention(traces: RetentionTraces, *, title: str | None = None) -> Figu
                       label=f"this spectrum: {run_text(selected)}"),
                Patch(color=SUMMED, lw=0, label=f"scans summed ({selected.window[0]:.2f}-"
                                                 f"{selected.window[1]:.2f} min)")]
+    if edit is not None:
+        handles.append(Patch(facecolor="none", edgecolor=EDITED, hatch="///", lw=0.8,
+                             label=f"new window ({edit[0]:.2f}-{edit[1]:.2f} min)"))
     if others:
         handles.append(Line2D([], [], color=OTHER, lw=0.9,
                               label=f"the sample's other runs ({len(others)})"))
@@ -74,24 +196,20 @@ def plot_retention(traces: RetentionTraces, *, title: str | None = None) -> Figu
     top = max(float(np.nanmax(t.intensity)) if len(t.intensity) else 0.0
               for t in traces.traces)
     if top > 0:
-        ax.set_ylim(top=top * 1.35)  # room for the legend
-    if dax is not None:
-        _drift_panel(dax, traces)
-    head = title if title is not None else traces.label
-    if selected.drift is not None:
-        head += f"; drift {selected.drift[0]:.3g}-{selected.drift[1]:.3g} ms"
-    fig.suptitle(head, fontsize="medium")
-    if traces.note:
-        fig.text(0.01, 0.01, traces.note, fontsize="x-small", color="#7a1f1f")
-    return fig
+        ax.set_ylim(top=top * (1.45 if edit is not None else 1.35))  # room for the legend
 
 
-def _drift_panel(ax, traces: RetentionTraces) -> None:
-    """The selected spectrum's drift profile over its window, with its drift range shaded."""
+def _drift_panel(ax, traces: RetentionTraces,
+                 edit: tuple[float, float] | None = None) -> None:
+    """The selected spectrum's drift profile over its window, with its drift range shaded (and
+    the range being edited hatched)."""
     p = traces.drift
     drift, y = np.asarray(p.drift, dtype=float), np.asarray(p.intensity, dtype=float)
     if p.range is not None:
         ax.axvspan(*p.range, color=SUMMED, lw=0, zorder=1, gid="drift_range")
+    if edit is not None:
+        ax.axvspan(*edit, facecolor="none", edgecolor=EDITED, hatch="///", lw=0.8, zorder=2,
+                   gid="drift_edited")
     ax.plot(drift, y, color=RAW_DARK, lw=1.4, zorder=3, gid="drift_profile")
     ax.set_xlabel("drift time (ms)")
     ax.set_ylabel("drift profile on the isotope peaks")
@@ -99,7 +217,8 @@ def _drift_panel(ax, traces: RetentionTraces) -> None:
     if len(y) and y.max() > 0:
         shown = drift[y >= _SHOWN_SHARE * y.max()]
         lo, hi = float(shown.min()), float(shown.max())
-        if p.range is not None:
-            lo, hi = min(lo, p.range[0]), max(hi, p.range[1])
+        for shown_range in (p.range, edit):
+            if shown_range is not None:
+                lo, hi = min(lo, shown_range[0]), max(hi, shown_range[1])
         pad = 0.1 * max(hi - lo, 1e-3)
         ax.set_xlim(lo - pad, hi + pad)

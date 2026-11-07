@@ -276,6 +276,8 @@ class ResultsWorkspace(QWidget):
         self._trace_task = Latest(self)
         self._trace_reader = None  # (results, TraceReader) for the results shown
         self._trace_for = None  # (results, spectrum id) the elution tab shows
+        self._shown_traces = None  # (results, spectrum id, data id, traces, title) drawn there
+        self.window_editor = None  # the elution tab's window editing (made with its panel)
         self._drawn = None  # (kind, series, time point or spectrum) the figures show
         self.figures.currentChanged.connect(lambda _i: self._draw_retention())
         self.panels: dict[str, FigurePanel] = {}
@@ -304,6 +306,14 @@ class ResultsWorkspace(QWidget):
                 panel.add_option(self.spectra_page)
             if name == "populations":
                 panel.add_option(self.population_page)
+            if name == "elution":  # its window can be changed there (PLAN Next steps 26)
+                from .window_editor import WindowEditor
+
+                self.window_editor = WindowEditor(panel, self._trace_context,
+                                                  self._draw_plain_trace, self)
+                if self.window is not None:
+                    self.window_editor.message.connect(
+                        lambda text: self.window.statusBar().showMessage(text, 15000))
             if self.window is not None:
                 panel.clicked.connect(
                     lambda gid: self.window.statusBar().showMessage(gid, 5000))
@@ -355,7 +365,7 @@ class ResultsWorkspace(QWidget):
         self.left = left
         self.left_bar.hide()  # worked out as the results were read
         self._selection, self._table_for = (None, None), None  # the table: nothing selected
-        self._trace_for, self._drawn = None, None
+        self._trace_for, self._drawn, self._shown_traces = None, None, None
         if self._trace_reader is not None:  # the files of the results shown before
             self._trace_reader[1].close()
         self._trace_reader = None
@@ -415,7 +425,6 @@ class ResultsWorkspace(QWidget):
     def _draw_retention(self) -> None:
         """The retention tab, when it is in view: the selected spectrum's trace in its run
         (drawn first), then with the sample's other runs of its series behind it."""
-        from ..report.retention import plot_retention
 
         keys = getattr(self, "_tab_keys", ())
         at = self.figures.currentIndex()
@@ -453,18 +462,48 @@ class ResultsWorkspace(QWidget):
             self._trace_for = None  # tried again when next in view
             panel.clear(f"No elution trace: {message}")
 
+        def show(traces, suffix: str = "") -> None:
+            self._shown_traces = (results, sid, data_id, traces, title + suffix)
+            if self.window_editor is not None and self.window_editor.active:
+                self.window_editor.update()
+            else:
+                self._draw_plain_trace()
+
         def others(first) -> None:
-            panel.draw(lambda: plot_retention(
-                first, title=title + ("; reading the sample's other runs…" if same else "")))
+            show(first, "; reading the sample's other runs…" if same else "")
             if same:
                 self._trace_task.submit(
                     lambda: reader.traces([sid, *same], data_id, drift_ranges=drift),
-                    lambda all_: panel.draw(lambda: plot_retention(all_, title=title)),
-                    failed)
+                    show, failed)
 
         panel.clear("reading the elution trace…")
         self._trace_task.submit(lambda: reader.traces([sid], data_id, drift_ranges=drift),
                                 others, failed)
+
+    def _draw_plain_trace(self) -> None:
+        """The elution tab without editing: the traces last read."""
+        from ..report.retention import plot_retention
+
+        if self._shown_traces is None:
+            return
+        *_, traces, title = self._shown_traces
+        self.panel("elution").draw(lambda: plot_retention(traces, title=title))
+
+    def _trace_context(self):
+        """What the elution tab shows, for its window editing (None: nothing yet)."""
+        from ..report.series import series_mz_range
+        from .window_editor import TraceContext
+
+        shown = self._shown_traces
+        if shown is None or shown[0] is not self.results:
+            return None
+        results, sid, data_id, traces, title = shown
+        try:
+            mz_range = series_mz_range(results, data_id)
+        except (ValueError, KeyError):
+            mz_range = None
+        return TraceContext(results, getattr(self, "results_path", None), sid, data_id, traces,
+                            title, mz_range, self._reader())
 
     # --- the data tab ----------------------------------------------------------------------------
 

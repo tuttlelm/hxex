@@ -1225,6 +1225,15 @@ Planned, not built:
      editor). Drift ranges the same way, once `drift_start`, `drift_end` join the row fields that
      keep a peptide's runs one series (`RUN_ROW_FIELDS`; today a per-run drift row would start a
      series of its own).
+     BUILT (HISTORY 317): **Edit window** in the elution tab (owner: a switch, boxes, and a
+     drag across the trace or the drift profile, not grabbing the edges); a preview of the
+     spectrum summed over the new window beside the one the results hold (owner: side by side,
+     with a "fits at each K" switch), picked at once and fitted on the CPU after, each K started
+     from the run's fit of the spectrum (0.6 s against 9 s; the run's settings and noise curve;
+     no bootstrap, population test or controls); Save writes the
+     run's own row (`hxex.gui.window_edit.save_window`, checked as the project reads it),
+     Undo writes the table back. Drift columns joined `RUN_ROW_FIELDS`. Not built: listing the
+     edited rows apart in the Tables view (the table shows them with their `run`).
    - *Applying*: first by a full `hxex run --overwrite` (about 11 minutes on the benchmark);
      later, if that gets in the way, a partial rerun: read again only the changed spectra (with
      each file's stored m/z offset and drift ranges, not measured again), pick and fit their

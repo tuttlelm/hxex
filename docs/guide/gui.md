@@ -202,9 +202,30 @@ range, and a second panel shows the drift profile of the scans summed, with that
 The selected run is drawn first, then the others (about half a second per file, longer the
 first time a large file is opened). The files are read from the project's `data_root`, or,
 for results opened on their own, from the folder that holds them; when a file is missing, the
-tab says so. The tab only shows the traces: to change a window, change the peptide table's
-`rt_start` and `rt_end` (a row with a `run` column sets one run's window; see
-[The peptide table](inputs.md#the-peptide-table)) and run again.
+tab says so.
+
+To change a spectrum's window, switch on **Edit window** in the tab's bar. The window's start
+and end appear as boxes (minutes), with the drift range (milliseconds) for ion-mobility files.
+Type new times, or drag across the trace (or across the drift profile) to set them: while the
+switch is on, dragging sets the window instead of moving the figure. The new window is hatched
+on the trace, and under it the spectrum as the results hold it ("now") is drawn beside the
+spectrum summed over the new window, each with its fit, its K, and its deuteration. The new
+spectrum shows at once; its fit follows within a second (every K, started from the run's fit
+of the spectrum, so it takes only a few steps). **Fits at each K** draws the new window's
+spectrum at every K the run tried. This is a preview: it uses the run's settings and noise
+curve, but not its bootstrap, population test, or controls, and nothing in the results
+changes. Now and then the run's own fit, which tries more starting points, settles on another
+K than the preview did.
+
+**Save to peptide table** writes the window as that run's own row of the project's peptide
+table: a copy of the peptide's row with the `run` column set to the file, and the new
+`rt_start` and `rt_end` (and `drift_start`, `drift_end` for ion-mobility files); saving again
+for the same run changes that row. **Undo** puts the table back as it was before the last
+save. Saving needs the results opened from their project file. The saved windows are used
+when you run the project again (`hxex run --overwrite`); the runs stay replicates of one
+series (see [The peptide table](inputs.md#the-peptide-table)). A spectrum's id names the scans
+it summed, so a spectrum with a new window has a new id after the run, and review decisions
+made for its old id are kept but no longer apply to it: review it again.
 
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes.

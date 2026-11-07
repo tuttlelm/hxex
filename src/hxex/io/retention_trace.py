@@ -29,7 +29,7 @@ import numpy as np
 
 from .. import chem
 from ..picking import PickerConfig, plan_bins
-from ..spectra import split_spectrum_id
+from ..spectra import Spectrum, split_spectrum_id
 from .drift_gate import drift_times, isotope_peaks, scan_profile
 from .mzml import (
     _MZML,
@@ -37,9 +37,12 @@ from .mzml import (
     MzmlConfig,
     MzmlRun,
     MzmlTarget,
+    _gated_kind,
     _run_file_name,
     _target_label,
+    sum_centroid,
     sum_mobility_bins,
+    sum_profile,
     target_scans,
 )
 
@@ -274,6 +277,84 @@ class TraceReader:
                     profile = DriftProfile(found_profile[0], found_profile[1], drift)
         note = "; ".join(missing) if missing else None
         return RetentionTraces(label, traces, profile, note)
+
+
+    def spectrum(self, spectrum_id: str, data_id: int, window: tuple[float, float], *,
+                 drift: tuple[float, float] | None = None) -> Spectrum:
+        """``spectrum_id`` (of series ``data_id``) summed again over another retention
+        ``window`` (minutes, the acquisition clock; the scans inside it, ends included) and,
+        when given, over the ``drift`` range (ms) of scans with ion mobility bins: the scans
+        summed as the reader sums them (:func:`hxex.io.mzml.read_mzml`), within the record's m/z
+        window, with the file's m/z offset taken out. Its id names the new scans. Raises
+        ValueError when the spectrum cannot be summed again (a kinetics run, no scan in the
+        window, an id that names no run) and FileNotFoundError when its file is not found."""
+        with self._lock:
+            return self._spectrum(spectrum_id, data_id, window, drift)
+
+    def _spectrum(self, spectrum_id, data_id, window, drift) -> Spectrum:
+        where = self.locate(spectrum_id, data_id)
+        if where is None:
+            raise ValueError("the spectrum's scans are not named in its id (read by an older "
+                             "version): read the data again")
+        run_i = where[0]
+        run = self.runs[run_i]
+        if not run.fixed:
+            raise ValueError("a kinetics run's spectra are not read by retention windows")
+        start, end = (float(v) for v in window)
+        if not start < end:
+            raise ValueError(f"the window's end ({end:g} min) must be after its start "
+                             f"({start:g} min)")
+        t_i = self.of_series[int(data_id)]
+        target = self.targets[t_i]
+        f = self._file(run_i)
+        table = f.scans()
+        rows = target_scans(table, run, replace(target, rt_window=(60.0 * start, 60.0 * end)),
+                            self.config)
+        rows = rows[np.argsort(table.time[rows], kind="stable")]
+        if not len(rows):
+            raise ValueError(f"no scan of the peptide ion between {start:.3f} and {end:.3f} min")
+        lo, hi = self.windows[t_i]
+        by_index = f.read_scans(table.index[rows], [(lo, hi)], drift=drift is not None)
+        scans = [by_index[int(table.index[r])] for r in rows]
+        parts, gated = [], False
+        for s in scans:  # as hxex.io.mzml._read_run sums them
+            if s.binned is not None and drift is not None:
+                m, y, d = s.binned
+                d = drift_times(d)
+                inside = (m >= lo) & (m <= hi) & (d >= drift[0]) & (d <= drift[1])
+                parts.append(sum_mobility_bins(m[inside], y[inside]))
+                gated = True
+                continue
+            inside = (s.mz >= lo) & (s.mz <= hi)
+            parts.append((s.mz[inside], s.intensity[inside]))
+        if len(parts) == 1:
+            mz, y = parts[0]
+        elif all(s.centroid for s in scans):
+            mz, y = sum_centroid(parts, self.config.sum_ppm)
+        else:
+            mz, y = sum_profile(parts, self.config.gap_factor)
+        order = np.argsort(mz, kind="stable")
+        mz, y = np.asarray(mz, float)[order], np.asarray(y, float)[order]
+        offset = self.offsets[run_i] if _gated_kind(target) else 0.0
+        if offset:
+            mz = mz / (1.0 + offset * 1e-6)
+        first, last = int(table.index[rows[0]]), int(table.index[rows[-1]])
+        scan_text = f"scan{first}" if first == last else f"scans{first}-{last}"
+        new_id = spectrum_id[:_SCANS.search(spectrum_id).start()] + "/" + scan_text
+        times = np.array([s.time for s in scans], dtype=float)
+        weight = np.array([float(np.sum(p[1])) for p in parts])
+        rt = float(np.average(times, weights=weight) if weight.sum() > 0 else times.mean())
+        resolutions = np.array([s.resolution for s in scans], dtype=float)
+        resolutions = resolutions[np.isfinite(resolutions)]
+        return Spectrum(
+            mz, y, replace(target.entry, sample=run.sample), run.spectrum_time, run.rep,
+            data_id=int(data_id), label=f"{_run_file_name(run.path)} {scan_text}",
+            spectrum_id=new_id, rt=rt / 60.0,
+            resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
+            resolving_power_mz=float(getattr(f, "resolving_power_mz", np.nan)),
+            role=run.role, rt_start=float(times.min()) / 60.0, rt_end=float(times.max()) / 60.0,
+            drift_start=drift[0] if gated else np.nan, drift_end=drift[1] if gated else np.nan,
+            mz_calibration_ppm=offset if offset else np.nan)
 
 
 def _at_bins(scan, pred: np.ndarray, half: np.ndarray,

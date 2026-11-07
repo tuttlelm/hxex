@@ -132,3 +132,32 @@ def test_the_figure_draws_every_run_or_says_why_not(lc):
     assert labels[-1] == "the sample's other runs (1)"
     empty = plot_retention(dataclasses.replace(traces, traces=[], note="un2.mzML not found"))
     assert "No elution trace: un2.mzML not found" in empty.axes[0].texts[0].get_text()
+
+
+def test_a_spectrum_summed_again_over_its_own_window_is_the_same(lc):
+    spectra, _ = lc
+    reader = TraceReader(spectra.source)
+    for i, sid in enumerate(spectra.spectrum_id):
+        window = (spectra.rt_start[i], spectra.rt_end[i])
+        again = reader.spectrum(sid, int(spectra.data_id[i]), window)
+        assert again.spectrum_id == sid and again.rep == spectra.rep[i]
+        np.testing.assert_allclose(again.mz, spectra.spectrum(i)[0])
+        np.testing.assert_allclose(again.intensity, spectra.spectrum(i)[1])
+        assert (again.rt_start, again.rt_end) == pytest.approx(window)
+
+
+def test_another_window_names_its_scans_and_sums_them(lc):
+    spectra, _ = lc
+    reader = TraceReader(spectra.source)
+    i = list(spectra.spectrum_id).index(_ids(spectra, "un1.mzML")[0])
+    sid, data_id = spectra.spectrum_id[i], int(spectra.data_id[i])
+    start, end = spectra.rt_start[i], spectra.rt_end[i]
+    narrow = reader.spectrum(sid, data_id, (start + 0.02, end - 0.02))
+    assert narrow.spectrum_id != sid and narrow.spectrum_id.split("/scans")[0] == \
+        sid.split("/scans")[0]
+    assert start < narrow.rt_start and narrow.rt_end < end
+    assert narrow.intensity.sum() < spectra.spectrum(i)[1].sum()
+    with pytest.raises(ValueError, match="no scan"):
+        reader.spectrum(sid, data_id, (2.0, 2.1))  # after the run's last scan (1 min)
+    with pytest.raises(ValueError, match="after its start"):
+        reader.spectrum(sid, data_id, (end, start))
