@@ -7878,3 +7878,41 @@ CSVs or mzML if wanted.
     figure's curves use the same fit. Ladder rates are opt-in (`fit_rates`), so no default
     output changes. Scratch (private): fragment_cut_fit/weighted_decay (README, rates.py,
     compare.py; built_* = the built code, same counts as the scratch w0.05).
+
+314. **Fitting fragments through the per-scan cut by default; flag below_noise (2026-11-07;
+    PLAN Next steps 24).** The owner: `scan_cut` the default for reduced profile fragment data,
+    a flag for spectra below 1 x the noise, and a clearer warning. `[input.scans] scan_cut` is
+    now `"auto"` (default), `true` or `false`: `"auto"` records the scans' noise and shares for
+    the fragment spectra of each file whose profile scans are reduced (`profile_record`) and
+    that records its scans' noise (`records_noise`: three MSn scans looked at; Thermo raw, or
+    mzML converted with `-N`); a reduced file without noise is read as before and counted in
+    the warning; `true` keeps refusing such a file; a record written before the setting reads
+    as `false`. The read record gains `scan_cut` (`files` cut, `no_noise`). The reduced-profile
+    warning (`hxex run`, `hxex check`, `hxex info`) now ends with what hxex does: "hxex fits the
+    fragment spectra of the 17 reduced files through this cut ([input.scans] scan_cut)" (or "N
+    of the 17 reduced files"), "N of the 17 reduced files record no noise, so the fragment
+    spectra of those files are fitted without allowing for it (read the Thermo raw files, or
+    convert them with ThermoRawFileParser's -N)", "peptide (MS1) spectra are fitted without
+    allowing for it" (when MS1 scans are reduced), "hxex fits without allowing for this cut
+    ([input.scans] scan_cut = false)", or "hxex fits peptide (MS1) spectra without allowing for
+    this cut" (no fragments read); it said "hxex does not correct for this" even with the cut on.
+    "Correct" is left out of the new wording: in hxex it means the back-exchange correction. New quality statistic `signal_to_noise`
+    (spectra.csv, fragment spectra with the scans' record): the largest over bins and scans of
+    the bin's reading times the scan's share of the signal over that scan's noise there; flag
+    `below_noise` below `[run.quality] min_signal_to_noise` (4; flag only; first built at 1 x,
+    the owner chose 4: HISTORY 308's limit below which no fit recovers the deuteration). On the
+    private targeted Orbitrap dataset (bundle with `scan_cut`), 38.3 % of the labelled and fully
+    deuterated fragment spectra are below 4 (23.0 % below 1, 17.8 % below 0.5), undeuterated
+    17.2 % below 1; fits through the cut by the dimmer fragment's value: closure (c-1 + z-dot
+    minus the MS1 parent) median -0.08 (robust sd 1.52) below 1 x, -0.37 (0.74) at 1-4 x, -0.11
+    (0.31) at 4-16 x, -0.06 (0.10) above; MS2 - MS3 robust sd 1.01 / 0.50 / 0.29 / 0.19
+    (fragment_cut_fit/centroid_region); against the scratch measure from the raw scans (largest 5-scan mean of the apex
+    position's reading over its noise; fragment_cut_fit/brightness_rule) median ratio 1.02,
+    log correlation 0.87, the same side of 1 for 90 %. Also tested there (scratch, not built):
+    the uptake as a centroid over the bins the fit picks (above 1 % of its curve) is about
+    twice as far off in closure as the fit through the cut at every brightness (1-4 x -0.61,
+    4-16 x -0.24, above -0.11; the deleted peaks pull a centroid low as they pull the plain
+    fit), a little less scattered below 4 x, the same above; over every bin it reads +1.8 D in
+    dim spectra (interference).
+    Projects reading reduced fragment data with noise now fit their fragments at K = 1 through
+    the cut unless `scan_cut = false`; others read the same.

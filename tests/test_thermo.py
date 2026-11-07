@@ -240,7 +240,8 @@ def test_reduced_profile_scans_are_noticed(tmp_path, monkeypatch, caplog):
         plain = profile_record(f)
     assert plain["reduced"] is False and set(plain["levels"]) == {"1", "2"}
     assert plain["levels"]["1"]["zero_share"] == 0 and "cut" not in plain["levels"]["1"]
-    assert reduced_profile_text([plain]) is None and _reduced_profile_info([plain]) is None
+    assert reduced_profile_text([plain]) is None
+    assert _reduced_profile_info({"profile": [plain]}) is None
     raw = tmp_path / "run.raw"
     raw.write_bytes(b"not really a raw file")
     monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: NoiseReader(
@@ -277,6 +278,72 @@ def test_reduced_profile_scans_are_noticed(tmp_path, monkeypatch, caplog):
     assert [r["fourier_transform"] for r in d.source["profile"]] == [None, False]
     assert d.source["profile"][0]["levels"]["1"]["zero_share"] == 0.667  # recorded all the same
     assert sum("reduced profile scans" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_scan_cut_auto_acts_on_reduced_files_that_record_noise(tmp_path, monkeypatch, caplog):
+    """[input.scans] scan_cut = "auto" (the default): fragment spectra of a reduced profile file
+    that records its scans' noise carry the scans' record; a reduced mzML file without noise is
+    read without it and named in the warning; full profile files and scan_cut = false record
+    nothing; the read record lists the files cut; hxex info says what was done."""
+    import dataclasses
+
+    from hxex.cli import _reduced_profile_info
+    from hxex.fragments import fragment_targets
+    from hxex.io.mzml import MzmlConfig
+    from test_mzml import _with_rt, fragment_lc_run
+
+    parent = dataclasses.replace(_with_rt(ENTRY, 30.0 / 60), extra={
+        **dict(_with_rt(ENTRY, 30.0 / 60).extra), "rt_start": str(20.0 / 60),
+        "rt_end": str(40.0 / 60)})
+    frags = fragment_targets(parent, "c:2-4:1", activation="ETD", rt_window=(20.0, 40.0))
+    targets = [MzmlTarget(parent, rt_window=(20.0, 40.0))] + frags
+    lc = fragment_lc_run(frags, other=None)
+    scans = [{**{k: v for k, v in s.items() if k != "precursors"}, "time": s["time"] / 60,
+              **({"precursor": s["precursors"][0][:3],
+                  "filter": f"FTMS + p ESI d Full ms2 {s['precursors'][0][0]:.4f}@etd20.00"}
+                 if "precursors" in s else {})} for s in lc]
+
+    class Noise500(NoiseReader):
+        noise_level = 500.0
+
+    raw = tmp_path / "run.raw"
+    raw.write_bytes(b"not really a raw file")
+    runs = [MzmlRun(path=str(raw), sample="S", time=60.0)]
+    config = MzmlConfig(find_fragment_peak=True)
+    assert config.scan_cut == "auto"
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: Noise500(
+        _reduced(scans)))
+    with caplog.at_level("WARNING", logger="hxex.io.mzml"):
+        read = read_thermo(runs, targets, project="p", config=config, thermo_dir="dlls")
+    is_frag = np.array(["ion_type" in m for m in read.modification])
+    assert all(r is not None for r in read.scans[is_frag])
+    assert all(r is None for r in read.scans[~is_frag])
+    assert read.source["scan_cut"] == {"files": ["run.raw"], "no_noise": []}
+    text = next(r.getMessage() for r in caplog.records if "reduced profile" in r.getMessage())
+    assert "fits the fragment spectra of the reduced file through this cut" in text
+    assert "fragment spectra without allowing" not in text
+    assert "through this cut" in _reduced_profile_info(read.source)
+    off = read_thermo(runs, targets, project="p", thermo_dir="dlls",
+                      config=MzmlConfig(find_fragment_peak=True, scan_cut=False))
+    assert all(r is None for r in off.scans) and off.source["scan_cut"]["files"] == []
+    assert "scan_cut = false" in _reduced_profile_info(off.source)
+    # full profile scans: nothing to correct, nothing recorded
+    monkeypatch.setattr(thermo, "_open_reader", lambda path, thermo_dir: Noise500(scans))
+    full = read_thermo(runs, targets, project="p", config=config, thermo_dir="dlls")
+    assert all(r is None for r in full.scans) and full.source["scan_cut"]["files"] == []
+    # a reduced Orbitrap mzML without -N: read without the record, named in the warning
+    mzml = _with_analyser(write_mzml(tmp_path / "ot.mzML", _reduced(lc)), "MS:1000484",
+                          "orbitrap")
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="hxex.io.mzml"):
+        plain = read_mzml([MzmlRun(path=str(mzml), sample="S", time=60.0)], targets,
+                          project="p", config=config)
+    assert all(r is None for r in plain.scans)
+    assert plain.source["scan_cut"] == {"files": [], "no_noise": ["ot.mzML"]}
+    text = next(r.getMessage() for r in caplog.records if "reduced profile" in r.getMessage())
+    assert ("the reduced file records no noise, so the fragment spectra of those files are "
+            "fitted without allowing for it") in text
+    assert "ThermoRawFileParser's -N" in text
 
 
 def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeypatch, capsys):

@@ -811,7 +811,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         scans = MzmlConfig.from_dict(_merge(MzmlConfig().to_dict(), scans, "input.scans"))
     except (TypeError, ValueError) as exc:
         raise ProjectError(f"[input.scans]: {exc}") from exc
-    if scans.scan_cut and not fragments:
+    if scans.scan_cut is True and not fragments:
         log.warning("[input.scans] scan_cut acts on fragment ions only, and this project reads "
                     "none ([[input.fragments]])")
     return InputSettings(
@@ -1568,8 +1568,9 @@ _COMMENTS: dict[str, str] = {
                                        "many peak widths at half maximum (wider than peak_width:"
                                        " beside the peak, reduced profile scans add no noise)",
     "input.scans.scan_cut": "fragments: record each scan's noise and share of the signal and fit "
-                            "through the instrument's per-scan cut (reduced profile; K = 1 "
-                            "only; Thermo raw, or mzML converted with -N)",
+                            "through the instrument's per-scan cut (K = 1 only; needs Thermo "
+                            "raw, or mzML converted with -N); \"auto\": for the files whose "
+                            "profile scans are reduced and record their noise",
     "input.scans.peak_search": "s either side of a peptide's rt that its peak is looked for in",
     "input.scans.peak_smoothing": "s: the chromatogram's running mean (false: half the run's "
                                   "typical peak width, measured)",
@@ -1803,6 +1804,10 @@ _COMMENTS: dict[str, str] = {
     "run.quality.max_ion_overlap": "overlapping_ion: another ion of the same fragment scans puts "
                                    "at least this share of a fragment's picked intensity on its "
                                    "bins (false: off)",
+    "run.quality.min_signal_to_noise": "below_noise: a fragment spectrum fitted through the "
+                                       "per-scan cut whose tallest peak, in its largest scan, is "
+                                       "below this times that scan's recorded noise: too dim for "
+                                       "the fit to recover its deuteration (false: off)",
     "run.quality.tails_low_ratio": "tails_low: an undeuterated control whose tail peaks (1-10 % "
                                    "of the top) read below this times natural abundance "
                                    "(false: off)",

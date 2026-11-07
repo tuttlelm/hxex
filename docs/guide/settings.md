@@ -170,7 +170,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `find_peak` | true/false | `false` | LC-MS runs with a fixed time: find each peptide's elution peak near its rt (peptide table, minutes) and sum that peak's scans; rows with rt_start, rt_end keep them |
 | `find_fragment_peak` | true/false | `false` | LC-MS runs with a fixed time: find each fragment channel's elution peak from its whole ladder near the parent's rt (the parent's window searched too) and sum that peak's scans; flags elution_cut |
 | `fragment_peak_width` | number | `1.0` | with find_fragment_peak: the window is the apex +- this many peak widths at half maximum (wider than peak_width: beside the peak, reduced profile scans add no noise) |
-| `scan_cut` | true/false | `false` | fragments: record each scan's noise and share of the signal and fit through the instrument's per-scan cut (reduced profile; K = 1 only; Thermo raw, or mzML converted with -N) |
+| `scan_cut` | text or true/false | `"auto"` | fragments: record each scan's noise and share of the signal and fit through the instrument's per-scan cut (K = 1 only; needs Thermo raw, or mzML converted with -N); "auto": for the files whose profile scans are reduced and record their noise |
 | `peak_search` | number | `30.0` | s either side of a peptide's rt that its peak is looked for in |
 | `peak_smoothing` | number | unset | s: the chromatogram's running mean (false: half the run's typical peak width, measured) |
 | `peak_width` | number | `0.5` | the window: the apex +- this many peak widths at half maximum |
@@ -360,6 +360,7 @@ Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, no
 | `tails_low_ratio` | number | `0.7` | tails_low: an undeuterated control whose tail peaks (1-10 % of the top) read below this times natural abundance (false: off) |
 | `max_precursor_offset` | number | `1.0` | precursor_off: a precursor ion in the fragment scans (unreacted) reading further than this (D) from its parent's MS1 spectrum in the same file (false: off) |
 | `max_ion_overlap` | number | `0.2` | overlapping_ion: another ion of the same fragment scans puts at least this share of a fragment's picked intensity on its bins (false: off) |
+| `min_signal_to_noise` | number | `4.0` | below_noise: a fragment spectrum fitted through the per-scan cut whose tallest peak, in its largest scan, is below this times that scan's recorded noise: too dim for the fit to recover its deuteration (false: off) |
 
 ## `[run.registry]`
 

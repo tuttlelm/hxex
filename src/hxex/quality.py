@@ -65,6 +65,18 @@ signal never reach the fit and are handled before it.
   of one ladder whose masses differ by close to whole isotope steps (a c and a z ion lacking
   different end residues), two charges of one ion type, and the bright precursor at 3+ or 4+.
   Ions that are not read (a, b and y ions) are not assessed.
+- ``below_noise``: a fragment spectrum fitted through the instrument's per-scan cut
+  (``[input.scans] scan_cut``) whose tallest peak, in the scan where it is largest, is below
+  ``min_signal_to_noise`` (4) times the noise that scan recorded there: in reduced profile scans
+  so many of its peaks were deleted scan by scan that even the cut-aware fit cannot recover its
+  deuteration (HISTORY 308: below about 4 x at the elution's top, no fit does). The statistic is
+  ``signal_to_noise`` (the tallest bin's reading times its scan's share of the signal, over that
+  scan's noise there, at the scan where this is largest; 0 for a spectrum with nothing read).
+  Measured on a targeted dataset (2026-11-07), fits through the cut: 38 % of the labelled and
+  fully deuterated fragment spectra below 4 x the noise (23 % below 1); the closure (c + z - MS1
+  parent) missed by a median -0.37 D at 1-4 x and -0.11 D at 4-16 x, and MS2 and MS3 readings of
+  one fragment scattered 0.50 D at 1-4 x, 0.29 D at 4-16 x and 0.19 D above. Not assessed (NaN)
+  without the scans' record.
 - ``elution_cut``: a fragment spectrum whose elution peak, found per run (``[input.scans]
   find_fragment_peak``), reaches the first or last scan the instrument recorded for its
   precursor: the scheduled acquisition cut the peak (retention moved in that run), so part of
@@ -117,7 +129,8 @@ from .spectra import UNDEUT, time_point
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
-              "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion")
+              "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion",
+              "below_noise")
 
 
 @dataclass(frozen=True)
@@ -140,6 +153,8 @@ class QualityConfig:
       fragment scans reads further than this from its parent's MS1 spectrum; None: off.
     - ``max_ion_overlap``: ``overlapping_ion`` when another ion of the same scans puts at least
       this share of a fragment's picked intensity on its bins; None: off.
+    - ``min_signal_to_noise``: ``below_noise`` when a fragment spectrum fitted through the
+      per-scan cut has its tallest peak below this times its scan's recorded noise; None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -152,6 +167,7 @@ class QualityConfig:
     tails_low_ratio: float | None = 0.7
     max_precursor_offset: float | None = 1.0
     max_ion_overlap: float | None = 0.2
+    min_signal_to_noise: float | None = 4.0
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -172,6 +188,8 @@ class QualityConfig:
             raise ValueError("max_ion_overlap must be between 0 and 1 (or None to skip the screen)")
         if self.tails_low_ratio is not None and not 0 < self.tails_low_ratio < 1:
             raise ValueError("tails_low_ratio must be between 0 and 1 (or None to skip the screen)")
+        if self.min_signal_to_noise is not None and not self.min_signal_to_noise > 0:
+            raise ValueError("min_signal_to_noise must be > 0 (or None to skip the screen)")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -227,15 +245,17 @@ class QualityFlags:
     ion_overlap: np.ndarray | None = None
     ion_overlap_with: np.ndarray | None = None
     overlapping_ion: np.ndarray | None = None
+    signal_to_noise: np.ndarray | None = None
+    below_noise: np.ndarray | None = None
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag
-                     "precursor_offset", "ion_overlap"):
+                     "precursor_offset", "ion_overlap", "signal_to_noise"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
                      "rt_found", "undeut_high", "drift_unclear", "elution_cut",
-                     "precursor_off", "overlapping_ion"):
+                     "precursor_off", "overlapping_ion", "below_noise"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
         if self.ion_overlap_with is None:
@@ -498,6 +518,9 @@ def assess_quality(
         raise ValueError("ion_overlap must have one value per measurement")
     overlapping = (np.zeros(m, dtype=bool) if config.max_ion_overlap is None
                    else np.nan_to_num(overlap) >= config.max_ion_overlap)
+    snr = signal_to_noise(meas)
+    below = (np.zeros(m, dtype=bool) if config.min_signal_to_noise is None
+             else np.nan_to_num(snr, nan=np.inf) < config.min_signal_to_noise)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -518,9 +541,31 @@ def assess_quality(
         undeut_high=undeut_high(fit, controls),
         precursor_offset=offset, precursor_off=precursor_off,
         ion_overlap=overlap, ion_overlap_with=np.where(overlapping, overlap_with, ""),
-        overlapping_ion=overlapping,
+        overlapping_ion=overlapping, signal_to_noise=snr, below_noise=below,
         **brightness,
     )
+
+
+def signal_to_noise(meas: Measurements) -> np.ndarray:
+    """Every measurement's ``signal_to_noise`` (``below_noise``): for a spectrum with its scans'
+    record (fitted through the per-scan cut), the largest over its bins and scans of the bin's
+    reading times the scan's share of the signal over the noise that scan recorded at the bin
+    (the size of the peak in that scan against the instrument's threshold; 0 when nothing was
+    read); NaN without the record."""
+    out = np.full(len(meas.bins), np.nan)
+    if meas.scan_cut is None:
+        return out
+    for i, cut in enumerate(meas.scan_cut):
+        if cut is None:
+            continue
+        obs = np.clip(np.asarray(meas.observed[i], dtype=float), 0.0, None)
+        w = np.asarray(cut.weights, dtype=float)
+        noise = np.asarray(cut.noise, dtype=float).reshape(len(obs), len(w))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(noise > 0, obs[:, None] * w[None, :] / noise, np.nan)
+        out[i] = 0.0 if not obs.any() else (float(np.nanmax(ratio)) if np.isfinite(ratio).any()
+                                            else np.nan)
+    return out
 
 
 def precursor_offsets(fit: FitResult, source, labels) -> np.ndarray:

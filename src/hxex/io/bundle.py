@@ -349,7 +349,7 @@ def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
     for name in ("deviance", "deviance_rel", "misfit", "misfit_rel", "intensity",
                  "intensity_rel", "mz_offset", "envelope_offset", "precursor_offset",
-                 "ion_overlap"):
+                 "ion_overlap", "signal_to_noise"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
     cols["ion_overlap_with"] = _str(q.ion_overlap_with)
     for name in FLAG_NAMES:
@@ -377,10 +377,12 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         # written before the brightness flags or the retention search: False
         **{name: (b(name) if name in table.column_names else None)
            for name in ("saturated", "tails_low", "bright", "rt_found", "drift_unclear",
-                        "elution_cut", "precursor_off", "overlapping_ion")},
+                        "elution_cut", "precursor_off", "overlapping_ion", "below_noise")},
         precursor_offset=(f("precursor_offset") if "precursor_offset" in table.column_names
                           else None),
         ion_overlap=f("ion_overlap") if "ion_overlap" in table.column_names else None,
+        signal_to_noise=(f("signal_to_noise") if "signal_to_noise" in table.column_names
+                         else None),
         ion_overlap_with=(np.asarray(table.column("ion_overlap_with").to_pylist(), dtype=object)
                           if "ion_overlap_with" in table.column_names else None),
         # written before the m/z check: not assessed

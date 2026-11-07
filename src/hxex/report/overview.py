@@ -72,6 +72,7 @@ QUALITY_LABELS = {
     "elution_cut": "elution cut",
     "precursor_off": "precursor off",
     "overlapping_ion": "overlapping ion",
+    "below_noise": "below the noise",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

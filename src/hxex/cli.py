@@ -918,9 +918,11 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
     from .io.entries import SCAN_REQUIRED
     from .io.mzml import (
         MzmlFile,
+        _has_fragments,
         _target_label,
         instrument_record,
         profile_record,
+        records_noise,
         reduced_profile_text,
         scan_index_rows,
         target_applies,
@@ -942,6 +944,8 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
     targets = scan_targets(project)
     _say(f"{'targets':14s} {len(targets)} from {inp.peptides}")
     profiles = []
+    cut = {"files": [], "no_noise": []}  # what scan_cut would do, as the read decides it
+    fragments = _has_fragments(targets)
     for run in inp.runs:
         path = Path(run.path)
         path = path if path.is_absolute() else inp.data_root / path
@@ -960,6 +964,10 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
             counts = [len(target_scans(table, run, t, inp.scans)) for t in mine]
             instrument = instrument_record(f)
             profiles.append(profile_record(f))
+            if fragments and (inp.scans.scan_cut is True or (
+                    inp.scans.scan_cut == "auto" and (profiles[-1] or {}).get("reduced"))):
+                cut["files" if inp.scans.scan_cut is True or records_noise(f)
+                    else "no_noise"].append(path.name)
             if index_rows is not None and _has_rules(project):
                 index_rows += scan_index_rows(table, path.name, run, targets,
                                               project=project.project, config=inp.scans)
@@ -981,7 +989,8 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
                             "from every run when its sample is empty)")
         elif len(none) == len(mine):
             problems.append(f"run {path.name}: no target has scans")
-    if text := reduced_profile_text(profiles):
+    if text := reduced_profile_text(profiles, cut=cut, setting=inp.scans.scan_cut,
+                                    fragments=fragments):
         _say(f"{'profile':14s} warning: {text}")
     return problems
 
@@ -1695,8 +1704,8 @@ def cmd_info(args) -> int:
             ("noise", _noise_curve_text(fit)),
             ("times", "seconds" if source.get("time_scale", "seconds") == "seconds"
              else "order: the times only order the points"),
-            *([("profile", _reduced_profile_info(source["profile"]))]
-              if _reduced_profile_info(source.get("profile")) else []),
+            *([("profile", _reduced_profile_info(source))]
+              if _reduced_profile_info(source) else []),
             *([("m/z calibration", _mz_calibration_info(source["mz_calibration"]))]
               if source.get("mz_calibration") else []),
             ("quality flags", "yes" if b.has("quality") else "no"),
@@ -1745,12 +1754,19 @@ def _mz_calibration_info(records) -> str:
                    else "")
 
 
-def _reduced_profile_info(records) -> str | None:
-    """``hxex info``'s line on the reduced profile scans of the files read (none recorded:
-    results read before the check existed, or formats without scans)."""
-    from .io.mzml import reduced_profile_text
+def _reduced_profile_info(source) -> str | None:
+    """``hxex info``'s line on the reduced profile scans of the files read (a read record,
+    ``spectra_source``; none recorded: results read before the check existed, or formats without
+    scans) and what the read did about them."""
+    from .io.mzml import MzmlConfig, MzmlTarget, _has_fragments, reduced_profile_text
 
-    return reduced_profile_text(records) if records else None
+    records = (source or {}).get("profile")
+    if not records:
+        return None
+    setting = MzmlConfig.from_dict(source.get("config") or {}).scan_cut
+    fragments = _has_fragments([MzmlTarget.from_dict(t) for t in source.get("targets", ())])
+    return reduced_profile_text(records, cut=source.get("scan_cut"), setting=setting,
+                                fragments=fragments)
 
 
 def _project_review_rows(project, path: Path) -> list[tuple[str, str]]:

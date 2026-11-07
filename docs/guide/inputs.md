@@ -856,9 +856,11 @@ the fits read the missing heavy side as a second population more often.
 *hxex* notices reduced profile scans when it reads the files: about half their points are
 exactly 0. `hxex check` and `hxex run` warn once for the dataset, and `hxex info` repeats it.
 For Thermo raw files the warning also gives the weakest peaks kept, as a multiple of the noise
-the files record. *hxex* does not correct for the lost signal. To reduce it when you acquire
-the data, more ions per scan (a higher AGC target or a longer maximum injection time) lifts weak
-peaks above the threshold; whether an instrument can store full profile scans is a question for
+the files record. The warning ends with what *hxex* does about it: fragment ions are fitted
+through the cut when the files record their scans' noise (next section); peptides read in MS1
+scans are fitted without allowing for it. To reduce the lost signal when you acquire the data,
+more ions per scan (a higher AGC target or a longer maximum injection time) lifts weak peaks
+above the threshold; whether an instrument can store full profile scans is a question for
 its maker. Only Orbitrap data are checked: Thermo raw files' Orbitrap scans, and mzML files
 that name an Orbitrap (or another Fourier-transform) analyser. Other instruments leave zeros
 too, such as a Q-TOF's empty channels where no ion arrived, but those are not this threshold. An
@@ -866,14 +868,8 @@ mzML file records no noise, so its warning gives no multiple.
 
 #### Fitting fragment ions through the cut
 
-For fragment ions, *hxex* can allow for the lost signal instead of only warning about it. With
-
-```toml
-[input.scans]
-scan_cut = true
-```
-
-*hxex* keeps, for every fragment spectrum, the noise each of its scans recorded and how much of
+For fragment ions, *hxex* allows for the lost signal. When a file's profile scans are reduced
+and the file records each scan's noise, *hxex* keeps, for every fragment spectrum, the noise each of its scans recorded and how much of
 the signal each scan holds (from the elution of the fragment's whole ladder, as
 `find_fragment_peak` measures it). The fit then compares the data with what the instrument would
 have kept of the fitted envelope: each predicted peak is split over the scans, every scan loses
@@ -893,13 +889,33 @@ Things to know:
   in MS1 scans are fitted as before.
 - It needs the noise each scan recorded. Thermo raw files have it (`format = "thermo"`). An
   mzML file has it only when it was converted with ThermoRawFileParser's `-N` option, which
-  writes each scan's noise; without it, `hxex run` stops and says so.
+  writes each scan's noise. A reduced file without it is read as before, and the warning names
+  how many such files there are: convert them again with `-N`, or read the raw files.
+- The setting is `[input.scans] scan_cut`. `"auto"` (the default) does the above for the files
+  whose scans are reduced and record their noise. `true` fits every file's fragments through
+  the cut and stops at a file that records no noise. `false` never does:
+
+  ```toml
+  [input.scans]
+  scan_cut = false
+  ```
+
 - The fitted curve drawn over a fragment spectrum is the expected reading, so it follows the
   data down where weak peaks were lost.
 - The results take more room (the noise of every scan at every peak): on the dataset above,
   about twice as much.
 - How much of a peak the instrument keeps was measured on one Orbitrap's undeuterated fragment
   ions. Below about 4 times the noise at the elution's top, no fit recovers the deuteration.
+- Fragment spectra whose tallest peak, in the scan where it is largest, is below 4 times the
+  noise that scan recorded are flagged `below_noise`, and `spectra.csv` gives that size as
+  `signal_to_noise` (`[run.quality] min_signal_to_noise`, 4 by default). So many of such a
+  spectrum's peaks were deleted scan by scan that even the fit through the cut cannot recover
+  its deuteration. On the dataset above, 38 % of the labelled and fully deuterated fragment
+  spectra were below 4 times the noise (23 % below the noise itself). Between 1 and 4 times,
+  a c ion and its z ion still fell 0.37 deuterons short of their parent, against 0.11 between
+  4 and 16 times; the two readings of one fragment (with and without the extra activation step)
+  scattered by 0.50 deuterons, against 0.29. The flag only marks them; nothing is left out. To
+  mark only the nearly empty spectra, set `min_signal_to_noise = 1`.
 
 ### What `hxex check` shows for scan formats
 

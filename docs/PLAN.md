@@ -1112,7 +1112,9 @@ Planned, not built:
    2026-11-05: needed to fit weak cut data reliably; design to be evaluated before building).
    FIRST SCOPE BUILT 2026-11-06 (HISTORY 308: `[input.scans] scan_cut`, fragments at K = 1,
    Thermo raw files and mzML converted with `-N`; the response curve measured, not the Gaussian
-   hard cut below; variance unchanged). Next: the mixture weights below, then MS1 peptides.
+   hard cut below; variance unchanged). DEFAULT 2026-11-07 (owner; HISTORY 314): `"auto"`
+   for the reduced files that record their noise; flag `below_noise` (< 4 x noise). Next: the
+   mixture weights below, then MS1 peptides.
    - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
      below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
      scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high

@@ -118,3 +118,37 @@ def test_without_a_cut_the_batch_is_unchanged():
     pred = torch.full((3, 2), 7.0, dtype=mixed.scan_c.dtype)
     read = cut_reading(pred, mixed.scan_w, mixed.scan_c)
     assert read[0, 0] == pytest.approx(7.0)  # the measurement without a cut reads as predicted
+
+
+def test_spectra_below_the_scans_noise_are_flagged():
+    """below_noise: a spectrum fitted through the cut whose tallest peak, in its largest scan,
+    is below 4 times the scan's recorded noise (the default); signal_to_noise is that size
+    (about the apex given to the simulation; 0 when nothing was read); not assessed without the
+    scans' record; kept by the bundle."""
+    from hxex.io.bundle import _quality_table, _read_quality
+    from hxex.quality import QualityConfig, assess_quality, signal_to_noise
+
+    rng = np.random.default_rng(5)
+    rows = [(apex, y, cut) for apex in (0.8, 3.0, 30.0) for y, cut in _cut_set(rng, 0.3, apex, 6)
+            if y.any()]  # a spectrum with nothing read is never fitted
+    data = Measurements.from_arrays(
+        [np.arange(len(r[1]), dtype=float) for r in rows], [r[1] for r in rows],
+        [SHAPE] * len(rows), [1.2 * SITES] * len(rows))
+    cut = dataclasses.replace(data, scan_cut=tuple(r[2] for r in rows))
+    fit = fit_models(cut, FitConfig(k_min=1, k_max=1, n_restarts=1))
+    q = assess_quality(cut, fit)
+    apex = np.array([r[0] for r in rows])
+    bright = apex == 30.0
+    np.testing.assert_allclose(q.signal_to_noise[bright], 30.0, rtol=0.2)
+    assert (apex == 0.8).sum() >= 2
+    np.testing.assert_array_equal(q.below_noise, apex < 4)  # the default: 4 x the noise
+    at_one = assess_quality(cut, fit, QualityConfig(min_signal_to_noise=1.0))
+    np.testing.assert_array_equal(at_one.below_noise, apex < 1)
+    empty = dataclasses.replace(cut, observed=(np.zeros_like(rows[0][1]),) + cut.observed[1:])
+    assert signal_to_noise(empty)[0] == 0.0
+    assert not assess_quality(cut, fit, QualityConfig(min_signal_to_noise=None)).below_noise.any()
+    plain = assess_quality(data, fit_models(data, FitConfig(k_min=1, k_max=1, n_restarts=1)))
+    assert np.isnan(plain.signal_to_noise).all() and not plain.below_noise.any()
+    back = _read_quality(_quality_table(q), q.config.__dict__, q.spectrum_id)
+    np.testing.assert_array_equal(back.below_noise, q.below_noise)
+    np.testing.assert_allclose(back.signal_to_noise, q.signal_to_noise)

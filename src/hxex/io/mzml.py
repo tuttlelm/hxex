@@ -1117,7 +1117,12 @@ class MzmlConfig:
       ``find_fragment_peak``), so that the fit passes its prediction through the instrument's
       per-scan cut (reduced profile scans: the weak peaks of each scan deleted; PLAN Next steps
       24). Such spectra are fitted at K = 1 only. Needs the noise the scans recorded: Thermo raw
-      files, or mzML files converted from them with ThermoRawFileParser's ``-N``.
+      files, or mzML files converted from them with ThermoRawFileParser's ``-N``. ``'auto'``
+      (the default) does so for the files whose profile scans are reduced
+      (:func:`profile_record`) and that record their scans' noise (a reduced file without it is
+      named in the warning, its fragments fitted without allowing for the cut); ``True`` for
+      every file, refusing one that records no noise; ``False`` never. A record written before
+      the setting reads as ``False``.
     - ``peak_search`` (s): how far either side of ``rt`` the peak is looked for.
     - ``peak_smoothing`` (s): the chromatogram's running mean; None: half the run's typical peak
       width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
@@ -1158,7 +1163,7 @@ class MzmlConfig:
     find_peak: bool = False
     find_fragment_peak: bool = False
     fragment_peak_width: float = 1.0
-    scan_cut: bool = False
+    scan_cut: str | bool = "auto"
     peak_search: float = 30.0
     peak_smoothing: float | None = None
     peak_width: float = 0.5
@@ -1175,6 +1180,8 @@ class MzmlConfig:
             value = getattr(self, name)
             if not (value is False or value == "auto"):
                 raise ValueError(f"{name} must be \"auto\" or false, not {value!r}")
+        if not (self.scan_cut is True or self.scan_cut is False or self.scan_cut == "auto"):
+            raise ValueError(f"scan_cut must be \"auto\", true or false, not {self.scan_cut!r}")
 
         if self.find_retention_time not in MODES:
             raise ValueError(f"find_retention_time must be one of {', '.join(MODES)}")
@@ -1216,6 +1223,7 @@ class MzmlConfig:
         values["windows"] = tuple(tuple(w) for w in values.get("windows", ()))
         values.setdefault("drift_gate", False)  # recorded before it: every drift time summed
         values.setdefault("mz_calibration", False)  # recorded before it: m/z as the files gave it
+        values.setdefault("scan_cut", False)  # recorded before it: no fragment fitted through a cut
         return cls(**values)
 
 
@@ -1455,6 +1463,8 @@ def _read_runs(
     extra: dict = {}
     instruments: list = [None] * len(runs)  # per file: the instrument, where it quotes its R
     profiles: list = [None] * len(runs)  # per file: its profile scans reduced or not
+    cut_by_run: dict[int, bool] = {}  # per file: its fragments fitted through the per-scan cut
+    no_noise: list[str] = []  # reduced files that record no noise (scan_cut "auto")
     common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry,
                   joins=joins)
     # drift ranges (drift_gate): measured on the undeuterated controls before anything is read,
@@ -1508,7 +1518,8 @@ def _read_runs(
             joined = {joins.get((run.sample, i), i) for i in mine}
             with fmt.open(opened[n]) as f:
                 again: list[Spectrum] = []
-                _read_run(f, run, targets_of(run), windows, series, again, only=mine, **common)
+                _read_run(f, run, targets_of(run), windows, series, again, only=mine,
+                          scan_cut=cut_by_run.get(n, config.scan_cut is True), **common)
             per_run[n] = [s for s in per_run[n]
                           if of_data.get(int(s.data_id), (None, -1))[1] not in joined
                           or of_data[int(s.data_id)][0] != run.sample] + again
@@ -1526,8 +1537,14 @@ def _read_runs(
                 extra = fmt.extra(f)
             instruments[n_run] = instrument_record(f)
             profiles[n_run] = profile_record(f)
+            cut_by_run[n_run] = config.scan_cut is True
+            if (config.scan_cut == "auto" and (profiles[n_run] or {}).get("reduced")
+                    and _has_fragments(targets)):
+                cut_by_run[n_run] = records_noise(f)
+                if not cut_by_run[n_run]:
+                    no_noise.append(Path(recorded[n_run]).name)
             width = _read_run(f, run, targets_of(run), windows, series, per_run[n_run],
-                              **common)
+                              scan_cut=cut_by_run[n_run], **common)
             if search is not None and search.reads(run):
                 search.add_file(f, run, per_run[n_run], width, cancel)
         report(progress, k + 1, len(runs))
@@ -1561,10 +1578,13 @@ def _read_runs(
                    for (sample, t_i), d in sorted(series.items(), key=lambda kv: kv[1])],
         "instruments": instruments,
         "profile": profiles,
+        "scan_cut": {"files": [Path(recorded[n]).name for n in sorted(cut_by_run)
+                               if cut_by_run[n]], "no_noise": no_noise},
         **({SAMPLES_TIE: True} if tie else {}),
         **extra,
     }
-    if text := reduced_profile_text(profiles):
+    if text := reduced_profile_text(profiles, cut=source["scan_cut"], setting=config.scan_cut,
+                                    fragments=_has_fragments(targets)):
         log.warning("%s", text)
     if search is not None and search.record is not None:
         found = by_target()
@@ -1947,7 +1967,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
               joins: Mapping[tuple[str, int], int] | None = None,
               gates: Mapping[tuple, DriftRange] | None = None,
               unclear: set[int] | None = None,
-              elution_cut: set[str] | None = None) -> float:
+              elution_cut: set[str] | None = None, scan_cut: bool = False) -> float:
     """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
     those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
     series of its sample and target (or the target it joins, :func:`series_targets`). With
@@ -1955,7 +1975,9 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
     peptide's scans with ion mobility bins are summed over its drift range only, and the series
     without a clear one are added to ``unclear``. The spectra whose found fragment peak the
     acquisition cut (``find_fragment_peak``) are added to ``elution_cut`` (spectrum ids).
-    Returns the run's typical peak width (s) when find_peak measured it, else NaN."""
+    ``scan_cut``: record the fragment spectra's scans for the per-scan cut (decided per file,
+    ``[input.scans] scan_cut``). Returns the run's typical peak width (s) when find_peak
+    measured it, else NaN."""
     cut: set[int] = set()
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
                          registry=registry, only=only, drift=gates is not None, cut=cut)
@@ -1963,7 +1985,7 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
         return float("nan")
     table, find, plans, by_index, width = scanned
     traces = (_scan_records(f, table, targets, plans, by_index, windows, picker, registry)
-              if config.scan_cut else {})
+              if scan_cut else {})
     noise_cache: dict[int, tuple] = {}
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     no_spectrum_type: set[Path] = set()  # files warned about scans without a spectrum type
@@ -2489,6 +2511,23 @@ _NO_NOISE = ("scan_cut needs the noise each scan recorded: Thermo raw files (for
              "(its sampled noise arrays)")
 
 
+def records_noise(f) -> bool:
+    """Whether a scan file records the noise of its fragment scans (Thermo raw, or mzML
+    converted with ThermoRawFileParser's ``-N``): looked for in up to three MSn scans spread
+    through the file."""
+    table = f.scans()
+    idx = np.flatnonzero(table.ms_level >= 2)
+    for i in idx[np.linspace(0, len(idx) - 1, min(3, len(idx))).astype(int)]:
+        got = _scan_noise(f, f.scan(int(i)), int(i))
+        if got is not None and np.any(np.asarray(got[1], dtype=float) > 0):
+            return True
+    return False
+
+
+def _has_fragments(targets) -> bool:
+    return any("fragment" in dict(t.entry.extra) and t.ms_level >= 2 for t in targets)
+
+
 def _scan_noise(f, scan: Scan, index: int) -> tuple[np.ndarray, np.ndarray] | None:
     """The noise a scan recorded (m/z, value): from its own arrays (mzML ``-N``) or the raw
     file; None when there is none."""
@@ -2689,9 +2728,14 @@ def profile_record(f) -> dict | None:
             "fourier_transform": ft, "levels": levels}
 
 
-def reduced_profile_text(records: Sequence[dict | None]) -> str | None:
+def reduced_profile_text(records: Sequence[dict | None], *, cut: Mapping | None = None,
+                         setting: str | bool = False, fragments: bool = False) -> str | None:
     """One sentence on the reduced profile scans among a dataset's files (``records``: one
-    :func:`profile_record` per file); None when no file's are reduced."""
+    :func:`profile_record` per file) and what hxex does about them: ``cut`` (the read record's
+    ``scan_cut``: the files whose fragments were fitted through the cut, and the reduced files
+    without recorded noise; None: all files with ``setting`` True, none otherwise), ``setting``
+    (``[input.scans] scan_cut``) and ``fragments`` (whether fragment ions are read). None when no
+    file's are reduced."""
     reduced = [r for r in records if r and r.get("reduced")]
     if not reduced:
         return None
@@ -2700,13 +2744,47 @@ def reduced_profile_text(records: Sequence[dict | None]) -> str | None:
     levels = "/".join(sorted({level for level, _ in at}, key=int))
     share = float(np.median([v["zero_share"] for _, v in at]))
     cuts = [v["cut"] for _, v in at if "cut" in v]
-    cut = (f"; the weakest peaks kept are about {np.median(cuts):.1f} x the noise the files "
-           "record" if cuts else "")
+    cut_text = (f"; the weakest peaks kept are about {np.median(cuts):.1f} x the noise the "
+                "files record" if cuts else "")
     return (f"{len(reduced)} of {len(records)} files hold reduced profile scans (MS{levels}: "
-            f"{share:.0%} of the points are 0{cut}): the instrument deleted, in each scan, the "
-            "peaks below its noise threshold, so weak isotope peaks (the heavy side of dim "
-            "envelopes, weak fragments) read low or 0 once scans are summed; hxex does not "
-            "correct for this (guide: Inputs, Reduced profile data)")
+            f"{share:.0%} of the points are 0{cut_text}): the instrument deleted, in each scan, "
+            "the peaks below its noise threshold, so weak isotope peaks (the heavy side of dim "
+            "envelopes, weak fragments) read low or 0 once scans are summed; "
+            f"{_correction_text(reduced, at, cut, setting, fragments)} "
+            "(guide: Inputs, Reduced profile data)")
+
+
+def _files(n: int, of: int) -> str:
+    """``'the reduced file'``, ``'the 17 reduced files'`` or ``'3 of the 17 reduced files'``."""
+    if of == 1:
+        return "the reduced file"
+    return f"the {of} reduced files" if n == of else f"{n} of the {of} reduced files"
+
+
+def _correction_text(reduced, at, cut: Mapping | None, setting, fragments: bool) -> str:
+    """What hxex does about the reduced files' cut, for :func:`reduced_profile_text`."""
+    ms1 = any(level == "1" for level, _ in at)
+    if not fragments:
+        return "hxex fits peptide (MS1) spectra without allowing for this cut"
+    if setting is False:
+        return "hxex fits without allowing for this cut ([input.scans] scan_cut = false)"
+    n_cut = len(cut["files"]) if cut is not None else (len(reduced) if setting is True else 0)
+    n_none = len(cut.get("no_noise", ())) if cut is not None else 0
+    parts = []
+    if n_cut:
+        parts.append(f"hxex fits the fragment spectra of {_files(n_cut, len(reduced))} through "
+                     "this cut ([input.scans] scan_cut)")
+    if n_none:
+        verb = "records" if n_none == 1 else "record"
+        parts.append(f"{_files(n_none, len(reduced))} {verb} no noise, so the fragment spectra "
+                     "of those files are fitted without allowing for it (read the Thermo raw "
+                     "files, or convert "
+                     "them with ThermoRawFileParser's -N)")
+    if not parts:
+        parts.append("hxex fits the fragment spectra without allowing for this cut")
+    if ms1:
+        parts.append("peptide (MS1) spectra are fitted without allowing for it")
+    return "; ".join(parts)
 
 
 def mzml_series_targets(source: Mapping) -> dict[int, MzmlTarget]:
