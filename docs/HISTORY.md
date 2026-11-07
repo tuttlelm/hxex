@@ -7964,5 +7964,41 @@ CSVs or mzML if wanted.
       for the owner's go): the dataset's middle-third references drift at about 5-10 x, which
       the clean standards do not reproduce (more scans summed, about 90 against 5-10, or
       interference?): that cause, not pooling, would address the closure's remaining miss of
-      about -0.4 D. The read found item 315's bug. Private: fragment_cut_fit/envelope_weights
-      (README).
+      about -0.4 D (answered in item 318: neither). The read found item 315's bug.
+      Private: fragment_cut_fit/envelope_weights (README).
+
+318. **Why the targeted dataset's middle-brightness fragment references read heavy (2026-11-07;
+    scratch, no code change; answers the open question of item 316).** The middle third's heavier
+    ion-type weights are neither scrambling nor a bias of the envelope fit: they are real
+    hydrogen-transfer ion types (z-dot -> z+1, c -> c+1) of particular fragments, which happen
+    to be dimmer. Private targeted Orbitrap dataset, bundles with `find_fragment_peak` and
+    `scan_cut` (weights) and with the peptide table's windows (scan traces); the two
+    undeuterated files; bands by the series' undeuterated summed top (bright >= 1e5, middle
+    1e4-1e5, dim below).
+    - With `find_fragment_peak` the middle-third drift shrinks (z-dot MS2 mean h 0.60 -> 0.43,
+      MS3 0.63 -> 0.50; bright 0.24-0.28) but stays.
+    - Not a brightness bias at middle brightness: the same fragment read bright in MS2 and 5-30 x
+      dimmer in MS3 has the same weights (h difference median 0.00, IQR -0.04 to +0.01, 89 pairs);
+      both channels in the middle band agree (|dh| median 0.02, correlation 0.98; 26 of 27 heavy
+      in one channel heavy in both); middle-band heavy series whose other channel is bright are
+      heavy there too in 20 of 26.
+    - The extra signal is the same ion plus a hydrogen atom: in the centroid scans the peaks
+      after the dominant monoisotopic one sit where the fitted +H weights put them (bright heavy:
+      +2.0 mDa above the 13C spacing observed vs +1.8 predicted; c-1 +3.0 vs +3.65, correlation
+      over series 0.86) and co-elute with it (trace correlation 0.99). Observed over predicted
+      shift at the next position 0.87 (95 % 0.72-0.95): +H gives 1.0, +D 0.65, so no deuterium
+      in the undeuterated runs. Same-peptide coinciding ions: `overlapping_ion` on 1 of 68 heavy
+      middle-band series. Not scrambling: an undeuterated sample has no deuterium to move.
+    - Why more of them at middle brightness: being heavy belongs to the fragment, and within one
+      parent, activation, ion type, and MS level (58 groups) the dimmer fragments are the heavier
+      ones (Spearman median -0.35, negative in 79 %); not fragment length or charge. Cause not
+      established.
+    - Dim band (below 1e4): signal outside the elution peak does inflate the weights (the +1
+      position's height ratio over the whole table window 1.45-2.2 x the core's);
+      `find_fragment_peak` removes most of it, and these spectra are mostly below 4 x the noise.
+    Consequences: the weights fitted without the cut are unlikely to explain the closure's
+    remaining -0.36 to -0.45 D in the middle fifths (item 308's check). Untested link to item
+    316: in labelled runs the transferred atom comes from the complementary fragment and can be
+    D, while the envelope treats the +1 H type as a fixed unlabelled hydrogen; prediction: a
+    fragment's excess D against its ladder neighbours or its MS1 parent grows with its +H
+    weight. Private: fragment_cut_fit/ref_drift (README).
