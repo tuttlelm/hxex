@@ -134,7 +134,7 @@ def test_a_window_is_written_to_the_elution_window_table_and_read_back(project):
     assert peptides.read_bytes() == original[peptides]  # never changed
     assert 'rt_elution_windows = "rt_elution_windows.csv"' in project.read_text()
     assert saved_window(project, key) == ((float(saved.row["rt_start"]),
-                                           float(saved.row["rt_end"])), None)
+                                           float(saved.row["rt_end"])), None, "ion")
     again = _read(project)
     assert edited.spectrum_id in list(again.spectrum_id)
     assert len(set(again.data_id.tolist())) == 1
@@ -160,3 +160,39 @@ def test_a_window_the_project_cannot_read_is_not_written(project):
         save_window(project, ("S", "un1.mzML", "0001-0008-VDQIIMAK-z4"), (1.0, 2.0))
     assert project.read_bytes() == before
     assert not (project.parent / "rt_elution_windows.csv").exists()
+
+
+def test_a_window_saved_for_the_whole_peptide(project):
+    """Saved for the whole peptide, the window is the peptide's row in that file (every ion of
+    it takes it); the ion's own row gives up its window (kept only for a drift range); other
+    ions of the peptide with windows of their own are named."""
+    from hxex.io.elution_windows import read_elution_windows
+
+    spectra = _read(project)
+    i = [k for k, s in enumerate(spectra.spectrum_id) if "/un2.mzML/" in s][0]
+    key = _key(spectra, i)
+    peptide = f"0001-{N:04d}-{PEPTIDE}"
+    window = (spectra.rt_start[i] + 0.02, spectra.rt_end[i] - 0.01)
+    own = save_window(project, key, window)  # first the ion's own window
+    assert saved_window(project, key, peptide)[2] == "ion"
+    whole = save_window(project, key, window, peptide=peptide, whole=True,
+                        siblings=(key[2], "x-z3"))
+    assert whole.added and whole.row["peptide"] == peptide and not whole.row["ion"]
+    rows = read_elution_windows(whole.path)
+    assert [w.is_peptide for w in rows] == [True]  # the ion's row went (nothing left in it)
+    got = saved_window(project, key, peptide)
+    assert got[2] == "peptide" and got[1] is None
+    assert got[0] == (float(whole.row["rt_start"]), float(whole.row["rt_end"]))
+    again = _read(project)
+    j = [k for k, s in enumerate(again.spectrum_id) if "/un2.mzML/" in s][0]
+    assert got[0][0] <= again.rt_start[j] < again.rt_end[j] <= got[0][1]
+    undo_window(whole)
+    assert saved_window(project, key, peptide)[2] == "ion"
+    undo_window(own)
+    # for this ion only: the row names its peptide too (two parents can give fragment ions of
+    # the same name)
+    alone = save_window(project, key, window, peptide=peptide)
+    assert alone.row["peptide"] == peptide and alone.row["ion"] == key[2]
+    assert saved_window(project, key, peptide)[2] == "ion"
+    assert saved_window(project, key, "0002-0009-OTHER") is None
+    undo_window(alone)

@@ -1770,3 +1770,35 @@ def test_each_files_mz_offset_is_taken_out(tmp_path, caplog):
     written = np.array([float(r["mz_calibration_ppm"]) for r in rows])
     np.testing.assert_allclose(written, [30.0 if "a.mzML" in r["spectrum_id"] else -8.0
                                          for r in rows], atol=1.0)
+
+
+def test_one_ion_with_its_own_window_stays_in_its_channel(tmp_path):
+    """scan_cut weighs a fragment spectrum's scans by its channel's trace (the whole ladder
+    read from the same scans). An ion given a window of its own (an ion row of
+    rt_elution_windows) stays in that channel: its siblings' traces are as before, and its own
+    is the channel's over its own scans, not a trace of its own ion alone."""
+    from hxex import chem
+    from hxex.fragments import fragment_targets
+    from hxex.io.mzml import _plans, _scan_records
+    from hxex.picking import PickerConfig
+
+    frags = fragment_targets(ENTRY, "c:2-4:1", activation="ETD", rt_window=(10.0, 60.0))
+    path = write_mzml(tmp_path / "frag.mzML", fragment_lc_run(frags, other=None))
+    f = MzmlFile(path)
+    table = f.scans()
+    run = MzmlRun(path=str(path), sample="S", time=60.0)
+    narrowed = [*frags]
+    narrowed[1] = dataclasses.replace(frags[1], rt_window=(25.0, 35.0))
+    traces = []
+    for targets in (frags, narrowed):
+        _, plans = _plans(table, run, targets, MzmlConfig())
+        rows = np.unique(np.concatenate([p[0] for p in plans if p is not None]))
+        by_index = f.read_scans(table.index[rows])
+        traces.append((plans, _scan_records(f, table, targets, plans, by_index, None,
+                                            PickerConfig(), chem.DEFAULT_MODIFICATIONS)))
+    (plain_plans, plain), (own_plans, own) = traces
+    for t_i in (0, 2):
+        np.testing.assert_array_equal(own[t_i], plain[t_i])
+    at = {int(k): i for i, k in enumerate(plain_plans[1][0])}
+    assert len(own_plans[1][0]) < len(plain_plans[1][0])
+    np.testing.assert_array_equal(own[1], plain[1][[at[int(k)] for k in own_plans[1][0]]])

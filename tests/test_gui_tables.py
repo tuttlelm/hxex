@@ -6,10 +6,12 @@ import pytest
 
 from hxex.config import template
 from hxex.gui.user_tables import (
+    ResultsIds,
     Table,
     TableLocked,
     kinds,
     read_table,
+    review_match,
     table_problem,
     write_table,
 )
@@ -81,7 +83,7 @@ def test_the_readers_check_a_table_before_it_is_saved(tmp_path):
     bad = Table(list(review.columns), [["s1", "maybe", "", ""]])
     assert "maybe" in table_problem("review.table", bad, project)
     assert table_problem("input.retention_times", Table(["sample"], [["WT"]]), project)
-    stray = Table(list(windows.columns), [["WT", "none.mzML", "1-4-AAAK-z2", "1", "2", "", ""]])
+    stray = Table(list(windows.columns), [["WT", "none.mzML", "", "1-4-AAAK-z2", "1", "2", "", ""]])
     assert "not a run of the project" in table_problem("input.rt_elution_windows", stray,
                                                         project)
     assert not list(tmp_path.glob("*.csv"))  # the copies are gone
@@ -94,6 +96,22 @@ def test_the_readers_check_a_table_before_it_is_saved(tmp_path):
 
 
 # --- the Tables view of the window (offscreen) ---------------------------------------------------
+
+_RESULTS = ResultsIds("results", ("WT/a.mzML/1-5-AAAAK-z2/scans10-20",
+                                   "WT/a.mzML/6-9-GGGK-z2/scans30-40"), (False, False))
+_REVIEW = Table(["spectrum_id", "review_status", "review_K", "note"], [
+    ["WT/a.mzML/1-5-AAAAK-z2/scans10-20", "rejected", "", ""],  # the results have it
+    ["WT/b.mzML/1-5-AAAAK-z2/scans10-20", "rejected", "", ""],  # another file: not there
+    ["WT/a.mzML/6-9-GGGK-z2/scans31-41", "", "2", ""],  # summed from other scans: moves
+    ["WT/b.mzML/6-9-GGGK-z2/scans30-40", "unreviewed", "", ""],  # no decision: not counted
+    ["", "rejected", "", ""]])
+
+
+def test_review_rows_the_results_do_not_have_are_found():
+    match = review_match(_REVIEW, _RESULTS)
+    assert list(match.unmatched) == [1] and "skipped" in match.unmatched[1]
+    assert list(match.moved) == [2] and "scans30-40" in match.moved[2]
+
 
 @pytest.fixture
 def tables_view(qtbot, tmp_path):
@@ -332,3 +350,31 @@ def test_ctrl_c_copies_every_selected_cell(tables_view, qtbot):
     assert copy.text() == "Copy" and copy.isEnabled()
     copy.trigger()
     assert QApplication.clipboard().text() == "s1\trejected\ns2\t\n"
+
+
+def test_the_review_table_shades_rows_the_results_do_not_have(tables_view, monkeypatch):
+    from PySide6.QtCore import Qt
+
+    import hxex.gui.table_editor as table_editor
+
+    view, project = tables_view
+    editor = view.editor
+    monkeypatch.setattr(table_editor, "results_ids", lambda project_path: _RESULTS)
+    view.show_table("review.table")
+    path = view.new_table(project.parent / "user_review_table.csv")
+    write_table(_REVIEW, path)
+    view.refresh()
+    view.show_table("review.table")
+    assert not editor.notice_row.isHidden()
+    assert "row 2 " in editor.notice.text() and "results" in editor.notice.text()
+    shade = Qt.ItemDataRole.BackgroundRole
+    assert editor.model.data(editor.model.index(1, 0), shade) is not None
+    assert editor.model.data(editor.model.index(0, 0), shade) is None
+    assert "scans30-40" in editor.model.data(editor.model.index(2, 0),
+                                             Qt.ItemDataRole.ToolTipRole)
+    editor._sort_by(0)  # sorted by spectrum_id: the row keeps its number in the file
+    position = editor.show_next_unmatched()
+    assert editor.cell(position, 0) == "WT/b.mzML/1-5-AAAAK-z2/scans10-20"
+    assert editor.model.headerData(position, Qt.Orientation.Vertical) == "2"
+    editor.set_cell(position, 0, "WT/a.mzML/6-9-GGGK-z2/scans30-40")  # corrected
+    assert editor.notice_row.isHidden() and not editor.match.unmatched

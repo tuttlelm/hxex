@@ -278,6 +278,25 @@ class ResultsWorkspace(QWidget):
         self._trace_for = None  # (results, spectrum id) the elution tab shows
         self._shown_traces = None  # (results, spectrum id, data id, traces, title) drawn there
         self.window_editor = None  # the elution tab's window editing (made with its panel)
+        # what the elution tab draws behind the selected trace: this ion in the sample's other
+        # runs (does this run need a window of its own?) or this peptide's other ions in this
+        # run (do they elute together: a window for all of them, or for this ion only?)
+        self.compare = QComboBox()
+        self.compare.addItem("this ion in the other runs", "runs")
+        self.compare.addItem("this peptide's other ions in this run", "ions")
+        self.compare.setToolTip(
+            "this ion in the other runs: does this run's peak sit where the others' do (if not, "
+            "it needs a window of its own)? This peptide's other ions in this run: its charge "
+            "states and fragment channels, each scaled to this trace's height; they elute "
+            "together, so an ion whose peak sits apart has interference at its own m/z (save "
+            "its window for this ion only)")
+        self.compare.currentIndexChanged.connect(self._compare_changed)
+        self.compare_box = QWidget()
+        row = QHBoxLayout(self.compare_box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Compare with"))
+        row.addWidget(self.compare)
+        row.addStretch(1)
         self._drawn = None  # (kind, series, time point or spectrum) the figures show
         self.figures.currentChanged.connect(lambda _i: self._draw_retention())
         self.panels: dict[str, FigurePanel] = {}
@@ -309,6 +328,7 @@ class ResultsWorkspace(QWidget):
             if name == "elution":  # its window can be changed there (PLAN Next steps 26)
                 from .window_editor import WindowEditor
 
+                panel.add_row(self.compare_box)
                 self.window_editor = WindowEditor(panel, self._trace_context,
                                                   self._draw_plain_trace, self)
                 if self.window is not None:
@@ -422,6 +442,33 @@ class ResultsWorkspace(QWidget):
         self._trace_reader = (self.results, reader)
         return reader
 
+    def _compare_changed(self, _index: int) -> None:
+        self._trace_for = None  # read again with the other comparison
+        self._draw_retention()
+
+    def _peptide_ions(self, reader, results, sid: str, data_id: int) -> list[tuple[str, int]]:
+        """The spectra (id, series) of the selected spectrum's peptide's other ions in its run:
+        its other charge states and, as a parent, its fragments (or, for a fragment, its
+        parent and the parent's other fragments)."""
+        from ..io.elution_windows import peptide_label
+
+        where = reader.locate(sid, data_id)
+        if where is None:
+            return []
+        peptide = peptide_label(reader.targets[reader.of_series[data_id]].entry)
+        head = sid.split("/", 2)[:2]  # project:sample, file
+        ids = np.asarray(results.fit.spectrum_id).astype(str)
+        series = np.asarray(results.fit.data_id)
+        out = []
+        for s, d in zip(ids, series, strict=True):
+            d = int(d)
+            if s == sid or d == data_id or s.split("/", 2)[:2] != head:
+                continue
+            t_i = reader.of_series.get(d)
+            if t_i is not None and peptide_label(reader.targets[t_i].entry) == peptide:
+                out.append((s, d))
+        return out
+
     def _draw_retention(self) -> None:
         """The retention tab, when it is in view: the selected spectrum's trace in its run
         (drawn first), then with the sample's other runs of its series behind it."""
@@ -434,7 +481,8 @@ class ResultsWorkspace(QWidget):
         if kind != "spectrum" or self.results is None:
             return
         results, sid = self.results, payload[3].spectrum_id
-        if self._trace_for == (results, sid):
+        if self._trace_for is not None and self._trace_for[0] is results \
+                and self._trace_for[1] == sid:  # the results by identity, not by value
             return
         self._trace_for = (results, sid)
         panel = self.panel("elution")
@@ -470,6 +518,27 @@ class ResultsWorkspace(QWidget):
                 self._draw_plain_trace()
 
         def others(first) -> None:
+            if self.compare.currentData() == "ions":
+                ions = self._peptide_ions(reader, results, sid, data_id)
+                if not ions or not first.traces:
+                    show(first, "; no other ion of this peptide in this run" if first.traces
+                         else "")
+                    return
+                ranges = dict(drift)
+                if binned is not None and binned.drift_start is not None:
+                    for s, _d in ions:
+                        try:
+                            j = binned.find(s)
+                        except KeyError:
+                            continue
+                        ranges[s] = (float(binned.drift_start[j]), float(binned.drift_end[j]))
+                times = first.traces[0].times
+                span = (float(np.min(times)), float(np.max(times)))
+                show(first, "; reading this peptide's other ions in this run…")
+                self._trace_task.submit(
+                    lambda: dataclasses.replace(first, ions=reader.ion_traces(
+                        sid, data_id, ions, span, drift_ranges=ranges)), show, failed)
+                return
             show(first, "; reading the sample's other runs…" if same else "")
             if same:
                 self._trace_task.submit(
@@ -518,7 +587,7 @@ class ResultsWorkspace(QWidget):
         self.series_table.setVisible(kind not in (None, "spectrum", "point"))
         if kind is None:
             return
-        key = (self.results, kind, id(payload))
+        key = (id(self.results), kind, id(payload))  # by identity: reset with new results
         if self._table_for == key:
             return
         self._table_for = key

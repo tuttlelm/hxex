@@ -392,7 +392,8 @@ class InputSettings:
     thermo_dir: Path | None = None
     # every format: a table of retention times (minutes)
     retention_times: Path | None = None
-    # one ion's own retention window in one file (scan formats; hxex.io.elution_windows)
+    # a peptide's (every ion of it) or one ion's own retention window in one file (scan
+    # formats; hxex.io.elution_windows)
     rt_elution_windows: Path | None = None
     # every format: take the raw spectra stored by an earlier run (a bundle, or a spectra file)
     # instead of reading the input
@@ -1322,10 +1323,11 @@ def scan_peptides(project: Project):
 def elution_window_problems(project: Project) -> list[str]:
     """What is wrong with the project's ``[input] rt_elution_windows`` table (none without
     one): a missing file, a row the reader refuses, or a row that names no run of the project, a
-    run without a time, or an ion not read from that file (the ion as the spectrum ids name it,
-    :func:`hxex.io.mzml._target_label`). No data file is opened."""
+    run without a time, or a peptide or an ion not read from that file (the ion as the spectrum
+    ids name it, :func:`hxex.io.mzml._target_label`; the peptide as
+    :func:`hxex.io.elution_windows.peptide_label` names it). No data file is opened."""
     from .io import ReadError
-    from .io.elution_windows import read_elution_windows
+    from .io.elution_windows import peptide_label, read_elution_windows
     from .io.mzml import _target_label, run_name, target_applies
 
     inp = project.input
@@ -1343,9 +1345,17 @@ def elution_window_problems(project: Project) -> list[str]:
     except (ProjectError, ReadError, ValueError, OSError):
         targets = None  # the peptide table's own problems are reported for it
     runs = {(r.sample, run_name(r)): r for r in inp.runs}
-    read = set() if targets is None else {
-        (r.sample, run_name(r), _target_label(t)) for r in inp.runs if r.fixed
-        for t in targets if target_applies(t, r)}
+    # (sample, file, peptide, ion) of every ion read, with "" for the peptide (an ion row
+    # naming no peptide) and for the ion (a peptide row)
+    read = set()
+    for r in inp.runs if targets is not None else ():
+        if not r.fixed:
+            continue
+        for t in targets:
+            if target_applies(t, r):
+                ion, pep = _target_label(t), peptide_label(t.entry)
+                read.update({(r.sample, run_name(r), pep, ion), (r.sample, run_name(r), "", ion),
+                             (r.sample, run_name(r), pep, "")})
     problems = []
     for w in rows:
         run = runs.get((w.sample, w.file))
@@ -1356,8 +1366,10 @@ def elution_window_problems(project: Project) -> list[str]:
             problems.append(f"{path}: {w.file} has no time (a kinetics run): its scans are not "
                             "chosen by a retention window")
         elif targets is not None and w.key not in read:
-            problems.append(f"{path}: {w.ion} is not read from {w.file} (the ion as the "
-                            "spectrum ids name it)")
+            how = ("its range and sequence, as the spectrum ids begin" if w.is_peptide else
+                   "the ion as the spectrum ids name it" + (
+                       ", of the peptide as its range and sequence" if w.peptide else ""))
+            problems.append(f"{path}: {w.name} is not read from {w.file} ({how})")
     return problems
 
 
@@ -2048,8 +2060,9 @@ data_root = "."                  # relative run paths are taken from here
 # retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
 #                                # end_seq, peptide, charge (else from the peptide table's
 #                                # rt column, else from the scans of fixed-time runs)
-# rt_elution_windows = "rt_elution_windows.csv"  # one ion's own window in one file (the
-#                                # window's elution tab writes it: Edit window, Save)
+# rt_elution_windows = "rt_elution_windows.csv"  # a peptide's (or one ion's) own window in
+#                                # one file (the window's elution tab writes it: Edit window,
+#                                # Save)
 record_paths = "path"            # or "relative" (to data_root) or "name"{thermo}
 time_scale = "seconds"           # or "order": the times only order the points
 parents = true                   # read each peptide itself (set false for fragments only)

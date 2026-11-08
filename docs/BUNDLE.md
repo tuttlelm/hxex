@@ -109,7 +109,10 @@ from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power 
 written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `chunk_plan`
 (the chunks the fits were made in: `budget_bytes` and `series`, the `data_id` of each chunk's
 series; `hxex resume` fits and tests in them, so that its fits are made as the run's were;
-absent before 2026-11-02; `hxex.pipeline.chunk_record`), `noise_curve`
+absent before 2026-11-02; `hxex.pipeline.chunk_record`), `quality_version` (the version of
+the checks that assessed the quality flags, `hxex.quality.QUALITY_VERSION`; absent: 0, before
+2026-11-08; a resume that keeps the flags keeps it, and `hxex resume` assesses flags of an
+earlier version again), `noise_curve`
 (with `[run.fit.noise] estimate = "controls"`, the default since 2026-10-31, when enough
 controls measured it: the per-bin noise the fit used, `b1`,
 `b1_se`, `model_error` (a share), `onset` (null: none), `n_controls`, `n_series` and `by_sample`

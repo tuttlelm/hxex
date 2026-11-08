@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..hooks import format_duration
+from ..hooks import format_duration, format_percent
 from .runner import CommandRun, shown_command
 
 log = logging.getLogger(__name__)
@@ -44,7 +44,11 @@ log = logging.getLogger(__name__)
 # (button, command, what it does): the commands a project runs, in the order of a project's life
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
             ("Run", "run", "read, pick, fit and bootstrap: the results bundle"),
-            ("Resume", "resume", "complete a stopped bootstrap, or add one at a chosen K"),
+            ("Resume", "resume",
+             "add to the results without fitting again: finish a stopped bootstrap, add or "
+             "redo one (its settings changed), bootstrap the K your review chose; add or redo "
+             "the population test; work the controls out again when [run.controls] changed; "
+             "assess the quality flags again when an earlier hxex made them"),
             ("Report", "report", "write the tables again (with the review applied)"),
             ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
             ("Info", "info", "what the results hold"))
@@ -298,7 +302,7 @@ class RunWorkspace(QWidget):
             self.bar.setRange(0, 1000)
             self.bar.setValue(round(1000 * min(max(overall, 0.0), 1.0)))
         stage = record.get("stage") or ""
-        text = f"{stage}: {100 * (record.get('fraction') or 0):.0f}%"
+        text = f"{stage}: {format_percent(record.get('fraction') or 0)}"
         if record.get("left") is not None:
             text += f", about {format_duration(record['left'])} left"
         if record.get("event") == "done":

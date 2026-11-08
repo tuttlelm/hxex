@@ -113,7 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("resume", help="complete a bundle's bootstrap (finish a stopped one, add "
                                       "or redo one, or bootstrap the review's chosen K), add "
-                                      "the population test, or work the controls out again")
+                                      "the population test, or work the controls or the "
+                                      "quality flags out again")
     p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
                    help="the project file (hxex.toml), or a results bundle (a folder, or .zip) "
                         "waiting for its bootstrap. With the project file, its [output] bundle "
@@ -122,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "K its [review] table chooses where that is missing, and the population "
                         "test with its [run.population_test] settings (made again only if they "
                         "changed), and its controls are worked out again when its "
-                        "[run.controls] changed; the fits kept")
+                        "[run.controls] changed; the fits kept. Quality flags made by an earlier "
+                        "version of hxex are assessed again either way")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -583,9 +585,16 @@ def cmd_check(args) -> int:
             from .io.elution_windows import read_elution_windows
 
             rows = read_elution_windows(inp.rt_elution_windows)
-            _say(f"{'elution windows':14s} {len(rows)} edited in {len({w.file for w in rows})} "
-                 f"file(s), from {inp.rt_elution_windows}")
+            peptides = sum(w.is_peptide for w in rows)
+            _say(f"{'elution windows':14s} {peptides} for a whole peptide, {len(rows) - peptides} "
+                 f"for one ion, in {len({w.file for w in rows})} file(s), from "
+                 f"{inp.rt_elution_windows}")
     problems += _check_ks(project)
+    if inp is not None:
+        device, problem = _device_text(project)
+        _say(f"{'fits on':14s} {device}")
+        if problem:
+            problems.append(problem)
     for n, line in enumerate(_output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")
     if problems:  # after the status block, and the verdict last, whatever the terminal buffers
@@ -597,6 +606,34 @@ def cmd_check(args) -> int:
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _device_text(project) -> tuple[str, str | None]:
+    """Where ``hxex run`` and ``hxex resume`` would fit, with this Python's PyTorch: the GPU
+    or the CPU (and its threads), from ``[run.fit.backend] device`` ("auto" resolved), and
+    the PyTorch and Python it was found with (a CPU-only PyTorch makes "auto" the CPU; owner,
+    2026-11-08). The problem: a CUDA device asked for where there is none. The window's device
+    choice and ``--device`` replace the setting for one command."""
+    import sys
+
+    import torch
+
+    setting = project.run.fit.backend.device
+    found = (f"PyTorch {torch.__version__} in {sys.prefix}"
+             + ("" if torch.cuda.is_available() else ", which has no CUDA"))
+    if setting.startswith("cuda") and not torch.cuda.is_available():
+        return (f"none: [run.fit.backend] device = \"{setting}\" ({found})",
+                f"[run.fit.backend] device = \"{setting}\", but this Python's PyTorch has no "
+                "CUDA: use device = \"auto\" or \"cpu\", or run hxex from a Python whose "
+                "PyTorch has CUDA (see the guide's install page)")
+    device = project.run.fit.backend.torch_device()
+    if device.type == "cuda" and (device.index or 0) >= torch.cuda.device_count():
+        return (f"none: [run.fit.backend] device = \"{setting}\" ({found})",
+                f"[run.fit.backend] device = \"{setting}\", but this computer has "
+                f"{torch.cuda.device_count()} CUDA device(s) (cuda:0 to "
+                f"cuda:{torch.cuda.device_count() - 1})")
+    where = project.run.fit.backend.describe(threads=project.threads)
+    return f"{where}: [run.fit.backend] device = \"{setting}\" ({found})", None
 
 
 def _format_hint(project) -> str:
@@ -1728,7 +1765,10 @@ def cmd_info(args) -> int:
               if _reduced_profile_info(source) else []),
             *([("m/z calibration", _mz_calibration_info(source["mz_calibration"]))]
               if source.get("mz_calibration") else []),
-            ("quality flags", "yes" if b.has("quality") else "no"),
+            ("quality flags", ("no" if not b.has("quality") else
+                               "assessed by an earlier version of hxex, before checks added "
+                               "since: hxex resume assesses them again" if b.quality().outdated
+                               else "yes")),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
             ("review", (f"{len(review)} entries" + (f" ({review.n_stale} stale)"

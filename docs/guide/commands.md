@@ -76,13 +76,13 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 
 ## hxex resume
 
-Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen K), add the population test, or work the controls out again.
+Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen K), add the population test, or work the controls or the quality flags out again.
 
 `hxex resume hxex.toml|BUNDLE [options]`
 
 | Argument | Meaning |
 |---|---|
-| `hxex.toml\|BUNDLE` | the project file (hxex.toml), or a results bundle (a folder, or .zip) waiting for its bootstrap. With the project file, its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed), and its controls are worked out again when its [run.controls] changed; the fits kept |
+| `hxex.toml\|BUNDLE` | the project file (hxex.toml), or a results bundle (a folder, or .zip) waiting for its bootstrap. With the project file, its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed), and its controls are worked out again when its [run.controls] changed; the fits kept. Quality flags made by an earlier version of hxex are assessed again either way |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | where the tables go (default: beside the bundle, or a project file's [output] tables) |

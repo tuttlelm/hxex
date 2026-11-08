@@ -122,7 +122,7 @@ def test_the_overview_is_the_first_look_and_a_tab_at_every_level(qtbot, results)
     pages = [page.overview_page.itemData(i) for i in range(page.overview_page.count())]
     assert pages[0] == "k_selection" and set(pages) <= {"k_selection", "controls", "quality"}
     assert overview.save_name == "overview_k_selection"
-    assert "Mouse over" not in overview.hint.text()  # no tooltips on the Results figures
+    assert "Mouse over" not in overview.help_text  # no tooltips on the Results figures
     first = overview.view.figure
     if len(pages) > 1:  # another page: drawn, then kept
         with qtbot.waitSignal(overview.drawn, timeout=30000):

@@ -155,6 +155,14 @@ class Results:
 
     @classmethod
     def from_bundle(cls, bundle: Bundle) -> Results:
+        quality = bundle.quality()
+        if quality is not None and quality.outdated:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%s: the quality flags were assessed by an earlier version of hxex, before "
+                "checks added since (such as overlapping_ion), which are empty; hxex resume "
+                "(hxex resume hxex.toml) assesses them again", bundle.path)
         return cls(
             measurements=bundle.measurements(), fit=bundle.fit(), bootstrap=bundle.bootstrap(),
             bootstrap_by_k={k: bundle.bootstrap(k) for k in bundle.bootstrap_ks()},

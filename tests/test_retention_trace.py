@@ -161,3 +161,56 @@ def test_another_window_names_its_scans_and_sums_them(lc):
         reader.spectrum(sid, data_id, (2.0, 2.1))  # after the run's last scan (1 min)
     with pytest.raises(ValueError, match="after its start"):
         reader.spectrum(sid, data_id, (end, start))
+
+
+def test_the_peptides_other_ions_in_the_run(tmp_path):
+    """The peptide's other ions in the selected run (Compare with: this peptide's other ions in
+    this run): an MS1 charge state gives a trace of its own; a fragment channel one trace,
+    summed over its ions; each peaks with the selected ion (they elute together), and the
+    figure draws them scaled to the selected trace's height."""
+    from hxex.config import load_project, read_input
+    from test_elution_windows import _charges_project
+
+    path = _charges_project(tmp_path / "charges")
+    spectra = read_input(load_project(path))
+    reader = TraceReader(spectra.source, data_root=path.parent)
+    ids = list(spectra.spectrum_id)
+    z2 = [i for i, s in enumerate(ids) if "/un2.mzML/" in s and s.split("/")[2].endswith("z2")][0]
+    z3 = [i for i, s in enumerate(ids) if "/un2.mzML/" in s and s.split("/")[2].endswith("z3")][0]
+    sid, data_id = ids[z2], int(spectra.data_id[z2])
+    traces = reader.traces([sid], data_id)
+    times = traces.traces[0].times
+    ions = reader.ion_traces(sid, data_id, [(ids[z3], int(spectra.data_id[z3]))],
+                             (float(times.min()), float(times.max())))
+    assert [i.label for i in ions] == ["3+ (MS1)"]
+    assert abs(_apex(ions[0]) - _apex(traces.traces[0])) <= 0.5  # s: within two scans
+    # a spectrum of another run is not this run's ion
+    other = [i for i, s in enumerate(ids) if "/un1.mzML/" in s][0]
+    assert reader.ion_traces(sid, data_id, [(ids[other], int(spectra.data_id[other]))],
+                             (float(times.min()), float(times.max()))) == []
+    fig = plot_retention(dataclasses.replace(traces, ions=ions))
+    drawn = [ln for ln in fig.axes[0].lines if ln.get_gid() == "ion:3+ (MS1)"]
+    assert len(drawn) == 1
+    assert np.max(drawn[0].get_ydata()) == pytest.approx(np.max(traces.traces[0].intensity))
+
+
+def test_a_fragment_channel_is_one_trace(tmp_path):
+    from hxex.fragments import fragment_targets
+    from test_mzml import fragment_lc_run
+
+    frags = fragment_targets(ENTRY, "c:2-4:1", activation="ETD", rt_window=(10.0, 60.0))
+    path = write_mzml(tmp_path / "frag.mzML", fragment_lc_run(frags, other=None))
+    targets = [MzmlTarget(ENTRY, rt_window=(10.0, 60.0)), *frags]
+    spectra = read_mzml([MzmlRun(path=str(path), sample="S", time=60.0)], targets, project="p")
+    reader = TraceReader(spectra.source, data_root=tmp_path)
+    ids = list(spectra.spectrum_id)
+    parent = [i for i, m in enumerate(spectra.modification) if "ion_type" not in m][0]
+    sid, data_id = ids[parent], int(spectra.data_id[parent])
+    traces = reader.traces([sid], data_id)
+    times = traces.traces[0].times
+    ions = reader.ion_traces(sid, data_id, [(s, int(d)) for i, (s, d) in enumerate(
+        zip(ids, spectra.data_id, strict=True)) if i != parent],
+        (float(times.min()), float(times.max())))
+    assert len(ions) == 1 and ions[0].n_ions == 3
+    assert ions[0].label.startswith("c ions: ETD MS2")
+    assert abs(_apex(ions[0]) - _apex(traces.traces[0])) <= 1.0  # s

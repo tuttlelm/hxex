@@ -930,6 +930,9 @@ def write_bundle(
             # fits and tests in the same ones (audit 2026-11-01 Engine 28)
             **({} if chunk_plan is None else {"chunk_plan": dict(chunk_plan)}),
             **({} if fit.noise_curve is None else {"noise_curve": fit.noise_curve.to_dict()}),
+            # the version of the checks that assessed the quality flags (a resume that keeps
+            # them keeps it: hxex.quality.QUALITY_VERSION)
+            **({} if quality is None else {"quality_version": int(quality.version)}),
             "configs": {
                 "fit": fit.config.to_dict(),
                 "bootstrap": None if bootstrap is None else bootstrap.config.to_dict(),
@@ -1557,7 +1560,8 @@ class Bundle:
             config = self.manifest["configs"]["quality"]
             ids = self.fit().spectrum_id
             table = self._table("quality")
-            quality = _read_quality(table, config, ids)
+            quality = dataclasses.replace(_read_quality(table, config, ids),
+                                          version=int(self.manifest.get("quality_version", 0)))
             if "undeut_high" not in table.column_names:  # written before it: from the fit
                 from ..quality import undeut_high
 

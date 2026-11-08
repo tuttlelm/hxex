@@ -101,8 +101,9 @@ def test_a_coverage_figures_rows_lead_to_the_spectra(qtbot, tmp_path, project):
     assert rows and {"sample", "start", "end", "fD"} <= set(page.data.model.columns)
     assert page.views.tabText(1) == f"data ({len(rows)})"
     assert page.data.save_name == page.panel.save_name
-    assert "Mouse over a peptide or bar for details. Right-click a peptide to go to its " \
-        "spectra." in page.panel.hint.text()
+    from hxex.gui.figure_view import SPECTRA_HINT
+
+    assert SPECTRA_HINT in page.panel.help_text and "Right-click a peptide" in SPECTRA_HINT
     row = rows[0]
     assert page.go_to_spectra(row)
     assert window.tabs.currentWidget() is window.results_page

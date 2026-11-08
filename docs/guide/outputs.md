@@ -241,6 +241,11 @@ pages, and its panel on the spectra page says so.
 Flags mark spectra for review; nothing is dropped. They appear in the `flags` column of
 `spectra.csv` and in the overview.
 
+New flags are added to *hxex* from time to time. Results made before a flag existed do not
+have it: the run that made them could not set it. When you open such results, *hxex* says that
+an earlier version assessed their flags (`hxex info` says so too), and `hxex resume hxex.toml`
+assesses every flag again with the current version, keeping the fits.
+
 | Flag | Meaning |
 |---|---|
 | `poor_fit` | the misfit is many times the series' median (`poor_fit_factor`) and the deviance is high |

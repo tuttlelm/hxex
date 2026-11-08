@@ -3,8 +3,11 @@
 tab's bar, the window's start and end (minutes) and, for an ion-mobility file, its drift range
 (ms) as boxes, a drag across the trace or the drift profile to set them, the spectrum summed
 over the new window drawn beside the one the results hold (:func:`hxex.gui.window_edit.preview`),
-**Save window** (the ion's row for that file in the project's ``[input] rt_elution_windows``
-table, :func:`hxex.gui.window_edit.save_window`; the peptide table is not changed) and
+**Save window** for all ions of this peptide, in this run (default: its charge states and
+fragments elute together) or for this ion only, in this run (interference at its m/z), as a
+row for that file in the project's
+``[input] rt_elution_windows`` table (:func:`hxex.gui.window_edit.save_window`; the peptide
+table is not changed) and
 **Undo** (the table as it was before the last save)."""
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
@@ -66,6 +70,7 @@ class WindowEditor(QObject):
         self.history: list = []  # SavedWindow, the latest last (Undo)
         self._target: tuple | None = None  # (results, spectrum id) the boxes were set for
         self._has_drift = False  # the spectrum was summed over a drift range
+        self._drift_shown: tuple | None = None  # the drift range the boxes were set to
         self._previewed: tuple | None = None  # (spectrum id, window, drift) of a fitted preview
         self._summed: tuple | None = None  # the same, of the spectrum summed (fitted or not)
         self._task = Latest(self)
@@ -94,6 +99,15 @@ class WindowEditor(QObject):
         self.each_k = QCheckBox("Fits at each K")
         self.each_k.setToolTip("the new window's spectrum fitted at every K the run tried")
         self.each_k.toggled.connect(lambda _on: self.draw())
+        self.scope = QComboBox()
+        self.scope.addItem("all ions of this peptide, in this run", "peptide")
+        self.scope.addItem("this ion only, in this run", "ion")
+        self.scope.setToolTip(
+            "all ions of this peptide, in this run: its charge states (MS1) and, as a parent, "
+            "all its fragment ions (MS2, MS3) take the window, in this file only (the same "
+            "molecules elute together; Compare with: this peptide's other ions in this run "
+            "shows whether they do). This ion only, in this run: for interference at this "
+            "ion's own m/z")
         self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
@@ -101,13 +115,22 @@ class WindowEditor(QObject):
                              "first save named the table there) back as before the last save")
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
+        # two rows of their own under the figure's buttons (in the buttons' row they made the
+        # window wider than the screen: owner, 2026-11-08): the switch and the window, then
+        # saving
+        self.save_bar = QWidget()
+        save_row = QHBoxLayout(self.save_bar)
+        save_row.setContentsMargins(0, 0, 0, 0)
         self.controls = [QLabel("window"), self.start, QLabel("to"), self.end, QLabel("min"),
                          self.drift_label, self.drift_start, QLabel("to"), self.drift_end,
-                         QLabel("ms"), self.each_k, self.save]
+                         QLabel("ms"), self.each_k]
         row.addWidget(self.edit)
         for w in self.controls:
             row.addWidget(w)
-        row.addWidget(self.undo)
+        row.addStretch(1)
+        for w in (self.save, QLabel("for"), self.scope, self.undo):
+            save_row.addWidget(w)
+        save_row.addStretch(1)
         self._drift_widgets = self.controls[5:10]
         # what the preview is (and how it differs from a run), above the figure at the
         # window's own font size (owner: not small print inside the figure)
@@ -117,7 +140,8 @@ class WindowEditor(QObject):
         layout = panel.layout()
         layout.insertWidget(layout.indexOf(panel.title) + 1, self.notes)
         self._show_controls(False)
-        panel.add_option(self.bar)
+        panel.add_row(self.bar)
+        panel.add_row(self.save_bar)
         panel.spanned.connect(self._spanned)
 
     def _box(self, unit: str) -> QDoubleSpinBox:
@@ -135,6 +159,7 @@ class WindowEditor(QObject):
 
     def _show_controls(self, on: bool, drift: bool = False) -> None:
         self.notes.setVisible(on)
+        self.save_bar.setVisible(on)
         for w in self.controls:
             w.setVisible(on)
         for w in self._drift_widgets:
@@ -148,6 +173,7 @@ class WindowEditor(QObject):
             self._show_controls(False)
             self._generation += 1  # a fit still running stops
             self._task.submit(lambda: None, lambda _r: None, lambda _m: None)  # drop a preview
+            self.panel.set_task(None)
             self.plain()
             return
         self._target = None
@@ -167,18 +193,26 @@ class WindowEditor(QObject):
         target = (ctx.results, ctx.spectrum_id)
         selected = ctx.traces.traces[0]
         drift = selected.drift
-        if target != self._target:
+        # the results by identity: compared as values, two Results compare their arrays (and
+        # fail) when the results were read again with the switch on (owner, 2026-11-08)
+        if not (self._target is not None and self._target[0] is target[0]
+                and self._target[1] == target[1]):
             self._target = target
             self.preview, self.failure, self._previewed, self._summed = None, None, None, None
             window, drift_range = selected.window, drift
             saved = self._saved_row(ctx)
             if saved is not None:
                 window, drift_range = saved[0], saved[1] or drift
-                self.message.emit("this ion has a window of its own in this file "
-                                  f"({window[0]:.4g}-{window[1]:.4g} min, the elution-window "
-                                  "table): shown here; the results change when the project is "
-                                  "run again")
+                whose = ("this ion has a window of its own" if saved[2] == "ion" else
+                         "its peptide has a window")
+                self.scope.setCurrentIndex(self.scope.findData(saved[2]))
+                self.message.emit(f"{whose} in this file ({window[0]:.4g}-{window[1]:.4g} min, "
+                                  "the elution-window table): shown here; the results change "
+                                  "when the project is run again")
+            else:
+                self.scope.setCurrentIndex(self.scope.findData("peptide"))
             self._has_drift = drift is not None
+            self._drift_shown = drift_range
             self._set_boxes(window, drift_range)
             self._show_controls(True, drift=self._has_drift)
             self._save_state(ctx)
@@ -256,6 +290,7 @@ class WindowEditor(QObject):
 
         def done(picked) -> None:
             self.preview, self._summed = picked, key
+            self.panel.set_task("Fitting the new window's spectrum…")
             self.draw()
             self._task.submit(lambda: fit_preview(
                 results, picked, threads=1, start_from=sid,
@@ -263,12 +298,16 @@ class WindowEditor(QObject):
 
         def fitted(shown) -> None:  # then fitted (seconds: one spectrum, every K and start)
             self.preview, self._previewed = shown, key
+            self.panel.set_task(None)
             self.draw()
 
         def failed(message: str) -> None:
             self.failure = message
+            self.panel.set_task(None)
             self.draw()
 
+        # the raw file is read (the bundle holds each spectrum only as summed over its window)
+        self.panel.set_task("Reading the new window's scans…")
         self._task.submit(work, done, failed)
 
     def draw(self) -> None:
@@ -316,6 +355,21 @@ class WindowEditor(QObject):
         target = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]]
         return run.sample, run_name(run), _target_label(target)
 
+    def _peptide(self, ctx: TraceContext) -> tuple[str, tuple[str, ...], bool]:
+        """The spectrum's peptide (as the table's peptide rows name it), its ions (as spectrum
+        ids name them: its charge states, and its fragments when it is a parent), and whether
+        another peptide has an ion of this spectrum's name (two parents sharing a terminus)."""
+        from ..io.elution_windows import peptide_label
+        from ..io.mzml import _target_label
+
+        target = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]]
+        name, label = peptide_label(target.entry), _target_label(target)
+        ions = tuple(_target_label(t) for t in ctx.reader.targets
+                     if peptide_label(t.entry) == name)
+        shared = any(_target_label(t) == label and peptide_label(t.entry) != name
+                     for t in ctx.reader.targets)
+        return name, ions, shared
+
     def _saved_row(self, ctx: TraceContext):
         from .window_edit import saved_window
 
@@ -323,7 +377,7 @@ class WindowEditor(QObject):
         if project is None or key is None:
             return None
         try:
-            return saved_window(project, key)
+            return saved_window(project, key, self._peptide(ctx)[0])
         except Exception as exc:  # noqa: BLE001 (a table that does not read: not shown)
             log.info("window editing: %s", exc)
             return None
@@ -335,10 +389,12 @@ class WindowEditor(QObject):
                                  "project) to save windows")
         else:
             self.save.setEnabled(True)
-            self.save.setToolTip("write the window as this ion's row for this file in the "
-                                 "project's elution-window table ([input] rt_elution_windows; "
-                                 "made by the first save); the peptide table is not changed, "
-                                 "and the results change when the project is run again")
+            self.save.setToolTip("write the window for this file in the project's "
+                                 "elution-window table ([input] rt_elution_windows; made by the "
+                                 "first save), for all ions of this peptide or this ion only, "
+                                 "in this run (the choice beside); the peptide table is not "
+                                 "changed, and the "
+                                 "results change when the project is run again")
 
     def _save(self) -> None:
         from .window_edit import save_window
@@ -354,9 +410,16 @@ class WindowEditor(QObject):
         if project is None or key is None:
             return
         spectrum = self.preview.spectrum
+        whole = self.scope.currentData() == "peptide"
+        peptide, siblings, shared = self._peptide(ctx)
+        drift = self.drift()
+        if whole and drift is not None and self._drift_shown is not None and all(
+                abs(a - b) < 5e-4 for a, b in zip(drift, self._drift_shown, strict=True)):
+            drift = None  # not changed: the ion's drift range stays as it is
         try:
-            saved = save_window(project, key, (spectrum.rt_start, spectrum.rt_end),
-                                self.drift())
+            saved = save_window(project, key, (spectrum.rt_start, spectrum.rt_end), drift,
+                                peptide=peptide, whole=whole, siblings=siblings,
+                                shared=shared)
         except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
             self.message.emit(f"not saved: {exc}")
             return
@@ -365,9 +428,13 @@ class WindowEditor(QObject):
         what = "added" if saved.added else "changed"
         named = (f"; named in {project.name} as [input] rt_elution_windows"
                  if len(saved.files) > 1 else "")
+        name = (f"peptide {peptide} (all its ions, in this run)" if whole
+                else f"{key[2]} (this ion only, in this run)")
+        own = (f"; {len(saved.own)} other ion(s) of it keep a window of their own"
+               if saved.own else "")
         self.message.emit(
-            f"{saved.path.name}: {key[2]} in {key[1]} {what} ({saved.row.get('rt_start')}-"
-            f"{saved.row.get('rt_end')} min){named}; run the project again (hxex run "
+            f"{saved.path.name}: {name} in {key[1]} {what} ({saved.row.get('rt_start')}-"
+            f"{saved.row.get('rt_end')} min){own}{named}; run the project again (hxex run "
             "--overwrite) to use it")
         self.saved.emit(str(saved.path))
 

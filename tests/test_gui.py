@@ -255,6 +255,68 @@ def test_a_failed_drawing_is_reported_in_the_panel(qtbot):
     with qtbot.waitSignal(panel.failed, timeout=10000) as failed:
         panel.draw(broken)
     assert "K = 4" in failed.args[0] and panel.view.figure is None
+    # said on the status line under the figure, in red, without the busy bar
+    assert panel.status.full().startswith("Could not draw the figure")
+    assert "color" in panel.status.styleSheet() and panel.busy.isHidden()
+
+
+def test_the_status_line_shows_what_the_panel_is_doing(qtbot):
+    """Under the figure (owner: in the button bar "drawing…" was easy to miss): a moving busy
+    bar and words while a figure is drawn or read, the figure shown faded meanwhile (it is the
+    one before), why there is none, and nothing once it shows. The mouse help is on "?"."""
+    import threading
+
+    from hxex.gui.figure_view import HINT, SPAN_HINT
+
+    panel = FigurePanel()
+    qtbot.addWidget(panel)
+    assert panel.help.text() == "?" and panel.help.toolTip() == HINT
+    assert len(HINT.splitlines()) == 3  # one line per action
+    panel.set_span_mode(True)
+    assert panel.help.toolTip() == HINT + SPAN_HINT
+    panel.set_span_mode(False)
+
+    def figure():
+        fig = Figure(figsize=(2, 2))
+        fig.add_subplot().plot([0, 1], [0, 1])
+        return fig
+
+    with qtbot.waitSignal(panel.drawn, timeout=10000):
+        panel.draw(figure)
+    assert panel.status.full() == "" and panel.busy.isHidden()
+    assert panel._veil.isHidden()
+    assert panel.scroll.graphicsEffect() is None  # the figure is drawn as it is (not blurred)
+    release = threading.Event()
+
+    def slow():
+        release.wait(10)
+        return figure()
+
+    height = panel.status_line.height()
+    panel.draw(slow)
+    assert panel.status.full() == "Drawing the figure…" and not panel.busy.isHidden()
+    # the line keeps its height: the figure above it does not move while it is drawn
+    assert panel.status_line.height() == height
+    assert panel.status_line.minimumHeight() == panel.status_line.maximumHeight() == height
+    assert not panel._veil.isHidden()  # the figure before, faded under a veil
+    with qtbot.waitSignal(panel.drawn, timeout=10000):
+        release.set()
+    assert panel._veil.isHidden() and panel.busy.isHidden()
+    panel.clear("reading the elution trace…")
+    assert panel.status.full() == "Reading the elution trace…" and not panel.busy.isHidden()
+    panel.clear("no elution trace: un2.mzML not found")
+    assert panel.status.full().startswith("No elution trace") and panel.busy.isHidden()
+    # a long message is shortened to the width there is: it does not widen the window
+    from PySide6.QtWidgets import QApplication
+
+    panel.resize(500, 400)
+    panel.show()
+    QApplication.processEvents()
+    narrow = panel.minimumSizeHint().width()
+    panel.clear("no elution trace: " + "/a/long/folder" * 40 + "/un2.mzML not found")
+    QApplication.processEvents()
+    assert panel.minimumSizeHint().width() == narrow
+    assert panel.status.text().endswith("…") and "un2.mzML" in panel.status.toolTip()
 
 
 def test_the_window_opens_results_draws_a_series_and_saves_the_session(qtbot, window, bundle,
@@ -567,16 +629,65 @@ def test_dotnet_starts_before_qt_when_pythonnet_is_installed(monkeypatch):
     real = importlib.util.find_spec
     monkeypatch.setattr(importlib.util, "find_spec",
                         lambda name, *a: object() if name == "pythonnet" else real(name, *a))
-    gui.start_dotnet()
+    assert gui.start_dotnet() is True
     assert calls == ["load"]
 
     def broken():
         raise RuntimeError("no runtime")
 
     fake.load = broken
-    gui.start_dotnet()  # logged, not raised
+    assert gui.start_dotnet() is False  # logged, not raised
     monkeypatch.setattr(importlib.util, "find_spec",
                         lambda name, *a: None if name == "pythonnet" else real(name, *a))
     fake.load = lambda: calls.append("again")
     gui.start_dotnet()
     assert calls == ["load"]  # without pythonnet: nothing
+
+
+def test_closing_the_window_ends_the_process(tmp_path):
+    """Closed, the window's process ends at once: after .NET was started (with pythonnet),
+    Python's own exit waited on its shutdown, and the terminal did not come back for the owner
+    (hxex.gui.end_process). Run as hxex gui runs, in a process of its own."""
+    import subprocess
+    import time
+    from pathlib import Path
+
+    script = tmp_path / "close.py"
+    script.write_text(
+        "from PySide6.QtCore import QTimer\n"
+        "import hxex.gui.window as gw\n"
+        "real = gw.MainWindow.show\n"
+        "def show(self):\n"
+        "    real(self)\n"
+        "    QTimer.singleShot(500, self.close)\n"
+        "gw.MainWindow.show = show\n"
+        "import hxex.gui\n"
+        "raise SystemExit(hxex.gui.launch(None))\n")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen",
+           "PYTHONPATH": os.pathsep.join([str(Path(__file__).parents[1] / "src"),
+                                          os.environ.get("PYTHONPATH", "")])}
+    start = time.monotonic()
+    done = subprocess.run([sys.executable, str(script)], env=env, timeout=120,
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert time.monotonic() - start < 60
+
+
+def test_the_results_lists_bar_wraps_when_it_is_narrow(qtbot):
+    """The Results list's row of choices wraps onto further lines when the list is narrow (in
+    one row it set the window's narrowest width; owner, 2026-11-08), and back to one line when
+    there is room."""
+    from PySide6.QtWidgets import QApplication
+
+    from hxex.gui.spectra_list import SpectraList
+
+    lst = SpectraList()
+    qtbot.addWidget(lst)
+    lst.show()
+    assert lst.minimumSizeHint().width() < 300
+    heights = {}
+    for width in (1000, 250, 1000):
+        lst.resize(width, 400)
+        QApplication.processEvents()
+        heights.setdefault(width, []).append(lst.bar.height())
+    assert heights[250][0] > heights[1000][0] == heights[1000][1]

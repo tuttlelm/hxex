@@ -33,10 +33,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QRubberBand,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -68,12 +70,19 @@ DRAG_START = 4  # pixels the pointer moves before a press becomes a drag (not a 
 # pixels around a drawn mark that still count as clicking it (a thin line has no height of its
 # own: a click had to land on its one pixel row)
 CLICK_ALLOWANCE = 4
-HINT = ("Mouse wheel: zoom in and out at the pointer. Drag: move a zoomed figure. "
+# one line per action (owner, 2026-11-08: as one paragraph they ran together)
+HINT = ("Mouse wheel: zoom in and out at the pointer.\n"
+        "Drag: move a zoomed figure.\n"
         "Double-click a panel: magnify it (double-click again: the whole figure).")
 # added under the figures whose bars have tooltips and lead to their spectra (the Analysis
 # workspace's; the Results figures have neither)
-SPECTRA_HINT = (" Mouse over a peptide or bar for details. Right-click a peptide to go to its "
-                "spectra.")
+SPECTRA_HINT = ("\nMouse over a peptide or bar: its details.\n"
+                "Right-click a peptide: go to its spectra.")
+# while a drag sets a span (the elution tab's Edit window)
+SPAN_HINT = ("\nEdit window is on: drag across the trace (or the drift profile) to set the "
+             "window; the figure does not move.")
+FADED = 0.35  # how much of the figure shows through the veil while the next one is drawn
+ERROR_COLOUR = "#b3261e"  # the status line's failures
 
 
 class FigureView(QWidget):
@@ -449,6 +458,23 @@ class TitleLabel(QLabel):
                                                    room))
 
 
+class StatusLabel(TitleLabel):
+    """A figure panel's status line: left-aligned, in the window's own font, shortened with "…"
+    to the width there is (the whole text on hover). Unshortened, a long message (a missing
+    file's path) made the window wider than the screen (owner, 2026-11-08)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        font = self.font()
+        font.setBold(False)
+        self.setFont(font)
+
+    def set_full(self, text: str) -> None:
+        super().set_full(text)
+        self.setVisible(True)  # empty or not: the line keeps its place
+
+
 class FigurePanel(QWidget):
     """A :class:`FigureView` in a scroll area, with buttons to zoom, fit and save. Give it a
     figure (:meth:`show_figure`) or a function that draws one (:meth:`draw`, run in a worker
@@ -474,7 +500,21 @@ class FigurePanel(QWidget):
         self._connect(self.view)
         self.magnified = False  # a panel fills the view (double-click)
         self.save_name = ""  # the file name the save dialog suggests (none: it asks)
-        self.status = QLabel()
+        # what the panel is doing, under the figure (owner, 2026-11-08: in the button bar, in
+        # the bar's own style, "drawing…" was easy to miss): a moving busy bar while it draws
+        # or reads, why there is no figure, or a failure in red; empty when the figure shows
+        self.status = StatusLabel()
+        self.busy = QProgressBar()
+        self.busy.setRange(0, 0)  # moves without a known end
+        self.busy.setTextVisible(False)
+        self.busy.setFixedSize(80, 10)
+        self.busy.hide()
+        # the figure shown while the next one is drawn, faded by a veil laid over it (an opacity
+        # effect on the figure drew it blurred and shifted on a high-resolution display: owner,
+        # 2026-11-08)
+        self._veil = _Veil(self.scroll)
+        self.help_text = hint
+        self._task: str | None = None  # work of the figure's own beside its drawing (set_task)
         self._fitted = True
         self._drawing = Latest(self, pool or drawing_pool())
 
@@ -496,7 +536,13 @@ class FigurePanel(QWidget):
         self._options: list[QWidget] = []  # a figure's own choices, after the buttons
         self._steppers: dict[QComboBox, tuple[QPushButton, QPushButton]] = {}
         buttons.addStretch(1)
-        buttons.addWidget(self.status)
+        # how to move about: on mouse-over or a click of "?" (as a line under every figure it
+        # took room; tooltips on the figure itself cover it: owner)
+        self.help = QToolButton()
+        self.help.setText("?")
+        self.help.setToolTip(hint)
+        self.help.clicked.connect(self._show_help)
+        buttons.addWidget(self.help)
         # the figure's title, readable at any zoom: on a row of its own between the buttons and
         # the figure, centred on it (owner, 2026-11-05: placed among the buttons, it could
         # cover them when the window was resized)
@@ -511,11 +557,16 @@ class FigurePanel(QWidget):
         layout.addWidget(self.bar)
         layout.addWidget(self.title)
         layout.addWidget(self.scroll)
-        # how to move about, under the figure (as a tooltip it covered the figure: owner)
-        self.hint = QLabel(hint)
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: palette(placeholder-text);")
-        layout.addWidget(self.hint)
+        # one line high whether it says something or not: a line that came and went moved the
+        # figure up and back while it was drawn (owner, 2026-11-08)
+        self.status_line = QWidget()
+        status = QHBoxLayout(self.status_line)
+        status.setContentsMargins(4, 2, 4, 2)
+        status.addWidget(self.busy)
+        status.addWidget(self.status, 1)
+        self.status_line.setFixedHeight(max(self.status.fontMetrics().height(),
+                                            self.busy.height()) + 6)
+        layout.addWidget(self.status_line)
         self.save_button.setEnabled(False)
 
     # --- showing ---------------------------------------------------------------------------
@@ -535,6 +586,7 @@ class FigurePanel(QWidget):
         """A drag across the figure selects a span (:attr:`spanned`) instead of moving it."""
         self.span_mode = on
         self.view.span_mode = on
+        self.help.setToolTip(self.help_text + (SPAN_HINT if on else ""))
         if on:
             self.view.setCursor(Qt.CursorShape.CrossCursor)
         else:
@@ -572,7 +624,7 @@ class FigurePanel(QWidget):
             self.view.set_figure(fig, marks=marks)
         self.set_title(figure_title(fig))
         self.save_button.setEnabled(True)
-        self.status.setText("")
+        self._set_status(self._task or "", busy=self._task is not None, veil=False)
         if self._fitted:
             self.fit()
         self.drawn.emit()
@@ -588,7 +640,7 @@ class FigurePanel(QWidget):
                 return fig, None, None
             return fig, figure_svg(fig), figure_marks(fig)
 
-        self.status.setText("drawing…")
+        self._set_status("Drawing the figure…", busy=True)
         self._drawing.submit(work, lambda done: self.show_figure(*done), self._failed)
 
     @property
@@ -596,16 +648,42 @@ class FigurePanel(QWidget):
         return self._drawing.running
 
     def clear(self, message: str = "") -> None:
-        """Show no figure (``message`` in its place)."""
+        """Show no figure, ``message`` on the status line under it (one that ends in "…" says
+        the panel is working: with the busy bar)."""
         self.view.clear()
         self.set_title("")
         self.save_button.setEnabled(False)
-        self.status.setText(message)
+        self._set_status(message, busy=message.endswith("…"))
 
     def _failed(self, message: str) -> None:
-        self.status.setText("could not draw the figure")
+        self._set_status("Could not draw the figure (the messages say why).", error=True)
         log.error("could not draw the figure: %s", message)
         self.failed.emit(message)
+
+    def set_task(self, text: str | None) -> None:
+        """Work the figure's owner does beside drawing it (the elution tab's editing: reading a
+        new window's scans, fitting its spectrum): said on the status line with the busy bar
+        until it is set to None, also after a figure finishes drawing in the meantime; the figure
+        is not faded (it is current)."""
+        self._task = text
+        if not self.drawing:
+            self._set_status(text or "", busy=text is not None, veil=False)
+
+    def _set_status(self, text: str, busy: bool = False, error: bool = False,
+                    veil: bool | None = None) -> None:
+        """The status line: ``text`` (sentence case), the busy bar while ``busy`` (and the figure
+        shown, if any, faded: it is the one before; ``veil`` False: not faded), red for an
+        ``error``."""
+        if text:
+            text = text[0].upper() + text[1:]
+        self.status.set_full(text)
+        self.status.setStyleSheet(f"color: {ERROR_COLOUR};" if error else "")
+        self.busy.setVisible(busy)
+        self._veil.cover((busy if veil is None else veil) and self.view.figure is not None)
+
+    def _show_help(self) -> None:
+        QToolTip.showText(self.help.mapToGlobal(self.help.rect().bottomLeft()),
+                          self.help.toolTip(), self.help)
 
     # --- zooming ---------------------------------------------------------------------------
 
@@ -714,6 +792,13 @@ class FigurePanel(QWidget):
         if isinstance(widget, QComboBox):
             self._sync_steppers(widget)
 
+    def add_row(self, widget: QWidget) -> None:
+        """A row of this figure's own controls under the buttons, above the title (rows added
+        later go under earlier ones): choices too many for the buttons' row, which would make
+        the window wider than the screen (owner, 2026-11-08: the elution tab's editing did)."""
+        layout = self.layout()
+        layout.insertWidget(layout.indexOf(self.title), widget)
+
     @staticmethod
     def _step(box: QComboBox, step: int) -> None:
         """The entry of ``box`` before (-1) or after (+1) the current one, going round."""
@@ -760,8 +845,39 @@ class FigurePanel(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Figure not saved", str(exc))
             return
-        self.status.setText(f"saved {path}")
+        window = self.window()
+        if hasattr(window, "statusBar"):  # an event, as "session saved": the window's bar
+            window.statusBar().showMessage(f"figure saved to {path}", 5000)
         log.info("figure saved to %s", path)
+
+
+class _Veil(QWidget):
+    """A half-transparent sheet over a scroll area's view (the window's own colour, letting
+    :data:`FADED` of the figure show through): the figure under it is the one before the figure
+    being drawn. It takes no mouse events and leaves the figure's own drawing alone."""
+
+    def __init__(self, scroll: QScrollArea):
+        super().__init__(scroll)
+        self._scroll = scroll
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+        scroll.viewport().installEventFilter(self)
+
+    def cover(self, on: bool) -> None:
+        if on:
+            self.setGeometry(self._scroll.viewport().geometry())
+            self.raise_()
+        self.setVisible(on)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.Resize and self.isVisible():
+            self.setGeometry(self._scroll.viewport().geometry())
+        return False
+
+    def paintEvent(self, _event) -> None:
+        colour = self.palette().color(QPalette.ColorRole.Window)
+        colour.setAlphaF(1.0 - FADED)
+        QPainter(self).fillRect(self.rect(), colour)
 
 
 VIEWS = {"svg": FigureView, "matplotlib": RasterView}  # how the window draws its figures

@@ -122,8 +122,12 @@ looks after your computer can tell you which you have):
 uv tool install https://github.com/tuttlelm/hxex/archive/refs/heads/main.zip --index https://download.pytorch.org/whl/cu126 --index-strategy unsafe-best-match
 ```
 
-*hxex* uses the GPU when you run `hxex run hxex.toml --device cuda`, or set `device = "cuda"`
-under `[run.fit.backend]` in the project file. GPU runs on macOS are not currently supported.
+*hxex* uses the GPU whenever its PyTorch can (the default, `device = "auto"` under
+`[run.fit.backend]` in the project file), or when you ask for it with `hxex run hxex.toml
+--device cuda` or `device = "cuda"`. To see which it will use, run `hxex check hxex.toml`: its
+`fits on` line names the GPU or the CPU, and the PyTorch it found; one "which has no CUDA"
+cannot use a GPU (install it with the command above). GPU runs on macOS are not currently
+supported.
 
 **The *hxex* window** needs the `gui` extra: in step 3, put `"hxex[gui] @ "` before the
 address, as in

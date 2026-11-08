@@ -45,6 +45,14 @@ def start_stage(progress: ProgressHook | None, name: str, start: float, end: flo
         hook(name, start, end)
 
 
+def format_percent(fraction: float) -> str:
+    """``fraction`` as a percent: one decimal below 10 % (``'0.4%'``; a slow stage still shows
+    it moving), whole above (``'12%'``), and no ``.0`` (``'2%'``)."""
+    pct = 100.0 * fraction
+    text = f"{pct:.1f}" if pct < 9.95 else f"{pct:.0f}"
+    return (text[:-2] if text.endswith(".0") else text) + "%"
+
+
 def format_duration(seconds: float) -> str:
     """``seconds`` as ``'45s'``, ``'4m 05s'`` or ``'2h 10m'``."""
     s = int(round(max(seconds, 0.0)))
@@ -239,7 +247,7 @@ class ProgressLog:
             rest = spent / frac * (1 - frac)
             left = (f", more than {LONGEST_ESTIMATE / 3600:.0f}h left" if rest > LONGEST_ESTIMATE
                     else f", about {format_duration(rest)} left")
-        self.logger.log(self.level, "%s: %.0f%% after %s%s", label, 100 * frac,
+        self.logger.log(self.level, "%s: %s after %s%s", label, format_percent(frac),
                         format_duration(spent), left)
 
 

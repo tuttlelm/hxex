@@ -72,7 +72,7 @@ from .drift_gate import (
     isotope_peaks,
     scan_profile,
 )
-from .elution_windows import ElutionWindow, by_key
+from .elution_windows import ElutionWindow, by_key, by_peptide, peptide_label, window_for
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
 from .times import format_time
@@ -1359,10 +1359,12 @@ def read_mzml(
     lives, for results to be shared; the read is repeated with ``directory``).
 
     ``elution_windows`` (:class:`hxex.io.elution_windows.ElutionWindow`, the ``[input]
-    rt_elution_windows`` table) gives one ion in one file its own retention window (and drift
-    range): that spectrum sums the scans inside it, without find_peak or find_fragment_peak, and
-    stays in its series. The rows used are recorded (``elution_windows``); a row that names no
-    ion read from its file is warned about.
+    rt_elution_windows`` table) gives a peptide (every ion of it: its charge states, and its
+    fragments when it is a parent) or one ion its own retention window in one file (and an ion
+    its drift range): those spectra sum the scans inside it, without find_peak or
+    find_fragment_peak, and stay in their series. The rows used are recorded
+    (``elution_windows``); a row that names no peptide or ion read from its file is warned
+    about.
     """
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
@@ -1501,19 +1503,23 @@ def _read_runs(
         order.sort(key=lambda n: not search.reads(runs[n]))
     moved: dict[tuple[str, int], float] = {}
     decided = search is None
-    edited = by_key(elution_windows)  # (sample, file, ion) -> its own window in that file
-    used: set[tuple[str, str, str]] = set()
+    edited = by_key(elution_windows)  # (sample, file, peptide, ion) -> an ion's own window
+    edited_peptides = by_peptide(elution_windows)  # (sample, file, peptide) -> all its ions'
+    used: set[tuple] = set()
 
     def targets_of(run):
         out = [with_rt(t, moved[(run.sample, i)]) if (run.sample, i) in moved else t
                for i, t in enumerate(targets)]
-        if edited and run.fixed:
+        if (edited or edited_peptides) and run.fixed:
             name = run_name(run)
             for i, t in enumerate(out):
-                window = edited.get((run.sample, name, _target_label(t)))
-                if window is not None and target_applies(t, run, tie):
-                    out[i] = _with_elution_window(t, window)
-                    used.add(window.key)
+                if not target_applies(t, run, tie):
+                    continue
+                window, drift, rows = window_for(_target_label(t), peptide_label(t.entry),
+                                                 run.sample, name, edited, edited_peptides)
+                if rows:
+                    out[i] = _with_elution_window(t, window, drift)
+                    used.update(w.key for w in rows)
         return out
 
     def by_target():
@@ -1571,12 +1577,14 @@ def _read_runs(
         moved = decide()
         if moved:
             reread(moved)
-    unused = [w for w in edited.values() if w.key not in used]
+    table_rows = [*edited.values(), *edited_peptides.values()]
+    unused = [w for w in table_rows if w.key not in used]
     if unused:
         w = unused[0]
-        log.warning("rt_elution_windows: %d row(s) name no ion read from their file (a run "
-                    "with a time; the sample, file and ion as the spectrum ids name them), "
-                    "for example %s in %s (%s): not used", len(unused), w.ion, w.file, w.sample)
+        log.warning("rt_elution_windows: %d row(s) name no peptide or ion read from their file "
+                    "(a run with a time; the sample, file, and peptide or ion as the spectrum "
+                    "ids name them), for example %s in %s (%s): not used", len(unused), w.name,
+                    w.file, w.sample)
     calibration = None
     if config.mz_calibration == "auto":
         calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry)
@@ -1596,8 +1604,8 @@ def _read_runs(
             file_identity(p) for p in opened],
         "targets": [t.to_dict() for t in targets],
         "windows": [list(w) for w in windows],  # the m/z each target's scans were cut to
-        # the rt_elution_windows rows used (one ion's own window in one file)
-        "elution_windows": [w.to_dict() for w in edited.values() if w.key in used],
+        # the rt_elution_windows rows used (a peptide's or one ion's window in one file)
+        "elution_windows": [w.to_dict() for w in table_rows if w.key in used],
         "config": config.to_dict(),
         "picker": picker.to_dict(),
         "registry": registry.to_dict(),
@@ -2256,16 +2264,21 @@ def _drift_gate(target: MzmlTarget, gates: Mapping[tuple, DriftRange]):
 EDITED_WINDOW = "elution_window"
 
 
-def _with_elution_window(target: MzmlTarget, window) -> MzmlTarget:
-    """``target`` as one file reads it with its own window (:class:`~hxex.io.elution_windows
-    .ElutionWindow`): the scans inside ``rt_start`` to ``rt_end``, the drift range when given,
-    and no peak search (its entry's ``rt_start``, ``rt_end`` and mark)."""
-    extra = {**dict(target.entry.extra), "rt_start": repr(float(window.rt_start)),
-             "rt_end": repr(float(window.rt_end)), EDITED_WINDOW: "edited"}
-    if window.drift is not None:
-        extra.update(drift_start=repr(float(window.drift_start)),
-                     drift_end=repr(float(window.drift_end)))
-    return replace(target, rt_window=(60.0 * window.rt_start, 60.0 * window.rt_end),
+def _with_elution_window(target: MzmlTarget, window: tuple[float, float] | None,
+                         drift: tuple[float, float] | None = None) -> MzmlTarget:
+    """``target`` as one file reads it with the window the ``rt_elution_windows`` table gives
+    it there (:func:`hxex.io.elution_windows.window_for`): the scans inside ``window``
+    (minutes) and no peak search (its entry's ``rt_start``, ``rt_end`` and mark); the ``drift``
+    range (ms) when given. A drift range alone leaves the window as the reader would choose
+    it."""
+    extra = dict(target.entry.extra)
+    if drift is not None:
+        extra.update(drift_start=repr(float(drift[0])), drift_end=repr(float(drift[1])))
+    if window is None:
+        return replace(target, entry=replace(target.entry, extra=extra))
+    extra.update(rt_start=repr(float(window[0])), rt_end=repr(float(window[1])))
+    extra[EDITED_WINDOW] = "edited"
+    return replace(target, rt_window=(60.0 * window[0], 60.0 * window[1]),
                    entry=replace(target.entry, extra=extra))
 
 
@@ -2495,25 +2508,28 @@ def _ladder_trace(scans, pred: np.ndarray, half: np.ndarray) -> np.ndarray:
     return out
 
 
-def _channels(targets, plans, which) -> list[list[int]]:
+def _channels(targets, plans, which, by_plan: bool = True) -> list[list[int]]:
     """The positions of the ``which`` targets (with a plan) grouped by channel
-    (:func:`_channel`) and planned scans."""
+    (:func:`_channel`) and, with ``by_plan``, by planned scans (else a channel stays one group
+    when one of its ions has a window of its own, ``rt_elution_windows``)."""
     channels: dict[tuple, list] = {}
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if which[t_i] and plan is not None:
-            key = (_channel(target), np.asarray(plan[0]).tobytes())
+            key = (_channel(target), np.asarray(plan[0]).tobytes() if by_plan else b"")
             channels.setdefault(key, []).append(t_i)
     return list(channels.values())
 
 
 def _channel_traces(table: ScanTable, targets, plans, channels, by_index, picker: PickerConfig,
                     registry, r_mz: float):
-    """``(members, order, trace)`` of every channel (target positions sharing one channel and
-    planned scans, :func:`_channels`): the sum of every member's predicted bins, scan by scan
-    over the planned scans ``order`` (:func:`_ladder_trace`)."""
+    """``(members, order, trace)`` of every channel (target positions sharing one channel, and
+    planned scans unless :func:`_channels` grouped them by channel alone): the sum of every
+    member's predicted bins, scan by scan over ``order``, every scan any member plans to read
+    (by scan time; :func:`_ladder_trace`)."""
     out = []
     for members in channels:
-        order = plans[members[0]][0]
+        order = np.unique(np.concatenate([np.asarray(plans[t_i][0]) for t_i in members]))
+        order = order[np.argsort(table.time[order], kind="stable")]
         # a run without a fixed time reads only the scans of its groups (group = "windows"):
         # the others have no share (no spectrum sums them)
         read = np.array([int(table.index[k]) in by_index for k in order], dtype=bool)
@@ -2539,18 +2555,22 @@ def _channel_traces(table: ScanTable, targets, plans, channels, by_index, picker
 def _scan_records(f, table: ScanTable, targets, plans, by_index, windows, picker: PickerConfig,
                   registry) -> dict[int, np.ndarray]:
     """For ``scan_cut``: the trace of every fragment target's channel over its planned scans
-    (target position -> trace, aligned with the plan's scan order), and checks that the file
-    records the scans' noise."""
+    (target position -> trace, aligned with the plan's scan order). The channel is the whole
+    ladder read from the same scans: an ion given a window of its own (``rt_elution_windows``)
+    stays in it, so its scans are weighed by the whole channel's trace, and its siblings' by
+    the same trace as before (measured on the private targeted dataset, 2026-11-08: one ion's
+    edited window had moved the weights of 557 sibling series by about 0.5 %)."""
     which = [("fragment" in dict(t.entry.extra) and t.ms_level >= 2) for t in targets]
     if not any(w and p is not None for w, p in zip(which, plans, strict=True)):
         return {}
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
     traces = {}
-    for members, _order, trace in _channel_traces(table, targets, plans,
-                                                  _channels(targets, plans, which), by_index,
-                                                  picker, registry, r_mz):
+    for members, order, trace in _channel_traces(
+            table, targets, plans, _channels(targets, plans, which, by_plan=False), by_index,
+            picker, registry, r_mz):
+        at = {int(k): i for i, k in enumerate(order)}
         for t_i in members:
-            traces[t_i] = trace
+            traces[t_i] = trace[[at[int(k)] for k in plans[t_i][0]]]
     return traces
 
 

@@ -546,7 +546,8 @@ def _plan(data: Measurements, config: RunConfig, progress_range,
             log.info("the bundle's chunk plan does not cover these measurements: planned again")
         budget = default_budget(config)
         chunks = plan_chunks(data, k_max, itemsize, budget, config.max_chunk)
-    log.info("%d measurements in %d chunk(s)", len(data), len(chunks))
+    log.info("%d measurements in %d chunk(s), fitted on %s", len(data), len(chunks),
+             config.fit.backend.describe())
     sizes = np.array([len(c) for c in chunks], dtype=float)
     edges = np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()])
     lo, hi = progress_range
@@ -602,19 +603,27 @@ def _fit_part(
     fits: list[FitResult] = []
     tests: list[PopulationTest] = []
     testing = config.population_test is not None
-    start_stage(progress, "fit and population test" if testing else "fit", lo,
-                lo + (hi - lo) * share)
+    # with the test, the fits and the test's null are stages of their own, each from 0 to 100 %
+    # with its own time left: as one stage the fits were its first ~3 % (the null takes ~30
+    # times as long), which read 0 % for minutes (owner, 2026-11-08)
+    n = len(plan.subs)
+    if not testing:
+        start_stage(progress, "fit", lo, lo + (hi - lo) * share)
     for j, sub in enumerate(plan.subs):
         check_cancel(cancel)
         a = lo + (hi - lo) * share * edges[j]
         b = lo + (hi - lo) * share * edges[j + 1]
         mid = a + (b - a) * (1.0 - plan.test_share)
+        chunk = f", chunk {j + 1} of {n}" if n > 1 else ""
+        if testing:
+            start_stage(progress, f"fit{chunk}", a, mid)
         required = (np.array([int(chosen.get(str(i), 0)) for i in sub.spectrum_id])
                     if chosen else None)
         part = fit_models(sub, config.fit, progress=_FitSpan(progress, a, mid, config.fit, sub),
                           cancel=cancel,
                           test_screen=testing, noise_curve=noise_curve, required_k=required)
         if testing:
+            start_stage(progress, f"population test{chunk}", mid, b)
             test = population_test(sub, part, config.population_test,
                                    d2o_fraction=_d2o_fraction(config), test_screen=True,
                                    progress=_Span(progress, mid, b), cancel=cancel)
@@ -1493,6 +1502,11 @@ def resume_bootstrap(
     the fits do not depend on the controls), the quality flags that use them are assessed again,
     and the bundle's run settings record them (owner, 2026-11-05: a D2O fraction corrected
     after the run).
+
+    Quality flags an earlier version of the checks assessed (:attr:`hxex.quality.QualityFlags
+    .outdated`: a flag added since is empty) are assessed again with this version's, also on a
+    bundle with nothing else to do (owner, 2026-11-08: flags added after a bundle's fits were
+    otherwise never assessed for it).
     The manifest's provenance records the resume (``resumed``), and ``project_file``
     (:func:`hxex.config.project_record`), when given, replaces the bundle's record of the
     project file (its ``run_settings_used.toml``)."""
@@ -1514,7 +1528,9 @@ def resume_bootstrap(
         stored_controls = (ControlConfig.from_dict(stored_run["controls"])
                            if stored_run.get("controls") else None)
         new_controls = run_controls is not None and run_controls != stored_controls
-        if not redo and not unfitted and not testing and not new_controls and (
+        # flags an earlier version of the checks assessed (a flag added since is empty)
+        outdated = b.has("quality") and b.quality().outdated
+        if not redo and not unfitted and not testing and not new_controls and not outdated and (
                 b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)):
             raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
                              "every K chosen in the review has one; to add or redo the "
@@ -1581,6 +1597,7 @@ def resume_bootstrap(
         if config.quality is not None:
             quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
                                   stored_controls_table)
+            outdated = False
         if review is not None:
             review = review.mark_stale(fit)
         provenance = _resumed(provenance, "population test", project_file is not None)
@@ -1598,6 +1615,7 @@ def resume_bootstrap(
         if config.quality is not None:
             quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
                                   controls_table)
+            outdated = False
         if test is not None and not testing and (stored_controls is None or (
                 stored_controls.d2o_fraction != config.controls.d2o_fraction)):
             log.warning("%s: the population test's narrow_component flags used the former "
@@ -1609,6 +1627,12 @@ def resume_bootstrap(
             project_record = dict(project_file)
     else:
         controls = stored_controls_table
+    if outdated and config.quality is not None:  # assessed again by this version's checks
+        log.info("%s: assessing the quality flags again: an earlier version of hxex assessed "
+                 "them, before checks added since (the fits are kept)", path)
+        quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
+                              controls)
+        provenance = _resumed(provenance, "quality flags", False)
     if redo:
         plan = dataclasses.replace(
             _plan(measurements, config, (tested, float(UNITS - _FINISH)), record=chunk_plan),

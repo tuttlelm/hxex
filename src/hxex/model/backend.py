@@ -44,6 +44,15 @@ class Backend:
             raise RuntimeError(f"device {self.device!r} requested but CUDA is not available")
         return torch.device(self.device)
 
+    def describe(self, threads: int | None = None) -> str:
+        """Where the fits run, in words: ``'the GPU (cuda:0, NAME)'`` or ``'the CPU (N
+        threads)'`` (``threads``: PyTorch's own when None). Raises as :meth:`torch_device`."""
+        device = self.torch_device()
+        if device.type == "cuda":
+            index = device.index if device.index is not None else torch.cuda.current_device()
+            return f"the GPU (cuda:{index}, {torch.cuda.get_device_name(index)})"
+        return f"the CPU ({threads or torch.get_num_threads()} threads)"
+
     def torch_dtype(self) -> torch.dtype:
         if self.dtype == "auto":
             return torch.float32

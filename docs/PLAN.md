@@ -1240,6 +1240,16 @@ Planned, not built:
      row to that file only (no peak search; the spectrum stays in its series); `hxex check`
      names rows the project does not read; the Tables view edits it. The peptide table is never
      changed by the window.
+     CHANGED (HISTORY 323, owner, 2026-11-08): a row names a **peptide** (every ion of it in
+     that file: charge states, the parent and all its fragment channels and ions) or one
+     **ion** (an exception, for interference at its m/z; it wins over its peptide's row; drift
+     ranges on ion rows only). Measured first (private elution-groups study): charge states
+     within 0.36 s of each other (Q-TOF; q99 4.8 s), fragment channels within 0.42 s of their
+     MS1 parent, ions with signal within 0.3-0.4 s of their channel; the owner's 21 edits all
+     narrowed around that shared peak. Save defaults to the whole peptide. Not built (to
+     consider): a suggestion to move a file's neighbouring peptides with an edit (their drift
+     is shared: +-1 min neighbours predict an offset to ~1 s); a warning for a window that cuts
+     the peak (the front of a deuterated peak reads 0.1-0.2 D heavier than its tail).
    - *Applying*: first by a full `hxex run --overwrite` (about 11 minutes on the benchmark);
      later, if that gets in the way, a partial rerun: read again only the changed spectra (with
      each file's stored m/z offset and drift ranges, not measured again), pick and fit their

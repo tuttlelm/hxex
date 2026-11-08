@@ -113,7 +113,14 @@ the user review table. Choose one on the left to edit it as a grid.
   spreadsheet takes (a cell not selected inside the block is left empty).
 - Click a column's header to sort the rows by it (numbers as numbers, empty cells last); click
   it again for the reverse order. Sorting changes only what you see: the file keeps its own
-  order when saved.
+  order when saved, and each row keeps its number in the file (a spreadsheet numbers it one
+  higher, as it counts the header).
+- In the user review table, a row naming a spectrum your results do not have is shaded red,
+  and a line above the grid gives its row number (the same rows `hxex check` and `hxex report`
+  warn about: *hxex* skips them). **Show the next one** selects the next such row; hover over it
+  to see why. Copy the right `spectrum_id` from `spectra.csv`, or remove the row. A row whose
+  spectrum a later run summed from other scans (a moved retention window) is not shaded: its
+  decision follows the spectrum, and hovering over the row names the new id.
 - Changes are kept until you press **Save**; **Revert** goes back to the file. Leaving a table,
   the project, or the window with unsaved changes asks first.
 - **Save** checks the table as *hxex* reads it (a sample of the peptide table must be one of
@@ -195,9 +202,20 @@ A replicate read from mzML or Thermo raw files also has an **elution** tab: its 
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
 neighbour's. *hxex* opens the spectrum's file again and draws, per scan, the intensity at the
 ion's bins (the tallest point in the picking window of each bin, added up over the bins) over a
-stretch of the run around the scans it summed (shaded). The same series' other runs in the
-sample are drawn behind it in grey, so a run that eluted earlier or later, or a window that
-caught another peak, stands out. For ion-mobility files the trace keeps to the spectrum's drift
+stretch of the run around the scans it summed (shaded). **Compare with** chooses what is drawn
+behind it:
+
+- **this ion in the other runs** (the default): the same ion in the sample's other runs (its
+  other time points, replicates, and controls), in grey. A run that eluted earlier or later, or
+  a window that caught another peak, stands out: that run needs a window of its own.
+- **this peptide's other ions in this run**: the peptide's other charge states (MS1) and, when
+  you read fragments, its fragment ions, one line per fragment channel (its ions added up), in
+  colour, each scaled to the selected trace's height so that the peaks compare. They come from
+  the same molecules and elute together; an ion whose peak sits apart from the others has
+  interference at its own m/z. This tells you which choice to make when you save a window
+  (below).
+
+For ion-mobility files the trace keeps to the spectrum's drift
 range, and a second panel shows the drift profile of the scans summed, with that range shaded.
 The selected run is drawn first, then the others (about half a second per file, longer the
 first time a large file is opened). The files are read from the project's `data_root`, or,
@@ -210,26 +228,42 @@ Type new times, or drag across the trace (or across the drift profile) to set th
 switch is on, dragging sets the window instead of moving the figure. The new window is hatched
 on the trace, and under it the spectrum as the results hold it ("now") is drawn beside the
 spectrum summed over the new window, each with its fit, its K, and its deuteration. The new
-spectrum shows at once; its fit follows within a second (every K, started from the run's fit
-of the spectrum, so it takes only a few steps). **Fits at each K** draws the new window's
+spectrum is made from the raw file (the results hold each spectrum only as summed over its own
+window), so the file has to be where the project's `data_root` says; the first time a file is
+opened this takes a few seconds, afterwards a fraction of one. The new spectrum shows as soon
+as it is read; its fit follows within a second (every K, started from the run's fit of the
+spectrum, so it takes only a few steps). The line under the figure says which of the two is
+under way. **Fits at each K** draws the new window's
 spectrum at every K the run tried. This is a preview: it uses the run's settings and noise
 curve, but not its bootstrap, population test, or controls, and nothing in the results
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did.
 
 **Save window** writes the window as a row of the project's elution-window table,
-`rt_elution_windows.csv`: one row for this ion in this file, with the new `rt_start` and
-`rt_end` (and `drift_start`, `drift_end` for ion-mobility files). The first save makes the table
-beside the project file and names it there (`[input] rt_elution_windows`); saving again for the
-same ion and file changes its row. Your peptide table is never changed. This works for peptides,
-fragment ions, and a fragment channel's intact precursor alike. **Undo** puts the table (and the
-project file, after the first save) back as it was before the last save. Saving needs the
-results opened from their project file, and the table opens in **Tables** like the others. The
-saved windows are used when you run the project again (`hxex run --overwrite`); each spectrum
-stays in its series (see [One ion's own window in one
-file](inputs.md#one-ions-own-window-in-one-file)). A spectrum's id names the scans it summed, so a
-spectrum with a new window has a new id after the run; your review decisions for it follow it
-to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
+`rt_elution_windows.csv`. The choice beside it says what the row is for:
+
+- **all ions of this peptide, in this run** (the default): every ion of the peptide in this
+  file takes the window: its charge states (MS1) and, when you read fragments, all its fragment
+  ions (MS2, MS3). Other runs keep their own windows. The ions are the same molecules and elute
+  together, so this is usually right.
+  If this ion had a window of its own, it now follows its peptide; the message names any other
+  ion of the peptide that keeps a window of its own.
+- **this ion only, in this run**: for interference at this ion's own m/z, when this one ion
+  needs a different window from the rest of its peptide. The row names the peptide as well, so it is
+  for this peptide's ion only.
+
+On ion-mobility files a changed drift range is always kept for this ion only (drift times
+differ between charge states). The first save makes the table beside the project file and names
+it there (`[input] rt_elution_windows`); saving again for the same peptide or ion and file
+changes its row. Your peptide table is never changed. When you open a spectrum whose peptide
+or ion already has a saved window in that file, the boxes show it and the choice is set to
+match. **Undo** puts the table (and the project file, after the first save) back as it was
+before the last save. Saving needs the results opened from their project file, and the table
+opens in **Tables** like the others. The saved windows are used when you run the project again
+(`hxex run --overwrite`); each spectrum stays in its series (see [A peptide's own window in one
+file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the scans it summed,
+so a spectrum with a new window has a new id after the run; your review decisions for it follow
+it to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
 
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes.
@@ -460,11 +494,18 @@ sample, and charge of a series), which stays readable however far you zoom:
   is: the peptide's sequence and residues, its value with its standard error, and, on a
   comparison, both samples' values, the difference, and whether it is significant.
 - **Save figure…** saves the figure as SVG or PDF (sharp at any size, for papers and slides
-  you edit further) or PNG (a picture).
+  you edit further) or PNG (a picture); the window's bottom bar says where it went.
+- **?**, at the end of the buttons, lists these mouse actions: rest the pointer on it, or
+  click it.
+
+A line under each figure says what the panel is doing. While a figure is drawn, or its elution
+trace read, a moving bar shows beside the words, and the figure shown until then is faded (it
+is the one before). When there is no figure, the line says why ("No elution trace: …"); when a
+figure could not be drawn, it says so in red (the messages pane says why). The line is empty
+once the figure shows.
 
 The figures are those `hxex report` draws, drawn by the same program (matplotlib), so the
-same peptide gives the same figure in the window and in the figures folder. A line under each
-figure says how to move about it. The window draws each figure as a picture at the size shown
+same peptide gives the same figure in the window and in the figures folder. The window draws each figure as a picture at the size shown
 (**matplotlib (raster, as PNG)** in the View menu); nothing is saved unless you press **Save
 figure…**. (**View > Draw the figures with** can switch to Qt's SVG
 renderer, which zooms without redrawing but draws past the panels' frames anything that runs

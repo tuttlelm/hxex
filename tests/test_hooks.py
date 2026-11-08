@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from hxex.hooks import ProgressLog, format_duration, report, start_stage
+from hxex.hooks import ProgressLog, format_duration, format_percent, report, start_stage
 
 
 class Clock:
@@ -220,3 +220,9 @@ def test_a_programs_report_gets_records_of_the_stages_and_the_end():
     quiet = ProgressLog(interval=30.0, clock=clock, heartbeat=False, report=broken)
     report(quiet, 1, 10)  # a failing hook is dropped, never stops the operation
     assert quiet.report is None
+
+
+def test_percents_below_ten_keep_a_decimal():
+    # a slow stage still shows it moving (the fits read 0 % for minutes; owner, 2026-11-08)
+    assert [format_percent(f) for f in (0, 0.004, 0.02, 0.0996, 0.12, 1)] == [
+        "0%", "0.4%", "2%", "10%", "12%", "100%"]

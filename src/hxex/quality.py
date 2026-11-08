@@ -133,6 +133,14 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
               "below_noise")
 
 
+# The version of the checks behind the flags: add one whenever a flag or statistic is added or
+# what one tests changes, so that a bundle whose flags an earlier version assessed says so and
+# `hxex resume` assesses them again (owner, 2026-11-08: a bundle fitted before overlapping_ion
+# existed kept it empty through later resumes). 0: flags read from a bundle that does not record
+# it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314).
+QUALITY_VERSION = 1
+
+
 @dataclass(frozen=True)
 class QualityConfig:
     """Thresholds of the quality screens (the ``[run.quality]`` table; see the module docstring
@@ -247,6 +255,13 @@ class QualityFlags:
     overlapping_ion: np.ndarray | None = None
     signal_to_noise: np.ndarray | None = None
     below_noise: np.ndarray | None = None
+    version: int = QUALITY_VERSION  # of the checks that assessed them (QUALITY_VERSION)
+
+    @property
+    def outdated(self) -> bool:
+        """Whether an earlier version of the checks assessed these flags (a flag added since is
+        False and its statistic NaN, not assessed)."""
+        return self.version < QUALITY_VERSION
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag

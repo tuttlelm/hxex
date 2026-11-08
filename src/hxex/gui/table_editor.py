@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QBrush, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -35,16 +35,24 @@ from PySide6.QtWidgets import (
 
 from .order import natural_key
 from .user_tables import (
+    ReviewMatch,
     Table,
     TableKind,
     TableLocked,
     kinds,
     read_table,
+    results_ids,
+    review_match,
     table_problem,
     write_table,
 )
 
 log = logging.getLogger(__name__)
+
+# a review-table row naming a spectrum the results do not have: a translucent red, readable on
+# light and dark backgrounds
+UNMATCHED = QColor(220, 50, 47, 70)
+UNMATCHED_TEXT = QColor("#b3261e")
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:
@@ -76,10 +84,14 @@ class TableModel(QAbstractTableModel):
         return 0 if parent.isValid() or self.table is None else len(self.table.columns)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role not in (Qt.ItemDataRole.DisplayRole,
-                                               Qt.ItemDataRole.EditRole):
+        if not index.isValid():
             return None
-        return self.table.rows[self.editor._order[index.row()]][index.column()]
+        row = self.editor._order[index.row()]
+        if role in (Qt.ItemDataRole.BackgroundRole, Qt.ItemDataRole.ToolTipRole):
+            return self.editor.row_mark(row, role)
+        if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+            return None
+        return self.table.rows[row][index.column()]
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):  # noqa: N802 - Qt's name
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
@@ -97,11 +109,18 @@ class TableModel(QAbstractTableModel):
                 | Qt.ItemFlag.ItemIsEditable)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        if orientation == Qt.Orientation.Vertical and self.table is not None \
+                and role in (Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.ToolTipRole) \
+                and 0 <= section < len(self.editor._order):
+            return self.editor.row_mark(self.editor._order[section], role, header=True)
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
             return self.table.columns[section] if self.table is not None else None
-        return str(section + 1)
+        # the row's place in the file, also when the view is sorted (one less than a
+        # spreadsheet's number, which counts the header)
+        return str(self.editor._order[section] + 1) if section < len(self.editor._order) \
+            else str(section + 1)
 
     def refresh(self) -> None:
         self.beginResetModel()
@@ -148,6 +167,22 @@ class TableEditor(QWidget):
         self.problem.setWordWrap(True)
         self.problem.setStyleSheet("color: #b00020;")
         self.problem.hide()
+        # review-table rows naming spectra the results do not have (owner, 2026-11-08: hxex
+        # check's warning named the spectrum, not where it is in the table)
+        self._results = None  # the results' spectrum ids (user_tables.ResultsIds)
+        self.match: ReviewMatch | None = None
+        self.notice = QLabel()
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet(f"color: {UNMATCHED_TEXT.name()};")
+        self.next_unmatched = QPushButton("Show the next one")
+        self.next_unmatched.setToolTip("select the next shaded row")
+        self.next_unmatched.clicked.connect(lambda checked=False: self.show_next_unmatched())
+        self.notice_row = QWidget()
+        notice = QHBoxLayout(self.notice_row)
+        notice.setContentsMargins(0, 0, 0, 0)
+        notice.addWidget(self.notice, 1)
+        notice.addWidget(self.next_unmatched, 0, Qt.AlignmentFlag.AlignTop)
+        self.notice_row.hide()
         # a click on a column's header sorts the view (owner, 2026-11-04); the file keeps its
         # own order. The header no longer selects the column (a cell in it does, for removing)
         self._order: list[int] = []  # the table's rows in the order shown
@@ -188,6 +223,7 @@ class TableEditor(QWidget):
         layout.addWidget(self.heading)
         layout.addLayout(bar)
         layout.addWidget(self.problem)
+        layout.addWidget(self.notice_row)
         layout.addWidget(self.grid, 1)
         self._enable()
 
@@ -241,6 +277,9 @@ class TableEditor(QWidget):
             self._fill()
             return
         self.heading.setText(f"{kind.title}: {path}")
+        self._results = None
+        if kind.setting == "review.table" and project is not None:
+            self._results = results_ids(project)
         self.reload()
         self.watcher.addPath(str(path))
 
@@ -270,6 +309,7 @@ class TableEditor(QWidget):
 
     def _fill(self) -> None:
         self._apply_sort()
+        self._match()
         self.model.refresh()
         if self.table is not None and not self._sized:
             self.grid.resizeColumnsToContents()  # the rows in view: quick at any size
@@ -362,7 +402,64 @@ class TableEditor(QWidget):
 
     def _changed(self) -> None:
         self.modified = True
+        before = self.match.unmatched if self.match is not None else {}
+        self._match()
+        if (self.match.unmatched if self.match is not None else {}) != before:
+            self.grid.viewport().update()
+            self.grid.verticalHeader().viewport().update()
         self._enable()
+
+    # --- review rows the results do not have -----------------------------------------------
+
+    def _match(self) -> None:
+        """Mark the review table's rows naming spectra the results do not have, and say how
+        many (nothing for other tables, or without results)."""
+        self.match = None
+        if self.table is not None and self._results is not None:
+            self.match = review_match(self.table, self._results)
+        rows = sorted(self.match.unmatched) if self.match is not None else []
+        if not rows:
+            self.notice_row.hide()
+            return
+        # numbered as the grid's rows are (a spreadsheet counts the header too: one more)
+        numbers = ", ".join(str(r + 1) for r in rows[:5])
+        more = f" and {len(rows) - 5} more" if len(rows) > 5 else ""
+        self.notice.setText(
+            f"{len(rows)} row(s) name spectra the results in {self.match.bundle} do not have, "
+            f"so hxex skips them: row {numbers}{more} (shaded; one more in a spreadsheet, "
+            "which counts the header). Copy each spectrum_id from spectra.csv, or remove the "
+            "rows.")
+        self.notice_row.show()
+
+    def row_mark(self, row: int, role, header: bool = False):
+        """The shading (or, on the row's number, the colour) and tooltip of the table's row
+        ``row`` when the results do not have its spectrum; for a row whose decision follows its
+        spectrum to a new id, the tooltip only."""
+        if self.match is None:
+            return None
+        why = self.match.unmatched.get(row)
+        if why is None:
+            moved = self.match.moved.get(row)
+            return moved if role == Qt.ItemDataRole.ToolTipRole else None
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return why
+        if header:
+            return QBrush(UNMATCHED_TEXT) if role == Qt.ItemDataRole.ForegroundRole else None
+        return QBrush(UNMATCHED) if role == Qt.ItemDataRole.BackgroundRole else None
+
+    def show_next_unmatched(self) -> int | None:
+        """Select the next shaded row after the current one (in the order shown, round to the
+        first); returns its position in the grid."""
+        if self.match is None or not self.match.unmatched:
+            return None
+        shown = [i for i, r in enumerate(self._order) if r in self.match.unmatched]
+        current = self.grid.currentIndex().row() if self.grid.currentIndex().isValid() else -1
+        position = next((i for i in shown if i > current), shown[0])
+        index = self.model.index(position, 0)
+        self.grid.setCurrentIndex(index)
+        self.grid.selectRow(position)
+        self.grid.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        return position
 
     def add_row(self) -> None:
         self.table.rows.append([""] * len(self.table.columns))

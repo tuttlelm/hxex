@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,22 +28,39 @@ def available() -> bool:
     return importlib.util.find_spec("PySide6") is not None
 
 
-def start_dotnet() -> None:
+def start_dotnet() -> bool:
     """Start .NET (pythonnet's runtime, Mono on Linux and macOS) when pythonnet is installed,
     before Qt starts: the elution tab reads Thermo raw files through it. Started later, inside
     the running window, Mono's start crashed the process on a desktop display (a segmentation
     fault in clr_loader's initialize; offscreen it worked), and started in a worker thread it
     aborted the process when the window's thread next touched .NET. Loading Thermo's assemblies
     into the running .NET later is safe. Nothing happens without pythonnet; a .NET that does not
-    start is logged, and Thermo files then say why they cannot be read."""
+    start is logged, and Thermo files then say why they cannot be read. Returns whether .NET
+    started."""
     if importlib.util.find_spec("pythonnet") is None:
-        return
+        return False
     try:
         import pythonnet
 
         pythonnet.load()
     except Exception as exc:  # noqa: BLE001 (reported when a Thermo file is read)
         log.info("pythonnet: .NET did not start (%s)", exc)
+        return False
+    return True
+
+
+def end_process(code: int, settings=None) -> None:
+    """End the process at once with ``code``, once the window's settings (``settings``, its
+    QSettings) and the logs are written. Used when the window closes after .NET was started:
+    Python's own exit then waits on the .NET runtime's shutdown (Mono: 10 s and more with no
+    Thermo file read, measured 2026-11-08; the terminal did not come back for the owner), and
+    nothing of ours is left to do."""
+    if settings is not None:
+        settings.sync()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    logging.shutdown()
+    os._exit(code)
 
 
 def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) -> int:
@@ -54,8 +72,7 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
     from .icon import follow_scheme
     from .window import MainWindow
 
-    if QApplication.instance() is None:
-        start_dotnet()  # before Qt (see there)
+    dotnet = QApplication.instance() is None and start_dotnet()  # before Qt (see there)
     app = QApplication.instance() or QApplication(list(argv or sys.argv[:1]))
     app.setApplicationName("hxex")
     app.setOrganizationName("hxex")
@@ -68,7 +85,10 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
             log.error("%s does not exist", path)
         else:
             window.open_path(path)
-    return app.exec()
+    code = app.exec()
+    if dotnet:  # Python's own exit would wait on .NET's shutdown
+        end_process(code, window.settings)
+    return code
 
 
 def main(argv: Sequence[str] | None = None) -> int:

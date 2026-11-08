@@ -239,7 +239,25 @@ def test_the_run_takes_each_spectrum_k_from_the_test_and_stores_it(tmp_path):
 
     raw = raw_spectra(n_series=2)
     cfg = config(population_test=PopulationTestConfig(simulations=4))
-    res = run(raw, cfg, out=tmp_path / "b")
+
+    class Stages:  # a progress hook that follows the stages
+        def __init__(self):
+            self.names, self.spans = [], []
+
+        def start_stage(self, name, start, end):
+            self.names.append(name)
+            self.spans.append((start, end))
+
+        def __call__(self, done, total):
+            pass
+
+    stages = Stages()
+    res = run(raw, cfg, out=tmp_path / "b", progress=stages)
+    # the fits and the test's null are stages of their own, one after the other (one stage,
+    # the fits were its first few percent: 0 % for minutes)
+    at = stages.names.index("fit")
+    assert stages.names[at + 1] == "population test"
+    assert stages.spans[at][1] == stages.spans[at + 1][0]
     test = res.population_test
     assert test is not None and len(test) == len(res.fit)
     np.testing.assert_array_equal(res.fit.selected_K, test.selected_K)
@@ -254,7 +272,11 @@ def test_the_run_takes_each_spectrum_k_from_the_test_and_stores_it(tmp_path):
         np.testing.assert_array_equal(getattr(stored, name), getattr(test, name))
     assert stored.steps == test.steps and stored.d2o_fraction == cfg.controls.d2o_fraction
     # chunking does not change it
-    small = run(raw, dataclasses.replace(cfg, max_chunk=1))
+    stages = Stages()
+    small = run(raw, dataclasses.replace(cfg, max_chunk=1), progress=stages)
+    chunks = [x for x in stages.names if x.startswith(("fit, chunk", "population test, chunk"))]
+    n = len(chunks) // 2
+    assert n > 1 and chunks[:2] == [f"fit, chunk 1 of {n}", f"population test, chunk 1 of {n}"]
     np.testing.assert_allclose(small.population_test.null_draws, test.null_draws, rtol=1e-3,
                                atol=1e-3)
     np.testing.assert_array_equal(small.population_test.selected_K, test.selected_K)

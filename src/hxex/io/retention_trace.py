@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -82,16 +82,31 @@ class DriftProfile:
 
 
 @dataclass(frozen=True)
+class IonTrace:
+    """The trace of another ion of the selected spectrum's peptide in the selected run
+    (:meth:`TraceReader.ion_traces`): a ``label`` (a charge state of the peptide in MS1, or a
+    fragment channel: its ion types, activation, MS level and precursor charge), the
+    ``times`` (minutes) and ``intensity`` (summed over the ``n_ions`` ions it holds)."""
+
+    label: str
+    times: np.ndarray
+    intensity: np.ndarray
+    n_ions: int = 1
+
+
+@dataclass(frozen=True)
 class RetentionTraces:
     """The traces of one spectrum's series in its sample (:func:`retention_traces`): the peptide
     ion's ``label``, one :class:`Trace` per run (the selected first), the selected spectrum's
-    :class:`DriftProfile` (None without ion mobility bins), and a ``note`` saying why there is
-    nothing to draw (no traces) or what is missing."""
+    :class:`DriftProfile` (None without ion mobility bins), a ``note`` saying why there is
+    nothing to draw (no traces) or what is missing, and ``ions``: the peptide's other ions in
+    the selected run (:class:`IonTrace`; empty unless asked for)."""
 
     label: str
     traces: list[Trace]
     drift: DriftProfile | None = None
     note: str | None = None
+    ions: list[IonTrace] = field(default_factory=list)
 
 
 def readable(source: Mapping | None) -> bool:
@@ -289,6 +304,78 @@ class TraceReader:
         return RetentionTraces(label, traces, profile, note)
 
 
+    def ion_traces(self, spectrum_id: str, data_id: int, others: Sequence[tuple[str, int]],
+                   span: tuple[float, float], *,
+                   drift_ranges: Mapping[str, tuple[float, float]] | None = None
+                   ) -> list[IonTrace]:
+        """The traces of the peptide's other ions in the selected spectrum's run, over ``span``
+        (minutes): ``others`` are their spectra (id, series) in that run. A charge state of the
+        peptide in MS1 gives a trace of its own; the fragments of one channel (the same scans:
+        activation, MS level, precursor charge) give one, summed over their ions, so that the
+        selected ion is compared with its peptide's whole ladder. Each ion within its spectrum's
+        drift range (``drift_ranges``, ms, by id) for files with ion mobility bins."""
+        with self._lock:
+            return self._ion_traces(spectrum_id, data_id, others, span, drift_ranges or {})
+
+    def _ion_traces(self, spectrum_id, data_id, others, span, drift_ranges) -> list[IonTrace]:
+        from .mzml import _channel
+
+        where = self.locate(spectrum_id, data_id)
+        if where is None:
+            return []
+        run_i = where[0]
+        groups: dict[tuple, list[tuple[str, MzmlTarget]]] = {}
+        for sid, d in others:
+            at = self.locate(sid, d)
+            if at is None or at[0] != run_i:
+                continue
+            target = self.targets[self.of_series[int(d)]]
+            extra = dict(target.entry.extra)
+            key = (("fragment", _channel(target)) if "fragment" in extra and target.ms_level >= 2
+                   else ("ion", _target_label(target)))
+            groups.setdefault(key, []).append((sid, target))
+        if not groups:
+            return []
+        f = self._file(run_i)
+        table = f.scans()
+        run = self.runs[run_i]
+        factor = 1.0 + self.offsets[run_i] * 1e-6
+        r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+        out = []
+        for key, members in sorted(groups.items(), key=lambda kv: _group_order(kv[1][0][1])):
+            first = members[0][1]
+            rows = target_scans(table, run, replace(first, rt_window=(60.0 * span[0],
+                                                                      60.0 * span[1])),
+                                self.config)
+            if not len(rows):
+                continue
+            rows = rows[np.argsort(table.time[rows], kind="stable")]
+            preds = []
+            for sid, t in members:
+                e = t.entry
+                pred = np.asarray(plan_bins(e.peptide, e.charge, modification=e.modification,
+                                            config=self.picker, registry=self.registry).pred_mz,
+                                  dtype=float) * factor
+                drift = drift_ranges.get(sid)
+                drift = None if drift is None or not np.all(np.isfinite(drift)) else (
+                    float(drift[0]), float(drift[1]))
+                preds.append((pred, e.charge, drift))
+            windows = [(p.min() - 1.0, p.max() + 1.0) for p, _, _ in preds]
+            by_index = f.read_scans(table.index[rows], windows, drift=True)
+            scans = [by_index[int(table.index[r])] for r in rows]
+            recorded = np.array([sc.resolution for sc in scans], dtype=float)
+            recorded = recorded[np.isfinite(recorded)]
+            rp = float(np.median(recorded)) if len(recorded) else None
+            y = np.zeros(len(scans))
+            for pred, charge, drift in preds:
+                half = self.picker.half_width(pred, charge, resolving_power=rp,
+                                              resolving_power_mz=r_mz)
+                y += np.array([_at_bins(sc, pred, half, drift) for sc in scans])
+            times = np.array([sc.time for sc in scans], dtype=float) / 60.0
+            out.append(IonTrace(_group_label(key[0], [t for _, t in members]), times, y,
+                                len(members)))
+        return out
+
     def spectrum(self, spectrum_id: str, data_id: int, window: tuple[float, float], *,
                  drift: tuple[float, float] | None = None) -> Spectrum:
         """``spectrum_id`` (of series ``data_id``) summed again over another retention
@@ -384,3 +471,32 @@ def _at_bins(scan, pred: np.ndarray, half: np.ndarray,
     a = np.searchsorted(mz, pred - half)
     z = np.searchsorted(mz, pred + half)
     return float(sum(float(y[i:j].max()) for i, j in zip(a, z, strict=True) if j > i))
+
+
+def _group_order(target: MzmlTarget) -> tuple:
+    """MS1 charge states first (by charge), then fragment channels (by MS level, activation,
+    precursor charge)."""
+    return (target.ms_level, str(target.activation or ""), str(target.preactivation or ""),
+            target.precursor_charge or 0, target.entry.charge)
+
+
+def _group_label(kind: str, targets: Sequence[MzmlTarget]) -> str:
+    """A charge state of the peptide (``3+ (MS1)``) or a fragment channel (``c-1, z-dot, M
+    ions: ETD MS2, 3+ precursor``)."""
+    t = targets[0]
+    if kind == "ion":
+        if t.ms_level == 1:
+            return f"{t.entry.charge}+ (MS1)"
+        return _target_label(t)
+    types = []
+    for target in targets:
+        mod = str(target.entry.modification or "")
+        kind_of = next((m.split(":", 1)[1] for m in mod.split() if m.startswith("ion_type:")),
+                       "?")
+        if kind_of not in types:
+            types.append(kind_of)
+    how = " ".join(str(x) for x in (
+        f"{t.preactivation} then" if t.preactivation else None, t.activation,
+        f"MS{t.ms_level}") if x)
+    prec = f", {t.precursor_charge}+ precursor" if t.precursor_charge else ""
+    return f"{', '.join(types)} ions: {how}{prec}"

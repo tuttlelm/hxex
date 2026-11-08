@@ -8161,3 +8161,143 @@ CSVs or mzML if wanted.
     synthetic LC runs (`tests/test_review_moves.py`: a narrowed window through run, check,
     report, the bundle layer, the chosen K, the window's writer; the kinetics, several,
     two-to-one, and superseded cases).
+
+323. **Edited windows for a whole peptide (2026-11-08; PLAN Next steps 26).** Question
+    (owner): when one spectrum's window is edited, should others change with it, because
+    changing one alone makes no physical sense? Measured on three datasets by reading every
+    spectrum again scan by scan across its elution, isotope bin by bin (the private targeted
+    Orbitrap dataset with its fragments, the Orbitrap digest of item 165, and the Q-TOF
+    intact-peptide benchmark with ion mobility; scripts and README in the private
+    elution-groups folder):
+    - The same molecules in one file share one elution. Charge states of a peptide: apex within
+      0.36 s of each other (median; q90 1.3 s, q99 4.8 s, > 5 s in 0.9 %; 11,943 spectra on
+      the benchmark), 0.07 s on the targeted dataset (one peptide at 2+ and 3+, also where the
+      whole file eluted 19 s early). Fragment channels (every ion summed) against their MS1
+      parent: 0.42 s (q99 3.1 s, 305 channels). Each fragment ion against its channel's
+      brightest: 0.3-0.4 s for ions with >= 3 % of its signal; 6-11 % of those disagree (another
+      species or interference at that ion's m/z); dimmer ions have no apex of their own.
+    - One file's peptides drift together: per-file median offsets -4..+3 s (benchmark), -6..+3 s
+      (targeted), under 1.3 s (digest); the drift varies smoothly along the gradient (targeted
+      early eluters up to 22 s); the other peptides within +-1 min predict an offset to 1.1 /
+      0.8 / 0.3 s against 2.2 / 3.1 / 0.4 s uncorrected.
+    - Deuterium isotope effect: within one peak, each bin's elution time falls with its mass
+      (-0.05 s per mass unit benchmark, -0.12 targeted, -0.02 digest; undeuterated controls
+      +0.00 to +0.02: none for 13C). Across files it is not measurable (under a second for
+      10 D), so labelled windows need no shift against their controls. Its consequence inside a
+      peak: the leading half of a deuterated peak reads 0.13 (benchmark) to 0.21 (targeted) mass
+      units heavier than its trailing half, the undeuterated controls -0.02 to +0.01; a
+      bivariate-normal estimate from the slope, the envelope's variance and the peak width
+      predicts 0.11 and 0.2. Back-exchange during the few seconds of a peak could add the same
+      sign, about 0.02-0.04 D for a 10 D peptide (an estimate, not measured); these data do not
+      separate the two. A window around half a peak shifts a labelled spectrum by about
+      0.05-0.1 D and its reference not at all. The windows in use cover the whole peak (median
+      share 1.00, q10 0.78-0.88).
+    - The owner's 21 window edits (targeted project) all narrowed the table window around the
+      shared peak (ion, channel and MS1 parent apexes within ~1 s, inside each edited window);
+      none moved a window or avoided interference particular to the ion.
+    Built (owner: "build 1"): `[input] rt_elution_windows` rows name a `peptide` (new column;
+    `hxex.io.elution_windows.peptide_label`: range and sequence, with a modification other than
+    `ion_type:M`; a fragment's is its parent's) or one `ion` (as before). A peptide row gives
+    every ion of the peptide in that file its window: charge states, the parent, and every
+    fragment channel and ion of it; an ion row wins over its peptide's row (`window_for`). An
+    ion row may name its peptide too (that peptide's ion only): two parents sharing a terminus
+    give fragment ions of the same name at the same precursor charge (174 of the targeted
+    dataset's 3,118 ion names belong to two parents, the c ions of two overlapping parents that
+    elute 3 minutes apart, for example), so an ion row without a peptide, as item 321 wrote
+    them, applied to both; the window's "this ion only" now writes the peptide. Drift
+    ranges only on ion rows (they differ between charge states), which may give a drift range
+    alone and keep the peptide's window. Tables without a `peptide` column read as before (ion
+    rows). `hxex check` counts both kinds and names a peptide the file does not read. The
+    elution tab's Save offers "all ions of this peptide, in this run" (default) or "this ion
+    only, in this run" (owner's wording); a
+    peptide save takes the window off the ion's own row (kept only for a drift range) and names
+    the peptide's other ions that keep windows of their own; a changed drift range goes to the
+    ion's row. Not built: moving a file's neighbours with an edit (a suggestion at most), a
+    warning for windows that cut the peak. With it (owner agreed, same session): `scan_cut`'s
+    channel trace stays the whole channel's when one ion has a window of its own
+    (`mzml._channels(by_plan=False)` for `_scan_records`; the trace over every scan any member
+    plans to read, each ion's weights read from it over its own scans). Before, the edited ion
+    left its channel's group: its weights came from its own trace alone and its siblings' moved
+    (on the targeted dataset one ion's window moved 557 sibling series' weights by about 0.5 %,
+    so a rerun that keeps unchanged series' fits still refitted them). Tested on synthetic LC runs (two
+    charge states, a peptide row and an ion row over it, the check, the fragments' parent
+    label, Save and Undo for both choices in the window, siblings' traces unchanged by one
+    ion's window). Also (owner): the elution tab's **Compare with** chooses what is drawn
+    behind the selected trace: "this ion in the other runs" (the grey traces, as before) or
+    "this peptide's other ions in this run" (`TraceReader.ion_traces`: each MS1 charge state,
+    and each fragment channel summed over its ions, scaled to the selected trace's height),
+    the evidence for the save choice (they peak together, or this ion's peak sits apart).
+    And (owner: "drawing…" at the end of the button bar blended with the buttons' text): every
+    figure panel's status moved to a line under the figure (`FigurePanel._set_status`): a
+    moving busy bar with the words while it draws or reads, the figure shown faded meanwhile
+    (it is the one before; a half-transparent veil over it: an opacity effect on the figure drew
+    it blurred and shifted on the owner's display; the line is one line high whether empty or
+    not, since a line that came and went moved the figure while it was drawn, and a long
+    message is shortened with "…" to the width there is, whole on hover: unshortened, a missing
+    file's path widened the window past the screen again), and the Results list's row of choices wraps onto further
+    lines when the list is narrow (`hxex.gui.flow_layout.FlowLayout`): the window's narrowest
+    width was 1,227 px (that row alone 568 px), now 993 px,
+    and the elution tab's editing says its own work there (`FigurePanel.set_task`: "Reading the
+    new window's scans…", from the raw file, then "Fitting the new window's spectrum…"), kept
+    through the redraws in between, without fading the figure, why there is none, a failure in red, empty once the figure shows;
+    the mouse help, which had that line, is on a "?" button at the end of the buttons (on
+    mouse-over or a click; it adds the drag-sets-the-window sentence while Edit window is on);
+    "saved PATH" goes to the window's bottom bar. And (owner: closing the window did not give
+    the terminal back): after .NET was started for Thermo files (`start_dotnet`, item 320),
+    Python's own exit waited on the .NET runtime's shutdown (offscreen: 9-11 s longer, with or
+    without a Thermo file read; longer on the owner's desktop). `hxex.gui.end_process` now ends
+    the process once the window has closed, its settings are synced and the logs written,
+    only when .NET was started (`start_dotnet` returns whether it did); 4 s against 13 s in the
+    same test. And (owner: with Edit window on, the window filled the screen and could not be
+    resized or maximised): the elution tab put Compare with, the window boxes, Save, the save
+    choice and Undo in the figure buttons' row, whose width became the window's minimum
+    (2,061 px; 1,449 px before this item). They are now rows of their own under the buttons
+    (`FigurePanel.add_row`): Compare with; the switch and the window; Save window for … and
+    Undo (807 px at most).
+    And (owner, from a question about one fragment's picking): bundles fitted before a flag
+    existed kept it empty through later resumes (the targeted dataset's bundle, fitted on
+    2026-11-05, had no `overlapping_ion` assessed: the check of item 309 came a day later; run
+    on the stored bundle it flags 1,135 of 16,442 fragment spectra). The flags now carry the
+    version of the checks (`hxex.quality.QUALITY_VERSION`, 1; the manifest's `quality_version`,
+    absent = 0). Loading results with flags of an earlier version warns (report, analyse, the
+    window), `hxex info` says so, and `hxex resume` assesses them again, also on a bundle with
+    nothing else to do (provenance `quality flags`). Add one to the version whenever a check is
+    added or changed. Measured with it (scratch, private fragment_overlap/strong_bins): the
+    overlap check counts another ion's own peaks only away from all of this fragment's bins;
+    counted away from its strong bins (>= 20 % of its fitted curve) it would flag 1,962
+    instead of 1,135 fragment spectra (the new pairs' share: median 0.68; mostly a c-1 ion
+    and the z-dot ion of the same parent). Not changed: the owner's case (a c-1 and a z-dot
+    ion of one parent about 50 ppm apart, partly resolved) reads 0.09 at most either way: the
+    picker zeroed the c-1's bins where the z-dot's apexes lie just beyond its 50 ppm window
+    and took the z-dot's apex where one lies just inside, so the loss is the c-1's own signal,
+    which an overlap share does not measure (a picking question, open).
+
+    In the window's Tables page, the user review table now shades the rows naming spectra the
+    results do not have (the rows `hxex check` and `hxex report` warn about, by spectrum id
+    only; owner: "flag this on the table page to see exactly what row is at fault"), with a line
+    above the grid giving their row numbers and **Show the next one**; a row whose decision
+    follows its spectrum to a new id (item 322) is not shaded, its tooltip names the new id
+    (`hxex.gui.user_tables.results_ids` / `review_match`). The grid's row numbers are now the
+    rows' places in the file, also when the view is sorted. The owner's case: one rejected row
+    of the targeted dataset whose spectrum (a c-1 ion of 2-3 in one labelled file) is not in
+    the rerun bundle at all, under any scans.
+    Progress (owner: "6 minutes and it says 0 %"): with the population test, the fits and the
+    test's null were one stage, "fit and population test", weighted by their expected times
+    (the null ~29 times the fits at k_max 3 and 20 simulations, HISTORY 174), so the fits were
+    its first ~3 % and the stage read 0 % for minutes. They are now two stages, `fit` and
+    `population test` (`, chunk J of N` when the run has several chunks), each from 0 to 100 %
+    with its own time left; the overall bar is unchanged. Percents below 10 keep one decimal
+    (`hxex.hooks.format_percent`: 0.4 %), in the log and the window. `hxex check` has a `fits
+    on` line: the GPU (its name) or the CPU (its threads) that `hxex run` would fit on, from
+    `[run.fit.backend] device` with "auto" resolved, and the PyTorch and Python it found (the
+    owner's window ran from a CPU-only PyTorch, so "auto" fitted on the CPU unseen); a CUDA
+    device asked for where PyTorch has none is a problem. The run logs the same next to its
+    chunk count. The Resume button's tooltip and `hxex resume`'s help list everything resume
+    does now (it said only "complete a stopped bootstrap, or add one at a chosen K").
+    Fixed: with **Edit window** on, results read again (a resume finishing) left the elution
+    figure empty: the editor compared the spectrum it was set for as (results, id) by value,
+    and two Results compare their arrays (an error in the window's thread); the results are
+    now compared by identity there and in the elution and table tabs' own checks.
+    Checks: full suite 1,666 passed (22 skipped), ruff clean. One earlier full run stopped in a
+    GUI test, waiting on a lock with the machine idle, for 25 minutes (interrupted; not seen
+    again in the next run): intermittent, like the Windows GUI hang noted in item 317.

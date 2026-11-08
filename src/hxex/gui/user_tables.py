@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..project_edit import replace_file
+
+log = logging.getLogger(__name__)
 
 
 class TableLocked(OSError):
@@ -191,3 +194,99 @@ def table_problem(setting: str, table: Table, project_path: str | Path) -> str |
     finally:
         copy.unlink(missing_ok=True)
     return None
+
+
+@dataclass(frozen=True)
+class ResultsIds:
+    """The spectra of a project's results, for checking its review table: the bundle's name,
+    its spectrum ids, and whether each came from a kinetics run (whose entries never move)."""
+
+    bundle: str
+    ids: tuple[str, ...]
+    kinetics: tuple[bool, ...]
+
+
+def results_ids(project_path: str | Path) -> ResultsIds | None:
+    """The spectra of the results the project at ``project_path`` writes to (its ``[output]
+    bundle``); None when the project does not load or has no results yet."""
+    from ..config import ProjectError, load_project
+    from ..io import ReadError, open_bundle
+    from ..io.bundle import bundle_manifest
+    from ..io.mzml import kinetics_spectra
+
+    try:
+        project = load_project(project_path)
+    except (ProjectError, OSError, ValueError):
+        return None
+    bundle = project.output.bundle
+    if bundle is None or not bundle.exists() or bundle_manifest(bundle) is None:
+        return None
+    try:
+        with open_bundle(bundle) as b:
+            ids = tuple(map(str, b.spectrum_ids()))
+            kinetics = tuple(bool(k) for k in kinetics_spectra(b.spectra_source(), ids))
+    except (ReadError, OSError, ValueError, KeyError) as exc:
+        log.warning("the review table is not checked against %s: %s", bundle, exc)
+        return None
+    return ResultsIds(bundle.name, ids, kinetics)
+
+
+@dataclass(frozen=True)
+class ReviewMatch:
+    """How the rows of a review table match the results (:func:`review_match`): ``unmatched``
+    (row index -> why the results have no such spectrum: the row is skipped, as ``hxex check``
+    and ``hxex report`` say) and ``moved`` (row index -> where its decision went: the
+    spectrum's new id after a rerun summed other scans)."""
+
+    bundle: str
+    unmatched: dict[int, str]
+    moved: dict[int, str]
+
+
+def review_match(table: Table, results: ResultsIds) -> ReviewMatch:
+    """Which rows of the review ``table`` name a spectrum ``results`` do not have. Only rows the
+    reader keeps count (a spectrum_id and a status, a K or a note; ``unreviewed`` is no status);
+    a row whose spectrum was summed from other scans in a rerun follows it
+    (:func:`hxex.review_table.move_entries`) and is not unmatched."""
+    from ..review_table import move_entries
+
+    def column(name):
+        return table.columns.index(name) if name in table.columns else None
+
+    sid_at = column("spectrum_id")
+    if sid_at is None:
+        return ReviewMatch(results.bundle, {}, {})
+    status_at, k_at, note_at = column("review_status"), column("review_K"), column("note")
+
+    def text(row, at):
+        return row[at].strip() if at is not None else ""
+
+    rows = {}
+    for i, row in enumerate(table.rows):
+        sid = text(row, sid_at)
+        status = text(row, status_at)
+        if status.lower() == "unreviewed":  # spectra.csv's word for no decision
+            status = ""
+        if sid and (status or text(row, k_at) or text(row, note_at)):
+            rows[i] = sid
+    known = set(results.ids)
+    moves = move_entries(list(dict.fromkeys(rows.values())), results.ids, results.kinetics)
+    unmatched, moved = {}, {}
+    for i, sid in rows.items():
+        if sid in known:
+            continue
+        if sid in moves.moved:
+            moved[i] = (f"{results.bundle} summed this ion from other scans: the decision "
+                        f"follows it to {moves.moved[sid]}")
+        elif sid in moves.superseded:
+            moved[i] = (f"{results.bundle} summed this ion from other scans, and its new "
+                        f"spectrum {moves.superseded[sid]} has a row of its own, which is used "
+                        "instead of this one")
+        elif sid in moves.several:
+            unmatched[i] = (f"{results.bundle} has no spectrum of this id; its ion has several "
+                            f"spectra in that file now ({', '.join(moves.several[sid][:3])}), so "
+                            "the decision does not follow any: the row is skipped")
+        else:
+            unmatched[i] = (f"{results.bundle} has no spectrum of this id: the row is skipped "
+                            "(copy the spectrum_id from spectra.csv, or remove the row)")
+    return ReviewMatch(results.bundle, unmatched, moved)

@@ -30,12 +30,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from .data_table import RowsModel, cell_text
+from .flow_layout import FlowLayout
 from .order import natural_key
 from .results_tree import search_matches
 
@@ -164,15 +166,15 @@ class SpectraList(QWidget):
         for box in (self.filter, self.sample):
             box.currentIndexChanged.connect(lambda _i: self._apply())
         self.search.textChanged.connect(lambda _t: self._apply())
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.addWidget(self.tables)
-        bar.addWidget(self.filter)
-        bar.addWidget(self.sample)
-        bar.addWidget(self.search, 1)
-        bar.addWidget(self.clear_filters)
-        bar.addWidget(self.count)
-        bar.addWidget(self.save_button)
+        # wraps onto further lines when the list is narrow (owner, 2026-11-08: in one row it
+        # set the window's narrowest width)
+        self.bar = QWidget()
+        bar = FlowLayout(self.bar)
+        self.search.setMinimumWidth(160)
+        self.search.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        for w in (self.tables, self.filter, self.sample, self.search, self.clear_filters,
+                  self.count, self.save_button):
+            bar.addWidget(w)
         stale = QHBoxLayout()
         stale.setContentsMargins(0, 0, 0, 0)
         stale.addWidget(self.stale, 1)
@@ -201,7 +203,7 @@ class SpectraList(QWidget):
         header.setToolTip("click: sort by the column; right-click: filter by it")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(bar)
+        layout.addWidget(self.bar)
         layout.addWidget(self.stale_bar)
         layout.addWidget(self.grid, 1)
 

@@ -410,6 +410,11 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     assert "targets        1 from" in out and "6 scans; 1 of 1 targets have scans" in out
     assert out.strip().endswith("ok")
     assert "outputs        none yet: hxex run writes out" in out
+    # where the fits would run, with this Python's PyTorch ("auto" resolved)
+    import torch
+
+    where = "the GPU (cuda:" if torch.cuda.is_available() else "the CPU ("
+    assert f"fits on        {where}" in out and f"PyTorch {torch.__version__} in" in out
     # existing results are information, not problems: each command refuses by itself
     path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
     assert cli.main(["-q", "run", str(path)]) == 0
@@ -2072,3 +2077,15 @@ def test_a_specexport_project_without_analysis_fasta_is_told_where_its_sequences
             "M2": {"sequence": "acKVLA", "first": 5, "file": "M2.fasta"}}
     assert cli._sequences_text(seqs) == ("WT (WT.fasta), M1 (M1.fasta): residues 1-10; "
                                          "M2 (M2.fasta): residues 5-8")
+
+
+def test_check_refuses_a_cuda_device_where_pytorch_has_none(tmp_path, capsys, monkeypatch):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    path = tmp_path / "hxex.toml"
+    path.write_text(template("mzml").replace('device = "auto"', 'device = "cuda"'))
+    cli.main(["check", str(path)])
+    out = capsys.readouterr()
+    assert 'fits on        none: [run.fit.backend] device = "cuda"' in out.out
+    assert "has no CUDA" in out.err

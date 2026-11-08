@@ -2,10 +2,12 @@
 """The retention trace of one spectrum (PLAN Next steps 26: the review's trace panel).
 
 :func:`plot_retention` draws what :func:`hxex.io.retention_trace.retention_traces` reads: the
-selected spectrum's retention trace in its run, the scans it summed shaded, the same series'
-other runs in the sample as faint lines behind it (retention moves between files, so a window
-on a neighbour's peak shows at once), and, for files with ion mobility bins, the spectrum's
-drift profile with the drift range it was summed over.
+selected spectrum's retention trace in its run, the scans it summed shaded, behind it either the
+same series' other runs in the sample as faint lines (retention moves between files, so a window
+on a neighbour's peak shows at once) or the peptide's other ions in the same run, each scaled to
+the selected trace's height (its charge states and fragment channels elute together, so an ion
+whose peak sits apart has interference at its own m/z), and, for files with ion mobility bins,
+the spectrum's drift profile with the drift range it was summed over.
 """
 
 from __future__ import annotations
@@ -23,8 +25,11 @@ from .spectrum import RAW_DARK
 
 OTHER = "#b3b3b3"  # the other runs' traces
 SUMMED = "#d9d9d9"  # the scans (or drift times) the spectrum summed
-EDITED = "#4d4d4d"  # the outline and hatching of a window being edited
+EDITED = "#4d4d4d"  # the outline of a window being edited
+HATCH = "#c4c4c4"  # its hatching: light, behind the traces (owner: dark, it hid the other runs)
 _SHOWN_SHARE = 0.02  # the drift panel shows the profile down to this share of its apex
+# the peptide's other ions in the run (not the samples' colours: one sample is drawn here)
+ION_COLOURS = ("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d")
 
 
 def run_text(trace: Trace) -> str:
@@ -105,7 +110,7 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     if preview is None:
         axes[1].set_axis_off()
         axes[1].text(0.5, 0.5, f"No preview: {waiting}" if waiting
-                     else "summing the new window…", ha="center", va="center", wrap=True,
+                     else "reading the new window's scans…", ha="center", va="center", wrap=True,
                      transform=axes[1].transAxes)
     else:
         spectrum = preview.spectrum
@@ -117,7 +122,7 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
                               show=("raw", "picked"), mz_range=mz_range, legend=False,
                               title=False)
                 ax_k.set_title(f"new window\n{_panel_text(sid, new_window)}\n"
-                               f"{waiting or 'fitting…'}", fontsize="small")
+                               f"{waiting or 'fitting its spectrum…'}", fontsize="small")
                 continue
             k = preview.k if k is None else k
             plot_spectrum(sid, preview.results, ax=ax_k, show=("raw", "picked", "fit"), k=k,
@@ -172,16 +177,27 @@ def _heading(fig, traces: RetentionTraces, title: str | None) -> None:
 
 
 def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) -> None:
-    """The selected run's trace over its window (shaded), the others behind it, and the window
-    being edited (hatched)."""
+    """The selected run's trace over its window (shaded), the others behind it (other runs, or
+    the peptide's other ions in this run, each scaled to the selected trace's height), and the
+    window being edited (hatched)."""
     selected, others = traces.traces[0], traces.traces[1:]
     for t in others:
         ax.plot(t.times, t.intensity, color=OTHER, lw=0.9, zorder=2,
                 gid=f"trace:{t.spectrum_id}")
+    own_top = float(np.nanmax(selected.intensity)) if len(selected.intensity) else 0.0
+    ion_handles = []
+    for n, ion in enumerate(traces.ions):
+        colour = ION_COLOURS[n % len(ION_COLOURS)]
+        top = float(np.nanmax(ion.intensity)) if len(ion.intensity) else 0.0
+        y = ion.intensity * (own_top / top) if top > 0 and own_top > 0 else ion.intensity
+        ax.plot(ion.times, y, color=colour, lw=1.1, zorder=3, gid=f"ion:{ion.label}")
+        ion_handles.append(Line2D([], [], color=colour, lw=1.1, label=ion.label))
     ax.axvspan(*selected.window, color=SUMMED, lw=0, zorder=1, gid="summed")
-    if edit is not None:
-        ax.axvspan(*edit, facecolor="none", edgecolor=EDITED, hatch="///", lw=0.8, zorder=3,
+    if edit is not None:  # behind every trace (owner: over them it hid the other runs)
+        ax.axvspan(*edit, facecolor="none", edgecolor=HATCH, hatch="///", lw=0, zorder=1.5,
                    gid="edited")
+        ax.axvspan(*edit, facecolor="none", edgecolor=EDITED, lw=0.8, zorder=1.6,
+                   gid="edited_outline")
     ax.plot(selected.times, selected.intensity, color=RAW_DARK, lw=1.6, zorder=4,
             marker="o", ms=2.5, gid=f"trace:{selected.spectrum_id}")
     ax.set_xlabel("retention time (min)")
@@ -192,16 +208,22 @@ def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) 
                Patch(color=SUMMED, lw=0, label=f"scans summed ({selected.window[0]:.2f}-"
                                                 f"{selected.window[1]:.2f} min)")]
     if edit is not None:
-        handles.append(Patch(facecolor="none", edgecolor=EDITED, hatch="///", lw=0.8,
+        handles.append(Patch(facecolor="none", edgecolor=HATCH, hatch="///", lw=0.8,
                              label=f"new window ({edit[0]:.2f}-{edit[1]:.2f} min)"))
     if others:
         handles.append(Line2D([], [], color=OTHER, lw=0.9,
                               label=f"the sample's other runs ({len(others)})"))
-    ax.legend(handles=handles, loc="upper left", fontsize="small", frameon=False)
+    first = ax.legend(handles=handles, loc="upper left", fontsize="small", frameon=False)
+    if ion_handles:
+        ax.add_artist(first)  # kept beside the ions' own legend
+        ax.legend(handles=ion_handles, loc="upper right", fontsize="x-small", frameon=False,
+                  title="this peptide's other ions in this run\n(each scaled to this one's "
+                  "height)", title_fontsize="x-small")
     top = max(float(np.nanmax(t.intensity)) if len(t.intensity) else 0.0
               for t in traces.traces)
     if top > 0:
-        ax.set_ylim(top=top * (1.45 if edit is not None else 1.35))  # room for the legend
+        room = max(1.45 if edit is not None else 1.35, 1.25 + 0.09 * (len(ion_handles) + 2))
+        ax.set_ylim(top=top * room)  # room for the legends
 
 
 def _drift_panel(ax, traces: RetentionTraces,
