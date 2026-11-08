@@ -95,11 +95,14 @@ def _text(value) -> str:
 
 
 def write_decisions(path: Path, decisions: dict[str, Decision], bundle_k: dict[str, int]
-                    | None = None) -> None:
+                    | None = None, results=None) -> None:
     """Write each spectrum's decision into its row of the table at ``path`` (a row added where
     the table has none); ``bundle_k``: the K chosen for a spectrum in the results shown; a
     decision for the fit's choice empties the table's own ``review_K``, or, when the table chose
-    none (the bundle's review layer did), clears it with ``review_K = 0``. Raises
+    none (the bundle's review layer did), clears it with ``review_K = 0``. With ``results``
+    (those shown), a row naming scans they no longer sum that follows its spectrum
+    (:func:`hxex.review_table.move_entries`) is the spectrum's row: a decision for it rewrites
+    that row's ``spectrum_id`` to the new one, keeping its other cells. Raises
     :class:`hxex.gui.user_tables.TableLocked` when another program holds the file."""
     table = read_table(path)
     for name in ("spectrum_id", *COLUMNS):
@@ -109,8 +112,17 @@ def write_decisions(path: Path, decisions: dict[str, Decision], bundle_k: dict[s
                 row.append("")
     col = {name: table.columns.index(name) for name in ("spectrum_id", *COLUMNS)}
     rows = {row[col["spectrum_id"]]: row for row in table.rows}
+    moved = {}
+    if results is not None:
+        from ..review_table import results_moves
+
+        moved = {new: old for old, new in results_moves(results, list(rows)).moved.items()}
     for sid, d in decisions.items():
         row = rows.get(sid)
+        if row is None and sid in moved:
+            row = rows.pop(moved[sid])
+            row[col["spectrum_id"]] = sid
+            rows[sid] = row
         if row is None:
             row = [""] * len(table.columns)
             row[col["spectrum_id"]] = sid

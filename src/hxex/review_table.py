@@ -28,6 +28,7 @@ import csv
 import io
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -159,26 +160,152 @@ def read_review_table(path: str | Path) -> ReviewSheet:
                        str(path))
 
 
+_SCANS = re.compile(r"/scans?\d+(?:-\d+)?$")
+
+
+def scan_stem(spectrum_id: str) -> str | None:
+    """``spectrum_id`` without the scans it summed (``.../scans1322-1623`` -> ``...``): the
+    sample, file, and ion, which a new retention window does not change; None for an id that
+    names no scans (SpecExport, pooled, HX-Express: their ids do not depend on a window)."""
+    stem = _SCANS.sub("", str(spectrum_id))
+    return None if stem == str(spectrum_id) else stem
+
+
+@dataclass(frozen=True)
+class Moves:
+    """Review entries matched to the spectra of new results by :func:`move_entries`: ``moved``
+    (old id -> the new id taking its decision), ``several`` (old id -> the new ids it would fit,
+    left stale), and ``superseded`` (old id -> the new id that has an entry of its own, which
+    wins)."""
+
+    moved: dict[str, str] = field(default_factory=dict)
+    several: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    superseded: dict[str, str] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.moved or self.several or self.superseded)
+
+    def describe(self) -> str:
+        """``N moved to their spectrum's new scans[, S matching several spectra (left as they
+        were)][, D replaced by the new spectrum's own entry]``, for the log and hxex check."""
+        out = [f"{len(self.moved)} moved to their spectrum's new scans"]
+        if self.several:
+            out.append(f"{len(self.several)} matching several spectra (left as they were)")
+        if self.superseded:
+            out.append(f"{len(self.superseded)} replaced by the new spectrum's own entry")
+        return ", ".join(out)
+
+    def examples(self, n: int = 3) -> str:
+        """A few of the moves and of the entries left as they were, ``old -> new``."""
+        parts = [f"{o} -> {s}" for o, s in list(self.moved.items())[:n]]
+        parts += [f"{o} (fits {', '.join(s[:3])}{', ...' if len(s) > 3 else ''})"
+                  for o, s in list(self.several.items())[:n]]
+        return "; ".join(parts)
+
+
+def move_entries(entry_ids, current_ids, kinetics=None) -> Moves:
+    """Where the review entries ``entry_ids`` whose spectrum the results ``current_ids`` no
+    longer have would go (docs/PLAN.md Next steps 27): a rerun that sums other scans (a moved
+    retention window, ``find_peak``, ``find_fragment_peak``) gives a spectrum a new id, as the
+    id names its scans. Such an entry follows its spectrum by sample, file, and ion
+    (:func:`scan_stem`) when exactly one spectrum of the results has that stem and it came from
+    a run with a fixed exchange time (one spectrum per ion and file). Entries of kinetics runs
+    (``kinetics``: a bool per current id; every scan group is its own time point, named by its
+    scans) never move. An entry matching several spectra, or one whose spectrum another missing
+    entry matches too, is not moved; one whose new spectrum has an entry of its own is
+    superseded by it."""
+    current = [str(s) for s in current_ids]
+    have = set(current)
+    kin = (np.zeros(len(current), dtype=bool) if kinetics is None
+           else np.asarray(kinetics, dtype=bool))
+    by_stem: dict[str, list[int]] = {}
+    for i, sid in enumerate(current):
+        stem = scan_stem(sid)
+        if stem is not None:
+            by_stem.setdefault(stem, []).append(i)
+    entries = [str(s) for s in entry_ids]
+    listed = set(entries)
+    target: dict[str, str] = {}
+    out = Moves()
+    for sid in entries:
+        if sid in have or (stem := scan_stem(sid)) is None or stem not in by_stem:
+            continue
+        hits = by_stem[stem]
+        if any(kin[i] for i in hits):
+            continue  # a kinetics run: its scans are its time points
+        if len(hits) > 1:
+            out.several[sid] = tuple(current[i] for i in hits)
+            continue
+        new = current[hits[0]]
+        if new in listed:
+            out.superseded[sid] = new
+            continue
+        target[sid] = new
+    taken: dict[str, list[str]] = {}
+    for old, new in target.items():
+        taken.setdefault(new, []).append(old)
+    for old, new in target.items():
+        if len(taken[new]) == 1:
+            out.moved[old] = new
+        else:  # two old entries for one spectrum: neither is chosen over the other
+            out.several[old] = (new,)
+    return out
+
+
+def results_moves(results, entry_ids) -> Moves:
+    """:func:`move_entries` of ``entry_ids`` against the spectra of ``results``
+    (:class:`hxex.report.Results`), kinetics runs told by the results' read record."""
+    from .io.mzml import kinetics_spectra
+
+    ids = results.fit.spectrum_id
+    source = results.settings.spectra_source if results.settings is not None else None
+    return move_entries(entry_ids, ids, kinetics_spectra(source, ids))
+
+
+def moved_sheet(sheet: ReviewSheet, moves: Moves) -> ReviewSheet:
+    """``sheet`` with the entries of ``moves.moved`` under their spectrum's new id."""
+    if not moves.moved:
+        return sheet
+    import dataclasses
+
+    return dataclasses.replace(sheet, spectrum_id=tuple(moves.moved.get(s, s)
+                                                        for s in sheet.spectrum_id))
+
+
+def _source_of(spectrum_id: str, origin: dict[str, str]) -> str:
+    old = origin.get(spectrum_id)
+    return "review table" if old is None else f"review table (moved from {old})"
+
+
 def apply_review_table(results, sheet: ReviewSheet | None):
     """``results`` (:class:`hxex.report.Results`) with the decisions of ``sheet`` laid over its
     review layer, in memory only (the bundle is not changed): a status replaces the stored
     one, a chosen K replaces the stored one, and a note replaces the stored one when given.
-    Spectra the results do not have are skipped with a warning; a chosen K that was not fitted
-    for its spectrum (one the run did not try, or one its screen skipped, which ``hxex resume``
-    fits) raises ValueError saying which."""
+    An entry naming scans the results no longer sum follows its spectrum (:func:`move_entries`;
+    logged). Spectra the results do not have are skipped with a warning; a chosen K that was
+    not fitted for its spectrum (one the run did not try, or one its screen skipped, which
+    ``hxex resume`` fits) raises ValueError saying which."""
     from .io.bundle import ReviewTable
 
     if sheet is None or not len(sheet):
         return results
     fit = results.fit
     index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
-    unknown = [s for s in sheet.spectrum_id if s not in index]
+    moves = results_moves(results, sheet.spectrum_id)
+    if moves:
+        log.info("the review table %s names %d spectra by scans these results no longer "
+                 "sum (a new retention window): %s (%s)", sheet.path,
+                 len(moves.moved) + len(moves.several) + len(moves.superseded),
+                 moves.describe(), moves.examples())
+        sheet = moved_sheet(sheet, moves)
+    unknown = [s for s in sheet.spectrum_id if s not in index and s not in moves.superseded]
     if unknown:
         log.warning("the review table %s names %d spectra these results do not have (for "
                     "example %s): they are skipped; check their spectrum_id (a typo, or a row "
                     "copied from another project), or the table may be from an earlier run "
                     "that had spectra since left out", sheet.path, len(unknown),
                     ", ".join(unknown[:3]))
+    origin = {new: old for old, new in moves.moved.items()}
     tried = fit.config.k_values
     beyond = [f"{sid} (K = {k})" for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True)
               if k > 0 and sid in index and k not in tried]
@@ -218,7 +345,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
             note.append(nt)
             updated.append(stamp)
             stale.append(False)
-            source.append("review table")
+            source.append(_source_of(sid, origin))
             continue
         if st:
             status[j] = st
@@ -227,7 +354,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
         if nt:
             note[j] = nt
         stale[j] = False
-        source[j] = "review table"
+        source[j] = _source_of(sid, origin)
     merged = ReviewTable(
         spectrum_id=np.array(ids, dtype=object), status=np.array(status, dtype=object),
         k_override=np.array(k_override, dtype=np.int64), note=np.array(note, dtype=object),
@@ -281,6 +408,18 @@ def table_choices(review: ReviewSettings | None) -> dict[str, int]:
         return {}
     sheet = read_review_table(review.table)
     return {s: k for s, k in zip(sheet.spectrum_id, sheet.k, strict=True) if k}
+
+
+def moved_choices(choices, spectrum_id, source=None) -> dict[str, int]:
+    """``choices`` (spectrum id -> K, :func:`table_choices`) with the ids naming scans the
+    spectra ``spectrum_id`` no longer sum replaced by their spectrum's new id
+    (:func:`move_entries`; kinetics runs told by the read record ``source``)."""
+    if not choices:
+        return dict(choices or {})
+    from .io.mzml import kinetics_spectra
+
+    moves = move_entries(list(choices), spectrum_id, kinetics_spectra(source, spectrum_id))
+    return {moves.moved.get(s, s): k for s, k in choices.items()}
 
 
 def merge_choices(*layers) -> dict[str, int]:

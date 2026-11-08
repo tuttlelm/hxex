@@ -1166,6 +1166,11 @@ def run(
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
     )
+    if chosen_k:  # a review table naming scans this run no longer sums (a new window)
+        from .review_table import moved_choices
+
+        chosen_k = moved_choices(chosen_k, measurements.spectrum_id,
+                                 None if raw is None else raw.source)
     noise_curve = bundle_noise(picked, measurements, config)
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
@@ -1208,7 +1213,7 @@ def run(
         population_test=test, peak_measure=measure, chunk_plan=plan.record,
     )
     spectra = stored if keep_spectra else None
-    review = _review_for(review, fit)
+    review = _review_for(review, fit, result.spectra_source)
     provenance = None
     if previous is not None:
         from .io.bundle import provenance_of
@@ -1334,13 +1339,28 @@ def _previous(out, replace: bool):
     return manifest, review
 
 
-def _review_for(review, fit: FitResult):
-    """``review`` with the entries the new run cannot apply (spectra it does not have, a chosen
-    K it did not fit) marked stale: their status and note stay on record, the chosen K is
-    ignored (see :class:`~hxex.io.ReviewTable`). One log line with the counts; None stays
-    None."""
+def _review_for(review, fit: FitResult, source: dict | None = None):
+    """``review`` with the entries naming scans the new run no longer sums moved to their
+    spectrum's new id (:func:`hxex.review_table.move_entries`; kinetics runs, told by the read
+    record ``source``, never move), and those the new run cannot apply (spectra it does not
+    have, a chosen K it did not fit) marked stale: their status and note stay on record, the
+    chosen K is ignored (see :class:`~hxex.io.ReviewTable`). One log line with the counts (and
+    one with the moves); None stays None."""
     if review is None or not len(review):
         return review
+    import dataclasses
+
+    from .io.mzml import kinetics_spectra
+    from .review_table import move_entries
+
+    moves = move_entries(review.spectrum_id, fit.spectrum_id,
+                         kinetics_spectra(source, fit.spectrum_id))
+    if moves:
+        log.info("review entries naming scans the new run no longer sums (a new retention "
+                 "window): %s (%s)", moves.describe(), moves.examples())
+    if moves.moved:
+        review = dataclasses.replace(review, spectrum_id=np.array(
+            [moves.moved.get(str(s), str(s)) for s in review.spectrum_id], dtype=object))
     review = review.mark_stale(fit)
     log.info("carrying %d review entries over to the new bundle, %d stale (their spectrum was "
              "dropped or their K not fitted: status and note kept, chosen K ignored)",
@@ -1480,6 +1500,10 @@ def resume_bootstrap(
 
     path = Path(path)
     with open_bundle(path) as b:
+        if chosen_k:  # a review table naming scans the bundle's run no longer sums
+            from .review_table import moved_choices
+
+            chosen_k = moved_choices(chosen_k, b.spectrum_ids(), b.spectra_source())
         redo = "bootstrap" in b.pending or add
         chosen = merge_choices(_review_choices(b.review() if b.has("review") else None),
                                chosen_k)

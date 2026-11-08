@@ -228,8 +228,8 @@ results opened from their project file, and the table opens in **Tables** like t
 saved windows are used when you run the project again (`hxex run --overwrite`); each spectrum
 stays in its series (see [One ion's own window in one
 file](inputs.md#one-ions-own-window-in-one-file)). A spectrum's id names the scans it summed, so a
-spectrum with a new window has a new id after the run, and review decisions made for its old id
-are kept but no longer apply to it: review it again.
+spectrum with a new window has a new id after the run; your review decisions for it follow it
+to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
 
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes.

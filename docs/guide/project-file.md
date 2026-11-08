@@ -263,6 +263,18 @@ and you can make them in a spreadsheet.
   Clear those cells if the rule should stay the only reason: otherwise the spectra stay rejected
   even when you delete the rule.
 
+**When a spectrum's id changes.** For scan files (mzML and Thermo `.raw`), a `spectrum_id`
+ends with the scans the spectrum adds up (`.../scans1322-1623`). A run that adds up other scans
+gives the spectrum a new id: a window edited in the elution tab, or `find_peak` or
+`find_fragment_peak` turned on. Your decision then follows the spectrum by its sample, file, and
+ion, as long as exactly one spectrum matches them. *hxex* does this every time it reads your
+table and logs each move; your file keeps the old id. `hxex check` lists the rows that move
+(`review moves`). A row stays unused, with the reason logged, when it matches several
+spectra, when two rows match the same spectrum, or when the spectrum already has a row under its
+new id (that row wins). Rows of kinetics files never move: there each spectrum is a time
+point, and its scans say which. When you change such a spectrum's decision in the window, the
+window writes the new id into the old row, so the file catches up.
+
 **What the decisions change.** A rejected spectrum is left out of everything that uses the
 results: `uptake.csv`, the figures (where it is drawn hollow and grey), and `hxex analyse`. A
 chosen number of populations changes the run's tables and figures (`spectra.csv`,

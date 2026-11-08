@@ -253,7 +253,7 @@ class ReviewPanel(QGroupBox):
                     bundle_k[sid] = entry["k_override"]
         try:
             path = make_review_table(project, results)
-            write_decisions(path, self.pending, bundle_k)
+            write_decisions(path, self.pending, bundle_k, results=results)
         except TableLocked as exc:
             self.message.setText(f"Not saved yet: {exc}")
             self.retry.show()

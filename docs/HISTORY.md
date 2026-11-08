@@ -8139,3 +8139,25 @@ CSVs or mzML if wanted.
     that use it (per-file windows imported from other software); its guide text now points to
     the new table for corrections. Tested on synthetic LC runs (the table, the reader with and
     without find_peak, the repeat read, the check, Save and Undo in the window).
+
+322. **Review decisions follow their spectrum to a new id (2026-11-07; PLAN Next steps 27).**
+    A spectrum id of a scan file names the scans summed (`.../scans1322-1623`), so a rerun with
+    another window (item 321's `rt_elution_windows`, `find_peak`, `find_fragment_peak`) gave
+    reviewed spectra new ids and their entries went stale (item 96); on the private targeted
+    dataset's `find_fragment_peak` rerun, 15 of 18 entries were moved by hand. Owner's
+    decisions: moving is automatic and the user review table file is left as it is (each
+    command matches in memory and logs the moves); entries of kinetics runs never move (owner:
+    a kinetics run is not given a window per spectrum, so it depends on the experiment type:
+    there the scans name the time point). Built: `hxex.review_table.move_entries` matches an
+    entry whose id the results do not have by its id without the scans (`scan_stem`: sample,
+    file, ion) when exactly one spectrum of a fixed-time run has that stem; several matches,
+    two entries for one spectrum, or a spectrum with its own entry (`superseded`: the own entry
+    wins) leave it unused and logged. Applied in `apply_review_table` (every command; review.csv
+    source `review table (moved from OLD)`), in the run's carried-over review layer
+    (`pipeline._review_for`: stored under the new id), to the table's chosen K before the run
+    fits and bootstraps it and in `resume` (`moved_choices`), in `hxex check` and `hxex info`
+    (`review moves` line, no longer a problem), and in the window's review writer (a decision
+    for a moved spectrum rewrites the old row's `spectrum_id`, keeping its cells). Tested on
+    synthetic LC runs (`tests/test_review_moves.py`: a narrowed window through run, check,
+    report, the bundle layer, the chosen K, the window's writer; the kinetics, several,
+    two-to-one, and superseded cases).

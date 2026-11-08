@@ -770,7 +770,8 @@ def _check_review_ids(project, lines: dict) -> list[str]:
 
     from .io import open_bundle
     from .io.bundle import bundle_manifest
-    from .review_table import read_review_table, table_choices
+    from .io.mzml import kinetics_spectra
+    from .review_table import move_entries, moved_sheet, read_review_table, table_choices
 
     review, bundle = project.review, project.output.bundle
     if (review is None or not review.table or bundle is None or not bundle.exists()
@@ -779,9 +780,17 @@ def _check_review_ids(project, lines: dict) -> list[str]:
     problems = [p for p in [_choices_not_fitted(table_choices(review), bundle)] if p]
     sheet = read_review_table(review.table)
     with open_bundle(bundle) as b:
-        known = set(map(str, b.spectrum_ids()))
+        ids = b.spectrum_ids()
+        moves = move_entries(sheet.spectrum_id, ids, kinetics_spectra(b.spectra_source(), ids))
+    known = set(map(str, ids))
+    if moves:
+        lines["review moves"] = (
+            f"rows naming scans {bundle.name} no longer sums (a new retention window): "
+            f"{moves.describe()}" + (f" ({moves.examples()})" if moves.examples() else ""))
+    sheet = moved_sheet(sheet, moves)
     keep = [i for i, sid in enumerate(sheet.spectrum_id) if sid in known]
-    unknown = [sid for sid in sheet.spectrum_id if sid not in known]
+    unknown = [sid for sid in sheet.spectrum_id if sid not in known
+               and sid not in moves.superseded]
     if not unknown:
         return problems
     matched = dataclasses.replace(sheet, **{name: tuple(getattr(sheet, name)[i] for i in keep)
@@ -1792,6 +1801,8 @@ def _project_review_rows(project, path: Path) -> list[tuple[str, str]]:
     if "review table" in lines:
         rows.append(("review table", f"{lines['review table']} (from {path.name}; applied by "
                                      "hxex report and hxex analyse)"))
+    if "review moves" in lines:
+        rows.append(("review moves", lines["review moves"]))
     if "excluded later" in lines:
         rows.append(("excluded later", f"{lines['excluded later']} (from {path.name})"))
     return rows or [("review table", f"none in {path.name}")]

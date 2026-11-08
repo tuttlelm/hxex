@@ -717,7 +717,9 @@ setting to your project file. `hxex check` says how many windows the table holds
 row whose sample, file, or ion the project does not read (a file renamed, a peptide taken out of
 the table), and the run warns about such rows and leaves them unused. Edited windows only act
 on files with a time (time points and controls), not on kinetics files. The table only acts
-when the project is run (`hxex run --overwrite`).
+when the project is run (`hxex run --overwrite`). The new window gives the spectrum a new
+`spectrum_id` (it names the scans added up), and your review decisions for it follow it there
+(see [When a spectrum's id changes](project-file.md#the-user-review-table)).
 
 ### When the peptide table's time is wrong
 

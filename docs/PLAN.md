@@ -1247,7 +1247,7 @@ Planned, not built:
      the bundle in place with a provenance note (as `hxex resume` does).
    - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
      gives a new id and its review entries would go stale; they should follow the spectrum by
-     file and peptide ion.
+     file and peptide ion. SETTLED by item 27 (built).
 27. **Review decisions carried over when a rerun changes the spectrum ids** (owner, 2026-11-06:
    to consider for users). A spectrum id names the scans summed (`.../scans1322-1623`), so a
    rerun that sums other scans (`find_fragment_peak`, `find_peak`, a moved `rt_start`, item 26)
@@ -1261,6 +1261,11 @@ Planned, not built:
    `hxex check` says which entries would move. A chosen K moved this way needs its bootstrap
    (`hxex resume`, as today). To decide: whether moving is automatic or a `hxex` command that
    rewrites the review table (keeping a copy), and the same for the GUI's review.
+   BUILT (HISTORY 322): automatic, in memory, the file left as it is (owner); kinetics runs
+   never move (owner: their scans name the time point); several matches stay unused and named;
+   the bundle's own layer is stored under the new id at the rerun; the window's writer rewrites
+   the old row's id when a moved spectrum's decision changes. The table's chosen K follows
+   into the run, so no `hxex resume` is needed for it.
 
 ## Risks and open decisions
 
