@@ -199,9 +199,9 @@ def ladder_kinetics_figure(
                                       condition=cond[1], charge=charge)
                 colour = _DIFF_COLOURS[j % len(_DIFF_COLOURS)]
                 if len(tr):
-                    _points(left, tr, colour, f"D {names[cond]}")
+                    _points(left, tr, colour, f"Δ {names[cond]}")
                     if right_defaults:
-                        _fitted(right, tr, colour, f"D {names[cond]}", min_time,
+                        _fitted(right, tr, colour, f"Δ {names[cond]}", min_time,
                                 fit and step.single)
         _extras(right, right_traces, step, min_time)
         if (step.single and kint is not None

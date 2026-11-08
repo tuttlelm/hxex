@@ -23,7 +23,12 @@ Everything below about rates, precise steps, and fitted curves applies only with
 `fit_rates = true`.
 
 **The ladder figure.** `ladder_<parent>_<ion>_z<charge>` shows the precursor in its top
-row, then a row for each step of the ladder, read top to bottom. A ladder too long for
+row, then a row for each step of the ladder, read top to bottom. In each step's row, the
+left panel shows the two fragments and, marked Δ in the legend, their difference: the larger
+fragment's deuterium minus the smaller one's, which is the deuterium of the residue (or
+residues) between them. The right panel shows that difference again, with its fitted curve
+when `fit_rates = true`. In the precursor row, the right panel shows the precursor (M) itself.
+A ladder too long for
 `[analysis] page_size` (16 by 12 inches: the precursor and three steps) goes on over further
 pages, `..._z1_2`, `..._z1_3`, each with the precursor row again at its top and its page
 number in that row's title. A taller page (`page_size = [16, 30]`) holds more steps a page.

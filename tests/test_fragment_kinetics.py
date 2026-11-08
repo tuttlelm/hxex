@@ -271,7 +271,7 @@ def test_ladder_figure_has_a_row_per_step():
     assert titles[0] == "S (Z3)  ETD M_z1"
     assert titles[1].endswith("G(S)-12") and titles[3].endswith("GSHP(L)-15")
     rate_labels = [t.get_text() for t in axes[2 * 4 + 1].get_legend().get_texts()]
-    assert rate_labels[0].startswith("D G, rate: 4.00e-03")  # residue 16 (V), exact data
+    assert rate_labels[0].startswith("Δ G, rate: 4.00e-03")  # residue 16 (V), exact data
     assert all(ax.get_xscale() == "log" for ax in axes)
     assert len({ax.get_xlim() for ax in axes}) == 1
     # a long ladder over pages (owner, 2026-11-04): the steps that fit under the precursor
