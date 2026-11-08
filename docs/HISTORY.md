@@ -7949,6 +7949,8 @@ CSVs or mzML if wanted.
       linked to the pre-activation (hypothesis: the hydrogen moved in the c/z transfer comes
       from a deuterated site more often after HCD). So MS2 and MS3 are not replicates of one
       measurement, and the bright floor is not to be counted as noise when calibrating errors.
+      Corrected by item 319: the gap is mostly scrambling caused by the
+      pre-activation; the sign test above was too weak to see it.
       Private: fragment_cut_fit/channel_offset (README).
     - **Ion-type mixture weights from dim references.** On the dataset, per-series weights drift
       heavy as the undeuterated references dim (z-dot h = w(+1 H) + 2 w(+2 H) 0.28 bright, 0.60
@@ -8035,4 +8037,51 @@ CSVs or mzML if wanted.
     316: in labelled runs the transferred atom comes from the complementary fragment and can be
     D, while the envelope treats the +1 H type as a fixed unlabelled hydrogen; prediction: a
     fragment's excess D against its ladder neighbours or its MS1 parent grows with its +H
-    weight. Private: fragment_cut_fit/ref_drift (README).
+    weight (tested in item 319: no sign in MS2). Private: fragment_cut_fit/ref_drift
+    (README).
+
+319. **Scrambling in the MS3 channels (HCD pre-activation) of the targeted dataset; the
+    moved hydrogen (2026-11-07; scratch, no code change; follows items 316 and 318).** The owner:
+    the MS3 scans with HCD pre-activation are meant as a high-scramble channel, a reference
+    for correcting the gentler MS2 channels by a private method (not described here). Measured
+    on the private targeted Orbitrap dataset and on its two deuterated scrambling standards
+    (peptides of 8 and 9 residues, an LC run against the undeuterated one, 3+ ETD and 2+
+    EThcD, MS2 and MS3).
+    - **Does the hydrogen moved in the c/z transfer carry the label?** If it were the
+      cleavage-site amide's in a share q of transfers, a labelled z would read high by
+      w(z+1) q p and a c low by w(c-dot) q p (p that amide's deuteration). The same fragment from
+      the 2+ and 3+ precursor: 16 pairs, unusable. Within one ladder, each fragment's deviation
+      from its two neighbours, its slope over the time course against the parent's D per
+      amide, against its transfer share minus its neighbours': MS2 q +0.09 (95 % -0.45 to
+      +0.69, 90 fragments) and below about 0.5-0.7 at every inclusion level (at most ~0.1 D
+      on one fragment); MS3 +1.01 (+0.32 to +1.49, 43 fragments) with the strictest selection,
+      fading to +0.02 as noisier fragments enter. No reliable sign in MS2; the MS3 hint is the
+      scrambling below.
+    - **Scrambling of MS3 over MS2.** Model per fragment: MS3 = (1 - s) MS2 + s x the value
+      with the deuterium spread evenly over the precursor's labile hydrogens (backbone amides
+      as hxex counts them, side chains, termini, charges; an assumption). Noise in MS2 enters
+      both sides of that regression and inflates s, so a swap control fits MS2 from MS3, which
+      must come out negative (-s / (1 - s)) when MS3 is the scrambled one. Standards: s 0.47 /
+      0.30 / 0.04 / 0.24 (8-residue ETD, EThcD; 9-residue ETD, EThcD), swap control negative in
+      the two EThcD channels; roughly noise-corrected 0.12 / 0.29 / 0 / 0.28 (the 9-residue 3+
+      ETD, whose two arginines hold the charges, does not scramble). The 8-residue probe's MS2
+      ladders show its designed pattern (fast block about 1 D in all, slow residues
+      0.7-0.8); MS3 flattens it (first c ion 1.00 -> 1.73 D). Targeted dataset (fragment pairs
+      with K = 1 se <= 0.2, not below_noise; 99 ETD and 45 EThcD channels): s 0.15-0.27,
+      correlation 0.40-0.57, growing with labelling; swap control -0.12, -0.04, -0.06 (ETD c,
+      ETD z, EThcD c) and +0.11 (EThcD z); roughly noise-corrected 0.08-0.15. The owner's
+      private measure, read on the same files, agrees: MS2 essentially unscrambled, MS3 more
+      scrambled in every usable channel.
+    - **Charge-reduced precursor ions carry the electrons' hydrogens.** In the ETD scans the 1+
+      ion from a 3+ precursor has its tallest peak 2.015 Da above the predicted
+      monoisotopic peak (two hydrogen atoms), the 1+ from a 2+ one hydrogen; hxex reads
+      them as deuterium unless compared at equal charge. The neutral-loss species M-NH3 sits
+      20-36 ppm below its predicted m/z at every charge and in both MS levels (flag
+      `mz_shift`; M itself within 1 ppm), as on the fragment-kinetics dataset (about -40 ppm);
+      at the precursor's own charge and from 4+ precursors it is another species. Cause open.
+    Reading: item 316's MS2/MS3 gap is mostly scrambling caused by the pre-activation, as
+    designed, not a labelled moved hydrogen; item 316's "not scrambling" came from a sign test
+    against the parent's average per amide, which ignores side chains, termini, and charges and
+    is weak at this size. MS2 is essentially unscrambled; residue values from MS3 alone are
+    about 10-15 % scrambled on this dataset. Private: fragment_cut_fit/ref_drift (README;
+    scram_std/, targeted_mnh3/).
