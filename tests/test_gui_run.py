@@ -106,7 +106,7 @@ def test_the_run_workspace_runs_hxex_and_offers_to_replace_earlier_results(qtbot
     assert "hxex check hxex.toml: done" in page.console.toPlainText()
     # the whole output in a log beside the project, with the command and how it ended
     log = page.log_path
-    assert log.parent == tmp_path / "hxex_logs" and log.name.startswith("check_")
+    assert log.parent == tmp_path / "hxex_logs" and log.name.startswith("hxex_check_")
     text = log.read_text()
     assert text.startswith("$ hxex check hxex.toml\nin ") and "hxex " in text.splitlines()[2]
     assert "[hxex check hxex.toml: done, after " in text and "@hxex-progress" not in text
@@ -183,3 +183,41 @@ def test_the_console_wraps_long_lines_unless_told_not_to(workspace):
     assert page.console.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
     page.wrap.setChecked(False)
     assert page.console.lineWrapMode() == QPlainTextEdit.LineWrapMode.NoWrap
+
+
+def test_reopening_a_project_shows_its_last_commands_log(qtbot, stand_in, tmp_path):
+    """The console shows the project's last command, and the earlier ones are listed (owner,
+    2026-11-08: reopened, the Run tab showed nothing of how the last command went); another
+    project file's logs in the same folder are not."""
+    project = tmp_path / "hxex.toml"
+    project.write_text("")
+    other = tmp_path / "hxex_other.toml"
+    other.write_text("")
+    folder = tmp_path / "hxex_logs"
+    folder.mkdir()
+    # a log named before logs were named by project: its first line tells the project
+    (folder / "run_2026-11-07_101500.log").write_text(
+        "$ hxex run hxex.toml\nin x\nstarted 2026-11-07 10:15:00, hxex 0\n\nfitting\n\n"
+        "[hxex run hxex.toml: stopped, after 31m 17s, 2026-11-07 10:46:17]\n")
+    (folder / "hxex_other_check_2026-11-07_120000.log").write_text(
+        "$ hxex check hxex_other.toml\nin x\nstarted 2026-11-07 12:00:00, hxex 0\n\n")
+    page = RunWorkspace(program=[sys.executable, str(stand_in)])
+    qtbot.addWidget(page)
+    page.show_project(project)
+    text = page.console.toPlainText()
+    assert "an earlier command: hxex run hxex.toml, started 7 Nov 2026 10:15: stopped after " \
+        "31m 17s" in text and "fitting" in text
+    assert [page.history.itemText(i) for i in range(page.history.count())] == [
+        "run, 7 Nov 10:15: stopped after 31m 17s"]
+    page.run_command("check")
+    assert not page.history.isEnabled()  # not while a command runs
+    qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
+    assert "fitting" not in page.console.toPlainText()  # the new command's output alone
+    with qtbot.waitSignal(page.runner.finished, timeout=20000):
+        page.stop()
+    assert page.log_path.name.startswith("hxex_check_")
+    assert page.history.count() == 2 and page.history.itemText(0).startswith("check, ")
+    assert "stopped after" in page.history.itemText(0) and page.history.isEnabled()
+    page.show_project(other)
+    assert "hxex_other.toml" in page.console.toPlainText() and page.history.count() == 1
+    assert page.history.itemText(0).endswith("no end recorded (the window closed during it?)")

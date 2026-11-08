@@ -170,11 +170,13 @@ class SpectraList(QWidget):
         # set the window's narrowest width)
         self.bar = QWidget()
         bar = FlowLayout(self.bar)
-        self.search.setMinimumWidth(160)
+        self.search.setMinimumWidth(200)
         self.search.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        for w in (self.tables, self.filter, self.sample, self.search, self.clear_filters,
-                  self.count, self.save_button):
+        for w in (self.tables, self.filter, self.sample, self.clear_filters, self.save_button):
             bar.addWidget(w)
+        bar.add_filling(self.search)  # the rest of its line (owner, 2026-11-08)
+        # the count (x of y spectra) is not in the bar: the Results workspace shows it on its
+        # status line under the list, so that the list can be narrow
         stale = QHBoxLayout()
         stale.setContentsMargins(0, 0, 0, 0)
         stale.addWidget(self.stale, 1)

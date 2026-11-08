@@ -147,13 +147,18 @@ class ResultsWorkspace(QWidget):
         self.search.setPlaceholderText("Find a peptide, residues, sample, or fragment")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill)
-        self.count = QLabel()
-        filters = QHBoxLayout()
+        self.count = QLabel()  # x of y series: on the status line under the tree
+        # the choices wrap onto further lines when the tree is narrow, the search box taking
+        # the rest of its line (owner, 2026-11-08)
+        from .flow_layout import FlowLayout
+
+        self.filters = QWidget()
+        filters = FlowLayout(self.filters)
         filters.addWidget(self.filter)
         filters.addWidget(self.ms_filter)
         filters.addWidget(self.ion_filter)
-        filters.addWidget(self.search, 1)
-        filters.addWidget(self.count)
+        self.search.setMinimumWidth(200)
+        filters.add_filling(self.search)
 
         self.tree = ReviewTree()
         self.tree.setColumnCount(len(COLUMNS))
@@ -180,7 +185,7 @@ class ResultsWorkspace(QWidget):
         tree_page = QWidget()
         tree_side = QVBoxLayout(tree_page)
         tree_side.setContentsMargins(0, 0, 0, 0)
-        tree_side.addLayout(filters)
+        tree_side.addWidget(self.filters)
         tree_side.addWidget(self.tree, 1)
         self.list = SpectraList()
         self.list.chosen.connect(self._list_chosen)
@@ -199,10 +204,21 @@ class ResultsWorkspace(QWidget):
         self.left_tabs.setTabToolTip(1, "every spectrum, one row each, with the columns of "
                                         "spectra.csv: sort by a column, filter, and step "
                                         "through them in that order")
+        # a status line under the list: how many series (Tree) or spectra (List) are shown
+        # (owner, 2026-11-08: in the rows of choices they kept the panel wide)
+        self.left_status = QWidget()
+        status = QHBoxLayout(self.left_status)
+        status.setContentsMargins(4, 0, 4, 0)
+        status.addWidget(self.count)
+        status.addWidget(self.list.count)
+        status.addStretch()
+        self.left_tabs.currentChanged.connect(self._left_tab_changed)
         left = QWidget()
         side = QVBoxLayout(left)
         side.setContentsMargins(0, 0, 0, 0)
         side.addWidget(self.left_tabs, 1)
+        side.addWidget(self.left_status)
+        self._left_tab_changed(0)
         # the "left out" column is worked out again only when asked (owner: no recalculation
         # in the middle of a review session)
         self.left_note = QLabel()
@@ -1199,6 +1215,13 @@ class ResultsWorkspace(QWidget):
             "your") else f"The 'left out' column is out of date: {why}.")
         self.left_update.setEnabled(True)
         self.left_bar.show()
+
+    def _left_tab_changed(self, _index: int) -> None:
+        """The status line's count and the review panel's stepping follow the tab shown."""
+        on_list = self.left_tabs.currentWidget() is self.list
+        self.count.setVisible(not on_list)
+        self.list.count.setVisible(on_list)
+        self.review.set_list_mode(on_list)
 
     def update_left_out(self) -> None:
         """Work out the "left out" column again (in the background), as asked."""

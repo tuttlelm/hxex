@@ -285,7 +285,8 @@ score from `0.1`, say; a time with its units, `30 s` to `2 min`), or text the va
 Filters on several columns combine; a filtered column's header has a ▼ (its tooltip says how),
 and **Clear column filters** shows every row again.
 Choosing a row shows that spectrum, with the review panel, as the tree does, and **◀ ▶** step
-through the list in the order shown (Ctrl+C, or a right click, copies the row chosen or every
+through the list one row at a time in the order shown (the choice of spectrum, time point, or
+charge beside them is greyed out on the List tab; Ctrl+C, or a right click, copies the row chosen or every
 row shown, with the header): sort by a screen score, say, and work down from the
 worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
 once; the row stays in view until you change the filter. The list is made in the background
@@ -345,7 +346,10 @@ or every spectrum of a time point or a charge.
 
 - **◀** and **▶** (top right) go to the previous and next spectrum, time point, or charge
   (the list beside them), through everything the tree shows (with the list above the tree,
-  only flagged series, say).
+  only flagged series, say). On the List tab they go row by row.
+- The line under the tree says how many series it shows of all the results' (under the list,
+  how many spectra); the rows of choices above the tree and the list wrap onto more lines when
+  you make that side of the window narrow.
 - **Status**: not reviewed, accepted, or rejected. In the tree, the keys **A**, **R**, and **U**
   do the same, so you can review with the arrow keys and those three letters.
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted).
@@ -470,9 +474,14 @@ would type it. One command runs at a time.
 - The console keeps the last 20,000 lines and wraps long lines to its width (untick **Wrap
   lines** to keep each line whole and scroll sideways); **Clear** empties it. Every command's whole output
   also goes to a log file in a folder `hxex_logs` beside the project file, one per command,
-  named by the command and when it started (`run_2026-11-03_112059.log`), with the command, the
-  folder, the *hxex* version, and how it ended. The folder is the window's: delete old logs
-  whenever you like.
+  named by the project file, the command, and when it started
+  (`hxex_run_2026-11-03_112059.log`), with the command, the folder, the *hxex* version, and how
+  it ended. The folder is the window's: delete old logs whenever you like.
+- Opening a project shows the output of its last command, under a grey line saying which
+  command it was, when it started, and how it ended (a long log shows its last 3,000 lines).
+  **Earlier commands**, below the console, lists the project's other commands, newest first:
+  choose one to see its output. Only the project file's own commands are listed, also when
+  several project files share a folder. The next command you run clears the console.
 - After **Run**, **Resume**, or **Report**, the Results part shows the new results.
 - Closing the window, or opening another project, while a command runs asks first, and stops
   the command if you agree.

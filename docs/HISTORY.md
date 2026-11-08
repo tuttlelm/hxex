@@ -8301,3 +8301,21 @@ CSVs or mzML if wanted.
     Checks: full suite 1,666 passed (22 skipped), ruff clean. One earlier full run stopped in a
     GUI test, waiting on a lock with the machine idle, for 25 minutes (interrupted; not seen
     again in the next run): intermittent, like the Windows GUI hang noted in item 317.
+
+324. **The Run tab shows the project's earlier commands (2026-11-08).** Owner: reopening a
+    project, the Run tab was empty, so how its last command went (done, stopped, failed; its
+    warnings) meant opening `hxex_logs` by hand, and the logs there, named by command and time
+    only, did not say which project file they belonged to (one folder of the owner's held five).
+    Logs are now named `PROJECT_COMMAND_DATE_TIME.log`; a project's logs are found by their first
+    line (`$ hxex run hxex.toml`), so logs named before keep working (`hxex.gui.logs`). Opening a
+    project shows its last command's log (its last 3,000 lines) under a grey line naming the
+    command, when it started, and how it ended (from the log's last line; "no end recorded" when
+    the window closed during it), and **Earlier commands** lists the others, newest first. The
+    next command clears the console. Read only: the commands and their logs do not change.
+    The Results side (owner, same day): the counts (`x of y series`, `x of y spectra`) moved
+    from the rows of choices to a status line under the tree and the list; the tree's choices
+    wrap like the list's (`FlowLayout.add_filling`: the search box takes the rest of its line,
+    at least 200 px); on the List tab the review panel's choice of what ◀ ▶ step through is
+    greyed out at "spectrum" (the list steps row by row; it had offered time point and charge
+    without effect), and the Tree tab gets its choice back. The left side's narrowest width is
+    now the review panel's (338 px).

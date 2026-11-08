@@ -16,11 +16,19 @@ class FlowLayout(QLayout):
     def __init__(self, parent: QWidget | None = None, spacing: int = 6):
         super().__init__(parent)
         self._items: list[QLayoutItem] = []
+        self._filling: list[QWidget] = []  # widgets that take the rest of their line
         self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(spacing)
 
     def addItem(self, item: QLayoutItem) -> None:  # noqa: N802 - Qt's name
         self._items.append(item)
+
+    def add_filling(self, widget: QWidget) -> None:
+        """Add ``widget`` to take the rest of its line (a search box after the choices; owner,
+        2026-11-08: wider where there is room); it moves to the next line when less than its
+        minimum width is left."""
+        self.addWidget(widget)
+        self._filling.append(widget)
 
     def count(self) -> int:
         return len(self._items)
@@ -68,9 +76,13 @@ class FlowLayout(QLayout):
         gap = self.spacing()
         for item in self._visible():
             hint = item.sizeHint()
-            width = max(min(hint.width(), area.width()), item.minimumSize().width())
-            if x > area.x() and x + width > area.right() + 1:
+            least = item.minimumSize().width()
+            width = max(min(hint.width(), area.width()), least)
+            filling = item.widget() is not None and item.widget() in self._filling
+            if x > area.x() and x + (least if filling else width) > area.right() + 1:
                 x, y, line = area.x(), y + line + gap, 0
+            if filling:
+                width = max(area.right() + 1 - x, least)
             if move:
                 item.setGeometry(QRect(QPoint(x, y), QSize(width, hint.height())))
             x += width + gap

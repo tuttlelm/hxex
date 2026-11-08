@@ -9,19 +9,22 @@ offers to run again replacing it or keeping it as ``NAME.N`` (``--overwrite``,
 results.
 
 Every command's whole output also goes to a log file beside the project file
-(``hxex_logs/COMMAND_DATE_TIME.log``; owner: the console keeps only its last lines, and a record
-outlasts the window), with the command, the folder, the hxex version, and how it ended.
+(``hxex_logs/PROJECT_COMMAND_DATE_TIME.log``; owner: the console keeps only its last lines, and a
+record outlasts the window), with the command, the folder, the hxex version, and how it ended.
+Opening a project shows its last command's log in the console, and **Earlier commands** lists
+the others (:mod:`hxex.gui.logs`; owner, 2026-11-08).
 """
 
 from __future__ import annotations
 
+import html
 import logging
 import time
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..hooks import format_duration, format_percent
+from .logs import LOG_FOLDER, CommandLog, log_name, log_text, project_logs
 from .runner import CommandRun, shown_command
 
 log = logging.getLogger(__name__)
@@ -55,7 +59,6 @@ COMMANDS = (("Check", "check", "check the project file and show what would be re
 CHANGES_RESULTS = ("run", "resume", "report")  # the window shows the results again after these
 DEVICE_SETTING = "[run.fit.backend] device"  # the project file's device setting, by its name
 REFUSED = "--keep-previous"  # in the message of a command refusing to write over its output
-LOG_FOLDER = "hxex_logs"  # beside the project file: one log per command run from the window
 
 
 class RunWorkspace(QWidget):
@@ -136,6 +139,16 @@ class RunWorkspace(QWidget):
                              "each, scrolled sideways)")
         self.wrap.toggled.connect(self._wrap)
         self.wrap.setChecked(True)
+        # the project's earlier commands, from their logs (owner, 2026-11-08: reopening a project
+        # showed nothing of how its last command went)
+        self.history = QComboBox()
+        self.history.setToolTip("this project's earlier commands, newest first: choose one to "
+                                "show its output (from its log in hxex_logs, beside the project "
+                                "file)")
+        self.history.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.history.activated.connect(self._history_chosen)
+        self._logs: list[CommandLog] = []
+        self._showing_log = False  # the console shows an earlier command's log
         clear = QPushButton("Clear")
         clear.setToolTip("empty the console")
         clear.clicked.connect(self.console.clear)
@@ -144,6 +157,8 @@ class RunWorkspace(QWidget):
         progress.addWidget(self.elapsed)
         progress.addWidget(self.state, 2)
         bottom = QHBoxLayout()
+        bottom.addWidget(QLabel("Earlier commands:"))
+        bottom.addWidget(self.history)
         bottom.addStretch()
         bottom.addWidget(self.wrap)
         bottom.addWidget(clear)
@@ -185,7 +200,13 @@ class RunWorkspace(QWidget):
     # --- the project -----------------------------------------------------------------------
 
     def show_project(self, path: Path | None) -> None:
+        changed = path != self.project
         self.project = path
+        if changed and not self.runner.running:
+            self.console.clear()
+            self._fill_history()
+            if self._logs:
+                self.show_log(self._logs[0])
         self.where.setText(f"Commands run on {path.name}, in {path.parent}" if path is not None
                            else "No project file open: open or make one in the Project "
                                 "workspace.")
@@ -206,10 +227,39 @@ class RunWorkspace(QWidget):
                 pass
         self.device.setItemText(0, f"{DEVICE_SETTING}: {value}")
 
+    # --- earlier commands --------------------------------------------------------------------
+
+    def _fill_history(self) -> None:
+        """The list of the project's earlier commands (none: the list says so)."""
+        self._logs = project_logs(self.project) if self.project is not None else []
+        self.history.clear()
+        for log_ in self._logs:
+            self.history.addItem(log_.describe())
+        if not self._logs:
+            self.history.addItem("none yet")
+        self.history.setEnabled(bool(self._logs) and not self.runner.running)
+
+    def show_log(self, log_: CommandLog) -> None:
+        """An earlier command's log in the console (its last lines, when it is long), under a
+        line saying which command it was and how it ended."""
+        self.console.clear()
+        self.console.appendHtml(
+            f'<span style="color: gray;">{html.escape(_heading(log_))}</span>')
+        self.console.appendPlainText(log_text(log_))
+        self.console.moveCursor(QTextCursor.MoveOperation.End)
+        self._showing_log = True
+        if log_ in self._logs:
+            self.history.setCurrentIndex(self._logs.index(log_))
+
+    def _history_chosen(self, index: int) -> None:
+        if not self.runner.running and 0 <= index < len(self._logs):
+            self.show_log(self._logs[index])
+
     def _enable(self) -> None:
         idle = not self.runner.running
         for button in self.buttons.values():
             button.setEnabled(idle and self.project is not None)
+        self.history.setEnabled(idle and bool(self._logs))
         self.stop_button.setEnabled(not idle)
 
     # --- running ---------------------------------------------------------------------------
@@ -229,6 +279,9 @@ class RunWorkspace(QWidget):
         self.args = self.arguments(command, extra)
         typed = shown_command(self.args)
         self.command.setText(typed)
+        if self._showing_log:  # an earlier command's log: the new command's output alone
+            self.console.clear()
+            self._showing_log = False
         self.console.appendPlainText(f"\n$ {typed}    (in {self.project.parent})")
         self.bar.setValue(0)
         self.bar.setRange(0, 0)  # busy until the first progress record
@@ -262,11 +315,11 @@ class RunWorkspace(QWidget):
         self._began = time.monotonic()
         now = datetime.now()
         folder = self.project.parent / LOG_FOLDER
-        path = folder / f"{self.args[0]}_{now:%Y-%m-%d_%H%M%S}.log"
         n = 1
+        path = folder / log_name(self.project, self.args[0], now)
         while path.exists():  # two commands in one second
             n += 1
-            path = folder / f"{self.args[0]}_{now:%Y-%m-%d_%H%M%S}_{n}.log"
+            path = folder / log_name(self.project, self.args[0], now, n)
         try:
             folder.mkdir(exist_ok=True)
             self.log_file = path.open("w", encoding="utf-8")
@@ -288,6 +341,7 @@ class RunWorkspace(QWidget):
                             f"{format_duration(took)}, {datetime.now():%Y-%m-%d %H:%M:%S}]\n")
         self.log_file.close()
         self.log_file = None
+        self._fill_history()  # the command just ended first
 
     def _line(self, text: str, which: str) -> None:
         self.console.appendPlainText(text)
@@ -348,3 +402,19 @@ class RunWorkspace(QWidget):
                 process.waitForFinished(5000)
         return True
 
+
+
+def _heading(log_: CommandLog) -> str:
+    """``— hxex run hxex.toml, started 8 Nov 2026 13:21: stopped after 31m 17s —``."""
+    command = f"hxex {log_.command}"
+    try:
+        with log_.path.open(encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()
+        if first.startswith("$ "):
+            command = first[2:]  # as typed
+    except OSError:
+        pass
+    when = f"{log_.started.day} {log_.started:%b %Y %H:%M}"
+    end = (f"{log_.ended} after {log_.took}" if log_.ended is not None
+           else "no end recorded (the window was closed during it?)")
+    return f"— an earlier command: {command}, started {when}: {end} —"

@@ -691,3 +691,35 @@ def test_the_results_lists_bar_wraps_when_it_is_narrow(qtbot):
         QApplication.processEvents()
         heights.setdefault(width, []).append(lst.bar.height())
     assert heights[250][0] > heights[1000][0] == heights[1000][1]
+
+
+def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(qtbot):
+    """The series and spectra counts are on a status line under the list (in the rows of
+    choices they kept the panel wide; owner, 2026-11-08), the search boxes take the rest of
+    their line, and on the List tab ◀ ▶ step row by row, so the choice of what they step
+    through is greyed out there."""
+    from PySide6.QtWidgets import QApplication
+
+    from hxex.gui.results_workspace import ResultsWorkspace
+
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1400, 800)
+    w.show()
+    QApplication.processEvents()
+    assert w.count.parent() is w.left_status and w.list.count.parent() is w.left_status
+    assert w.count.isVisible() and not w.list.count.isVisible()
+    left = w.left_tabs.parentWidget()
+    assert left.minimumSizeHint().width() < 400
+    # the search box reaches the end of its line
+    line_end = w.filters.width()
+    assert w.search.geometry().right() >= line_end - 2
+    level = w.review.level
+    level.setCurrentIndex(2)  # by charge, on the tree
+    w.left_tabs.setCurrentWidget(w.list)
+    QApplication.processEvents()
+    assert not level.isEnabled() and level.currentText() == "spectrum"
+    assert w.list.count.isVisible() and not w.count.isVisible()
+    assert "row" in w.review.next.toolTip()
+    w.left_tabs.setCurrentIndex(0)
+    assert level.isEnabled() and level.currentIndex() == 2  # the tree's choice back

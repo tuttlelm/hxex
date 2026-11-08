@@ -118,9 +118,35 @@ class ReviewPanel(QGroupBox):
         self.show_spectra([], "")
 
     def _level_tips(self, *_) -> None:
+        if not self.level.isEnabled():  # the List tab: row by row
+            self.previous.setToolTip("the previous row of the list, in its order")
+            self.next.setToolTip("the next row of the list, in its order")
+            return
         words = self.level.currentText()
         self.previous.setToolTip(f"the previous {words}")
         self.next.setToolTip(f"the next {words} (through everything the tree shows)")
+
+    def set_list_mode(self, on: bool) -> None:
+        """On the List tab ◀ ▶ step through the list's rows one at a time, so the choice of what
+        they step through is greyed out at "spectrum" (owner, 2026-11-08: offered there, it did
+        nothing); the Tree tab gets its choice back."""
+        if on == (not self.level.isEnabled()):
+            return
+        if on:
+            self._tree_level = self.level.currentIndex()
+            self.level.blockSignals(True)
+            self.level.setCurrentIndex(0)
+            self.level.blockSignals(False)
+            self.level.setEnabled(False)
+            self.level.setToolTip("the list steps one row at a time, in its order (the tree "
+                                  "steps by spectrum, time point or charge)")
+        else:
+            self.level.setEnabled(True)
+            self.level.blockSignals(True)
+            self.level.setCurrentIndex(getattr(self, "_tree_level", 0))
+            self.level.blockSignals(False)
+            self.level.setToolTip("what ◀ and ▶ step through")
+        self._level_tips()
 
     # --- what is shown ---------------------------------------------------------------------
 
