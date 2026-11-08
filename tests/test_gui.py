@@ -550,3 +550,33 @@ def test_a_figures_list_has_steps_that_go_round(qtbot):
     box.clear()
     box.addItem("one page")
     assert not nxt.isEnabled() and not prev.isEnabled()
+
+
+def test_dotnet_starts_before_qt_when_pythonnet_is_installed(monkeypatch):
+    """The window starts .NET before Qt (hxex.gui.start_dotnet): started inside the running
+    window, Mono crashed the process on a desktop display. Nothing happens without pythonnet,
+    and a .NET that does not start is not an error there."""
+    import importlib.util
+    import types
+
+    from hxex import gui
+
+    calls = []
+    fake = types.SimpleNamespace(load=lambda: calls.append("load"))
+    monkeypatch.setitem(sys.modules, "pythonnet", fake)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: object() if name == "pythonnet" else real(name, *a))
+    gui.start_dotnet()
+    assert calls == ["load"]
+
+    def broken():
+        raise RuntimeError("no runtime")
+
+    fake.load = broken
+    gui.start_dotnet()  # logged, not raised
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: None if name == "pythonnet" else real(name, *a))
+    fake.load = lambda: calls.append("again")
+    gui.start_dotnet()
+    assert calls == ["load"]  # without pythonnet: nothing

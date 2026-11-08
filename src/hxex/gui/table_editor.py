@@ -587,4 +587,5 @@ def _suggested(kind: TableKind) -> str:
     from ..review_table import SUGGESTED_NAME
 
     return {"input.peptides": "peptides.csv", "input.retention_times": "retention_times.csv",
+            "input.rt_elution_windows": "rt_elution_windows.csv",
             "review.table": SUGGESTED_NAME}.get(kind.setting, "table.csv")

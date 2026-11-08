@@ -1232,8 +1232,14 @@ Planned, not built:
      from the run's fit of the spectrum (0.6 s against 9 s; the run's settings and noise curve;
      no bootstrap, population test or controls); Save writes the
      run's own row (`hxex.gui.window_edit.save_window`, checked as the project reads it),
-     Undo writes the table back. Drift columns joined `RUN_ROW_FIELDS`. Not built: listing the
-     edited rows apart in the Tables view (the table shows them with their `run`).
+     Undo writes the table back. Drift columns joined `RUN_ROW_FIELDS`.
+     CHANGED (HISTORY 321, owner: the peptide table is the file-agnostic starting point, and
+     fragments have no row in it): Save writes `[input] rt_elution_windows`
+     (`rt_elution_windows.csv`, `hxex.io.elution_windows`), one row per sample, file and ion (as
+     the spectrum ids name it), for peptides, fragments and M ions alike; the reader applies a
+     row to that file only (no peak search; the spectrum stays in its series); `hxex check`
+     names rows the project does not read; the Tables view edits it. The peptide table is never
+     changed by the window.
    - *Applying*: first by a full `hxex run --overwrite` (about 11 minutes on the benchmark);
      later, if that gets in the way, a partial rerun: read again only the changed spectra (with
      each file's stored m/z offset and drift ranges, not measured again), pick and fit their

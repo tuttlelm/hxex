@@ -451,6 +451,7 @@ def read_thermo(
     thermo_dir: str | Path | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    elution_windows: Sequence | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in every run of Thermo raw files: :func:`~hxex.io.read_mzml`
     for ``.raw`` files (the same arguments, layouts, spectrum ids and record), plus
@@ -460,7 +461,7 @@ def read_thermo(
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_format(thermo_dir), runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
-                      progress=progress, cancel=cancel)
+                      progress=progress, cancel=cancel, elution_windows=elution_windows)
 
 
 def read_thermo_source(

@@ -4,9 +4,10 @@
 Without Qt: :func:`preview` sums the spectrum again over the new window
 (:meth:`hxex.io.retention_trace.TraceReader.spectrum`), picks it and fits it with the run's
 settings, so that the window can draw it beside the spectrum the results hold; and
-:func:`save_window` writes the window as the run's own row of the project's peptide table (the
-``run`` column with ``rt_start``, ``rt_end`` and, for an ion-mobility file, ``drift_start``,
-``drift_end``), where the next ``hxex run`` reads it. Nothing in the results changes until then.
+:func:`save_window` writes the window as the ion's row for that file in the project's
+``[input] rt_elution_windows`` table (:mod:`hxex.io.elution_windows`; made, and named in the
+project file, by the first save), where the next ``hxex run`` reads it. The peptide table is
+never changed, and nothing in the results changes until the project is run again.
 """
 
 from __future__ import annotations
@@ -35,9 +36,6 @@ PREVIEW_STEPS = {"n_restarts": 1, "kmeans_after_warm": False, "adam_steps": 50,
 # levels are the process's, so two fits in two threads (a stale preview still running when a
 # new one starts) break each other ("no level exists"); the thread count is the process's too
 _FIT_LOCK = threading.Lock()
-
-# the peptide table's columns a run's own row is matched by (the reader's names, any case)
-_KEY = ("peptide", "start_seq", "end_seq", "charge", "modification")
 
 
 @dataclass(frozen=True)
@@ -164,20 +162,26 @@ def _warm(results, spectrum_id: str, measurements) -> dict:
     return starts
 
 
-# --- the peptide table -------------------------------------------------------------------------
+# --- the elution-window table ----------------------------------------------------------------
+
+DEFAULT_NAME = "rt_elution_windows.csv"  # beside the project file, when it names no table
 
 
 @dataclass(frozen=True)
 class SavedWindow:
-    """A window written to the peptide table at ``path``: the file's bytes ``before`` and
-    ``after`` (Undo writes ``before`` back), the run's row as written (``row``, by column),
-    and whether it was ``added`` (else an existing row of the run was changed)."""
+    """A window written to the project's ``[input] rt_elution_windows`` table: each file
+    written with its bytes ``before`` (None: it did not exist) and ``after`` (Undo writes
+    ``before`` back), the row as written (``row``, by column), and whether it was ``added``
+    (else the ion's row in that file was changed). The table is the first file; the project file
+    follows when the first save named the table in it."""
 
-    path: Path
-    before: bytes
-    after: bytes
+    files: tuple[tuple[Path, bytes | None, bytes], ...]
     row: dict[str, str]
     added: bool
+
+    @property
+    def path(self) -> Path:
+        return self.files[0][0]
 
 
 def _text(value: float, places: int, up: bool) -> str:
@@ -188,120 +192,109 @@ def _text(value: float, places: int, up: bool) -> str:
     return f"{v:.{places}f}"
 
 
-def _number(text: str) -> float | None:
-    try:
-        return float(text)
-    except ValueError:
-        return None
+def table_path(project_path: str | Path) -> tuple[Path, bool]:
+    """The project's elution-window table and whether the project file names it already (else
+    the default name beside the project file, named there by the first save)."""
+    from ..config import load_project
+
+    project_path = Path(project_path)
+    named = load_project(project_path).input.rt_elution_windows
+    return (Path(named), True) if named is not None else (project_path.parent / DEFAULT_NAME,
+                                                          False)
 
 
-def _same(a: str, b: str, numeric: bool) -> bool:
-    if numeric:
-        x, y = _number(a.strip()), _number(b.strip())
-        return x is not None and x == y
-    return a.strip() == b.strip()
-
-
-def save_window(project_path: str | Path, peptides: str | Path, spectrum: Spectrum, run: str,
+def save_window(project_path: str | Path, key: tuple[str, str, str],
                 window: tuple[float, float], drift: tuple[float, float] | None = None
                 ) -> SavedWindow:
-    """Write ``window`` (minutes: the first and last scan of ``spectrum``, summed again over
-    it) as the row of run ``run`` (its file name) in the peptide table ``peptides`` of the
-    project at ``project_path``: the run's existing row for the peptide ion is changed, else
-    a copy of the peptide's general row (its sample's, or the one for every run) is added with
-    the run's name. ``drift`` (ms) is written for an ion-mobility file. The times are written
-    rounded outwards (4 decimals of a minute, 3 of a millisecond), so the run reads the same
-    scans. The table is checked as the project reads it before it is written (ValueError with
-    the reader's words, nothing written)."""
-    path = Path(peptides)
-    before = path.read_bytes()
-    table = read_table(path)
-    names = [c.strip().lower() for c in table.columns]
-    if not all(k in names for k in _KEY[:4]):
-        raise ValueError(f"{path} has no {', '.join(k for k in _KEY[:4] if k not in names)} "
-                         "column")
-    e = spectrum.entry
-    want = {"peptide": e.peptide, "start_seq": str(e.start_seq), "end_seq": str(e.end_seq),
-            "charge": str(e.charge), "modification": e.modification or ""}
+    """Write ``window`` (minutes: the first and last scan of the spectrum summed again over it)
+    and ``drift`` (ms, ion-mobility files) as the row of ``key`` (sample, file name, ion as the
+    spectrum ids name it) in the project's ``[input] rt_elution_windows`` table: that row is
+    changed, or one is added. The first save makes the table (:data:`DEFAULT_NAME`, beside the
+    project file) and names it in the project file. The times are written rounded outwards (4
+    decimals of a minute, 3 of a millisecond), so the run reads the same scans. The table is
+    checked as the project reads it before anything is written (ValueError with the reader's
+    words; nothing written). The peptide table is never changed."""
+    from ..io.elution_windows import COLUMNS
+    from ..project_edit import set_settings
+    from .user_tables import Table
 
-    def cell(row: list[str], name: str) -> str:
-        return row[names.index(name)] if name in names else ""
-
-    def is_ion(row: list[str]) -> bool:
-        return all(_same(cell(row, k), want[k], k in ("start_seq", "end_seq", "charge"))
-                   for k in _KEY if k in names or want[k])
-
+    project_path = Path(project_path)
+    path, named = table_path(project_path)
+    before = path.read_bytes() if path.is_file() else None
+    table = read_table(path) if before is not None else Table(list(COLUMNS))
     table = table.copy()
-    for column in ("run", "rt_start", "rt_end", *(("drift_start", "drift_end") if drift
-                                                  else ())):
+    names = [c.strip().lower() for c in table.columns]
+    for column in COLUMNS:
         if column not in names:
             table.columns.append(column)
             names.append(column)
             for r in table.rows:
                 r.append("")
-    own = [r for r in table.rows if is_ion(r) and cell(r, "run").strip() == run]
+    at = {c: names.index(c) for c in COLUMNS}
+    sample, file, ion = key
+    own = [r for r in table.rows if (r[at["sample"]].strip(), r[at["file"]].strip(),
+                                     r[at["ion"]].strip()) == key]
     added = not own
     if own:
         row = own[0]
     else:
-        general = [r for r in table.rows if is_ion(r) and not cell(r, "run").strip()
-                   and cell(r, "sample").strip() in ("", e.sample)]
-        if not general:
-            raise ValueError(f"{path}: no row of {e.peptide} (charge {e.charge}, residues "
-                             f"{e.start_seq}-{e.end_seq}) to copy for run {run}")
-        # the sample's own row before the one for every run
-        general.sort(key=lambda r: cell(r, "sample").strip() != e.sample)
-        row = list(general[0])
-        table.rows.insert(table.rows.index(general[0]) + 1, row)
-    row[names.index("run")] = run
-    row[names.index("rt_start")] = _text(window[0], 4, up=False)
-    row[names.index("rt_end")] = _text(window[1], 4, up=True)
-    if drift:
-        row[names.index("drift_start")] = _text(drift[0], 3, up=False)
-        row[names.index("drift_end")] = _text(drift[1], 3, up=True)
-    problem = table_problem("input.peptides", table, project_path)
+        row = [""] * len(table.columns)
+        row[at["sample"]], row[at["file"]], row[at["ion"]] = sample, file, ion
+        table.rows.append(row)
+    row[at["rt_start"]] = _text(window[0], 4, up=False)
+    row[at["rt_end"]] = _text(window[1], 4, up=True)
+    row[at["drift_start"]] = "" if drift is None else _text(drift[0], 3, up=False)
+    row[at["drift_end"]] = "" if drift is None else _text(drift[1], 3, up=True)
+    problem = table_problem("input.rt_elution_windows", table, project_path)
     if problem:
         raise ValueError(problem)
+    project_before = project_path.read_bytes()
     write_table(table, path)
-    return SavedWindow(path, before, path.read_bytes(),
-                       {c: v for c, v in zip(table.columns, row, strict=True)}, added)
+    files = [(path, before, path.read_bytes())]
+    if not named:
+        try:
+            set_settings(project_path, [("input.rt_elution_windows",
+                                         f'"{DEFAULT_NAME}"')], unfinished=True)
+        except Exception:
+            _restore(path, before)
+            raise
+        files.append((project_path, project_before, project_path.read_bytes()))
+    return SavedWindow(tuple(files), {c: v for c, v in zip(table.columns, row, strict=True)},
+                       added)
+
+
+def _restore(path: Path, before: bytes | None) -> None:
+    from ..project_edit import replace_file
+
+    if before is None:
+        path.unlink(missing_ok=True)
+        return
+    tmp = path.with_name(path.name + ".hxex-tmp")
+    tmp.write_bytes(before)
+    replace_file(tmp, path)
 
 
 def undo_window(saved: SavedWindow) -> None:
-    """Write the peptide table back as it was before ``saved`` (ValueError when it was changed
-    since, by hand or by another program: nothing is written)."""
-    if saved.path.read_bytes() != saved.after:
-        raise ValueError(f"{saved.path} was changed since the window was saved: not undone")
-    tmp = saved.path.with_name(saved.path.name + ".hxex-tmp")
-    tmp.write_bytes(saved.before)
-    from ..project_edit import replace_file
+    """Write the files ``saved`` changed back as they were (the table removed when the save
+    made it; ValueError when one was changed since, by hand or by another program: nothing is
+    written)."""
+    for path, _before, after in saved.files:
+        if not path.is_file() or path.read_bytes() != after:
+            raise ValueError(f"{path} was changed since the window was saved: not undone")
+    for path, before, _after in saved.files:
+        _restore(path, before)
 
-    replace_file(tmp, saved.path)
 
-
-def saved_window(peptides: str | Path, entry, run: str
+def saved_window(project_path: str | Path, key: tuple[str, str, str]
                  ) -> tuple[tuple[float, float], tuple[float, float] | None] | None:
-    """The window (minutes) and drift range (ms, or None) of run ``run``'s own row for the
-    peptide ion ``entry`` in the peptide table ``peptides``; None without such a row (or a
-    window in it)."""
-    table = read_table(peptides)
-    names = [c.strip().lower() for c in table.columns]
-    if "run" not in names:
-        return None
-    want = {"peptide": entry.peptide, "start_seq": str(entry.start_seq),
-            "end_seq": str(entry.end_seq), "charge": str(entry.charge),
-            "modification": entry.modification or ""}
-    for row in table.rows:
-        def cell(name: str, row=row) -> str:
-            return row[names.index(name)].strip() if name in names else ""
+    """The window (minutes) and drift range (ms, or None) the project's elution-window table
+    gives ``key`` (sample, file, ion); None without a table or such a row."""
+    from ..io.elution_windows import read_elution_windows
 
-        if cell("run") != run or not all(
-                _same(cell(k), want[k], k in ("start_seq", "end_seq", "charge"))
-                for k in _KEY if k in names or want[k]):
-            continue
-        start, end = _number(cell("rt_start")), _number(cell("rt_end"))
-        if start is None or end is None:
-            return None
-        lo, hi = _number(cell("drift_start")), _number(cell("drift_end"))
-        return (start, end), (None if lo is None or hi is None else (lo, hi))
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return None
+    for w in read_elution_windows(path):
+        if w.key == key:
+            return (w.rt_start, w.rt_end), w.drift
     return None

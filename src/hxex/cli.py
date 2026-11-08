@@ -574,6 +574,17 @@ def cmd_check(args) -> int:
             problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
+    if inp is not None and inp.rt_elution_windows is not None:
+        from .config import elution_window_problems
+
+        found = elution_window_problems(project)
+        problems += found
+        if not found:
+            from .io.elution_windows import read_elution_windows
+
+            rows = read_elution_windows(inp.rt_elution_windows)
+            _say(f"{'elution windows':14s} {len(rows)} edited in {len({w.file for w in rows})} "
+                 f"file(s), from {inp.rt_elution_windows}")
     problems += _check_ks(project)
     for n, line in enumerate(_output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")

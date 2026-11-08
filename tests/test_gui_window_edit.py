@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The elution tab's window editing (hxex.gui.window_editor; PLAN Next steps 26): the switch,
-the boxes, a drag across the trace, the preview beside the spectrum, Save to the peptide table
-and Undo. Runs offscreen."""
+the boxes, a drag across the trace, the preview beside the spectrum, Save to the elution-window
+table and Undo. Runs offscreen."""
 import os
 
 import pytest
@@ -55,17 +55,22 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project):  # noqa:
         timeout=60000)
     assert editor.failure is None
     assert editor.preview.k is not None  # fitted (it was drawn picked first)
+    # what the preview is: above the figure in the window's font, not inside the figure
+    assert editor.notes.text().startswith("Preview: the results change only")
+    assert not any("preview" in t.get_text().lower() for t in panel.view.figure.texts)
     assert editor.preview.spectrum.spectrum_id != w._shown_traces[1]
-    table = project.parent / "peptides.csv"
-    before = table.read_bytes()
-    assert editor.save.isEnabled()
+    table = project.parent / "rt_elution_windows.csv"
+    before = project.read_bytes()
+    assert editor.save.isEnabled() and editor.save.text() == "Save window"
     messages = []
     editor.message.connect(messages.append)
     editor.save.click()
     assert "un2.mzML" in table.read_text() and "hxex run --overwrite" in messages[-1]
+    assert "rt_elution_windows" in project.read_text()
     assert editor.undo.isEnabled()
     editor.undo.click()
-    assert table.read_bytes() == before and not editor.undo.isEnabled()
+    assert not table.exists() and project.read_bytes() == before
+    assert not editor.undo.isEnabled()
     # switched off: the plain trace again, dragging moves the figure
     editor.edit.setChecked(False)
     assert not panel.span_mode

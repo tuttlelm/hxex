@@ -412,7 +412,7 @@ Optional columns:
 | `rt_start`, `rt_end` | the peptide's retention window, minutes (both or neither): only scans inside it are summed |
 | `drift_start`, `drift_end` | for files with ion mobility: the peptide's drift-time range, milliseconds (both or neither), in place of the one *hxex* finds (see [Ion mobility: each peptide's drift time](#ion-mobility-each-peptides-drift-time)) |
 | `modification` | extra composition in pyHXExpress's syntax (`H:1 Hex:1 ion_type:c undeut_mz:523.1`); not allowed in a project that reads fragment ions (see [Fragment ions](#fragment-ions)) |
-| `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, or `drift_start`, `drift_end`, say; the elution tab of the window's Results page writes such rows, see [Results](gui.md#results)). The rows are still one peptide: the runs stay replicates of one series, with the same controls, also when every run has a row of its own |
+| `run` | the file name of one run (`D_60s_01.raw`): the row is read from that run only. A peptide can have one row without `run` and rows for single runs; a run with its own row uses it instead of the general one (to give one run its own `rt_start`, `rt_end`, or `drift_start`, `drift_end`, say; for a window corrected in one file, the elution-window table is the place, see [One ion's own window in one file](#one-ions-own-window-in-one-file)). The rows are still one peptide: the runs stay replicates of one series, with the same controls, also when every run has a row of its own |
 
 Other columns are kept with the entry but not used.
 
@@ -632,9 +632,11 @@ run: half its typical peak width, measured on its strongest peptides, so it suit
 long gradient and a fast or slow scan rate alike; `peak_smoothing` sets it in seconds instead.
 The run log reports each run's measured peak width and the smoothing used.
 
-A peptide with its own `rt_start` and `rt_end` keeps them. To correct one run, add a row for
-that run alone (the `run` column) with the window you want, or set it in the window's elution
-tab (**Edit window**), which writes that row; the other runs keep finding the peak. Every peptide needs either `rt` or `rt_start` and `rt_end`; `hxex check` names any that
+A peptide with its own `rt_start` and `rt_end` keeps them. To correct one file, give the
+peptide its own window there in the elution-window table (see [One ion's own window in one
+file](#one-ions-own-window-in-one-file); the window's elution tab writes it); the other files
+keep finding the peak. Every peptide needs
+either `rt` or `rt_start` and `rt_end`; `hxex check` names any that
 has neither. Fragment ions keep their windows; `find_fragment_peak` (next section) finds theirs.
 
 On a whole-cell digest measured on an Orbitrap (563 peptides, 45 runs), the peaks found were
@@ -684,6 +686,38 @@ or last scan the instrument recorded for it: the rest of the peak was never meas
 elution, and in reduced profile data dim fragment spectra read less reliably (see [Reduced
 profile data](#reduced-profile-data)). On the targeted dataset 8 of 612 channels were cut this
 way: the four channels of one early-eluting peptide, in the two runs that eluted earliest.
+
+### One ion's own window in one file
+
+The peptide table says what to read, in every file alike. When one ion's window is wrong in one
+file (its peak eluted early in that injection, say, or a neighbour's peak crept in), correct it
+there only, in the elution-window table:
+
+```toml
+[input]
+rt_elution_windows = "rt_elution_windows.csv"
+```
+
+| sample | file | ion | rt_start | rt_end | drift_start | drift_end |
+|---|---|---|---|---|---|---|
+| WT | D_60s_01.raw | 0012-0020-LVKDLEPAQ-z2 | 5.62 | 5.81 | | |
+| WT | D_60s_02.raw | 0002-0013-ASKELVDPLRKE-z1-ion_type:c-1@ETD-pz3-ETD | 8.62 | 8.97 | | |
+
+Each row names a sample, a file (its name, as in `[[input.runs]]`), and an ion exactly as the
+spectrum ids name it: the part of a `spectrum_id` between the file and the scans (`spectra.csv`
+lists them). It can be a peptide, a fragment ion, or a fragment channel's intact precursor.
+`rt_start` and `rt_end` are minutes on the file's own clock; `drift_start` and `drift_end`
+(milliseconds) are for files with ion mobility and may stay empty. That spectrum then sums the
+scans inside the window, in that file only: `find_peak` and `find_fragment_peak` leave it alone,
+the other files read as before, and the spectrum stays in its series with the same controls.
+
+You rarely type this table: the elution tab of the window's Results page writes it (**Edit
+window**, then **Save window**; see [Results](gui.md#results)), and the first save adds the
+setting to your project file. `hxex check` says how many windows the table holds and names any
+row whose sample, file, or ion the project does not read (a file renamed, a peptide taken out of
+the table), and the run warns about such rows and leaves them unused. Edited windows only act
+on files with a time (time points and controls), not on kinetics files. The table only acts
+when the project is run (`hxex run --overwrite`).
 
 ### When the peptide table's time is wrong
 

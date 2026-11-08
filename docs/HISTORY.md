@@ -8085,3 +8085,57 @@ CSVs or mzML if wanted.
     is weak at this size. MS2 is essentially unscrambled; residue values from MS3 alone are
     about 10-15 % scrambled on this dataset. Private: fragment_cut_fit/ref_drift (README;
     scram_std/, targeted_mnh3/).
+
+320. **The elution tab crashed the window on Thermo raw files (2026-11-07).** The owner's
+    window closed on opening the elution tab of a project read from Thermo raw files (the private
+    targeted Orbitrap dataset). Two causes, one after the other. (1) The trace reader started .NET
+    (Mono, through pythonnet) in the window's worker thread; when the main thread next touched a
+    .NET object Mono aborted ("Cannot enter GC unsafe region if the thread is not attached";
+    `mono_crash.mem.*.blob` files left in the working folder). Reproduced offscreen. Loading .NET
+    in the thread that makes the reader (the window's) fixed it offscreen, but (2) on the owner's
+    desktop display Mono's start inside the running window then crashed the process
+    (segmentation fault in clr_loader's `initialize`, found with `python -X faulthandler`; it
+    does not happen offscreen). Fixed: the window starts .NET before Qt whenever pythonnet is
+    installed (`hxex.gui.start_dotnet`, 0.19 s at start-up; nothing without pythonnet), and the
+    trace reader loads Thermo's assemblies into it in the window's thread (0.05 s); the reads stay
+    in the worker. Confirmed by the owner on the desktop. The tests had used mzML files only: a
+    real-file test (HXEX_THERMO_EXAMPLE, HXEX_THERMO_DIR) runs a trace read in a worker thread in
+    a subprocess whose main thread has not used .NET (it fails without the reader's change); the
+    display crash cannot be tested offscreen, so a test checks that `start_dotnet` loads
+    pythonnet when it is installed and does nothing otherwise.
+    Also: CI for item 317 (158e4df) hung once on Windows with Python 3.11, in
+    `test_the_overview_is_the_first_look_and_a_tab_at_every_level` while it waited for the
+    overview's second page (the timeout report showed only the main thread, inside Qt's event
+    loop: no Python code running elsewhere); the same test passed on every other job and in the
+    eight runs before, and the re-run passed on all 11 jobs. Noted as intermittent; if it comes
+    back, run the GUI tests in a loop on a Windows machine.
+    Also (owner: the preview's "fits at each K" panels were squeezed, with a gap, and their
+    titles unreadable): the preview's notes had hung under one panel, so the layout widened that
+    panel's column to the note's length; they now sit above the figure at the window's font
+    size (`preview_text`; owner: not small print in the figure), and each panel's title is three
+    short lines (now or new window with its K, the scans and minutes, D), the chosen K in bold.
+
+321. **Windows edited per file go to their own table: `[input] rt_elution_windows`
+    (2026-11-07; PLAN Next steps 26).** Item 317's Save wrote a run's own row into the peptide
+    table. The owner: the peptide table is the file-agnostic starting point and must stay so;
+    and on their targeted fragment project Save was refused (no row of the
+    peptide, charge 1, to copy): fragments have no row in it, and a fragment channel's intact
+    precursor at the parent's charge would have changed the parent's MS1 window. Considered and
+    weighed with the owner: the review table (one place for per-spectrum decisions, but it acts
+    without a rerun and is keyed by spectrum ids, which a new window changes) and a separate
+    table (chosen). Built: `rt_elution_windows.csv` (name chosen by the owner), columns sample,
+    file, ion (as the spectrum ids name it: `_target_label`), rt_start, rt_end, drift_start,
+    drift_end (`hxex.io.elution_windows`: duplicates and bad values refused with the line). The
+    reader gives that ion in that file its own window (`targets_of`, `_with_elution_window`: the
+    entry's rt_start/rt_end and a mark, so neither find_peak nor find_fragment_peak searches it;
+    the drift gate takes its drift range); other files are read as before, the spectrum stays in
+    its series, the rows used are recorded (`elution_windows` in the read record) so a repeat
+    read gives the same spectra, and rows naming no ion read from their file are warned about.
+    `hxex check` counts the windows and names rows for an unknown run, a kinetics run or an ion
+    not read from that file (`config.elution_window_problems`; without opening data files). The
+    window's **Save window** (renamed from "Save to peptide table") writes the row, making the
+    table and naming it in the project file on the first save; Undo restores both files. The
+    Tables view lists and checks the table. The peptide table's `run` column stays for projects
+    that use it (per-file windows imported from other software); its guide text now points to
+    the new table for corrections. Tested on synthetic LC runs (the table, the reader with and
+    without find_peak, the repeat read, the check, Save and Undo in the window).

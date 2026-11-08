@@ -3,7 +3,8 @@
 tab's bar, the window's start and end (minutes) and, for an ion-mobility file, its drift range
 (ms) as boxes, a drag across the trace or the drift profile to set them, the spectrum summed
 over the new window drawn beside the one the results hold (:func:`hxex.gui.window_edit.preview`),
-**Save to peptide table** (the run's own row, :func:`hxex.gui.window_edit.save_window`) and
+**Save window** (the ion's row for that file in the project's ``[input] rt_elution_windows``
+table, :func:`hxex.gui.window_edit.save_window`; the peptide table is not changed) and
 **Undo** (the table as it was before the last save)."""
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ class WindowEditor(QObject):
     editing. :attr:`message` says what happened (the window's status bar)."""
 
     message = Signal(str)
-    saved = Signal(str)  # the peptide table written (its path)
+    saved = Signal(str)  # the elution-window table written (its path)
 
     def __init__(self, panel, context: Callable[[], TraceContext | None],
                  plain: Callable[[], None], parent=None):
@@ -93,12 +94,11 @@ class WindowEditor(QObject):
         self.each_k = QCheckBox("Fits at each K")
         self.each_k.setToolTip("the new window's spectrum fitted at every K the run tried")
         self.each_k.toggled.connect(lambda _on: self.draw())
-        self.save = QPushButton("Save to peptide table")
-        self.save.setToolTip("write the window as this run's own row of the project's peptide "
-                             "table; the results change when the project is run again")
+        self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
-        self.undo.setToolTip("write the peptide table back as it was before the last save")
+        self.undo.setToolTip("put the elution-window table (and the project file, when the "
+                             "first save named the table there) back as before the last save")
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
         self.controls = [QLabel("window"), self.start, QLabel("to"), self.end, QLabel("min"),
@@ -109,6 +109,13 @@ class WindowEditor(QObject):
             row.addWidget(w)
         row.addWidget(self.undo)
         self._drift_widgets = self.controls[5:10]
+        # what the preview is (and how it differs from a run), above the figure at the
+        # window's own font size (owner: not small print inside the figure)
+        self.notes = QLabel()
+        self.notes.setWordWrap(True)
+        self.notes.hide()
+        layout = panel.layout()
+        layout.insertWidget(layout.indexOf(panel.title) + 1, self.notes)
         self._show_controls(False)
         panel.add_option(self.bar)
         panel.spanned.connect(self._spanned)
@@ -127,6 +134,7 @@ class WindowEditor(QObject):
         return self.edit.isChecked()
 
     def _show_controls(self, on: bool, drift: bool = False) -> None:
+        self.notes.setVisible(on)
         for w in self.controls:
             w.setVisible(on)
         for w in self._drift_widgets:
@@ -166,9 +174,10 @@ class WindowEditor(QObject):
             saved = self._saved_row(ctx)
             if saved is not None:
                 window, drift_range = saved[0], saved[1] or drift
-                self.message.emit("this run has a window of its own in the peptide table "
-                                  f"({window[0]:.4g}-{window[1]:.4g} min): shown here; the "
-                                  "results change when the project is run again")
+                self.message.emit("this ion has a window of its own in this file "
+                                  f"({window[0]:.4g}-{window[1]:.4g} min, the elution-window "
+                                  "table): shown here; the results change when the project is "
+                                  "run again")
             self._has_drift = drift is not None
             self._set_boxes(window, drift_range)
             self._show_controls(True, drift=self._has_drift)
@@ -264,22 +273,23 @@ class WindowEditor(QObject):
 
     def draw(self) -> None:
         """The trace with the window being edited, and the spectra now and over it."""
-        from ..report.retention import plot_window_edit
+        from ..report.retention import plot_window_edit, preview_text
 
         ctx = self.context()
         if not self.active or ctx is None:
             return
         shown, failure = self.preview, self.failure
+        self.notes.setText(preview_text(shown))
         window, drift, each_k = self.window(), self.drift(), self.each_k.isChecked()
         self.panel.draw(lambda: plot_window_edit(
             ctx.traces, ctx.results, ctx.spectrum_id, shown, edit=window, drift_edit=drift,
             each_k=each_k, title=ctx.title, mz_range=ctx.mz_range, waiting=failure))
 
-    # --- the peptide table ---------------------------------------------------------------------
+    # --- the elution-window table -------------------------------------------------------------
 
-    def _project(self, ctx: TraceContext):
-        """The project's input settings, when the results came from a project file of a scan
-        format (else None: nothing can be saved)."""
+    def _project(self, ctx: TraceContext) -> Path | None:
+        """The project file, when the results came from one of a scan format (else None:
+        nothing can be saved)."""
         path = ctx.results_path
         if path is None or Path(path).suffix != ".toml":
             return None
@@ -290,38 +300,45 @@ class WindowEditor(QObject):
         except Exception as exc:  # noqa: BLE001 (the project file does not load: say so)
             log.info("window editing: %s (%s)", path, exc)
             return None
-        if inp is None or inp.format not in ("mzml", "thermo") or inp.peptides is None:
+        if inp is None or inp.format not in ("mzml", "thermo"):
             return None
-        return inp
+        return Path(path)
 
-    def _run_name(self, ctx: TraceContext) -> str | None:
-        from ..io.mzml import run_name
+    def _key(self, ctx: TraceContext) -> tuple[str, str, str] | None:
+        """The spectrum's row in the table: its sample, file name, and ion (as its id names
+        it)."""
+        from ..io.mzml import _target_label, run_name
 
         where = ctx.reader.locate(ctx.spectrum_id, ctx.data_id)
-        return None if where is None else run_name(ctx.reader.runs[where[0]])
+        if where is None:
+            return None
+        run = ctx.reader.runs[where[0]]
+        target = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]]
+        return run.sample, run_name(run), _target_label(target)
 
     def _saved_row(self, ctx: TraceContext):
         from .window_edit import saved_window
 
-        inp, run = self._project(ctx), self._run_name(ctx)
-        if inp is None or run is None:
+        project, key = self._project(ctx), self._key(ctx)
+        if project is None or key is None:
             return None
-        entry = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]].entry
         try:
-            return saved_window(inp.peptides, entry, run)
-        except (OSError, ValueError):
+            return saved_window(project, key)
+        except Exception as exc:  # noqa: BLE001 (a table that does not read: not shown)
+            log.info("window editing: %s", exc)
             return None
 
     def _save_state(self, ctx: TraceContext) -> None:
         if self._project(ctx) is None:
             self.save.setEnabled(False)
             self.save.setToolTip("open the results from their project file (an mzML or Thermo "
-                                 "project) to save windows to its peptide table")
+                                 "project) to save windows")
         else:
             self.save.setEnabled(True)
-            self.save.setToolTip("write the window as this run's own row of the project's "
-                                 "peptide table; the results change when the project is run "
-                                 "again")
+            self.save.setToolTip("write the window as this ion's row for this file in the "
+                                 "project's elution-window table ([input] rt_elution_windows; "
+                                 "made by the first save); the peptide table is not changed, "
+                                 "and the results change when the project is run again")
 
     def _save(self) -> None:
         from .window_edit import save_window
@@ -333,24 +350,25 @@ class WindowEditor(QObject):
                                                     self.drift()):
             self.message.emit("wait for the new window's spectrum, then save")
             return
-        inp, run = self._project(ctx), self._run_name(ctx)
-        if inp is None or run is None:
+        project, key = self._project(ctx), self._key(ctx)
+        if project is None or key is None:
             return
         spectrum = self.preview.spectrum
-        drift = self.drift()
         try:
-            saved = save_window(ctx.results_path, inp.peptides, spectrum, run,
-                                (spectrum.rt_start, spectrum.rt_end), drift)
-        except (OSError, ValueError) as exc:
+            saved = save_window(project, key, (spectrum.rt_start, spectrum.rt_end),
+                                self.drift())
+        except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
             self.message.emit(f"not saved: {exc}")
             return
         self.history.append(saved)
         self.undo.setEnabled(True)
         what = "added" if saved.added else "changed"
+        named = (f"; named in {project.name} as [input] rt_elution_windows"
+                 if len(saved.files) > 1 else "")
         self.message.emit(
-            f"{Path(saved.path).name}: run {run}'s row {what} ({saved.row.get('rt_start')}-"
-            f"{saved.row.get('rt_end')} min); run the project again (hxex run --overwrite) to "
-            "use it")
+            f"{saved.path.name}: {key[2]} in {key[1]} {what} ({saved.row.get('rt_start')}-"
+            f"{saved.row.get('rt_end')} min){named}; run the project again (hxex run "
+            "--overwrite) to use it")
         self.saved.emit(str(saved.path))
 
     def _undo(self) -> None:

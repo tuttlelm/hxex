@@ -217,15 +217,19 @@ curve, but not its bootstrap, population test, or controls, and nothing in the r
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did.
 
-**Save to peptide table** writes the window as that run's own row of the project's peptide
-table: a copy of the peptide's row with the `run` column set to the file, and the new
-`rt_start` and `rt_end` (and `drift_start`, `drift_end` for ion-mobility files); saving again
-for the same run changes that row. **Undo** puts the table back as it was before the last
-save. Saving needs the results opened from their project file. The saved windows are used
-when you run the project again (`hxex run --overwrite`); the runs stay replicates of one
-series (see [The peptide table](inputs.md#the-peptide-table)). A spectrum's id names the scans
-it summed, so a spectrum with a new window has a new id after the run, and review decisions
-made for its old id are kept but no longer apply to it: review it again.
+**Save window** writes the window as a row of the project's elution-window table,
+`rt_elution_windows.csv`: one row for this ion in this file, with the new `rt_start` and
+`rt_end` (and `drift_start`, `drift_end` for ion-mobility files). The first save makes the table
+beside the project file and names it there (`[input] rt_elution_windows`); saving again for the
+same ion and file changes its row. Your peptide table is never changed. This works for peptides,
+fragment ions, and a fragment channel's intact precursor alike. **Undo** puts the table (and the
+project file, after the first save) back as it was before the last save. Saving needs the
+results opened from their project file, and the table opens in **Tables** like the others. The
+saved windows are used when you run the project again (`hxex run --overwrite`); each spectrum
+stays in its series (see [One ion's own window in one
+file](inputs.md#one-ions-own-window-in-one-file)). A spectrum's id names the scans it summed, so a
+spectrum with a new window has a new id after the run, and review decisions made for its old id
+are kept but no longer apply to it: review it again.
 
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes.

@@ -79,6 +79,7 @@ What to read. Which keys apply depends on the format (the Formats column): folde
 | `data_root` | path | `"."` | scan | relative run paths are taken from here |
 | `thermo_dir` | path | unset | thermo | the folder of Thermo's RawFileReader DLLs (else the HXEX_THERMO_DIR environment variable) |
 | `retention_times` | path | unset | all | a table of retention times in minutes (columns rt and sample, start_seq, end_seq, peptide, charge) |
+| `rt_elution_windows` | path | unset | all | scan formats: a table of retention windows edited for one ion in one file (columns sample, file, ion, rt_start, rt_end, and drift_start, drift_end for ion-mobility files; minutes and milliseconds), the ion as the spectrum ids name it; a row replaces that ion's window in that file only (no peak search). The window's elution tab writes it |
 | `spectra` | path | unset | all | take the raw spectra stored by an earlier run (a bundle or a spectra file) instead of reading the input |
 | `exclude` | list | `[]` | all | spectra left out before fitting: [[input.exclude]] rules (below) |
 

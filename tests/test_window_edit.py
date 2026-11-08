@@ -6,10 +6,9 @@ own row of the peptide table, which the next read takes (one series still)."""
 import numpy as np
 import pytest
 
-from hxex.config import load_project, scan_targets
+from hxex.config import load_project, read_input
 from hxex.fit import FitConfig
-from hxex.gui.window_edit import preview, save_window, undo_window
-from hxex.io import read_mzml
+from hxex.gui.window_edit import preview, save_window, saved_window, undo_window
 from hxex.io.retention_trace import TraceReader
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
@@ -52,8 +51,8 @@ role = "undeut"
 
 
 def _read(path):
-    p = load_project(path)
-    return read_mzml(p.input.runs, scan_targets(p), project="p", data_root=path.parent)
+    """The project's spectra, as hxex run reads them (with its rt_elution_windows table)."""
+    return read_input(load_project(path))
 
 
 def _results(spectra):
@@ -107,46 +106,57 @@ def test_the_preview_fit_starts_from_the_runs_fit(project):
                    for n in preview(results, same, start_from="p:nothing").notes)
 
 
-def test_a_window_is_written_as_the_runs_row_and_read_back(project):
+def _key(spectra, i):
+    """The (sample, file, ion) of spectrum ``i``, as its id names them."""
+    sample, file, ion, _scans = spectra.spectrum_id[i].split(":", 1)[1].split("/")
+    return sample, file, ion
+
+
+def test_a_window_is_written_to_the_elution_window_table_and_read_back(project):
+    """Save writes the ion's row for its file in [input] rt_elution_windows (made, and named in
+    the project file, by the first save); the peptide table is never changed. Read again, the
+    file sums the new scans and the runs stay one series; Undo puts both files back."""
     spectra = _read(project)
-    table = project.parent / "peptides.csv"
-    original = table.read_bytes()
+    peptides = project.parent / "peptides.csv"
+    original = {p: p.read_bytes() for p in (peptides, project)}
     reader = TraceReader(spectra.source, data_root=project.parent)
     i = [k for k, s in enumerate(spectra.spectrum_id) if "/un2.mzML/" in s][0]
     sid, data_id = spectra.spectrum_id[i], int(spectra.data_id[i])
     start, end = spectra.rt_start[i] + 0.02, spectra.rt_end[i] - 0.01
     edited = reader.spectrum(sid, data_id, (start, end))
-    saved = save_window(project, table, edited, "un2.mzML", (edited.rt_start, edited.rt_end))
-    assert saved.added and saved.row["run"] == "un2.mzML" and saved.row["note"] == "kept"
+    key = _key(spectra, i)
+    saved = save_window(project, key, (edited.rt_start, edited.rt_end))
+    table = project.parent / "rt_elution_windows.csv"
+    assert saved.added and saved.path == table and len(saved.files) == 2
+    assert saved.row["file"] == "un2.mzML" and saved.row["ion"] == key[2]
     assert float(saved.row["rt_start"]) <= edited.rt_start <= edited.rt_end <= \
         float(saved.row["rt_end"])
-    lines = table.read_text().splitlines()
-    assert lines[0] == "Peptide,start_seq,end_seq,charge,rt_start,rt_end,note,run"
-    assert len(lines) == 3  # the general row and the run's own after it
-    # read again: the run sums the new scans, and both runs stay one series
+    assert peptides.read_bytes() == original[peptides]  # never changed
+    assert 'rt_elution_windows = "rt_elution_windows.csv"' in project.read_text()
+    assert saved_window(project, key) == ((float(saved.row["rt_start"]),
+                                           float(saved.row["rt_end"])), None)
     again = _read(project)
     assert edited.spectrum_id in list(again.spectrum_id)
     assert len(set(again.data_id.tolist())) == 1
     k = list(again.spectrum_id).index(edited.spectrum_id)
     np.testing.assert_allclose(again.spectrum(k)[1], edited.intensity)
-    # saved again: the run's row changes, no second row
+    # saved again: the row changes (no second row), the project file is not touched again
     wider = reader.spectrum(sid, data_id, (spectra.rt_start[i], spectra.rt_end[i] + 0.02))
-    second = save_window(project, table, wider, "un2.mzML", (wider.rt_start, wider.rt_end))
-    assert not second.added and len(table.read_text().splitlines()) == 3
+    second = save_window(project, key, (wider.rt_start, wider.rt_end))
+    assert not second.added and len(second.files) == 1
+    assert len(table.read_text().splitlines()) == 2
     undo_window(second)
     undo_window(saved)
-    assert table.read_bytes() == original
+    assert not table.exists() and project.read_bytes() == original[project]
     with pytest.raises(ValueError, match="changed since"):
-        undo_window(saved)  # the file is no longer what that save wrote
+        undo_window(saved)  # the files are no longer what that save wrote
 
 
 def test_a_window_the_project_cannot_read_is_not_written(project):
-    spectra = _read(project)
-    table = project.parent / "peptides.csv"
-    original = table.read_bytes()
-    reader = TraceReader(spectra.source, data_root=project.parent)
-    sid, data_id = spectra.spectrum_id[0], int(spectra.data_id[0])
-    edited = reader.spectrum(sid, data_id, (spectra.rt_start[0], spectra.rt_end[0]))
-    with pytest.raises(ValueError, match="not the file of any"):
-        save_window(project, table, edited, "elsewhere.mzML", (1.0, 2.0))
-    assert table.read_bytes() == original
+    before = project.read_bytes()
+    with pytest.raises(ValueError, match="not a run of the project"):
+        save_window(project, ("S", "elsewhere.mzML", "0001-0008-VDQIIMAK-z2"), (1.0, 2.0))
+    with pytest.raises(ValueError, match="is not read from un1.mzML"):
+        save_window(project, ("S", "un1.mzML", "0001-0008-VDQIIMAK-z4"), (1.0, 2.0))
+    assert project.read_bytes() == before
+    assert not (project.parent / "rt_elution_windows.csv").exists()

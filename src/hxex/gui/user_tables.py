@@ -49,7 +49,12 @@ def kinds(fmt: str) -> list[TableKind]:
     else:
         peptides = TableKind("input.peptides", "table of files",
                              ("file", "sample", "peptide", "start_seq", "end_seq", "charge"))
-    return [peptides,
+    extra = []
+    if fmt in ("mzml", "thermo"):
+        from ..io.elution_windows import COLUMNS
+
+        extra = [TableKind("input.rt_elution_windows", "elution-window table", COLUMNS)]
+    return [peptides, *extra,
             TableKind("input.retention_times", "retention-time table",
                       ("sample", "start_seq", "end_seq", "charge", "rt")),
             TableKind("review.table", "user review table",
@@ -150,6 +155,14 @@ def table_problem(setting: str, table: Table, project_path: str | Path) -> str |
             from ..review_table import read_review_table
 
             read_review_table(copy)
+        elif setting == "input.rt_elution_windows":
+            from ..config import elution_window_problems, load_project
+
+            project = load_project(project_path)
+            problems = elution_window_problems(dataclasses.replace(
+                project, input=dataclasses.replace(project.input, rt_elution_windows=copy)))
+            if problems:
+                return "; ".join(problems).replace(str(copy), "the table")
         elif setting == "input.retention_times":
             from ..io.entries import read_retention_times
 

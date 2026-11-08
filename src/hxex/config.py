@@ -392,6 +392,8 @@ class InputSettings:
     thermo_dir: Path | None = None
     # every format: a table of retention times (minutes)
     retention_times: Path | None = None
+    # one ion's own retention window in one file (scan formats; hxex.io.elution_windows)
+    rt_elution_windows: Path | None = None
     # every format: take the raw spectra stored by an earlier run (a bundle, or a spectra file)
     # instead of reading the input
     spectra: Path | None = None
@@ -705,7 +707,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
                            "files)")
     if fmt in FOLDER_FORMATS:
         extra = set(data) & {"runs", "parents", "target", "fragments", "scans", "data_root",
-                             "thermo_dir"}
+                             "thermo_dir", "rt_elution_windows"}
         if extra:
             raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are for mzml and "
                                f"thermo, not {fmt}")
@@ -822,6 +824,8 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         data_root=_path(base, data.get("data_root", "."), "input.data_root"),
         thermo_dir=_path(base, data.get("thermo_dir"), "input.thermo_dir"),
         retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
+        rt_elution_windows=_path(base, data.get("rt_elution_windows"),
+                                 "input.rt_elution_windows"),
         exclude=_exclude(data),
     )
 
@@ -1315,6 +1319,48 @@ def scan_peptides(project: Project):
     return entries
 
 
+def elution_window_problems(project: Project) -> list[str]:
+    """What is wrong with the project's ``[input] rt_elution_windows`` table (none without
+    one): a missing file, a row the reader refuses, or a row that names no run of the project, a
+    run without a time, or an ion not read from that file (the ion as the spectrum ids name it,
+    :func:`hxex.io.mzml._target_label`). No data file is opened."""
+    from .io import ReadError
+    from .io.elution_windows import read_elution_windows
+    from .io.mzml import _target_label, run_name, target_applies
+
+    inp = project.input
+    path = None if inp is None else inp.rt_elution_windows
+    if path is None:
+        return []
+    if not Path(path).is_file():
+        return [f"input.rt_elution_windows {path}: no such file"]
+    try:
+        rows = read_elution_windows(path)
+    except ReadError as exc:
+        return [str(exc)]
+    try:
+        targets = scan_targets(project)
+    except (ProjectError, ReadError, ValueError, OSError):
+        targets = None  # the peptide table's own problems are reported for it
+    runs = {(r.sample, run_name(r)): r for r in inp.runs}
+    read = set() if targets is None else {
+        (r.sample, run_name(r), _target_label(t)) for r in inp.runs if r.fixed
+        for t in targets if target_applies(t, r)}
+    problems = []
+    for w in rows:
+        run = runs.get((w.sample, w.file))
+        if run is None:
+            problems.append(f"{path}: {w.file} of sample {w.sample} is not a run of the project "
+                            "(the sample and the file name as in [[input.runs]])")
+        elif not run.fixed:
+            problems.append(f"{path}: {w.file} has no time (a kinetics run): its scans are not "
+                            "chosen by a retention window")
+        elif targets is not None and w.key not in read:
+            problems.append(f"{path}: {w.ion} is not read from {w.file} (the ion as the "
+                            "spectrum ids name it)")
+    return problems
+
+
 def fragment_parent_problems(project: Project, entries) -> list[str]:
     """With ``[[input.fragments]]``: one problem per peptide of the table whose
     ``modification`` its fragments cannot take (:func:`hxex.fragments.passable_to_fragments`),
@@ -1510,6 +1556,10 @@ def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
     common = dict(project=project.project, config=inp.scans, picker=project.run.picker,
                   registry=project.run.registry, data_root=inp.data_root,
                   record_paths=inp.record_paths, progress=progress, cancel=cancel)
+    if inp.rt_elution_windows is not None:
+        from .io.elution_windows import read_elution_windows
+
+        common["elution_windows"] = read_elution_windows(inp.rt_elution_windows)
     targets = scan_targets(project)
     if inp.format == "mzml":
         from .io import read_mzml
@@ -1998,6 +2048,8 @@ data_root = "."                  # relative run paths are taken from here
 # retention_times = "rt.csv"     # retention times (minutes): rt and sample, start_seq,
 #                                # end_seq, peptide, charge (else from the peptide table's
 #                                # rt column, else from the scans of fixed-time runs)
+# rt_elution_windows = "rt_elution_windows.csv"  # one ion's own window in one file (the
+#                                # window's elution tab writes it: Edit window, Save)
 record_paths = "path"            # or "relative" (to data_root) or "name"{thermo}
 time_scale = "seconds"           # or "order": the times only order the points
 parents = true                   # read each peptide itself (set false for fragments only)
@@ -2351,6 +2403,7 @@ def _input_record(inp: InputSettings, mode: str) -> dict[str, Any]:
         data.update(
             peptides=_recorded(inp.peptides, mode), data_root=_recorded(root, mode),
             thermo_dir=_recorded(inp.thermo_dir, mode), parents=inp.parents,
+            rt_elution_windows=_recorded(inp.rt_elution_windows, mode),
             target=_toml_ready(inp.target), scans=inp.scans.to_dict(), runs=runs,
             fragments=[_toml_ready({f.name: getattr(frag, f.name) for f in fields(frag)})
                        for frag in inp.fragments])

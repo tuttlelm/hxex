@@ -466,6 +466,47 @@ def test_a_real_raw_file_matches_its_thermorawfileparser_mzml():
     np.testing.assert_allclose(x.intensity, y.intensity, rtol=1e-6)
 
 
+_TRACE_IN_A_THREAD = """
+import json, sys, threading
+from hxex.io.retention_trace import TraceReader
+record = json.loads(open(sys.argv[1]).read())
+reader = TraceReader(record["source"])  # made in the main thread, as the window makes it
+out = []
+thread = threading.Thread(
+    target=lambda: out.append(reader.traces([record["id"]], record["data_id"])))
+thread.start()
+thread.join()
+reader.close()  # in the main thread, as the window closes it
+print("traces", len(out[0].traces))
+"""
+
+
+@pytest.mark.skipif(not (REAL and DLLS), reason="HXEX_THERMO_EXAMPLE or HXEX_THERMO_DIR not set")
+def test_a_trace_read_in_a_worker_thread_leaves_the_process_whole(tmp_path):
+    """The elution tab reads Thermo files in a worker thread, in a window whose results came
+    from a bundle (its main thread had not used .NET): .NET must be started in the thread that
+    makes the reader, or the process aborts when the main thread next touches .NET (here at
+    exit; in the window as the tab was drawn)."""
+    import json
+    import subprocess
+    import sys
+
+    spectra = read_thermo([MzmlRun(Path(REAL), "S", time=0.0)], [MzmlTarget(ENTRY)],
+                          project="p")
+    record = tmp_path / "record.json"
+    record.write_text(json.dumps({"source": spectra.source, "id": str(spectra.spectrum_id[0]),
+                                  "data_id": int(spectra.data_id[0])}))
+    script = tmp_path / "trace.py"
+    script.write_text(_TRACE_IN_A_THREAD)
+    import hxex  # the subprocess imports this same package
+
+    env = dict(os.environ, PYTHONPATH=str(Path(hxex.__file__).resolve().parents[1]))
+    done = subprocess.run([sys.executable, str(script), str(record)], capture_output=True,
+                          text=True, timeout=600, cwd=tmp_path, env=env)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert "traces 1" in done.stdout and "Native Crash" not in done.stderr
+
+
 # --- the RawFileReader handle is released when opening fails ----------------------------------
 
 class FakeRaw:

@@ -124,6 +124,16 @@ class TraceReader:
         self.data_root = None if data_root is None else Path(data_root)
         self.directory = None if directory is None else Path(directory)
         self.thermo_dir = thermo_dir
+        if source.get("reader") == "thermo":
+            # Thermo's assemblies loaded here, in the thread that makes the reader (the
+            # window's): .NET must have been started on a thread that stays attached to it.
+            # Started from a worker thread, the main thread later touches .NET objects
+            # unattached and the process aborts ("Cannot enter GC unsafe region if the thread
+            # is not attached"). The window starts .NET before Qt (hxex.gui.start_dotnet):
+            # started here, inside the running window, Mono crashed on a desktop display
+            from .thermo import _thermo_api
+
+            _thermo_api(thermo_dir)
         self._open: dict[int, object] = {}
         self._lock = threading.Lock()  # one read at a time: the window reads in the background
 

@@ -74,15 +74,17 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     summed over the new window (``preview``, :class:`hxex.gui.window_edit.Preview`, or None
     while it is not ready; picked only while its fit runs), each at its K; with ``each_k``
     the new window's spectrum at every K the run tried instead. ``mz_range`` is the series'
-    m/z axis; ``waiting`` says why there is no preview or fit (default: it is being made)."""
+    m/z axis; ``waiting`` says why there is no preview or fit (default: it is being made).
+    The preview's notes (``preview.notes``) are not drawn: the window shows them above the
+    figure (:func:`preview_text`)."""
     from .spectrum import plot_spectrum
 
     with_drift = traces.drift is not None
     fitted = preview is not None and preview.results is not None
     ks = sorted(preview.results.fit.fits) if each_k and fitted else [None]
     columns = 1 + len(ks)
-    fig = Figure(figsize=(max(9.6, 3.6 * columns), 7.6), layout="constrained")
-    rows = fig.add_gridspec(2, 1, height_ratios=(1, 1.25))
+    fig = Figure(figsize=(max(9.6, 3.2 * columns), 7.6), layout="constrained")
+    rows = fig.add_gridspec(2, 1, height_ratios=(1, 1.3))
     if not traces.traces:
         _nothing(fig.add_subplot(rows[0]), traces)
     elif with_drift:
@@ -98,7 +100,7 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     plot_spectrum(spectrum_id, results, ax=axes[0], show=("raw", "picked", "fit"), k=k_now,
                   mz_range=mz_range, legend=False, title=False)
     window = traces.traces[0].window if traces.traces else None
-    axes[0].set_title(f"now: {_panel_text(spectrum_id, window)}\n"
+    axes[0].set_title(f"now\n{_panel_text(spectrum_id, window)}\n"
                       f"{_k_text(results.fit, i, k_now)}", fontsize="small")
     if preview is None:
         axes[1].set_axis_off()
@@ -114,24 +116,27 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
                 plot_spectrum(sid, spectra=preview.spectra, binned=preview.binned, ax=ax_k,
                               show=("raw", "picked"), mz_range=mz_range, legend=False,
                               title=False)
-                ax_k.set_title(f"new window: {_panel_text(sid, new_window)}\n"
+                ax_k.set_title(f"new window\n{_panel_text(sid, new_window)}\n"
                                f"{waiting or 'fitting…'}", fontsize="small")
                 continue
             k = preview.k if k is None else k
             plot_spectrum(sid, preview.results, ax=ax_k, show=("raw", "picked", "fit"), k=k,
                           mz_range=mz_range, legend=False, title=False)
-            text = (f"new window: {_panel_text(sid, new_window)}\n"
-                    f"{_k_text(preview.results.fit, 0, k)}"
-                    + (" (the criterion's choice)" if each_k and k == preview.k else ""))
-            ax_k.set_title(text, fontsize="small")
-        # under the preview's first panel's x axis
-        notes = ("a preview: the results change when the project is run again",
-                 *preview.notes)
-        axes[1].annotate("; ".join(notes), (0, 0), xycoords="axes fraction",
-                         xytext=(0, -30), textcoords="offset points", va="top",
-                         fontsize="x-small", color="#555555", wrap=True)
+            head = ("new window" if not each_k else f"new window, K = {k}"
+                    + (" (chosen)" if k == preview.k else ""))
+            ax_k.set_title(f"{head}\n{_panel_text(sid, new_window)}\n"
+                           f"{_k_text(preview.results.fit, 0, k, with_k=not each_k)}",
+                           fontsize="small",
+                           fontweight="bold" if each_k and k == preview.k else "normal")
     _heading(fig, traces, title)
     return fig
+
+
+def preview_text(preview) -> str:
+    """What the window says about a preview, above its figure: that it is one, and its notes."""
+    notes = "; ".join(preview.notes) if preview is not None and preview.notes else ""
+    return ("Preview: the results change only when the project is run again"
+            + (f". {notes[0].upper()}{notes[1:]}." if notes else "."))
 
 
 def _panel_text(spectrum_id: str, window: tuple[float, float] | None) -> str:
@@ -140,14 +145,14 @@ def _panel_text(spectrum_id: str, window: tuple[float, float] | None) -> str:
     scans = ("" if m is None else
              f"scan {m.group(1)}" if m.group(2) is None else f"scans {m.group(1)}-{m.group(2)}")
     if window is not None and np.all(np.isfinite(window)):
-        scans += f" ({window[0]:.2f}-{window[1]:.2f} min)"
+        scans += f", {window[0]:.2f}-{window[1]:.2f} min"
     return scans
 
 
-def _k_text(fit, i: int, k: int) -> str:
+def _k_text(fit, i: int, k: int, with_k: bool = True) -> str:
     """K and the populations' deuteration (uncorrected, D) of measurement ``i``."""
     means = np.sort(np.asarray(fit.fits[k].means[i], dtype=float))
-    return f"K = {k}, D " + " / ".join(f"{m:.2f}" for m in means)
+    return (f"K = {k}, " if with_k else "") + "D " + " / ".join(f"{m:.2f}" for m in means)
 
 
 def _nothing(ax, traces: RetentionTraces) -> None:

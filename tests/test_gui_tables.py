@@ -69,7 +69,8 @@ def test_a_file_held_by_another_program_keeps_the_edits(tmp_path, monkeypatch):
 def test_the_readers_check_a_table_before_it_is_saved(tmp_path):
     project = tmp_path / "hxex.toml"
     project.write_text(template("mzml"), encoding="utf-8")
-    peptides, _, review = kinds("mzml")
+    peptides, windows, _, review = kinds("mzml")
+    assert windows.setting == "input.rt_elution_windows"
     good = Table(list(peptides.columns), [["WT", "AAAK", "1", "4", "2", "", "", ""]])
     assert table_problem("input.peptides", good, project) is None
     other = Table(list(peptides.columns), [["mutant", "AAAK", "1", "4", "2", "", "", ""]])
@@ -80,6 +81,9 @@ def test_the_readers_check_a_table_before_it_is_saved(tmp_path):
     bad = Table(list(review.columns), [["s1", "maybe", "", ""]])
     assert "maybe" in table_problem("review.table", bad, project)
     assert table_problem("input.retention_times", Table(["sample"], [["WT"]]), project)
+    stray = Table(list(windows.columns), [["WT", "none.mzML", "1-4-AAAK-z2", "1", "2", "", ""]])
+    assert "not a run of the project" in table_problem("input.rt_elution_windows", stray,
+                                                        project)
     assert not list(tmp_path.glob("*.csv"))  # the copies are gone
     folder = tmp_path / "folder.toml"
     folder.write_text(template("specexport"), encoding="utf-8")

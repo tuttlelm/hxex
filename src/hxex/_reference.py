@@ -91,6 +91,12 @@ _DESCRIPTIONS: dict[str, str] = {
     "input.data_root": "relative run paths are taken from here",
     "input.thermo_dir": "the folder of Thermo's RawFileReader DLLs (else the HXEX_THERMO_DIR "
                         "environment variable)",
+    "input.rt_elution_windows": "scan formats: a table of retention windows edited for one "
+                                "ion in one file (columns sample, file, ion, rt_start, rt_end, "
+                                "and drift_start, drift_end for ion-mobility files; minutes and "
+                                "milliseconds), the ion as the spectrum ids name it; a row "
+                                "replaces that ion's window in that file only (no peak search). "
+                                "The window's elution tab writes it",
     "input.retention_times": "a table of retention times in minutes (columns rt and sample, "
                              "start_seq, end_seq, peptide, charge)",
     "input.exclude": "spectra left out before fitting: [[input.exclude]] rules (below)",

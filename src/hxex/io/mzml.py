@@ -72,6 +72,7 @@ from .drift_gate import (
     isotope_peaks,
     scan_profile,
 )
+from .elution_windows import ElutionWindow, by_key
 from .errors import ReadError
 from .identity import CHANGE_ACTIONS, compare_identity, file_identity
 from .times import format_time
@@ -1332,6 +1333,7 @@ def read_mzml(
     record_paths: str = "path",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    elution_windows: Sequence | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in its runs (see the module docstring for the two layouts):
     a target whose entry names a sample is read from the runs of that sample only, one with an
@@ -1355,11 +1357,17 @@ def read_mzml(
     how run paths are recorded: ``'path'`` as given, ``'relative'`` relative to ``data_root``
     (every file must be inside it), ``'name'`` the file name only (nothing about where the data
     lives, for results to be shared; the read is repeated with ``directory``).
+
+    ``elution_windows`` (:class:`hxex.io.elution_windows.ElutionWindow`, the ``[input]
+    rt_elution_windows`` table) gives one ion in one file its own retention window (and drift
+    range): that spectrum sums the scans inside it, without find_peak or find_fragment_peak, and
+    stays in its series. The rows used are recorded (``elution_windows``); a row that names no
+    ion read from its file is warned about.
     """
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
-                      progress=progress, cancel=cancel)
+                      progress=progress, cancel=cancel, elution_windows=elution_windows)
 
 
 # the record's mark that targets are tied to runs by their entry's sample (reads recorded
@@ -1445,6 +1453,7 @@ def _read_runs(
     progress: ProgressHook | None,
     cancel: CancelHook | None,
     tie: bool = True,
+    elution_windows: Sequence | None = None,
 ) -> SpectrumSet:
     """:func:`read_mzml` (or another format's read) with the files to open (``opened``), the
     paths to record, and the file identities when they are already known (else they are
@@ -1492,10 +1501,20 @@ def _read_runs(
         order.sort(key=lambda n: not search.reads(runs[n]))
     moved: dict[tuple[str, int], float] = {}
     decided = search is None
+    edited = by_key(elution_windows)  # (sample, file, ion) -> its own window in that file
+    used: set[tuple[str, str, str]] = set()
 
     def targets_of(run):
-        return [with_rt(t, moved[(run.sample, i)]) if (run.sample, i) in moved else t
-                for i, t in enumerate(targets)]
+        out = [with_rt(t, moved[(run.sample, i)]) if (run.sample, i) in moved else t
+               for i, t in enumerate(targets)]
+        if edited and run.fixed:
+            name = run_name(run)
+            for i, t in enumerate(out):
+                window = edited.get((run.sample, name, _target_label(t)))
+                if window is not None and target_applies(t, run, tie):
+                    out[i] = _with_elution_window(t, window)
+                    used.add(window.key)
+        return out
 
     def by_target():
         """The series by (sample, target position), whichever row of its peptide a target is."""
@@ -1552,6 +1571,12 @@ def _read_runs(
         moved = decide()
         if moved:
             reread(moved)
+    unused = [w for w in edited.values() if w.key not in used]
+    if unused:
+        w = unused[0]
+        log.warning("rt_elution_windows: %d row(s) name no ion read from their file (a run "
+                    "with a time; the sample, file and ion as the spectrum ids name them), "
+                    "for example %s in %s (%s): not used", len(unused), w.ion, w.file, w.sample)
     calibration = None
     if config.mz_calibration == "auto":
         calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry)
@@ -1571,6 +1596,8 @@ def _read_runs(
             file_identity(p) for p in opened],
         "targets": [t.to_dict() for t in targets],
         "windows": [list(w) for w in windows],  # the m/z each target's scans were cut to
+        # the rt_elution_windows rows used (one ion's own window in one file)
+        "elution_windows": [w.to_dict() for w in edited.values() if w.key in used],
         "config": config.to_dict(),
         "picker": picker.to_dict(),
         "registry": registry.to_dict(),
@@ -2225,6 +2252,23 @@ def _drift_gate(target: MzmlTarget, gates: Mapping[tuple, DriftRange]):
     return None if found is None else (found.start, found.end, found.unclear)
 
 
+# an entry's mark that its window in this file comes from the rt_elution_windows table
+EDITED_WINDOW = "elution_window"
+
+
+def _with_elution_window(target: MzmlTarget, window) -> MzmlTarget:
+    """``target`` as one file reads it with its own window (:class:`~hxex.io.elution_windows
+    .ElutionWindow`): the scans inside ``rt_start`` to ``rt_end``, the drift range when given,
+    and no peak search (its entry's ``rt_start``, ``rt_end`` and mark)."""
+    extra = {**dict(target.entry.extra), "rt_start": repr(float(window.rt_start)),
+             "rt_end": repr(float(window.rt_end)), EDITED_WINDOW: "edited"}
+    if window.drift is not None:
+        extra.update(drift_start=repr(float(window.drift_start)),
+                     drift_end=repr(float(window.drift_end)))
+    return replace(target, rt_window=(60.0 * window.rt_start, 60.0 * window.rt_end),
+                   entry=replace(target.entry, extra=extra))
+
+
 def _finds_peak(target: MzmlTarget) -> bool:
     """Whether find_peak applies to ``target``: an MS1 peptide (not a fragment) without its own
     ``rt_start``, ``rt_end``."""
@@ -2370,10 +2414,12 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
 
 def _finds_fragment_peak(target: MzmlTarget) -> bool:
     """Whether find_fragment_peak applies to ``target``: a fragment, not of a run's own
-    peptide-table row (the ``run`` column: that row's window is kept)."""
+    peptide-table row (the ``run`` column: that row's window is kept), nor given its own window
+    in this file (``rt_elution_windows``)."""
     extra = dict(target.entry.extra)
     return ("fragment" in extra and target.ms_level >= 2
-            and not str(extra.get("run", "") or "").strip())
+            and not str(extra.get("run", "") or "").strip()
+            and not extra.get(EDITED_WINDOW))
 
 
 def _channel(target: MzmlTarget) -> tuple:
@@ -2911,4 +2957,6 @@ def _repeat_read(
         picker=PickerConfig.from_dict(source["picker"]),
         registry=chem.ModificationRegistry.from_dict(source["registry"]),
         progress=progress, cancel=cancel, tie=bool(source.get(SAMPLES_TIE, False)),
+        elution_windows=[ElutionWindow.from_dict(w) for w in source.get("elution_windows")
+                         or []],
     )
