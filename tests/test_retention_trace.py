@@ -214,3 +214,23 @@ def test_a_fragment_channel_is_one_trace(tmp_path):
     assert len(ions) == 1 and ions[0].n_ions == 3
     assert ions[0].label.startswith("c ions: ETD MS2")
     assert abs(_apex(ions[0]) - _apex(traces.traces[0])) <= 1.0  # s
+
+
+
+def test_every_trace_reader_reads_one_at_a_time(lc):
+    """Two readers (the window made a new one for each review decision) share one lock: two
+    threads reading Thermo raw files through .NET at once locked the window (2026-11-09)."""
+    spectra, _ = lc
+    a, b = TraceReader(spectra.source), TraceReader(spectra.source)
+    assert a._lock is b._lock
+    sid = _ids(spectra, "un2.mzML")[0]
+    with a._lock:  # one reader reading: the other waits
+        import threading
+
+        done = []
+        t = threading.Thread(target=lambda: done.append(b.traces([sid], 0)))
+        t.start()
+        t.join(0.5)
+        assert not done
+    t.join(30)
+    assert done and done[0].traces

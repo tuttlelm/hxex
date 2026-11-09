@@ -300,7 +300,15 @@ class Results:
         new one)."""
         if self.review is None:
             return self.fit.selected_K.copy()
-        return self.review.effective_K(self.fit)
+        # a K chosen that the screen skipped stays the fit's K until hxex resume fits it
+        # (:attr:`unfitted_choices`): the window keeps working; report and analyse refuse
+        return self.review.effective_K(self.fit, unfitted="keep")
+
+    @cached_property
+    def unfitted_choices(self) -> dict[str, int]:
+        """The review's choices of a K the screen skipped for that spectrum (spectrum id ->
+        K), shown at the fit's K until ``hxex resume`` fits them."""
+        return {} if self.review is None else self.review.unfitted(self.fit)
 
     @cached_property
     def replicates(self) -> np.ndarray:

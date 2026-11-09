@@ -1165,17 +1165,32 @@ class ReviewTable:
             np.append(self.stale[keep], False),  # a change makes the entry current again
         )
 
-    def effective_K(self, fit: FitResult) -> np.ndarray:
-        """The K of every measurement with the reviewer's choices applied (stale ones not)."""
+    def effective_K(self, fit: FitResult, unfitted: str = "raise") -> np.ndarray:
+        """The K of every measurement with the reviewer's choices applied (stale ones not). A
+        choice of a K the run tries but the screen skipped for that spectrum raises ValueError,
+        or with ``unfitted="keep"`` leaves the fit's K until it is fitted (:meth:`unfitted`;
+        ``hxex resume`` fits it). A K the run never tried always raises."""
         out = fit.selected_K.copy()
         index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
         for sid, k, stale in zip(self.spectrum_id, self.k_override, self.stale, strict=True):
             if k and not stale:
                 if int(k) not in fit.k_values:
                     raise ValueError(f"{sid}: K = {int(k)} was not fitted (tried {fit.k_values})")
+                if unfitted == "keep" and not fit.fitted(int(k))[index[str(sid)]]:
+                    continue
                 fit.require_fitted(index[str(sid)], int(k))
                 out[index[str(sid)]] = int(k)
         return out
+
+    def unfitted(self, fit: FitResult) -> dict[str, int]:
+        """The current choices of a K the run tries that the screen skipped for that spectrum
+        (spectrum id -> K): ``hxex resume`` fits them."""
+        index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
+        return {str(sid): int(k)
+                for sid, k, stale in zip(self.spectrum_id, self.k_override, self.stale,
+                                         strict=True)
+                if k and not stale and int(k) in fit.k_values and str(sid) in index
+                and not fit.fitted(int(k))[index[str(sid)]]}
 
     def status_of(self, fit: FitResult) -> np.ndarray:
         """``accepted``, ``rejected`` or ``unreviewed`` for every measurement (a stale entry

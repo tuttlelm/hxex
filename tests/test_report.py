@@ -1666,3 +1666,27 @@ def test_the_residue_axis_spaces_its_labels_for_the_length():
     width = 3.6
     for last in (100, 175, 400, 900, 3000):
         assert last / residue_step(last, width) <= max(3, int(width * LABELS_PER_INCH))
+
+
+def test_a_chosen_k_the_screen_skipped_waits_for_resume():
+    """The review choosing a K the screen skipped for a spectrum: the results show the fit's K
+    until hxex resume fits it (in the window the choice raised at every look, 2026-11-09); it
+    counts as waiting for resume, and an analysis refuses it with resume named."""
+    from hxex.review_table import missing_bootstraps, refuse_unfitted
+
+    raw = raw_spectra(n_series=1)
+    cfg = config(bootstrap=None)
+    screened = Results.from_run(run(raw, dataclasses.replace(
+        cfg, fit=dataclasses.replace(cfg.fit, screen=True))), spectra=raw)
+    i = int(np.flatnonzero(~screened.fit.fitted(2))[0])
+    sid = str(screened.fit.spectrum_id[i])
+    review = ReviewTable.empty().update(sid, k_override=2)
+    with pytest.raises(ValueError, match="was not fitted"):  # the bundle's own check
+        review.effective_K(screened.fit)
+    waiting = screened.with_review(review)
+    np.testing.assert_array_equal(waiting.effective_K, screened.fit.selected_K)
+    assert waiting.unfitted_choices == {sid: 2}
+    assert missing_bootstraps(waiting) == {sid: 2}  # no bootstrap at all: still waiting
+    with pytest.raises(ValueError, match="hxex resume fits it"):
+        refuse_unfitted(waiting)
+    refuse_unfitted(screened)  # nothing chosen: nothing refused

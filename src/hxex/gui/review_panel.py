@@ -328,9 +328,15 @@ class ReviewPanel(QGroupBox):
         waiting = [s for s in shown if s in missing]
         self.resume.setVisible(bool(waiting))
         if waiting:
+            unfitted = self.workspace.results.unfitted_choices
             ks = ", ".join(str(k) for k in sorted({missing[s] for s in waiting}))
-            self.message.setText(f"{self.message.text()} No bootstrap at K={ks} for these "
-                                 "spectra yet: its errors come with Resume.")
+            if any(s in unfitted for s in waiting):  # the screen skipped it: drawn at the fit's K
+                self.message.setText(f"{self.message.text()} K={ks} was not fitted for these "
+                                     "spectra (the screen skipped it): shown at the fit's K "
+                                     "until Resume fits it.")
+            else:
+                self.message.setText(f"{self.message.text()} No bootstrap at K={ks} for these "
+                                     "spectra yet: its errors come with Resume.")
 
     def key(self, letter: str) -> None:
         """A, R or U in the tree: accepted, rejected, not reviewed."""

@@ -775,10 +775,12 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                          "hxex analyse writes a folder for each)")
     if config.exclude or review:  # rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
-        from ..review_table import apply_view
+        from ..review_table import apply_view, refuse_unfitted
 
         def view(r):
-            return exclude_from_results(apply_view(r, review), config.exclude)
+            r = exclude_from_results(apply_view(r, review), config.exclude)
+            refuse_unfitted(r)
+            return r
 
         if isinstance(results, RunSet):
             results = RunSet({name: view(r) for name, r in results.runs.items()},

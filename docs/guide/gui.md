@@ -355,7 +355,9 @@ or every spectrum of a time point or a charge.
   do the same, so you can review with the arrow keys and those three letters.
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted).
   When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
-  resume`, which adds it.
+  resume`, which adds it. When the run's quick screen (`[run.fit] screen`) skipped that K for
+  the spectrum, the spectrum stays at the fit's K, and the panel says so, until **Resume** fits
+  it (with its bootstrap). `hxex report` and `hxex analyse` wait for that too.
 - **Note**: anything you want to keep with the spectrum. It is saved when you press Enter or
   leave the box. With a time point or a charge selected, the box shows the note its spectra
   share, and a note typed there replaces each spectrum's own. When their notes differ, the box
@@ -484,6 +486,11 @@ would type it. One command runs at a time.
   choose one to see its output. Only the project file's own commands are listed, also when
   several project files share a folder. The next command you run clears the console.
 - After **Run**, **Resume**, or **Report**, the Results part shows the new results.
+- While a command runs, the other parts of the window show it too: the tab reads **Run
+  (running)** in the highlight colour, and the right end of the status bar, at the bottom of
+  the window, shows the command, its step, and its run time (click it to open **Run**). When
+  the command ends while you are elsewhere, the tab says how it ended (**Run (done)**,
+  **(stopped)**, or **(failed)**) until you open it.
 - Closing the window, or opening another project, while a command runs asks first, and stops
   the command if you agree.
 

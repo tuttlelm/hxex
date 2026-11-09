@@ -115,6 +115,9 @@ def readable(source: Mapping | None) -> bool:
     return bool(source) and source.get("reader") in SCAN_READERS
 
 
+_READS = threading.Lock()  # every TraceReader's reads (see TraceReader.__init__)
+
+
 class TraceReader:
     """Reads retention traces from the scan files of one read record, keeping each file it
     opened (and its scan table) for the next spectrum. ``data_root`` is the project's (relative
@@ -150,7 +153,9 @@ class TraceReader:
 
             _thermo_api(thermo_dir)
         self._open: dict[int, object] = {}
-        self._lock = threading.Lock()  # one read at a time: the window reads in the background
+        # one read at a time in the whole process, whichever reader asks: two threads reading
+        # Thermo raw files through .NET at once locked the window for good (2026-11-09)
+        self._lock = _READS
 
     # --- files ---------------------------------------------------------------------------
 

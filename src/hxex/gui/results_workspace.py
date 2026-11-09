@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -290,7 +291,7 @@ class ResultsWorkspace(QWidget):
         # the selected spectrum's elution trace, read from its scan files when in view
         # (PLAN Next steps 26): the run first, then the sample's other runs behind it
         self._trace_task = Latest(self)
-        self._trace_reader = None  # (results, TraceReader) for the results shown
+        self._trace_reader = None  # (read record, TraceReader) for the results shown
         self._trace_for = None  # (results, spectrum id) the elution tab shows
         self._shown_traces = None  # (results, spectrum id, data id, traces, title) drawn there
         self.window_editor = None  # the elution tab's window editing (made with its panel)
@@ -403,9 +404,7 @@ class ResultsWorkspace(QWidget):
         self.left_bar.hide()  # worked out as the results were read
         self._selection, self._table_for = (None, None), None  # the table: nothing selected
         self._trace_for, self._drawn, self._shown_traces = None, None, None
-        if self._trace_reader is not None:  # the files of the results shown before
-            self._trace_reader[1].close()
-        self._trace_reader = None
+        self._drop_reader()  # the files of the results shown before
         self.results_path = path
         self.kind = None  # the tabs again: the elution tab follows the results
         self.table_view.clear()
@@ -437,8 +436,12 @@ class ResultsWorkspace(QWidget):
         the results."""
         from ..io.retention_trace import TraceReader
 
-        if self._trace_reader is not None and self._trace_reader[0] is self.results:
+        # one reader for the read record shown: a review decision gives new results with the
+        # same record, and a second reader then read the same files at once (2026-11-09)
+        source = self.results.settings.spectra_source
+        if self._trace_reader is not None and self._trace_reader[0] is source:
             return self._trace_reader[1]
+        self._drop_reader()
         data_root, thermo_dir = None, None
         path = getattr(self, "results_path", None)
         if path is not None and Path(path).suffix == ".toml":
@@ -456,8 +459,16 @@ class ResultsWorkspace(QWidget):
             data_root = Path(path).parent
         reader = TraceReader(self.results.settings.spectra_source, data_root=data_root,
                              thermo_dir=thermo_dir)
-        self._trace_reader = (self.results, reader)
+        self._trace_reader = (source, reader)
         return reader
+
+    def _drop_reader(self) -> None:
+        """Close the trace reader's files, off the window's thread: a read still running holds
+        them, and the window does not wait for it."""
+        if self._trace_reader is None:
+            return
+        reader, self._trace_reader = self._trace_reader[1], None
+        threading.Thread(target=reader.close, name="close trace files", daemon=True).start()
 
     def _compare_changed(self, _index: int) -> None:
         self._trace_for = None  # read again with the other comparison

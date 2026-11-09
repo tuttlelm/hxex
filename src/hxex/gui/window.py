@@ -22,7 +22,16 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QFont, QKeySequence
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QKeySequence,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -38,6 +47,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -270,8 +280,45 @@ class MainWindow(QMainWindow):
             logging.getLogger("hxex").setLevel(logging.INFO)
 
         self._menus()
-        self.statusBar()
+        # a command running shows outside the Run tab too: the tab's title and colour, and a
+        # line at the right of the status bar that opens the Run tab (owner, 2026-11-09)
+        self.running = QToolButton()
+        self.running.setAutoRaise(True)
+        self.running.setToolTip("a command is running: click to see it in the Run tab")
+        self.running.clicked.connect(
+            lambda: self.tabs.setCurrentIndex(WORKSPACES.index("run")))
+        self.running.hide()
+        self.statusBar().addPermanentWidget(self.running)
+        self.run_page.activity.connect(self._run_activity)
+        self.run_page.ended.connect(self._run_ended)
+        self.tabs.currentChanged.connect(self._tab_opened)
         self._saved_text = self._session_text()
+
+    # --- a command running ------------------------------------------------------------------
+
+    def _run_tab(self, note: str = "", colour: QColor | None = None) -> None:
+        """The Run tab's title (``Run (running)``) and its text colour (None: the usual)."""
+        i = WORKSPACES.index("run")
+        self.tabs.setTabText(i, "Run" + (f" ({note})" if note else ""))
+        self.tabs.tabBar().setTabTextColor(i, colour if colour is not None else QColor())
+
+    def _run_activity(self, text: str) -> None:
+        if text:
+            self._run_tab("running", self.palette().color(QPalette.ColorRole.Highlight))
+            self.running.setText(f"running: {text}")
+        self.running.setVisible(bool(text))
+
+    def _run_ended(self, how: str) -> None:
+        """Outside the Run tab, its title says how the command ended until it is opened."""
+        if self.tabs.currentIndex() == WORKSPACES.index("run"):
+            self._run_tab()
+            return
+        word = how.split()[0] if how else ""
+        self._run_tab(word if word in ("done", "stopped", "failed") else "ended")
+
+    def _tab_opened(self, index: int) -> None:
+        if index == WORKSPACES.index("run") and not self.run_page.runner.running:
+            self._run_tab()
 
     # --- menus -----------------------------------------------------------------------------
 

@@ -19,7 +19,10 @@ editing the table needs only the command run again. A row with both
 
 A chosen K is drawn and tabulated with the errors of a bootstrap at that K: :func:`chosen_k`
 lists the spectra shown at a K other than the fit's choice and :func:`missing_bootstraps` those
-of them without a bootstrap at it, which ``hxex resume`` (and ``hxex run``) add.
+of them without a bootstrap at it, which ``hxex resume`` (and ``hxex run``) add. A chosen K the
+screen skipped for a spectrum is shown at the fit's K until ``hxex resume`` fits it (and
+bootstraps it); :func:`missing_bootstraps` lists it too, and :func:`refuse_unfitted` stops an
+analysis on it.
 """
 
 from __future__ import annotations
@@ -376,15 +379,25 @@ def chosen_k(results) -> dict[str, int]:
 def missing_bootstraps(results) -> dict[str, int]:
     """The spectra of :func:`chosen_k` without a bootstrap at their chosen K, when the results
     have a bootstrap (without any, no spectrum has bootstrap errors and nothing is missing)."""
+    out = dict(results.unfitted_choices)  # not even fitted yet: resume fits and bootstraps
     if results.bootstrap is None and not results.bootstrap_by_k:
-        return {}
+        return out
     index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
-    out = {}
     for sid, k in chosen_k(results).items():
         boot = results.bootstrap_for(index[sid], k)
         if boot is None or not boot.covers(index[sid]):
             out[sid] = k
     return out
+
+
+def refuse_unfitted(results) -> None:
+    """Raise ValueError when the review chooses a K the screen skipped for some spectra: they
+    would be analysed at the fit's K. ``hxex resume`` fits them."""
+    if unfitted := results.unfitted_choices:
+        shown = ", ".join(f"{s} at K = {k}" for s, k in list(unfitted.items())[:2])
+        raise ValueError(f"the review chooses a K that was not fitted for {len(unfitted)} "
+                         f"spectra (the screen skipped it; for example {shown}): hxex resume "
+                         "fits it (and bootstraps it), then analyse again")
 
 
 def apply_view(results, review: ReviewSettings | None):

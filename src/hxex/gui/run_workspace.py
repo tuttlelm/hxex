@@ -66,6 +66,10 @@ class RunWorkspace(QWidget):
 
     results_changed = Signal()  # a run, resume or report finished: the results are new
     show_setting = Signal(str)  # the user asked to change a setting (its table's name)
+    # what the command is doing, in a few words, for the rest of the window (the Run tab's
+    # title and the status bar: owner, 2026-11-09); "" when nothing runs
+    activity = Signal(str)
+    ended = Signal(str)  # a command ended: how, in words (hxex.gui.runner.outcome)
 
     def __init__(self, parent=None, program: list[str] | None = None):
         super().__init__(parent)
@@ -294,6 +298,7 @@ class RunWorkspace(QWidget):
         self.runner.start(self.args, self.project.parent)
         self._enable()
         self.stop_button.setText("Stop")
+        self._tell()
 
     def stop(self) -> None:
         sent = self.runner.stop()
@@ -303,6 +308,7 @@ class RunWorkspace(QWidget):
         elif sent >= 2:
             self.state.setText("aborting…")
             self.stop_button.setEnabled(False)
+        self._tell()
 
     def _wrap(self, on: bool) -> None:
         self.console.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if on
@@ -362,10 +368,25 @@ class RunWorkspace(QWidget):
         if record.get("event") == "done":
             text = f"{stage}: done"
         self.state.setText(text)
+        self._tell()
 
     def _tick(self) -> None:
         if self._started_at is not None:
             self.elapsed.setText(f"total {format_duration(time.monotonic() - self._started_at)}")
+        self._tell()
+
+    def activity_text(self) -> str:
+        """``hxex run hxex.toml: fit: 50%, about 3s left (total 1m 2s)`` while a command runs;
+        "" otherwise."""
+        if not self.runner.running:
+            return ""
+        state = self.state.text()
+        total = self.elapsed.text().removeprefix("total ")
+        return (shown_command(self.args) + (f": {state}" if state else "")
+                + (f" ({total})" if total else ""))
+
+    def _tell(self) -> None:
+        self.activity.emit(self.activity_text())
 
     def _finished(self, code: int, how: str) -> None:
         self._tick()  # the final total stays shown
@@ -378,6 +399,8 @@ class RunWorkspace(QWidget):
         self.state.setText(f"{command}: {how}")
         self.stop_button.setText("Stop")
         self._enable()
+        self.activity.emit("")
+        self.ended.emit(how)
         if code != 0 and any(REFUSED in line for line in self._tail):
             choice = self.ask_output_exists()
             if choice is not None:

@@ -221,3 +221,34 @@ def test_reopening_a_project_shows_its_last_commands_log(qtbot, stand_in, tmp_pa
     page.show_project(other)
     assert "hxex_other.toml" in page.console.toPlainText() and page.history.count() == 1
     assert page.history.itemText(0).endswith("no end recorded (the window closed during it?)")
+
+
+def test_a_running_command_shows_outside_the_run_tab(qtbot, stand_in, tmp_path):
+    """The Run tab's title and colour, and a line in the status bar that opens the Run tab,
+    while a command runs; outside the Run tab its title says how it ended until it is opened
+    (owner, 2026-11-09)."""
+    from hxex.gui.session import WORKSPACES
+    from test_gui import _window
+
+    w = _window(qtbot, tmp_path / "gui.ini")
+    page = w.run_page
+    page.runner.program = [sys.executable, str(stand_in)]
+    project = tmp_path / "hxex.toml"
+    project.write_text("")
+    page.show_project(project)
+    run_tab = WORKSPACES.index("run")
+    w.tabs.setCurrentIndex(WORKSPACES.index("results"))
+    page.run_command("run")
+    qtbot.waitUntil(lambda: "fit: 50%" in w.running.text(), timeout=20000)
+    assert w.tabs.tabText(run_tab) == "Run (running)" and not w.running.isHidden()
+    assert w.running.text().startswith("running: hxex run hxex.toml: fit: 50%")
+    assert w.tabs.tabBar().tabTextColor(run_tab).isValid()
+    w.running.click()  # opens the Run tab
+    assert w.tabs.currentIndex() == run_tab
+    w.tabs.setCurrentIndex(WORKSPACES.index("results"))
+    with qtbot.waitSignal(page.runner.finished, timeout=20000):
+        page.stop()
+    assert w.running.isHidden() and w.tabs.tabText(run_tab) == "Run (stopped)"
+    assert not w.tabs.tabBar().tabTextColor(run_tab).isValid()
+    w.tabs.setCurrentIndex(run_tab)  # seen: the title is the usual one again
+    assert w.tabs.tabText(run_tab) == "Run"

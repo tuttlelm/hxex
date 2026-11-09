@@ -1505,8 +1505,9 @@ def cmd_report(args) -> int:
         missing = missing_bootstraps(results)
         if missing:
             log.error("%d spectra are shown at a K chosen in the review that has no bootstrap "
-                      "(for example %s), so their errors would not compare with the others': "
-                      "hxex resume %s bootstraps them (only those), then report again",
+                      "or was not fitted for them (the screen skipped it; for example %s), so "
+                      "their values or errors would not compare with the others': hxex resume "
+                      "%s fits and bootstraps them (only those), then report again",
                       len(missing), ", ".join(f"{s} at K = {k}"
                                               for s, k in list(missing.items())[:2]),
                       args.bundle)

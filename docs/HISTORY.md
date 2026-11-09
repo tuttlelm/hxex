@@ -8372,3 +8372,33 @@ CSVs or mzML if wanted.
     2026-11-09, a K chosen in the review: kept when the run fitted it, with the bootstrap at it
     made for that spectrum alone; its series fitted again when the screen had skipped it).
     Full suite 1,682 passed, ruff clean.
+
+327. **A running command shows outside the Run tab (2026-11-09).** Owner: while a command
+    runs, only the Run tab showed it. Now the tab's title reads "Run (running)" in the palette's
+    highlight colour, and a line at the right of the status bar gives the command, its step and
+    its total time and opens the Run tab when clicked (RunWorkspace.activity / ended signals).
+    A command that ends while another tab is open leaves "Run (done)", "(stopped)" or
+    "(failed)" on the tab until the Run tab is opened. Checks: tests/test_gui_run.py (stand-in
+    command), ruff clean; full suite 1,675 passed (with item 328).
+
+328. **A K the screen skipped, chosen in the review; the elution tab locked the window
+    (2026-11-09).** Owner: choosing K = 2 for a fragment spectrum gave errors, the next
+    spectrum's elution tab was not drawn, and then the window froze (the targeted Orbitrap
+    dataset, fitted with `[run.fit] screen`). Two faults, both on main, reproduced offscreen on
+    a copy of the project. (1) The screen had skipped K = 2 for that spectrum; the review
+    layer's chosen K raised ValueError at every look (`Results.effective_K` is a
+    cached_property, so it raised again each time). `hxex resume` already fits such a choice
+    (HISTORY 124's partial path). Now the results show the fit's K until then
+    (`ReviewTable.effective_K(unfitted="keep")`, `Results.unfitted_choices`), the review panel
+    says "K=2 was not fitted for these spectra (the screen skipped it): shown at the fit's K
+    until Resume fits it" and offers Resume (`missing_bootstraps` lists it), `hxex report`
+    refuses it with resume named, and an analysis refuses it (`refuse_unfitted`). The bundle's
+    own review check stays strict. (2) The elution tab's reader was kept per results object; a
+    review decision makes a new one, so a second reader opened the same Thermo raw files while
+    the first still read the sample's other runs, and two threads calling .NET at once
+    deadlocked the process (stacks: both in `thermo.info`, every Python thread waiting). Now the
+    reader is kept per read record and every reader shares one lock (`retention_trace._READS`);
+    a replaced reader is closed off the window's thread. On the copy: no errors, the first step
+    after the decision waits ~29 s for the read in progress, later steps 0.2-1.3 s. Checks:
+    touched tests 284 passed (new: tests/test_report.py, tests/test_retention_trace.py), ruff
+    clean; full suite 1,675 passed, with the real Thermo and mzML file tests.
