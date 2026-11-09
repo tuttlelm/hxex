@@ -219,11 +219,17 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
   charges of one ion share every other position, and a bright 3+ or 4+ precursor puts a peak
   every third or quarter m/z. *hxex* measures, for every fragment spectrum, how much of its
   picked intensity another ion read from the same scans puts there (from that ion's own fit,
-  scaled by its peaks away from the fragment's), and flags it `overlapping_ion` at 20 % or more
-  (`[run.quality] max_ion_overlap`); `spectra.csv` names the other ion (`overlapping_ion_with`).
-  On the dataset above, 7 to 8 % of fragment spectra were flagged, at every time point. An ion
-  that falls on all of the fragment's strong bins cannot be told apart from it and is not
-  counted, nor are ions that are not read (a, b and y ions).
+  scaled by its peaks away from the fragment's strong peaks), and flags it `overlapping_ion` at
+  20 % or more (`[run.quality] max_ion_overlap`); `spectra.csv` names the other ion
+  (`overlapping_ion_with`). This includes another ion that lies further up the fragment's bins,
+  where the fragment could move once labelled, and a fragment whose fit has settled on another
+  ion's envelope instead of its own. On the dataset above, 12 % of fragment spectra were
+  flagged (10 % of the undeuterated ones, 12 % of the labelled ones). An ion that falls on all
+  of the fragment's strong peaks cannot be told apart from it and is not counted, nor are ions
+  that are not read (a, b and y ions). Where two ions' peaks merge, *hxex* does not try to
+  split the merged peak between them: on that dataset no way of doing so (the height at each
+  ion's position, or fitting a peak at each position) read the true height better than the
+  picked value.
 - Per-residue rates from both ladders together (`ladder_residues.csv`, with `fit_rates =
   true`): an N-terminal and a C-terminal ion type are paired, and where they disagree the
   residue is marked. Conditions, precursor charges, fragment charges and runs are never pooled,

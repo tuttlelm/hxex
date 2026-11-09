@@ -58,8 +58,10 @@ signal never reach the fit and are handled before it.
 - ``overlapping_ion``: another ion read from the same scans (a c-1 or z-dot fragment of the same
   parent with its mixed components, or the precursor ``M``) puts at least ``max_ion_overlap`` of
   this fragment's picked intensity on its bins: its peaks fall inside the picker's windows. The
-  other ion's fitted curve is scaled by its own bins away from this fragment's (an ion that
-  coincides with every strong bin cannot be told apart and is not counted). The statistic is
+  other ion's fitted curve is scaled by its own bins away from this fragment's strong bins (those
+  holding at least a fifth of the fragment's own fitted curve), so an ion inside the fragment's
+  reachable range, every bin of which lies near one of the fragment's, still counts (an ion
+  that coincides with every strong bin cannot be told apart and is not counted). The statistic is
   ``ion_overlap`` (the share), with the other ion in ``ion_overlap_with``. Measured on a targeted
   dataset (2026-11-06): 7-8 % of fragment spectra at 0.2 or more, at every time point; ions
   of one ladder whose masses differ by close to whole isotope steps (a c and a z ion lacking
@@ -137,8 +139,9 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # what one tests changes, so that a bundle whose flags an earlier version assessed says so and
 # `hxex resume` assesses them again (owner, 2026-11-08: a bundle fitted before overlapping_ion
 # existed kept it empty through later resumes). 0: flags read from a bundle that does not record
-# it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314).
-QUALITY_VERSION = 1
+# it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314). 2: overlapping_ion
+# scales the other ion by its bins away from the fragment's strong bins (was: all its bins).
+QUALITY_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -630,10 +633,14 @@ def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
     :meth:`~hxex.picking.PickerConfig.half_width`; ``mz``, the bins' m/z of every measurement) or
     within one peak width at half maximum, from the resolving power the file records (two peaks
     closer than that read as one, whichever the window takes),
-    scaled by the other ion's own bins that are not near this fragment's and hold at least 20 %
-    of its curve: a fit of a coinciding ion is made of the same peaks. An ion with no such bins
-    is not counted. NaN for measurements that are not fragments, and without a scan-file read
-    record (``source``)."""
+    scaled by the other ion's own bins that are not near this fragment's strong bins (where its
+    own fitted curve is at least 20 % of its tallest; all its bins when it has no fit) and hold at
+    least 20 % of the other ion's curve: a fit of a coinciding ion is made of the same peaks. An
+    ion with no such bins is not counted. The strong bins, not all of them: a fragment's bins
+    cover its whole reachable range, so an ion anywhere inside it lies near one of them, and
+    counted by all its bins would never count (including a fragment whose fit sits on that ion).
+    NaN for measurements that are not fragments, and without a scan-file read record
+    (``source``)."""
     from .io.mzml import SCAN_READERS, _channel, mzml_series_targets
     from .report.curves import component_curves, cut_curves
 
@@ -679,6 +686,9 @@ def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
             if np.isfinite(r0) and np.isfinite(r_mz):  # the peak width at half maximum
                 width = fmz / (r0 * (r_mz / fmz) ** picker.resolving_power_exponent)
                 half = np.maximum(half, width)
+            own = curves[f]
+            strong = (own >= 0.2 * own.max() if own is not None and own.max() > 0
+                      else np.ones(len(fmz), dtype=bool))
             lo, hi = float(np.min(fmz - half)), float(np.max(fmz + half))
             for o in members:
                 pred = curves[o]
@@ -690,7 +700,7 @@ def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
                 near = np.abs(fmz[:, None] - omz[None, :]) <= half[:, None]
                 if not near.any():
                     continue
-                free = ~near.any(axis=0) & (pred >= 0.2 * pred.max())
+                free = ~near[strong].any(axis=0) & (pred >= 0.2 * pred.max())
                 if not free.any():
                     continue
                 oobs = np.asarray(data.observed[o], dtype=float)

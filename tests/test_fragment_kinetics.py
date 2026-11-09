@@ -918,9 +918,10 @@ def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
 def test_an_ion_on_a_fragments_bins_flags_it():
     """ion_overlaps (overlapping_ion): another fragment of the same scans whose envelope falls on
     a fragment's bins (here two isotope steps below it) gives it the share of its picked
-    intensity it puts there, measured by the other ion's bins away from the fragment's; the other
-    way round the fragment coincides with the ion's bins only (no free bins of its own: not
-    counted); the parent, which is not read in the fragment scans, is not assessed."""
+    intensity it puts there, measured by the other ion's bins away from the fragment's strong
+    bins; the other way round the dim ion's mono sits on the bright one's third peak (a small
+    share, below the flag); the parent, which is not read in the fragment scans, is not
+    assessed."""
     from hxex.fit import Measurements
     from hxex.io.mzml import MzmlTarget
     from hxex.quality import QualityConfig, ion_overlaps
@@ -967,11 +968,57 @@ def test_an_ion_on_a_fragments_bins_flags_it():
     expect = np.minimum(curve[2][2:], observed[dim_a][:4]).sum() / observed[dim_a].sum()
     assert share[dim_a] == pytest.approx(expect) and expect > 0.5
     assert other[dim_a] == "c 11-15 1+"
-    assert share[rows.index((2, "a.raw"))] == 0.0  # the dim one coincides: not counted
+    assert 0.0 < share[rows.index((2, "a.raw"))] < 0.2  # the dim one's mono on its third peak
     assert np.isnan(share[rows.index((0, "a.raw"))])  # the parent
     assert np.isnan(ion_overlaps(data, Fit(), {"reader": "hxexpress"}, labels,
                                  [mz[d] for d, _ in rows], PickerConfig())[0]).all()
     assert QualityConfig().max_ion_overlap == 0.2
     with pytest.raises(ValueError, match="max_ion_overlap"):
         QualityConfig(max_ion_overlap=0)
+
+
+def test_an_ion_inside_a_fragments_reach_flags_it():
+    """overlapping_ion: a bright ion whose whole envelope lies on a fragment's bins beyond the
+    fragment's own envelope (inside its reachable range, so every bin of the ion is near one of
+    the fragment's) counts: it is scaled by its bins away from the fragment's STRONG bins. Counted
+    by all the fragment's bins it had no free bin and read 0 (HISTORY 309's rule)."""
+    from hxex.fit import Measurements
+    from hxex.io.mzml import MzmlTarget
+    from hxex.quality import ion_overlaps
+    from hxex.report.curves import component_curves
+
+    frags = fragment_targets(PARENT, "c:4:1 c:5:1", activation="ETD")
+    targets = [MzmlTarget(PARENT)] + frags
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    shape = np.array([1.0, 0.5, 0.2])
+    wide, narrow = np.arange(12.0), np.arange(6.0)
+    dim = component_curves(wide, [100.0], [1e-3], [0.5], shape)[0]
+    bright = component_curves(narrow, [1000.0], [1e-3], [0.5], shape)[0]
+    observed = {1: dim.copy(), 2: bright.copy()}
+    observed[1][5:11] += bright  # the bright ion's envelope on the dim one's bins 5-10
+    mz = {1: 500.0 + wide, 2: 505.0 + narrow}
+    ids = (1, 2)
+    data = Measurements.from_arrays([wide, narrow], [observed[d] for d in ids], [shape] * 2,
+                                    [5.0, 5.0], data_id=list(ids),
+                                    spectrum_id=[f"p:S/a.raw/{d}" for d in ids])
+
+    class Fit:
+        data_id = np.array(ids)
+        selected_K = np.ones(2, dtype=int)
+        spectrum_id = data.spectrum_id
+        fits = {1: SimpleNamespace(A=np.array([[100.0], [1000.0]]), n=np.full((2, 1), 1e-3),
+                                   p=np.full((2, 1), 0.5), nll=np.zeros(2))}
+
+        def __len__(self):
+            return 2
+
+    labels = np.array(["a.raw scans1-9"] * 2)
+    share, other = ion_overlaps(data, Fit(), source, labels, [mz[d] for d in ids],
+                                PickerConfig())
+    expect = bright.sum() / observed[1].sum()
+    assert share[0] == pytest.approx(expect) and expect > 0.8
+    assert other[0] == "c 11-15 1+"
+    assert share[1] == pytest.approx(0.0)  # the dim one's peaks lie off the bright one's bins
 

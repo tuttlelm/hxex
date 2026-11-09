@@ -8458,3 +8458,36 @@ CSVs or mzML if wanted.
     ~1e-5, however small the statistic; a relative tolerance is the wrong yardstick for them.
     The test compares the population test with the full run to 1e-3 absolute (or 1e-4
     relative); the other arrays keep 1e-4 relative. Checks: tests/test_reuse.py, ruff clean.
+
+333. **overlapping_ion measures the other ion away from the fragment's strong bins; merged
+    peaks are not split (2026-11-09).** The owner's c-1 of a 2+ EThcD parent (item 309's pair,
+    seen the other way round) read 0 although the z-dot of the same parent sat about 50 ppm
+    below each of its bins from the fifth on. Item 309's rule scaled the other ion by its bins
+    away from ALL the fragment's bins; a fragment's bins cover its whole reachable range, so an
+    ion anywhere inside it lies near one of them, has no free bin and reads 0. Measured on the
+    private targeted dataset (scripts in a private folder): counting the other ion's bins away
+    from the fragment's STRONG bins (its own fitted curve >= 20 % of its tallest) flags 1,951
+    of 16,435 fragment spectra instead of 1,043 (undeuterated 10.2 %, labelled 12.1 %; 230 of
+    1,272 series). Pages of 18 random new pairs over the stored profile: fragments whose K = 1
+    fit sits on a brighter ion inside their reach (a z-dot 2+ on a c-1 2+ 7 m/z higher, read
+    0.65-0.86), 2+ and 3+ fragments that picked only a 1+ ion's peaks (0.96-1.0), another ion
+    further up the fragment's bins (counted although the K = 1 fit ignores it), and ions on the
+    same peaks whose owner cannot be told (0.56-0.95). In 875 of the 1,028 new pairs the other
+    ion is scaled partly on a peak both ions picked (same apex; also at 10-60 ppm, the median
+    peak width being 44 ppm); subtracting the fragment's own fit there first keeps 981 flagged
+    but weakens the fits sitting on the other ion (0.65 -> 0.26), so it was not built. BUILT:
+    `ion_overlaps` scales by the other ion's bins away from the fragment's strong bins (all its
+    bins when it has no fit); QUALITY_VERSION 2, so `hxex resume` reassesses older bundles.
+    Still a flag only. Not built: a reading of merged peaks. Tested on the undeuterated
+    controls (known answer: each fragment's K = 1 envelope fitted on its bins with no other
+    listed ion near, checked by leaving one such bin out: 92 % of strong bins within 20 % when
+    the tallest peak is >= 160,000; below that the reduced profile empties 43 % of the bins, so
+    there is no known answer): of 112 merged bins in 45 bright spectra, today's pick read 1.12
+    of the true height (50 % within 20 %), the profile's height at the bin 1.06 (50 %),
+    Gaussian peaks fitted at every listed ion's position with the recorded or measured width
+    0.97 (40 %) or the spectrum's own width 0.94 (53 % of the 38 bins where it could be
+    measured); with a neighbour 2-10 times brighter every reading was about 2.3 times too high.
+    Only 3 of the 112 merged bins were picked zero (the owner's case is one: true 85,500,
+    picked 0, separation 0). So no joint fit of partly resolved ions, and no "lost signal" flag:
+    the common error is a merged bin read too high, which overlapping_ion measures. Checks:
+    tests/test_fragment_kinetics.py (an ion inside a fragment's reach), ruff clean.
