@@ -80,7 +80,8 @@ Several sessions may work on this repository at once.
   offscreen). `fragments` makes fragment-ion entries and mzML
   targets from a parent peptide. `kint` gives intrinsic exchange rates in H2O/D2O mixtures
   (ported from pacilab/hdx-rates-mixtures, MIT). `deamidation` measures Asn-Gly deamidation of
-  heated fully deuterated controls from the peaks' m/z. `config` reads the TOML project file that `cli` (`hxex init`,
+  heated fully deuterated controls from the peaks' m/z. `reuse` keeps the fits of
+  unchanged series when `hxex run` replaces a bundle. `config` reads the TOML project file that `cli` (`hxex init`,
   `set`, `check`, `run`, `resume`, `report`, `figures`, `info`) runs; `project_edit` changes one setting
   of it in place (`hxex set`). `report.catalogue` lists every kind of figure (the guide's `figures.md`, `hxex figures`). Shared contracts: `spectra.py` (spectrum and entry
   types) and `hooks.py` (progress and cancellation). `picking` produces `BinnedSet`.

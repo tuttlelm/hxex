@@ -814,8 +814,13 @@ def write_bundle(
     project_file: Mapping | None = None,
     peak_measure: PeakMeasure | None = None,
     chunk_plan: Mapping | None = None,
+    fitted_with: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
+
+    ``fitted_with``: the software that made the fits, population test and bootstrap
+    (:func:`_versions`; recorded as ``fitted_with``; default the software writing now), which
+    ``hxex resume`` carries over and :mod:`hxex.reuse` compares.
 
     ``path`` ending in ``.zip`` gives a zip (read only); anything else a directory. The
     bundle is written next to its final place and moved there when complete, so a failed write
@@ -920,6 +925,8 @@ def write_bundle(
             "project": project if project is not None else _project_of(fit.spectrum_id),
             "notes": notes,
             "versions": _versions(),
+            # what made the fits, the population test and the bootstrap (a resume keeps them)
+            "fitted_with": dict(fitted_with) if fitted_with is not None else _versions(),
             "k_values": list(fit.k_values),
             "n_measurements": len(fit),
             "pending": list(pending),

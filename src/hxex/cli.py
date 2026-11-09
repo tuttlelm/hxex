@@ -107,6 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-previous", action="store_true",
                    help="move an existing bundle (with its tables, figures and analysis "
                         "folders) to the next generation, NAME.N, before writing")
+    p.add_argument("--refit", action="store_true",
+                   help="fit every spectrum again; without it, a spectrum whose input is the "
+                        "same as in the bundle being replaced keeps its fit, population test "
+                        "and bootstrap")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
     _spectra_option(p)
     _threads_option(p)
@@ -1171,7 +1175,7 @@ def cmd_run(args) -> int:
                 spectra, config, out=bundle, project=project.project, notes=out.notes,
                 overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
                 exclude=project.input.exclude, view_exclude=_view_exclude(project),
-                chosen_k=chosen_k,
+                chosen_k=chosen_k, reuse=not args.refit,
                 project_file=project_record(dataclasses.replace(
                     project, threads=threads, output=dataclasses.replace(
                         out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
@@ -1910,6 +1914,10 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
         rows.append(("changed", "nothing" if not changed else
                      f"{len(changed)} setting(s): " + ", ".join(changed[:8])
                      + (", ..." if len(changed) > 8 else "")))
+        if "fits_reused" in prov:
+            rows.append(("fits reused", f"{prov['fits_reused']} of {prov.get('spectra', '?')} "
+                                        "spectra kept the replaced bundle's fits (the same "
+                                        "input)"))
         review = prov.get("review") or {}
         if review.get("carried"):
             rows.append(("carried", f"{review['carried']} review entries, "

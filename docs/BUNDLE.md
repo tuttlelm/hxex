@@ -88,7 +88,11 @@ analyse` or `hxex report --figures` runs again. `hxex info` lists the generation
 ## manifest.json
 
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
-`versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics), `k_values` (the K tried),
+`versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics, and `hxex_commit` when
+known), `fitted_with` (the same keys for the software that made the fits, the population test
+and the bootstrap: a run's own; `hxex resume` keeps the bundle's when the software resuming is
+the same, else writes `{"mixed": true}`; absent before 2026-11-07, read then as `versions` when
+no resume rewrote the bundle; `hxex.reuse` compares it), `k_values` (the K tried),
 `n_measurements`, `pending` (the stages the run has still to add: `["bootstrap"]` for the
 bundle a run writes as soon as its fits are done, which it rewrites complete at the end, or
 `hxex.pipeline.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
@@ -97,7 +101,10 @@ replaced a bundle: `replaced` (its path), `replaced_created` and `replaced_hxex`
 and version), `at`, `moved_to` (the generation it was moved to with `keep_previous`, else
 null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
 and `spectra_source` when other files were read or read differently) and `review`
-(`carried`, `stale`: the review entries carried over and how many are stale);
+(`carried`, `stale`: the review entries carried over and how many are stale), `fits_reused`
+and `spectra` (how many of the run's spectra kept the replaced bundle's fit, population test
+and bootstrap because their series' input was unchanged, out of how many; `hxex.reuse`;
+absent before 2026-11-07);
 `hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
 `hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`,
 `bootstrap` (added or made again), or `bootstrap at chosen K` (the K a review chose))

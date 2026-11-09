@@ -1255,6 +1255,12 @@ Planned, not built:
      each file's stored m/z offset and drift ranges, not measured again), pick and fit their
      series, redo their controls, bootstrap, and population test where they change, and update
      the bundle in place with a provenance note (as `hxex resume` does).
+     BUILT differently (HISTORY 326; owner chose it, 2026-11-07): `hxex run --overwrite`
+     reads and picks everything, then keeps the replaced bundle's fit, population test and
+     bootstrap of every series whose input is unchanged (`hxex.reuse`), fitting the rest; every
+     whole-run step (peak measure, envelopes, noise curve, m/z check, controls, flags) is redone,
+     so the result is a full run's up to batch rounding. `--refit` fits everything. A partial
+     read stays possible later if the read time gets in the way.
    - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
      gives a new id and its review entries would go stale; they should follow the spectrum by
      file and peptide ion. SETTLED by item 27 (built).

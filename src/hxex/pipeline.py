@@ -234,6 +234,9 @@ class RunResult:
     # tables drawn from this result then say they were made from that bundle
     created: str = ""
     chunk_plan: dict | None = None  # the chunks fitted (chunk_record), reused by a resume
+    # the software that made the fits, test and bootstrap (None: the one writing; a resume by
+    # other software records {"mixed": True}); hxex.reuse compares it
+    fitted_with: dict | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -290,6 +293,7 @@ class RunResult:
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
             provenance=provenance, excluded=self.excluded, project_file=self.project_file,
             peak_measure=self.peak_measure, chunk_plan=self.chunk_plan,
+            fitted_with=self.fitted_with,
         )
 
 
@@ -561,6 +565,20 @@ def _plan(data: Measurements, config: RunConfig, progress_range,
                  chunk_record(data, chunks, budget))
 
 
+def _without(plan: _Plan, data: Measurements, rows) -> _Plan:
+    """``plan`` without the measurements at ``rows`` (those the previous results give): each
+    chunk keeps its other measurements, in order, and the empty ones go; the recorded plan is
+    still the whole run's."""
+    keep = ~np.isin(np.arange(len(data)), np.asarray(rows, dtype=np.int64))
+    chunks = [c[keep[c]] for c in plan.chunks]
+    chunks = [c for c in chunks if len(c)]
+    sizes = np.array([len(c) for c in chunks], dtype=float)
+    edges = (np.concatenate([[0.0], np.cumsum(sizes) / sizes.sum()]) if len(chunks)
+             else np.array([0.0, 1.0]))
+    return dataclasses.replace(plan, chunks=chunks, subs=[data.select(c) for c in chunks],
+                               edges=edges)
+
+
 def _d2o_fraction(config: RunConfig) -> float:
     """The labelling D2O fraction of the population test's width check."""
     return (config.controls.d2o_fraction if config.controls is not None
@@ -572,7 +590,7 @@ def _fit_part(
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
-    elution_cut=None, precursor=None,
+    elution_cut=None, precursor=None, reused=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -591,7 +609,9 @@ def _fit_part(
     (:func:`hxex.analysis.screening.control_removal`), left out of the controls. ``chosen``
     (spectrum id -> K, a review table's choices): fitted whatever the screen says.
     ``deamidation``: the fully deuterated controls' deamidation
-    (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``."""
+    (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``.
+    ``reused`` (:class:`hxex.reuse.Reused`): the previous results' fits (and tests) of the
+    measurements ``plan`` leaves out, merged with those fitted here."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is _MEASURE:  # run() gives its own (None: its rule found too few controls)
         noise_curve = None
@@ -630,10 +650,15 @@ def _fit_part(
             part = dataclasses.replace(part, selected_K=test.selected_K.copy())
             tests.append(test)
         fits.append(part)
-    fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, plan.chunks)
-    test = None
-    if tests:
-        test = tests[0] if len(tests) == 1 else PopulationTest.merge(tests, plan.chunks)
+    if reused is not None:
+        fit = FitResult.merge([*fits, reused.fit], [*plan.chunks, reused.rows])
+        test = (None if reused.test is None
+                else PopulationTest.merge([*tests, reused.test], [*plan.chunks, reused.rows]))
+    else:
+        fit = fits[0] if len(fits) == 1 else FitResult.merge(fits, plan.chunks)
+        test = None
+        if tests:
+            test = tests[0] if len(tests) == 1 else PopulationTest.merge(tests, plan.chunks)
     check_cancel(cancel)
     at = lo + (hi - lo) * share
     start_stage(progress, "controls and quality", at, at)
@@ -669,15 +694,16 @@ def _fit_part(
 
 
 def _bootstrap_part(
-    config: RunConfig, plan: _Plan, fits: Sequence[FitResult], progress, cancel
+    config: RunConfig, plan: _Plan, fits: Sequence[FitResult], progress, cancel, reused=None
 ) -> tuple[BootstrapResult | None, dict[int, BootstrapResult] | None]:
-    """Bootstrap every chunk from its fit (``fits``, one per chunk) and merge."""
+    """Bootstrap every chunk from its fit (``fits``, one per chunk) and merge (with the
+    previous results' bootstrap of the measurements ``reused`` holds)."""
     if config.bootstrap is None:
         return None, None
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     boots: list[BootstrapResult] = []
     fixed: list[dict[int, BootstrapResult]] = []
-    ks = _bootstrap_ks(config, fits[0])
+    ks = _bootstrap_ks(config, fits[0] if fits else reused.fit)
     skipped = [k for k in ks if not all(f.fitted(k).all() for f in fits)]
     if skipped:
         log.warning("the screen skipped K = %s for some spectra: the fixed-K bootstrap has no "
@@ -698,6 +724,13 @@ def _bootstrap_part(
                               cancel=cancel)
         boots.append(selected_from(fit, done))
         fixed.append({k: done[k] for k in ks})
+    if reused is not None:
+        boot = BootstrapResult.merge([*boots, reused.boot], [*plan.chunks, reused.rows])
+        by_k = None
+        if ks:
+            by_k = {k: BootstrapResult.merge([*(f[k] for f in fixed), reused.by_k[k]],
+                                             [*plan.chunks, reused.rows]) for k in ks}
+        return boot, by_k
     boot = boots[0] if len(boots) == 1 else BootstrapResult.merge(boots, plan.chunks)
     by_k = None
     if fixed:
@@ -1032,6 +1065,7 @@ def run(
     view_exclude: Sequence = (),
     project_file: Mapping | None = None,
     chosen_k: Mapping[str, int] | None = None,
+    reuse: bool = True,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -1058,7 +1092,11 @@ def run(
     project file's other settings in the bundle, beside the run settings. With a bootstrap, the
     spectra shown at a K other than the fit's choice (``chosen_k``, spectrum id -> K, from a
     review table, and the carried-over review's chosen K) are bootstrapped at that K as well,
-    so their errors are made like every other's. Raises ValueError if nothing is left.
+    so their errors are made like every other's. With ``reuse`` (the default), a run that
+    replaces a bundle (``overwrite`` or ``keep_previous``) takes its fit, population test and
+    bootstrap of every spectrum whose input is unchanged instead of fitting it again
+    (:mod:`hxex.reuse`); everything that uses all the spectra is worked out again. Raises
+    ValueError if nothing is left.
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
@@ -1181,8 +1219,21 @@ def run(
         chosen_k = moved_choices(chosen_k, measurements.spectrum_id,
                                  None if raw is None else raw.source)
     noise_curve = bundle_noise(picked, measurements, config)
+    if reuse and previous is not None:  # a curve hardly moved: the replaced bundle's kept
+        from .reuse import kept_curve
+
+        noise_curve = kept_curve(moved if moved is not None else out, noise_curve)
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
+    reused = None
+    if reuse and previous is not None:
+        from .reuse import describe, reused_fits
+
+        reused = reused_fits(moved if moved is not None else out, measurements, config,
+                             noise_curve, merge_choices(chosen_k))
+        if reused is not None:
+            log.info("%s", describe(reused, len(measurements)))
+            plan = _without(plan, measurements, reused.rows)
     from .io.drift_gate import unclear_series
     from .io.mzml import elution_cut_spectra
     from .io.retention_search import moved_series
@@ -1211,7 +1262,8 @@ def run(
                                                  record.get("drift_gate")),
                                              elution_cut=elution_cut_spectra(record),
                                              precursor=(record, binned.label[kept],
-                                                        _bin_mz(binned, kept)))
+                                                        _bin_mz(binned, kept)),
+                                             reused=reused)
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1230,6 +1282,9 @@ def run(
         provenance = provenance_of(
             previous, out, moved_to=moved, review=review,
             new_configs={"run": config.to_dict(), "spectra_source": result.spectra_source})
+        # how many spectra kept the replaced bundle's fits (hxex.reuse)
+        provenance["fits_reused"] = 0 if reused is None else len(reused)
+        provenance["spectra"] = len(measurements)
     checkpoint = out is not None and config.bootstrap is not None
     if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)
@@ -1239,7 +1294,7 @@ def run(
                      pending=("bootstrap",), review=review, provenance=provenance)
         overwrite = True
     try:
-        boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
+        boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel, reused=reused)
     except BaseException:
         if checkpoint:
             log.warning("the bootstrap did not finish: the fits are in %s; 'hxex resume' (or "
@@ -1578,6 +1633,9 @@ def resume_bootstrap(
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
         chunk_plan = b.manifest.get("chunk_plan")  # the run's chunks (absent before 2026-11-02)
+        from .reuse import resumed_fitted_with
+
+        fitted_with = resumed_fitted_with(b.manifest)
     if testing:
         log.info("%s: %s the population test (%d simulations per spectrum and step); the "
                  "reading, the picking and the fits are kept", path,
@@ -1655,6 +1713,7 @@ def resume_bootstrap(
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_record,
         population_test=test, peak_measure=peak_measure,
         chunk_plan=chunk_plan or _plan(measurements, config, (0.0, 1.0)).record,
+        fitted_with=fitted_with,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

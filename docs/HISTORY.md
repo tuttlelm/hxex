@@ -8332,3 +8332,43 @@ CSVs or mzML if wanted.
     there; the dividers of Results, Analysis, the project editor and Tables now stop at each
     panel's narrowest width. Tried and reverted (owner: not well aligned): the review messages on
     a status line under the panel like the figure's. Checks: GUI tests 133 passed, ruff clean.
+
+326. **Fits kept from the earlier results when a run replaces a bundle (2026-11-07/08; PLAN
+    Next steps 26, "Applying").** An edited retention window acted only through a full `hxex run
+    --overwrite` (about 20 minutes on the private targeted dataset). PLAN 26 proposed patching the
+    bundle (read only the changed spectra, refit them); the owner chose instead to keep the
+    replaced bundle's work in `hxex run` (option A), since several steps use every spectrum at
+    once (peak measure, envelopes, the per-bin noise curve, the m/z check, controls, flags) and a
+    patch would leave them as they were. Built (`hxex.reuse`): the run reads and picks
+    everything, then keeps the fit, population test and bootstrap of every series whose spectra
+    are all unchanged (bins, intensities, envelope, n bound, time, charge, role, random key,
+    scan cut, noise references; the same spectra in the series, since the noise estimated from
+    replicates and the chunks are per series), when the same software made the bundle's fits,
+    with the same `[run.fit]`, `[run.population_test]` and `[run.bootstrap]`, the same per-bin
+    noise, and nothing pending. A review table's chosen K must have been fitted. The rest is
+    fitted in the run's own chunks (`pipeline._without`) and merged; the controls and flags are
+    worked out again from the merged fits. `--refit` turns it off; the log and `hxex info`
+    (`fits reused`, provenance `fits_reused`, `spectra`) say how many spectra kept their fits.
+    Two findings shaped it. (1) A resume rewrote the manifest's `versions` while keeping older
+    fits, so the bundle now records `fitted_with` (the software that made the fits, test and
+    bootstrap; a resume keeps it when the software is the same, else `{"mixed": true}`); bundles
+    resumed before it are not reused. (2) Editing an undeuterated control moves the per-bin noise
+    b1 by a negligible amount (4.6e-7 of its standard error on the targeted dataset) and would
+    leave nothing to keep; a curve that moved by less than 1 % of its standard error, with the
+    same controls, onset and model error, is replaced by the bundle's (`kept_curve`). Check
+    (private record, README): 15 edited windows; 16,742 of 18,174 spectra
+    kept, 1,432 fitted (97 series); 13 min against 20 min on the GPU (the fit stage on the GPU
+    takes as long for 1,432 spectra as for 18,174; the bootstrap fell from 11 to 3.7 min).
+    Selected K, the population test's K and the control fallbacks equal a full refit's; the
+    kept spectra's mean differences from the full refit are exactly those between two full GPU
+    runs of the same spectra (K=1: 75 of 16,742 above 0.01 D, up to 3.8 D): run-to-run
+    variation of the GPU fits, already there and not looked at further. Also found: an ion with
+    its own window leaves its channel's group in the scan cut's trace (`io/mzml.py`
+    `_channels`), so its siblings' weights move (up to ~0.5 %) and its own trace is its own ion
+    alone (settled by item 323: the trace stays the whole channel's). Tested on
+    synthetic data (`tests/test_reuse.py`: a second run, a changed spectrum, a changed
+    undeuterated control, changed settings, `--refit`, the command line and `hxex info`, a
+    resume's record, a noise curve that hardly moved and one whose controls changed, and, added
+    2026-11-09, a K chosen in the review: kept when the run fitted it, with the bootstrap at it
+    made for that spectrum alone; its series fitted again when the screen had skipped it).
+    Full suite 1,682 passed, ruff clean.

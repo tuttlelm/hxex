@@ -70,6 +70,7 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 | `--bundle` `BUNDLE` | the results bundle (instead of output.bundle; relative to the current folder, not to the project file's) |
 | `--overwrite` | replace an existing bundle (and its tables), carrying its review over; also a tables folder left from a bundle that is gone |
 | `--keep-previous` | move an existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, before writing |
+| `--refit` | fit every spectrum again; without it, a spectrum whose input is the same as in the bundle being replaced keeps its fit, population test and bootstrap |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of run.fit.backend) |
 | `--spectra` `PATH` | take the raw spectra stored in this bundle (or spectra file) instead of reading the input (as input.spectra) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |

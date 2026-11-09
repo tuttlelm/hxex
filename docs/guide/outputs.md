@@ -114,6 +114,20 @@ from the results in the bundle now, and which command writes each, with one clos
 `--overwrite` and `--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
 command stops by itself, before doing any work.
 
+**Fits kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite` or
+`--keep-previous`), it still reads and picks every spectrum, but it does not fit again the
+peptides and fragments whose spectra are all exactly as before: each keeps its fits,
+population test, and bootstrap from the earlier results. Only what changed is fitted, so a run
+after a small change (a retention window edited in the window, one spectrum left out, a peptide
+added) takes minutes rather than the full time. Everything that uses all the spectra at once
+(the controls, the noise measured from the undeuterated controls, the quality flags) is worked
+out again, so the results are those a full run would give. The run's log says how many spectra
+kept their fits, and `hxex info results` repeats it (`fits reused`). Nothing is kept when the
+`[run.fit]`, `[run.population_test]`, or `[run.bootstrap]` settings changed, when the noise
+measured from the undeuterated controls changed (an undeuterated control edited, for example),
+or when another version of *hxex* made the earlier fits; the log says which. `hxex run
+--overwrite --refit` fits everything again.
+
 Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
 few values (stand-in controls, outlier limits, the comparisons' critical difference) come from
 the whole project. [Analysing part of a dataset](part-of-a-dataset.md) lists them.

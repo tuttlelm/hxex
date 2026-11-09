@@ -260,7 +260,8 @@ or ion already has a saved window in that file, the boxes show it and the choice
 match. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save. Saving needs the results opened from their project file, and the table
 opens in **Tables** like the others. The saved windows are used when you run the project again
-(`hxex run --overwrite`); each spectrum stays in its series (see [A peptide's own window in one
+(`hxex run --overwrite`, which fits
+again only the series whose spectra changed); each spectrum stays in its series (see [A peptide's own window in one
 file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the scans it summed,
 so a spectrum with a new window has a new id after the run; your review decisions for it follow
 it to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
