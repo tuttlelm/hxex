@@ -1276,6 +1276,87 @@ Planned, not built:
    the bundle's own layer is stored under the new id at the rerun; the window's writer rewrites
    the old row's id when a moved spectrum's decision changes. The table's chosen K follows
    into the run, so no `hxex resume` is needed for it.
+28. **Presets: how much work a run and analysis do** (owner, 2026-11-08: to consider; names
+   provisional, "all may change still"). One top-level key sets every effort setting of
+   `hxex run` and `hxex analyse` at once, formalising the steps the guide's statistics.md
+   ("A typical project") describes by hand. Levels (owner, 2026-11-08):
+   - *quick fits*: K = 1 and 2, the population test with `null = "chi_square"`, no
+     bootstrap; controls corrected; nothing drawn ahead (the window draws on demand); the full
+     analysis, marked provisional. For the spectra review, retention windows, the controls,
+     missing peptides, which peptides hold two populations, and where the samples differ,
+     before a complete run.
+   - *complete*, in two versions (owner, 2026-11-08); both draw every analysis figure, with
+     `fit_rates = true` when the run has fragments:
+     - *complete bimodal*: K = 1 to 3 fitted, bootstrap `ks = [1, 2]`; the simulated population
+       test for one against two only. The 2-against-3 step with the chi-square reference
+       (no simulations) as a flag only, "a third population possible". Measured on the
+       complete bundles: with the default analysis filters it puts at three 4 of the 4
+       (tutorial) and 14 of the 16 (benchmark) sets the simulated step does, plus 0 and 5
+       others; spectra 144 of 171 plus 7. Good enough for a flag. Needs a population-test setting for the last simulated step (today the steps
+       follow `k_max`).
+     - *complete multimodal*: K = 1 to a `k_max` the user sets (default 3), the simulated test
+       at every step, bootstrap at each spectrum's chosen K. Proposed (not yet confirmed):
+       also `ks = [1, 2]` for every spectrum, because the analysis takes its K = 1 and K = 2
+       errors, and so the comparisons between samples, from the fixed-K bootstraps (HISTORY
+       204; the population tiers and the choice of K need no bootstrap); the chosen K adds a
+       bootstrap only
+       where it is above 2 (a new `ks` form; few spectra: 171 of 26,189 on the benchmark).
+       K above 2 reaches the spectrum and set level and the residue tiers (up to three);
+       the choice, comparisons, and residue values stop at K = 2 (a set of three is compared
+       at K = 2 with a reason).
+
+     Measured (timing study, lack_of_fit): the 2-against-3 step is 37-44 % of a complete run
+     and put 4 (tutorial) and 16 (benchmark) sets at three, with no residue in a "three" tier.
+     A large residual at K <= 2 does not point to a third population (the per-bin reduced
+     chi-square has heavy tails: q99 15-54; a cut at the clean undeuterated controls' q99 holds
+     3 of the 171 spectra the test put at three), so the flag needs the 2-against-3
+     comparison itself.
+   - *maximum quality*: complete with `n_boot = 100` (the 95 % intervals), figures for every
+     series. Recommended on a GPU only.
+
+   A K = 1-only *first look* was proposed and dropped (owner, 2026-11-08: "first look risks
+   being misleading on data quality"): with K = 1 only, `poor_fit` flags 3-4 times as many
+   spectra, mostly ones with two populations, the multimodal-control notes are missing, and it
+   saves seconds only (below). `screen = true` was dropped from quick fits: under the default
+   per-bin noise it fits every K anyway.
+
+   Proposed rules:
+   - `preset = "..."` at the top level; a key written in the file wins over the preset;
+     `hxex check` and the project editor show which values come from the preset and which the
+     file overrides. No preset: today's defaults, unchanged.
+   - Each level holds the one below, so moving up is `hxex set preset ...` plus a resume, not
+     a new run. `hxex resume` already adds the bootstrap and the population test; replacing the
+     chi-square test by the simulated one and adding K = 3 fits to a K = 1-2 bundle is new work
+     (or `hxex run --overwrite` keeping the fits through `hxex.reuse`, item 26: to settle).
+   - Presets change effort, never judgement: `alpha`, `[analysis.filters]`,
+     `[analysis.choice]`, and the control thresholds are the same at every level, so quick
+     fits and a complete run differ only by the evidence added (the chi-square null against
+     the simulated one, the bootstrap's errors).
+   - What a preset expanded to is recorded (`run_settings_used.toml`, its name in the
+     manifest), because its definition may change between versions; `hxex info` and the
+     figures mark quick-fits outputs as provisional.
+
+   Never in a preset: what describes the experiment (`d2o_fraction`, control times and roles,
+   `quench`, `[analysis.labelling]`, `[analysis.fragments.exchange]`, samples, reference,
+   FASTA, regions, `nterm_subtract`, `time_scale`), the review, the statistical policy above,
+   or the instrument settings (`resolution_ppm`, `pick`, `area_fwhm`, `scan_cut`, `find_peak`,
+   `[run.envelope]`; most adapt to the data already: `measure = "auto"`, `scan_cut = "auto"`,
+   and `model_error` was calibrated on five datasets, HISTORY 293). Rules that need enough data
+   switch themselves off on small datasets (`outlier_sd` ten controls, `off_mz` five
+   undeuterated controls, `replicate_outlier` five replicated groups), so presets need no size
+   dimension. A lab-wide file of policy and instrument settings (`base = "lab.toml"`) is a
+   separate idea, for later: a second hidden layer.
+
+   Timed 2026-11-08 (private analysis_examples/presets, README; tutorial 3,874 spectra on a
+   shared CPU, benchmark 26,189 on a GPU; `hxex run`): K = 1 only 32 s / 2.0 min, quick fits
+   74 s / 2.4 min (as timed, with `screen`), complete 55 min / 55 min, maximum quality not run
+   on the CPU (estimated 1.5-2 h) / 1 h 34 min; `hxex analyse` 13-70 s at every level. Reading
+   and picking dominate quick fits. The population test is 60-75 % of a complete run (its
+   2-against-3 step alone 37-44 %); 100 bootstrap resamples take 3x the time of 20 on the GPU.
+   A benchmark-sized dataset on a CPU: roughly 6 h complete, 8-10 h maximum quality.
+
+   To settle before building: the multimodal bootstrap (`[1, 2]` plus the chosen K);
+   the names.
 
 ## Risks and open decisions
 
