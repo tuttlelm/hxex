@@ -194,6 +194,10 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.coverage_times": '"undeuterated" (judged on the undeuterated controls), "all", '
                                "or a list of times",
     "analysis.redundancy": 'what the redundancy counts: "peptides" or "spectra"',
+    "analysis.residue_level": '"auto": residue-level outputs (coverage, redundancy and '
+                              "resolution, residue values, Woods plots) for the samples whose "
+                              "peptides make one protein (two of them overlap, and they agree "
+                              "on the residues they share); true: every sample; false: none",
     "analysis.weight_exponent": "exponent of the residue averaging's weights",
     "analysis.filters": "which spectra and K=2 descriptions are kept: [analysis.filters] "
                         "(below), or false for all",

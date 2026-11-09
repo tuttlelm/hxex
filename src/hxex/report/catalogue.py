@@ -318,6 +318,21 @@ KINDS: tuple[FigureKind, ...] = (
 KINDS = tuple(dataclasses.replace(k, peptides=True)
               if k.command == ANALYSE and _FRAGMENTS not in k.needs else k for k in KINDS)
 
+# the figures on a protein's residue numbers: only for the samples whose peptides make one
+# protein ([analysis] residue_level; owner, 2026-11-08)
+_ON_RESIDUES = ("coverage", "redundancy_resolution", "residues_all", "choice", "profile",
+                "population_tiers", "overlay_residues", "overlay_populations", "woods",
+                "woods_K2", "residue_significance", "residue_significance_K2",
+                "region_significance", "regions")
+_PROTEIN = ("for the samples whose peptides make one protein (two of them overlap and they "
+            "agree on the residues they share; [analysis] residue_level)")
+_RESIDUES = Need("[analysis] residue_level", "not false",
+                 lambda s: s.analysis.residue_level is not False)
+KINDS = tuple(dataclasses.replace(
+    k, needs=(*k.needs, _RESIDUES), data=f"{k.data}; {_PROTEIN}" if k.data else _PROTEIN,
+    changed_by=(*k.changed_by, "[analysis] residue_level"))
+    if k.name in _ON_RESIDUES else k for k in KINDS)
+
 
 def kind_named(name: str) -> FigureKind:
     """The kind of figure called ``name``."""

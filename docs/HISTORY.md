@@ -8424,3 +8424,28 @@ CSVs or mzML if wanted.
     it). Batch rounding (items 46, 219), not reuse: the kept series still compare exactly. The
     test's comparison with a full run now allows 1e-4 relative. Checks: tests/test_bundle.py
     (two writes give two stamps), tests/test_reuse.py, ruff clean.
+
+331. **Residue-level outputs only for samples whose peptides make one protein (2026-11-08;
+    PLAN Next steps 29).** Owner: coverage, redundancy and resolution, and most of the analysis
+    make no sense for a set of unrelated peptides measured together (the known-answer test set:
+    each sample one peptide, numbered from residue 1). `[analysis] residue_level` (default
+    `"auto"`; `true` every sample, `false` none) decides per sample
+    (`hxex.analysis.residues.residue_level_states`): residue-level outputs (the residue map,
+    coverage, the population choice, residue and region comparisons, and their figures: 14
+    kinds, marked in `report.catalogue` and greyed in the window's Analysis list when `false`)
+    are made only where two of the sample's peptides overlap and, without a sequence for the
+    sample, its peptides agree on the residue at every number they share (base residues; with a
+    sequence the residue map checks every peptide against it, as before). The first draft asked
+    for more than one peptide range; the Jurkat digest's table (435 peptides laid end to end on
+    a made-up axis, no residue covered twice) passed it, so the rule became "two overlap".
+    Peptide-level outputs (`species_uptake.csv`, the peptide comparisons, population counts,
+    the butterfly plot, protection factors) and fragments are unchanged. Checks (main against
+    this change, `analysis_outputs`): the tutorial's tables, their row counts and its 50 figures
+    are identical; the known-answer set loses 387 figures and the residues, coverage and
+    populations tables (13 samples, one peptide each); the Jurkat digest 29 figures. On main,
+    the known-answer set with a reference stopped with "no reference sample ... at K=1 rank 1"
+    in the residue comparison; that comparison is now not made there. The synthetic test runs
+    have one peptide per sample, so the tests of residue outputs set `residue_level = true`.
+    Not built: telling apart several proteins drawn on one residue axis. Checks: full suite
+    1,665 passed and 5 failed (residue-output tests on one-peptide data), those 5 then set
+    `residue_level = true` and pass; ruff clean.

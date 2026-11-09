@@ -463,6 +463,21 @@ shows, the settings it needs, and the settings that change it.
 
 `[analysis] format` sets the file type (`pdf`, `png`, `svg`).
 
+### Residue-level outputs need one protein
+
+Most of the analysis places a sample's peptides on its protein's residue numbers: coverage,
+redundancy and resolution, the residue values and their comparisons, the Woods plots, and the
+significance maps. That only means something when the sample's peptides come from one protein
+and overlap. A set of unrelated peptides measured together (for example a test set of single
+peptides, or a digest of many proteins numbered end to end) has no residues to resolve: each
+residue would only repeat its one peptide's value.
+
+So by default (`[analysis] residue_level = "auto"`) *hxex* makes these outputs only for a
+sample where two of its peptides overlap and its peptides agree on the residue at every number
+they share. For any other sample the log says why it has none, and the peptide-level tables
+(`species_uptake.csv`, the peptide comparisons, the butterfly plot) are made as usual.
+`residue_level = true` makes the residue-level outputs for every sample, and `false` for none.
+
 `[analysis] page_size` sets the largest page, width and height in inches (`[16, 12]`). A figure
 that grows with the data goes on over further pages rather than growing past it: a coverage
 map's time points wrap into rows and then onto `coverage_WT_2`, `coverage_WT_3`; the

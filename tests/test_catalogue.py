@@ -54,7 +54,7 @@ def _agrees(situation: Situation, drawn: dict[str, set[str]], command: str) -> N
 ], ids=["reference with regions", "K=1 only", "no reference"])
 def test_every_analysis_figure_has_an_entry_and_the_plan_agrees(two_sample_bundle, tmp_path,  # noqa: F811
                                                                  changes):
-    cfg = AnalysisConfig(format="png", **changes)
+    cfg = AnalysisConfig(residue_level=True, format="png", **changes)
     with open_bundle(two_sample_bundle) as b:
         results = Results.from_bundle(b)
         write_analysis(results, cfg, tmp_path)
@@ -111,13 +111,21 @@ def test_the_plan_names_the_setting_that_rules_a_figure_out():
     planned = {p.kind.name: p for p in plan(Situation.of())}
     woods = planned["woods"]
     assert woods.state == "off" and [n.setting for n in woods.missing] == ["[analysis] reference"]
-    assert planned["coverage"].state == "drawn"
+    # the residue figures depend on whether a sample's peptides make one protein
+    assert planned["coverage"].state == "depends"
+    assert "residue_level" in planned["coverage"].reason
     # without the results, whether the run has the population test is not known
     assert planned["population_tiers"].state == "depends"
     assert "[analysis] populations" in planned["population_tiers"].reason
     with_ref = {p.kind.name: p for p in plan(Situation.of(analysis=AnalysisConfig(
         reference="WT", populations="best_set")))}
-    assert with_ref["woods"].state == "drawn"
+    assert with_ref["woods"].state == "depends"
+    assert with_ref["butterfly"].state == "drawn"
+    off = {p.kind.name: p for p in plan(Situation.of(analysis=AnalysisConfig(
+        reference="WT", residue_level=False)))}
+    assert off["woods"].state == "off" and off["coverage"].state == "off"
+    assert [n.setting for n in off["coverage"].missing] == ["[analysis] residue_level"]
+    assert off["butterfly"].state == "drawn"
     assert with_ref["population_tiers"].state == "off"
     assert with_ref["woods_K2"].state == "depends"
 

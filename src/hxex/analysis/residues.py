@@ -224,6 +224,68 @@ def states(table) -> list[tuple[str, str]]:
                                   strict=True)))
 
 
+RESIDUE_LEVEL = ("auto", True, False)
+
+
+def residue_level_states(
+    uptake: SpeciesUptake,
+    setting: str | bool = "auto",
+    *,
+    sequences: str | Mapping[str, str] | None = None,
+    registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+) -> dict[tuple[str, str], str]:
+    """Which states ``(run, sample)`` of ``uptake`` have residue-level outputs (coverage,
+    redundancy and resolution, residue values, their comparisons and figures): ``''`` for those
+    that do, else why not. Those outputs place a sample's peptides on one protein's residue
+    numbers, which says nothing for a sample that is not one protein (owner, 2026-11-08: a set
+    of unrelated peptides pooled, such as a test set of single peptides).
+
+    ``setting`` ``True``: every state; ``False``: none; ``'auto'`` (the default): a state two of
+    whose peptide ranges overlap (else each residue's value would repeat its one peptide's: a
+    single peptide, or unrelated peptides laid end to end on a made-up axis) and, without a
+    sequence for it
+    (``sequences``, :func:`sample_setting`; with one, :func:`residue_map` checks every peptide
+    against it), agree on the residue at every number two of them cover (base residues, so
+    ``pS`` matches ``S``)."""
+    from .runs import sample_setting
+
+    if setting not in RESIDUE_LEVEL:
+        raise ValueError(f'residue_level must be "auto", true or false, not {setting!r}')
+    out: dict[tuple[str, str], str] = {}
+    run, sample = uptake.run.astype(str), uptake.sample.astype(str)
+    for state in states(uptake):
+        if setting is True or setting is False:
+            out[state] = "" if setting else "residue_level = false"
+            continue
+        rows = np.flatnonzero((run == state[0]) & (sample == state[1]))
+        ranges = set(zip(uptake.start[rows].astype(int), uptake.end[rows].astype(int),
+                         strict=True))
+        covered = np.zeros(max(e for _, e in ranges) + 2, dtype=int)
+        for start, end in ranges:
+            covered[start:end + 1] += 1
+        if covered.max() < 2:
+            out[state] = (f"no two of its {len(ranges)} peptide ranges overlap: each residue "
+                          "would only repeat its one peptide" if len(ranges) > 1 else
+                          "one peptide range: no residues to resolve")
+            continue
+        if sample_setting(sequences, *state) is not None:
+            out[state] = ""
+            continue
+        peptides = dict.fromkeys(zip(uptake.peptide[rows].astype(str),
+                                     uptake.start[rows].astype(int), strict=True))
+        letters: dict[int, str] = {}
+        clash = None
+        for peptide, start in peptides:
+            for offset, residue in enumerate(_sequence_letters(peptide, registry)):
+                there = letters.setdefault(start + offset, residue)
+                if there != residue and clash is None:
+                    clash = (start + offset, there, residue)
+        out[state] = ("" if clash is None else
+                      f"its peptides name different residues at residue {clash[0]} "
+                      f"({clash[1]} and {clash[2]}): not one protein")
+    return out
+
+
 MODIFIED = ("separate", "combined")
 
 

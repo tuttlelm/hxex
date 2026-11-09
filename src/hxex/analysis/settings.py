@@ -118,6 +118,11 @@ class AnalysisConfig:
 
     Residues:
 
+    - ``residue_level``: which samples have residue-level outputs (coverage, redundancy and
+      resolution, residue values and their comparisons, Woods plots): ``'auto'`` (the default)
+      those whose peptides make one protein (:func:`hxex.analysis.residues.residue_level_states`:
+      two of its peptides overlap, and they agree on the residues they share), ``True`` every
+      sample, ``False`` none (the peptide-level tables and comparisons stay).
     - ``fasta``: one sequence file for every sample, or one per sample (sample -> path, with a
       run's own under its name); empty: the sequence comes from the peptides.
     - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated controls; when
@@ -185,6 +190,7 @@ class AnalysisConfig:
     times: tuple[float, ...] = ()
     exclude_times: tuple[float, ...] = ()
     ks: tuple[int, ...] = (1, 2)
+    residue_level: str | bool = "auto"
     fasta: str | Mapping[str, str] | None = None
     coverage_times: str | tuple[float, ...] = UNDEUTERATED
     redundancy: str = "peptides"
@@ -259,6 +265,10 @@ class AnalysisConfig:
         else:
             object.__setattr__(self, "coverage_times",
                                tuple(parse_time(t, "coverage_times") for t in self.coverage_times))
+        if not (self.residue_level is True or self.residue_level is False
+                or self.residue_level == "auto"):
+            raise ValueError(f'residue_level must be "auto", true or false, not '
+                             f"{self.residue_level!r}")
         if self.redundancy not in COUNTS:
             raise ValueError(f"redundancy must be one of {', '.join(COUNTS)}")
         if self.format not in FORMATS:

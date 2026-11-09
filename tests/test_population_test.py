@@ -477,8 +477,8 @@ def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):
     from hxex.analysis import AnalysisConfig
     from hxex.report import Results, write_analysis
 
-    files = write_analysis(Results.from_run(tested_run), AnalysisConfig(fragments=None),
-                           tmp_path / "a")
+    files = write_analysis(Results.from_run(tested_run),
+                           AnalysisConfig(fragments=None, residue_level=True), tmp_path / "a")
     names = {p.name for p in files}
     assert "population_tiers.pdf" in names
     # the tier map's data table: a row per sample, point and residue with a tier

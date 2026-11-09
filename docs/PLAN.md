@@ -1364,6 +1364,14 @@ Planned, not built:
    To settle before building: the multimodal bootstrap (`[1, 2]` plus the chosen K);
    the names.
 
+29. **Residue-level outputs only for samples that are one protein** (owner, 2026-11-08: coverage,
+   redundancy and resolution, and most of `hxex analyse` say nothing for pooled unrelated
+   peptides, such as the known-answer test set). BUILT (HISTORY 331; owner: "try automatic as
+   a default option"): `[analysis] residue_level = "auto"` makes them for a sample two of whose
+   peptides overlap and whose peptides agree on the residue at every number they share; `true`
+   every sample, `false` none. Not built: telling apart several proteins drawn together on one
+   residue axis (samples that are different proteins); no dataset at hand needs it yet.
+
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are not corrected for now

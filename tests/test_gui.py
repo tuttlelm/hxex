@@ -81,7 +81,7 @@ def test_every_figure_renders_through_qt_svg(two_sample_bundle, tmp_path, qtlog)
         write_figures(results, tmp_path / "k2", PlotConfig(series="all", format="svg", k=2,
                                                            overview=False))
         write_analysis(results, AnalysisConfig(
-            reference="S", format="svg", annotations=Annotations(
+            reference="S", format="svg", residue_level=True, annotations=Annotations(
                 regions=(Region("all", 1, 10),), sites=(Site(5, "x"),))), tmp_path / "a")
     files = sorted(tmp_path.glob("*/*.svg"))
     names = " ".join(p.name for p in files)

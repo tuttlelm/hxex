@@ -990,7 +990,7 @@ def _figures_from(data) -> Any:
         raise ProjectError(f"[figures]: {exc}") from exc
 
 
-ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "fasta",
+ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "residue_level", "fasta",
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "page_size", "out", "runs", "overlay",
@@ -2226,6 +2226,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "#                                 # the fits are kept)",
         '# fasta = "protein.fasta"         # or one per sample: [analysis.fasta] WT = "wt.fasta"',
         '#                                 # (for one run of [analysis.runs]: [analysis.fasta.A])',
+        '# residue_level = "auto"          # residue-level outputs for samples whose peptides',
+        "#                                 # make one protein (true: every sample; false: none)",
         '# coverage_times = "undeuterated" # or "all", or a list of times',
         '# redundancy = "peptides"         # or "spectra"',
         "# alpha = 0.05                    # significance of the comparisons",

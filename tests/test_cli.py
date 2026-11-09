@@ -470,7 +470,7 @@ def test_figures_says_what_would_be_drawn_and_why_not(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "settings only: no results yet" in out
     assert "off      Woods plot" in out and "needs [analysis] reference" in out
-    assert "drawn    Coverage" in out
+    assert "depends  Coverage" in out  # on whether a sample's peptides make one protein
     assert cli.main(["-q", "run", str(path)]) == 0
     settings = path.read_text()
     path.write_text(settings + '\n[figures]\nseries = "all"\nkinds = ["uptake"]\n')

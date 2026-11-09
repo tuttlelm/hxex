@@ -75,7 +75,7 @@ def test_the_table_sorts_copies_and_saves_what_it_shows(qtbot, tmp_path):
 def project(tmp_path, two_sample_bundle):  # noqa: F811
     path = tmp_path / "hxex.toml"
     path.write_text(f'project = "gui"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n\n'
-                    '[analysis]\nreference = "S"\n', encoding="utf-8")
+                    '[analysis]\nreference = "S"\nresidue_level = true\n', encoding="utf-8")
     return path
 
 

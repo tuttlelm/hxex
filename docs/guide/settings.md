@@ -425,6 +425,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |
+| `residue_level` | text or true/false | `"auto"` | "auto": residue-level outputs (coverage, redundancy and resolution, residue values, Woods plots) for the samples whose peptides make one protein (two of them overlap, and they agree on the residues they share); true: every sample; false: none |
 | `fasta` | text or table | unset | one FASTA file whose sequence every sample shares; for one file per sample use [analysis.fasta] (below) instead (a header >NAME/START-END numbers its first residue START); unset: the sequence comes from the peptides |
 | `coverage_times` | text or list | `"undeuterated"` | "undeuterated" (judged on the undeuterated controls), "all", or a list of times |
 | `redundancy` | text | `"peptides"` | what the redundancy counts: "peptides" or "spectra" |

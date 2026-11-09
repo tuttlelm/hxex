@@ -907,7 +907,7 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     from hxex.report import write_analysis
 
     seen = []
-    cfg = AnalysisConfig(reference="S", format="png",
+    cfg = AnalysisConfig(residue_level=True, reference="S", format="png",
                          annotations=Annotations(regions=(Region("all", 1, 10),),
                                                  sites=(Site(5, "x"),)))
     with open_bundle(two_sample_bundle) as b:
@@ -938,7 +938,7 @@ def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     assert "compare_population_counts.csv" not in names
     assert any(n.startswith("woods_K2_V_") for n in names)
     with pytest.raises(ValueError, match="populations"):
-        AnalysisConfig(populations="loose")
+        AnalysisConfig(residue_level=True, populations="loose")
 
 
 
@@ -1043,7 +1043,7 @@ def test_coverage_falls_back_to_every_time_when_none_was_measured(two_sample_bun
     from hxex.io import open_bundle
     from hxex.report import write_analysis
 
-    cfg = AnalysisConfig(coverage_times=(999.0,), format="png")
+    cfg = AnalysisConfig(residue_level=True, coverage_times=(999.0,), format="png")
     with open_bundle(two_sample_bundle) as b, caplog.at_level(logging.WARNING):
         written = write_analysis(Results.from_bundle(b), cfg, tmp_path / "c")
     assert "coverage.csv" in {p.name for p in written}
@@ -1120,7 +1120,8 @@ def test_analyse_command(two_sample_bundle, tmp_path, capsys):
     assert cli.main(["-q", "analyse", str(two_sample_bundle), "--out", str(out),
                      "--format", "svg"]) == 0
     assert (out / "species_uptake.csv").is_file() and not (out / "compare_peptides.csv").exists()
-    assert any(p.suffix == ".svg" for p in out.iterdir())
+    # one peptide per sample and no reference: nothing on residues, nothing compared
+    assert not any(p.suffix == ".svg" for p in out.iterdir())
     assert "table(s)" in capsys.readouterr().out
     project = tmp_path / "hxex.toml"
     project.write_text(f"""project = "p"
@@ -1131,6 +1132,7 @@ data_dir = "d"
 bundle = "{two_sample_bundle.as_posix()}"
 [analysis]
 reference = "S"
+residue_level = true
 format = "png"
 out = "from_project"
 [[analysis.regions]]
@@ -1304,9 +1306,11 @@ def test_analyse_separate_runs(two_sample_bundle, tmp_path, capsys):
     assert cli.main(["-q", "analyse", f"A={two_sample_bundle}", f"B={two_sample_bundle}",
                      "--reference", "A:S", "--out", str(out), "--format", "png"]) == 0
     names = {p.name for p in out.iterdir()}
-    for table in ("run_settings", "run_identity", "compare_peptides", "compare_choices"):
+    for table in ("run_settings", "run_identity", "compare_peptides"):
         assert f"{table}.csv" in names
-    assert {"coverage_A_S.png", "butterfly_B_S.png", "butterfly_A_V.png"} <= names
+    assert {"butterfly_B_S.png", "butterfly_A_V.png"} <= names
+    # one peptide per sample: no residues to resolve, so no residue-level outputs by default
+    assert "residues.csv" not in names and not any(n.startswith("coverage_") for n in names)
     rows = (out / "compare_peptides.csv").read_text().splitlines()
     assert rows[0].startswith("comparison,run,sample,")
     assert {tuple(r.split(",")[1:3]) for r in rows[1:]} == {
@@ -1324,6 +1328,7 @@ format = "specexport"
 data_dir = "d"
 [analysis]
 reference = "one:S"
+residue_level = true
 samples = ["one:S", "two:S"]
 format = "png"
 out = "from_runs"
@@ -1717,8 +1722,8 @@ def test_times_that_only_order_the_points(two_sample_bundle, tmp_path):
     results = dataclasses.replace(results, settings=settings)
     assert results.time_scale == "order"
     assert _when(60.0, "order") == "point 60" and _when(60.0) == "1 min"
-    written = write_analysis(results, AnalysisConfig(reference="S", format="png"),
-                             tmp_path / "order")
+    written = write_analysis(results, AnalysisConfig(residue_level=True, reference="S",
+                                                     format="png"), tmp_path / "order")
     names = {p.name for p in written}
     assert any(re.fullmatch(r"(choice|profile)_V_\d+\.png", n) for n in names)
     assert not any(re.search(r"_\d+(s|min|h)\.png$", n) for n in names)
@@ -2766,7 +2771,8 @@ def test_analysis_colours_reach_every_figure_that_colours_samples(two_sample_bun
 
     with pytest.raises(ValueError, match="not a colour"):
         AnalysisConfig(colours={"V": "blurple"})
-    cfg = AnalysisConfig(reference="S", colours={"V": "orange", "nobody": "red"})
+    cfg = AnalysisConfig(residue_level=True, reference="S",
+                         colours={"V": "orange", "nobody": "red"})
     with open_bundle(two_sample_bundle) as b:
         outputs = analysis_outputs(Results.from_bundle(b), cfg)
     assert "[analysis.colours] nobody: no such sample" in caplog.text
@@ -2809,8 +2815,10 @@ def test_a_reference_list_or_all_makes_one_analysis_each(two_sample_bundle, tmp_
     shutil.copytree(two_sample_bundle, bundle)
     assert cli.main(["-q", "analyse", str(bundle), "--reference", "all", "--format", "png"]) == 0
     assert (tmp_path / "results_analysis_S").is_dir() and (tmp_path / "results_analysis_V").is_dir()
-    assert any(p.name.startswith("woods_V_") for p in (tmp_path / "results_analysis_S").iterdir())
-    assert any(p.name.startswith("woods_S_") for p in (tmp_path / "results_analysis_V").iterdir())
+    assert any(p.name.startswith("butterfly_V") for p in (tmp_path / "results_analysis_S")
+               .iterdir())
+    assert any(p.name.startswith("butterfly_S") for p in (tmp_path / "results_analysis_V")
+               .iterdir())
     out = capsys.readouterr().out
     assert out.count("figure(s) in") == 2
     assert cli.main(["-q", "analyse", str(bundle), "--reference", "S,V", "--out",
@@ -2874,7 +2882,7 @@ def test_every_residue_figure_carries_its_data_table(two_sample_bundle):
 
     with open_bundle(two_sample_bundle) as b:
         results = Results.from_bundle(b)
-    outputs = analysis_outputs(results, AnalysisConfig(
+    outputs = analysis_outputs(results, AnalysisConfig(residue_level=True, 
         reference="S", annotations=Annotations(regions=(Region("A", 1, 5),))))
     drawn = {stem.split("_1min")[0]: figure_rows(make()) for stem, make in outputs.figures}
     expected = {  # the figure -> columns its rows must have
@@ -2916,7 +2924,8 @@ def test_figures_that_grow_go_on_over_pages_of_the_page_size(two_sample_bundle):
     assert [len(p) for p in _map_pages((16.0, 12.0), list(range(30)), 4, 2.4)] == [12, 12, 6]
     with open_bundle(two_sample_bundle) as b:
         results = Results.from_bundle(b)
-    small = analysis_outputs(results, AnalysisConfig(reference="S", page_size=(6, 4)))
+    small = analysis_outputs(results, AnalysisConfig(residue_level=True, reference="S",
+                                                     page_size=(6, 4)))
     stems = [stem for stem, _ in small.figures]
     # a panel a page: the undeuterated control's coverage, then the time point's
     assert {"coverage_S", "coverage_S_2"} <= set(stems)
@@ -2925,10 +2934,52 @@ def test_figures_that_grow_go_on_over_pages_of_the_page_size(two_sample_bundle):
     assert kind_of("population_tiers_3").name == "population_tiers"
     first = dict(small.figures)["coverage_S"]()
     assert [ax.get_title() for ax in first.axes if ax.get_title()][0].endswith("undeuterated")
-    default = analysis_outputs(results, AnalysisConfig(reference="S"))
+    default = analysis_outputs(results, AnalysisConfig(residue_level=True, reference="S"))
     assert not any(stem.endswith("_2") for stem, _ in default.figures)  # one page each
     with pytest.raises(ValueError):
-        AnalysisConfig(page_size=(3, 2))
+        AnalysisConfig(residue_level=True, page_size=(3, 2))
     with pytest.raises(ValueError, match="width and height"):
-        AnalysisConfig(page_size="big")
+        AnalysisConfig(residue_level=True, page_size="big")
     assert AnalysisConfig.from_dict({"page_size": [20, 15]}).page_size == (20.0, 15.0)
+
+
+def test_residue_level_outputs_need_peptides_that_make_one_protein(two_sample_bundle,  # noqa: F811
+                                                                   tmp_path):
+    """Pooled unrelated peptides have no residues to resolve (owner, 2026-11-08): a sample with
+    one peptide range, with peptides laid end to end that overlap nowhere, or whose peptides
+    name different residues at one number has no residue-level outputs by default."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.analysis.residues import residue_level_states
+    from hxex.io import open_bundle
+    from hxex.report import analysis_outputs
+
+    up = table([
+        ("P", "PEPTIDEK", 1, 60.0, 0.4, 0.02), ("P", "TIDEKAAL", 4, 60.0, 0.5, 0.02),
+        ("one", "PEPTIDEK", 1, 60.0, 0.4, 0.02),
+        ("end", "PEPTIDEK", 1, 60.0, 0.4, 0.02), ("end", "AALLKR", 9, 60.0, 0.5, 0.02),
+        ("clash", "PEPTIDEK", 1, 60.0, 0.4, 0.02), ("clash", "WWWWWWW", 3, 60.0, 0.5, 0.02),
+        ("mod", "PEpSTIDEK", 1, 60.0, 0.4, 0.02), ("mod", "STIDEKA", 3, 60.0, 0.5, 0.02),
+    ])
+    level = {s: why for (_, s), why in residue_level_states(up).items()}
+    assert level["P"] == "" and level["mod"] == ""  # overlapping; pS matches S
+    assert level["one"].startswith("one peptide range")
+    assert level["end"].startswith("no two of its 2 peptide ranges overlap")
+    assert "different residues at residue 3 (P and W)" in level["clash"]
+    # a sequence for the sample: the residue map checks its peptides against it instead
+    assert residue_level_states(up, sequences={"clash": "PEPTIDEKAAL"})[("", "clash")] == ""
+    assert set(residue_level_states(up, True).values()) == {""}
+    assert "" not in residue_level_states(up, False).values()
+    with pytest.raises(ValueError, match="residue_level"):
+        residue_level_states(up, "yes")
+    with pytest.raises(ValueError, match="residue_level"):
+        AnalysisConfig(residue_level="sometimes")
+    # the synthetic run has one peptide per sample: the peptide outputs only, by default
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    auto = analysis_outputs(results, AnalysisConfig(reference="S"))
+    assert "residues" not in auto.tables and "coverage" not in auto.tables
+    assert "compare_residues" not in auto.tables and "compare_peptides" in auto.tables
+    stems = [stem for stem, _ in auto.figures]
+    assert stems and all(stem.startswith("butterfly_") for stem in stems)
+    forced = analysis_outputs(results, AnalysisConfig(reference="S", residue_level=True))
+    assert {"residues", "coverage", "compare_residues"} <= set(forced.tables)

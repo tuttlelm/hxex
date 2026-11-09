@@ -72,7 +72,7 @@ from ..analysis import (
     set_pvalues,
     species_uptake,
 )
-from ..analysis.residues import NoPeptideAtTime
+from ..analysis.residues import NoPeptideAtTime, residue_level_states
 from ..analysis.residues import states as _states
 from ..analysis.runs import display_labels, label, resolve_sample
 from ..analysis.settings import ALL_REFERENCES, OVERLAY_VALUES, UNDEUTERATED, population_rule
@@ -374,16 +374,29 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     pairs = list(zip(up.run.astype(str), up.sample.astype(str), strict=True))
     up = up.select(np.array([p in set(wanted) for p in pairs], dtype=bool))
     sequences = config.sequences(base)
+    # residue-level outputs only for a sample whose peptides make one protein (owner,
+    # 2026-11-08: pooled unrelated peptides have no residues to resolve)
+    level = residue_level_states(up, config.residue_level, sequences=sequences)
+    for state, why in level.items():
+        if why and config.residue_level == "auto":
+            log.info("%s: no residue-level outputs (%s); [analysis] residue_level = true makes "
+                     "them", label(*state), why)
+    on = {state for state, why in level.items() if not why}
+    res_up = up.select(np.array([p in on for p in zip(
+        up.run.astype(str), up.sample.astype(str), strict=True)], dtype=bool))
     # K=2 residue values from the peptides whose sets are best described by two populations,
     # with the share of the weight they carry (HISTORY 137)
     # else the bootstrap rule (HISTORY 139)
     gate = config.populations in ("best_set", "population_test")
-    residues = residue_map(up, sequences=sequences, weight_exponent=config.weight_exponent,
-                           modified=config.modified_peptides,
-                           two_population_peptides=gate and 2 in config.ks,
-                           population_test=config.populations == "population_test")
+    residues = (residue_map(res_up, sequences=sequences,
+                            weight_exponent=config.weight_exponent,
+                            modified=config.modified_peptides,
+                            two_population_peptides=gate and 2 in config.ks,
+                            population_test=config.populations == "population_test")
+                if on else None)
     # modified forms kept apart are states of their own (e.g. 'WT pS12'), after their sample
-    state_pairs = [s for s in _states(residues) if s not in wanted]
+    state_pairs = ([s for s in _states(residues) if s not in wanted]
+                   if residues is not None else [])
     all_states = wanted + state_pairs
     labels = display_labels([s[0] for s in all_states], [s[1] for s in all_states])
     samples = [labels[s] for s in wanted]  # display labels, the reference first
@@ -395,18 +408,26 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     reference = labels[ref_state] if ref_state is not None else ""
     ref_name = label(*ref_state) if ref_state is not None else ""  # names it for the analyses
     styles = _sample_styles(up, labels, in_order + states_shown, config.colours)
-    coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
-    try:
-        coverage = coverage_table(up, sequences=sequences, count=config.redundancy,
-                                  time=coverage_time)
-    except NoPeptideAtTime as exc:
-        log.warning("%s: coverage_times = \"all\" is used instead (set [analysis] "
-                    "coverage_times to choose the times coverage is judged on)", exc)
-        coverage = coverage_table(up, sequences=sequences, count=config.redundancy, time="all")
-    choice = (choose_populations(residues, config.choice_limits,
-                                 tiers=config.populations == "population_test")
-              if 2 in config.ks else None)
-    length = int(residues.residue.max())
+    # the display labels of the samples with residue-level outputs, in the figures' order
+    res_order = [labels[s] for s in wanted if s in on]
+    res_order = [x for x in in_order if x in set(res_order)]
+    coverage = choice = None
+    length = None
+    if residues is not None:
+        coverage_time = (None if config.coverage_times == UNDEUTERATED
+                         else config.coverage_times)
+        try:
+            coverage = coverage_table(res_up, sequences=sequences, count=config.redundancy,
+                                      time=coverage_time)
+        except NoPeptideAtTime as exc:
+            log.warning("%s: coverage_times = \"all\" is used instead (set [analysis] "
+                        "coverage_times to choose the times coverage is judged on)", exc)
+            coverage = coverage_table(res_up, sequences=sequences, count=config.redundancy,
+                                      time="all")
+        choice = (choose_populations(residues, config.choice_limits,
+                                     tiers=config.populations == "population_test")
+                  if 2 in config.ks else None)
+        length = int(residues.residue.max())
     # the per-time figures: every time point (the controls are not times; a control that is
     # also a time point is one)
     times = list(config.times) or sorted({float(t) for t in up.time if np.isfinite(t)})
@@ -414,8 +435,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     when = {"time_scale": scale}  # the figures label their time by the scale
     ann = config.annotations
     marks = ann.marks()
-    tables: dict[str, dict] = {"species_uptake": up.columns(), "residues": residues.columns(),
-                               "coverage": coverage.columns()}
+    tables: dict[str, dict] = {"species_uptake": up.columns()}
+    if residues is not None:
+        tables["residues"] = residues.columns()
+        tables["coverage"] = coverage.columns()
     if choice is not None:
         tables["populations"] = choice.columns()
     if config.filters is not None:  # the spectra [analysis.filters] left out whole, and why
@@ -423,7 +446,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             results, config.filters, exclude_flagged=config.exclude_flagged,
             controls=config.controls)
     # the figures take the tables with each state's display label as its sample
-    up_d, residues_d, coverage_d = (_display(t, labels) for t in (up, residues, coverage))
+    up_d = _display(up, labels)
+    residues_d = _display(residues, labels) if residues is not None else None
+    coverage_d = _display(coverage, labels) if coverage is not None else None
     choice_d = _display(choice, labels) if choice is not None else None
     if isinstance(results, RunSet):
         tables["run_settings"] = compare_settings(results).columns()
@@ -475,82 +500,88 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                **(test_p or {}))
             tables["compare_population_counts"] = counts.columns()
             counts_d = _display(counts, labels, reference)
-        # each sample's own values; whether a difference is significant is judged from the
-        # peptides both samples measured at that time (owner, 2026-10-31; HISTORY 202), so a
-        # peptide only one of them has cannot make one
-        crit = comparisons["K=1 fD"].delta_crit
-        pairs = paired_residue_maps(
-            up, ref, match=config.peptide_match, sequences=sequences,
-            weight_exponent=config.weight_exponent, modified=config.modified_peptides,
-            two_population_peptides=gate and 2 in config.ks,
-            population_test=config.populations == "population_test")
-        pair_choice = ({s: choose_populations(m, config.choice_limits,
-                                              tiers=config.populations == "population_test")
-                        for s, m in pairs.items()} if choice is not None else {})
-        # and only where a covering peptide carries it: a safeguard against wrong error bars;
-        # the residue test's other calls stay visible as residue_test_only (HISTORY 206)
-        nterm = up.nterm_subtract
-        res_cmp = gated_by_peptides(judged_on_shared(
-            compare_residues(residues, ref, alpha=config.alpha, delta_crit=crit, choice=choice),
-            concat_tables([compare_residues(m, ref, alpha=config.alpha, delta_crit=crit,
-                                            choice=pair_choice.get(s))
-                           for s, m in pairs.items()])), comparisons["K=1 fD"],
-            nterm_subtract=nterm, modified=config.modified_peptides)
-        tables["compare_residues"] = res_cmp.columns()
-        if ann.regions:  # the regions compared from their residues, with the same gate
-            reg_cmp = compare_regions(res_cmp, ann, comparisons["K=1 fD"], nterm_subtract=nterm,
-                                      modified=config.modified_peptides)
-            tables["compare_regions"] = reg_cmp.columns()
-        if choice is not None:
-            # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
-            # every run: without one most residues have no error and the few calls do not
-            # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
-            k2_tested = all(r.bootstrap_by_k.get(2) is not None for r in (
-                results.runs.values() if isinstance(results, RunSet) else [results]))
-            if k2_tested:  # the two positions, each with its own K=2 threshold
-                k2_positions = {}
-                for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
-                    k2_crit = comparisons[title].delta_crit
-                    k2_positions[rank] = gated_by_peptides(judged_on_shared(
-                        compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
-                                         delta_crit=k2_crit, choice=choice),
-                        concat_tables([compare_residues(m, ref, K=2, rank=rank,
-                                                        alpha=config.alpha,
-                                                        delta_crit=k2_crit,
-                                                        choice=pair_choice[s])
-                                       for s, m in pairs.items()])), comparisons[title],
+        res_cmp = None
+        # the residues compared only where the reference has residue-level outputs
+        if residues is not None and ref_state in on:
+            # each sample's own values; whether a difference is significant is judged from the
+            # peptides both samples measured at that time (owner, 2026-10-31; HISTORY 202), so a
+            # peptide only one of them has cannot make one
+            crit = comparisons["K=1 fD"].delta_crit
+            pairs = paired_residue_maps(
+                res_up, ref, match=config.peptide_match, sequences=sequences,
+                weight_exponent=config.weight_exponent, modified=config.modified_peptides,
+                two_population_peptides=gate and 2 in config.ks,
+                population_test=config.populations == "population_test")
+            pair_choice = ({s: choose_populations(m, config.choice_limits,
+                                                  tiers=config.populations == "population_test")
+                            for s, m in pairs.items()} if choice is not None else {})
+            # and only where a covering peptide carries it: a safeguard against wrong error bars;
+            # the residue test's other calls stay visible as residue_test_only (HISTORY 206)
+            nterm = up.nterm_subtract
+            res_cmp = gated_by_peptides(judged_on_shared(
+                compare_residues(residues, ref, alpha=config.alpha, delta_crit=crit, choice=choice),
+                concat_tables([compare_residues(m, ref, alpha=config.alpha, delta_crit=crit,
+                                                choice=pair_choice.get(s))
+                               for s, m in pairs.items()])), comparisons["K=1 fD"],
+                nterm_subtract=nterm, modified=config.modified_peptides)
+            tables["compare_residues"] = res_cmp.columns()
+            if ann.regions:  # the regions compared from their residues, with the same gate
+                reg_cmp = compare_regions(res_cmp, ann, comparisons["K=1 fD"], nterm_subtract=nterm,
+                                          modified=config.modified_peptides)
+                tables["compare_regions"] = reg_cmp.columns()
+            if choice is not None:
+                # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
+                # every run: without one most residues have no error and the few calls do not
+                # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
+                k2_tested = all(r.bootstrap_by_k.get(2) is not None for r in (
+                    results.runs.values() if isinstance(results, RunSet) else [results]))
+                if k2_tested:  # the two positions, each with its own K=2 threshold
+                    k2_positions = {}
+                    for rank, title in ((1, "K=2 rank 1 (low D) fD"),
+                                        (2, "K=2 rank 2 (high D) fD")):
+                        k2_crit = comparisons[title].delta_crit
+                        k2_positions[rank] = gated_by_peptides(judged_on_shared(
+                            compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
+                                             delta_crit=k2_crit, choice=choice),
+                            concat_tables([compare_residues(m, ref, K=2, rank=rank,
+                                                            alpha=config.alpha,
+                                                            delta_crit=k2_crit,
+                                                            choice=pair_choice[s])
+                                           for s, m in pairs.items()])), comparisons[title],
+                            nterm_subtract=nterm, modified=config.modified_peptides)
+                    tables["compare_residues_K2"] = _ranked(k2_positions)
+                # where the map shows no position difference the states are the same, and the
+                # populations are compared on positions shared by both samples (HISTORY 281)
+                shown = list(k2_positions.values()) if k2_positions is not None else None
+                pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
+                    compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit,
+                                        positions=shown),
+                    concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
+                                                       delta_crit=crit, positions=shown)
+                                   for s in pairs]))
+                if k2_tested:
+                    pop_cmp = gated_by_peptides(
+                        pop_cmp, comparisons["K=2 rank 1 (low D) population"],
                         nterm_subtract=nterm, modified=config.modified_peptides)
-                tables["compare_residues_K2"] = _ranked(k2_positions)
-            # where the map shows no position difference the states are the same, and the
-            # populations are compared on positions shared by both samples (HISTORY 281)
-            shown = list(k2_positions.values()) if k2_positions is not None else None
-            pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
-                compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit,
-                                    positions=shown),
-                concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
-                                                   delta_crit=crit, positions=shown)
-                               for s in pairs]))
-            if k2_tested:
-                pop_cmp = gated_by_peptides(
-                    pop_cmp, comparisons["K=2 rank 1 (low D) population"],
-                    nterm_subtract=nterm, modified=config.modified_peptides)
-            pop_cols = pop_cmp.columns()
-            if not k2_tested:  # the same columns as the tested case, empty
-                pop_cols["z"] = np.full(len(pop_cmp), np.nan)
-                pop_cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
-                pop_cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
-                pop_cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
-                log.info("K=2 differences between samples (population share, positions) not "
-                         "tested: no bootstrap at K=2 ([run.bootstrap] ks = [1, 2], or hxex "
-                         "resume); residue_significance_K2 shows where the number of "
-                         "populations differs")
-            tables["compare_populations"] = pop_cols
-            choices_cmp = compare_choices(choice, ref)
-            tables["compare_choices"] = choices_cmp.columns()
-            # the K = 2 map decides one or two on the shared peptides too, as its test does
-            shared_choices = concat_tables([compare_choices(pair_choice[s], ref) for s in pairs])
+                pop_cols = pop_cmp.columns()
+                if not k2_tested:  # the same columns as the tested case, empty
+                    pop_cols["z"] = np.full(len(pop_cmp), np.nan)
+                    pop_cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
+                    pop_cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
+                    pop_cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
+                    log.info("K=2 differences between samples (population share, positions) not "
+                             "tested: no bootstrap at K=2 ([run.bootstrap] ks = [1, 2], or hxex "
+                             "resume); residue_significance_K2 shows where the number of "
+                             "populations differs")
+                tables["compare_populations"] = pop_cols
+                choices_cmp = compare_choices(choice, ref)
+                tables["compare_choices"] = choices_cmp.columns()
+                # the K = 2 map decides one or two on the shared peptides too, as its test does
+                shared_choices = concat_tables([compare_choices(pair_choice[s], ref)
+                                                for s in pairs])
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
-        res_cmp = _display(res_cmp, labels, reference)
+        if res_cmp is not None:
+            res_cmp = _display(res_cmp, labels, reference)
         if reg_cmp is not None:
             reg_cmp = _display(reg_cmp, labels, reference)
         if choices_cmp is not None:
@@ -582,7 +613,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             prot_cmp = _display(prot_cmp, labels, reference)
         protection = _display(protection, labels)
     regions = None
-    if ann.regions:
+    if ann.regions and residues is not None:
         regions = region_summary(residues, ann)
         tables["regions"] = _columns(regions)
         regions = _display(regions, labels)
@@ -593,17 +624,18 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     page = config.page_size
     per_row = max(1, int((page[0] - 0.8) // COVERAGE_CELL[0]))
     per_page = per_row * max(1, int(page[1] // COVERAGE_CELL[1]))
-    for s in in_order:  # the undeuterated control, then the times, wrapped and paged
+    for s in res_order:  # the undeuterated control, then the times, wrapped and paged
         points = (["UN"] if up.where(sample=s, role=UNDEUT).any() else []) + list(times)
         for n, chunk in enumerate(_pages(points, per_page)):
             jobs.append((_page_stem(f"coverage_{s}", n), lambda s=s, chunk=chunk: coverage_figure(
                 up, samples=[s], times=[t for t in chunk if t != "UN"], length=length,
                 columns=per_row, undeuterated="UN" in chunk, cell=COVERAGE_CELL, **when)))
-    jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
-        coverage, samples=in_order, marks=marks, styles=styles)))
+    if coverage is not None:
+        jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
+            coverage, samples=res_order, marks=marks, styles=styles)))
     runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
     booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
-    for s in in_order + states:
+    for s in (res_order + states if residues is not None else []):
         for t in times:
             when_ = _time_label(t, scale)
             if choice is not None and choice.where(sample=s, time=t).any():
@@ -618,30 +650,35 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     k1_crit = comparisons["K=1 fD"].delta_crit if "K=1 fD" in comparisons else None
     # every sample's fD by residue on one axis, none a reference (owner), one y axis for every
     # time so the figures compare (owner, 2026-11-04)
-    k1 = residues.where(K=1, rank=1) & np.isin(residues.time, list(times))
-    k1 &= np.isfinite(residues.fD)
+    k1 = (residues.where(K=1, rank=1) & np.isin(residues.time, list(times))
+          if residues is not None else np.zeros(0, dtype=bool))
+    k1 &= np.isfinite(residues.fD) if residues is not None else k1
     highest = (float(np.max(residues.fD[k1] + np.nan_to_num(residues.fD_se[k1])))
                if k1.any() else None)
-    for t in times:
-        with_values = [s for s in in_order + states
+    for t in (times if residues is not None else []):
+        with_values = [s for s in res_order + states
                        if residues.where(sample=s, time=t, K=1, rank=1).any()]
         if with_values:
             jobs.append((f"residues_all_{_time_label(t, scale)}",
                          lambda t=t, w=with_values: plot_residue_samples(
                              residues, w, t, styles=styles, annotations=ann, length=length,
                              top=highest, delta_crit=k1_crit, **when)))
-    if config.populations == "population_test" and (residues.population_tier != "").any():
+    if (config.populations == "population_test" and residues is not None
+            and (residues.population_tier != "").any()):
         tiered = (residues.K == 1) & (residues.population_tier != "")
         points = [np.nan] + sorted({float(t) for t in residues.time[tiered]
                                     if np.isfinite(t)})  # NaN: the controls' rows
         for n, chunk in enumerate(_map_pages(config.page_size, points,
-                                             len(in_order + states), 2.2)):
+                                             len(res_order + states), 2.2)):
             jobs.append((_page_stem("population_tiers", n), lambda chunk=chunk:
-                         plot_population_tiers(residues, in_order + states, length=length,
+                         plot_population_tiers(residues, res_order + states, length=length,
                                                times=chunk, **when)))
     if config.reference:
         others = [s for s in samples if s != reference]
-        residue_others = others + states  # the residue comparisons include the states
+        # the residue comparisons: the samples with residue-level outputs, and the states,
+        # against a reference that has them
+        residue_others = ([s for s in others if s in set(res_order)] + states
+                          if res_cmp is not None else [])
         # the Woods plot: page 1, K=1 and where the number of populations differs; page 2,
         # the K=2 comparisons (made only where both have two populations), the population in
         # fD units: its difference times the separation, judged by the K=1 delta_crit
@@ -678,7 +715,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                  residues, reference, part, t, show=("pop_high",),
                                  choice=choice, annotations=ann, length=length, styles=styles,
                                  **when)))
-            for s in others:
+            for s in (o for o in others if o in residue_others):  # Woods: on the residues
                 k1_rows = comparisons["K=1 fD"].where(sample=s, time=t).any()
                 if k1_rows and counts_d is not None:
                     jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_populations_figure(
