@@ -8449,3 +8449,12 @@ CSVs or mzML if wanted.
     Not built: telling apart several proteins drawn on one residue axis. Checks: full suite
     1,665 passed and 5 failed (residue-output tests on one-peptide data), those 5 then set
     `residue_level = true` and pass; ruff clean.
+
+332. **The reuse test's population-test statistics compared to 1e-3 absolute (2026-11-09).** CI
+    for f8447c9 failed again on the three macOS jobs, in the same test as item 330: a null
+    statistic of the population test (`null_draws`) was 0.07687 against 0.07686 in the full run,
+    1.4e-4 relative over the new 1e-4 tolerance. The statistics are differences of two fitted
+    losses in the hundreds, so a series fitted in another batch rounds them by an absolute
+    ~1e-5, however small the statistic; a relative tolerance is the wrong yardstick for them.
+    The test compares the population test with the full run to 1e-3 absolute (or 1e-4
+    relative); the other arrays keep 1e-4 relative. Checks: tests/test_reuse.py, ruff clean.

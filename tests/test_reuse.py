@@ -35,9 +35,10 @@ def _changed(raw: SpectrumSet, index: int, factor: float = 1.3,
     return dataclasses.replace(raw, intensity=y)
 
 
-def _same(a, b, rows=None, close=False, m=None):
+def _same(a, b, rows=None, close=False, m=None, atol=1e-8):
     """The per-measurement arrays (``m`` rows; default ``len(a)``) of two results (fit, test,
-    bootstrap, controls or flags) equal, at ``rows`` (all: None)."""
+    bootstrap, controls or flags) equal, at ``rows`` (all: None); with ``close``, to 1e-4
+    relative or ``atol``."""
     m = len(a) if m is None else m
     for f in dataclasses.fields(a):
         x, y = getattr(a, f.name), getattr(b, f.name)
@@ -48,7 +49,7 @@ def _same(a, b, rows=None, close=False, m=None):
         if x.dtype.kind in "fc" and close:
             # a series fitted in another batch rounds differently (HISTORY 46, 219): on
             # macOS a population test's null mean moved by 4e-6 relative (HISTORY 330)
-            np.testing.assert_allclose(x, y, rtol=1e-4, atol=1e-8, err_msg=f.name)
+            np.testing.assert_allclose(x, y, rtol=1e-4, atol=atol, err_msg=f.name)
         else:
             np.testing.assert_array_equal(x, y, err_msg=f.name)
 
@@ -101,7 +102,9 @@ def test_a_changed_spectrum_refits_its_series_only(first, tmp_path, caplog):
     kept = np.flatnonzero(~own)
     _same_fit(partial.fit, before.fit, kept)
     _same_fit(partial.fit, fresh.fit, close=True)
-    _same(partial.population_test, fresh.population_test, close=True)
+    # the test's statistics are differences of two fitted losses in the hundreds: their
+    # rounding is absolute, 1e-5 for a statistic of 0.08 on macOS (HISTORY 332)
+    _same(partial.population_test, fresh.population_test, close=True, atol=1e-3)
     _same(partial.bootstrap, fresh.bootstrap, close=True)
     _same(partial.controls, fresh.controls, close=True)
     _same(partial.quality, fresh.quality, close=True)
