@@ -772,6 +772,22 @@ def _written(kind: str, raw: str) -> str:
     return _quoted(raw) if kind in ("text", "path") else raw
 
 
+class _CopyGrid(QTableWidget):
+    """A list editor's grid, whose Ctrl+C copies every selected cell (Qt's own copied only the
+    current one; owner, 2026-11-09), as the Tables view's does."""
+
+    def __init__(self, editor: ListEditor, columns: int):
+        super().__init__(0, columns)
+        self.editor = editor
+
+    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.editor.copy_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class ListEditor(QWidget):
     """A list of tables (``[[input.runs]]``, ...): one row per entry, one column per setting.
     A changed cell is written at once to that entry's lines; an emptied cell switches the
@@ -782,13 +798,15 @@ class ListEditor(QWidget):
         self.owner, self.table = owner, table
         self.keys = [s.key for s in table.settings]
         self.kinds = {s.key: s.kind for s in table.settings}
-        self.grid = QTableWidget(0, len(self.keys))
+        self.grid = _CopyGrid(self, len(self.keys))
         self.grid.setHorizontalHeaderLabels(self.keys)
         for c, s in enumerate(table.settings):
             self.grid.horizontalHeaderItem(c).setToolTip(plain(s.text or ""))
         self.grid.verticalHeader().setVisible(True)
         self.grid.cellChanged.connect(self._changed)
         self.grid.setMinimumHeight(220)
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._menu)
         add = QPushButton("Add an entry")
         add.clicked.connect(self.add)
         self.remove = QPushButton("Remove the selected entry")
@@ -797,7 +815,10 @@ class ListEditor(QWidget):
         self.browse.setToolTip("a file or folder for a cell of a path column")
         self.browse.clicked.connect(self._browse)
         buttons = QHBoxLayout()
-        for b in (add, self.remove, self.browse):
+        copy = QPushButton("Copy the table")
+        copy.setToolTip("every entry, with the column names, as a spreadsheet pastes it")
+        copy.clicked.connect(self.copy_table)
+        for b in (add, self.remove, self.browse, copy):
             buttons.addWidget(b)
         buttons.addStretch()
         about = QFormLayout()
@@ -837,6 +858,58 @@ class ListEditor(QWidget):
         self.grid.blockSignals(False)
         self.grid.resizeColumnsToContents()
         self.remove.setEnabled(bool(entries))
+
+    # --- copying ---------------------------------------------------------------------------
+
+    def _cell(self, row: int, column: int) -> str:
+        item = self.grid.item(row, column)
+        return "" if item is None else item.text()
+
+    def copied_text(self) -> str:
+        """The selected cells as a spreadsheet takes them: the block from the first selected row
+        and column to the last, tab-separated, a cell not selected inside it left empty; with
+        every cell selected (Ctrl+A), the column names first (owner, 2026-11-09)."""
+        chosen = {(i.row(), i.column()) for i in self.grid.selectedIndexes()}
+        if not chosen and self.grid.currentRow() >= 0 and self.grid.currentColumn() >= 0:
+            chosen = {(self.grid.currentRow(), self.grid.currentColumn())}
+        if not chosen:
+            return ""
+        rows = range(min(r for r, _ in chosen), max(r for r, _ in chosen) + 1)
+        columns = range(min(c for _, c in chosen), max(c for _, c in chosen) + 1)
+        lines = ["\t".join(self._cell(r, c) if (r, c) in chosen else "" for c in columns)
+                 for r in rows]
+        if len(chosen) == self.grid.rowCount() * len(self.keys):  # Ctrl+A: with the names
+            lines.insert(0, "\t".join(self.keys[c] for c in columns))
+        return "\n".join(lines) + "\n"
+
+    def table_text(self) -> str:
+        """Every entry with the column names, tab-separated."""
+        lines = ["\t".join(self.keys)]
+        lines += ["\t".join(self._cell(r, c) for c in range(len(self.keys)))
+                  for r in range(self.grid.rowCount())]
+        return "\n".join(lines) + "\n"
+
+    def copy_selection(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        if text := self.copied_text():
+            QApplication.clipboard().setText(text)
+
+    def copy_table(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(self.table_text())
+
+    def _menu(self, pos) -> None:
+        menu = QMenu(self)
+        copy = menu.addAction("Copy")
+        copy.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        copy.setEnabled(bool(self.copied_text()))
+        copy.triggered.connect(self.copy_selection)
+        menu.addAction("Copy the table (with the column names)").triggered.connect(
+            self.copy_table)
+        menu.exec(self.grid.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def _changed(self, row: int, column: int) -> None:
         from ..project_edit import set_entry

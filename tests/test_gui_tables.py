@@ -350,6 +350,11 @@ def test_ctrl_c_copies_every_selected_cell(tables_view, qtbot):
     assert copy.text() == "Copy" and copy.isEnabled()
     copy.trigger()
     assert QApplication.clipboard().text() == "s1\trejected\ns2\t\n"
+    # every cell (Ctrl+A): the column names first (owner, 2026-11-09)
+    qtbot.keyClick(editor.grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    qtbot.keyClick(editor.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    lines = QApplication.clipboard().text().splitlines()
+    assert lines[0].split("\t") == list(editor.table.columns) and len(lines) == 4
 
 
 def test_the_review_table_shades_rows_the_results_do_not_have(tables_view, monkeypatch):

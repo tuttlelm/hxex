@@ -192,6 +192,33 @@ def test_a_list_of_tables_is_edited_entry_by_entry(scan_editor):
     assert "rep" in editor.problem.text()
 
 
+def test_a_list_of_tables_is_copied_as_a_table(scan_editor, qtbot):
+    """The selected cells (Ctrl+C) and the whole table with its column names, tab-separated, as
+    a spreadsheet pastes them (owner, 2026-11-09: it could not be copied as a table)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    editor, _ = scan_editor
+    _page(editor, "input.runs")
+    lists = editor.list_editor
+    keys, grid = lists.keys, lists.grid
+    path_c = keys.index("path")
+    lines = lists.table_text().splitlines()
+    assert lines[0].split("\t") == keys and len(lines) == 3
+    assert lines[1].split("\t")[path_c] == "UN_01.mzML"
+    lists.copy_table()
+    assert QApplication.clipboard().text() == lists.table_text()
+    grid.clearSelection()
+    grid.setCurrentCell(0, path_c)
+    grid.setCurrentCell(1, path_c, grid.selectionModel().SelectionFlag.Select)
+    qtbot.keyClick(grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "UN_01.mzML\nD_60s_01.mzML\n"
+    assert lists.copied_text().count("\t") == 0  # one column: no tabs
+    qtbot.keyClick(grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)  # every cell
+    qtbot.keyClick(grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == lists.table_text()  # with the column names
+
+
 def test_a_table_of_names_is_edited(editor, project):
     _page(editor, "analysis.controls")
     names = editor.list_editor

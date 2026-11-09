@@ -89,7 +89,10 @@ every setting at its default, as `hxex init` does.
   setting, each column's description below it. Type in a cell and press Enter to write it;
   empty a cell to switch that setting off. **Add an entry** and **Remove the selected entry**
   add and remove rows; **Browse for the selected cell** fills a cell with a file's name. Each
-  entry is changed in its own lines, so comments elsewhere in the file stay.
+  entry is changed in its own lines, so comments elsewhere in the file stay. Ctrl+C copies the
+  selected cells (all of them, after Ctrl+A, with the column names first), and **Copy the
+  table** (also on the right-click menu) copies every entry with the column names, ready to
+  paste into a spreadsheet.
 - A table of names you choose (sample names under `[analysis.controls]`, run names under
   `[analysis.runs]`, ...) is a table of names and values: type a name and its value and click
   **Add**, or change a value in the table. Under `[analysis.colours]`, each colour is shown
@@ -110,7 +113,8 @@ the user review table. Choose one on the left to edit it as a grid.
   removing one asks first). Columns of your own are kept (*hxex* ignores the ones it does not
   read), and the columns keep their order.
 - Select cells and press Ctrl+C, or right-click and choose **Copy**, to copy them as a block a
-  spreadsheet takes (a cell not selected inside the block is left empty).
+  spreadsheet takes (a cell not selected inside the block is left empty). With every cell
+  selected (Ctrl+A), the column names come first.
 - Click a column's header to sort the rows by it (numbers as numbers, empty cells last); click
   it again for the reverse order. Sorting changes only what you see: the file keeps its own
   order when saved, and each row keeps its number in the file (a spreadsheet numbers it one

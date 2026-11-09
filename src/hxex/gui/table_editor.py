@@ -326,7 +326,8 @@ class TableEditor(QWidget):
 
     def copied_text(self) -> str:
         """The selected cells as a spreadsheet takes them: the block from the first selected row
-        and column to the last, tab-separated, a cell not selected inside it left empty."""
+        and column to the last, tab-separated, a cell not selected inside it left empty; with
+        every cell selected (Ctrl+A), the column names first (owner, 2026-11-09)."""
         picked = self.grid.selectionModel().selectedIndexes()
         if not picked:
             current = self.grid.currentIndex()
@@ -336,8 +337,12 @@ class TableEditor(QWidget):
         chosen = {(i.row(), i.column()) for i in picked}
         rows = range(min(r for r, _ in chosen), max(r for r, _ in chosen) + 1)
         columns = range(min(c for _, c in chosen), max(c for _, c in chosen) + 1)
-        return "\n".join("\t".join(self.cell(r, c) if (r, c) in chosen else "" for c in columns)
-                         for r in rows) + "\n"
+        lines = ["\t".join(self.cell(r, c) if (r, c) in chosen else "" for c in columns)
+                 for r in rows]
+        if len(chosen) == self.model.rowCount() * self.model.columnCount():
+            lines.insert(0, "\t".join(str(self.model.headerData(c, Qt.Orientation.Horizontal))
+                                      for c in columns))
+        return "\n".join(lines) + "\n"
 
     def cell_menu(self):
         """The grid's right-click menu: Copy (the selected cells, as Ctrl+C)."""

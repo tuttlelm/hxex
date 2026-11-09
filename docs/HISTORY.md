@@ -8402,3 +8402,11 @@ CSVs or mzML if wanted.
     after the decision waits ~29 s for the read in progress, later steps 0.2-1.3 s. Checks:
     touched tests 284 passed (new: tests/test_report.py, tests/test_retention_trace.py), ruff
     clean; full suite 1,675 passed, with the real Thermo and mzML file tests.
+
+329. **Lists of tables copy as a table (2026-11-09).** Owner: the `[[input.runs]]` grid of
+    the project editor could not be copied as a table (Qt's own Ctrl+C copied one cell). Its grid
+    (and every list of tables': exclusion rules, regions, sites) now copies the selected cells
+    tab-separated with Ctrl+C or the right-click menu, as the Tables view does, and **Copy the
+    table** copies every entry with the column names. With every cell selected (Ctrl+A), Ctrl+C
+    puts the column names first, here and in the Tables view (owner). Checks: tests/test_gui_project.py and
+    tests/test_gui_tables.py (58 GUI tests passed), ruff clean.
