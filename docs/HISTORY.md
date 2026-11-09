@@ -8491,3 +8491,14 @@ CSVs or mzML if wanted.
     picked 0, separation 0). So no joint fit of partly resolved ions, and no "lost signal" flag:
     the common error is a merged bin read too high, which overlapping_ion measures. Checks:
     tests/test_fragment_kinetics.py (an ion inside a fragment's reach), ruff clean.
+
+334. **Legends above a panel wrap instead of squeezing it (2026-11-09).** The residue fD
+    figure of every sample (`residues_all`) put its legend on one row, one column per entry; with
+    ten entries (five samples, each with a modified form; owner's pooled example) constrained
+    layout narrowed the panel to a sliver beside a legend running far past it. Redundancy and
+    resolution, the residue comparison, and the per-peptide sample bars did the same, already
+    a little too wide with five samples. `hxex.report.coverage.legend_columns` measures the
+    labels in the legend's font and gives the most columns that fit across the panel (every
+    entry when they all fit, else fewer, balanced over the rows); those four legends use it.
+    Figures whose legends fit are unchanged. Checks: tests/test_report.py (the helper), the
+    report and analysis tests, before/after pages of the pooled example (private).

@@ -1690,3 +1690,22 @@ def test_a_chosen_k_the_screen_skipped_waits_for_resume():
     with pytest.raises(ValueError, match="hxex resume fits it"):
         refuse_unfitted(waiting)
     refuse_unfitted(screened)  # nothing chosen: nothing refused
+
+
+def test_a_legend_above_a_panel_wraps_rather_than_squeezing_it():
+    """legend_columns gives every entry its own column while they fit across the panel, else
+    fewer, balanced over the rows (ten samples and modified forms had squeezed the residue
+    figure to a sliver; owner, 2026-11-09)."""
+    from matplotlib.figure import Figure
+
+    from hxex.report.coverage import legend_columns
+
+    ax = Figure(figsize=(8.0, 3.4)).add_subplot()
+    assert legend_columns(ax, ["WT", "D109H"]) == 2
+    many = [f"sample_{name} acK40" for name in ("one", "two", "three", "four", "five",
+                                                  "six", "seven", "eight", "nine", "ten")]
+    ncol = legend_columns(ax, many, fontsize=7.5)
+    assert 1 < ncol < 10
+    rows = -(-10 // ncol)
+    assert ncol == -(-10 // rows)  # balanced: no nearly empty last row
+    assert legend_columns(ax, []) == 1

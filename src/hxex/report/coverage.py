@@ -165,6 +165,42 @@ def residue_step(last: float, width_in: float) -> int:
     return next((s for s in RESIDUE_STEPS if last / s <= most), RESIDUE_STEPS[-1])
 
 
+def legend_columns(ax, labels: Sequence[str], *, fontsize: float | None = None,
+                   handlelength: float | None = None, handletextpad: float | None = None,
+                   columnspacing: float | None = None, share: float = 1.0) -> int:
+    """How many columns a legend of ``labels`` above ``ax`` may have and still fit in
+    ``share`` of the axes' width: every entry if they fit in one row, else fewer, balanced
+    over the rows. A legend of one row per entry wider than its panel made constrained layout
+    squeeze the panel (owner, 2026-11-09: ten samples and modified forms). The text widths are
+    measured in the legend's font; the spacings are the legend's (``rcParams`` when None)."""
+    from math import ceil
+
+    from matplotlib import rcParams
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextToPath
+
+    labels = [str(x) for x in labels]
+    if not labels:
+        return 1
+    font = FontProperties(size=fontsize if fontsize is not None else rcParams["legend.fontsize"])
+    size = font.get_size_in_points()
+    measure = TextToPath()
+    widest = max(measure.get_text_width_height_descent(x, font, ismath=False)[0]
+                 for x in labels)
+    entry = widest + size * ((handlelength if handlelength is not None
+                              else rcParams["legend.handlelength"])
+                             + (handletextpad if handletextpad is not None
+                                else rcParams["legend.handletextpad"]))
+    gap = size * (columnspacing if columnspacing is not None
+                  else rcParams["legend.columnspacing"])
+    room = ax.get_position().width * ax.figure.get_figwidth() * 72 * share
+    fit = max(1, int((room + gap) // (entry + gap)))
+    if fit >= len(labels):
+        return len(labels)
+    rows = ceil(len(labels) / fit)
+    return ceil(len(labels) / rows)
+
+
 def residue_ticks(ax, last: float) -> None:
     """Residue numbers on ``ax``'s x axis spaced for its width (:func:`residue_step`), with
     minor ticks at a fifth of the step from 25 up (a half below)."""
@@ -369,5 +405,7 @@ def plot_redundancy_resolution(
     top.set_ylabel("redundancy" if coverage.count == "peptides" else "redundancy (spectra)")
     bottom.set_xlabel("residue")
     bottom.set_xlim(0.5, n_res + 0.5)
-    top.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(samples), frameon=False)
+    _, names = top.get_legend_handles_labels()
+    top.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), frameon=False,
+               ncol=legend_columns(top, names))
     return fig

@@ -30,7 +30,7 @@ from ..analysis import (
 )
 from ..analysis.settings import OVERLAY_VALUES
 from . import hover
-from .coverage import MARK_LINE, SampleStyle, sample_hatch, sample_style
+from .coverage import MARK_LINE, SampleStyle, legend_columns, sample_hatch, sample_style
 from .residues import _when
 
 INCREASE, DECREASE, NEUTRAL = "#c0392b", "#1f5fa8", "#b5b5b5"
@@ -203,10 +203,12 @@ def _residue_axes(ax: Axes, *, length: int, ylabel: str, reference: str, sample:
         handles.append(Line2D([], [], linestyle="none", marker="$*$", markersize=7,
                               color="#4d4d4d", label="corrected differently"))
     many = len(handles) > 3  # from the left, clear of the time label on the right
+    style = {"fontsize": 7.5 if many else 9, "handletextpad": 0.2, "columnspacing": 1.0,
+             "handlelength": 1.3}  # fDavg's line: short
     ax.legend(handles=handles, loc="lower left" if many else "lower center",
-              bbox_to_anchor=(0.0 if many else 0.5, 0.98), ncol=len(handles), frameon=False,
-              fontsize=7.5 if many else 9, handletextpad=0.2, columnspacing=1.0,
-              borderaxespad=0.0 if many else 0.5, handlelength=1.3)  # fDavg's line: short
+              bbox_to_anchor=(0.0 if many else 0.5, 0.98), frameon=False,
+              ncol=legend_columns(ax, [h.get_label() for h in handles], share=0.88, **style),
+              borderaxespad=0.0 if many else 0.5, **style)
     ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
 
@@ -527,10 +529,12 @@ def plot_residue_samples(
     ax.set_ylabel(r"fD$_{\rm avg}$")  # the K=1 fit, or the K=2 average of separated twos
     ax.grid(color="#e5e5e5", linewidth=0.8)
     many = len(handles) > 4
+    style = {"fontsize": 7.5 if many else 9, "handletextpad": 0.3, "columnspacing": 1.0,
+             "handlelength": 1.6}
     ax.legend(handles=handles, loc="lower left" if many else "lower center",
-              bbox_to_anchor=(0.0 if many else 0.5, 0.98), ncol=len(handles), frameon=False,
-              fontsize=7.5 if many else 9, handletextpad=0.3, columnspacing=1.0,
-              borderaxespad=0.0 if many else 0.5, handlelength=1.6)
+              bbox_to_anchor=(0.0 if many else 0.5, 0.98), frameon=False,
+              ncol=legend_columns(ax, [h.get_label() for h in handles], share=0.88, **style),
+              borderaxespad=0.0 if many else 0.5, **style)
     ax.text(1.0, 1.02, _when(time, time_scale), transform=ax.transAxes, ha="right",
             va="bottom", fontsize=9)
     many_note = len(handles) > 4  # the legend runs from the left: the note inside instead
@@ -873,8 +877,9 @@ def plot_region_bars(
     ax.set_ylabel("fD")
     ax.grid(axis="y", color="#e5e5e5", linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(samples), frameon=False,
-              fontsize=8)
+    _, names = ax.get_legend_handles_labels()
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), frameon=False, fontsize=8,
+              ncol=legend_columns(ax, names, fontsize=8))
     return fig
 
 
