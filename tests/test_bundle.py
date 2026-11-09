@@ -277,9 +277,14 @@ def test_existing_paths_are_protected(tmp_path, run):
     path = write_bundle(tmp_path / "b", measurements=meas, fit=fit)
     with pytest.raises(BundleError, match="exists"):
         write_bundle(path, measurements=meas, fit=fit)
+    with open_bundle(path) as b:
+        before = b.manifest["created"]
     write_bundle(path, measurements=meas, fit=fit, overwrite=True, notes="again")
     with open_bundle(path) as b:
         assert b.manifest["notes"] == "again"
+        # a new stamp even within the second (a rerun keeping every fit is that quick; the
+        # analysis folders tell results apart by it)
+        assert b.manifest["created"] != before
     other = tmp_path / "data"
     other.mkdir()
     (other / "keep.txt").write_text("do not delete")

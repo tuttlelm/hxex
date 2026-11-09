@@ -8410,3 +8410,17 @@ CSVs or mzML if wanted.
     table** copies every entry with the column names. With every cell selected (Ctrl+A), Ctrl+C
     puts the column names first, here and in the Tables view (owner). Checks: tests/test_gui_project.py and
     tests/test_gui_tables.py (58 GUI tests passed), ruff clean.
+
+330. **Bundles stamped to the millisecond (2026-11-09).** The full suite on the residue-level branch
+    (then unmerged) failed two tests of analysis folders: after `hxex run --overwrite`, the old
+    analysis read as made from the new results. An analysis folder records the bundle's
+    `created` stamp (HISTORY 134), which was to the second; with item 326 a rerun that keeps
+    every fit took 0.09 s on the test data, so the old and new bundles had the same stamp. On
+    main the tests passed only because their analyses took over a second. `created` is now to
+    the millisecond (old bundles keep theirs; the comparison is unchanged). Also: CI failed on
+    all three macOS jobs for 456ac4f in `test_a_changed_spectrum_refits_its_series_only`: the
+    full run and the partial run fit the changed series in different batches, and a population
+    test's null mean differed by 4e-6 relative (tolerance 1e-6; Linux and Windows agreed to
+    it). Batch rounding (items 46, 219), not reuse: the kept series still compare exactly. The
+    test's comparison with a full run now allows 1e-4 relative. Checks: tests/test_bundle.py
+    (two writes give two stamps), tests/test_reuse.py, ruff clean.

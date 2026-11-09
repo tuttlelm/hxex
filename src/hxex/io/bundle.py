@@ -921,7 +921,9 @@ def write_bundle(
         manifest = {
             "kind": KIND,
             "schema_version": SCHEMA_VERSION,
-            "created": datetime.now(UTC).isoformat(timespec="seconds"),
+            # to the millisecond: the stamp tells one bundle's results from the next (analysis
+            # folders record it), and a rerun that keeps every fit can take well under a second
+            "created": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "project": project if project is not None else _project_of(fit.spectrum_id),
             "notes": notes,
             "versions": _versions(),

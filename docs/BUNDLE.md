@@ -87,8 +87,8 @@ analyse` or `hxex report --figures` runs again. `hxex info` lists the generation
 
 ## manifest.json
 
-`kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC), `project`, `notes`,
-`versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics, and `hxex_commit` when
+`kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC, to the millisecond; to the
+second in bundles written before 2026-11-09), `project`, `notes`, `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics, and `hxex_commit` when
 known), `fitted_with` (the same keys for the software that made the fits, the population test
 and the bootstrap: a run's own; `hxex resume` keeps the bundle's when the software resuming is
 the same, else writes `{"mixed": true}`; absent before 2026-11-07, read then as `versions` when
