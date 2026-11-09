@@ -322,6 +322,7 @@ class ResultsWorkspace(QWidget):
         split.addWidget(left)
         split.addWidget(self.figures)
         split.setStretchFactor(1, 1)
+        split.setChildrenCollapsible(False)  # a panel dragged to nothing left no trace
         split.setSizes([560, 900])
         layout = QVBoxLayout(self)
         layout.addLayout(top)

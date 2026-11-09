@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -25,8 +25,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QWidget,
 )
 
+from .flow_layout import FlowLayout
 from .review import Decision, make_review_table, table_stamp, write_decisions
 from .user_tables import TableLocked
 
@@ -56,14 +58,16 @@ class ReviewPanel(QGroupBox):
         self.heading = QLabel("Select a spectrum, a time point or a series.")
         self.heading.setWordWrap(True)
         self.status = QButtonGroup(self)
-        status_row = QHBoxLayout()
+        # the choices wrap onto a second line when the panel is narrow (in one line they set the
+        # results panel's narrowest width: 522 px with Windows' font; owner, 2026-11-08)
+        self.status_row = QWidget()
+        status_row = FlowLayout(self.status_row)
         for i, (value, words, key) in enumerate(STATUS_WORDS):
             button = QRadioButton(words)
             button.setProperty("status", value)
             button.setToolTip(f"{words} (key {key} in the tree)")
             self.status.addButton(button, i)
             status_row.addWidget(button)
-        status_row.addStretch()
         self.status.buttonClicked.connect(lambda b: self.decide(status=b.property("status")))
         self.k = QComboBox()
         self.k.setToolTip("the number of populations to use for these spectra (review_K)")
@@ -103,8 +107,8 @@ class ReviewPanel(QGroupBox):
         top.addWidget(self.next)
         grid = QGridLayout(self)
         grid.addLayout(top, 0, 0, 1, 2)
-        grid.addWidget(QLabel("Status"), 1, 0)
-        grid.addLayout(status_row, 1, 1)
+        grid.addWidget(QLabel("Status"), 1, 0, Qt.AlignmentFlag.AlignTop)  # by its first line
+        grid.addWidget(self.status_row, 1, 1)
         grid.addWidget(QLabel("K"), 2, 0)
         grid.addWidget(self.k, 2, 1)
         grid.addWidget(QLabel("Note"), 3, 0)

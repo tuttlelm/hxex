@@ -590,6 +590,7 @@ class TablesView(QWidget):
         split.addWidget(left)
         split.addWidget(self.editor)
         split.setStretchFactor(1, 1)
+        split.setChildrenCollapsible(False)  # a panel dragged to nothing left no trace
         split.setSizes([260, 900])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

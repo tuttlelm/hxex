@@ -709,8 +709,16 @@ def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(
     QApplication.processEvents()
     assert w.count.parent() is w.left_status and w.list.count.parent() is w.left_status
     assert w.count.isVisible() and not w.list.count.isVisible()
-    left = w.left_tabs.parentWidget()
-    assert left.minimumSizeHint().width() < 400
+    # the panel's narrowest width is no longer set by a row of choices in one line: the tree's
+    # widest piece is the search box, and the review's status choices wrap (in one line they
+    # made the panel 522 px wide with Windows' font)
+    assert w.left_tabs.minimumSizeHint().width() <= w.search.minimumWidth() + 20
+    radios = w.review.status.buttons()
+    assert w.review.minimumSizeHint().width() < sum(b.sizeHint().width() for b in radios)
+    w.review.resize(w.review.minimumSizeHint().width(), 400)
+    QApplication.processEvents()
+    inside = w.review.status_row.rect()
+    assert all(inside.contains(b.geometry()) for b in radios)
     # the search box reaches the end of its line
     line_end = w.filters.width()
     assert w.search.geometry().right() >= line_end - 2
@@ -723,3 +731,13 @@ def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(
     assert "row" in w.review.next.toolTip()
     w.left_tabs.setCurrentIndex(0)
     assert level.isEnabled() and level.currentIndex() == 2  # the tree's choice back
+
+
+def test_no_page_divider_drags_a_panel_out_of_sight(window):
+    """A panel dragged to nothing left no sign that it was there (owner, 2026-11-08): the
+    dividers stop at each panel's narrowest width."""
+    from PySide6.QtWidgets import QSplitter
+
+    splits = window.findChildren(QSplitter)
+    assert len(splits) >= 4  # Results, Analysis, the project editor and Tables
+    assert not any(s.childrenCollapsible() for s in splits)

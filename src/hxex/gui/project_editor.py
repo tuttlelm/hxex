@@ -420,6 +420,7 @@ class ProjectEditor(QWidget):
         split.addWidget(self.list)
         split.addWidget(self.scroll)
         split.setStretchFactor(1, 1)
+        split.setChildrenCollapsible(False)  # a panel dragged to nothing left no trace
         split.setSizes([240, 900])
         top = QHBoxLayout()
         top.addWidget(self.search, 1)

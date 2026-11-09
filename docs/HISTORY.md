@@ -8319,3 +8319,16 @@ CSVs or mzML if wanted.
     greyed out at "spectrum" (the list steps row by row; it had offered time point and charge
     without effect), and the Tree tab gets its choice back. The left side's narrowest width is
     now the review panel's (338 px).
+
+325. **The review panel's status choices wrap; dividers no longer hide a panel (2026-11-08).**
+    CI for item 324 failed on all three Windows jobs, in one test only: it checked that the
+    results side could be narrower than 400 px, and with Windows' font it could not be narrower
+    than 522 px. That width was the review panel's: its three status choices ("not reviewed",
+    "accepted", "rejected") stood on one line. They now wrap onto further lines when the panel is
+    narrow (`FlowLayout`; "Status" beside the first), so the review panel's narrowest width is
+    206 px at 9 pt (was 338) and 226 px at 12 pt (was 410), about that of the tree and list
+    (204 px, their search box). The test now compares widths within the window, so it no longer
+    depends on the font. Owner, same day: a panel dragged to nothing left no sign that it was
+    there; the dividers of Results, Analysis, the project editor and Tables now stop at each
+    panel's narrowest width. Tried and reverted (owner: not well aligned): the review messages on
+    a status line under the panel like the figure's. Checks: GUI tests 133 passed, ruff clean.
