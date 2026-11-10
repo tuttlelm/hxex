@@ -718,12 +718,12 @@ def test_sets_with_three_populations_are_bootstrapped_at_their_number(tmp_path, 
 
     def three(results, **kw):  # one set at three populations: the first time's spectra
         calls.append(kw)
-        return dict.fromkeys(ids, 3), 1
+        return dict.fromkeys(ids, (3,)), 1
 
     monkeypatch.setattr(set_test, "set_k_spectra", three)
     with caplog.at_level(logging.INFO, logger="hxex"):
         res = run(raw, cfg)
-    assert "of 1 sets with three populations or more at the set's K" in caplog.text
+    assert "of the population test's 1 sets at their set's number of populations" in caplog.text
     assert calls and calls[0]["filters"] is not None  # the analysis's default filters
     want = [i for i in rows if res.fit.selected_K[i] != 3]  # K = 3 chosen: its own bootstrap
     assert want
@@ -744,8 +744,8 @@ def test_sets_with_three_populations_are_bootstrapped_at_their_number(tmp_path, 
 
 
 def test_the_set_k_spectra_are_those_the_average_takes_at_that_k(monkeypatch):
-    """set_k_spectra names only the spectra a set's average takes at the set's K: not those
-    the review rejected (or the filters leave out), nor those kept at one population."""
+    """set_k_spectra names the spectra of a set at the set's K: not those the review rejected
+    (or the filters leave out); one kept at one population gives its K = 1 mean, so K = 1."""
     from hxex.analysis import SpeciesFilters
     from hxex.analysis import set_test as st
     from hxex.io.bundle import ReviewTable
@@ -762,7 +762,7 @@ def test_the_set_k_spectra_are_those_the_average_takes_at_that_k(monkeypatch):
     monkeypatch.setattr(st, "set_tests", all_three)
     labelled = [str(s) for s, r in zip(res.fit.spectrum_id, res.fit.role, strict=True) if r == ""]
     every, n_sets = st.set_k_spectra(res, filters=SpeciesFilters(replicate_outlier=None))
-    assert n_sets and set(every) <= set(labelled) and set(every.values()) == {3}
+    assert n_sets and set(every) <= set(labelled) and set(every.values()) == {(3,)}
     rejected, one = sorted(every)[:2]
     review = ReviewTable(
         spectrum_id=np.array([rejected, one], dtype=object),
@@ -771,7 +771,84 @@ def test_the_set_k_spectra_are_those_the_average_takes_at_that_k(monkeypatch):
         updated=np.array(["", ""], dtype=object))
     fewer, n = st.set_k_spectra(res.with_review(review),
                                 filters=SpeciesFilters(replicate_outlier=None))
-    assert set(fewer) == set(every) - {rejected, one} and n == n_sets
+    # the one kept at one population gives its K = 1 mean: bootstrapped at K = 1
+    assert set(fewer) == set(every) - {rejected} and fewer[one] == (1,) and n == n_sets
+
+
+def test_set_k_bootstraps_each_spectrum_at_the_k_its_sets_values_come_from(monkeypatch):
+    """[run.bootstrap] set_k (owner, 2026-11-10: "every spectrum gets a bootstrap at the K its
+    set's average takes"): the spectra of a set at two are bootstrapped at K = 2 (its
+    description), and, once those errors exist, at K = 1 where the set's average is the K = 1
+    mean (its positions close: a second pass), each at the K it was not selected at. Those
+    partial bootstraps do not open the K = 2 comparisons between samples, which need every
+    spectrum."""
+    from hxex import pipeline
+    from hxex.analysis import SpeciesFilters
+    from hxex.analysis import set_test as st
+    from hxex.report.results import Results
+    from test_run import config, raw_spectra
+
+    real = st.set_tests
+
+    def all_two(results, **kw):  # every set read as two populations
+        return {key: dataclasses.replace(t, K=2) for key, t in real(results, **kw).items()}
+
+    monkeypatch.setattr(st, "set_tests", all_two)
+    res = run(raw_spectra(n_series=2), config(population_test=PopulationTestConfig(simulations=4)))
+    first, n_sets = st.set_k_spectra(Results.from_run(res), filters=SpeciesFilters())
+    assert n_sets and set(first.values()) == {(2,)}
+    averages = pipeline._set_averages(Results.from_run(res), None)
+    wanted, _ = st.set_k_spectra(Results.from_run(res), filters=SpeciesFilters(),
+                                 averages=averages)
+    assert set(wanted) == set(first) and set(wanted.values()) <= {(1, 2), (2,)}
+    assert (1, 2) in set(wanted.values())  # close positions: the average is the K = 1 mean
+    index = {str(s): i for i, s in enumerate(res.fit.spectrum_id)}
+    for sid, ks in wanted.items():
+        i = index[sid]
+        for k in ks:
+            assert (res.fit.selected_K[i] == k and res.bootstrap.covers(i)) or (
+                res.bootstrap_by_k[k].covers(i)), (sid, k)
+    r = Results.from_run(res)
+    assert r.bootstrap_by_k and not any(r.bootstraps_every_spectrum(k) for k in (1, 2))
+    every = dataclasses.replace(r.bootstrap_by_k[min(r.bootstrap_by_k)], config=dataclasses.replace(
+        res.config.bootstrap, ks=(1, 2)))
+    assert dataclasses.replace(r, bootstrap_by_k={min(r.bootstrap_by_k): every}
+                               ).bootstraps_every_spectrum(min(r.bootstrap_by_k))
+
+
+def test_resume_adds_a_k_to_ks_without_making_the_bootstrap_again(tmp_path, monkeypatch):
+    """Settings that only add to a bundle's bootstrap (ks gains a K) keep what is there and
+    bootstrap every spectrum at the new K alone, as a run with it gives (each spectrum is
+    seeded from its own id); the bundle records the union and has nothing left to add;
+    settings that change the values are refused without add=True."""
+    from hxex import pipeline
+    from hxex.pipeline import NothingToResume
+    from test_run import config, raw_spectra
+
+    raw = raw_spectra(n_series=2)
+    cfg = config()
+    first = run(raw, cfg, out=tmp_path / "b")
+    with_two = dataclasses.replace(cfg.bootstrap, ks=(2,))
+    fresh = run(raw, config(bootstrap=with_two))
+
+    def again(*_a, **_k):
+        raise AssertionError("the bootstrap was made again")
+
+    monkeypatch.setattr(pipeline, "_bootstrap_part", again)
+    added = resume_bootstrap(tmp_path / "b", bootstrap=with_two)
+    np.testing.assert_array_equal(added.bootstrap.mean_se, first.bootstrap.mean_se)
+    fitted = added.fit.fitted(2)
+    assert fitted.any() and all(added.bootstrap_by_k[2].covers(int(i))
+                                for i in np.flatnonzero(fitted))
+    np.testing.assert_allclose(added.bootstrap_by_k[2].mean_se[fitted],
+                               fresh.bootstrap_by_k[2].mean_se[fitted])
+    with open_bundle(tmp_path / "b") as b:
+        assert b.manifest["configs"]["bootstrap"]["ks"] == [2]
+        assert b.manifest["provenance"]["resumed"][-1]["added"] == "bootstrap at K = 2"
+    with pytest.raises(NothingToResume):  # back to "selected": the K = 2 bootstrap stays
+        resume_bootstrap(tmp_path / "b", bootstrap=cfg.bootstrap)
+    with pytest.raises(ValueError, match=r"\(n_boot\) change its values"):
+        resume_bootstrap(tmp_path / "b", bootstrap=dataclasses.replace(cfg.bootstrap, n_boot=4))
 
 
 def test_the_steps_above_decide_up_to_only_flag():

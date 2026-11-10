@@ -8887,3 +8887,50 @@ CSVs or mzML if wanted.
     (default 50), kept in the window's session file (`residues_per_line`, only when not the
     default). Guide gui.md "Project"; checks: tests/test_gui_sequence.py (pooled rows and
     coverage, residues a line), tests/test_gui.py (the session).
+
+350. **Every set's spectra bootstrapped at the K its values come from; resume adds a K to
+    `ks` alone (2026-11-10; PLAN Next steps 28).** Owner: "every spectrum gets a bootstrap at
+    the K its set's average takes" makes sense, for the multimodal and maximum presets
+    (selected K and `set_k`, no `ks`: "no need to have the bimodal analysis in this mode") and
+    bimodal (`ks = [2]`). Measured first (private set_k_general, README; the tutorial run and
+    the intact-peptide benchmark, both bundles with `ks = [1, 2]`, analysed with their
+    bootstrap and with it cut to what the rule gives): the rule adds 294 and 1,381
+    spectrum-bootstraps beyond the selected-K one (4-5 % of the 7,748 and 52,382 of `ks =
+    [1, 2]`); every set average's error, the peptide K = 1 comparison and the residue K = 1
+    test are unchanged (the same decisions on the same rows), and a fixed K = 1 bootstrap of
+    every spectrum adds nothing. The K = 2 residue tests are not served: half to three quarters
+    of their rows lose their error (tested 1,008 -> 444 and 2,433 -> 625) and the rest decide
+    differently (tutorial: low-D position 21 -> 16, high-D 11 -> 18 with 7 new, the share 86
+    -> 92 with 17 new): a residue whose covering peptides partly lack an error takes too small
+    an error from the rest (item 204's reason, for a partial K = 2 bootstrap). One benchmark set
+    showed a circular case: the analysis's filters refuse a K = 2 description by its bootstrap
+    errors, so a set at two judged before those errors exist can average at K = 2 and fall back
+    to K = 1 once they do. Built in two passes: `set_test.set_k_spectra` names each kept
+    labelled spectrum's K values (spectrum id -> tuple), first the set's number (K = 1 for a
+    set at one); then, with `averages` (`species.set_average_ks` of a species table made with
+    the first pass's bootstraps, `pipeline._set_averages`), K = 1 as well for a set at two
+    whose average is the K = 1 mean (its positions close, item 210, or its K = 2 description
+    refused). A spectrum the review or the screens keep at one: K = 1 only (it gives its K = 1
+    mean; it was left out before). The run's end and `hxex resume` bootstrap those without one
+    (`pipeline._set_k_part`, `_set_k_missing`). Built check (same bundles): 348 and 2,381
+    spectrum-bootstraps beyond the selected-K one (one pass with both K for every set at two:
+    845 and 4,477); every set average's error and the peptide K = 1 decisions equal those with
+    `ks = [1, 2]`; against the selected-K bootstrap alone (today's default) 69 of 744 and 131
+    of 3,124 set averages' errors grow (median 1.28 and 1.08 times), 12 unknown errors are
+    filled, and no peptide K = 1 decision changes. The K = 2 comparisons between
+    samples are gated on `Results.bootstraps_every_spectrum(2)` (a fixed-K bootstrap the run's
+    `ks` lists) instead of any K = 2 bootstrap: a partial one (a review's chosen K, `set_k`)
+    passed the old gate and gave the tests above, also before this change. `hxex resume` with
+    settings that differ only in `ks` and `set_k` (`bootstrap.added_settings`) keeps the
+    bootstrap and bootstraps every spectrum at each K newly listed (`pipeline._fixed_part`),
+    recording `ks` as the union (a fixed-K bootstrap is never dropped) and the provenance
+    "bootstrap at K = N"; other settings still make it again, and from Python they need
+    `add=True` (refused otherwise, naming the settings). `hxex info` says "for every spectrum"
+    by the settings (controls are not fitted at K = 2, so a count never said it) and "not for
+    every spectrum at K = 2" when the K = 2 comparisons cannot run; `Results` marks partial
+    ones "(some spectra)". Behaviour change: runs with the population test and the default
+    `ks` bootstrap a few more spectra, at K = 1 those selected at two in sets at one or two;
+    their K = 1 errors were the replicates' scatter alone before. Checks: tests/
+    test_population_test.py (the rule in a run, the gate, resume adding K = 2 alone and equal to
+    a run with it, refusing a change of n_boot), test_bootstrap.py (`added_settings`,
+    `fixed_ks`), test_cli.py (resume adding K = 1 alone, never dropping it, `hxex info`).

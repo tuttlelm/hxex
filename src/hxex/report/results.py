@@ -249,7 +249,8 @@ class Results:
         boot = []
         if self.bootstrap is not None:
             boot.append("selected K")
-        boot += [f"K = {k}" for k in sorted(self.bootstrap_by_k)]
+        boot += [f"K = {k}" + ("" if self.bootstraps_every_spectrum(k) else " (some spectra)")
+                 for k in sorted(self.bootstrap_by_k)]
         parts.append("bootstrap at " + ", ".join(boot) if boot else "no bootstrap")
         status = self.review_status
         counts = [f"{int((status == s).sum())} {s}" for s in ("rejected", "accepted")
@@ -330,6 +331,16 @@ class Results:
         if self.review is None:
             return np.full(len(self.fit), "unreviewed", dtype=object)
         return self.review.status_of(self.fit)
+
+    def bootstraps_every_spectrum(self, k: int) -> bool:
+        """Whether the run bootstrapped every spectrum at K = ``k``: a fixed-K bootstrap its
+        ``[run.bootstrap] ks`` lists. The partial ones (a review's chosen K, ``set_k``) cover
+        some spectra only, which the comparisons between samples at that K cannot use: a
+        residue whose peptides partly lack an error takes too small an error from the rest."""
+        from ..bootstrap import fixed_ks
+
+        fixed = self.bootstrap_by_k.get(k)
+        return fixed is not None and k in fixed_ks(fixed.config, (k,))
 
     def bootstrap_for(self, i: int, k: int) -> BootstrapResult | None:
         """The bootstrap that covers measurement ``i`` at K = ``k`` (the fixed-K one, else the

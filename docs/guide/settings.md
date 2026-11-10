@@ -313,7 +313,7 @@ Standard errors and intervals from resampled refits of every measurement (guide:
 | `keep_draws` | true/false | `false` | keep every resample's fit in the bundle |
 | `curve_band` | true/false | `true` | also the band of the total uptake curve |
 | `ks` | text or list | `"selected"` | "selected" (each measurement at its own K), "all" fitted K, or a list of K (fixed-K bootstraps for the analysis) |
-| `set_k` | true/false | `true` | with the population test, also bootstrap the spectra of sets with three populations or more at that number: the error of their average (else the replicates' scatter) |
+| `set_k` | true/false | `true` | with the population test, also bootstrap each spectrum at the K its set's values come from (the set's number of populations, and 1 for sets at one or two) where it was selected at another: the error of every set's average (else the replicates' scatter); a few spectra |
 
 ## `[run.population_test]`
 

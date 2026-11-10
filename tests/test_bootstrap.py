@@ -295,3 +295,26 @@ def test_no_resample_places_a_population_beyond_the_highest_bin():
                                                         "keep_draws": True})).draws
         pos = np.where(draws.ok[..., None], draws.n * draws.p, np.nan)
         assert np.nanmax(pos) <= top + 1e-6, k
+
+
+def test_settings_that_only_add_keep_the_bootstrap_and_name_the_union():
+    """[run.bootstrap] settings differing from a bundle's only in ks and set_k add to its
+    bootstrap (nothing made changes: each measurement is seeded from its own id), ks the union,
+    so a fixed-K bootstrap is never dropped; any other difference makes it again (owner,
+    2026-11-10: a multimodal run moved to the bimodal analysis needs only K = 2 added)."""
+    from hxex.bootstrap import added_settings, fixed_ks
+
+    held = BootstrapConfig()
+    assert added_settings(held, dataclasses.replace(held, ks=(2,))).ks == (2,)
+    both = dataclasses.replace(held, ks=(2, 1))
+    assert added_settings(both, dataclasses.replace(held, ks=(2,))).ks == (1, 2)
+    assert added_settings(both, held).ks == (1, 2)  # back to "selected": nothing dropped
+    assert added_settings(both, dataclasses.replace(held, ks="all")).ks == "all"
+    assert added_settings(held, held) == held
+    off = added_settings(held, dataclasses.replace(held, set_k=False))
+    assert off.set_k is False and off.ks == "selected"
+    assert added_settings(held, dataclasses.replace(held, n_boot=50)) is None
+    assert added_settings(held, dataclasses.replace(held, ks=(2,), seed=1)) is None
+    assert fixed_ks(held, (1, 2, 3)) == ()
+    assert fixed_ks(dataclasses.replace(held, ks="all"), (3, 1, 2)) == (1, 2, 3)
+    assert fixed_ks(dataclasses.replace(held, ks=(5, 2)), (1, 2, 3)) == (2,)

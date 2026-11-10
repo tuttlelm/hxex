@@ -1300,14 +1300,17 @@ Planned, not built:
      before a complete run.
    - *complete*, in two versions (owner, 2026-11-08); both draw every analysis figure, with
      `fit_rates = true` when the run has fragments:
-     - *complete bimodal*: K = 1 to 3 fitted, bootstrap `ks = [1, 2]`; the simulated population
-       test for one against two only. The 2-against-3 step with the chi-square reference
-       (no simulations) as a flag only, "a third population possible". Measured on the
-       complete bundles: with the default analysis filters it puts at three 4 of the 4
-       (tutorial) and 14 of the 16 (benchmark) sets the simulated step does, plus 0 and 5
-       others; spectra 144 of 171 plus 7. Good enough for a flag. Needs a population-test setting for the last simulated step (today the steps
-       follow `k_max`).
-     - *complete multimodal*: K = 1 to a `k_max` the user sets (default 3), the simulated test
+     - *complete bimodal* (`preset = "bimodal"`): K = 1 to 3 fitted, bootstrap `ks = [2]`
+       (owner, 2026-11-10: with `set_k` covering every set's K, K = 1 for every spectrum adds
+       nothing; the K = 2 comparisons between samples need K = 2 for every spectrum); the
+       simulated population test for one against two only (`decide_up_to = 2`, HISTORY 346).
+       The 2-against-3 step with the chi-square reference (no simulations) as a flag only,
+       `more_populations_possible`. Measured on the complete bundles: with the default
+       analysis filters it puts at three 4 of the 4 (tutorial) and 14 of the 16 (benchmark)
+       sets the simulated step does, plus 0 and 5 others; spectra 144 of 171 plus 7. Good
+       enough for a flag.
+     - *complete multimodal* (`preset = "multimodal"`): K = 1 to a `k_max` the user sets
+       (default 3), the simulated test
        at every step. What it offers above K = 2 (owner, 2026-11-09): each spectrum's fit at
        its selected K (positions and shares) with errors; each set's average (fDavg) at the
        set's K with its error (HISTORY 344); the population tiers, up to "three or more" (no
@@ -1323,14 +1326,15 @@ Planned, not built:
        permuting whole replicates), to evaluate on a three-population noise simulation.
        K belongs to the set wherever spectra are combined (owner): results from K < 3 never
        decide anything at K >= 3.
-       Bootstrap: each spectrum at its selected K (every run), `ks = [1, 2]` for every
-       spectrum (the analysis takes its K = 1 and K = 2 errors from the fixed-K bootstraps,
-       HISTORY 204), and `[run.bootstrap] set_k` (built, on by default in every run, HISTORY
-       344): the spectra of sets at K >= 3 not selected at the set's K are bootstrapped there,
-       a few (30 spectra on the tutorial). Checked at K = 4 on simulated four-population sets
-       (k_max 4): the test put them at four and their averages matched the truth within
-       0.001. `ks = "all"` rejected (owner: K = 3 for 26,189 spectra to serve about a
-       hundred). Bootstrap errors never choose K.
+       Bootstrap (owner, 2026-11-10): each spectrum at its selected K (every run) and
+       `[run.bootstrap] set_k` (on by default in every run, HISTORY 344, made general by HISTORY 350): every
+       spectrum at the K its set's values come from, the set's number and K = 1 for sets at
+       one or two. No `ks`: the bimodal analysis (K = 2 comparisons between samples) is not
+       part of this level (owner: "no need to have the bimodal analysis in this mode");
+       adding `ks = [2]` later and `hxex resume` adds it without making the rest again.
+       Checked at K = 4 on simulated four-population sets (k_max 4): the test put them at four
+       and their averages matched the truth within 0.001. `ks = "all"` rejected (owner: K = 3
+       for 26,189 spectra to serve about a hundred). Bootstrap errors never choose K.
 
      Measured (timing study, lack_of_fit): the 2-against-3 step is 37-44 % of a complete run
      and put 4 (tutorial) and 16 (benchmark) sets at three, with no residue in a "three" tier.
@@ -1338,8 +1342,9 @@ Planned, not built:
      chi-square has heavy tails: q99 15-54; a cut at the clean undeuterated controls' q99 holds
      3 of the 171 spectra the test put at three), so the flag needs the 2-against-3
      comparison itself.
-   - *maximum quality*: complete with `n_boot = 100` (the 95 % intervals), figures for every
-     series. Recommended on a GPU only.
+   - *maximum quality* (`preset = "maximum"`): complete multimodal at the user's `k_max`
+     with `n_boot = 100` (the 95 % intervals) at each spectrum's K and its set's (owner,
+     2026-11-10), figures for every series. Recommended on a GPU only.
 
    A K = 1-only *first look* was proposed and dropped (owner, 2026-11-08: "first look risks
    being misleading on data quality"): with K = 1 only, `poor_fit` flags 3-4 times as many
@@ -1382,13 +1387,18 @@ Planned, not built:
    2-against-3 step alone 37-44 %); 100 bootstrap resamples take 3x the time of 20 on the GPU.
    A benchmark-sized dataset on a CPU: roughly 6 h complete, 8-10 h maximum quality.
 
-   No new `ks` form is needed: every run bootstraps each spectrum at its selected K, and `ks`
-   adds fixed-K bootstraps beside it, so `ks = [1, 2]` already gives a spectrum selected above
-   K = 2 its own errors. To settle before building: the names. Build order: the population
-   test's last simulated step with the chi-square 2-against-3 flag (built 2026-11-10,
-   HISTORY 346: `[run.population_test] decide_up_to`, flag `more_populations_possible`); the
-   preset key, its expansion, `hxex check`, and the project editor;
-   moving up through `hxex resume`.
+   No new `ks` form is needed: every run bootstraps each spectrum at its selected K, and
+   `set_k` each set's spectra at the set's K. Names (owner, 2026-11-10): `preset = "quick"`,
+   `"bimodal"`, `"multimodal"`, `"maximum"`. Build order: the population test's last
+   simulated step with the chi-square 2-against-3 flag (built 2026-11-10, HISTORY 346:
+   `[run.population_test] decide_up_to`, flag `more_populations_possible`); `set_k` made
+   general, the K = 2 comparisons gated on a bootstrap of every spectrum at K = 2, and
+   `hxex resume` adding a K newly listed in `ks` without making the rest again (built
+   2026-11-10, HISTORY 350); the preset key, its expansion, `hxex check`, and the project
+   editor; moving up (and across: multimodal to bimodal, owner's example of a trimer whose
+   data suit the bimodal analysis better) through `hxex resume`, with the population test
+   decided again from its stored steps when only `decide_up_to` changes (no new
+   simulations).
 
 29. **Residue-level outputs only for samples that are one protein** (owner, 2026-11-08: coverage,
    redundancy and resolution, and most of `hxex analyse` say nothing for pooled unrelated

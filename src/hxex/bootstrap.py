@@ -64,11 +64,15 @@ class BootstrapConfig:
       ``'all'`` (also every K that was fitted, for every measurement, as a fixed-K analysis) or a
       list of K values (those, for every measurement; the analysis' choice between one and two
       populations wants 1 and 2). The cost grows with the number of Ks.
-    - ``set_k``: with the population test, also bootstrap the spectra of every set the test
-      puts at three populations or more at the set's number, where they have no bootstrap
-      there (:func:`hxex.pipeline.run`): such a set's average comes from that description
-      (:func:`hxex.analysis.species.set_average_ks`), and this is its error; without it the
-      error is the replicates' scatter.
+      ``hxex resume`` adds a K newly listed without redoing the others (:func:`added_settings`).
+    - ``set_k``: with the population test, also bootstrap every spectrum of a set at the K the
+      set's values come from, where it has no bootstrap there (:func:`hxex.pipeline.run`;
+      :func:`hxex.analysis.set_test.set_k_spectra`): the set's number of populations, and
+      K = 1 as well for sets at one or two (their average is the K = 1 mean unless their
+      positions lie far apart, :func:`hxex.analysis.species.set_average_ks`). So every set's
+      average, and every K = 1 comparison built on the averages, has a bootstrap error; without
+      it the spectra not selected at that K add only the replicates' scatter. The K = 2
+      comparisons between samples need more: a bootstrap of every spectrum at K = 2 (``ks``).
     """
 
     n_boot: int = 20
@@ -628,6 +632,34 @@ def _empty_like(part: BootstrapResult, n: int, k: int) -> BootstrapResult:
         curve_offsets=np.zeros(n + 1, dtype=np.int64), draws=draws, **comp,
         average_se=None if part.average_se is None else np.full(n, np.nan),
     )
+
+
+def fixed_ks(config: BootstrapConfig, fitted: Sequence[int]) -> tuple[int, ...]:
+    """The K values at which ``config`` bootstraps every measurement (``ks``), among those
+    ``fitted``: none for ``'selected'``, every fitted K for ``'all'``."""
+    if config.ks == "selected":
+        return ()
+    if config.ks == "all":
+        return tuple(sorted(int(k) for k in fitted))
+    return tuple(sorted(int(k) for k in config.ks if k in fitted))
+
+
+def added_settings(held: BootstrapConfig, new: BootstrapConfig) -> BootstrapConfig | None:
+    """The settings of a bundle whose bootstrap (made with ``held``) takes what ``new`` adds,
+    or None when ``new`` needs it made again. When they differ only in ``ks`` and ``set_k``
+    nothing already made changes (each measurement is seeded from its own id): the bootstrap
+    is kept and only what is missing is added, ``ks`` the union of both (a fixed-K bootstrap is
+    never dropped) and ``set_k`` as ``new``. Any other difference (the resamples, the refits)
+    changes the values: None."""
+    if dataclasses.replace(held, ks=new.ks, set_k=new.set_k) != new:
+        return None
+    if "all" in (held.ks, new.ks):
+        ks: str | tuple[int, ...] = "all"
+    else:
+        union = set(() if held.ks == "selected" else held.ks)
+        union |= set(() if new.ks == "selected" else new.ks)
+        ks = tuple(sorted(union)) or "selected"
+    return dataclasses.replace(new, ks=ks)
 
 
 def scatter(part: BootstrapResult, rows, n: int, k: int,

@@ -122,11 +122,28 @@ values. On the known-answer test data with three true populations, this average 
 truth by 0.28 deuterons (median) where the one-population value missed it by 2.8; on two real
 datasets it concerned 15 and 3 peptides and times, mostly at the shortest labelling time, and
 moved them by 0.1 to 0.3 deuterons. Its error comes from a bootstrap at that number of
-populations, which `hxex run` makes for the spectra of these peptides and times on its own
-(`set_k` in `[run.bootstrap]`, on unless you switch it off; the log says how many spectra it
-bootstrapped, and `hxex info` lists them under `bootstrap`). Without that bootstrap the error
-is the scatter of the replicates, and `hxex analyse` warns, naming the peptides and times;
-`hxex resume hxex.toml` adds the bootstrap to results made without it.
+populations. Without that bootstrap the error is the scatter of the replicates, and `hxex
+analyse` warns, naming the peptides and times.
+
+The same rule holds for every peptide and time: its spectra are bootstrapped at the number of
+populations its values come from, whatever number each spectrum chose on its own. That is the
+number the population test gives the set, and also one population where the set has one or
+two, since such a set's average is the one-population value unless its two populations lie far
+apart. `hxex run` makes these bootstraps on its own (`set_k` in `[run.bootstrap]`, on unless
+you switch it off; the log says how many spectra it bootstrapped, and `hxex info` lists them
+under `bootstrap`). They are few: most spectra chose the number their set has, and their own
+bootstrap already serves. So every average, and every one-population comparison built on the
+averages, has a bootstrap error. `hxex resume hxex.toml` adds these bootstraps to results made
+without them.
+
+The two-population comparisons between samples (the populations' positions and shares, at
+the peptides and the residues) need more: a bootstrap of every spectrum at two populations,
+`ks = [2]` in `[run.bootstrap]`. A residue's two-population values come from every peptide
+covering it, including peptides whose spectra read one population, and a residue whose
+peptides only partly have an error would take too small an error from the rest. Without that
+bootstrap, `hxex analyse` leaves those tests out and says so. Adding `ks = [2]` later and
+running `hxex resume hxex.toml` bootstraps only that number: the bootstrap already there is
+kept.
 
 ## Same states, different shares
 

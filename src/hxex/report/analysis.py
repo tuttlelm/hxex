@@ -551,7 +551,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 # K = 2 differences between samples are tested only with a bootstrap at K = 2 in
                 # every run: without one most residues have no error and the few calls do not
                 # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
-                k2_tested = all(r.bootstrap_by_k.get(2) is not None for r in (
+                k2_tested = all(r.bootstraps_every_spectrum(2) for r in (
                     results.runs.values() if isinstance(results, RunSet) else [results]))
                 if k2_tested:  # the two positions, each with its own K=2 threshold
                     k2_positions = {}
@@ -588,9 +588,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                     pop_cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
                     pop_cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
                     log.info("K=2 differences between samples (population share, positions) not "
-                             "tested: no bootstrap at K=2 ([run.bootstrap] ks = [1, 2], or hxex "
-                             "resume); residue_significance_K2 shows where the number of "
-                             "populations differs")
+                             "tested: no bootstrap of every spectrum at K=2 ([run.bootstrap] "
+                             "ks = [2], then hxex resume hxex.toml adds it); "
+                             "residue_significance_K2 shows where the number of populations "
+                             "differs")
                 tables["compare_populations"] = pop_cols
                 choices_cmp = compare_choices(choice, ref)
                 tables["compare_choices"] = choices_cmp.columns()

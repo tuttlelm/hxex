@@ -1442,9 +1442,14 @@ def cmd_resume(args) -> int:
                 log.info("%s: the stored bootstrap settings lack %s; taken as the defaults",
                          bundle, ", ".join(filled))
                 held = {**{k: defaults[k] for k in filled}, **held}
-        # without [run.bootstrap] (a review table's K to fit) the bundle's bootstrap is kept
+        # without [run.bootstrap] (a review table's K to fit) the bundle's bootstrap is kept;
+        # settings that only add to it (other ks or set_k) keep it too and add what is missing
+        from .bootstrap import added_settings
+
         redo = (project.run.bootstrap is not None
-                and held != json.loads(json.dumps(project.run.bootstrap.to_dict())))
+                and held != json.loads(json.dumps(project.run.bootstrap.to_dict()))
+                and (not isinstance(held, dict) or added_settings(
+                    BootstrapConfig.from_dict(held), project.run.bootstrap) is None))
         extra.update(bootstrap=project.run.bootstrap, add=redo,
                      view_exclude=_view_exclude(project), chosen_k=chosen,
                      analysis=project.analysis)
@@ -1852,18 +1857,22 @@ def _bootstrap_text(bundle, m: int) -> str:
         covered = int((np.asarray(chosen.n_success) > 0).sum())
         parts.append("at each spectrum's chosen K" + (f", {n_boot} resamples" if n_boot else "")
                      + ("" if covered == m else f" ({covered} of {m} spectra)"))
+    from .bootstrap import BootstrapConfig, fixed_ks
+
+    settings = configs.get("bootstrap")
+    full = fixed_ks(BootstrapConfig.from_dict(settings), bundle.bootstrap_ks()) if settings else ()
     for k in bundle.bootstrap_ks():
         fixed = bundle.bootstrap(k)
         covered = int((np.asarray(fixed.n_success) > 0).sum()) if fixed is not None else 0
-        why = "chosen in the review" + (f", or of sets with {k} populations ([run.bootstrap] "
-                                        "set_k)" if k >= 3 else "")
-        parts.append(f"at K = {k} for " + ("every spectrum" if covered == m else
-                                            f"{covered} of {m} spectra ({why})"))
+        parts.append(f"at K = {k} for " + (
+            "every spectrum" if k in full else
+            f"{covered} of {m} spectra (chosen in the review, or of sets whose values come from "
+            "that K: [run.bootstrap] set_k)"))
     if not parts:
         return "none"
-    if not bundle.bootstrap_ks():
-        parts.append("none at a fixed K ([run.bootstrap] ks; the K = 2 comparisons of residues "
-                     "need K = 2)")
+    if 2 not in full:
+        parts.append("not for every spectrum at K = 2 ([run.bootstrap] ks: the K = 2 comparisons "
+                     "between samples need it)")
     return "; ".join(parts)
 
 

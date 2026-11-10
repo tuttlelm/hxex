@@ -520,7 +520,7 @@ def test_run_info_and_report(tmp_path, capsys):
     # what the bootstraps cover (owner: "yes" did not say whether a K was bootstrapped for
     # every spectrum, as the K = 2 comparisons of residues need)
     line = next(x for x in info.splitlines() if x.startswith("bootstrap"))
-    assert "at each spectrum's chosen K" in line and "none at a fixed K" in line
+    assert "at each spectrum's chosen K" in line and "not for every spectrum at K = 2" in line
     assert cli.main(["report", str(tmp_path / "out"), "--figures", str(tmp_path / "f"),
                      "--series", "all", "--format", "png"]) == 0
     assert any(p.suffix == ".png" for p in (tmp_path / "f").iterdir())
@@ -1278,13 +1278,28 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     with open_bundle(tmp_path / "out") as b:
         assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
         assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4
-    # the same settings again, a list among them (ks): kept, not redone (a list came back from
-    # the manifest's JSON and never equalled the project's tuple, so every resume redid it)
+    with open_bundle(tmp_path / "out") as b:
+        chosen_se = b.bootstrap().mean_se.copy()
     path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4\nks = [1]"))
     assert cli.main(["-q", "resume", str(path)]) == 0
     capsys.readouterr()
+    # a K added to ks is bootstrapped alone: the bootstrap there is kept (owner, 2026-11-10:
+    # a multimodal run moved to the bimodal analysis needs only K = 2 added)
+    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["provenance"]["resumed"][-1]["added"] == "bootstrap at K = 1"
+        np.testing.assert_array_equal(b.bootstrap().mean_se, chosen_se)
+        assert b.manifest["configs"]["bootstrap"]["ks"] == [1]
+    # the same settings again, a list among them (ks): kept, not redone (a list came back from
+    # the manifest's JSON and never equalled the project's tuple, so every resume redid it)
     assert cli.main(["resume", str(path)]) == 0
     assert "nothing to add" in capsys.readouterr().out
+    # back to no fixed K: the K = 1 bootstrap stays (a fixed-K bootstrap is never dropped)
+    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4"))
+    assert cli.main(["resume", str(path)]) == 0
+    assert "nothing to add" in capsys.readouterr().out
+    with open_bundle(tmp_path / "out") as b:
+        assert b.bootstrap_ks() == [1] and b.manifest["configs"]["bootstrap"]["ks"] == [1]
+    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4\nks = [1]"))
     # a key the stored settings lack (added to hxex later) takes its default: not redone
     manifest = tmp_path / "out" / "manifest.json"
     stored = json.loads(manifest.read_text())
@@ -2123,8 +2138,8 @@ def test_info_says_what_the_bootstraps_cover():
         return SimpleNamespace(n_success=np.array(n_ok))
 
     class Bundle:
-        def __init__(self, chosen, fixed):
-            self.manifest = {"configs": {"bootstrap": {"n_boot": 20}}}
+        def __init__(self, chosen, fixed, ks="selected"):
+            self.manifest = {"configs": {"bootstrap": {"n_boot": 20, "ks": ks}}}
             self.chosen, self.fixed = chosen, fixed
 
         def bootstrap_ks(self):
@@ -2135,10 +2150,18 @@ def test_info_says_what_the_bootstraps_cover():
 
     assert _bootstrap_text(Bundle(None, {}), 4) == "none"
     only = _bootstrap_text(Bundle(boot([20, 20, 20, 20]), {}), 4)
-    assert only.startswith("at each spectrum's chosen K, 20 resamples; none at a fixed K")
-    both = _bootstrap_text(Bundle(boot([20] * 4), {1: boot([20] * 4), 2: boot([20, 0, 0, 20])}), 4)
-    assert both == ("at each spectrum's chosen K, 20 resamples; at K = 1 for every spectrum; "
-                    "at K = 2 for 2 of 4 spectra (chosen in the review)")
+    assert only == ("at each spectrum's chosen K, 20 resamples; not for every spectrum at K = 2 "
+                    "([run.bootstrap] ks: the K = 2 comparisons between samples need it)")
+    # every spectrum at a K the settings' ks lists (controls are not fitted at K = 2, so a
+    # count would not say it); a partial one names its origins
+    both = _bootstrap_text(Bundle(boot([20] * 4), {1: boot([20] * 4), 2: boot([20, 0, 0, 20])},
+                                  ks=[1]), 4)
+    assert both.startswith("at each spectrum's chosen K, 20 resamples; at K = 1 for every "
+                           "spectrum; at K = 2 for 2 of 4 spectra (chosen in the review, or of "
+                           "sets whose values come from that K: [run.bootstrap] set_k); not for "
+                           "every spectrum at K = 2")
+    full = _bootstrap_text(Bundle(boot([20] * 4), {2: boot([20, 0, 0, 20])}, ks=[2]), 4)
+    assert full == "at each spectrum's chosen K, 20 resamples; at K = 2 for every spectrum"
 
 
 def test_a_specexport_project_without_analysis_fasta_is_told_where_its_sequences_are(
