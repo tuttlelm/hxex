@@ -403,7 +403,7 @@ def test_narrow_component_is_the_flag_of_the_fit_at_the_spectrums_k():
     # steps one and two: the K = 2 and K = 3 fits' flags
     narrow = np.array([[True, False], [True, False], [False, True], [False, True]])
     test = SimpleNamespace(criterion_K=np.ones(4), steps=(1, 2), p=np.zeros((4, 2)),
-                           narrow=narrow, null_kind=np.full((4, 2), "simulated"))
+                           narrow=narrow, null_kind=np.full((4, 2), "simulated"), config=TEST)
     cols = _test_columns(SimpleNamespace(population_test=test,
                                          effective_K=np.array([1, 2, 2, 3])))
     # K = 1 never; K = 2 the first step's flag; K = 3 the second's
@@ -772,3 +772,92 @@ def test_the_set_k_spectra_are_those_the_average_takes_at_that_k(monkeypatch):
     fewer, n = st.set_k_spectra(res.with_review(review),
                                 filters=SpeciesFilters(replicate_outlier=None))
     assert set(fewer) == set(every) - {rejected, one} and n == n_sets
+
+
+def test_the_steps_above_decide_up_to_only_flag():
+    from hxex.population_test import decided_and_flag, decided_steps
+
+    config = PopulationTestConfig(decide_up_to=2)
+    assert decided_steps(config, (1, 2, 3)) == 1 and decided_steps(TEST, (1, 2, 3)) == 3
+    p = np.array([[1e-6, 1e-6], [1e-6, 0.5], [0.5, 1e-6], [1e-6, np.nan]])
+    added = np.full((4, 2), 0.3)
+    usable = np.isfinite(p)
+    k, more = decided_and_flag(p, added, usable, config, 1)
+    np.testing.assert_array_equal(k, [2, 2, 1, 2])
+    np.testing.assert_array_equal(more, [True, False, False, False])
+    # every step deciding: the first row reads three, nothing is flagged
+    k, more = decided_and_flag(p, added, usable, TEST, 2)
+    np.testing.assert_array_equal(k, [3, 2, 1, 2])
+    assert not more.any()
+    with pytest.raises(ValueError, match="decide_up_to"):
+        PopulationTestConfig(decide_up_to=0)
+    c = RunConfig(fit=FitConfig(k_max=3), population_test=config)
+    assert RunConfig.from_dict(c.to_dict()) == c
+    from hxex.config import run_config_from
+
+    read = run_config_from({"fit": {"k_max": 3}, "population_test": {"decide_up_to": 2}})
+    assert read.population_test.decide_up_to == 2
+    read = run_config_from({"fit": {"k_max": 3}, "population_test": {"decide_up_to": False}})
+    assert read.population_test.decide_up_to is None
+
+
+def test_a_three_population_spectrum_is_flagged_when_the_test_decides_two(mixed):
+    """With ``decide_up_to = 2`` the step from two to three uses the chi-square reference (no
+    simulation) and flags the spectra it would take to three; their K stays at two."""
+    data, _, _ = mixed
+    three = [spectrum([(0.33, 18, 0.08), (0.33, 18, 0.5), (0.34, 18, 0.92)], noise=0.002,
+                      seed=30 + s) for s in range(2)]
+    xs = [np.arange(N_MAX + 1, dtype=float)] * 4
+    ys = [np.asarray(data.bins[0], float), np.asarray(data.bins[6], float)] + [y for _, y in three]
+    sub = Measurements.from_arrays(xs, ys, [None] * 4, [N_MAX] * 4,
+                                   spectrum_id=["one", "two", "three_a", "three_b"])
+    fit = fit_models(sub, dataclasses.replace(FIT, k_max=3))
+    full = population_test(sub, fit, dataclasses.replace(TEST, simulations=4))
+    capped = population_test(sub, fit, dataclasses.replace(TEST, simulations=4, decide_up_to=2))
+    assert (full.selected_K[2:] == 3).all()
+    assert (capped.null_kind[:, 0] == SIMULATED).all()
+    assert (capped.null_kind[:, 1] == CHI_SQUARE).all() and np.isnan(capped.null_draws[:, 1]).all()
+    # the decided step is the same test (same simulations): K is the full test's, capped at two
+    np.testing.assert_array_equal(capped.selected_K, np.minimum(full.selected_K, 2))
+    np.testing.assert_allclose(capped.p[:, 0], full.p[:, 0])
+    # the chi-square reference flags the three-population spectra (it is looser than the
+    # simulated null, so a clean two may be flagged too: a flag, never a decision)
+    assert capped.more_populations_possible()[2:].all()
+    assert not full.more_populations_possible().any()
+
+
+def test_sets_above_decide_up_to_are_flagged_and_keep_their_decided_k(tmp_path):
+    """A set whose spectra would read three is put at two with ``decide_up_to = 2``, flagged
+    ``more_populations_possible`` in species_uptake.csv, and its two-against-three p-value is
+    left empty (it decides nothing, so the residue tiers stop at two); spectra.csv carries the
+    spectrum's flag."""
+    from hxex.analysis import species_uptake
+    from hxex.report import Results
+    from hxex.report.tables import spectra_table
+    from test_run import config, raw_spectra
+
+    base = config()
+    res = run(raw_spectra(n_series=2),
+              config(fit=dataclasses.replace(base.fit, k_max=3),
+                     population_test=PopulationTestConfig(simulations=4, decide_up_to=2)))
+    r = Results.from_run(res)
+    test = r.population_test
+    labelled = np.flatnonzero(r.fit.role == "")
+    st, ad = test.statistic.copy(), test.added_population.copy()
+    st[labelled, :], ad[labelled, :] = 1000.0, 0.3
+    forced = dataclasses.replace(r, population_test=dataclasses.replace(
+        test, statistic=st, added_population=ad))
+    up = species_uptake(forced, populations="population_test")
+    rows = up.where(role="", K=1, rank=1) & (up.time == 60.0)
+    assert (up.set_test_K[rows] == 2).all() and up.more_populations_possible[rows].all()
+    assert np.isfinite(up.set_p_1[rows]).all() and np.isnan(up.set_p_2[rows]).all()
+    assert all("more populations possible" in x for x in up.best_set_reason[rows])
+    assert not up.more_populations_possible[up.role != ""].any()
+    # every step deciding: the same sets read three, nothing flagged
+    open_test = dataclasses.replace(test, statistic=st, added_population=ad,
+                                    config=dataclasses.replace(test.config, decide_up_to=None))
+    up = species_uptake(dataclasses.replace(r, population_test=open_test),
+                        populations="population_test")
+    assert (up.set_test_K[rows] == 3).all() and not up.more_populations_possible.any()
+    table = spectra_table(r)
+    assert "more_populations_possible" in table

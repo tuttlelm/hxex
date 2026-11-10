@@ -197,6 +197,9 @@ class SpeciesUptake:
     test, and for a set the test never saw (every spectrum left out by the filters);
     ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in some
     sample of the run, has two populations or more by the test: another species);
+    ``more_populations_possible``, a flag: the test's steps above ``[run.population_test]
+    decide_up_to`` (the chi-square reference) would add a population to the set, whose
+    ``set_p_*`` of those steps are left empty;
     ``average_K`` (every row of a species and time): the number of populations whose
     description gives its K=1 values (its average). 1: the K = 1 fit. 2: the K = 2
     description's population-weighted mean, because the set has two populations at least
@@ -251,6 +254,7 @@ class SpeciesUptake:
     set_p_2: np.ndarray | None = None
     set_test_K: np.ndarray | None = None
     undeuterated_two: np.ndarray | None = None
+    more_populations_possible: np.ndarray | None = None
     average_K: np.ndarray | None = None
     nterm_subtract: int = 1
     populations: str = "best_set"
@@ -278,6 +282,7 @@ class SpeciesUptake:
                             ("set_p_1", np.full(n, np.nan)), ("set_p_2", np.full(n, np.nan)),
                             ("set_test_K", np.zeros(n, dtype=np.int64)),
                             ("undeuterated_two", np.zeros(n, dtype=bool)),
+                            ("more_populations_possible", np.zeros(n, dtype=bool)),
                             ("average_K", np.ones(n, dtype=np.int64))):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, empty)
@@ -1138,7 +1143,8 @@ def species_uptake(
     cols: dict[str, list] = {f.name: [] for f in fields(SpeciesUptake)
                              if f.name not in _SCALARS
                              and f.name not in ("set_p_1", "set_p_2", "set_test_K",
-                                                "undeuterated_two", "average_K")}
+                                                "undeuterated_two",
+                                                "more_populations_possible", "average_K")}
     by_charge: dict[tuple, dict[int, list[tuple[float, float]]]] = {}
     by_run: dict[tuple, list[dict]] = {}
     for key, recs in sorted(groups.items()):
@@ -1555,7 +1561,8 @@ def test_set(cols: Mapping[str, np.ndarray], tests: Mapping[tuple, Any]
     out = {"best_set_K": np.zeros(n, dtype=np.int64), "best_set": np.zeros(n, dtype=bool),
            "best_set_reason": np.full(n, "", dtype=object), "set_p_1": np.full(n, np.nan),
            "set_p_2": np.full(n, np.nan), "set_test_K": np.zeros(n, dtype=np.int64),
-           "undeuterated_two": np.zeros(n, dtype=bool)}
+           "undeuterated_two": np.zeros(n, dtype=bool),
+           "more_populations_possible": np.zeros(n, dtype=bool)}
     rows: dict[tuple, list[int]] = {}
     for i in range(n):
         key = _set_key(cols["run"][i], cols["sample"][i], cols["peptide"][i],
@@ -1571,8 +1578,10 @@ def test_set(cols: Mapping[str, np.ndarray], tests: Mapping[tuple, Any]
         if t is None:  # no spectrum of the set kept for the test (the filters left them out)
             chosen, reason = (1 if 1 in by_k else min(by_k)), "not tested: one population"
         else:
-            for s, p in enumerate(t.p[:2]):
+            decide = t.p[:2] if t.n_decided is None else t.p[:min(2, t.n_decided)]
+            for s, p in enumerate(decide):  # the steps that decide K
                 out[f"set_p_{s + 1}"][idx] = p
+            out["more_populations_possible"][idx] = t.more_populations_possible
             out["set_test_K"][idx] = t.K
             out["undeuterated_two"][idx] = t.undeuterated_two
             below = [k for k in by_k if k <= t.K]

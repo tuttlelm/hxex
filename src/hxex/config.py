@@ -1859,6 +1859,10 @@ _COMMENTS: dict[str, str] = {
     "run.population_test.null": '"simulated", or "chi_square" for a quick first look without '
                                 "simulations (less exact)",
     "run.population_test.seed": "seed of the simulations",
+    "run.population_test.decide_up_to": "the most populations the test decides (false: up to "
+                                        "[run.fit] k_max); the steps above it use the "
+                                        "chi-square reference without simulations and only "
+                                        "flag more_populations_possible",
     "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
                         "list of K (fixed-K bootstraps for the analysis)",
     "run.controls": '"auto" (the default, the key left out): the back-exchange correction is '

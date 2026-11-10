@@ -8820,3 +8820,22 @@ CSVs or mzML if wanted.
     `max_fD_se` (0.25) or more counts by its fD alone, so its point stays on the axis but its
     error bar no longer stretches every panel (one fD of 1.2 with an error of 1.0 had set the
     top to 2.3); test in tests/test_pooled_forms.py.
+
+346. **The population test decides up to a set number and flags beyond it (2026-11-10; PLAN
+    Next steps 28, step 1 of the presets' build order).** Owner chose the names
+    (`decide_up_to`, `more_populations_possible`) and a flag only. `[run.population_test]
+    decide_up_to = N` (default unset: every step up to `k_max` decides, as before): the steps
+    above N use the chi-square null (3 degrees of freedom, no simulation) and decide nothing;
+    a spectrum or set they would take beyond N keeps its number and is flagged
+    `more_populations_possible` (spectra.csv with the setting; species_uptake.csv always,
+    false without it), with `set_p_*` of those steps left empty so the residue tiers and the
+    borderline rule use the decided steps only; the set's reason says so, and the run and
+    the analysis log the counts. The decided steps are the same test as without the setting
+    (same simulations: checked). The bimodal preset's form is N = 2 with `k_max = 3`: the
+    2-against-3 step was 37-44 % of a complete run, and its chi-square version flagged 4 of 4
+    (tutorial) and 14 of 16 (benchmark) of the sets the simulated step put at three, plus 0
+    and 5 others (presets README, private). Changing `decide_up_to` refits through `hxex run`
+    (reuse treats a changed `[run.population_test]` as a change); a resume that only redoes
+    the test is step 3 of the build order. Checks: tests/test_population_test.py (the
+    stepping and its flag, settings and the project file, a three-population spectrum with
+    the test deciding two, a set at three flagged at two with its p-values).

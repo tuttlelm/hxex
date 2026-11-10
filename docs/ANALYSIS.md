@@ -709,6 +709,20 @@ the junction risk above. 3: the undeuterated rule as first designed (one sample'
 replaced by the width check and the peptide-wide cap, both flags since HISTORY 175 (the cap a
 switch, off by default). 4: the CPU cost above.
 
+**Steps that only flag (`decide_up_to`; PLAN Next steps 28, the bimodal preset; built
+2026-11-10).** `[run.population_test] decide_up_to = N` caps the populations the test decides
+at N. Each step above it (K against K + 1, K >= N) is made with the chi-square null of 3
+degrees of freedom and no simulation; the decided number is the stepping of
+`steps_K` over the decided steps alone, and a spectrum or set is flagged
+`more_populations_possible` where the stepping over every step goes further. A set's
+`set_p_*` of a flag-only step is left empty in the species table, so the residue tiers and the
+peptide-level borderline rule use the decided steps only. Evidence for the bimodal form (N = 2,
+`k_max = 3`): the 2-against-3 step is 37-44 % of a complete run; with the default filters the
+chi-square step puts at three 4 of the 4 (tutorial) and 14 of the 16 (benchmark) sets the
+simulated step does, plus 0 and 5 others; spectra 144 of 171 plus 7. The chi-square null is
+looser than the simulated one (a clean two-population spectrum of low noise can be flagged),
+which is why it flags and never decides.
+
 ### Deamidated fully deuterated controls (built 2026-10-30, HISTORY 196-197; opt-in)
 
 **Finding.** A fully deuterated (FD) control made by heating the protein near neutral pH (one

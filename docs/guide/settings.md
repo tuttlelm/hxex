@@ -326,6 +326,7 @@ Tests how many populations each spectrum, and each set of replicates and charge 
 | `min_population` | number | `0.1` | ... and the further population is at least this share of the molecules |
 | `null` | text | `"simulated"` | "simulated", or "chi_square" for a quick first look without simulations (less exact) |
 | `seed` | integer | `0` | seed of the simulations |
+| `decide_up_to` | integer | unset | the most populations the test decides (false: up to [run.fit] k_max); the steps above it use the chi-square reference without simulations and only flag more_populations_possible |
 
 ## `[run.controls]`
 

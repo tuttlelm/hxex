@@ -26,6 +26,13 @@ statistic room to reach 1 (:func:`hxex.fit.screen.can_exceed`); a skipped spectr
 with T = 0 and the chi-square null of 3 degrees of freedom (the three parameters a population
 adds) instead of a simulation. ``null = 'chi_square'`` gives every spectrum that null (no
 simulation): a quick look, not the results (HISTORY 162, 169).
+
+``decide_up_to`` (PLAN Next steps 28, the bimodal preset; owner, 2026-11-10) caps the number of
+populations the test decides: the steps above it are made with the chi-square null (no
+simulation) and decide nothing; where they would add a population, the spectrum or set is
+flagged ``more_populations_possible``, a pointer to a run that decides further. Measured on the
+complete bundles, the chi-square step from two to three agreed with the simulated one on 4 of
+4 (tutorial) and 14 of 16 (benchmark) sets at three, plus 0 and 5 others.
 """
 # evidence: docs/HISTORY.md items 139, 161-162, 168-173
 
@@ -88,6 +95,9 @@ class PopulationTestConfig:
     - ``null``: ``'simulated'`` (each spectrum's own null) or ``'chi_square'`` (no
       simulation: a quick look, about 96 % of the sets' verdicts of the simulated null).
     - ``seed``: of the null simulations.
+    - ``decide_up_to``: the most populations the test decides (None: up to ``k_max``, every
+      step); the steps above it use the chi-square null and only flag
+      (``more_populations_possible``).
     """
     # the test and its numbers: docs/ANALYSIS.md "The population test"
 
@@ -96,6 +106,7 @@ class PopulationTestConfig:
     min_population: float = 0.10
     null: str = "simulated"
     seed: int = 0
+    decide_up_to: int | None = None
 
     def __post_init__(self):
         if self.simulations < 2:
@@ -108,6 +119,9 @@ class PopulationTestConfig:
             raise ValueError(f"null must be one of {', '.join(NULLS)}")
         if self.seed < 0:
             raise ValueError("seed must be non-negative")
+        if self.decide_up_to is not None and (isinstance(self.decide_up_to, bool)
+                                              or int(self.decide_up_to) < 1):
+            raise ValueError("decide_up_to must be a number of populations, at least 1")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -172,6 +186,15 @@ class PopulationTest:
     def tested(self) -> np.ndarray:
         """``(M, S)``: whether each spectrum has a statistic and a null at each step."""
         return ~np.isin(self.null_kind, NOT_TESTED)
+
+    def more_populations_possible(self) -> np.ndarray:
+        """``(M,)``: whether the steps above ``decide_up_to`` would add a population to each
+        spectrum (a flag; False everywhere when every step decides)."""
+        n_decided = decided_steps(self.config, self.steps)
+        if n_decided >= len(self.steps):
+            return np.zeros(len(self), dtype=bool)
+        return decided_and_flag(self.p, self.added_population, self.tested(), self.config,
+                                n_decided)[1]
 
     @classmethod
     def merge(cls, parts: Sequence[PopulationTest], rows: Sequence[Sequence[int]]
@@ -252,6 +275,25 @@ def steps_K(p: np.ndarray, added: np.ndarray, usable: np.ndarray,
     return k
 
 
+def decided_steps(config: PopulationTestConfig, steps: Sequence[int]) -> int:
+    """How many of ``steps`` (K against K + 1, in order) decide the number of populations: those
+    whose K + 1 is at most ``decide_up_to`` (every step without it)."""
+    if config.decide_up_to is None:
+        return len(steps)
+    return sum(int(k) + 1 <= config.decide_up_to for k in steps)
+
+
+def decided_and_flag(p: np.ndarray, added: np.ndarray, usable: np.ndarray,
+                     config: PopulationTestConfig, n_decided: int
+                     ) -> tuple[np.ndarray, np.ndarray]:
+    """The number of populations of each row from its decided steps (the first ``n_decided``;
+    :func:`steps_K`) and whether the steps above them would add one
+    (``more_populations_possible``)."""
+    k = steps_K(p[:, :n_decided], added[:, :n_decided], usable[:, :n_decided], config)
+    more = steps_K(p, added, usable, config) > k
+    return k, more
+
+
 def population_test(
     data: Measurements,
     fit: FitResult,
@@ -287,7 +329,7 @@ def population_test(
     added = np.full(shape, np.nan)
     narrow = np.zeros(shape, dtype=bool)
     chi_mean, chi_var = chi_square_moments()
-    simulate = config.null == "simulated"
+    n_decided = decided_steps(config, steps)
     plans = []
     for s, k in enumerate(steps):
         lo, hi = fit.fits[k].nll, fit.fits[k + 1].nll
@@ -301,9 +343,14 @@ def population_test(
         null_mean[screened, s], null_var[screened, s] = chi_mean, chi_var
         added[both, s] = np.nanmin(fit.fits[k + 1].populations[both], axis=1)
         narrow[:, s] = both & narrow_components(fit, k + 1, d2o_fraction)
-        if simulate:
+        if config.null == "simulated" and s < n_decided:
             plans.append((s, k, np.flatnonzero(both)))
         else:
+            if s >= n_decided and both.any():
+                log.info("population test, %d against %d: the chi-square reference for %d "
+                         "spectra (above decide_up_to %d: a flag only, "
+                         "more_populations_possible)", k, k + 1, int(both.sum()),
+                         config.decide_up_to)
             kind[both, s] = CHI_SQUARE
             null_mean[both, s], null_var[both, s] = chi_mean, chi_var
     total = sum(len(rows) for _, _, rows in plans) * n_sim
@@ -345,7 +392,7 @@ def population_test(
     p = np.where(tested, gamma_tail(statistic, null_mean, null_var), np.nan)
     added = np.where(kind == SCREENED, np.nan, added)  # no K + 1 fit to say
     usable = tested
-    selected = steps_K(p, added, usable, config)
+    selected, more = decided_and_flag(p, added, usable, config, n_decided)
     criterion = np.asarray(fit.selected_K, dtype=np.int64)
     if narrow.any():
         log.info("population test: %d spectra have a component narrower than deuterium "
@@ -355,6 +402,10 @@ def population_test(
              "%d)", int((selected == 1).sum()), int((selected == 2).sum()),
              "" if n_steps < 2 else f", {int((selected >= 3).sum())} three or more",
              int((criterion == 1).sum()), int((criterion == 2).sum()))
+    if n_decided < n_steps:
+        log.info("population test: %d spectra may hold more populations than the %d the test "
+                 "decides (more_populations_possible in spectra.csv; a flag only)",
+                 int(more.sum()), config.decide_up_to)
     return PopulationTest(
         config=config, steps=steps, statistic=statistic, null_mean=null_mean, null_var=null_var,
         null_kind=kind.astype(str), null_draws=draws, added_population=added, narrow=narrow,

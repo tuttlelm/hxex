@@ -164,5 +164,16 @@ times, but less well for some peptide sizes: use it to look, not for results. Wi
 shape shows that two populations cannot improve it by enough to count (about a third of the
 spectra), with hardly any effect on the peptides' results.
 
+**Two populations decided, a third flagged.** The step from two populations to three takes
+about 40 % of a complete run. With `decide_up_to = 2` in `[run.population_test]` (and
+`k_max = 3`), the test decides one or two populations as usual, and the step to three uses the
+quick yardstick above instead of the simulations. It decides nothing: where it would add a
+population, the spectrum or the peptide at that time is flagged `more_populations_possible`
+(in `spectra.csv` and `species_uptake.csv`), and keeps its number of populations. A set the
+flag marks may hold a third population; a run that decides three (the setting left out, as
+by default) tells. On the tutorial and on a larger dataset, the quick step flagged 4 of the 4 and
+14 of the 16 peptides and times the full test put at three, and 5 others. With the setting,
+`set_p_2` is left empty (that step decides nothing), and the residue tiers stop at two.
+
 [Analysis methods](../ANALYSIS.md#the-population-test-one-evaluation-of-k-from-spectrum-to-residue)
 gives the formulas and the evidence behind each choice.

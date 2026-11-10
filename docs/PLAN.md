@@ -1385,8 +1385,9 @@ Planned, not built:
    No new `ks` form is needed: every run bootstraps each spectrum at its selected K, and `ks`
    adds fixed-K bootstraps beside it, so `ks = [1, 2]` already gives a spectrum selected above
    K = 2 its own errors. To settle before building: the names. Build order: the population
-   test's last simulated step (a setting; today the steps follow `k_max`) with the chi-square
-   2-against-3 flag; the preset key, its expansion, `hxex check`, and the project editor;
+   test's last simulated step with the chi-square 2-against-3 flag (built 2026-11-10,
+   HISTORY 346: `[run.population_test] decide_up_to`, flag `more_populations_possible`); the
+   preset key, its expansion, `hxex check`, and the project editor;
    moving up through `hxex resume`.
 
 29. **Residue-level outputs only for samples that are one protein** (owner, 2026-11-08: coverage,

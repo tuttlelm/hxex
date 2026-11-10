@@ -340,6 +340,9 @@ def _test_columns(results: Results) -> dict[str, np.ndarray]:
     out["narrow_component"] = np.array(
         [s is not None and bool(narrow[i, s]) for i, s in
          enumerate(step.get(int(k)) for k in results.effective_K)], dtype=bool)
+    if test.config.decide_up_to is not None:
+        out["more_populations_possible"] = np.asarray(test.more_populations_possible(),
+                                                      dtype=bool)
     return out
 
 

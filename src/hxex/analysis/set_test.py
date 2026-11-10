@@ -38,7 +38,13 @@ from typing import Any
 
 import numpy as np
 
-from ..population_test import NOT_TESTED, PopulationTestConfig, gamma_tail, steps_K
+from ..population_test import (
+    NOT_TESTED,
+    PopulationTestConfig,
+    decided_and_flag,
+    decided_steps,
+    gamma_tail,
+)
 from ..spectra import UNDEUT
 from .screening import Screening, screening
 
@@ -50,8 +56,10 @@ class SetTest:
     """The test of one set: ``K``, the p-value and the mean added population of each step
     (``p``, ``added``; NaN where the step was not tested), ``n_spectra`` (the set's spectra),
     ``n_tested`` (those tested at the first step), ``undeuterated_two`` (a flag: the peptide's
-    undeuterated set, in some sample of the run, has two populations or more) and ``reason``
-    (for people)."""
+    undeuterated set, in some sample of the run, has two populations or more), ``reason``
+    (for people), ``n_decided`` (the steps that decide K: those up to ``decide_up_to``; the
+    p-values of the others come from the chi-square null) and ``more_populations_possible``
+    (a flag: the steps above them would add a population)."""
 
     K: int
     p: tuple[float, ...]
@@ -60,6 +68,8 @@ class SetTest:
     n_tested: int
     undeuterated_two: bool
     reason: str
+    n_decided: int | None = None  # None: every step
+    more_populations_possible: bool = False
 
 
 def run_tests(results) -> list:
@@ -238,6 +248,11 @@ def set_tests(results, *, filters=None, exclude_flagged: bool = False,
         n_two = sum(t.K >= 2 for t in result.values())
         log.info("population test: %d of %d sets have two populations or more", n_two,
                  len(result))
+        n_more = sum(t.more_populations_possible for t in result.values())
+        if n_more:
+            log.info("population test: %d sets may hold more populations than the %d the test "
+                     "decides (more_populations_possible in species_uptake.csv; a flag only: "
+                     "a run with a larger decide_up_to decides)", n_more, config.decide_up_to)
         if flagged:
             log.warning("population test: %d peptides have two populations or more in an "
                         "undeuterated set (another species: undeuterated_two in "
@@ -275,7 +290,10 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
     tested = n_live > 0
     p = np.where(tested, gamma_tail(t_sum, m_sum, v_sum), np.nan)
     mean_added = np.array([np.mean(a) if a else np.nan for a in added])
-    k = int(steps_K(p[None, :], mean_added[None, :], tested[None, :], config)[0])
+    n_decided = decided_steps(config, steps)
+    k, more = decided_and_flag(p[None, :], mean_added[None, :], tested[None, :], config,
+                               n_decided)
+    k, more = int(k[0]), bool(more[0])
     words = {1: "one", 2: "two", 3: "three"}
     if not tested[0]:
         reason = ("kept at one population: the peptide's undeuterated set has two or more "
@@ -284,6 +302,9 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
         at = max(k - 2, 0)  # the last step that added a population, else the first
         reason = (f"set test: {words.get(k, str(k))} (p = {p[at]:.2g}, added population "
                   f"{mean_added[at]:.2f})")
+        if more:
+            reason += (f"; more populations possible (the chi-square reference above "
+                       f"decide_up_to {config.decide_up_to}: a flag only)")
     return SetTest(K=k, p=tuple(float(x) for x in p), added=tuple(float(x) for x in mean_added),
                    n_spectra=len(rows), n_tested=int(n_live[0]), undeuterated_two=False,
-                   reason=reason)
+                   reason=reason, n_decided=n_decided, more_populations_possible=more)
