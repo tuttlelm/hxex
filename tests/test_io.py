@@ -720,7 +720,7 @@ def test_a_pooled_project_of_state_folders_needs_no_sample(statedir):
     s = read_input(load_project(toml))
     assert len(s) == 3 and set(s.sample) == {"with partner"}
     one = statedir / "alone"
-    toml.write_text(f'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "{one}"\n')
+    toml.write_text(f'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "{one.as_posix()}"\n')
     with pytest.raises(ProjectError, match="input.sample is needed for pooled when data_dir "
                                            "holds peptide folders"):
         load_project(toml)
