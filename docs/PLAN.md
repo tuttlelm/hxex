@@ -724,6 +724,12 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
   means at high `p` can move (Bimodal: median 0.005 D, 90th percentile 0.18 D). Every component
   is normalised to sum to 1 over its bins (HISTORY 78): the amplitudes are areas and the
   populations are shares of the molecules at any `n` and `p`.
+- A population's position `n p` is capped at the spectrum's highest bin (`p = sigmoid(logit_p)
+  min(1, top / n)`), in every fit, polish, bootstrap resample, and population-test simulation;
+  pyHXExpress bounds `p` to `[0, 1]` and `n` only. A population beyond the bins predicts no
+  intensity, so its share was free: such resamples inflated the bootstrap's average error
+  (HISTORY 335). No cap from the fully deuterated level or the D2O fraction
+  (measured and rejected there).
 - The percent noise sd of a series is a percentage of its undeuterated control's tallest peak
   (or the spectrum's own when there is none; kinetics runs: HISTORY 77), not of the average of
   the undeuterated and fully deuterated controls' maxima as in `run_hdx_fits` (`Y_ERR`).
@@ -1022,18 +1028,16 @@ Planned, not built:
    interval multiplier, percentage heat maps, boxplots, HX-Express input files. Its plain
    pooled critical interval at alpha 0.01 differs from *hxex*'s robust `delta_crit`
    (HISTORY 140) and stays different.
-20. **Population positions capped at full deuteration** (owner, 2026-11-05: to be considered,
-   not now). `n_max` (1.2 x the amides) bounds a population's sites `n`, not its position
-   `n p`, so a K = 2 fit may put a population above the series' fully deuterated level
-   (`max_fD` only drops such fits from the population test afterwards, HISTORY 178-179). A cap
-   in the model, `p <= mFD / n` (the series' measured fully deuterated level, or its stand-in),
-   would make the fit find the best physically possible description instead. Checked outside
-   *hxex* on 68-75 z2 of the tutorial data (HISTORY 290): capped, the two-population fits keep
-   their advantage at 4 s and 1 min and become two states at fixed positions (a protected one
-   near 1.2 D, an open one at full deuteration) whose shares move with time, where the
-   uncapped fits had shown fixed 50:50 shares and a high position above full deuteration. To
-   evaluate before building, with the usual yardsticks (known-answer K, controls read as two,
-   calibration), and the series without a measured fully deuterated control.
+20. **Population positions capped** (owner, 2026-11-05; evaluated and BUILT 2026-11-09,
+   HISTORY 335). `n_max` (1.2 x the amides) bounds a population's sites `n`, not its
+   position `n p`. Built: the cap at each spectrum's highest bin (always on; needs no controls
+   or D2O fraction), which ends the escaped resamples of the bootstrap. Measured and NOT built:
+   a cap at the fully deuterated level (`m0 + 1.1 (mFD - m0)`, measured or stand-in) cut into
+   the data where that level is low (331 K = 1 means of the intact-peptide benchmark moved, up
+   to 18 D), and a cap at the exchangeable sites made true-two known-answer spectra read three
+   more often; populations above full deuteration stay with the `max_fD` hold-out (HISTORY
+   178-179). The 68-75 observation of HISTORY 290 (two states at fixed positions under an FD
+   cap) is not pursued by this.
 21. **Bug: the last spectrum of an indexed mzML marked the index stale** (found 2026-11-05 on
    msconvert output; FIXED the same day, HISTORY 295). `MzmlFile._indexed_scan` read zero bytes
    for the last spectrum (no next offset), called the index stale and read the file through from

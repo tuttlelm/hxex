@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Model tests: independent checks (scipy, numpy) and the prototype's values as the oracle."""
 
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +36,9 @@ def gold_inputs(backend=CPU64):
     obs = [GOLD["obs_padded"][: s, i] for i, s in enumerate(sizes)]
     bins = [np.arange(s, dtype=float) for s in sizes]
     shapes = [GOLD[f"shape_{i}"] for i in range(len(sizes))]
-    batch = PaddedBatch.from_arrays(bins, obs, GOLD["n_max"], backend)
+    # the prototype has no position cap: these checks compare the maths at the given n and p
+    batch = dataclasses.replace(PaddedBatch.from_arrays(bins, obs, GOLD["n_max"], backend),
+                                d_cap=None)
     shape_w = shape_weights(shapes, GOLD["log_A"].shape[1], backend)
     model = MixtureBatch(
         batch, shape_w, backend.tensor(GOLD["log_A"]), backend.tensor(GOLD["n_raw"]),
@@ -163,7 +166,8 @@ def test_values_match_the_prototype_at_near_integer_n():
     obs = [GOLD["obs_padded"][: s, i] for i, s in enumerate(sizes)]
     bins = [np.arange(s, dtype=float) for s in sizes]
     shapes = [GOLD[f"shape_{i}"] for i in range(len(sizes))]
-    batch = PaddedBatch.from_arrays(bins, obs, GOLD["n_max"], CPU64)
+    batch = dataclasses.replace(PaddedBatch.from_arrays(bins, obs, GOLD["n_max"], CPU64),
+                                d_cap=None)  # no cap in the prototype
     model = MixtureBatch(
         batch, shape_weights(shapes, GOLD["log_A"].shape[1], CPU64), CPU64.tensor(GOLD["log_A"]),
         CPU64.tensor(GOLD["n_raw_int"]), CPU64.tensor(GOLD["logit_p"]),
@@ -441,3 +445,43 @@ def test_gradients_are_finite_in_float32_where_p_is_near_1():
         out.backward()
         for prm in m.parameters():
             assert torch.isfinite(prm.grad).all(), model_fn
+
+
+# --- the position cap -----------------------------------------------------------------------
+
+def test_capped_p_keeps_the_position_within_the_cap():
+    from hxex.model.mixture import capped_p
+
+    n = torch.tensor([[6.0, 10.0, 30.0]], dtype=torch.float64)
+    logit_p = torch.tensor([[-1.0, 3.0, 2.0]], dtype=torch.float64, requires_grad=True)
+    cap = torch.tensor([8.0], dtype=torch.float64)
+    p, lp = capped_p(n, logit_p, cap)
+    pos = (n * p).detach().numpy()[0]
+    assert pos[0] == pytest.approx(6 / (1 + np.exp(1.0)))  # n within the cap: the sigmoid
+    # n beyond it: p scaled by cap / n, so n p runs from 0 to the cap
+    assert pos[1] == pytest.approx(8.0 / (1 + np.exp(-3.0)))
+    assert pos[2] == pytest.approx(8.0 / (1 + np.exp(-2.0)))
+    assert (pos <= 8.0).all()
+    # the logit returned is the capped p's own (exact log terms)
+    np.testing.assert_allclose(lp.detach().numpy(), np.log(p.detach().numpy()
+                                                            / (1 - p.detach().numpy())))
+    (n * p).sum().backward()
+    assert torch.isfinite(logit_p.grad).all()
+    p0, lp0 = capped_p(n, logit_p, None)
+    assert torch.equal(lp0, logit_p) and torch.allclose(p0, torch.sigmoid(logit_p))
+
+
+def test_a_population_cannot_sit_beyond_the_highest_bin():
+    bins = [np.arange(10, dtype=float), np.arange(25, dtype=float)]
+    batch = PaddedBatch.from_arrays(bins, [np.zeros(10), np.zeros(25)], [24.0, 24.0], CPU64)
+    np.testing.assert_allclose(batch.d_cap.numpy(), [9.0, 24.0])
+    shape = normalise_shape(np.array([0.6, 0.3, 0.1]))
+    model = MixtureBatch(
+        batch, shape_weights([shape, shape], 2, CPU64), CPU64.tensor(np.zeros((2, 2))),
+        CPU64.tensor(np.full((2, 2), 3.0)), CPU64.tensor(np.full((2, 2), 4.0)),
+    )
+    pos = (model.ns * model.ps).detach().numpy()
+    assert (pos[0] <= 9.0 + 1e-9).all() and (pos[1] <= 24.0 + 1e-9).all()
+    # the component keeps signal inside the bins, so its amplitude is constrained by the data
+    comp = model.components().detach().numpy()
+    assert (comp[:10, 0].sum(axis=0) > 0.3).all()

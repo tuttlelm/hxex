@@ -3,6 +3,7 @@
 standard errors against the spread over independent noise realisations (about a minute) runs when
 HXEX_FULL_REGRESSION=1."""
 
+import dataclasses
 import json
 import os
 
@@ -276,3 +277,21 @@ def test_standard_errors_match_the_spread_over_independent_noise_realisations():
     boot_frac = np.mean([b.population_se[i][o[i]] for i in range(3)], axis=0)
     np.testing.assert_allclose(boot_mean / means.std(axis=0, ddof=1), 1.0, atol=0.3)
     np.testing.assert_allclose(boot_frac / frac.std(axis=0, ddof=1), 1.0, atol=0.3)
+
+
+def test_no_resample_places_a_population_beyond_the_highest_bin():
+    # the escaped resamples of HISTORY 335: a population beyond the bins predicted
+    # nothing, so its share was free and one such draw inflated the average's error
+    meas, _ = synthetic([[(4.0, 0.4), (11.0, 0.6)], [(10.5, 1.0)]], seed=3)
+    top = 11
+    cut = Measurements.from_arrays(
+        [b[: top + 1] for b in meas.bins], [o[: top + 1] for o in meas.observed],
+        list(meas.shapes), meas.n_max, references=[None, None], spectrum_id=["a", "b"],
+    )
+    res = fit_models(cut, FitConfig(noise=NOISE, backend=CPU, **LIGHT))
+    for k in (1, 2):  # each spectrum resampled at K = 1 and at K = 2
+        at_k = dataclasses.replace(res, selected_K=np.full(2, k, dtype=res.selected_K.dtype))
+        draws = bootstrap(cut, at_k, BootstrapConfig(**{**BOOT.to_dict(),
+                                                        "keep_draws": True})).draws
+        pos = np.where(draws.ok[..., None], draws.n * draws.p, np.nan)
+        assert np.nanmax(pos) <= top + 1e-6, k

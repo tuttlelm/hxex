@@ -8502,3 +8502,46 @@ CSVs or mzML if wanted.
     entry when they all fit, else fewer, balanced over the rows); those four legends use it.
     Figures whose legends fit are unchanged. Checks: tests/test_report.py (the helper), the
     report and analysis tests, before/after pages of the pooled example (private).
+
+335. **The position cap: no population beyond the spectrum's highest bin (2026-11-09).**
+    Found while evaluating the multimodal preset: some bootstrap resamples placed a population
+    beyond the spectrum's last bin (one tutorial spectrum at K = 3: a component at 20.3 D with
+    none of its intensity inside bins 0 to 19, counted at 93 % of the molecules, with a lower
+    loss than the original fit's description). Such a component predicts nothing, so its
+    amplitude, and its share, are free; `n_max` (1.2 x the sites) bounds `n` but not the
+    position `n p`, and the bins stop below `n_max` in 17-18 % of spectra (SpecExport windows).
+    Scope before the change: 0.3-1.3 % of K = 2 and K = 3 fits had a hidden component (almost
+    none at the selected K); the K = 2 bootstrap's `average_se` exceeded 1 D in 7.0 % of the
+    intact-peptide benchmark's spectra and 6.3 % of the tutorial's, nearly all from such draws
+    (without them the tutorial's median for those spectra falls from 3.21 to 0.044 D).
+    Evaluated (private scratch; complete runs: K 1-3, population test, bootstrap at K = 1 and
+    2, analysis against WT, on the benchmark, the tutorial data, and the known-answer set) four
+    variants of a smooth cap `p = sigmoid(logit_p) min(1, cap / n)`: none; the highest bin;
+    the smaller of that and the exchangeable sites; the smaller of that and the fully
+    deuterated level `m0 + 1.1 (mFD - m0)` (measured or stand-in). Every cap ends the escaped
+    resamples (benchmark `average_se` > 1 D: 1,845 -> 19-26; tutorial 243 -> 1). The
+    highest-bin cap changes nothing else: K chosen, population-test sets, calibration (K = 1
+    replicates 1.12, charges 1.69; K = 2 averages 1.20 benchmark, 0.92 tutorial), differences
+    found against WT, and the known answer (K correct 0.832 both; its bins reach about twice
+    the sites, so the cap never binds there); 12 benchmark K = 1 means moved, fits that had
+    escaped. The fully deuterated cap removes most populations above fD 1.1 (benchmark K = 2
+    fits 20.5 -> 5.7 %), so the `max_fD` hold-out nearly stops (6,411 -> 1,592 spectra) and the
+    sets it had held out enter the test and often read two (undeuterated sets at two 6.1 ->
+    9.4 %; sets never held out unchanged: the hold-out had been hiding them, HISTORY 180). It
+    also cuts into data where the fully deuterated level is low (331 benchmark K = 1 means
+    moved, up to 18 D, 56 % of them with the uncapped mean above the cap, half on measured
+    controls), and true-two known-answer spectra read three more often (25 -> 36 of 279). The
+    sites cap does the same to the known answer (25 -> 33): uncapped, those spectra's K = 3 fit
+    had parked a component at about 1.17 x the sites (inside the bins, physically impossible,
+    a weak fit); held at the sites it fits the envelope's top edge and the criterion
+    over-splits. BUILT (owner: "build bins as an always-on rule"): `PaddedBatch.from_arrays`
+    sets each measurement's cap at its highest bin (at least 0.5), `capped_p` in
+    `hxex.model.mixture` (the logit of the capped `p` kept for the exact log terms), used by
+    `MixtureBatch` and the polish; every place a model is built from a spectrum's bins
+    (fits, polish, bootstrap, its curve band, the population-test null, quality statistics,
+    the window-edit preview) takes it with no further argument. Stored `p` is the capped one;
+    stored `logit_p` stays the optimiser's own parameter, so warm starts and rebuilt models
+    agree. Bundles made before keep their fits (a resumed bootstrap or reassessed quality of
+    such a bundle rebuilds its models under the cap). Not built: a cap at the fully deuterated
+    level or the sites (above); PLAN Next steps 20 updated. Checks: tests/test_model.py,
+    test_fit.py, test_bootstrap.py (both fit and bootstrap tests fail without the cap).

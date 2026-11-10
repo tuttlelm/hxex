@@ -6,8 +6,10 @@ envelope), the predicted intensity is ``I(b) = sum_k A_k * (B_k * D)[b]`` where 
 binomial with real-valued ``n_k`` and ``p_k`` (defined through the gamma function).
 
 Parameterisation (always inside their bounds): ``A_k = exp(log_A_k)``,
-``n_k = n_max * sigmoid(n_raw_k)`` and ``p_k = sigmoid(logit_p_k)``. ``n`` has no lower bound
-other than 0, so small ``n`` with large ``p`` and large ``n`` with small ``p`` are both reachable.
+``n_k = n_max * sigmoid(n_raw_k)`` and ``p_k = sigmoid(logit_p_k) * min(1, d_cap / n_k)``, which
+keeps every population's position ``n_k p_k`` at or below the measurement's highest bin
+``d_cap`` (:func:`capped_p`). ``n`` has no lower bound other than 0, so small ``n`` with large
+``p`` and large ``n`` with small ``p`` are both reachable.
 
 Many measurements are fitted together: ragged bins are padded to ``(B_max, M)`` with a mask, and
 padded positions are excluded from the loss. Losses (per measurement, on spectra already divided
@@ -332,6 +334,9 @@ class PaddedBatch:
     # log ratio so large that nothing is cut)
     scan_w: torch.Tensor | None = None
     scan_c: torch.Tensor | None = None
+    # the highest position ``n p`` a population may take, per measurement, in deuterons: the
+    # measurement's highest bin (at least 0.5; :func:`capped_p`); None: no cap
+    d_cap: torch.Tensor | None = None
 
     @classmethod
     def from_arrays(
@@ -348,7 +353,11 @@ class PaddedBatch:
         (:class:`hxex.noise.BinNoise`, in the units of ``observed``): variances that follow the
         prediction instead (``weights`` is then not given). ``cut``: per measurement None or
         ``(w, c)``, the scans' shares of its signal ``(S,)`` and ``log(w_s / sigma_s)`` at each
-        bin ``(bins, S)`` in the units of ``observed`` (:func:`cut_reading`)."""
+        bin ``(bins, S)`` in the units of ``observed`` (:func:`cut_reading`).
+
+        Every population's position ``n p`` is capped at the measurement's highest bin
+        (``d_cap``): a population beyond the bins predicts no intensity there, so its amplitude
+        (and share) would be free (HISTORY 335)."""
         m = len(bins)
         if not (len(observed) == len(n_max) == m):
             raise ValueError("bins, observed and n_max must have one entry per measurement")
@@ -402,11 +411,28 @@ class PaddedBatch:
             weight=weight, base_var=base, floor_var=floor,
             model_error=None if noise is None else float(noise.model_error),
             scan_w=scan_w, scan_c=scan_c,
+            d_cap=backend.tensor(np.array([max(float(np.max(bc)), 0.5) if len(bc) else 0.5
+                                           for bc in bins])),
         )
 
     @property
     def n_measurements(self) -> int:
         return self.b.shape[1]
+
+
+def capped_p(n: torch.Tensor, logit_p: torch.Tensor, d_cap: torch.Tensor | None):
+    """``p = sigmoid(logit_p) * min(1, d_cap / n)``, so that a population's position ``n p``
+    stays at or below ``d_cap`` (``(M,)``, deuterons); returns ``(p, logit)``, the logit of the
+    capped ``p`` for the exact log terms of :func:`predict_mixture`. The cap is smooth in the
+    parameters (the optimiser's ``logit_p`` is unbounded as before). ``d_cap`` None: the plain
+    sigmoid."""
+    if d_cap is None:
+        return torch.sigmoid(logit_p), logit_p
+    s = torch.clamp(d_cap.unsqueeze(1) / n.clamp(min=1e-12), max=1.0)
+    log_p = F.logsigmoid(logit_p) + torch.log(s)
+    log_q_cap = torch.log(-torch.expm1(torch.clamp(log_p, max=-1e-6)))
+    log_q = torch.where(s < 1.0, log_q_cap, F.logsigmoid(-logit_p))
+    return torch.exp(log_p), log_p - log_q
 
 
 def logit(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
@@ -473,6 +499,7 @@ class MixtureBatch(nn.Module):
         self.register_buffer("shape_w", shape_w)
         self.register_buffer("scan_w", batch.scan_w)
         self.register_buffer("scan_c", batch.scan_c)
+        self.register_buffer("d_cap", batch.d_cap)
         self.log_A = nn.Parameter(log_A.clone())
         self.n_raw = nn.Parameter(n_raw.clone())
         self.logit_p = nn.Parameter(logit_p.clone())
@@ -506,13 +533,19 @@ class MixtureBatch(nn.Module):
 
     @property
     def ps(self) -> torch.Tensor:
-        return torch.sigmoid(self.logit_p)
+        """Each population's ``p``, capped so that ``n p`` stays within the bins
+        (:func:`capped_p`)."""
+        return capped_p(self.ns, self.logit_p, self.d_cap)[0]
+
+    def _p_logit(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return capped_p(self.ns, self.logit_p, self.d_cap)
 
     def predict(self) -> torch.Tensor:
         """Predicted intensity at every (padded) bin, ``(B_max, M)``: with a per-scan cut, the
         expected reading (:func:`cut_reading`)."""
-        pred = predict_mixture(self.b, self.log_A, self.ns, self.ps, self.shape_w[:, :, 0],
-                               self.grid, self.logit_p)
+        p, lp = self._p_logit()
+        pred = predict_mixture(self.b, self.log_A, self.ns, p, self.shape_w[:, :, 0],
+                               self.grid, lp)
         if self.scan_w is None:
             return pred
         return cut_reading(pred, self.scan_w, self.scan_c)
@@ -520,8 +553,9 @@ class MixtureBatch(nn.Module):
     def components(self) -> torch.Tensor:
         """Predicted intensity of every component, ``(B_max, M, K)`` (with a per-scan cut, each
         scaled by its bin's share read, :meth:`predict` over the uncut prediction)."""
-        comp = self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, self.ps, self.shape_w,
-                                                       self.grid, self.logit_p)
+        p, lp = self._p_logit()
+        comp = self.amplitudes.unsqueeze(0) * convolve(self.b, self.ns, p, self.shape_w,
+                                                       self.grid, lp)
         if self.scan_w is None:
             return comp
         total = comp.sum(dim=2)

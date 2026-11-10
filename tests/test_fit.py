@@ -702,3 +702,19 @@ def test_one_deuteron_is_one_population_and_poisson_takes_no_negative_counts():
     Backend("cuda:1")
     with pytest.raises(ValueError, match="cuda:N"):
         Backend("cuda:abc")
+
+
+def test_no_population_is_placed_beyond_the_highest_bin():
+    # a heavy population whose envelope runs past the last bin (a window that stops short): no
+    # fitted K puts a population beyond the bins, where it would predict nothing and its share
+    # would be free
+    meas, _ = synthetic([[(4.0, 0.4), (11.0, 0.6)], [(10.5, 1.0)]], seed=3)
+    top = 11
+    cut = Measurements.from_arrays(
+        [b[: top + 1] for b in meas.bins], [o[: top + 1] for o in meas.observed],
+        list(meas.shapes), meas.n_max, references=[None, None], spectrum_id=["a", "b"],
+    )
+    res = fit_models(cut, dataclasses.replace(CFG, k_max=3))
+    for k, kf in res.fits.items():
+        pos = kf.n[:, :k] * kf.p[:, :k]
+        assert np.nanmax(pos) <= top + 1e-6, k
