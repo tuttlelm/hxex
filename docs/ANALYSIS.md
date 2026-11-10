@@ -808,7 +808,7 @@ Every stand-in is checked against the series' time course as stand-ins are now (
 `fd_other_sample` does not count as measured for the protection fit's start (owner, 2026-10-30:
 only expand that pool if needed; may be revisited).
 
-### Pooled samples: possible identities (design, owner 2026-11-09; steps 1-4 built)
+### Pooled samples: possible identities (design, owner 2026-11-09; steps 1-5 built)
 
 **The use case.** A pooled sample holds what *may* be there, not a known list of proteins: a
 pooled FASTA lists every candidate (isoforms, say), and *hxex* gives each peptide the identities
@@ -890,16 +890,20 @@ levels, and whether both sides hold the same set.
   and over all of them, the set unique. The effect of a modification or a mutation within one
   condition (acetylated against unacetylated, one isoform against another) belongs to the
   head-to-head figures (below).
-- *Head to head, by peptide* (owner open to designs; to show as drafts side by side before
-  settling): pages of panels, one per residue range, for (a) one sequence across conditions
-  and (b) several sequences of one range against each other within a condition. In a panel the
-  x axis is the condition (or time, log, when there are several), one marker shape per
-  sequence and one colour per sample (`[analysis.colours]`), replicates as small points, ±1 se
-  bars; the panel title aligns the sequences with differing residues marked and gives each
-  one's identity. Significance by Welch's test per pair (crosses for not significant, as on the
-  Woods plots); (b) gets a table of its own (`compare_sequences.csv`). Which panels:
-  `[analysis.pooled] head_to_head = "auto"` (every range with several sequences, and every
-  isoform-level sequence) or a list of ranges or sequences.
+- *Head to head, by peptide* (built; owner chose layout A of three drafts, 2026-11-09): one
+  panel per range, the samples along x, each sequence its own marker shape beside the others
+  (the first, the class's or the unmodified one, filled; the others hollow, named by identity
+  and difference, `N50T`, `acK40`), each sample its colour, ±1 se bars; every panel on the
+  forms pages' y axis (0 to the highest residue or peptide fD with its error). No significance
+  marks on the figure (owner: may revisit); `compare_sequences.csv` has each sequence against
+  its panel's first per sample and time (Welch on the replicates, significant as the peptide
+  comparisons). Panels (`[analysis] head_to_head`, a flat key rather than the
+  `[analysis.pooled]` table first proposed): `"auto"`, every range with two or more sequences
+  of one class (a sequence whose candidates fall in several classes is left out; sequences of
+  different classes at one range are different proteins and never share a panel), then every
+  isoform's sequence alone at its range (one sequence across the conditions); or a list of
+  ranges; or false. Measured on the private pooled dataset: 18 ranges with several sequences
+  of one class (two more ranges pair the two classes and are left out), four pages at 4 min.
 
 Built in step 2: the candidates (the FASTA's records and the class names) are kept in the read
 record (`pooled_candidates`), and the identities are worked out from it when tables are written

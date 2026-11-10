@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import itertools
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -223,12 +223,15 @@ def plot_coverage(
     colorbar: bool = True,
     title: str | None = None,
     time_scale: str = "seconds",
+    outlined: Collection[tuple[str, int, int]] | None = None,
 ) -> Figure:
     """The coverage map of ``sample`` at ``time`` (NaN: its undeuterated control; peptides
     only), coloured by ``fD`` at ``K`` and
     ``rank`` (0 to 1; grey where it is not known). ``length`` is the protein's (the x axis runs
     from 0 to it; else to the last covered residue); ``wrap`` the rows of the stack (else
-    :func:`autowrap`). Each bar has the gid ``peptide:<start>-<end>``.
+    :func:`autowrap`). Each bar has the gid ``peptide:<start>-<end>:<sequence>`` (two
+    sequences over one range are two bars). ``outlined``: the ``(peptide, start, end)`` drawn
+    with a thick black edge (a pooled form's own peptides).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -249,9 +252,16 @@ def plot_coverage(
         value = uptake.fD[i]
         colour = FD_CMAP(norm(value)) if np.isfinite(value) else FD_CMAP.get_bad()
         y = -(n % wrap) - 1
+        own = outlined is not None and (str(uptake.peptide[i]), int(uptake.start[i]),
+                                        int(uptake.end[i])) in outlined
         rect = Rectangle((uptake.start[i] - 0.5, y), uptake.end[i] - uptake.start[i] + 1, 1,
-                         facecolor=colour, edgecolor="k", linewidth=0.3)
-        rect.set_gid(f"peptide:{uptake.start[i]}-{uptake.end[i]}")
+                         facecolor=colour, edgecolor="k", linewidth=2.0 if own else 0.3,
+                         zorder=3 if own else 2)
+        if own:  # a white line inside the black one: seen on the dark and the bright colours
+            ax.add_patch(Rectangle((uptake.start[i] - 0.5, y),
+                                   uptake.end[i] - uptake.start[i] + 1, 1, facecolor="none",
+                                   edgecolor="white", linewidth=0.7, zorder=4))
+        rect.set_gid(f"peptide:{uptake.start[i]}-{uptake.end[i]}:{uptake.peptide[i]}")
         hover.set_hover(rect, hover.peptide(uptake.peptide[i], uptake.modification[i]),
                         hover.residues(uptake.start[i], uptake.end[i]),
                         hover.value("fD", uptake.fD[i], uptake.fD_se[i]),
@@ -294,12 +304,15 @@ def coverage_figure(
     time_scale: str = "seconds",
     columns: int | None = None,
     undeuterated: bool = True,
+    outlined: Collection[tuple[str, int, int]] | None = None,
+    title: str | None = None,
 ) -> Figure:
     """Coverage maps of several samples (rows) and points (columns: the undeuterated control
     when there is one and ``undeuterated``, then the ``times``, by default every time point),
     all with one colour scale and the same number of rows per stack. Empty cells (no peptide of
     that sample at that point) are left blank. ``columns``: each sample's points wrap into
-    rows of at most that many (a long time course on a page of its size).
+    rows of at most that many (a long time course on a page of its size). ``outlined``: the
+    peptides drawn with a thick edge (:func:`plot_coverage`); ``title``: above the figure.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -337,7 +350,7 @@ def coverage_figure(
                 ax.set_axis_off()
                 continue
             plot_coverage(uptake, s, t, K=K, rank=rank, length=top, wrap=wrap, ax=ax,
-                          colorbar=False, time_scale=time_scale)
+                          colorbar=False, time_scale=time_scale, outlined=outlined)
             if r * lines + c // per_row < len(samples) * lines - 1:
                 ax.set_xlabel("")
         for c in range(len(times), lines * per_row):  # the last row's empty places
@@ -347,6 +360,8 @@ def coverage_figure(
     bar = fig.colorbar(ScalarMappable(norm=Normalize(0, 1), cmap=FD_CMAP), ax=axes, pad=0.01,
                        fraction=0.03, aspect=40)
     bar.set_label("fD")
+    if title:
+        fig.suptitle(title, fontsize=10)
     return fig
 
 

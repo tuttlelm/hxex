@@ -429,6 +429,7 @@ may be](inputs.md#what-each-peptide-may-be)).
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution and the block the residue lies in (`block_start`, `block_end`: the stretch the peptides cannot divide, whose length is the resolution), coverage; with the [population test](population-test.md), on the K=1 rows: `population_tier`, `test_strength_2`, `test_agreement_2` (and `_3`) |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `pooled_forms.csv` | pooled data with `pooled_fasta`: the forms of the pool's minimum set, one row each: `form`, `members` (the candidates it may be), `candidates` (all those its peptides fit), `base` and `sites` (a modified form), `n_peptides`, `n_own`, `own_peptides`, `shared_peptides`, `minimum_set_unique`; each form's residue values are in `residues.csv`, its sample named `SAMPLE FORM` ([The forms in a pool](inputs.md#the-forms-in-a-pool)) |
+| `compare_sequences.csv` | pooled data with `pooled_fasta`: the sequences of each head-to-head panel against its first, per sample and time: `start`, `end`, `group` (their class), `peptide_reference` and `peptide`, their identities, `difference` (how the sequence differs, `N50T`, `acK40`), values and errors, `delta`, `delta_se`, `t`, `p`, replicate counts, `significant` (as in `compare_peptides.csv`), and whether either side used a stand-in control ([Sequences head to head](inputs.md#sequences-head-to-head)) |
 | `populations.csv` | per residue and labelling time (the controls take no part): the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
 | `regions.csv` | per region and labelling time (the controls take no part): fD over the region's residues |
 | `compare_regions.csv` | with regions and a reference: per region and time, whether each sample differs from the reference there: `delta` (the mean of its residues' own differences), `delta_shared` and `delta_shared_se` (the difference and error the test used), `z`, `significant`, `peptide_support`, `region_test_only`, `n_residues` and `coverage` (the region's residues compared), and `delta_crit` (see *Reading the region significance map* below) |
@@ -469,8 +470,8 @@ shows, the settings it needs, and the settings that change it.
 
 ### Residue-level outputs need one protein
 
-Most of the analysis places a sample's peptides on its protein's residue numbers: coverage,
-redundancy and resolution, the residue values and their comparisons, the Woods plots, and the
+Most of the analysis places a sample's peptides on its protein's residue numbers: redundancy
+and resolution, the residue values and their comparisons, the Woods plots, and the
 significance maps. That only means something when the sample's peptides come from one protein
 and overlap. A set of unrelated peptides measured together (for example a test set of single
 peptides, or a digest of many proteins numbered end to end) has no residues to resolve: each
@@ -481,6 +482,10 @@ sample where two of its peptides overlap and its peptides agree on the residue a
 they share. For any other sample the log says why it has none, and the peptide-level tables
 (`species_uptake.csv`, the peptide comparisons, the butterfly plot) are made as usual.
 `residue_level = true` makes the residue-level outputs for every sample, and `false` for none.
+
+The coverage maps are drawn for every sample whatever `residue_level` says: they only show
+each peptide at its residue numbers and average nothing. A pooled sample has one coverage map
+per form instead ([The forms in a pool](inputs.md#the-forms-in-a-pool)).
 
 `[analysis] page_size` sets the largest page, width and height in inches (`[16, 12]`). A figure
 that grows with the data goes on over further pages rather than growing past it: a coverage
@@ -517,7 +522,9 @@ differences are significant.
 draws the same thing for each form of the pool: one panel per form, one page per class. A grey
 strip along the bottom of a panel, outlined in black, marks the residues the form's own
 peptides measure; elsewhere the value is the mixture of the forms that share the peptides. See
-[The forms in a pool](inputs.md#the-forms-in-a-pool).
+[The forms in a pool](inputs.md#the-forms-in-a-pool). `head_to_head_<time>` puts the pooled
+sequences measured over one range side by side, every sample along the x axis, on the same y
+axis ([Sequences head to head](inputs.md#sequences-head-to-head)).
 
 **Reading the Woods plot.** Each panel shows, for every peptide, a bar over the residues it
 covers at its difference from the reference (sample minus reference), with its standard error as

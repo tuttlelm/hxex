@@ -234,8 +234,9 @@ def residue_level_states(
     sequences: str | Mapping[str, str] | None = None,
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
 ) -> dict[tuple[str, str], str]:
-    """Which states ``(run, sample)`` of ``uptake`` have residue-level outputs (coverage,
-    redundancy and resolution, residue values, their comparisons and figures): ``''`` for those
+    """Which states ``(run, sample)`` of ``uptake`` have residue-level outputs (redundancy and
+    resolution, residue values, their comparisons and figures; the coverage maps are drawn for
+    every sample, owner 2026-11-09): ``''`` for those
     that do, else why not. Those outputs place a sample's peptides on one protein's residue
     numbers, which says nothing for a sample that is not one protein (owner, 2026-11-08: a set
     of unrelated peptides pooled, such as a test set of single peptides).

@@ -385,13 +385,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     level = residue_level_states(up, config.residue_level, sequences=sequences)
     # a pooled sample with candidates is several proteins: its residue-level outputs are those
     # of each form of the pool's minimum set (owner, 2026-11-09), never one map of the mixture
-    pools = (_pool_forms(results, up) if config.residue_level is not False else {})
+    pools = _pool_forms(results, up)
     pooled = {s for s in level if s[0] in pools}
+    forms_on = config.residue_level is not False
     for state, why in level.items():
         if why and config.residue_level == "auto" and state not in pooled:
             log.info("%s: no residue-level outputs (%s); [analysis] residue_level = true makes "
                      "them", label(*state), why)
-    if pooled:
+    if pooled and forms_on:
         log.info("pooled samples (%s): residue-level outputs for each form of the pool "
                  "(pooled_forms.csv), not for the mixture", ", ".join(label(*s) for s in
                                                                          sorted(pooled)))
@@ -633,10 +634,24 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         regions = region_summary(residues, ann)
         tables["regions"] = _columns(regions)
         regions = _display(regions, labels)
-    form_jobs = (_pooled_form_outputs(
-        pools, up, pooled, tables, config, labels=labels, styles=styles,
-        order=[s for s in in_order if any(labels[p] == s for p in pooled)], ref_state=ref_state,
-        k1=k1_raw, times=times, scale=scale) if pooled else [])
+    pooled_order = [s for s in in_order if any(labels[p] == s for p in pooled)]
+    # the forms pages and the head-to-head pages share one y axis (owner, 2026-11-09): up to
+    # the highest residue or peptide fD with its error
+    on_pooled = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
+                                                                       strict=True)], dtype=bool)
+    peptide_top = (_highest(up_d.select(on_pooled & (up.role == "")), times)
+                   if pooled and config.head_to_head is not False else None)
+    form_jobs, form_top = (_pooled_form_outputs(
+        pools, up, pooled, tables, config, labels=labels, styles=styles, order=pooled_order,
+        ref_state=ref_state, k1=k1_raw, times=times, scale=scale, floor=peptide_top)
+        if pooled and forms_on else ([], peptide_top))
+    if pooled:  # a coverage map per form of the pool: peptide-level, whatever residue_level
+        form_jobs += _pooled_coverage_jobs(pools, up, pooled, config, labels=labels,
+                                           order=pooled_order, times=times, scale=scale)
+    if pooled and config.head_to_head is not False:
+        form_jobs += _head_to_head_outputs(
+            results, pools, up, up_d, pooled, tables, config, styles=styles,
+            order=pooled_order, times=times, scale=scale, top=form_top)
     up, residues, coverage, choice = up_d, residues_d, coverage_d, choice_d
     states = states_shown
 
@@ -644,7 +659,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     page = config.page_size
     per_row = max(1, int((page[0] - 0.8) // COVERAGE_CELL[0]))
     per_page = per_row * max(1, int(page[1] // COVERAGE_CELL[1]))
-    for s in res_order:  # the undeuterated control, then the times, wrapped and paged
+    # coverage: peptide-level, so every sample (owner, 2026-11-09), but a pooled sample, whose
+    # peptides belong to several proteins: those get a map per form (pooled_coverage)
+    pooled_shown = {labels[s] for s in pooled}
+    for s in [x for x in in_order if x not in pooled_shown]:
+        # the undeuterated control, then the times, wrapped and paged
         points = (["UN"] if up.where(sample=s, role=UNDEUT).any() else []) + list(times)
         for n, chunk in enumerate(_pages(points, per_page)):
             jobs.append((_page_stem(f"coverage_{s}", n), lambda s=s, chunk=chunk: coverage_figure(
@@ -858,16 +877,26 @@ def _joined(first: dict | None, second: dict) -> dict:
     return out
 
 
+def _highest(table, times) -> float | None:
+    """The highest K=1 fD plus its error of ``table`` (a species table or a residue map) at
+    ``times``; None without any."""
+    k1 = ((table.K == 1) & (table.rank == 1) & np.isfinite(table.fD)
+          & np.isin(table.time, list(times)))
+    return (float(np.max(table.fD[k1] + np.nan_to_num(table.fD_se[k1]))) if k1.any()
+            else None)
+
+
 def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: AnalysisConfig, *,
                          labels: dict, styles: dict, order: list, ref_state, k1, times,
-                         scale: str) -> list:
+                         scale: str, floor: float | None = None) -> tuple[list, float | None]:
     """The residue-level outputs of the pooled samples (owner, 2026-11-09): the forms of each
     pool's minimum set (``pooled_forms`` table), each form's residue values (rows of the
     ``residues`` table, the sample named ``'<sample> <form>'``), each form compared with the
     same form of the reference (rows of ``compare_residues``: judged on the peptides both
     measured, then gated by the peptide comparison of the form's peptides), and one figure
     page per class of forms and time (:func:`hxex.report.pooled.plot_pooled_forms`). Adds
-    the tables to ``tables``; returns the figure jobs."""
+    the tables to ``tables``; returns the figure jobs and the top of their y axis (the
+    head-to-head figure shares it)."""
     from ..analysis.pooled import form_class, form_comparison, form_sequences, form_uptake
     from .pooled import FORM_PANEL, plot_pooled_forms
 
@@ -923,9 +952,8 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                                                  concat_tables(found).columns())
     # the figures: one page per class of forms (forms of no single class last) and time
     shown = _display(rm, form_labels)
-    k1_rows = (shown.K == 1) & (shown.rank == 1) & np.isfinite(shown.fD)
-    top = (float(np.max(shown.fD[k1_rows] + np.nan_to_num(shown.fD_se[k1_rows])))
-           if k1_rows.any() else None)
+    tops = [x for x in (_highest(shown, times), floor) if x is not None]
+    top = max(tops) if tops else None
     first, record, registry = next(iter(pools.values()))
     groups: dict[str, list] = {}
     for f in first.forms:
@@ -944,6 +972,85 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                 jobs.append((stem, lambda t=t, part=part: plot_pooled_forms(
                     shown, part, order, t, styles=styles, nterm_subtract=up.nterm_subtract,
                     top=top, delta_crit=crit, time_scale=scale, registry=registry)))
+    return jobs, top
+
+
+def _pooled_coverage_jobs(pools: dict, up, pooled: set, config: AnalysisConfig, *,
+                          labels: dict, order: list, times, scale: str) -> list:
+    """One coverage map per form of each pool's minimum set (owner, 2026-11-09): the peptides
+    the form may have given, every pooled sample a row, the undeuterated control and the
+    times as columns (paged as the samples' maps), the form's own peptides outlined in black
+    and white;
+    file ``pooled_coverage_<form>``."""
+    from ..analysis.pooled import form_uptake
+
+    forms = {run: f for run, (f, _, _) in pools.items()}
+    rows = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
+                                                                  strict=True)], dtype=bool)
+    fu, base = form_uptake(up.select(rows & (up.kind == "peptide")), forms)
+    form_labels = {state: f"{labels.get((state[0], s), label(state[0], s))} "
+                          f"{state[1][len(s) + 1:]}" for state, s in base.items()}
+    shown = _display(fu, form_labels)
+    page = config.page_size
+    per_row = max(1, int((page[0] - 0.8) // COVERAGE_CELL[0]))
+    per_page = per_row * max(1, int(page[1] // (COVERAGE_CELL[1] * max(len(order), 1))))
+    jobs = []
+    first = next(iter(pools.values()))[0]
+    for form in first.forms:
+        samples = [f"{s} {form.name}" for s in order
+                   if shown.where(sample=f"{s} {form.name}").any()]
+        if not samples:
+            continue
+        has_un = any(shown.where(sample=s, role=UNDEUT).any() for s in samples)
+        points = (["UN"] if has_un else []) + list(times)
+        own = set(form.own)
+        for n, chunk in enumerate(_pages(points, per_page)):
+            jobs.append((_page_stem(f"pooled_coverage_{_stem(form.name)}", n),
+                         lambda samples=samples, chunk=chunk, own=own, form=form:
+                         coverage_figure(
+                             shown, samples=samples, times=[t for t in chunk if t != "UN"],
+                             columns=per_row, undeuterated="UN" in chunk, cell=COVERAGE_CELL,
+                             outlined=own, time_scale=scale,
+                             title=f"{form.name}: its own peptides outlined in black and white")))
+    return jobs
+
+
+def _head_to_head_outputs(results, pools: dict, up, up_d, pooled: set, tables: dict,
+                          config: AnalysisConfig, *, styles: dict, order: list, times,
+                          scale: str, top: float | None) -> list:
+    """The pooled sequences measured over one range, head to head (owner, 2026-11-09):
+    ``compare_sequences`` (each panel's sequences against its first, per sample and time)
+    and figure pages ``head_to_head_<time>`` (:func:`hxex.report.pooled.plot_head_to_head`),
+    their y axis from 0 to ``top`` (shared with the forms pages). ``[analysis] head_to_head``
+    chooses the ranges. Adds the table to ``tables``; returns the figure jobs."""
+    from ..analysis.compare import compare_sequences
+    from ..analysis.pooled import head_to_head_panels
+    from .pooled import HEAD_TO_HEAD_COLUMNS, HEAD_TO_HEAD_PANEL, plot_head_to_head
+
+    _, record, registry = next(iter(pools.values()))
+    rows = np.flatnonzero([(str(u), str(s)) in pooled and k == "peptide" and not r
+                           for u, s, k, r in zip(up.run, up.sample, up.kind, up.role,
+                                                 strict=True)])
+    peptides = [(str(up.peptide[i]), int(up.start[i]), int(up.end[i])) for i in rows
+                if not str(up.modification[i])]
+    panels = head_to_head_panels(peptides, record, config.head_to_head, registry=registry)
+    if not panels:
+        log.info("head to head: no range with sequences to show ([analysis] head_to_head = "
+                 "%r)", config.head_to_head)
+        return []
+    comparison = compare_sequences(
+        results, panels, alpha=config.alpha, exclude_flagged=config.exclude_flagged,
+        filters=config.filters, controls=config.controls, k2_averages=k2_average_sets(up))
+    tables["compare_sequences"] = comparison.columns()
+    rows_per_page = max(1, int((config.page_size[1] - 0.4) // HEAD_TO_HEAD_PANEL[1]))
+    per_page = HEAD_TO_HEAD_COLUMNS * rows_per_page
+    jobs = []
+    for t in times:
+        when_ = _time_label(t, scale)
+        for n, part in enumerate(_pages(panels, per_page)):
+            jobs.append((_page_stem(f"head_to_head_{when_}", n), lambda t=t, part=part:
+                         plot_head_to_head(up_d, part, order, t, styles=styles, top=top,
+                                           time_scale=scale)))
     return jobs
 
 

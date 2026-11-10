@@ -422,10 +422,38 @@ filter removes the only peptide of a candidate. If the set is not the only one o
 - `pooled_forms_CLASS_TIME` figures: one page per class, one panel per form, every sample's
   fD by residue. A grey strip along the bottom of a panel, outlined in black, marks the
   residues the form's own peptides measure. Forms of no single class go on an `other` page.
+- `pooled_coverage_FORM` figures: a coverage map per form, its peptides only, every sample a
+  row, its own peptides outlined in black and white. Each sequence and each modified form is a bar of
+  its own: nothing is combined across sequences.
 
-The other residue-level figures (coverage, residue profiles, Woods plots, and the
-significance maps) are not drawn for pooled samples: they place every peptide on one
-protein's residue numbers. `[analysis] residue_level = false` turns the forms off as well.
+The other residue-level figures (residue profiles, Woods plots, and the significance maps) and
+the samples' own coverage maps are not drawn for pooled samples: they place every peptide on
+one protein's residue numbers. `[analysis] residue_level = false` turns the forms' residue
+values and pages off as well; the forms' coverage maps stay.
+
+### Sequences head to head
+
+Where several sequences of one class were measured over the same residues (isoforms that
+differ by a point mutation, or a modified peptide beside its unmodified form), `hxex analyse`
+draws them side by side: `head_to_head_TIME` figures, one panel per range.
+
+- Every sample is along the x axis, in its colour; each sequence has its own marker shape
+  beside the others.
+- The first sequence (the class's, or the unmodified one) is filled; the others are hollow,
+  named by their identity and how they differ from the first (`ALPHA4: N50T`, `ALPHA: acK40`).
+- Error bars are ±1 standard error. Every panel has the same y axis as the forms pages, so the
+  figures compare at a glance.
+- An isoform's sequence with no other sequence of its class at its range gets a panel of its
+  own: that sequence across the samples.
+- Sequences of different classes at one range are different proteins numbered alike: they
+  never share a panel.
+
+`compare_sequences.csv` compares each sequence of a panel with the panel's first, in every
+sample and at every time: the difference, its error, Welch's test on the replicates, and
+`significant`, judged as the peptide comparisons are.
+
+`[analysis] head_to_head` chooses the panels: `"auto"` (the default, as above), a list of
+ranges (`head_to_head = ["27-52", "152-164"]`), or `false` for none.
 
 ---
 

@@ -351,12 +351,12 @@ def test_coverage_plots():
     fig = plot_coverage(up, "S", 4.0, length=19)
     assert isinstance(fig, Figure)
     bars = [p for p in fig.axes[0].patches if isinstance(p, Rectangle)]
-    assert sorted(b.get_gid() for b in bars) == ["peptide:2-9", "peptide:6-11"]
-    nan_bar = next(b for b in bars if b.get_gid() == "peptide:6-11")
+    assert sorted(b.get_gid() for b in bars) == ["peptide:2-9:AKLPGSTV", "peptide:6-11:GSTVED"]
+    nan_bar = next(b for b in bars if b.get_gid() == "peptide:6-11:GSTVED")
     assert np.allclose(nan_bar.get_facecolor(), FD_CMAP.get_bad())  # unknown fD is grey
     from hxex.report.hover import hover_text
 
-    first = next(b for b in bars if b.get_gid() == "peptide:2-9")
+    first = next(b for b in bars if b.get_gid() == "peptide:2-9:AKLPGSTV")
     assert hover_text(first).splitlines()[:3] == ["AKLPGSTV", "residues 2–9", "fD 0.30 ± 0.02"]
     assert "fD not known" in hover_text(nan_bar)
     # its data table (the window's data tab): one row per bar, what the figure draws
@@ -543,6 +543,33 @@ def test_population_choice_figure():
 
 
 # --- comparisons within a run -------------------------------------------------------------------
+
+def test_pooled_sequences_are_compared_head_to_head(results):
+    """compare_sequences: each panel's sequences against its first, per sample and time, by
+    the peptide comparisons' rule (Welch's p below alpha and the difference beyond
+    delta_crit)."""
+    import dataclasses
+
+    from hxex.analysis.compare import compare_sequences
+    from hxex.analysis.pooled import HeadToHead
+
+    binned = results.binned
+    # the run's two series as two sequences over residues 1-10, one with I at 10
+    other = dataclasses.replace(binned, peptide=np.where(binned.data_id == 1, "RDKVQKEYAI",
+                                                         "RDKVQKEYAL"))
+    panel = HeadToHead(1, 10, "A", ("RDKVQKEYAL", "RDKVQKEYAI"), ("A", "A2"), ("A", "A2: L10I"))
+    sc = compare_sequences(dataclasses.replace(results, binned=other), [panel])
+    cols = sc.columns()
+    times = {float(t) for t in binned.time if np.isfinite(t)}
+    assert len(sc) == len(times) and set(cols["time"]) == times
+    assert set(cols["peptide_reference"]) == {"RDKVQKEYAL"} and set(cols["difference"]) == {
+        "L10I"}
+    np.testing.assert_allclose(cols["delta"], cols["value"] - cols["value_reference"])
+    assert np.isfinite(sc.delta_crit) and sc.delta_crit > 0
+    assert np.all(~cols["significant"] | ((cols["p"] < sc.alpha)
+                                          & (np.abs(cols["delta"]) > sc.delta_crit)))
+    assert compare_sequences(results, []).columns()["sample"].size == 0
+
 
 def test_annotations_round_trip_and_marks():
     from hxex.analysis import Annotations, Region, Site
@@ -1171,8 +1198,10 @@ def test_analyse_command(two_sample_bundle, tmp_path, capsys):
     assert cli.main(["-q", "analyse", str(two_sample_bundle), "--out", str(out),
                      "--format", "svg"]) == 0
     assert (out / "species_uptake.csv").is_file() and not (out / "compare_peptides.csv").exists()
-    # one peptide per sample and no reference: nothing on residues, nothing compared
-    assert not any(p.suffix == ".svg" for p in out.iterdir())
+    # one peptide per sample and no reference: nothing on residues, nothing compared; only the
+    # coverage maps, which place the peptides whatever residue_level says (owner, 2026-11-09)
+    assert {p.name for p in out.iterdir() if p.suffix == ".svg"} == {"coverage_S.svg",
+                                                                     "coverage_V.svg"}
     assert "table(s)" in capsys.readouterr().out
     project = tmp_path / "hxex.toml"
     project.write_text(f"""project = "p"
@@ -1360,8 +1389,10 @@ def test_analyse_separate_runs(two_sample_bundle, tmp_path, capsys):
     for table in ("run_settings", "run_identity", "compare_peptides"):
         assert f"{table}.csv" in names
     assert {"butterfly_B_S.png", "butterfly_A_V.png"} <= names
-    # one peptide per sample: no residues to resolve, so no residue-level outputs by default
-    assert "residues.csv" not in names and not any(n.startswith("coverage_") for n in names)
+    # one peptide per sample: no residues to resolve, so no residue-level outputs by default;
+    # the coverage maps are drawn all the same (owner, 2026-11-09)
+    assert "residues.csv" not in names and "coverage.csv" not in names
+    assert any(n.startswith("coverage_") for n in names)
     rows = (out / "compare_peptides.csv").read_text().splitlines()
     assert rows[0].startswith("comparison,run,sample,")
     assert {tuple(r.split(",")[1:3]) for r in rows[1:]} == {
@@ -3031,6 +3062,9 @@ def test_residue_level_outputs_need_peptides_that_make_one_protein(two_sample_bu
     assert "residues" not in auto.tables and "coverage" not in auto.tables
     assert "compare_residues" not in auto.tables and "compare_peptides" in auto.tables
     stems = [stem for stem, _ in auto.figures]
-    assert stems and all(stem.startswith("butterfly_") for stem in stems)
+    # the coverage maps place the peptides, averaging nothing: drawn whatever residue_level
+    # says (owner, 2026-11-09); every other figure here is peptide-level too
+    assert stems and all(stem.startswith(("butterfly_", "coverage_")) for stem in stems)
+    assert {"coverage_S", "coverage_V"} <= set(stems)
     forced = analysis_outputs(results, AnalysisConfig(reference="S", residue_level=True))
     assert {"residues", "coverage", "compare_residues"} <= set(forced.tables)

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The figures of pooled samples: each form of the pool's minimum set
-(:mod:`hxex.analysis.pooled`) residue by residue, every sample on one axis."""
+(:mod:`hxex.analysis.pooled`) residue by residue, every sample on one axis; and the sequences
+measured over one range side by side (head to head)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -89,4 +91,88 @@ def plot_pooled_forms(
     labels = [h.get_label() for h in handles]
     fig.legend(handles=handles, loc="outside upper center", fontsize=8, frameon=False,
                ncol=legend_columns(axes[0], labels, fontsize=8))
+    return fig
+
+
+HEAD_TO_HEAD_PANEL = (3.6, 3.4)  # inches per panel, width and height
+HEAD_TO_HEAD_COLUMNS = 3
+SEQUENCE_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
+
+
+def _tick(name: str) -> str:
+    """A sample name as an x tick: long names broken at their first space or underscore."""
+    if len(name) > 8:
+        for sep in (" ", "_"):
+            if sep in name:
+                head, tail = name.split(sep, 1)
+                return f"{head}\n{tail}"
+    return name
+
+
+def plot_head_to_head(
+    uptake,
+    panels: Sequence,
+    samples: Sequence[str],
+    time: float,
+    *,
+    styles: Mapping[str, SampleStyle] | None = None,
+    top: float | None = None,
+    columns: int = HEAD_TO_HEAD_COLUMNS,
+    time_scale: str = "seconds",
+) -> Figure:
+    """The pooled sequences of each panel (:class:`hxex.analysis.pooled.HeadToHead`) side by
+    side at ``time`` (owner, 2026-11-09, layout A): one panel per range, the samples along
+    x, each sequence its own marker shape beside the others (the first, which the others are
+    compared with in ``compare_sequences.csv``, filled; the others hollow), each sample in its
+    colour, ±1 standard error bars; the K=1 fD of the species table ``uptake`` (its samples
+    named as ``samples``). ``top``: the y axis's upper end, shared by every panel and page (the
+    forms pages' own), from 0."""
+    from .hover import set_row, time_label
+
+    styles = dict(styles or {})
+    n = max(len(panels), 1)
+    cols = min(columns, n)
+    rows = -(-n // cols)
+    fig = Figure(figsize=(HEAD_TO_HEAD_PANEL[0] * cols, 0.4 + HEAD_TO_HEAD_PANEL[1] * rows),
+                 layout="constrained")
+    axes = fig.subplots(rows, cols, squeeze=False).ravel()
+    sel = uptake.where(K=1, rank=1, role="", time=time)
+    value = {(str(uptake.sample[i]), str(uptake.peptide[i]), int(uptake.start[i]),
+              int(uptake.end[i])): (float(uptake.fD[i]), float(uptake.fD_se[i]))
+             for i in np.flatnonzero(sel)}
+    x = np.arange(len(samples))
+    when = time_label(time, time_scale)
+    for ax, panel in zip(axes, panels, strict=False):
+        k = len(panel.sequences)
+        width = 0.18 if k > 1 else 0.0
+        for j, (seq, label) in enumerate(zip(panel.sequences, panel.labels, strict=True)):
+            off = (j - (k - 1) / 2) * width
+            marker = SEQUENCE_MARKERS[j % len(SEQUENCE_MARKERS)]
+            for i, s in enumerate(samples):
+                got = value.get((s, seq, panel.start, panel.end))
+                if got is None or not np.isfinite(got[0]):
+                    continue
+                colour = styles[s].colour if s in styles else "0.3"
+                bars = ax.errorbar(x[i] + off, got[0], got[1] if np.isfinite(got[1]) else None,
+                                   fmt=marker, color=colour, ms=6, capsize=2,
+                                   mfc=colour if j == 0 else "white", zorder=2)
+                set_row(bars[0], {"sample": s, "range": panel.name, "peptide": seq,
+                                  "sequence": label, "time": time, "fD": got[0],
+                                  "fD_se": got[1]})
+        handles = [Line2D([], [], marker=SEQUENCE_MARKERS[j % len(SEQUENCE_MARKERS)],
+                          color="0.3", ls="none", mfc="0.3" if j == 0 else "white", label=lab)
+                   for j, lab in enumerate(panel.labels)]
+        ax.legend(handles=handles, fontsize=6.5, loc="best", frameon=False)
+        ax.set_xticks(x, [_tick(s) for s in samples], fontsize=7)
+        ax.set_xlim(-0.6, len(samples) - 0.4)
+        if top is not None and np.isfinite(top):
+            ax.set_ylim(0, top)
+        ax.set_ylabel(r"fD$_\mathrm{avg}$")
+        ax.set_title(panel.name + (f" ({panel.group})" if panel.group else ""), loc="left",
+                     fontsize=9)
+        ax.set_title(when, loc="right", fontsize=8)
+        ax.grid(axis="y", color="0.9")
+        ax.set_axisbelow(True)
+    for ax in axes[len(panels):]:
+        ax.set_visible(False)
     return fig

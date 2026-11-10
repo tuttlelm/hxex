@@ -1000,8 +1000,8 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "residu
                  "coverage_times", "redundancy", "weight_exponent", "filters", "choice", "alpha",
                  "regions", "sites",
                  "exclude_flagged", "format", "page_size", "out", "runs", "overlay",
-                 "overlay_two_only", "peptide_match", "populations", "borderline_evidence",
-                 "modified_peptides",
+                 "overlay_two_only", "peptide_match", "head_to_head", "populations",
+                 "borderline_evidence", "modified_peptides",
                  "controls", "merge", "colours",
                  "fragments", "protection", "labelling")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
@@ -2311,6 +2311,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# peptide_match = "auto"          # compare peptides over the same residues ("range",',
         '#                                 # mutated or not) or identical sequences ("sequence");',
         '#                                 # auto: sequence for pooled data, else range',
+        '# head_to_head = "auto"           # pooled data: sequences at one range side by side',
+        '#                                 # (or a list of ranges, ["27-52"]; false: none)',
         '# populations = "best_set"        # how many populations: "population_test" (the',
         '#                                 # default with [run.population_test]), "best_set"',
         '#                                 # (each peptide\'s spectra together; the default',

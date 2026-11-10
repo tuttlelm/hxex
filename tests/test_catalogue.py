@@ -112,8 +112,10 @@ def test_the_plan_names_the_setting_that_rules_a_figure_out():
     woods = planned["woods"]
     assert woods.state == "off" and [n.setting for n in woods.missing] == ["[analysis] reference"]
     # the residue figures depend on whether a sample's peptides make one protein
-    assert planned["coverage"].state == "depends"
-    assert "residue_level" in planned["coverage"].reason
+    assert planned["redundancy_resolution"].state == "depends"
+    assert "residue_level" in planned["redundancy_resolution"].reason
+    # coverage places peptides, residue_level aside (owner, 2026-11-09)
+    assert "residue_level" not in planned["coverage"].reason
     # without the results, whether the run has the population test is not known
     assert planned["population_tiers"].state == "depends"
     assert "[analysis] populations" in planned["population_tiers"].reason
@@ -123,8 +125,10 @@ def test_the_plan_names_the_setting_that_rules_a_figure_out():
     assert with_ref["butterfly"].state == "drawn"
     off = {p.kind.name: p for p in plan(Situation.of(analysis=AnalysisConfig(
         reference="WT", residue_level=False)))}
-    assert off["woods"].state == "off" and off["coverage"].state == "off"
-    assert [n.setting for n in off["coverage"].missing] == ["[analysis] residue_level"]
+    assert off["woods"].state == "off" and off["redundancy_resolution"].state == "off"
+    assert [n.setting for n in off["redundancy_resolution"].missing] == [
+        "[analysis] residue_level"]
+    assert off["coverage"].state != "off"
     assert off["butterfly"].state == "drawn"
     assert with_ref["population_tiers"].state == "off"
     assert with_ref["woods_K2"].state == "depends"

@@ -205,8 +205,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.coverage_times": '"undeuterated" (judged on the undeuterated controls), "all", '
                                "or a list of times",
     "analysis.redundancy": 'what the redundancy counts: "peptides" or "spectra"',
-    "analysis.residue_level": '"auto": residue-level outputs (coverage, redundancy and '
-                              "resolution, residue values, Woods plots) for the samples whose "
+    "analysis.residue_level": '"auto": residue-level outputs (redundancy and resolution, '
+                              "residue values, Woods plots; coverage maps are drawn for every "
+                              "sample) for the samples whose "
                               "peptides make one protein (two of them overlap, and they agree "
                               "on the residues they share); true: every sample; false: none",
     "analysis.weight_exponent": "exponent of the residue averaging's weights",
@@ -250,6 +251,10 @@ _DESCRIPTIONS: dict[str, str] = {
                               'or not) or "sequence" (identical sequences); "auto": sequence '
                               'for pooled data (two sequences at one range are different '
                               'proteins), else range',
+    "analysis.head_to_head": 'pooled data: the ranges of the head-to-head figure and '
+                             'compare_sequences.csv: "auto" (every range with several '
+                             "sequences of one class, and every isoform's sequence on its "
+                             'own), a list of ranges such as ["27-52"], or false for none',
     "analysis.modified_peptides": '"separate" (modified forms as states of their own) or '
                                   '"combined" (averaged with the sample)',
     "analysis.controls": "control settings to change for the analysis: [analysis.controls] "

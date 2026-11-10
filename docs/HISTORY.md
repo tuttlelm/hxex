@@ -8650,6 +8650,7 @@ CSVs or mzML if wanted.
     whose peptides also fit four other records), the same in every state, the set unique; own
     peptides 2 to 24 per form; 9,090 residue comparison rows, 3,865 significant. Checks:
     tests/test_pooled_forms.py, tests/test_io.py (the check line), tests/test_catalogue.py.
+
 341. **Tooltips wrap at 60 characters, one line per item (2026-11-09).** Qt shows a
     plain-text tooltip on one line until it is wider than the screen, so the window's longer
     tooltips ran across it (owner). `hxex.gui.tips.tip` lays the text out before Qt sees it:
@@ -8662,3 +8663,32 @@ CSVs or mzML if wanted.
     headers, figure marks); not done through an application-wide event filter, which would
     run Python on every event and change the text Qt compares to decide whether a shown
     tooltip is still current. Checks: tests/test_gui_tips.py.
+
+342. **Pooled sequences head to head (2026-11-09; step 5 of the pooled design).** Figure
+    `head_to_head_<time>` (owner chose layout A of three drafts: values side by side; the
+    others were the same joined by lines, and each sequence's difference from the first): one
+    panel per range, the samples along x, each sequence its own marker shape (the first, the
+    class's or the unmodified one, filled; the others hollow, named by identity and their
+    difference, `N50T` or `acK40`), each sample its colour, ±1 se bars, every panel on the
+    forms pages' y axis (owner: the same axis; the shared top is the highest residue or
+    peptide fD with its error). `compare_sequences.csv`: each sequence against its panel's
+    first per sample and time, Welch on the replicates, significant as the peptide
+    comparisons (`hxex.analysis.compare.compare_sequences`); no marks on the figure (owner:
+    may revisit). `[analysis] head_to_head` (`"auto"`: every range with two or more sequences
+    of one class, then every isoform's sequence alone; a list of ranges; false):
+    `hxex.analysis.pooled.head_to_head_panels`. With classes named, a sequence whose
+    candidates fall in several classes is left out, and two classes' sequences at one range
+    never share a panel (different proteins numbered alike; owner). On the private pooled
+    dataset (K = 1, uncorrected: the example project has no controls): 18 ranges with several
+    sequences, 105 comparison rows, 48 significant; four pages at 4 min. Checks:
+    tests/test_pooled_forms.py (panels, differences, setting, figure), tests/test_analysis.py
+    (compare_sequences).
+    Also (owner, 2026-11-09): coverage maps are peptide-level, so they no longer wait on
+    `[analysis] residue_level` (drawn for every sample; `residue_level` keeps redundancy and
+    resolution, residue values and their comparisons, Woods plots, significance maps); a pooled
+    sample has one coverage map per form instead (`pooled_coverage_<form>`: the form's
+    peptides, every sample a row, its own peptides outlined in black and white). Owner asked to confirm
+    that nothing combines different sequences or modifications: each bar is one row of the
+    species table (sequence and modification apart), and a form's map cannot hold two
+    sequences at one range. Coverage bars' gid gains the sequence
+    (`peptide:<start>-<end>:<sequence>`).

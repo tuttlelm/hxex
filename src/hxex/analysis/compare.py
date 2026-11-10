@@ -1559,3 +1559,90 @@ def region_summary(
     cols = {name: np.array([r[name] for r in rows]) for name in names}
     cols["run"] = cols["run"].astype(object)
     return RegionTable(**cols, K=K, rank=rank)
+
+
+SEQUENCE_COLUMNS = ("run", "sample", "start", "end", "group", "time", "peptide_reference",
+                    "peptide", "identity_reference", "identity", "difference",
+                    "value_reference", "value_reference_se", "value", "value_se", "delta",
+                    "delta_se", "t", "p", "n_reference", "n", "significant",
+                    "control_fallback_reference", "control_fallback")
+
+
+@dataclass(frozen=True)
+class SequenceComparison:
+    """Pooled sequences compared head to head (:func:`compare_sequences`): one row per panel
+    (:class:`hxex.analysis.pooled.HeadToHead`), sample, time and sequence other than the
+    panel's first, which is the ``reference`` of the row (``peptide_reference``); columns
+    :data:`SEQUENCE_COLUMNS`. ``difference``: how the sequence differs from the first."""
+
+    columns_: dict
+    alpha: float = 0.05
+    delta_crit: float = np.nan
+
+    def __len__(self) -> int:
+        return len(self.columns_["sample"])
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return dict(self.columns_)
+
+
+def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: bool = False,
+                      filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
+                      controls: Mapping | None = None,
+                      k2_averages: Collection[tuple] | None = None) -> SequenceComparison:
+    """Each head-to-head panel's sequences (``panels``, :func:`hxex.analysis.pooled
+    .head_to_head_panels`) against its first, in every sample and at every time both were
+    measured, at K = 1: the mean fD of each side's replicates (their charge states averaged),
+    the difference and its error, and Welch's test on the replicate values; significant as
+    the peptide comparisons are (:func:`compare_peptides`: p below ``alpha`` and the difference
+    beyond ``delta_crit``, worked out from the same replicate values)."""
+    ks = (1, 2) if k2_averages else (1,)
+    groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True,
+                          controls_changes=controls)
+    groups = _k2_average_records(groups, k2_averages)
+    measured: dict[tuple, tuple[np.ndarray, np.ndarray, bool]] = {}
+    for key, recs in groups.items():
+        run, sample, peptide, mod, start, end, point, k, r = key
+        if point.role or (k, r) != (1, 1) or mod:
+            continue
+        values, errors = _by_replicate(recs)
+        measured[(run, sample, peptide, start, end, point.time)] = (
+            values, errors, any(x[7] for x in recs))
+    delta_crit = _delta_crit((v for v, _, _ in measured.values()), alpha)
+    states = sorted({k[:2] for k in measured})
+    times = sorted({k[5] for k in measured})
+    rows = []
+    for panel in panels:
+        first = panel.sequences[0]
+        for other, identity, label in zip(panel.sequences[1:], panel.identities[1:],
+                                          panel.labels[1:], strict=True):
+            difference = label.split(": ", 1)[1] if ": " in label else ""
+            for state in states:
+                for t in times:
+                    a = measured.get((*state, first, panel.start, panel.end, t))
+                    b = measured.get((*state, other, panel.start, panel.end, t))
+                    if a is None or b is None:
+                        continue
+                    ma, sa = _combine(a[0], a[1])
+                    mb, sb = _combine(b[0], b[1])
+                    if len(a[0]) >= 2 and len(b[0]) >= 2 and (np.var(a[0]) > 0
+                                                             or np.var(b[0]) > 0):
+                        tt, p = stats.ttest_ind(b[0], a[0], equal_var=False)
+                    else:
+                        tt, p = np.nan, np.nan
+                    delta = mb - ma
+                    rows.append((state[0], state[1], panel.start, panel.end, panel.group, t,
+                                 first, other, panel.identities[0], identity, difference, ma,
+                                 sa, mb, sb, delta, float(np.hypot(sa, sb)), float(tt),
+                                 float(p), len(a[0]), len(b[0]),
+                                 bool(np.isfinite(p) and p < alpha and np.isfinite(delta_crit)
+                                      and abs(delta) > delta_crit), a[2], b[2]))
+    numbers = {"start": np.int64, "end": np.int64, "n_reference": np.int64, "n": np.int64,
+               "significant": bool, "control_fallback_reference": bool,
+               "control_fallback": bool}
+    floats = {"time", "value_reference", "value_reference_se", "value", "value_se", "delta",
+              "delta_se", "t", "p"}
+    cols = {name: np.array([r[i] for r in rows],
+                           dtype=numbers.get(name, np.float64 if name in floats else object))
+            for i, name in enumerate(SEQUENCE_COLUMNS)}
+    return SequenceComparison(cols, alpha=alpha, delta_crit=delta_crit)

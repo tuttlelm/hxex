@@ -118,11 +118,12 @@ class AnalysisConfig:
 
     Residues:
 
-    - ``residue_level``: which samples have residue-level outputs (coverage, redundancy and
-      resolution, residue values and their comparisons, Woods plots): ``'auto'`` (the default)
-      those whose peptides make one protein (:func:`hxex.analysis.residues.residue_level_states`:
-      two of its peptides overlap, and they agree on the residues they share), ``True`` every
-      sample, ``False`` none (the peptide-level tables and comparisons stay).
+    - ``residue_level``: which samples have residue-level outputs (redundancy and resolution,
+      residue values and their comparisons, Woods plots; coverage maps are drawn regardless):
+      ``'auto'`` (the default) those whose peptides make one protein
+      (:func:`hxex.analysis.residues.residue_level_states`: two of its peptides overlap, and
+      they agree on the residues they share), ``True`` every sample, ``False`` none (the
+      peptide-level tables and comparisons stay).
     - ``fasta``: one sequence file for every sample, or one per sample (sample -> path, with a
       run's own under its name); empty: the sequence comes from the peptides.
     - ``coverage_times``: ``'undeuterated'`` (coverage judged on the undeuterated controls; when
@@ -161,6 +162,10 @@ class AnalysisConfig:
       :func:`compare_peptides`); ``'auto'`` (the default): ``'sequence'`` for pooled data,
       where two sequences at one range are different proteins, else ``'range'``
       (:func:`resolve_match`).
+    - ``head_to_head``: pooled data only: which ranges the head-to-head figure and
+      ``compare_sequences`` show, ``'auto'`` (the default: every range with several sequences
+      of one class, and every isoform's sequence alone), a list of ranges (``'27-52'``), or
+      ``False`` (none; :func:`hxex.analysis.pooled.head_to_head_panels`).
     - ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the
       residue level, ``'WT pS12'``) or ``'combined'`` (averaged with the sample's other
       peptides; :func:`residue_map`).
@@ -209,6 +214,7 @@ class AnalysisConfig:
     overlay: tuple[str, ...] = DEFAULT_OVERLAY
     overlay_two_only: bool = True
     peptide_match: str = "auto"
+    head_to_head: str | bool | tuple[str, ...] = "auto"
     populations: str | None = None
     borderline_evidence: float = 10.0
     modified_peptides: str = "separate"
@@ -313,6 +319,15 @@ class AnalysisConfig:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
         if self.peptide_match not in ("auto", *MATCHES):
             raise ValueError(f"peptide_match must be one of auto, {', '.join(MATCHES)}")
+        if self.head_to_head is True:
+            object.__setattr__(self, "head_to_head", "auto")
+        elif self.head_to_head not in ("auto", False):
+            from .pooled import head_to_head_ranges
+
+            given = ([self.head_to_head] if isinstance(self.head_to_head, str)
+                     else list(self.head_to_head))
+            head_to_head_ranges(given)  # refused with the reason when not ranges
+            object.__setattr__(self, "head_to_head", tuple(str(g) for g in given))
         if self.populations is not None and self.populations not in POPULATION_RULES:
             raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:

@@ -287,3 +287,114 @@ def form_comparison(comparison, forms: Mapping[str, PooledForms]):
         if isinstance(getattr(comparison, f.name), np.ndarray)
         and len(getattr(comparison, f.name)) == len(comparison.sample)})
     return dataclasses.replace(picked, sample=labels)
+
+
+# --- head to head: sequences at one range ----------------------------------------------------
+
+@dataclass(frozen=True)
+class HeadToHead:
+    """One panel of the head-to-head figure: the sequences measured over ``start``-``end``
+    that share one class (``group``; '' when no classes are named), each with its identity and
+    how it differs from the first (``labels``); the first, the class's sequence or the
+    unmodified one where there is one, is the one the others are compared with."""
+
+    start: int
+    end: int
+    group: str
+    sequences: tuple[str, ...]
+    identities: tuple[str, ...]
+    labels: tuple[str, ...]
+
+    @property
+    def name(self) -> str:
+        return f"{self.start}-{self.end}"
+
+
+HEAD_TO_HEAD = ("auto", False)
+
+
+def head_to_head_ranges(setting) -> tuple[tuple[int, int], ...] | None:
+    """The ranges a ``[analysis] head_to_head`` list names (``"27-52"``), or None for
+    ``"auto"`` or false."""
+    if setting in HEAD_TO_HEAD or setting is True:
+        return None
+    out = []
+    for item in ([setting] if isinstance(setting, str) else setting):
+        try:
+            start, end = (int(x) for x in str(item).split("-"))
+        except ValueError:
+            raise ValueError(f'head_to_head: {item!r} is not a range such as "27-52"') from None
+        if start > end:
+            raise ValueError(f"head_to_head: {item!r} ends before it starts")
+        out.append((start, end))
+    return tuple(out)
+
+
+def sequence_difference(first: str, other: str, start: int,
+                        registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
+                        ) -> str:
+    """How ``other`` differs from ``first`` (two sequences over the same residues, modX
+    labels allowed), residue by residue on the protein's numbers: ``N50T`` for a different
+    residue, ``acK40`` for a modification of the same residue; '' when they are the same."""
+    a = chem.parse_sequence(first, registry)
+    b = chem.parse_sequence(other, registry)
+    if len(a) != len(b):
+        return f"{len(b)} residues against {len(a)}"
+    out = []
+    for i, (x, y) in enumerate(zip(a, b, strict=True)):
+        if x == y:
+            continue
+        bx, by = registry.base_residue(x), registry.base_residue(y)
+        out.append(f"{y}{start + i}" if bx == by and by != y else f"{bx}{start + i}{y}")
+    return ", ".join(out)
+
+
+def head_to_head_panels(peptides, record: dict, setting="auto",
+                        registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
+                        ) -> list[HeadToHead]:
+    """The head-to-head panels of the pooled ``peptides`` ``(peptide, start, end)`` against
+    the candidates ``record`` (owner, 2026-11-09). ``"auto"``: every range with two or more
+    sequences of one class (a modified form beside its unmodified one included; with classes
+    named, sequences of different classes are different proteins on one numbering and never
+    share a panel; a sequence whose candidates fall in several classes is left out), then
+    every isoform-level sequence not in such a panel, on its own (one sequence across the
+    conditions). A list of ranges: the class groups at those ranges, whatever their size.
+    False: none."""
+    from ..io.pooled import identify, record_classes
+
+    if setting is False:
+        return []
+    wanted = head_to_head_ranges(setting)
+    names = [n for n, _ in record["records"]]
+    order = {n: i for i, n in enumerate(names)}
+    named = bool(record.get("classes"))
+    found: dict[tuple[int, int], dict[str, list]] = {}
+    for p, s, e in dict.fromkeys(peptides):
+        ident = identify(p, s, record, registry=registry)
+        if not ident.candidates:
+            continue
+        classes = set.union(*(record_classes(record, c) for c in ident.candidates))
+        if named and len(classes) != 1:
+            continue
+        group = next(iter(classes)) if named else ""
+        found.setdefault((s, e), {}).setdefault(group, []).append((p, ident))
+    panels = []
+    for (s, e), groups in sorted(found.items()):
+        for group, members in sorted(groups.items()):
+            if wanted is not None:
+                if (s, e) not in wanted:
+                    continue
+            elif len(members) < 2 and not (len(members) == 1
+                                           and members[0][1].level == "isoform"):
+                continue
+            members.sort(key=lambda m: (bool(modified_state(m[0], s, "", registry)),
+                                        m[1].level != "class",
+                                        order.get(m[1].candidates[0], len(order)), m[0]))
+            first = members[0][0]
+            labels = []
+            for p, ident in members:
+                diff = sequence_difference(first, p, s, registry)
+                labels.append(f"{ident.identity}: {diff}" if diff else ident.identity)
+            panels.append(HeadToHead(s, e, group, tuple(m[0] for m in members),
+                                     tuple(m[1].identity for m in members), tuple(labels)))
+    return panels

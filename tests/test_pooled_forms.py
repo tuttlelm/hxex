@@ -150,7 +150,7 @@ def test_pooled_outputs_compare_each_form_with_the_same_form_of_the_reference(re
     k1 = _comparison([(SHARED, 0.0, False), (ONLY_X1, 0.2, True), (ONLY_X2, 0.0, False),
                       (ACETYL, 0.0, False)])
     tables: dict = {}
-    jobs = _pooled_form_outputs(
+    jobs, top = _pooled_form_outputs(
         {"": (forms, record, DEFAULT_MODIFICATIONS)}, up, {("", "R"), ("", "V")}, tables,
         AnalysisConfig(), labels={("", "R"): "R", ("", "V"): "V"},
         styles=sample_styles(["R", "V"], "R"), order=["R", "V"], ref_state=("", "R"),
@@ -167,6 +167,7 @@ def test_pooled_outputs_compare_each_form_with_the_same_form_of_the_reference(re
     assert {r for s, r in called if s == "V X1"} == {14, 15, 16, 17, 18, 19}
     assert not {s for s, _ in called} - {"V X1"}
     assert [stem for stem, _ in jobs] == ["pooled_forms_X_1min"]
+    assert top == pytest.approx(0.6 + 0.01)  # the highest residue value with its error
     fig = jobs[0][1]()
     titles = [ax.get_title(loc="left") for ax in fig.axes]
     assert titles == ["X1: 1 of its 2 peptides are its own",
@@ -206,3 +207,89 @@ def test_a_forms_class_follows_the_classes_named_by_their_records(tmp_path):
                                                                        ("X2", "second")]
     one = pooled_forms(keys(SHARED), record)  # X1 or X2: one form across two classes
     assert [(f.name, form_class(f, record)) for f in one.forms] == [("X1 or X2", "")]
+
+
+def test_head_to_head_panels_put_one_class_sequences_of_a_range_side_by_side(tmp_path):
+    from hxex.analysis.pooled import head_to_head_panels, sequence_difference
+
+    (tmp_path / "pool.fasta").write_text(POOL + ">Y2\nMAKLPGSTVEDRWQAFKLT\n")
+    # Y2 has X1's sequence but is of class Y: WQAFKLT then fits two classes and is left out
+    record = candidates_record(tmp_path / "pool.fasta", {"X": ["X1", "X2"], "Y": ["Y1", "Y2"]})
+    assert sequence_difference("WQAFKLT", "WQAYKLT", 13) == "F16Y"
+    assert sequence_difference("WQAFKLT", "WQAFacKLT", 13) == "acK17"
+    assert sequence_difference("WQAFKLT", "WQAFKLT", 13) == ""
+    record_x = candidates_record(tmp_path / "pool.fasta", {"X": ["X1", "X2", "Y2"]})
+    panels = head_to_head_panels([SHARED, ONLY_X1, ONLY_X2, ACETYL], record_x)
+    # the X sequences at 13-19: the unmodified class sequence first, then X2's, then acK17
+    assert [(p.name, p.group, p.sequences) for p in panels] == [
+        ("13-19", "X", ("WQAFKLT", "WQAYKLT", "WQAFacKLT"))]
+    assert panels[0].labels == ("X", "X2: F16Y", "X: acK17")
+    # with Y2 in another class, X1's sequence (also Y2's) fits two classes and leaves; X2's
+    # sequence is then alone at its range, an isoform: a panel of its own
+    panels = head_to_head_panels([SHARED, ONLY_X1, ONLY_X2], record)
+    assert [(p.name, p.sequences) for p in panels] == [("13-19", ("WQAYKLT",))]
+    # a list of ranges: those ranges' groups, whatever their size; false: none
+    listed = head_to_head_panels([SHARED, ONLY_X1, ONLY_X2], record_x, ["2-9"])
+    assert [(p.name, p.sequences) for p in listed] == [("2-9", ("AKLPGSTV",))]
+    assert head_to_head_panels([SHARED], record_x, False) == []
+
+
+def test_the_head_to_head_setting_takes_auto_false_or_ranges():
+    assert AnalysisConfig().head_to_head == "auto"
+    assert AnalysisConfig(head_to_head=True).head_to_head == "auto"
+    assert AnalysisConfig(head_to_head=["27-52", "1-9"]).head_to_head == ("27-52", "1-9")
+    assert AnalysisConfig(head_to_head="27-52").head_to_head == ("27-52",)
+    with pytest.raises(ValueError, match='not a range such as "27-52"'):
+        AnalysisConfig(head_to_head=["27"])
+    with pytest.raises(ValueError, match="ends before it starts"):
+        AnalysisConfig(head_to_head=["52-27"])
+
+
+def test_the_head_to_head_figure_shares_its_axis_and_marks_the_first_sequence(record):
+    from hxex.analysis.pooled import head_to_head_panels
+    from hxex.report.coverage import sample_styles
+    from hxex.report.hover import row_of
+    from hxex.report.pooled import plot_head_to_head
+
+    panels = head_to_head_panels([SHARED, ONLY_X1, ONLY_X2, ACETYL], record)
+    up = uptake([(s, k, 60.0, fd) for s in ("R", "V")
+                 for k, fd in ((ONLY_X1, 0.4), (ONLY_X2, 0.5), (ACETYL, 0.6))])
+    fig = plot_head_to_head(up, panels, ["R", "V"], 60.0, styles=sample_styles(["R", "V"], "R"),
+                            top=0.9)
+    ax = fig.axes[0]
+    assert ax.get_ylim() == pytest.approx((0.0, 0.9))
+    assert ax.get_title(loc="left") == "13-19 (X)"
+    # X1's sequence first (FASTA order among isoforms, unmodified before modified)
+    labels = ["X1", "X2: F16Y", "X1: acK17"]
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == labels
+    rows = [row_of(line) for line in ax.lines if row_of(line)]
+    assert len(rows) == 6 and {r["sequence"] for r in rows} == set(labels)
+    first = [line for line in ax.lines if (row_of(line) or {}).get("sequence") == "X1"]
+    others = [line for line in ax.lines if (row_of(line) or {}).get("sequence") == "X2: F16Y"]
+    assert first[0].get_markerfacecolor() != "white" and others[0].get_markerfacecolor() == "white"
+
+
+def test_each_form_has_a_coverage_map_with_its_own_peptides_outlined(record):
+    from hxex.report.analysis import _pooled_coverage_jobs
+    from hxex.report.coverage import plot_coverage
+
+    forms = pooled_forms(keys(SHARED, ONLY_X1, ONLY_X2, ACETYL), record)
+    up = uptake([(s, k, 60.0, 0.4) for s in ("R", "V")
+                 for k in (SHARED, ONLY_X1, ONLY_X2, ACETYL)])
+    jobs = _pooled_coverage_jobs({"": (forms, record, DEFAULT_MODIFICATIONS)}, up,
+                                 {("", "R"), ("", "V")}, AnalysisConfig(),
+                                 labels={("", "R"): "R", ("", "V"): "V"}, order=["R", "V"],
+                                 times=[60.0], scale="seconds")
+    assert [stem for stem, _ in jobs] == ["pooled_coverage_X1", "pooled_coverage_X2",
+                                          "pooled_coverage_X1_acK17"]
+    fig = jobs[0][1]()
+    assert fig.get_suptitle() == "X1: its own peptides outlined in black and white"
+    bars = {p.get_gid(): p for ax in fig.axes for p in ax.patches if p.get_gid()}
+    assert set(bars) == {"peptide:2-9:AKLPGSTV", "peptide:13-19:WQAFKLT"}
+    assert bars["peptide:13-19:WQAFKLT"].get_linewidth() > bars[
+        "peptide:2-9:AKLPGSTV"].get_linewidth()  # X1's own peptide, outlined
+    # two sequences over one range in one sample: two bars, each named by its sequence
+    both = plot_coverage(up, "R", 60.0)
+    gids = sorted(p.get_gid() for p in both.axes[0].patches if p.get_gid())
+    assert gids == ["peptide:13-19:WQAFKLT", "peptide:13-19:WQAFacKLT",
+                    "peptide:13-19:WQAYKLT", "peptide:2-9:AKLPGSTV"]

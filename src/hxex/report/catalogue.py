@@ -195,7 +195,17 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "coverage", "Coverage", ANALYSE, ("coverage_{sample}",),
         "one bar per peptide, coloured by fD, for every time and rank", _ANALYSIS_PAGE,
+        data="for every sample but pooled ones (their forms have pooled_coverage)",
         changed_by=("[analysis.filters]", "[analysis] page_size")),
+    FigureKind(
+        "pooled_coverage", "Coverage, each form of a pool", ANALYSE,
+        ("pooled_coverage_{form}",),
+        "for pooled samples with candidates ([input] pooled_fasta): one coverage map per form "
+        "of the pool, the peptides it may have given, every sample a row, its own peptides "
+        "outlined in black and white", "inputs.md#the-forms-in-a-pool",
+        data="for pooled samples whose project names [input] pooled_fasta",
+        changed_by=("[input] pooled_fasta", "[input] pooled_classes", "[analysis.filters]",
+                    "[analysis] page_size")),
     FigureKind(
         "redundancy_resolution", "Redundancy and resolution", ANALYSE,
         ("redundancy_resolution",), "redundancy and resolution per residue", _ANALYSIS_PAGE,
@@ -221,6 +231,17 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[input] pooled_fasta", "[input] pooled_classes", "[analysis] samples",
                     "[analysis.colours]", "[analysis] weight_exponent", "[analysis] times",
                     "[analysis] page_size")),
+    FigureKind(
+        "head_to_head", "Pooled sequences head to head", ANALYSE, ("head_to_head_{time}",),
+        "for pooled samples with candidates ([input] pooled_fasta): one panel per range, the "
+        "sequences measured over it side by side in every sample (a class's isoforms, a "
+        "modified form beside its unmodified one; an isoform's sequence alone shows it across "
+        "the samples), each sequence its own marker shape, each sample its colour; the same "
+        "y axis as the forms pages", "inputs.md#sequences-head-to-head",
+        data="for pooled samples whose project names [input] pooled_fasta",
+        changed_by=("[analysis] head_to_head", "[input] pooled_fasta",
+                    "[input] pooled_classes", "[analysis] samples", "[analysis.colours]",
+                    "[analysis] times", "[analysis] page_size")),
     FigureKind(
         "choice", "Residue profile with the population choice", ANALYSE,
         ("choice_{sample}_{time}",),
@@ -332,7 +353,7 @@ KINDS = tuple(dataclasses.replace(k, peptides=True)
 
 # the figures on a protein's residue numbers: only for the samples whose peptides make one
 # protein ([analysis] residue_level; owner, 2026-11-08)
-_ON_RESIDUES = ("coverage", "redundancy_resolution", "residues_all", "choice", "profile",
+_ON_RESIDUES = ("redundancy_resolution", "residues_all", "choice", "profile",
                 "population_tiers", "overlay_residues", "overlay_populations", "woods",
                 "woods_K2", "residue_significance", "residue_significance_K2",
                 "region_significance", "regions")
