@@ -263,7 +263,7 @@ assesses every flag again with the current version, keeping the fits.
 | Flag | Meaning |
 |---|---|
 | `poor_fit` | the misfit is many times the series' median (`poor_fit_factor`) and the deviance is high |
-| `low_intensity` | far less signal than the other replicates at the same time |
+| `low_intensity` | far less signal (below `min_intensity`, 0.3, of the mean) than the other replicates at the same time, once each injection's overall brightness is allowed for: an injection (a scan file, or for exported spectra one replicate of one time point) that reads dimmer than the injections it shares replicates with throughout, because less sample was loaded or the spray was weaker, is not a fault of each of its spectra. *hxex* measures that brightness from all the injection's spectra with replicates (at least 10), divides it out, and names an injection outside 0.5 to 2 times in a warning and in `hxex info` (`injection brightness`) |
 | `noise_outlier` | a replicate the replicate-based noise estimate left out; a control replicate is also left out of its control's average (its series gets `m0_replicate_left_out` or `fd_replicate_left_out`) |
 | `mz_shift` | the series sits off its predicted m/z: a wrong sequence, modification, terminus or ion type (series that `off_mz` does not check: fragment ions, and series without an undeuterated control) |
 | `off_mz` | the series' undeuterated controls put its peaks further from the run's calibration than the run's other series: most likely another species (often the retention time points at another peptide of almost the same mass); the analysis leaves the series out ([details](picking-window.md#a-series-whose-peaks-sit-off-its-mz)) |

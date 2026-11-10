@@ -62,6 +62,72 @@ def test_a_weak_spectrum_is_flagged_low_intensity_and_only_it(run):
     assert not np.delete(q.low_intensity, i).any()  # the others still see 2 normal replicates
 
 
+def test_a_dim_injection_is_allowed_for_and_named(run, monkeypatch, caplog):
+    """low_intensity compares replicates once each injection's overall brightness is divided
+    out: an injection that reads 5 times dimmer throughout (less sample loaded) is not a fault
+    of its spectra, and is named in a warning; a spectrum that lost its signal on top of that
+    is still flagged."""
+    import hxex.quality as quality
+
+    meas, fit = run
+    monkeypatch.setattr(quality, "MIN_INJECTION_SPECTRA", 2)  # the fixture: 2-3 per injection
+    rep = np.array([1, 2, 3, 1, 2, 3, 1, 2])  # build_run's layout
+    files = np.array([f"S file{r}" for r in rep], dtype=object)
+    dim = meas
+    for i in np.flatnonzero(rep == 2):
+        dim = replace_observed(dim, i, np.asarray(meas.observed[i]) * 0.2)
+    before = assess_quality(dim, fit)
+    assert before.low_intensity[rep == 2].all() and not before.low_intensity[rep != 2].any()
+    with caplog.at_level("WARNING", logger="hxex.quality"):
+        q = assess_quality(dim, fit, injection=files)
+    assert not q.low_intensity.any()
+    assert q.injection_scale[rep == 2] == pytest.approx(0.2, rel=0.15)
+    assert q.injection_scale[rep != 2] == pytest.approx(1.0, rel=0.25)  # heights vary 10 %
+    assert "S file2 reads 0.2" in caplog.text and "file1" not in caplog.text
+    i = 4  # rep 2 at 60 s: lost its signal on top of its injection's dimness
+    lost = replace_observed(dim, i, np.asarray(dim.observed[i]) * 0.1)
+    q = assess_quality(lost, fit, injection=files)
+    assert q.low_intensity[i] and int(q.low_intensity.sum()) == 1
+    assert q.intensity_rel[i] == pytest.approx(0.1, abs=0.05)
+
+
+def test_injection_scales_are_measured_jointly_within_linked_injections():
+    """Two files, the second 4 times dimmer: each reads its share of the ratio (0.5 and 2), not
+    all of it; a second pair that shares no replicate with them is centred on its own; an
+    injection with too few spectra with replicates is not measured."""
+    from hxex.quality import MIN_INJECTION_SPECTRA, injection_scales
+
+    rng = np.random.default_rng(1)
+    n = MIN_INJECTION_SPECTRA + 5
+    level = rng.uniform(3, 6, n)  # each point's own brightness (log10)
+    total = np.concatenate([10 ** level, 10 ** level / 4, 10 ** level * 3, 10 ** level * 3,
+                            [5.0, 5.0]])
+    point = np.concatenate([np.arange(n), np.arange(n), 100 + np.arange(n),
+                            100 + np.arange(n), [500, 500]]).astype(str).astype(object)
+    inj = np.array(["a"] * n + ["b"] * n + ["c"] * n + ["d"] * n + ["e", "f"], dtype=object)
+    s = injection_scales(total, point, inj)
+    assert s[inj == "a"] == pytest.approx(2.0) and s[inj == "b"] == pytest.approx(0.5)
+    assert s[inj == "c"] == pytest.approx(1.0) and s[inj == "d"] == pytest.approx(1.0)
+    assert np.isnan(s[inj == "e"]).all() and np.isnan(s[inj == "f"]).all()
+    assert np.isnan(injection_scales(total, point, np.full(len(total), "", dtype=object))).all()
+
+
+def test_injections_are_files_for_scan_formats_and_replicates_of_a_point_otherwise():
+    from types import SimpleNamespace
+
+    from hxex.quality import injection_keys
+
+    spectra = SimpleNamespace(
+        spectrum_id=np.array(["a", "b", "c"]), sample=np.array(["S", "S", "T"]),
+        label=np.array(["un1.raw scans1-9", "t30.raw scans4-8", "un1.raw scan3"]),
+        time=np.array([np.nan, 30.0, np.nan]), role=np.array(["undeut", "", "undeut"]),
+        rep=np.array([1, 1, 2]), source=None)
+    assert list(injection_keys(spectra, source={"reader": "mzml"})) == [
+        "S un1.raw", "S t30.raw", "T un1.raw"]
+    assert list(injection_keys(spectra, rows=[1, 0], source={"reader": "hxexpress"})) == [
+        "S t=30.0 rep 1", "S undeut rep 1"]
+
+
 def test_unreplicated_time_points_and_small_series_are_not_assessed(run):
     meas, fit = run
     # keep one of the two fully deuterated spectra
@@ -210,6 +276,20 @@ def test_flags_written_before_the_brightness_flags_read_as_false(run):
     back = _read_quality(old, q.config.to_dict(), q.spectrum_id)
     assert not back.saturated.any() and not back.tails_low.any() and not back.bright.any()
     assert np.array_equal(back.flagged, q.flagged)
+
+
+def test_the_injection_and_its_scale_are_stored_and_older_tables_read_without_them(run):
+    from hxex.io.bundle import _quality_table, _read_quality
+
+    meas, fit = run
+    files = np.array([f"S file{r}" for r in (1, 2, 3, 1, 2, 3, 1, 2)], dtype=object)
+    q = assess_quality(meas, fit, injection=files)
+    back = _read_quality(_quality_table(q), q.config.to_dict(), q.spectrum_id)
+    assert list(back.injection) == list(files)
+    assert np.array_equal(back.injection_scale, q.injection_scale, equal_nan=True)
+    old = _read_quality(_quality_table(q).drop_columns(["injection", "injection_scale"]),
+                        q.config.to_dict(), q.spectrum_id)
+    assert (old.injection == "").all() and np.isnan(old.injection_scale).all()
 
 
 

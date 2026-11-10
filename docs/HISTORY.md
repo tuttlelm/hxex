@@ -8545,3 +8545,27 @@ CSVs or mzML if wanted.
     such a bundle rebuilds its models under the cap). Not built: a cap at the fully deuterated
     level or the sites (above); PLAN Next steps 20 updated. Checks: tests/test_model.py,
     test_fit.py, test_bootstrap.py (both fit and bootstrap tests fail without the cap).
+
+336. **low_intensity allows for each injection's overall brightness (2026-11-09).** The
+    owner: on the private targeted dataset most of the second undeuterated replicate's spectra
+    were flagged `low_intensity` although they look fine. That file reads 4.6 times dimmer than
+    the first throughout (median ratio of a spectrum to its replicate 0.22, IQR 0.15-0.30), so
+    724 of its 971 spectra fell below 0.3: a fact about the injection (less sample loaded, a
+    weaker spray), not about each spectrum. On the tutorial, the intact-peptide benchmark and
+    the Orbitrap digest the injections read within about 0.8-1.25 of their replicates and the
+    effect is small. BUILT: each injection's brightness (`injection_scale`; an injection is a
+    scan file, or for exports one replicate of one time point) is estimated from every
+    spectrum with a replicate by median polish on the log totals (point level + injection
+    level; at least 10 spectra, else not measured), centred within each set of injections
+    linked by shared replicates (an export's replicates of one time point share no point with
+    any other injection, so their common level means nothing; measured globally they read
+    2-3.6 for no reason); `low_intensity` compares the totals divided by it. Measured jointly,
+    so that with two files each reads its share of the ratio (0.47 and 2.14 here) rather than
+    one of them all of it. A warning names injections outside 0.5-2, and `hxex info` lists them
+    (`injection brightness`); the quality table stores `injection` and `injection_scale`;
+    QUALITY_VERSION 3. Effect: targeted 726 -> 142 flagged (the rest are spectra dimmer than
+    their own file's norm), tutorial 187 -> 179 (22 borderline spectra between 0.22 and 0.37
+    change either way; the tutorial's dim WT 68-75 30 min replicate stays flagged at 0.02),
+    benchmark 612 -> 522 (one injection at 0.48), digest 393 -> 390. Checks:
+    tests/test_quality.py (a dim injection allowed for and named, a lost spectrum still
+    flagged, joint scales, injection keys, storage), tests/test_cli.py (the info line).

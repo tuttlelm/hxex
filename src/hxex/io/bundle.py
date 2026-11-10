@@ -349,9 +349,10 @@ def _quality_table(q: QualityFlags) -> pa.Table:
     cols: dict[str, pa.Array] = {"measurement": pa.array(np.arange(len(q), dtype=np.int64))}
     for name in ("deviance", "deviance_rel", "misfit", "misfit_rel", "intensity",
                  "intensity_rel", "mz_offset", "envelope_offset", "precursor_offset",
-                 "ion_overlap", "signal_to_noise"):
+                 "ion_overlap", "signal_to_noise", "injection_scale"):
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=np.float64))
     cols["ion_overlap_with"] = _str(q.ion_overlap_with)
+    cols["injection"] = _str(q.injection)
     for name in FLAG_NAMES:
         cols[name] = pa.array(np.asarray(getattr(q, name), dtype=bool))
     cols["flagged"] = pa.array(np.asarray(q.flagged, dtype=bool))
@@ -385,6 +386,11 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
                          else None),
         ion_overlap_with=(np.asarray(table.column("ion_overlap_with").to_pylist(), dtype=object)
                           if "ion_overlap_with" in table.column_names else None),
+        # written before the injection scale: not known (the replicates compared as they read)
+        injection=(np.asarray(table.column("injection").to_pylist(), dtype=object)
+                   if "injection" in table.column_names else None),
+        injection_scale=(f("injection_scale") if "injection_scale" in table.column_names
+                         else None),
         # written before the m/z check: not assessed
         envelope_offset=(f("envelope_offset") if "envelope_offset" in table.column_names
                          else None),

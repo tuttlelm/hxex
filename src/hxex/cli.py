@@ -1716,6 +1716,20 @@ def _bootstrap_text(bundle, m: int) -> str:
     return "; ".join(parts)
 
 
+def _injection_text(quality) -> str | None:
+    """The injections ``low_intensity`` found much brighter or dimmer than those they share
+    replicates with (None: none, or flags assessed before the injection scale)."""
+    from .quality import INJECTION_SCALE_WARN, injection_summary
+
+    far = injection_summary(quality.injection, quality.injection_scale)
+    if not far:
+        return None
+    lo, hi = INJECTION_SCALE_WARN
+    return (", ".join(f"{name} {s:.2f}x" for name, s in far)
+            + f" (outside {lo:g}-{hi:g}x of the injections they share replicates with; "
+              "low_intensity allows for it)")
+
+
 def cmd_info(args) -> int:
     from .io import generations, open_bundle
 
@@ -1774,6 +1788,8 @@ def cmd_info(args) -> int:
                                "assessed by an earlier version of hxex, before checks added "
                                "since: hxex resume assesses them again" if b.quality().outdated
                                else "yes")),
+            *([("injection brightness", _injection_text(b.quality()))]
+              if b.has("quality") and _injection_text(b.quality()) else []),
             ("raw spectra", "stored" if b.has("spectra") else "not stored"),
             ("pending", ", ".join(b.pending) or "nothing (complete)"),
             ("review", (f"{len(review)} entries" + (f" ({review.n_stale} stale)"

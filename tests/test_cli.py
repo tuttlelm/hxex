@@ -2089,3 +2089,16 @@ def test_check_refuses_a_cuda_device_where_pytorch_has_none(tmp_path, capsys, mo
     out = capsys.readouterr()
     assert 'fits on        none: [run.fit.backend] device = "cuda"' in out.out
     assert "has no CUDA" in out.err
+
+
+def test_info_names_injections_far_brighter_or_dimmer_than_their_replicates():
+    from types import SimpleNamespace
+
+    from hxex.cli import _injection_text
+
+    names = np.array(["S un1.raw", "S un2.raw", "S un2.raw", ""], dtype=object)
+    q = SimpleNamespace(injection=names, injection_scale=np.array([2.14, 0.47, 0.47, np.nan]))
+    text = _injection_text(q)
+    assert text.startswith("S un2.raw 0.47x, S un1.raw 2.14x") and "low_intensity" in text
+    assert _injection_text(SimpleNamespace(injection=np.array(["a"], dtype=object),
+                                           injection_scale=np.array([1.2]))) is None

@@ -85,7 +85,7 @@ from .population_test import (
     check_fit_config,
     population_test,
 )
-from .quality import QualityConfig, QualityFlags, assess_quality
+from .quality import QualityConfig, QualityFlags, assess_quality, injection_keys
 from .review_table import merge_choices
 from .spectra import SpectrumSet
 
@@ -590,7 +590,7 @@ def _fit_part(
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
-    elution_cut=None, precursor=None, reused=None,
+    elution_cut=None, precursor=None, reused=None, injection=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -611,7 +611,8 @@ def _fit_part(
     ``deamidation``: the fully deuterated controls' deamidation
     (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``.
     ``reused`` (:class:`hxex.reuse.Reused`): the previous results' fits (and tests) of the
-    measurements ``plan`` leaves out, merged with those fitted here."""
+    measurements ``plan`` leaves out, merged with those fitted here. ``injection``: every
+    measurement's injection for ``low_intensity`` (:func:`hxex.quality.injection_keys`)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is _MEASURE:  # run() gives its own (None: its rule found too few controls)
         noise_curve = None
@@ -689,7 +690,7 @@ def _fit_part(
                                  drift_unclear_series=drift_unclear,
                                  elution_cut_spectra=elution_cut,
                                  precursor_offset=offsets, ion_overlap=overlaps,
-                                 controls=controls)
+                                 controls=controls, injection=injection)
     return fits, fit, controls, quality, test
 
 
@@ -1263,7 +1264,9 @@ def run(
                                              elution_cut=elution_cut_spectra(record),
                                              precursor=(record, binned.label[kept],
                                                         _bin_mz(binned, kept)),
-                                             reused=reused)
+                                             reused=reused,
+                                             injection=injection_keys(
+                                                 binned, np.flatnonzero(kept), record))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1473,6 +1476,7 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
 
     return assess_quality(
         data, fit, config.quality,
+        injection=injection_keys(binned, np.flatnonzero(kept), source),
         mz_offset_ppm=None if binned.mz_offset_ppm is None else binned.mz_offset_ppm[kept],
         poor_envelope_series=None if envelopes is None else envelopes.data_id[envelopes.poor],
         envelope_offset_ppm=binned.envelope_offset_ppm[kept],

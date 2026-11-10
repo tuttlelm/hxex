@@ -18,7 +18,13 @@ signal never reach the fit and are handled before it.
   data 11 of 12 relative-only flags were fits with deviance below 0.6).
 - ``low_intensity``: the total intensity of the spectrum is below ``min_intensity`` times the
   mean of the other replicates at the same time point (needs one other replicate; spectra without
-  replicates are not assessed, because the total legitimately changes along a time course).
+  replicates are not assessed, because the total legitimately changes along a time course),
+  once each injection's overall brightness is divided out (``injection_scale``,
+  :func:`injection_scales`): an injection that reads dimmer than its replicates' throughout (less
+  sample loaded, a weaker spray) is a fact about the file, logged as a warning beyond
+  ``INJECTION_SCALE_WARN``, not a fault of each of its spectra (owner, 2026-11-09: a targeted
+  dataset's second undeuterated file read 0.22 times the first and 75 % of its spectra were
+  flagged).
 - ``noise_outlier``: the replicate-consistency score of the noise estimate flagged the spectrum
   (:class:`hxex.noise.NoiseEstimate`); False when the noise was not estimated.
 - ``mz_shift``: the picked peaks of the spectrum's series are, as a rule, further than
@@ -117,6 +123,7 @@ signal never reach the fit and are handled before it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any
@@ -128,6 +135,8 @@ from .fit.result import FitResult
 from .model import Backend
 from .model.mixture import MixtureBatch, PaddedBatch, shape_weights
 from .spectra import UNDEUT, time_point
+
+log = logging.getLogger(__name__)
 
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
@@ -141,7 +150,13 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # existed kept it empty through later resumes). 0: flags read from a bundle that does not record
 # it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314). 2: overlapping_ion
 # scales the other ion by its bins away from the fragment's strong bins (was: all its bins).
-QUALITY_VERSION = 2
+# 3: low_intensity compares the spectra once each injection's brightness is divided out.
+QUALITY_VERSION = 3
+
+# low_intensity: an injection's brightness is measured from at least this many of its spectra
+# with replicates (else it is taken as 1), and named in a warning outside these limits.
+MIN_INJECTION_SPECTRA = 10
+INJECTION_SCALE_WARN = (0.5, 2.0)
 
 
 @dataclass(frozen=True)
@@ -221,7 +236,9 @@ class QualityFlags:
     median of the series; ``misfit`` is ``sum((obs - fit)^2) / sum(obs^2)`` of that fit and
     ``misfit_rel`` its ratio to the median of the series (the ``poor_fit`` statistic; NaN in flags
     read from a bundle written before it); ``intensity`` is the total intensity and
-    ``intensity_rel`` its ratio to the mean of the other replicates at the same time; ``mz_offset``
+    ``intensity_rel`` its ratio to the mean of the other replicates at the same time (each total
+    divided by its injection's ``injection_scale``; ``injection`` names the injection, empty
+    where not known); ``mz_offset``
     is the series' m/z offset relative to the run, in ppm, and ``envelope_offset`` the picker's
     m/z check of the series (``off_mz``), in ppm. NaN where not assessed (the flag is False
     there). ``flagged`` is True where any flag is set. Flags read from a bundle written before
@@ -258,6 +275,8 @@ class QualityFlags:
     overlapping_ion: np.ndarray | None = None
     signal_to_noise: np.ndarray | None = None
     below_noise: np.ndarray | None = None
+    injection: np.ndarray | None = None
+    injection_scale: np.ndarray | None = None
     version: int = QUALITY_VERSION  # of the checks that assessed them (QUALITY_VERSION)
 
     @property
@@ -268,7 +287,8 @@ class QualityFlags:
 
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag
-                     "precursor_offset", "ion_overlap", "signal_to_noise"):
+                     "precursor_offset", "ion_overlap", "signal_to_noise",
+                     "injection_scale"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
@@ -276,9 +296,9 @@ class QualityFlags:
                      "precursor_off", "overlapping_ion", "below_noise"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
-        if self.ion_overlap_with is None:
-            object.__setattr__(self, "ion_overlap_with",
-                               np.full(len(self.spectrum_id), "", dtype=object))
+        for name in ("ion_overlap_with", "injection"):
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.spectrum_id), "", dtype=object))
 
     def __len__(self) -> int:
         return len(self.spectrum_id)
@@ -453,6 +473,7 @@ def assess_quality(
     elution_cut_spectra=None,
     precursor_offset: np.ndarray | None = None,
     ion_overlap: tuple[np.ndarray, np.ndarray] | None = None,
+    injection: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -467,6 +488,8 @@ def assess_quality(
     fragment peak the acquisition cut (:func:`hxex.io.mzml.find_fragment_peaks`);
     ``precursor_offset`` every measurement's :func:`precursor_offsets` (None: not assessed).
     ``ion_overlap``: :func:`ion_overlaps` (the share and the other ion; None: not assessed).
+    ``injection``: every measurement's injection (:func:`injection_keys`; None: every
+    injection taken as equally bright).
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
@@ -489,14 +512,22 @@ def assess_quality(
             median = np.median(misfit[assessed])
             if median > 0:
                 misfit_rel[assessed] = misfit[assessed] / median
-        for t in np.unique(time[rows]):
-            same = rows[time[rows] == t]
-            if len(same) < 2:
-                continue
-            for i in same:
-                others = total[same[same != i]].mean()
-                if others > 0:
-                    intensity_rel[i] = total[i] / others
+    point = np.array([f"{d}|{t}" for d, t in zip(fit.data_id, time, strict=True)], dtype=object)
+    inj = (np.full(m, "", dtype=object) if injection is None
+           else np.asarray(injection, dtype=object))
+    if len(inj) != m:
+        raise ValueError("injection must have one value per measurement")
+    scale = injection_scales(total, point, inj)
+    adjusted = total / np.nan_to_num(scale, nan=1.0)
+    for p in np.unique(point):
+        same = np.flatnonzero(point == p)
+        if len(same) < 2:
+            continue
+        for i in same:
+            others = adjusted[same[same != i]].mean()
+            if others > 0:
+                intensity_rel[i] = adjusted[i] / others
+    _warn_injections(inj, scale)
     noise_outlier = (
         np.asarray(fit.noise_estimate.outlier, dtype=bool)
         if fit.noise_estimate is not None else np.zeros(m, dtype=bool)
@@ -560,8 +591,112 @@ def assess_quality(
         precursor_offset=offset, precursor_off=precursor_off,
         ion_overlap=overlap, ion_overlap_with=np.where(overlapping, overlap_with, ""),
         overlapping_ion=overlapping, signal_to_noise=snr, below_noise=below,
-        **brightness,
+        injection=inj, injection_scale=scale, **brightness,
     )
+
+
+def injection_keys(spectra, rows=None, source=None) -> np.ndarray:
+    """The injection of every spectrum of ``spectra`` (a :class:`~hxex.spectra.SpectrumSet` or a
+    :class:`~hxex.picking.BinnedSet`; ``rows``: only these, in this order) for
+    ``low_intensity``: its sample and scan file when the reader read scan files (``source``,
+    the read record, else the spectra's own; each file one injection), else its sample, time
+    point and replicate (an export keeps each time point of a replicate apart)."""
+    from .io.mzml import SCAN_READERS
+
+    idx = np.arange(len(spectra.spectrum_id)) if rows is None else np.asarray(rows)
+    record = source if source is not None else getattr(spectra, "source", None)
+    scan = (record or {}).get("reader") in SCAN_READERS
+    point = time_point(np.asarray(spectra.time)[idx],
+                       None if spectra.role is None else np.asarray(spectra.role)[idx])
+    out = np.empty(len(idx), dtype=object)
+    for k, i in enumerate(idx):
+        if scan:
+            label = str(spectra.label[i])
+            out[k] = f"{spectra.sample[i]} {label.rsplit(' ', 1)[0] if ' ' in label else label}"
+        else:
+            out[k] = f"{spectra.sample[i]} {point[k]} rep {spectra.rep[i]}"
+    return out
+
+
+def injection_scales(total: np.ndarray, point: np.ndarray, injection: np.ndarray,
+                     iterations: int = 50) -> np.ndarray:
+    """Every spectrum's ``injection_scale``: how bright its injection reads against the
+    injections of its replicates, from every spectrum with a replicate (same ``point``: series
+    and time point) and some intensity, on the log scale: each spectrum's log total is its
+    point's level plus its injection's, the injections' levels the median of their spectra's
+    excess over their points (median polish; within each set of injections linked by shared
+    replicates, the median injection 1). An injection with fewer
+    than ``MIN_INJECTION_SPECTRA`` such spectra, or an empty ``injection``, is not measured
+    (NaN: taken as 1). Measured jointly, so that with two files each reads its own share of
+    their ratio, not all of it."""
+    total = np.asarray(total, dtype=float)
+    point = np.asarray(point, dtype=object)
+    injection = np.asarray(injection, dtype=object)
+    out = np.full(len(total), np.nan)
+    ok = (total > 0) & (injection != "")
+    pts, counts = np.unique(point[ok], return_counts=True)
+    ok &= np.isin(point, pts[counts >= 2])
+    if not ok.any():
+        return out
+    names, inj_i = np.unique(injection[ok], return_inverse=True)
+    _, pt_i = np.unique(point[ok], return_inverse=True)
+    n = np.bincount(inj_i, minlength=len(names))
+    measured = n >= MIN_INJECTION_SPECTRA
+    if not measured.any():
+        return out
+    # injections that share replicates, directly or through others, are compared with each
+    # other: each such set is centred on its own median (an export's replicates of one time
+    # point share their points with no other injection: their common level means nothing)
+    parent = list(range(len(names)))
+
+    def root(j):
+        while parent[j] != j:
+            parent[j] = parent[parent[j]]
+            j = parent[j]
+        return j
+
+    for p in np.unique(pt_i):
+        members = np.unique(inj_i[pt_i == p])
+        for j in members[1:]:
+            parent[root(int(j))] = root(int(members[0]))
+    component = np.array([root(j) for j in range(len(names))])
+    y = np.log(total[ok])
+    level = np.zeros(len(names))
+    for _ in range(iterations):
+        own = y - level[inj_i]
+        point_level = np.bincount(pt_i, own) / np.bincount(pt_i)
+        excess = y - point_level[pt_i]
+        new = np.array([np.median(excess[inj_i == j]) if measured[j] else 0.0
+                        for j in range(len(names))])
+        for c in np.unique(component[measured]):
+            sel = measured & (component == c)
+            new[sel] -= np.median(new[sel])
+        if np.allclose(new, level, atol=1e-6):
+            level = new
+            break
+        level = new
+    scale = dict(zip(names[measured], np.exp(level[measured]), strict=True))
+    for i in np.flatnonzero(injection != ""):
+        out[i] = scale.get(injection[i], np.nan)
+    return out
+
+
+def injection_summary(injection: np.ndarray, scale: np.ndarray) -> list[tuple[str, float]]:
+    """The injections outside ``INJECTION_SCALE_WARN`` and their scales, dimmest first."""
+    seen: dict[str, float] = {}
+    for name, s in zip(np.asarray(injection, dtype=object), np.asarray(scale, dtype=float),
+                       strict=True):
+        if name and np.isfinite(s) and not INJECTION_SCALE_WARN[0] <= s <= INJECTION_SCALE_WARN[1]:
+            seen[str(name)] = float(s)
+    return sorted(seen.items(), key=lambda kv: kv[1])
+
+
+def _warn_injections(injection: np.ndarray, scale: np.ndarray) -> None:
+    for name, s in injection_summary(injection, scale):
+        log.warning("low_intensity: injection %s reads %.2f times as bright overall as the "
+                    "injections it shares replicates with (less sample loaded, or a weaker "
+                    "spray?); its spectra are compared with their replicates after allowing "
+                    "for that", name, s)
 
 
 def signal_to_noise(meas: Measurements) -> np.ndarray:
