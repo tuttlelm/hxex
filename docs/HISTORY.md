@@ -8739,3 +8739,42 @@ CSVs or mzML if wanted.
     the controls to a bundle made without them), tests/test_cli.py (the check lines; a run with
     `controls = false` set by hxex set, report's warning, resume, info), tests/test_gui_project.py
     (the page), and the existing tests updated where they assumed no table meant no correction.
+
+344. **The set-K average: sets with three populations or more take their average from that
+    number (2026-11-09).** Owner: "build the per-set average" (evaluation 2a of the multimodal
+    preset, private scratch; HISTORY 335 for the cap found on the way). A set (run, sample,
+    peptide, modification, range, time) the population test puts at three or more populations
+    (`set_test_K`; `best_set_K` without the test, which follows the test only up to the largest
+    K analysed) now takes its K = 1 values, its average, from every spectrum's
+    population-weighted mean at the set's K, as sets with two populations at least 2 D apart
+    do at K = 2 (HISTORY 210); everything built on the K = 1 values follows (comparisons, the
+    lever rule's average, residue values). Owner, asked whether the comparisons should switch
+    too: "didn't we already determine that K=3 set average is better than K = 1 as average?"
+    (known answer, true three: 0.28 D median error against 2.77 D at K = 1), so they do. Every
+    spectrum the analysis keeps in the set counts, whatever K it chose on its own (77-100 % of
+    such sets' spectra chose fewer), with its description at the set's K not judged by the
+    filters on describing populations (`min_population`, `max_fD`, `max_fD_se`,
+    `k1_between_ranks`: they would drop most of them for a small third share); a spectrum the
+    review or the screens keep at one population gives its K = 1 mean. Its error is the
+    bootstrap's average error at the set's K where the spectrum has one, else unknown, so the
+    set's error is its replicates' scatter. That bootstrap (owner: "probably 2 with
+    transparency", a setting on by default): `[run.bootstrap] set_k` (default true) bootstraps,
+    at the end of `hxex run` and in `hxex resume` (also on a bundle with nothing else to do;
+    provenance `bootstrap at set K`), the spectra of the labelled sets the population test puts
+    at three or more at the set's K where they have no bootstrap there (only those the average
+    takes at that K: not rejected, not left out by the filters, not kept at one population;
+    owner, 2026-11-09: "yes to add the bootstrap at the found K=3 if that is what is required
+    to get set level values and errors"), as a partial fixed-K
+    bootstrap (the review's chosen-K route, `_bootstrap_at`); the sets are those of the
+    project's `[analysis.filters]` (`set_test.set_k_spectra`; the defaults without them). Shown:
+    a log line (spectra, sets, K), `hxex info`'s bootstrap line names the sets, and `hxex
+    analyse` warns, naming up to five sets, where a set's spectra lack it.
+    `species_uptake.csv` column `average_from_k2` (bool) replaced by `average_K` (1, 2, or
+    the set's number); `k2_average_sets` by `set_average_ks` (sets -> K),
+    `compare_peptides(k2_averages=)` by `set_averages=`; records carry their spectrum id. Built check (private): the cap evaluation's bundles with the
+    population test switch 15 of 3,133 benchmark sets (mostly residues 33-57 at the shortest
+    time) and 3 of 748 tutorial sets (residues 1-23 at the shortest time), by +0.11 and +0.27 D
+    in the median (largest 0.66 D), every other set unchanged; as evaluation 2a found (16 and
+    4 sets there, before the cap). Checks: tests/test_analysis.py (an end-to-end run fitted to
+    K = 3 against values computed from its fits; the set test's number; the warning),
+    tests/test_population_test.py (the run's and resume's set-K bootstrap).

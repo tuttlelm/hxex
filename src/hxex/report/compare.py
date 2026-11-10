@@ -475,8 +475,9 @@ def plot_residue_samples(
     delta_crit: float | None = None,
 ) -> Figure:
     """Every sample's average deuteration (fDavg: the K=1 fit's, or, for a set with two
-    populations at least 2 D apart, the K = 2 population-weighted mean; ``average_from_k2``,
-    HISTORY 210) residue by residue at ``time`` on one axis,
+    populations at least 2 D apart, the K = 2 population-weighted mean, HISTORY 210, and for a
+    set with three or more, the population-weighted mean at its number; ``average_K``)
+    residue by residue at ``time`` on one axis,
     none of them a reference (owner, 2026-11-04: "the all samples fDavg overlay, so not head to
     head"; drawn as redundancy and resolution draw the samples): each sample in its colour and
     marker (``styles``, :func:`hxex.report.coverage.sample_styles`; else the default style of

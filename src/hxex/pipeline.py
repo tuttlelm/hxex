@@ -765,10 +765,18 @@ def _chosen_part(config: RunConfig, data: Measurements, fit: FitResult,
     wanted = _missing_choices(fit, by_k, chosen)
     if not wanted:
         return by_k
-    by_k = dict(by_k or {})
     total = sum(len(r) for r in wanted.values())
     log.info("bootstrapping %d spectra at the K chosen for them in the review", total)
     start_stage(progress, "bootstrap chosen K", UNITS - _FINISH, UNITS - _FINISH)
+    return _bootstrap_at(config, data, fit, by_k, wanted, cancel)
+
+
+def _bootstrap_at(config: RunConfig, data: Measurements, fit: FitResult,
+                  by_k: dict[int, BootstrapResult] | None, wanted: Mapping[int, Sequence[int]],
+                  cancel) -> dict[int, BootstrapResult]:
+    """``by_k`` with the rows of ``wanted`` (K -> rows of ``fit``) bootstrapped at that K, as
+    partial fixed-K bootstraps (:func:`hxex.bootstrap.scatter`)."""
+    by_k = dict(by_k or {})
     for k, rows in sorted(wanted.items()):
         check_cancel(cancel)
         rows = np.sort(np.asarray(rows, dtype=np.int64))
@@ -776,6 +784,50 @@ def _chosen_part(config: RunConfig, data: Measurements, fit: FitResult,
                               config.bootstrap, cancel=cancel)[k]
         by_k[k] = scatter(part, rows, len(fit), k, base=by_k.get(k))
     return by_k
+
+
+def _set_k_wanted(result: RunResult, by_k, review, analysis) -> tuple[dict[int, list[int]],
+                                                                      int, int]:
+    """The rows of ``result`` that ``[run.bootstrap] set_k`` bootstraps (K -> rows): the
+    spectra of the sets the population test puts at three populations or more that have no
+    bootstrap at the set's K (:func:`hxex.analysis.set_test.set_k_spectra`, with the filters of
+    ``analysis``, an :class:`hxex.analysis.AnalysisConfig`, or the defaults); with the number of
+    such sets and of their spectra."""
+    config = result.config
+    if (config.bootstrap is None or not config.bootstrap.set_k
+            or result.population_test is None):
+        return {}, 0, 0
+    from .analysis import SpeciesFilters
+    from .analysis.set_test import set_k_spectra
+    from .report.results import Results
+
+    filters = getattr(analysis, "filters", None) or SpeciesFilters()
+    spectra, n_sets = set_k_spectra(Results.from_run(result, review=review), filters=filters,
+                                    exclude_flagged=bool(getattr(analysis, "exclude_flagged",
+                                                                 False)))
+    return _missing_choices(result.fit, by_k, spectra), n_sets, len(spectra)
+
+
+def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunResult:
+    """``result`` with ``[run.bootstrap] set_k`` done (:func:`_set_k_wanted`): the spectra of
+    sets with three populations or more bootstrapped at the set's K where they have no bootstrap
+    there; the log says how many and why."""
+    wanted, n_sets, n_spectra = _set_k_wanted(result, result.bootstrap_by_k, review, analysis)
+    if not n_sets:
+        return result
+    if not wanted:
+        log.info("the %d spectra of the %d sets with three populations or more have a bootstrap "
+                 "at their set's K", n_spectra, n_sets)
+        return result
+    total = sum(len(r) for r in wanted.values())
+    log.info("bootstrapping %d spectra of %d sets with three populations or more at the set's "
+             "K (%s): their average comes from that description, and this is its error "
+             "([run.bootstrap] set_k)", total, n_sets,
+             ", ".join(f"K={k}: {len(r)}" for k, r in sorted(wanted.items())))
+    start_stage(progress, "bootstrap set K", UNITS - _FINISH, UNITS - _FINISH)
+    by_k = _bootstrap_at(result.config, result.measurements, result.fit,
+                         result.bootstrap_by_k, wanted, cancel)
+    return dataclasses.replace(result, bootstrap_by_k=by_k)
 
 
 def _missing_choices(fit: FitResult, by_k: Mapping[int, BootstrapResult] | None,
@@ -1118,6 +1170,7 @@ def run(
     project_file: Mapping | None = None,
     chosen_k: Mapping[str, int] | None = None,
     reuse: bool = True,
+    analysis=None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -1147,8 +1200,11 @@ def run(
     so their errors are made like every other's. With ``reuse`` (the default), a run that
     replaces a bundle (``overwrite`` or ``keep_previous``) takes its fit, population test and
     bootstrap of every spectrum whose input is unchanged instead of fitting it again
-    (:mod:`hxex.reuse`); everything that uses all the spectra is worked out again. Raises
-    ValueError if nothing is left.
+    (:mod:`hxex.reuse`); everything that uses all the spectra is worked out again. With the
+    population test and ``[run.bootstrap] set_k``, the spectra of the sets it puts at three
+    populations or more are bootstrapped at the set's K too, the sets being those of
+    ``analysis`` (an :class:`hxex.analysis.AnalysisConfig`: its filters; None: the defaults).
+    Raises ValueError if nothing is left.
     """
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
@@ -1362,6 +1418,7 @@ def run(
     by_k = _chosen_part(config, measurements, fit, by_k,
                         merge_choices(_review_choices(review), chosen_k), progress, cancel)
     result = dataclasses.replace(result, bootstrap=boot, bootstrap_by_k=by_k)
+    result = _set_k_part(result, review, analysis, progress, cancel)
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, progress=progress, cancel=cancel, review=review,
                    provenance=provenance)
@@ -1563,6 +1620,23 @@ def _resumed(provenance: Mapping | None, added: str, project_file: bool) -> dict
     return out
 
 
+def _bundle_set_k_missing(b, bootstrap: BootstrapConfig | None, held, analysis) -> bool:
+    """Whether the bundle ``b`` (open) has spectra ``[run.bootstrap] set_k`` would bootstrap
+    (:func:`_set_k_wanted`), with the bootstrap settings ``bootstrap`` or its own."""
+    stored = (b.manifest.get("configs", {}).get("run") or {}).get("bootstrap")
+    cfg = bootstrap or (BootstrapConfig.from_dict(stored) if stored else None)
+    if cfg is None or not cfg.set_k or not b.has("population_test") or b.bootstrap() is None:
+        return False
+    from .analysis import SpeciesFilters
+    from .analysis.set_test import set_k_spectra
+    from .report.results import Results
+
+    filters = getattr(analysis, "filters", None) or SpeciesFilters()
+    spectra, _ = set_k_spectra(Results.from_bundle(b), filters=filters,
+                               exclude_flagged=bool(getattr(analysis, "exclude_flagged", False)))
+    return bool(_missing_choices(b.fit(), held, spectra))
+
+
 class NothingToResume(ValueError):
     """A complete bundle with every chosen K bootstrapped: :func:`resume_bootstrap` has nothing
     to add."""
@@ -1580,6 +1654,7 @@ def resume_bootstrap(
     run_controls: ControlConfig | None = None,
     controls_choice: Mapping | None = None,
     project_file: Mapping | None = None,
+    analysis=None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -1626,6 +1701,10 @@ def resume_bootstrap(
     .outdated`: a flag added since is empty) are assessed again with this version's, also on a
     bundle with nothing else to do (owner, 2026-11-08: flags added after a bundle's fits were
     otherwise never assessed for it).
+    With ``[run.bootstrap] set_k`` (the default), the spectra of the sets the population test
+    puts at three populations or more (with the filters of ``analysis``, an
+    :class:`hxex.analysis.AnalysisConfig`; None: the defaults) are bootstrapped at the set's K
+    where they have none there, as a run does; also on a bundle with nothing else to do.
     The manifest's provenance records the resume (``resumed``), and ``project_file``
     (:func:`hxex.config.project_record`), when given, replaces the bundle's record of the
     project file (its ``run_settings_used.toml``)."""
@@ -1650,7 +1729,8 @@ def resume_bootstrap(
         # flags an earlier version of the checks assessed (a flag added since is empty)
         outdated = b.has("quality") and b.quality().outdated
         if not redo and not unfitted and not testing and not new_controls and not outdated and (
-                b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)):
+                b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)) and (
+                not _bundle_set_k_missing(b, bootstrap, held, analysis)):
             raise NothingToResume(f"{path}: no bootstrap is pending (the bundle is complete) and "
                              "every K chosen in the review has one; to add or redo the "
                              "bootstrap or the population test, or to work the controls out "
@@ -1784,5 +1864,8 @@ def resume_bootstrap(
         chunk_plan=chunk_plan or _plan(measurements, config, (0.0, 1.0)).record,
         fitted_with=fitted_with, controls_choice=choice_record,
     )
+    if _set_k_wanted(result, by_k, review, analysis)[0]:
+        provenance = _resumed(provenance, "bootstrap at set K", False)
+    result = _set_k_part(result, review, analysis, progress, cancel)
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

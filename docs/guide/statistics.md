@@ -94,7 +94,7 @@ value missed the true average by a third to two thirds of a deuteron.
 So where a peptide's spectra at a time are best described by two populations or more (`best_set_K` 2 or more,
 or the population test's decision) and the two lie at least 2 deuterons apart, *hxex* takes that
 peptide's average from the two populations instead: the share-weighted mean of their positions,
-for each spectrum. Those rows are marked `average_from_k2` in `species_uptake.csv`, and the
+for each spectrum. Those rows have `average_K` 2 in `species_uptake.csv`, and the
 values feed everything built on the K = 1 values, including the comparisons and the residue
 values. The populations' shares are reliable in exactly these cases, because the two are far
 enough apart to be fitted well. On simulated data this brought the averages of such peptides
@@ -110,6 +110,23 @@ independent, which is too large: small real differences in such peptides are the
 often (on simulated data 7 to 16 percentage points fewer); run its bootstrap again (`hxex
 resume`) to use the right error. On simulated data with the right error, these peptides' small
 differences were found as often as before the switch, with no more false ones.
+
+Where the population test finds three populations or more in a peptide's spectra at a time,
+the one-population fit describes the envelope badly whatever the distances, so *hxex* takes
+the average from the description at that number: for each spectrum, the share-weighted mean
+of its populations at the set's number (at three, the three-population fit), whether or not
+that spectrum on its own chose that many. Every spectrum the analysis keeps counts, and one
+the review keeps at one population gives its one-population value. Those rows have `average_K`
+3 (or more) in `species_uptake.csv`, and these values too feed the comparisons and the residue
+values. On the known-answer test data with three true populations, this average missed the
+truth by 0.28 deuterons (median) where the one-population value missed it by 2.8; on two real
+datasets it concerned 15 and 3 peptides and times, mostly at the shortest labelling time, and
+moved them by 0.1 to 0.3 deuterons. Its error comes from a bootstrap at that number of
+populations, which `hxex run` makes for the spectra of these peptides and times on its own
+(`set_k` in `[run.bootstrap]`, on unless you switch it off; the log says how many spectra it
+bootstrapped, and `hxex info` lists them under `bootstrap`). Without that bootstrap the error
+is the scatter of the replicates, and `hxex analyse` warns, naming the peptides and times;
+`hxex resume hxex.toml` adds the bootstrap to results made without it.
 
 ## Same states, different shares
 

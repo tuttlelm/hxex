@@ -107,7 +107,9 @@ and bootstrap because their series' input was unchanged, out of how many; `hxex.
 absent before 2026-11-07);
 `hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
 `hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`,
-`bootstrap` (added or made again), or `bootstrap at chosen K` (the K a review chose))
+`bootstrap` (added or made again), `bootstrap at chosen K` (the K a review chose), or
+`bootstrap at set K` (the spectra of sets with three populations or more, at that number:
+`[run.bootstrap] set_k`))
 and `project_file_replaced` (whether the record of the project file, `configs.project_file`,
 was replaced by the one resume was given)), `peak_measure` (whether the
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came

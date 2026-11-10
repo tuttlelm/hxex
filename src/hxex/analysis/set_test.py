@@ -166,6 +166,30 @@ def above_max_fd(r, filters, controls=None, screen=None, use=None) -> np.ndarray
     return np.logical_or.accumulate(out, axis=1)
 
 
+def set_k_spectra(results, *, filters=None, exclude_flagged: bool = False,
+                  min_k: int = 3) -> tuple[dict[str, int], int]:
+    """The spectra of the labelled sets of one run's ``results`` that the population test puts
+    at ``min_k`` populations or more, with the set's number (spectrum id -> K), and the number
+    of such sets: the sets whose average comes from that description
+    (:func:`hxex.analysis.species.set_average_ks`), whose spectra want a bootstrap at it
+    (``[run.bootstrap] set_k``). Only the spectra that average takes at that K: not those the
+    review rejected or the filters leave out, nor those the review or the screens keep at one
+    population (they give their K = 1 mean). ``filters`` and ``exclude_flagged`` as in
+    :func:`set_tests`."""
+    tests = set_tests(results, filters=filters, exclude_flagged=exclude_flagged, quiet=True)
+    run = _run_rows("", results, lambda _r, s: ("", s), filters, exclude_flagged, None)
+    out: dict[str, int] = {}
+    sets = set()
+    for i, key in enumerate(run.keys):
+        t = tests.get(key)
+        if t is None or key[6].role or t.K < min_k:
+            continue
+        sets.add(key)
+        if run.use[i] and not run.one[i]:
+            out[str(results.fit.spectrum_id[i])] = int(t.K)
+    return out, len(sets)
+
+
 def set_tests(results, *, filters=None, exclude_flagged: bool = False,
               controls: Mapping[str, Any] | None = None, undeuterated_cap: bool = False,
               quiet: bool = False) -> dict[tuple, SetTest]:

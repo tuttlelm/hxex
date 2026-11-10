@@ -1847,6 +1847,9 @@ _COMMENTS: dict[str, str] = {
     "run.bootstrap.seed": "seed of the resampling and the restarts",
     "run.bootstrap.keep_draws": "keep every resample's fit in the bundle",
     "run.bootstrap.curve_band": "also the band of the total uptake curve",
+    "run.bootstrap.set_k": "with the population test, also bootstrap the spectra of sets with "
+                           "three populations or more at that number: the error of their "
+                           "average (else the replicates' scatter)",
     "run.population_test.simulations": "simulated spectra per spectrum and step for the test's "
                                        "reference (20; time grows with it)",
     "run.population_test.significance": "a further population counts when the chance of "

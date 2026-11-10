@@ -47,7 +47,7 @@ from .. import chem
 from .populations import ChoiceConfig, lever_population
 from .residues import ResidueMap, residue_map, separate_modified
 from .runs import resolve_sample
-from .species import SpeciesFilters, _by_replicate, _combine, _k2_average_records, _records
+from .species import SpeciesFilters, _by_replicate, _combine, _records, _with_set_averages
 
 log = logging.getLogger(__name__)
 
@@ -316,7 +316,7 @@ def compare_peptides(
     best_sets: Mapping[tuple, tuple[int, float]] | None = None,
     two_population_sets: bool | None = None,
     populations: str | None = None,
-    k2_averages: Collection[tuple] | None = None,
+    set_averages: Mapping[tuple, int] | Collection[tuple] | None = None,
     comparisons: Sequence[PeptideComparison] | None = None,
 ) -> PeptideComparison:
     """Every sample (or those in ``samples``) against ``reference``, per peptide and time, at
@@ -360,10 +360,12 @@ def compare_peptides(
     ``two_population_sets=False`` turns this off (the default with ``populations =
     "bootstrap"``): every K=2 description is compared.
 
-    ``k2_averages`` (:func:`hxex.analysis.species.k2_average_sets` of the species table) names
-    the sets whose average is the K = 2 description's population-weighted mean, each replicate
-    spectrum's own (two populations far apart, where the K = 1 fit settles on one; HISTORY
-    210): their K = 1 values, and the average of the lever rule, are taken from it.
+    ``set_averages`` (:func:`hxex.analysis.species.set_average_ks` of the species table) names
+    the sets whose average is another description's population-weighted mean, each spectrum's
+    own, with that description's K: 2 for two populations far apart, where the K = 1 fit
+    settles on one (HISTORY 210), and the set's own number from three (one population
+    describes such an envelope badly); a plain collection of sets means K = 2. Their K = 1
+    values, and the average of the lever rule, are taken from it.
 
     ``comparisons`` (a population only): the K=1 comparison and the K=2 rank 1 and rank 2
     comparisons made with the same settings, which decide where the positions are shared (see
@@ -394,14 +396,15 @@ def compare_peptides(
     if quantity == "population":
         return _compare_populations_peptides(results, reference, samples, rank, alpha,
                                              exclude_flagged, filters, match, controls, choice,
-                                             best_sets, k2_averages, comparisons)
+                                             best_sets, set_averages, comparisons)
     at = 0 if quantity == "fD" else 2  # the record's value (its standard error follows it)
-    ks = (1, K) if K != 1 else ((1, 2) if k2_averages else (1,))
+    ks = (1, K) if K != 1 else ((1, 2) if set_averages else (1,))
     # quiet: species_uptake reports what the filters left out
     groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
     if K == 1:
-        groups = _k2_average_records(groups, k2_averages)
+        groups = _with_set_averages(results, groups, set_averages, exclude_flagged, filters,
+                                    controls)
     by_sample: dict[tuple[str, str], dict[tuple, np.ndarray]] = {}
     # every species and time with a K=1 value: the pairs compared (at K >= 2 a pair without a
     # description at (K, rank) on a side gets a row saying so, never an error)
@@ -645,13 +648,14 @@ def _one_population(best_sets: Mapping, state, key, reference, rkey) -> str:
 
 
 def _compare_populations_peptides(results, reference, samples, rank, alpha, exclude_flagged,
-                                  filters, match, controls, choice, best_sets, k2_averages=None,
+                                  filters, match, controls, choice, best_sets,
+                                  set_averages=None,
                                   comparisons=None) -> PeptideComparison:
     """:func:`compare_peptides` with ``quantity='population'``."""
     # the K=1 comparison and the K=2 positions' decide where the positions are shared
     same = dict(samples=samples, alpha=alpha, exclude_flagged=exclude_flagged, filters=filters,
                 match=match, controls=controls, choice=choice, best_sets=best_sets,
-                two_population_sets=best_sets is not None, k2_averages=k2_averages)
+                two_population_sets=best_sets is not None, set_averages=set_averages)
     if comparisons is None:
         comparisons = [compare_peptides(results, reference, **same),
                        *(compare_peptides(results, reference, K=2, rank=r, **same)
@@ -659,7 +663,8 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
     at_k1, *at_k2 = (_by_pair(c) for c in comparisons)
     groups, *_ = _records(results, (1, 2), exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
-    groups = _k2_average_records(groups, k2_averages)
+    groups = _with_set_averages(results, groups, set_averages, exclude_flagged, filters,
+                                controls)
     k1 = (_by_replicate(recs)[0] for key, recs in groups.items()
           if key[7:] == (1, 1) and not key[6].role)
     delta_crit = _delta_crit(k1, alpha)  # the K=1 threshold, carried over by the separation
@@ -1589,17 +1594,21 @@ class SequenceComparison:
 def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: bool = False,
                       filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
                       controls: Mapping | None = None,
-                      k2_averages: Collection[tuple] | None = None) -> SequenceComparison:
+                      set_averages: Mapping[tuple, int] | Collection[tuple] | None = None,
+                      ) -> SequenceComparison:
     """Each head-to-head panel's sequences (``panels``, :func:`hxex.analysis.pooled
     .head_to_head_panels`) against its first, in every sample and at every time both were
     measured, at K = 1: the mean fD of each side's replicates (their charge states averaged),
     the difference and its error, and Welch's test on the replicate values; significant as
     the peptide comparisons are (:func:`compare_peptides`: p below ``alpha`` and the difference
-    beyond ``delta_crit``, worked out from the same replicate values)."""
-    ks = (1, 2) if k2_averages else (1,)
+    beyond ``delta_crit``, worked out from the same replicate values). ``set_averages``
+    (:func:`hxex.analysis.species.set_average_ks`) gives the sets whose K = 1 value is an
+    average at another K, as in :func:`compare_peptides`."""
+    ks = (1, 2) if set_averages else (1,)
     groups, *_ = _records(results, ks, exclude_flagged, filters, quiet=True,
                           controls_changes=controls)
-    groups = _k2_average_records(groups, k2_averages)
+    groups = _with_set_averages(results, groups, set_averages, exclude_flagged, filters,
+                                controls)
     measured: dict[tuple, tuple[np.ndarray, np.ndarray, bool]] = {}
     for key, recs in groups.items():
         run, sample, peptide, mod, start, end, point, k, r = key

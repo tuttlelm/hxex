@@ -1287,7 +1287,7 @@ def cmd_run(args) -> int:
                 spectra, config, out=bundle, project=project.project, notes=out.notes,
                 overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
                 exclude=project.input.exclude, view_exclude=_view_exclude(project),
-                chosen_k=chosen_k, reuse=not args.refit,
+                chosen_k=chosen_k, reuse=not args.refit, analysis=project.analysis,
                 project_file=project_record(dataclasses.replace(
                     project, threads=threads, output=dataclasses.replace(
                         out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
@@ -1446,7 +1446,8 @@ def cmd_resume(args) -> int:
         redo = (project.run.bootstrap is not None
                 and held != json.loads(json.dumps(project.run.bootstrap.to_dict())))
         extra.update(bootstrap=project.run.bootstrap, add=redo,
-                     view_exclude=_view_exclude(project), chosen_k=chosen)
+                     view_exclude=_view_exclude(project), chosen_k=chosen,
+                     analysis=project.analysis)
         out = project.output
         tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
     from .io import check_output, holds_output, made_from, prepare_output
@@ -1850,8 +1851,10 @@ def _bootstrap_text(bundle, m: int) -> str:
     for k in bundle.bootstrap_ks():
         fixed = bundle.bootstrap(k)
         covered = int((np.asarray(fixed.n_success) > 0).sum()) if fixed is not None else 0
+        why = "chosen in the review" + (f", or of sets with {k} populations ([run.bootstrap] "
+                                        "set_k)" if k >= 3 else "")
         parts.append(f"at K = {k} for " + ("every spectrum" if covered == m else
-                                            f"{covered} of {m} spectra (chosen in the review)"))
+                                            f"{covered} of {m} spectra ({why})"))
     if not parts:
         return "none"
     if not bundle.bootstrap_ks():

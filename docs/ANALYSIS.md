@@ -228,8 +228,11 @@ in the published work; where it matters, a component is named by its rank.
   average (it is far more precise than the K=2 fit's own share, whose scatter comes from the
   positions trading off against it). Where a set has two populations at least 2 D apart, the
   K=1 fit settles on one of them rather than their average, so the set's average, and with it
-  the lever rule's, is the K=2 share-weighted mean (`average_from_k2`, owner, 2026-10-31,
-  HISTORY 210); there the K=2 shares are reliable, the populations being far enough apart. Per peptide (`compare_peptides(..., quantity='population')`)
+  the lever rule's, is the K=2 share-weighted mean (`average_K` 2, owner, 2026-10-31,
+  HISTORY 210); there the K=2 shares are reliable, the populations being far enough apart.
+  Where the set has three populations or more (the population test's number), its average is
+  each spectrum's share-weighted mean at that number, from every spectrum the analysis keeps
+  (`average_K` 3 or more, owner, 2026-11-09; HISTORY "The set-K average"). Per peptide (`compare_peptides(..., quantity='population')`)
   each replicate's K=1 value sits between the sample's K=2 positions averaged over its
   replicates; each sample keeps its own positions, so the K=2 fD comparisons say whether the
   states differ and the population comparison whether they are populated differently. Where

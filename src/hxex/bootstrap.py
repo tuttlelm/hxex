@@ -64,6 +64,11 @@ class BootstrapConfig:
       ``'all'`` (also every K that was fitted, for every measurement, as a fixed-K analysis) or a
       list of K values (those, for every measurement; the analysis' choice between one and two
       populations wants 1 and 2). The cost grows with the number of Ks.
+    - ``set_k``: with the population test, also bootstrap the spectra of every set the test
+      puts at three populations or more at the set's number, where they have no bootstrap
+      there (:func:`hxex.pipeline.run`): such a set's average comes from that description
+      (:func:`hxex.analysis.species.set_average_ks`), and this is its error; without it the
+      error is the replicates' scatter.
     """
 
     n_boot: int = 20
@@ -79,6 +84,7 @@ class BootstrapConfig:
     keep_draws: bool = False
     curve_band: bool = True
     ks: str | tuple[int, ...] = "selected"
+    set_k: bool = True
 
     def __post_init__(self):
         if self.n_boot < 2:
@@ -102,6 +108,8 @@ class BootstrapConfig:
                 raise ValueError("ks must be 'selected', 'all' or distinct K values >= 1")
         elif self.ks not in ("selected", "all"):
             raise ValueError("ks must be 'selected', 'all' or distinct K values >= 1")
+        if not isinstance(self.set_k, bool):
+            raise ValueError("set_k must be true or false")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}

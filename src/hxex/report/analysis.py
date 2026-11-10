@@ -63,12 +63,12 @@ from ..analysis import (
     coverage_table,
     gated_by_peptides,
     judged_on_shared,
-    k2_average_sets,
     left_out_spectra,
     left_out_summary,
     paired_residue_maps,
     region_summary,
     residue_map,
+    set_average_ks,
     set_pvalues,
     species_uptake,
 )
@@ -485,8 +485,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
               "alpha": config.alpha, "samples": [label(*s) for s in wanted],
               "match": config.peptide_match, "controls": config.controls, "best_sets": best,
               "two_population_sets": gate,
-              # the averages of sets with two populations far apart (HISTORY 210)
-              "k2_averages": k2_average_sets(up)}
+              # the averages of sets with two populations far apart (HISTORY 210) or three
+              # and more
+              "set_averages": set_average_ks(up)}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         k1_raw = comparisons["K=1 fD"]
         if 2 in config.ks:
@@ -1040,7 +1041,7 @@ def _head_to_head_outputs(results, pools: dict, up, up_d, pooled: set, tables: d
         return []
     comparison = compare_sequences(
         results, panels, alpha=config.alpha, exclude_flagged=config.exclude_flagged,
-        filters=config.filters, controls=config.controls, k2_averages=k2_average_sets(up))
+        filters=config.filters, controls=config.controls, set_averages=set_average_ks(up))
     tables["compare_sequences"] = comparison.columns()
     rows_per_page = max(1, int((config.page_size[1] - 0.4) // HEAD_TO_HEAD_PANEL[1]))
     per_page = HEAD_TO_HEAD_COLUMNS * rows_per_page

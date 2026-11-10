@@ -689,3 +689,86 @@ def test_resume_refuses_the_test_for_fits_that_cannot_carry_it(tmp_path):
         base, fit=dataclasses.replace(base.fit, k_max=1)), out=tmp_path / "b")
     with pytest.raises(ValueError, match="cannot carry the population test.*k_max.*run again"):
         resume_bootstrap(tmp_path / "b", population_test=TEST)
+
+
+def test_sets_with_three_populations_are_bootstrapped_at_their_number(tmp_path, monkeypatch,
+                                                                       caplog):
+    """[run.bootstrap] set_k (on by default): with the population test, the spectra of the sets
+    it puts at three populations or more are bootstrapped at the set's number where they have
+    no bootstrap there (their average comes from that description); the log says so, and
+    hxex resume adds it to a bundle without it, records it, and then has nothing left to add."""
+    import logging
+
+    from hxex.analysis import set_test
+    from hxex.pipeline import NothingToResume
+    from test_run import config, raw_spectra
+
+    raw = raw_spectra(n_series=2)
+    base = config()
+    cfg = config(fit=dataclasses.replace(base.fit, k_max=3),
+                 population_test=PopulationTestConfig(simulations=4))
+    assert cfg.bootstrap.set_k
+    off = dataclasses.replace(cfg, bootstrap=dataclasses.replace(cfg.bootstrap, set_k=False))
+    plain = run(raw, off, out=tmp_path / "b")
+    labelled = np.flatnonzero(np.asarray(plain.fit.role) == "")
+    first = np.asarray(plain.fit.time, dtype=float)[labelled].min()
+    rows = labelled[np.asarray(plain.fit.time, dtype=float)[labelled] == first]
+    ids = [str(plain.fit.spectrum_id[i]) for i in rows]
+    calls = []
+
+    def three(results, **kw):  # one set at three populations: the first time's spectra
+        calls.append(kw)
+        return dict.fromkeys(ids, 3), 1
+
+    monkeypatch.setattr(set_test, "set_k_spectra", three)
+    with caplog.at_level(logging.INFO, logger="hxex"):
+        res = run(raw, cfg)
+    assert "of 1 sets with three populations or more at the set's K" in caplog.text
+    assert calls and calls[0]["filters"] is not None  # the analysis's default filters
+    want = [i for i in rows if res.fit.selected_K[i] != 3]  # K = 3 chosen: its own bootstrap
+    assert want
+    by3 = res.bootstrap_by_k[3]
+    assert all(by3.covers(i) for i in want)
+    assert not any(by3.covers(i) for i in range(len(res.fit)) if i not in want)
+    assert 3 not in (plain.bootstrap_by_k or {})
+
+    # resume adds it to the bundle made without it, as the run made it
+    again = resume_bootstrap(tmp_path / "b", bootstrap=cfg.bootstrap)
+    np.testing.assert_allclose(again.bootstrap_by_k[3].mean_se[want], by3.mean_se[want])
+    with open_bundle(tmp_path / "b") as b:
+        assert [e["added"] for e in b.manifest["provenance"]["resumed"]] == [
+            "bootstrap at set K"]
+        assert b.bootstrap(3).covers(want[0])
+    with pytest.raises(NothingToResume):
+        resume_bootstrap(tmp_path / "b", bootstrap=cfg.bootstrap)
+
+
+def test_the_set_k_spectra_are_those_the_average_takes_at_that_k(monkeypatch):
+    """set_k_spectra names only the spectra a set's average takes at the set's K: not those
+    the review rejected (or the filters leave out), nor those kept at one population."""
+    from hxex.analysis import SpeciesFilters
+    from hxex.analysis import set_test as st
+    from hxex.io.bundle import ReviewTable
+    from hxex.report.results import Results
+    from test_run import config, raw_spectra
+
+    raw = raw_spectra(n_series=2)
+    res = Results.from_run(run(raw, config(population_test=PopulationTestConfig(simulations=4))))
+    real = st.set_tests
+
+    def all_three(results, **kw):  # every set read as three populations
+        return {key: dataclasses.replace(t, K=3) for key, t in real(results, **kw).items()}
+
+    monkeypatch.setattr(st, "set_tests", all_three)
+    labelled = [str(s) for s, r in zip(res.fit.spectrum_id, res.fit.role, strict=True) if r == ""]
+    every, n_sets = st.set_k_spectra(res, filters=SpeciesFilters(replicate_outlier=None))
+    assert n_sets and set(every) <= set(labelled) and set(every.values()) == {3}
+    rejected, one = sorted(every)[:2]
+    review = ReviewTable(
+        spectrum_id=np.array([rejected, one], dtype=object),
+        status=np.array(["rejected", "unreviewed"], dtype=object),
+        k_override=np.array([0, 1], dtype=np.int64), note=np.array(["", ""], dtype=object),
+        updated=np.array(["", ""], dtype=object))
+    fewer, n = st.set_k_spectra(res.with_review(review),
+                                filters=SpeciesFilters(replicate_outlier=None))
+    assert set(fewer) == set(every) - {rejected, one} and n == n_sets

@@ -2750,8 +2750,8 @@ def test_two_populations_far_apart_take_their_average_from_k2():
     from hxex.analysis.species import (
         K2_AVERAGE_SEPARATION,
         Point,
-        _k2_average_keys,
         _k2_average_records,
+        _set_average_ks,
     )
 
     assert K2_AVERAGE_SEPARATION == 2.0
@@ -2778,11 +2778,16 @@ def test_two_populations_far_apart_take_their_average_from_k2():
             "role": np.array([""] * 3), "K": np.array([1, 2, 2]), "rank": np.array([1, 1, 2]),
             "fD": np.array([0.45, 0.05, 0.95]), "n_amides": np.array([9.0] * 3),
             "best_set_K": np.array([2, 2, 2])}
-    assert _k2_average_keys(cols) == {key}  # 0.9 fD x 9 amides = 8.1 D apart
+    assert _set_average_ks(cols) == {key: 2}  # 0.9 fD x 9 amides = 8.1 D apart
     near = dict(cols, fD=np.array([0.45, 0.40, 0.55]))  # 1.35 D apart
-    assert _k2_average_keys(near) == set()
+    assert _set_average_ks(near) == {}
     one = dict(cols, best_set_K=np.array([1, 1, 1]))
-    assert _k2_average_keys(one) == set()
+    assert _set_average_ks(one) == {}
+    # three populations or more: the set's own number, the population test's where it ran
+    # (best_set_K follows it only up to the largest K analysed), whatever the separation
+    assert _set_average_ks(dict(near, set_test_K=np.array([3, 3, 3]))) == {key: 3}
+    assert _set_average_ks(dict(near, best_set_K=np.array([3, 3, 3]))) == {key: 3}
+    assert _set_average_ks(dict(cols, set_test_K=np.array([4, 4, 4]))) == {key: 4}
 
 
 def test_a_fasta_numbered_by_its_header_keeps_the_datas_residue_numbers(tmp_path):
@@ -2809,7 +2814,7 @@ def test_a_fasta_numbered_by_its_header_keeps_the_datas_residue_numbers(tmp_path
 
 def test_a_k2_average_counts_the_spectra_it_averages(results, monkeypatch):
     """Audit 2026-11-01 Analysis 36: a K = 1 row whose value comes from the K = 2 descriptions
-    (average_from_k2) counts the spectra that have one, not the K = 1 group's."""
+    (average_K 2) counts the spectra that have one, not the K = 1 group's."""
     from hxex.analysis import species as sp
 
     original = sp.best_set
@@ -2826,7 +2831,7 @@ def test_a_k2_average_counts_the_spectra_it_averages(results, monkeypatch):
     reviewed = _review_k1_ids(results, [str(results.fit.spectrum_id[labelled[0]])])
     up = species_uptake(reviewed, filters=SpeciesFilters(min_population=0.0))
     rows = (up.role == "") & (up.time == 60.0)
-    assert up.average_from_k2[rows].all()
+    assert (up.average_K[rows] == 2).all()
     k1, k2 = rows & (up.K == 1), rows & (up.K == 2) & (up.rank == 1)
     np.testing.assert_array_equal(up.n_spectra[k1], up.n_spectra[k2])
 
@@ -3068,3 +3073,77 @@ def test_residue_level_outputs_need_peptides_that_make_one_protein(two_sample_bu
     assert {"coverage_S", "coverage_V"} <= set(stems)
     forced = analysis_outputs(results, AnalysisConfig(reference="S", residue_level=True))
     assert {"residues", "coverage", "compare_residues"} <= set(forced.tables)
+
+
+@pytest.fixture(scope="module")
+def results_k3():
+    """The synthetic run fitted up to K = 3."""
+    import dataclasses
+
+    base = config()
+    return Results.from_run(run(raw_spectra(n_series=2),
+                                config(fit=dataclasses.replace(base.fit, k_max=3))))
+
+
+def test_sets_at_three_take_their_average_from_their_own_k(results_k3, monkeypatch, caplog):
+    """A set with three populations or more (owner, 2026-11-09) takes its average from every
+    spectrum's population-weighted mean at the set's K, not from the K = 1 fit: charge states
+    averaged within a replicate, then the replicates' mean. Every spectrum the analysis keeps
+    counts (the filters on describing populations do not judge an average); a spectrum the
+    review keeps at one population gives its K = 1 mean. The comparisons use the same values."""
+    import logging
+
+    from hxex.analysis import species as sp
+    from hxex.controls import correct_means
+
+    original = sp.best_set
+
+    def three(cols, evidence, ks, min_population=0.05):  # every set reads three populations
+        out = original(cols, evidence, ks, min_population)
+        out["best_set_K"][:] = 3
+        return out
+
+    monkeypatch.setattr(sp, "best_set", three)
+    r = results_k3
+    fit, ctl, b = r.fit, r.controls, r.binned
+    one = str(fit.spectrum_id[np.flatnonzero(np.asarray(fit.role) == "")[0]])
+    reviewed = _review_k1_ids(r, [one])
+    with caplog.at_level(logging.WARNING, logger="hxex"):
+        up = species_uptake(reviewed, ks=(1, 2, 3), filters=None, populations="best_set")
+    # the run bootstrapped each spectrum at its own K only: the error is the replicates'
+    assert "without a bootstrap at that number" in caplog.text and "hxex resume" in caplog.text
+    assert (up.average_K[up.role == ""] == 3).all() and (up.average_K[up.role != ""] == 1).all()
+
+    at = ctl.rows(fit.data_id)
+    amides = np.asarray(ctl.n_amides, dtype=float)[at]
+    kf = fit.fits[3]
+    k3 = np.nansum(kf.means[:, :3] * kf.populations[:, :3], axis=1)
+    value = np.where(np.asarray(fit.spectrum_id).astype(str) == one, fit.fits[1].means[:, 0], k3)
+    fd = correct_means(ctl, fit.data_id, value[:, None]).mean[:, 0] / amides
+    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    rows = np.array([index[str(s)] for s in fit.spectrum_id])
+    rep, time = np.asarray(b.rep)[rows], np.asarray(fit.time, dtype=float)
+    labelled = np.asarray(fit.role) == ""
+    for t in np.unique(time[labelled]):
+        here = labelled & (time == t)
+        per_rep = [fd[here & (rep == x)].mean() for x in np.unique(rep[here])]
+        row = np.flatnonzero((up.role == "") & (up.K == 1) & (up.time == t))
+        assert len(row) == 1
+        assert up.fD[row[0]] == pytest.approx(np.mean(per_rep), rel=1e-9)
+        assert up.n_spectra[row[0]] == int(here.sum())
+    # the K = 3 rows themselves stay the K = 3 description's
+    k3_rows = up.where(K=3)
+    assert k3_rows.any()
+
+    # with the default filters every kept spectrum still counts (none judged on its K = 3
+    # populations): the counts of the K = 1 fit's rows, other values
+    up_f = species_uptake(r, ks=(1, 2, 3), populations="best_set")
+    k1_f = (up_f.role == "") & (up_f.K == 1)
+    averages = sp.set_average_ks(up_f)
+    assert averages and set(averages.values()) == {3}
+    monkeypatch.undo()
+    plain = species_uptake(r, ks=(1, 2, 3), populations="best_set")
+    k1_p = (plain.role == "") & (plain.K == 1)
+    assert (plain.average_K[k1_p] == 1).all()
+    np.testing.assert_array_equal(up_f.n_spectra[k1_f], plain.n_spectra[k1_p])
+    assert not np.allclose(up_f.fD[k1_f], plain.fD[k1_p])
