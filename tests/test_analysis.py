@@ -3147,3 +3147,45 @@ def test_sets_at_three_take_their_average_from_their_own_k(results_k3, monkeypat
     assert (plain.average_K[k1_p] == 1).all()
     np.testing.assert_array_equal(up_f.n_spectra[k1_f], plain.n_spectra[k1_p])
     assert not np.allclose(up_f.fD[k1_f], plain.fD[k1_p])
+
+
+def test_head_to_head_leaves_stand_in_controls_untested(results):
+    """A head-to-head row whose sequence is corrected by a stand-in (the retention map here)
+    keeps its values but is not tested, with the reason; the sequence is marked as such for
+    the figure (owner, 2026-11-10)."""
+    import dataclasses
+
+    from hxex.analysis import SpeciesFilters
+    from hxex.analysis.compare import compare_sequences
+    from hxex.analysis.pooled import HeadToHead
+
+    binned = results.binned
+    other = dataclasses.replace(binned, peptide=np.where(binned.data_id == 1, "RDKVQKEYAI",
+                                                         "RDKVQKEYAL"))
+    ct = results.controls
+    assert ct is not None and ct.sequence_measured.all()
+    at = ct.rows([1])[0]
+    flags = np.array(ct.flags, dtype=object).copy()
+    flags[at] = "fd_missing;fd_map"
+    fallback = np.array(ct.fallback, dtype=bool).copy()
+    fallback[at] = True
+    n_fd = np.array(ct.n_fd).copy()
+    n_fd[at] = 0
+    stand_in = dataclasses.replace(ct, flags=flags, fallback=fallback, n_fd=n_fd)
+    assert not stand_in.sequence_measured[at] and stand_in.sequence_measured.sum() == len(ct) - 1
+    panel = HeadToHead(1, 10, "A", ("RDKVQKEYAL", "RDKVQKEYAI"), ("A", "A2"), ("A", "A2: L10I"))
+    patched = dataclasses.replace(results, binned=other, controls=stand_in)
+    kept = compare_sequences(patched, [panel],
+                             filters=SpeciesFilters(stand_in_controls="include"))
+    cols = kept.columns()
+    assert len(kept) and set(cols["reason"]) == {
+        "stand-in control (this sequence): not tested between different sequences"}
+    assert np.isnan(cols["p"]).all() and not cols["significant"].any()
+    assert np.isfinite(cols["delta"]).all()
+    assert {k[2] for k, own in kept.own_controls.items() if not own} == {"RDKVQKEYAI"}
+    # the default leaves the stand-in series out of the analysis: no row at all
+    assert len(compare_sequences(patched, [panel])) == 0
+    # both corrected by their own controls: tested, no reason
+    tested = compare_sequences(dataclasses.replace(results, binned=other), [panel]).columns()
+    assert set(tested["reason"]) == {""} and np.isfinite(tested["p"]).any()
+

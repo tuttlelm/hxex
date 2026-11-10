@@ -1570,7 +1570,7 @@ SEQUENCE_COLUMNS = ("run", "sample", "start", "end", "group", "time", "peptide_r
                     "peptide", "identity_reference", "identity", "difference",
                     "value_reference", "value_reference_se", "value", "value_se", "delta",
                     "delta_se", "t", "p", "n_reference", "n", "significant",
-                    "control_fallback_reference", "control_fallback")
+                    "control_fallback_reference", "control_fallback", "reason")
 
 
 @dataclass(frozen=True)
@@ -1578,11 +1578,16 @@ class SequenceComparison:
     """Pooled sequences compared head to head (:func:`compare_sequences`): one row per panel
     (:class:`hxex.analysis.pooled.HeadToHead`), sample, time and sequence other than the
     panel's first, which is the ``reference`` of the row (``peptide_reference``); columns
-    :data:`SEQUENCE_COLUMNS`. ``difference``: how the sequence differs from the first."""
+    :data:`SEQUENCE_COLUMNS`. ``difference``: how the sequence differs from the first;
+    ``reason``: why a row is not tested (empty when it is). ``own_controls``: (run, sample,
+    peptide, start, end, time) -> whether every spectrum of that sequence there is corrected
+    by controls of its own sequence (:attr:`hxex.controls.ControlTable.sequence_measured`), for
+    every sequence measured, those without a row included."""
 
     columns_: dict
     alpha: float = 0.05
     delta_crit: float = np.nan
+    own_controls: Mapping = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.columns_["sample"])
@@ -1601,7 +1606,12 @@ def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: 
     measured, at K = 1: the mean fD of each side's replicates (their charge states averaged),
     the difference and its error, and Welch's test on the replicate values; significant as
     the peptide comparisons are (:func:`compare_peptides`: p below ``alpha`` and the difference
-    beyond ``delta_crit``, worked out from the same replicate values). ``set_averages``
+    beyond ``delta_crit``, worked out from the same replicate values). A row whose sides are
+    not both corrected by controls of their own sequence (a fully deuterated stand-in from the
+    retention map or the run, or an undeuterated control of another species) is listed with
+    its values but not tested, with the ``reason``: a stand-in's error (about 10 % of fD) is as
+    large as the differences between sequences and, unlike between samples of one peptide,
+    does not cancel (owner, 2026-11-10). ``set_averages``
     (:func:`hxex.analysis.species.set_average_ks`) gives the sets whose K = 1 value is an
     average at another K, as in :func:`compare_peptides`."""
     ks = (1, 2) if set_averages else (1,)
@@ -1616,8 +1626,8 @@ def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: 
             continue
         values, errors = _by_replicate(recs)
         measured[(run, sample, peptide, start, end, point.time)] = (
-            values, errors, any(x[7] for x in recs))
-    delta_crit = _delta_crit((v for v, _, _ in measured.values()), alpha)
+            values, errors, any(x[7] for x in recs), all(x[13] for x in recs))
+    delta_crit = _delta_crit((v for v, *_ in measured.values()), alpha)
     states = sorted({k[:2] for k in measured})
     times = sorted({k[5] for k in measured})
     rows = []
@@ -1634,8 +1644,15 @@ def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: 
                         continue
                     ma, sa = _combine(a[0], a[1])
                     mb, sb = _combine(b[0], b[1])
-                    if len(a[0]) >= 2 and len(b[0]) >= 2 and (np.var(a[0]) > 0
-                                                             or np.var(b[0]) > 0):
+                    stand_in = [side for side, own in (("the first sequence", a[3]),
+                                                       ("this sequence", b[3])) if not own]
+                    why = ("" if not stand_in else
+                           f"stand-in control ({'both' if len(stand_in) == 2 else stand_in[0]}"
+                           "): not tested between different sequences")
+                    if why:
+                        tt, p = np.nan, np.nan
+                    elif len(a[0]) >= 2 and len(b[0]) >= 2 and (np.var(a[0]) > 0
+                                                               or np.var(b[0]) > 0):
                         tt, p = stats.ttest_ind(b[0], a[0], equal_var=False)
                     else:
                         tt, p = np.nan, np.nan
@@ -1645,7 +1662,7 @@ def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: 
                                  sa, mb, sb, delta, float(np.hypot(sa, sb)), float(tt),
                                  float(p), len(a[0]), len(b[0]),
                                  bool(np.isfinite(p) and p < alpha and np.isfinite(delta_crit)
-                                      and abs(delta) > delta_crit), a[2], b[2]))
+                                      and abs(delta) > delta_crit), a[2], b[2], why))
     numbers = {"start": np.int64, "end": np.int64, "n_reference": np.int64, "n": np.int64,
                "significant": bool, "control_fallback_reference": bool,
                "control_fallback": bool}
@@ -1654,4 +1671,5 @@ def compare_sequences(results, panels, *, alpha: float = 0.05, exclude_flagged: 
     cols = {name: np.array([r[i] for r in rows],
                            dtype=numbers.get(name, np.float64 if name in floats else object))
             for i, name in enumerate(SEQUENCE_COLUMNS)}
-    return SequenceComparison(cols, alpha=alpha, delta_crit=delta_crit)
+    own = {key: bool(v[3]) for key, v in measured.items()}
+    return SequenceComparison(cols, alpha=alpha, delta_crit=delta_crit, own_controls=own)

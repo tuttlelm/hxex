@@ -8778,3 +8778,45 @@ CSVs or mzML if wanted.
     4 sets there, before the cap). Checks: tests/test_analysis.py (an end-to-end run fitted to
     K = 3 against values computed from its fits; the set test's number; the warning),
     tests/test_population_test.py (the run's and resume's set-K bootstrap).
+
+345. **Pooled sequences head to head are tested only with their own controls (2026-11-10).**
+    The owner reran the private pooled dataset with "complete bimodal" settings written out by
+    hand (K 1-3, bootstrap at K = 1 and 2, the simulated population test) and the correction on
+    by itself (HISTORY 343): 666 of 1,313 peptide-sample series had their own fully deuterated
+    control, and the default `stand_in_controls = "exclude"` left out the others (4,752
+    spectra; the forms lost about half their peptides: 92 to 50 for one isoform). The owner
+    asked which stand-ins head to head could trust, given that different sequences differ in
+    intrinsic exchange. Study (private, pooled_states/stand_in_study, README):
+    - 345 of the 460 fully deuterated files are byte-identical between the dataset's two
+      folders, so "the same peptide in another sample" is trivially exact there.
+    - Leave-one-out on the 596 accepted measured retentions (123 peptides): the retention map
+      misses by 0.050 (median; q90 0.186), the run median by 0.058 (q90 0.159), kint with a
+      fitted LC time (pH 2.5, 0 C, 3600 s) by 0.046 (r = 0.43 with the measured); about a
+      tenth of fD (q90 about a third). The map was 0.022-0.032 on single proteins (HISTORY 196);
+      isoform-level peptides almost never have one.
+    - Labelling chemistry: at 4 min, pH 7-7.5, 20-25 C every unprotected amide of every
+      sequence is at equilibrium (difference 0.0000). Back-exchange differs by sequence
+      (paired measured retentions up to 0.34 apart), and kint does not predict which pairs.
+    - Head to head with stand-ins kept: 105 rows instead of 38; rows present either way never
+      change; measured on both sides 19 of 38 significant (50 %), with a stand-in 70-100 %.
+    Reading: a stand-in's error is the size of the differences between sequences and does not
+    cancel there; between samples of one peptide the same control scales value and error alike,
+    so the verdict stands. Built (owner: "go ahead"): `ControlTable.sequence_measured` (fully
+    deuterated control measured at any charge or in another sample, undeuterated control not
+    `m0_high`); the analysis records carry it (`own_sequence`); `compare_sequences` lists a row
+    with a stand-in on either side with its values but untested (`t`, `p` empty,
+    `significant` false), new column `reason` ("stand-in control (this sequence|the first
+    sequence|both): not tested between different sequences"); `SequenceComparison
+    .own_controls`; the head-to-head pages draw those sequences pale (alpha 0.3), with a legend
+    line and the hover saying so. `stand_in_controls` keeps deciding every other comparison;
+    with its default the stand-in series are out of the analysis anyway, so default outputs only
+    gain the empty `reason` column. On the pooled dataset with `"include"`: 105 rows, 40 with their
+    own controls on both sides (the 38 measured pairs and 2 with another sample's control), 33
+    of them tested (7 have one replicate on a side: no Welch test), 20 significant. Guide
+    inputs.md "Sequences head to head", outputs.md, settings.md (the setting's text);
+    ANALYSIS.md pooled note. Checks: tests/test_analysis.py (a stand-in row untested, the
+    default leaves it out, own controls tested), tests/test_pooled_forms.py (the pale values).
+    The y axis's top on the forms and head-to-head pages (owner agreed): a value whose error is
+    `max_fD_se` (0.25) or more counts by its fD alone, so its point stays on the axis but its
+    error bar no longer stretches every panel (one fD of 1.2 with an error of 1.0 had set the
+    top to 2.3); test in tests/test_pooled_forms.py.

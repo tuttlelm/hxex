@@ -139,6 +139,21 @@ def test_the_peptide_comparison_follows_the_forms(record):
     assert pc.delta_crit == 0.05
 
 
+def test_a_value_with_a_large_error_does_not_stretch_the_shared_axis():
+    from types import SimpleNamespace
+
+    from hxex.report.analysis import _highest
+
+    table = SimpleNamespace(K=np.array([1, 1, 1, 2]), rank=np.ones(4, dtype=int),
+                            time=np.full(4, 60.0), fD=np.array([1.2, 0.9, 0.5, 2.0]),
+                            fD_se=np.array([1.0, 0.1, np.nan, 0.01]))
+    # 1.2 +- 1.0 counts as 1.2 (its point stays on the axis); 0.9 +- 0.1 keeps its error
+    assert _highest(table, [60.0], 0.25) == pytest.approx(1.2)
+    table.fD[0] = 0.7
+    assert _highest(table, [60.0], 0.25) == pytest.approx(1.0)
+    assert _highest(table, [30.0], 0.25) is None
+
+
 def test_pooled_outputs_compare_each_form_with_the_same_form_of_the_reference(record):
     from hxex.report.analysis import _pooled_form_outputs
     from hxex.report.coverage import sample_styles
@@ -249,7 +264,7 @@ def test_the_head_to_head_figure_shares_its_axis_and_marks_the_first_sequence(re
     from hxex.analysis.pooled import head_to_head_panels
     from hxex.report.coverage import sample_styles
     from hxex.report.hover import row_of
-    from hxex.report.pooled import plot_head_to_head
+    from hxex.report.pooled import STAND_IN_ALPHA, plot_head_to_head
 
     panels = head_to_head_panels([SHARED, ONLY_X1, ONLY_X2, ACETYL], record)
     up = uptake([(s, k, 60.0, fd) for s in ("R", "V")
@@ -267,6 +282,17 @@ def test_the_head_to_head_figure_shares_its_axis_and_marks_the_first_sequence(re
     first = [line for line in ax.lines if (row_of(line) or {}).get("sequence") == "X1"]
     others = [line for line in ax.lines if (row_of(line) or {}).get("sequence") == "X2: F16Y"]
     assert first[0].get_markerfacecolor() != "white" and others[0].get_markerfacecolor() == "white"
+    # a sequence corrected by a stand-in control: drawn pale, said in the legend and hover
+    panel = panels[0]
+    pale = {("V", panel.sequences[1], panel.start, panel.end)}
+    fig = plot_head_to_head(up, panels, ["R", "V"], 60.0, styles=sample_styles(["R", "V"], "R"),
+                            top=0.9, stand_ins=pale)
+    ax = fig.axes[0]
+    drawn = {(r["sample"], r["peptide"]): line for line in ax.lines if (r := row_of(line))}
+    assert drawn[("V", panel.sequences[1])].get_alpha() == pytest.approx(STAND_IN_ALPHA)
+    assert row_of(drawn[("V", panel.sequences[1])])["controls"] == "stand-in: not compared"
+    assert drawn[("R", panel.sequences[1])].get_alpha() in (None, 1.0)
+    assert ax.get_legend().get_texts()[-1].get_text() == "pale: stand-in control, not compared"
 
 
 def test_each_form_has_a_coverage_map_with_its_own_peptides_outlined(record):

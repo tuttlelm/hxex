@@ -637,10 +637,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         regions = _display(regions, labels)
     pooled_order = [s for s in in_order if any(labels[p] == s for p in pooled)]
     # the forms pages and the head-to-head pages share one y axis (owner, 2026-11-09): up to
-    # the highest residue or peptide fD with its error
+    # the highest residue or peptide fD with its error (errors of max_fD_se or more left out)
     on_pooled = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
                                                                        strict=True)], dtype=bool)
-    peptide_top = (_highest(up_d.select(on_pooled & (up.role == "")), times)
+    peptide_top = (_highest(up_d.select(on_pooled & (up.role == "")), times,
+                            config.choice_limits.max_fD_se)
                    if pooled and config.head_to_head is not False else None)
     form_jobs, form_top = (_pooled_form_outputs(
         pools, up, pooled, tables, config, labels=labels, styles=styles, order=pooled_order,
@@ -651,7 +652,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                            order=pooled_order, times=times, scale=scale)
     if pooled and config.head_to_head is not False:
         form_jobs += _head_to_head_outputs(
-            results, pools, up, up_d, pooled, tables, config, styles=styles,
+            results, pools, up, up_d, pooled, tables, config, labels=labels, styles=styles,
             order=pooled_order, times=times, scale=scale, top=form_top)
     up, residues, coverage, choice = up_d, residues_d, coverage_d, choice_d
     states = states_shown
@@ -878,13 +879,17 @@ def _joined(first: dict | None, second: dict) -> dict:
     return out
 
 
-def _highest(table, times) -> float | None:
+def _highest(table, times, max_se: float) -> float | None:
     """The highest K=1 fD plus its error of ``table`` (a species table or a residue map) at
-    ``times``; None without any."""
+    ``times``; None without any. A value whose error is ``max_se`` or more counts by its fD
+    alone (owner, 2026-11-10): it stays on the axis, but its error bar does not stretch every
+    panel (one fD of 1.2 with an error of 1.0 had set the top to 2.3)."""
     k1 = ((table.K == 1) & (table.rank == 1) & np.isfinite(table.fD)
           & np.isin(table.time, list(times)))
-    return (float(np.max(table.fD[k1] + np.nan_to_num(table.fD_se[k1]))) if k1.any()
-            else None)
+    if not k1.any():
+        return None
+    se = np.nan_to_num(table.fD_se[k1])
+    return float(np.max(table.fD[k1] + np.where(se < max_se, se, 0.0)))
 
 
 def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: AnalysisConfig, *,
@@ -953,7 +958,8 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                                                  concat_tables(found).columns())
     # the figures: one page per class of forms (forms of no single class last) and time
     shown = _display(rm, form_labels)
-    tops = [x for x in (_highest(shown, times), floor) if x is not None]
+    tops = [x for x in (_highest(shown, times, config.choice_limits.max_fD_se), floor)
+            if x is not None]
     top = max(tops) if tops else None
     first, record, registry = next(iter(pools.values()))
     groups: dict[str, list] = {}
@@ -1017,8 +1023,8 @@ def _pooled_coverage_jobs(pools: dict, up, pooled: set, config: AnalysisConfig, 
 
 
 def _head_to_head_outputs(results, pools: dict, up, up_d, pooled: set, tables: dict,
-                          config: AnalysisConfig, *, styles: dict, order: list, times,
-                          scale: str, top: float | None) -> list:
+                          config: AnalysisConfig, *, labels: dict, styles: dict, order: list,
+                          times, scale: str, top: float | None) -> list:
     """The pooled sequences measured over one range, head to head (owner, 2026-11-09):
     ``compare_sequences`` (each panel's sequences against its first, per sample and time)
     and figure pages ``head_to_head_<time>`` (:func:`hxex.report.pooled.plot_head_to_head`),
@@ -1043,6 +1049,12 @@ def _head_to_head_outputs(results, pools: dict, up, up_d, pooled: set, tables: d
         results, panels, alpha=config.alpha, exclude_flagged=config.exclude_flagged,
         filters=config.filters, controls=config.controls, set_averages=set_average_ks(up))
     tables["compare_sequences"] = comparison.columns()
+    pale = {}  # per time: the sequences corrected by stand-ins, drawn pale
+    for (run, sample, peptide, start, end, t), own in comparison.own_controls.items():
+        if not own:
+            pale.setdefault(t, set()).add((labels.get((str(run), str(sample)),
+                                                      label(str(run), str(sample))),
+                                           peptide, start, end))
     rows_per_page = max(1, int((config.page_size[1] - 0.4) // HEAD_TO_HEAD_PANEL[1]))
     per_page = HEAD_TO_HEAD_COLUMNS * rows_per_page
     jobs = []
@@ -1051,7 +1063,7 @@ def _head_to_head_outputs(results, pools: dict, up, up_d, pooled: set, tables: d
         for n, part in enumerate(_pages(panels, per_page)):
             jobs.append((_page_stem(f"head_to_head_{when_}", n), lambda t=t, part=part:
                          plot_head_to_head(up_d, part, order, t, styles=styles, top=top,
-                                           time_scale=scale)))
+                                           time_scale=scale, stand_ins=pale.get(t, ()))))
     return jobs
 
 

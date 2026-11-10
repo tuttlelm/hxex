@@ -486,10 +486,13 @@ def _records(results, ks, exclude_flagged, filters, quiet=False, controls_change
              counts=None, evidence=None):
     """The filtered values of every spectrum, grouped by (run, sample, peptide, modification,
     start, end, time, K, rank): lists of ``(fD, fD_se, population, population_se, charge,
-    n_amides, rep, control_fallback, run, not_measured, uncorrected, average_se, spectrum_id)``
+    n_amides, rep, control_fallback, run, not_measured, uncorrected, average_se, spectrum_id,
+    own_sequence)``
     (``average_se``: at K >= 2, the bootstrap's error of the spectrum's population-weighted mean
     fD, NaN without it; ``spectrum_id``: the spectrum's own, which with the run names it across
-    the K and ranks of its records; run: '' for one run, the
+    the K and ranks of its records; ``own_sequence``: its correction comes from controls of its
+    own sequence, :attr:`hxex.controls.ControlTable.sequence_measured`, or none is applied; run:
+    '' for one run, the
     run's name in a
     :class:`hxex.analysis.RunSet`; the group's run is '' for a merged sample); with whether
     each sample's values are corrected ((run, sample) -> bool) and ``nterm_subtract``. The
@@ -919,12 +922,14 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     fell_back = np.zeros(len(fit), dtype=bool)
     not_measured = np.zeros(len(fit), dtype=bool)
     raw = np.zeros(len(fit), dtype=bool)
+    own_sequence = np.ones(len(fit), dtype=bool)
     if controls is not None:
         at = controls.rows(fit.data_id)
         raw = controls.uncorrected[at]
         n_amides = np.asarray(controls.n_amides, dtype=float)[at]
         fell_back = np.asarray(controls.fallback, dtype=bool)[at]
         not_measured = ~controls.measured[at]
+        own_sequence = controls.sequence_measured[at] | raw
 
     # one record per spectrum and rank, then grouped by species, point (a time, or a control
     # role), K and rank
@@ -994,6 +999,7 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
                     frac_se[i, r], int(binned.charge[j]), float(n_amides[i]),
                     int(binned.rep[j]), bool(fell_back[i]), "", bool(not_measured[i]),
                     bool(raw[i]), average_se[i] / n_amides[i], str(fit.spectrum_id[i]),
+                    bool(own_sequence[i]),
                 ))
 
     if evidence is not None:

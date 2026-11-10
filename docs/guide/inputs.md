@@ -442,7 +442,8 @@ draws them side by side: `head_to_head_TIME` figures, one panel per range.
 - The first sequence (the class's, or the unmodified one) is filled; the others are hollow,
   named by their identity and how they differ from the first (`ALPHA4: N50T`, `ALPHA: acK40`).
 - Error bars are ±1 standard error. Every panel has the same y axis as the forms pages, so the
-  figures compare at a glance.
+  figures compare at a glance. A value with a large error (0.25 or more) does not stretch the
+  axis for everyone: its point stays on the plot, but its error bar may run off the top.
 - An isoform's sequence with no other sequence of its class at its range gets a panel of its
   own: that sequence across the samples.
 - Sequences of different classes at one range are different proteins numbered alike: they
@@ -451,6 +452,22 @@ draws them side by side: `head_to_head_TIME` figures, one panel per range.
 `compare_sequences.csv` compares each sequence of a panel with the panel's first, in every
 sample and at every time: the difference, its error, Welch's test on the replicates, and
 `significant`, judged as the peptide comparisons are.
+
+Two different sequences are compared only where both were corrected with controls of their
+own sequence: a fully deuterated control measured for that peptide (at any of its charge
+states, or in another sample), and an undeuterated control that is not another species.
+
+- Why: a stand-in control (the retention map of the overlapping peptides, or the run's median
+  retention) was off by about a tenth of the fD value in a pooled dataset we tested, as much
+  as the differences found between its sequences. Between two samples of one peptide that error is the same
+  on both sides and does not change the verdict; between two sequences it does not cancel.
+- What you see: with `[analysis.filters] stand_in_controls = "include"`, the sequences
+  corrected by a stand-in stay in the figures and tables. On the head-to-head pages they are
+  drawn pale, and their rows of `compare_sequences.csv` keep the values but are not tested:
+  `reason` says why. With the default (`"exclude"`), those sequences are left out of the
+  analysis altogether.
+- Without a back-exchange correction, every value is uncorrected, so a difference between
+  two sequences includes any difference in how much deuterium they lose to back-exchange.
 
 `[analysis] head_to_head` chooses the panels: `"auto"` (the default, as above), a list of
 ranges (`head_to_head = ["27-52", "152-164"]`), or `false` for none.

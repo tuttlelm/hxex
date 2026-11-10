@@ -897,7 +897,8 @@ levels, and whether both sides hold the same set.
   panel per range, the samples along x, each sequence its own marker shape beside the others
   (the first, the class's or the unmodified one, filled; the others hollow, named by identity
   and difference, `N50T`, `acK40`), each sample its colour, ±1 se bars; every panel on the
-  forms pages' y axis (0 to the highest residue or peptide fD with its error). No significance
+  forms pages' y axis (0 to the highest residue or peptide fD with its error; an error of
+  `max_fD_se` or more left out, owner 2026-11-10). No significance
   marks on the figure (owner: may revisit); `compare_sequences.csv` has each sequence against
   its panel's first per sample and time (Welch on the replicates, significant as the peptide
   comparisons). Panels (`[analysis] head_to_head`, a flat key rather than the
@@ -907,6 +908,16 @@ levels, and whether both sides hold the same set.
   isoform's sequence alone at its range (one sequence across the conditions); or a list of
   ranges; or false. Measured on the private pooled dataset: 18 ranges with several sequences
   of one class (two more ranges pair the two classes and are left out), four pages at 4 min.
+  Controls (owner, 2026-11-10, after a study on that dataset: private stand_in_study README):
+  two sequences are tested only where both are corrected by controls of their own sequence
+  (`ControlTable.sequence_measured`: the fully deuterated control measured at any charge or in
+  another sample, the undeuterated control not another species). A stand-in (retention map
+  0.050, run median 0.058 median error in retention there; about a tenth of fD) is as large as
+  the differences found and does not cancel between sequences; between samples of one peptide
+  it scales value and error alike, so `stand_in_controls` keeps deciding those. Rows with a
+  stand-in keep their values, `reason` says why they are not tested, and the figure draws
+  those sequences pale. Labelling chemistry plays no part at 4 min (pH 7-7.5, 20-25 C: every
+  unprotected amide at equilibrium in every sequence); back-exchange does.
 
 Built in step 2: the candidates (the FASTA's records and the class names) are kept in the read
 record (`pooled_candidates`), and the identities are worked out from it when tables are written

@@ -5,7 +5,7 @@ measured over one range side by side (head to head)."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 import numpy as np
 from matplotlib.figure import Figure
@@ -96,6 +96,8 @@ def plot_pooled_forms(
 
 HEAD_TO_HEAD_PANEL = (3.6, 3.4)  # inches per panel, width and height
 HEAD_TO_HEAD_COLUMNS = 3
+# values whose fully deuterated control is a stand-in, on the head-to-head page
+STAND_IN_ALPHA = 0.3
 SEQUENCE_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 
 
@@ -119,6 +121,7 @@ def plot_head_to_head(
     top: float | None = None,
     columns: int = HEAD_TO_HEAD_COLUMNS,
     time_scale: str = "seconds",
+    stand_ins: Collection[tuple] = (),
 ) -> Figure:
     """The pooled sequences of each panel (:class:`hxex.analysis.pooled.HeadToHead`) side by
     side at ``time`` (owner, 2026-11-09, layout A): one panel per range, the samples along
@@ -126,7 +129,9 @@ def plot_head_to_head(
     compared with in ``compare_sequences.csv``, filled; the others hollow), each sample in its
     colour, ±1 standard error bars; the K=1 fD of the species table ``uptake`` (its samples
     named as ``samples``). ``top``: the y axis's upper end, shared by every panel and page (the
-    forms pages' own), from 0."""
+    forms pages' own), from 0. ``stand_ins``: (sample, peptide, start, end) whose correction
+    is not from controls of their own sequence, drawn pale: their rows in
+    ``compare_sequences.csv`` are not tested."""
     from .hover import set_row, time_label
 
     styles = dict(styles or {})
@@ -142,7 +147,9 @@ def plot_head_to_head(
              for i in np.flatnonzero(sel)}
     x = np.arange(len(samples))
     when = time_label(time, time_scale)
+    stand_ins = set(stand_ins)
     for ax, panel in zip(axes, panels, strict=False):
+        shown_pale = False
         k = len(panel.sequences)
         width = 0.18 if k > 1 else 0.0
         for j, (seq, label) in enumerate(zip(panel.sequences, panel.labels, strict=True)):
@@ -153,15 +160,23 @@ def plot_head_to_head(
                 if got is None or not np.isfinite(got[0]):
                     continue
                 colour = styles[s].colour if s in styles else "0.3"
+                pale = (s, seq, panel.start, panel.end) in stand_ins
                 bars = ax.errorbar(x[i] + off, got[0], got[1] if np.isfinite(got[1]) else None,
                                    fmt=marker, color=colour, ms=6, capsize=2,
-                                   mfc=colour if j == 0 else "white", zorder=2)
+                                   mfc=colour if j == 0 else "white", zorder=2,
+                                   alpha=STAND_IN_ALPHA if pale else 1.0)
+                shown_pale |= pale
                 set_row(bars[0], {"sample": s, "range": panel.name, "peptide": seq,
                                   "sequence": label, "time": time, "fD": got[0],
-                                  "fD_se": got[1]})
+                                  "fD_se": got[1],
+                                  "controls": "stand-in: not compared" if pale else "own"})
         handles = [Line2D([], [], marker=SEQUENCE_MARKERS[j % len(SEQUENCE_MARKERS)],
                           color="0.3", ls="none", mfc="0.3" if j == 0 else "white", label=lab)
                    for j, lab in enumerate(panel.labels)]
+        if shown_pale:
+            handles.append(Line2D([], [], marker="o", color="0.3", ls="none",
+                                  alpha=STAND_IN_ALPHA, label="pale: stand-in control, not "
+                                                              "compared"))
         ax.legend(handles=handles, fontsize=6.5, loc="best", frameon=False)
         ax.set_xticks(x, [_tick(s) for s in samples], fontsize=7)
         ax.set_xlim(-0.6, len(samples) - 0.4)

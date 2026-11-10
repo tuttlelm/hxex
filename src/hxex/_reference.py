@@ -287,7 +287,9 @@ _DESCRIPTIONS: dict[str, str] = {
                                           "undeuterated control read above [run.controls] "
                                           'm0_max (m0_high: another species); "other_sample" '
                                           "excludes them but keeps the series that took the "
-                                          "same peptide's control in another sample",
+                                          "same peptide's control in another sample; pooled "
+                                          "sequences head to head are tested only where both "
+                                          "have their own controls, whatever this says",
     "analysis.filters.undeuterated_cap": "with the population test: keep the other spectra of a "
                                          "peptide whose undeuterated set has two populations "
                                          "or more at one population, in every sample (off: "

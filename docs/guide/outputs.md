@@ -429,7 +429,7 @@ may be](inputs.md#what-each-peptide-may-be)).
 | `residues.csv` | per residue, time, K and rank: fD from the overlapping peptides, redundancy, resolution and the block the residue lies in (`block_start`, `block_end`: the stretch the peptides cannot divide, whose length is the resolution), coverage; with the [population test](population-test.md), on the K=1 rows: `population_tier`, `test_strength_2`, `test_agreement_2` (and `_3`) |
 | `coverage.csv` | per residue: redundancy, resolution, proline, covered |
 | `pooled_forms.csv` | pooled data with `pooled_fasta`: the forms of the pool's minimum set, one row each: `form`, `members` (the candidates it may be), `candidates` (all those its peptides fit), `base` and `sites` (a modified form), `n_peptides`, `n_own`, `own_peptides`, `shared_peptides`, `minimum_set_unique`; each form's residue values are in `residues.csv`, its sample named `SAMPLE FORM` ([The forms in a pool](inputs.md#the-forms-in-a-pool)) |
-| `compare_sequences.csv` | pooled data with `pooled_fasta`: the sequences of each head-to-head panel against its first, per sample and time: `start`, `end`, `group` (their class), `peptide_reference` and `peptide`, their identities, `difference` (how the sequence differs, `N50T`, `acK40`), values and errors, `delta`, `delta_se`, `t`, `p`, replicate counts, `significant` (as in `compare_peptides.csv`), and whether either side used a stand-in control ([Sequences head to head](inputs.md#sequences-head-to-head)) |
+| `compare_sequences.csv` | pooled data with `pooled_fasta`: the sequences of each head-to-head panel against its first, per sample and time: `start`, `end`, `group` (their class), `peptide_reference` and `peptide`, their identities, `difference` (how the sequence differs, `N50T`, `acK40`), values and errors, `delta`, `delta_se`, `t`, `p`, replicate counts, `significant` (as in `compare_peptides.csv`), whether either side used a stand-in control, and `reason`, why a row is not tested (empty when it is) ([Sequences head to head](inputs.md#sequences-head-to-head)) |
 | `populations.csv` | per residue and labelling time (the controls take no part): the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
 | `regions.csv` | per region and labelling time (the controls take no part): fD over the region's residues |
 | `compare_regions.csv` | with regions and a reference: per region and time, whether each sample differs from the reference there: `delta` (the mean of its residues' own differences), `delta_shared` and `delta_shared_se` (the difference and error the test used), `z`, `significant`, `peptide_support`, `region_test_only`, `n_residues` and `coverage` (the region's residues compared), and `delta_crit` (see *Reading the region significance map* below) |
@@ -510,7 +510,9 @@ where no peptide measures two residues together, and a light band of ±½ δcrit
 smallest difference the peptide comparisons call significant (one value for every pair of
 samples, named above the plot): where two samples' bands are apart, they differ by more than
 that; where they overlap, by less (without a reference sample there is no δcrit, and the bands
-are ±1 standard error). Every time's figure has the same y axis, so they compare at a glance.
+are ±1 standard error). Every time's figure has the same y axis, so they compare at a glance
+(a value with an error of 0.25 or more keeps its point on the plot, but its error bar may run
+off the top).
 fDavg is
 the analysis's average deuteration, as on the overlays: the K=1 fit's, or, where a peptide's
 spectra have two populations at least 2 D apart, the K=2 population-weighted mean, which the

@@ -424,6 +424,20 @@ class ControlTable:
         return (~np.asarray(self.fallback, dtype=bool) | (other & m0_ok)) & ~self.uncorrected
 
     @property
+    def sequence_measured(self) -> np.ndarray:
+        """True where the series' correction comes from controls of its own sequence: a fully
+        deuterated control measured for it (:attr:`fd_measured`: its own, or at the peptide's
+        other charge states) or the same peptide's in another sample (``fd_other_sample``), and
+        an undeuterated control that is not another species (``m0_high``; a missing one counts:
+        0 stands in for it fairly). False for the retention map and the run-level stand-ins,
+        whose errors (about 10 % of fD) do not cancel between different sequences: the pooled
+        head-to-head comparison tests only series with this."""
+        tokens = [set(str(f).split(";")) for f in self.flags]
+        other_sample = np.array(["fd_other_sample" in t for t in tokens], dtype=bool)
+        m0_ok = np.array(["m0_high" not in t for t in tokens], dtype=bool)
+        return (self.fd_measured | (other_sample & ~self.uncorrected)) & m0_ok
+
+    @property
     def fd_measured(self) -> np.ndarray:
         """True where the fully deuterated control is measured: the series' own, accepted, or
         the same peptide's at its other charge states (``fd_other_charge``); False for a
