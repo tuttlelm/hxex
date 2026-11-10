@@ -59,6 +59,7 @@ from .run_workspace import RunWorkspace
 from .sequence_view import SequenceView
 from .session import SUFFIX, WORKSPACES, GuiSession, SessionError, load_session, save_session
 from .tasks import Latest
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -284,7 +285,7 @@ class MainWindow(QMainWindow):
         # line at the right of the status bar that opens the Run tab (owner, 2026-11-09)
         self.running = QToolButton()
         self.running.setAutoRaise(True)
-        self.running.setToolTip("a command is running: click to see it in the Run tab")
+        self.running.setToolTip(tip("a command is running: click to see it in the Run tab"))
         self.running.clicked.connect(
             lambda: self.tabs.setCurrentIndex(WORKSPACES.index("run")))
         self.running.hide()

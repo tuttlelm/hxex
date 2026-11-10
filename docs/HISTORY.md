@@ -8569,3 +8569,16 @@ CSVs or mzML if wanted.
     benchmark 612 -> 522 (one injection at 0.48), digest 393 -> 390. Checks:
     tests/test_quality.py (a dim injection allowed for and named, a lost spectrum still
     flagged, joint scales, injection keys, storage), tests/test_cli.py (the info line).
+
+341. **Tooltips wrap at 60 characters, one line per item (2026-11-09).** Qt shows a
+    plain-text tooltip on one line until it is wider than the screen, so the window's longer
+    tooltips ran across it (owner). `hxex.gui.tips.tip` lays the text out before Qt sees it:
+    word-wrapped at `TIP_WIDTH` (60 characters; a word longer than that, such as a path, is
+    kept whole), and each item on its own line, where items are separated by line breaks
+    already in the text or by a semicolon outside brackets (the semicolon stays at the line's
+    end; one inside parentheses or square brackets belongs to the aside and does not break).
+    The result stays plain text, so Qt does not reflow it and nothing needs escaping. Applied
+    at every place the window sets a tooltip (widgets, tabs, combo-box items, table cells and
+    headers, figure marks); not done through an application-wide event filter, which would
+    run Python on every event and change the text Qt compares to decide whether a shown
+    tooltip is still current. Checks: tests/test_gui_tips.py.

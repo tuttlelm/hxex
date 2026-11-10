@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .tips import tip
+
 log = logging.getLogger(__name__)
 
 GROUP_GAP = 10  # pixels above each top-level table in the list of tables
@@ -128,7 +130,7 @@ class SettingRow(QWidget):
 
         self.label = QLabel(setting.key)
         self.label.setFont(QFont("monospace"))
-        self.label.setToolTip(self.name)
+        self.label.setToolTip(tip(self.name))
         if self.name in ORDERED:  # a list whose order matters: its items, with up and down
             self.editor = OrderedList(names)
             self.editor.changed.connect(self._ordered)
@@ -144,7 +146,8 @@ class SettingRow(QWidget):
             self.editor.setPlaceholderText(self.default)
             self.editor.editingFinished.connect(self._typed)
         self.reset = QPushButton("Default")
-        self.reset.setToolTip(f"back to the default ({self.default}): the line gets a # in front")
+        self.reset.setToolTip(
+            tip(f"back to the default ({self.default}): the line gets a # in front"))
         self.reset.clicked.connect(lambda: self.edited.emit(self.name, None))
         line = QHBoxLayout()
         line.setContentsMargins(0, 0, 0, 0)
@@ -248,16 +251,16 @@ class OrderedList(QWidget):
         self.up = QPushButton("↑")
         self.down = QPushButton("↓")
         self.remove = QPushButton("Remove")
-        for button, tip in ((self.up, "move the selected one up"),
+        for button, words in ((self.up, "move the selected one up"),
                             (self.down, "move the selected one down"),
                             (self.remove, "remove the selected one")):
-            button.setToolTip(tip)
+            button.setToolTip(tip(words))
         self.up.clicked.connect(lambda: self._move(-1))
         self.down.clicked.connect(lambda: self._move(1))
         self.remove.clicked.connect(self._remove)
         self.add_box = NoWheelComboBox()
         self.add_box.setEditable(True)
-        self.add_box.setToolTip("a sample to add: one of the results', or typed")
+        self.add_box.setToolTip(tip("a sample to add: one of the results', or typed"))
         self.add_button = QPushButton("Add")
         self.add_button.clicked.connect(self._add)
         side = QVBoxLayout()
@@ -555,10 +558,11 @@ class ProjectEditor(QWidget):
         self.last_change.setText(f"Last change: {last}" if last else
                                  "No change made in this window yet.")
         self.undo_button.setEnabled(bool(self.undo_steps))
-        self.undo_button.setToolTip(f"Undo: {last} (Ctrl+Z)" if last else "nothing to undo")
+        self.undo_button.setToolTip(tip(f"Undo: {last} (Ctrl+Z)" if last else "nothing to undo"))
         nxt = self.redo_steps[-1].what if self.redo_steps else ""
         self.redo_button.setEnabled(bool(self.redo_steps))
-        self.redo_button.setToolTip(f"Redo: {nxt} (Ctrl+Shift+Z)" if nxt else "nothing to redo")
+        self.redo_button.setToolTip(
+            tip(f"Redo: {nxt} (Ctrl+Shift+Z)" if nxt else "nothing to redo"))
 
     def _file_changed(self, path: str) -> None:
         # a file replaced (as hxex writes it, and many editors) is no longer watched: watch again
@@ -801,7 +805,7 @@ class ListEditor(QWidget):
         self.grid = _CopyGrid(self, len(self.keys))
         self.grid.setHorizontalHeaderLabels(self.keys)
         for c, s in enumerate(table.settings):
-            self.grid.horizontalHeaderItem(c).setToolTip(plain(s.text or ""))
+            self.grid.horizontalHeaderItem(c).setToolTip(tip(plain(s.text or "")))
         self.grid.verticalHeader().setVisible(True)
         self.grid.cellChanged.connect(self._changed)
         self.grid.setMinimumHeight(220)
@@ -812,11 +816,11 @@ class ListEditor(QWidget):
         self.remove = QPushButton("Remove the selected entry")
         self.remove.clicked.connect(self.remove_selected)
         self.browse = QPushButton("Browse for the selected cell…")
-        self.browse.setToolTip("a file or folder for a cell of a path column")
+        self.browse.setToolTip(tip("a file or folder for a cell of a path column"))
         self.browse.clicked.connect(self._browse)
         buttons = QHBoxLayout()
         copy = QPushButton("Copy the table")
-        copy.setToolTip("every entry, with the column names, as a spreadsheet pastes it")
+        copy.setToolTip(tip("every entry, with the column names, as a spreadsheet pastes it"))
         copy.clicked.connect(self.copy_table)
         for b in (add, self.remove, self.browse, copy):
             buttons.addWidget(b)
@@ -967,7 +971,7 @@ class NamesEditor(QWidget):
         line.addWidget(self.value, 1)
         if self.paths:
             browse = QPushButton("Browse…")
-            browse.setToolTip("choose the file")
+            browse.setToolTip(tip("choose the file"))
             browse.clicked.connect(self._browse)
             line.addWidget(browse)
         line.addWidget(add)

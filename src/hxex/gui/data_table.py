@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from .order import natural_key
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -119,8 +120,10 @@ class RowsModel(QAbstractTableModel):
         if not index.isValid():
             return None
         value = self.rows[index.row()].get(self.columns[index.column()])
-        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+        if role == Qt.ItemDataRole.DisplayRole:
             return cell_text(value)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return tip(cell_text(value))
         if role == Qt.ItemDataRole.TextAlignmentRole and isinstance(
                 value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -133,7 +136,7 @@ class RowsModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return f"{name} ▼" if name in self.marked else name  # a filter on it
         if role == Qt.ItemDataRole.ToolTipRole and name in self.marked:
-            return f"filtered: {self.marked[name]} (right-click to change)"
+            return tip(f"filtered: {self.marked[name]} (right-click to change)")
         return None
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
@@ -172,8 +175,8 @@ class DataPanel(QWidget):
         self.table.customContextMenuRequested.connect(self._menu)
         self.count = QLabel()
         self.save_button = QPushButton("Save table…")
-        self.save_button.setToolTip("save these rows, in the order shown, as a CSV file (as "
-                                    "hxex's other tables)")
+        self.save_button.setToolTip(tip("save these rows, in the order shown, as a CSV file (as "
+                                        "hxex's other tables)"))
         self.save_button.clicked.connect(self.save_dialog)
         bar = QHBoxLayout()
         bar.setContentsMargins(0, 0, 0, 0)

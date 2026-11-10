@@ -55,6 +55,7 @@ from .figures import (
     save_figure,
 )
 from .tasks import Latest, drawing_pool
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ class FigureView(QWidget):
             area = QRectF(left * self.width(), top * self.height(), width * self.width(),
                           height * self.height()).adjusted(
                 -CLICK_ALLOWANCE, -CLICK_ALLOWANCE, CLICK_ALLOWANCE, CLICK_ALLOWANCE)
-            QToolTip.showText(event.globalPos(), mark.text, self, area.toAlignedRect())
+            QToolTip.showText(event.globalPos(), tip(mark.text), self, area.toAlignedRect())
             return True
         return super().eventFilter(watched, event)
 
@@ -441,7 +442,7 @@ class TitleLabel(QLabel):
 
     def set_full(self, text: str) -> None:
         self._full = text
-        self.setToolTip(text)
+        self.setToolTip(tip(text))
         self.setVisible(bool(text))
         self._elide()
 
@@ -521,14 +522,14 @@ class FigurePanel(QWidget):
         self.bar = QWidget()
         buttons = QHBoxLayout(self.bar)
         buttons.setContentsMargins(0, 0, 0, 0)
-        for text, tip, slot in (("Fit page", "show the whole figure in the space there is",
+        for text, words, slot in (("Fit page", "show the whole figure in the space there is",
                                  self.fit),
                                 ("−", "zoom out (Ctrl and the mouse wheel)", self.zoom_out),
                                 ("+", "zoom in (Ctrl and the mouse wheel)", self.zoom_in),
                                 ("100 %", "the figure's own size", self.actual_size),
                                 ("Save figure…", "save as SVG, PDF or PNG", self.save_dialog)):
             button = QPushButton(text)
-            button.setToolTip(tip)
+            button.setToolTip(tip(words))
             button.clicked.connect(slot)
             buttons.addWidget(button)
         self.save_button = button  # the last one
@@ -540,7 +541,7 @@ class FigurePanel(QWidget):
         # took room; tooltips on the figure itself cover it: owner)
         self.help = QToolButton()
         self.help.setText("?")
-        self.help.setToolTip(hint)
+        self.help.setToolTip(tip(hint))
         self.help.clicked.connect(self._show_help)
         buttons.addWidget(self.help)
         # the figure's title, readable at any zoom: on a row of its own between the buttons and
@@ -586,7 +587,7 @@ class FigurePanel(QWidget):
         """A drag across the figure selects a span (:attr:`spanned`) instead of moving it."""
         self.span_mode = on
         self.view.span_mode = on
-        self.help.setToolTip(self.help_text + (SPAN_HINT if on else ""))
+        self.help.setToolTip(tip(self.help_text + (SPAN_HINT if on else "")))
         if on:
             self.view.setCursor(Qt.CursorShape.CrossCursor)
         else:
@@ -775,7 +776,7 @@ class FigurePanel(QWidget):
             for button, step, words in ((prev, -1, "the previous one (from the first: the last)"),
                                         (nxt, 1, "the next one (from the last: the first)")):
                 button.setFixedWidth(30)
-                button.setToolTip(words)
+                button.setToolTip(tip(words))
                 button.clicked.connect(lambda _c=False, b=widget, d=step: self._step(b, d))
             group = [prev, widget, nxt]
             self._steppers[widget] = (prev, nxt)

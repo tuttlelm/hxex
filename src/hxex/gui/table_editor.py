@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .order import natural_key
+from .tips import tip
 from .user_tables import (
     ReviewMatch,
     Table,
@@ -175,7 +176,7 @@ class TableEditor(QWidget):
         self.notice.setWordWrap(True)
         self.notice.setStyleSheet(f"color: {UNMATCHED_TEXT.name()};")
         self.next_unmatched = QPushButton("Show the next one")
-        self.next_unmatched.setToolTip("select the next shaded row")
+        self.next_unmatched.setToolTip(tip("select the next shaded row"))
         self.next_unmatched.clicked.connect(lambda checked=False: self.show_next_unmatched())
         self.notice_row = QWidget()
         notice = QHBoxLayout(self.notice_row)
@@ -200,7 +201,7 @@ class TableEditor(QWidget):
         header.setSortIndicatorShown(True)
         self.buttons = {}
         bar = QHBoxLayout()
-        for name, text, tip, slot in (
+        for name, text, words, slot in (
                 ("save", "Save", "write the table (its reader checks it first)", self.save),
                 ("revert", "Revert", "back to the file as it is", self.revert),
                 ("add_row", "Add a row", "a new row at the end", self.add_row),
@@ -211,7 +212,7 @@ class TableEditor(QWidget):
                  "the columns of the selected cells (select a cell in each)",
                  self.remove_columns)):
             button = QPushButton(text)
-            button.setToolTip(tip)
+            button.setToolTip(tip(words))
             # called without arguments: clicked passes "checked" (False), which add_column
             # would take for a column name
             button.clicked.connect(lambda checked=False, slot=slot: slot())
@@ -445,9 +446,9 @@ class TableEditor(QWidget):
         why = self.match.unmatched.get(row)
         if why is None:
             moved = self.match.moved.get(row)
-            return moved if role == Qt.ItemDataRole.ToolTipRole else None
+            return tip(moved) if role == Qt.ItemDataRole.ToolTipRole else None
         if role == Qt.ItemDataRole.ToolTipRole:
-            return why
+            return tip(why)
         if header:
             return QBrush(UNMATCHED_TEXT) if role == Qt.ItemDataRole.ForegroundRole else None
         return QBrush(UNMATCHED) if role == Qt.ItemDataRole.BackgroundRole else None
@@ -582,8 +583,8 @@ class TablesView(QWidget):
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._chosen)
         self.new_button = QPushButton("New table…")
-        self.new_button.setToolTip("a new table with the columns hxex reads, named in the "
-                                   "project file")
+        self.new_button.setToolTip(tip("a new table with the columns hxex reads, named in the "
+                                       "project file"))
         self.new_button.clicked.connect(lambda checked=False: self.new_table())
         self.editor = TableEditor()
         left = QWidget()

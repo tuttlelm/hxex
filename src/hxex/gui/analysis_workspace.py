@@ -46,6 +46,7 @@ from .figure_view import HINT, SPECTRA_HINT, FigurePanel
 from .order import natural_key
 from .review import table_stamp
 from .tasks import Latest, drawing_pool
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -96,16 +97,16 @@ class AnalysisWorkspace(QWidget):
         self.status = QLabel("No results open.")
         self.status.setWordWrap(True)
         self.compute_button = QPushButton("Compute")
-        self.compute_button.setToolTip("compute the analysis as hxex analyse does (nothing is "
-                                       "written)")
+        self.compute_button.setToolTip(tip("compute the analysis as hxex analyse does (nothing is "
+                                           "written)"))
         self.compute_button.clicked.connect(self.compute)
         # [analysis.fragments] fit_rates, for results with fragment series: written to the
         # project file, so hxex analyse does the same (owner, 2026-11-05)
         self.fit_rates = QCheckBox("fit ladder rates")
         self.fit_rates.setToolTip(
-            "[analysis.fragments] fit_rates in the project file: fit each ladder step's decay "
-            "rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the "
-            "fitted curves on the ladder figures); minutes on a large run")
+            tip("[analysis.fragments] fit_rates in the project file: fit each ladder step's decay "
+                "rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the "
+                "fitted curves on the ladder figures); minutes on a large run"))
         self.fit_rates.hide()
         self.fit_rates.toggled.connect(self._set_fit_rates)
         self.busy = QProgressBar()
@@ -113,9 +114,9 @@ class AnalysisWorkspace(QWidget):
         self.busy.setMaximumWidth(120)
         self.busy.hide()
         self.reference = QComboBox()
-        self.reference.setToolTip("which reference's analysis is shown: [analysis] reference "
-                                  "names several (or all), and hxex analyse writes a folder "
-                                  "for each")
+        self.reference.setToolTip(tip("which reference's analysis is shown: [analysis] reference "
+                                      "names several (or all), and hxex analyse writes a folder "
+                                      "for each"))
         self.reference.currentIndexChanged.connect(lambda _i: self.refresh())
         self.reference_label = QLabel("against")
         top = QHBoxLayout()
@@ -162,8 +163,8 @@ class AnalysisWorkspace(QWidget):
         self.views = QTabWidget()
         self.views.addTab(self.panel, "figure")
         self.views.addTab(self.data, "data")
-        self.views.setTabToolTip(1, "the values of what the figure draws, one row per bar: "
-                                    "sort, copy or save them as CSV")
+        self.views.setTabToolTip(1, tip("the values of what the figure draws, one row per bar: "
+                                        "sort, copy or save them as CSV"))
         self.views.currentChanged.connect(lambda _i: self._gather_if_shown())
         split = QSplitter()
         split.addWidget(left)
@@ -433,7 +434,7 @@ class AnalysisWorkspace(QWidget):
             kinds = [p for p in planned if p.kind.command == ANALYSE]
             sections = analysis_sections(kinds, situation.fragments, self.shown_reference,
                                          self.shared_reference)
-            for heading, tip, group in sections:
+            for heading, words, group in sections:
                 if not group:
                     continue
                 head = QTreeWidgetItem([heading, ""])
@@ -441,7 +442,7 @@ class AnalysisWorkspace(QWidget):
                 font = head.font(0)
                 font.setBold(True)
                 head.setFont(0, font)
-                head.setToolTip(0, tip)
+                head.setToolTip(0, tip(words))
                 head.setFirstColumnSpanned(True)
                 self.list.addTopLevelItem(head)
                 head.setFirstColumnSpanned(True)
@@ -457,7 +458,7 @@ class AnalysisWorkspace(QWidget):
         self._planned[p.kind.name] = p
         item = QTreeWidgetItem([p.kind.title, self._state_text(p, stems)])
         item.setData(0, KIND, p.kind.name)
-        item.setToolTip(0, p.kind.shows)
+        item.setToolTip(0, tip(p.kind.shows))
         if p.state == "off" or (outputs is not None and not stems):
             for col in (0, 1):
                 item.setForeground(col, self.palette().placeholderText())

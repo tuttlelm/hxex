@@ -40,6 +40,7 @@ from .data_table import RowsModel, cell_text
 from .flow_layout import FlowLayout
 from .order import natural_key
 from .results_tree import search_matches
+from .tips import tip
 
 FEW_VALUES = 30  # a column with at most this many values is filtered by ticking them
 # the report's tables the list shows (owner, 2026-11-04: the Results tables, read only)
@@ -128,39 +129,39 @@ class SpectraList(QWidget):
         self.tables = QComboBox()
         for i, (name, meaning) in enumerate(TABLES.items()):
             self.tables.addItem(f"{name}.csv", name)
-            self.tables.setItemData(i, meaning, Qt.ItemDataRole.ToolTipRole)
-        self.tables.setToolTip("which of hxex report's tables the list shows (read only)")
+            self.tables.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
+        self.tables.setToolTip(tip("which of hxex report's tables the list shows (read only)"))
         self.tables.currentIndexChanged.connect(
             lambda _i: self.table_asked.emit(self.tables.currentData()))
         self.save_button = QPushButton("Save table…")
-        self.save_button.setToolTip("save the rows shown, in the order shown, as a CSV file")
+        self.save_button.setToolTip(tip("save the rows shown, in the order shown, as a CSV file"))
         self.save_button.clicked.connect(self.save_dialog)
         self.stale = QLabel()
         self.stale.setWordWrap(True)
         self.update_button = QPushButton("Update")
-        self.update_button.setToolTip("make this table again with your latest decisions")
+        self.update_button.setToolTip(tip("make this table again with your latest decisions"))
         self.update_button.clicked.connect(self.update_asked.emit)
         self.columns: list[str] = []
         self.rows: list[dict] = []  # every spectrum's row (the model shows the filtered ones)
         self.filter = QComboBox()
         for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
             self.filter.addItem(text, key)
-            self.filter.setItemData(i, meaning, Qt.ItemDataRole.ToolTipRole)
-        self.filter.setToolTip("which spectra the list shows")
+            self.filter.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
+        self.filter.setToolTip(tip("which spectra the list shows"))
         self.sample = QComboBox()
-        self.sample.setToolTip("one sample's spectra, or every sample's")
+        self.sample.setToolTip(tip("one sample's spectra, or every sample's"))
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find: residue 20, peptide 12-23, or text")
-        self.search.setToolTip("every word must match: a number is a residue the peptide "
-                               "covers (20), two numbers its residues (12-23), anything else "
-                               "text in the sample, peptide or spectrum id (WT, SPFY)")
+        self.search.setToolTip(tip("every word must match: a number is a residue the peptide "
+                                   "covers (20), two numbers its residues (12-23), anything else "
+                                   "text in the sample, peptide or spectrum id (WT, SPFY)"))
         self.search.setClearButtonEnabled(True)
         self.count = QLabel("Building the list…")
         self.column_filters: dict[str, tuple] = {}  # column -> ('values', set), ('range', lo,
         # hi) or ('contains', text)
         self.clear_filters = QPushButton("Clear column filters")
-        self.clear_filters.setToolTip("show every row again (the filters set by a right click "
-                                      "on a column's header)")
+        self.clear_filters.setToolTip(tip("show every row again (the filters set by a right click "
+                                          "on a column's header)"))
         self.clear_filters.clicked.connect(self.clear_column_filters)
         self.clear_filters.hide()
         for box in (self.filter, self.sample):
@@ -202,7 +203,7 @@ class SpectraList(QWidget):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(
             lambda pos: self.ask_filter(header.logicalIndexAt(pos)))
-        header.setToolTip("click: sort by the column; right-click: filter by it")
+        header.setToolTip(tip("click: sort by the column; right-click: filter by it"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.bar)

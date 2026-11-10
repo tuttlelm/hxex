@@ -25,6 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .tips import tip
+
 log = logging.getLogger(__name__)
 
 PER_LINE = 50  # residues a line: five blocks of ten
@@ -365,7 +367,7 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.about = QLabel("Click a residue to see what it is.")
         self.about.setWordWrap(True)
         refresh = QPushButton("Read again")
-        refresh.setToolTip("read the FASTA files again (after editing one)")
+        refresh.setToolTip(tip("read the FASTA files again (after editing one)"))
         refresh.clicked.connect(lambda: self.show_project(self.project))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

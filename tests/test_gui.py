@@ -17,6 +17,7 @@ from PySide6.QtSvg import QSvgRenderer  # noqa: E402
 from hxex.gui.figure_view import FigurePanel, FigureView  # noqa: E402
 from hxex.gui.figures import qt_ready  # noqa: E402
 from hxex.gui.session import load_session  # noqa: E402
+from hxex.gui.tips import tip  # noqa: E402
 from hxex.gui.window import MainWindow  # noqa: E402
 from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
 from test_run import config, raw_spectra, run  # noqa: E402
@@ -270,10 +271,10 @@ def test_the_status_line_shows_what_the_panel_is_doing(qtbot):
 
     panel = FigurePanel()
     qtbot.addWidget(panel)
-    assert panel.help.text() == "?" and panel.help.toolTip() == HINT
+    assert panel.help.text() == "?" and panel.help.toolTip() == tip(HINT)
     assert len(HINT.splitlines()) == 3  # one line per action
     panel.set_span_mode(True)
-    assert panel.help.toolTip() == HINT + SPAN_HINT
+    assert panel.help.toolTip() == tip(HINT + SPAN_HINT)
     panel.set_span_mode(False)
 
     def figure():
@@ -487,7 +488,7 @@ def test_the_title_has_a_row_of_its_own_above_the_figure(qtbot):
     panel.set_title(long)
     panel.resize(160, 500)  # as narrow as the buttons let it be
     qtbot.waitUntil(lambda: title.text().endswith("…"), timeout=5000)
-    assert title.toolTip() == long and title.width() <= panel.width()
+    assert title.toolTip() == tip(long) and title.width() <= panel.width()
     assert title.geometry().top() >= bar.geometry().bottom()
 
 

@@ -42,6 +42,7 @@ from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides,
 from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ class ResultsWorkspace(QWidget):
         self.tree_data: list[Peptide] = []
         self.path_label = QLabel("No results open.")
         open_button = QPushButton("Open results…")
-        open_button.setToolTip("a results bundle: a folder, or a .zip")
+        open_button.setToolTip(tip("a results bundle: a folder, or a .zip"))
         if window is not None:
             open_button.clicked.connect(window.open_results_dialog)
         top = QHBoxLayout()
@@ -131,18 +132,18 @@ class ResultsWorkspace(QWidget):
         self.filter = QComboBox()
         for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
             self.filter.addItem(text, key)
-            self.filter.setItemData(i, meaning, Qt.ItemDataRole.ToolTipRole)
-        self.filter.setToolTip("which series the tree shows")
+            self.filter.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
+        self.filter.setToolTip(tip("which series the tree shows"))
         self.filter.currentIndexChanged.connect(self._fill)
         # MS level and ion type: shown for results with fragment series
         self.ms_filter = QComboBox()
         self.ms_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.ms_filter.setToolTip("the MS level of the series the tree shows")
+        self.ms_filter.setToolTip(tip("the MS level of the series the tree shows"))
         self.ms_filter.currentIndexChanged.connect(self._fill)
         self.ion_filter = QComboBox()
         self.ion_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.ion_filter.setToolTip("the ion type of the series the tree shows (peptides: the "
-                                   "peptides read at MS1)")
+        self.ion_filter.setToolTip(tip("the ion type of the series the tree shows (peptides: the "
+                                       "peptides read at MS1)"))
         self.ion_filter.currentIndexChanged.connect(self._fill)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find a peptide, residues, sample, or fragment")
@@ -164,8 +165,8 @@ class ResultsWorkspace(QWidget):
         self.tree = ReviewTree()
         self.tree.setColumnCount(len(COLUMNS))
         self.tree.setHeaderLabels(list(COLUMNS))
-        for name, tip in COLUMN_TIPS.items():
-            self.tree.headerItem().setToolTip(COLUMN[name], tip)
+        for name, words in COLUMN_TIPS.items():
+            self.tree.headerItem().setToolTip(COLUMN[name], tip(words))
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.itemExpanded.connect(self._expanded)
@@ -201,10 +202,10 @@ class ResultsWorkspace(QWidget):
         self.left_tabs = QTabWidget()
         self.left_tabs.addTab(tree_page, "Tree")
         self.left_tabs.addTab(self.list, "List")
-        self.left_tabs.setTabToolTip(0, "peptides, their charges, time points and replicates")
-        self.left_tabs.setTabToolTip(1, "every spectrum, one row each, with the columns of "
-                                        "spectra.csv: sort by a column, filter, and step "
-                                        "through them in that order")
+        self.left_tabs.setTabToolTip(0, tip("peptides, their charges, time points and replicates"))
+        self.left_tabs.setTabToolTip(1, tip("every spectrum, one row each, with the columns of "
+                                            "spectra.csv: sort by a column, filter, and step "
+                                            "through them in that order"))
         # a status line under the list: how many series (Tree) or spectra (List) are shown
         # (owner, 2026-11-08: in the rows of choices they kept the panel wide)
         self.left_status = QWidget()
@@ -225,9 +226,9 @@ class ResultsWorkspace(QWidget):
         self.left_note = QLabel()
         self.left_note.setWordWrap(True)
         self.left_update = QPushButton("Update")
-        self.left_update.setToolTip("work out the 'left out' column again with your decisions "
-                                    "and the project's [analysis] settings (a few seconds on "
-                                    "a large run)")
+        self.left_update.setToolTip(tip("work out the 'left out' column again with your decisions "
+                                        "and the project's [analysis] settings (a few seconds on "
+                                        "a large run)"))
         self.left_update.clicked.connect(self.update_left_out)
         stale = QHBoxLayout()
         stale.setContentsMargins(0, 0, 0, 0)
@@ -242,26 +243,26 @@ class ResultsWorkspace(QWidget):
         # the uptake page's time axis, for the window only (owner: the project's linear default
         # is not how uptake is usually read); the project's [figures] setting first
         self.time_axis = QComboBox()
-        self.time_axis.setToolTip("how the uptake page spreads the times: the project file's "
-                                  "[figures] scale and x, or for this window only log, linear, or "
-                                  "one even step per time point")
+        self.time_axis.setToolTip(tip("how the uptake page spreads the times: the project file's "
+                                      "[figures] scale and x, or for this window only log, linear, "
+                                      "or one even step per time point"))
         self.time_axis.currentIndexChanged.connect(self._redraw)
         # the overview tab's page: the run's summary pages, one at a time (owner, 2026-11-04)
         self.overview_page = QComboBox()
-        self.overview_page.setToolTip("which page of the overview: as hxex report --figures "
-                                      "writes them (overview)")
+        self.overview_page.setToolTip(tip("which page of the overview: as hxex report --figures "
+                                          "writes them (overview)"))
         self.overview_page.currentIndexChanged.connect(lambda _i: self._draw_overview())
         # the spectra tab's page, for a series on several pages ([figures] page_rows,
         # page_columns, max_points; owner, 2026-11-04: a kinetics run made one 214-inch page)
         self.spectra_page = QComboBox()
-        self.spectra_page.setToolTip("which page of the series' spectra ([figures] page_rows "
-                                     "and page_columns; max_points thins a long time course)")
+        self.spectra_page.setToolTip(tip("which page of the series' spectra ([figures] page_rows "
+                                         "and page_columns; max_points thins a long time course)"))
         self.spectra_page.currentIndexChanged.connect(lambda _i: self._draw_spectra_page())
         self.spectra_page.hide()
         # the populations tab goes on over the same pages: its own list, kept in step
         self.population_page = QComboBox()
-        self.population_page.setToolTip("which page of the series' populations (the same pages "
-                                        "as its spectra)")
+        self.population_page.setToolTip(tip("which page of the series' populations (the same pages "
+                                            "as its spectra)"))
         self.population_page.currentIndexChanged.connect(self.spectra_page.setCurrentIndex)
         self.population_page.hide()
         self._populations_paged = False  # the series' populations page is drawn per page
@@ -282,7 +283,8 @@ class ResultsWorkspace(QWidget):
         # populations page), or spectra.csv (its spectra)
         self.series_table = QComboBox()
         self.series_table.addItems(SERIES_TABLES)
-        self.series_table.setToolTip("which of the report's tables to list this series' rows of")
+        self.series_table.setToolTip(
+            tip("which of the report's tables to list this series' rows of"))
         self.series_table.currentTextChanged.connect(self._series_table_changed)
         self.series_table.hide()
         self.table_view.add_option(self.series_table)
@@ -302,11 +304,11 @@ class ResultsWorkspace(QWidget):
         self.compare.addItem("this ion in the other runs", "runs")
         self.compare.addItem("this peptide's other ions in this run", "ions")
         self.compare.setToolTip(
-            "this ion in the other runs: does this run's peak sit where the others' do (if not, "
-            "it needs a window of its own)? This peptide's other ions in this run: its charge "
-            "states and fragment channels, each scaled to this trace's height; they elute "
-            "together, so an ion whose peak sits apart has interference at its own m/z (save "
-            "its window for this ion only)")
+            tip("this ion in the other runs: does this run's peak sit where the others' do (if "
+                "not, it needs a window of its own)? This peptide's other ions in this run: its "
+                "charge states and fragment channels, each scaled to this trace's height; they "
+                "elute together, so an ion whose peak sits apart has interference at its own m/z "
+                "(save its window for this ion only)"))
         self.compare.currentIndexChanged.connect(self._compare_changed)
         self.compare_box = QWidget()
         row = QHBoxLayout(self.compare_box)
@@ -925,7 +927,7 @@ class ResultsWorkspace(QWidget):
                                    "", *_counts(counts), "", "", ""])
             top.setData(0, KIND, "peptide")
             top.setData(0, PAYLOAD, pep)
-            top.setToolTip(0, f"{pep.sample} {pep.peptide_range} {pep.peptide}")
+            top.setToolTip(0, tip(f"{pep.sample} {pep.peptide_range} {pep.peptide}"))
             for s, name in zip(series, _series_names(series), strict=True):
                 child = QTreeWidgetItem([name, "", s.fragment, str(s.ms_level or ""), s.condition,
                                          s.parent, *_counts(dataclasses.asdict(s)), "", "", ""])
@@ -975,7 +977,7 @@ class ResultsWorkspace(QWidget):
                 leaf.setText(COLUMN["flags"], spectrum.flags.replace(";", ", "))
                 leaf.setData(0, KIND, "spectrum")
                 leaf.setData(0, PAYLOAD, (pep, series, point, spectrum))
-                leaf.setToolTip(0, spectrum.spectrum_id)
+                leaf.setToolTip(0, tip(spectrum.spectrum_id))
                 child.addChild(leaf)
                 self._leaves[spectrum.index] = leaf
                 self._show_status(leaf, spectrum.status)
@@ -1287,7 +1289,7 @@ class ResultsWorkspace(QWidget):
     @staticmethod
     def _show_left_out(leaf: QTreeWidgetItem, why: str) -> None:
         leaf.setText(COLUMN["left out"], why)
-        leaf.setToolTip(COLUMN["left out"], why)
+        leaf.setToolTip(COLUMN["left out"], tip(why))
 
     @staticmethod
     def _sum_children(item: QTreeWidgetItem,

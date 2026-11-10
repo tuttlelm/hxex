@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from .flow_layout import FlowLayout
 from .review import Decision, make_review_table, table_stamp, write_decisions
+from .tips import tip
 from .user_tables import TableLocked
 
 log = logging.getLogger(__name__)
@@ -65,12 +66,12 @@ class ReviewPanel(QGroupBox):
         for i, (value, words, key) in enumerate(STATUS_WORDS):
             button = QRadioButton(words)
             button.setProperty("status", value)
-            button.setToolTip(f"{words} (key {key} in the tree)")
+            button.setToolTip(tip(f"{words} (key {key} in the tree)"))
             self.status.addButton(button, i)
             status_row.addWidget(button)
         self.status.buttonClicked.connect(lambda b: self.decide(status=b.property("status")))
         self.k = QComboBox()
-        self.k.setToolTip("the number of populations to use for these spectra (review_K)")
+        self.k.setToolTip(tip("the number of populations to use for these spectra (review_K)"))
         self.k.activated.connect(self._k_chosen)
         self.note = QLineEdit()
         self.note.setPlaceholderText("a note (kept with the decision)")
@@ -85,7 +86,7 @@ class ReviewPanel(QGroupBox):
         self.retry.clicked.connect(lambda: self.decide())
         self.retry.hide()
         self.resume = QPushButton("Add the bootstrap (Resume)…")
-        self.resume.setToolTip("hxex resume: bootstraps the spectra shown at a K without one")
+        self.resume.setToolTip(tip("hxex resume: bootstraps the spectra shown at a K without one"))
         self.resume.clicked.connect(self.resume_asked)
         self.resume.hide()
         self.previous = QPushButton("◀")
@@ -97,7 +98,7 @@ class ReviewPanel(QGroupBox):
         self.level = QComboBox()  # what ◀ ▶ step through (owner)
         for words, kind in STEP_LEVELS:
             self.level.addItem(words, kind)
-        self.level.setToolTip("what ◀ and ▶ step through")
+        self.level.setToolTip(tip("what ◀ and ▶ step through"))
         self.level.currentIndexChanged.connect(self._level_tips)
         self._level_tips()
         top = QHBoxLayout()
@@ -123,12 +124,12 @@ class ReviewPanel(QGroupBox):
 
     def _level_tips(self, *_) -> None:
         if not self.level.isEnabled():  # the List tab: row by row
-            self.previous.setToolTip("the previous row of the list, in its order")
-            self.next.setToolTip("the next row of the list, in its order")
+            self.previous.setToolTip(tip("the previous row of the list, in its order"))
+            self.next.setToolTip(tip("the next row of the list, in its order"))
             return
         words = self.level.currentText()
-        self.previous.setToolTip(f"the previous {words}")
-        self.next.setToolTip(f"the next {words} (through everything the tree shows)")
+        self.previous.setToolTip(tip(f"the previous {words}"))
+        self.next.setToolTip(tip(f"the next {words} (through everything the tree shows)"))
 
     def set_list_mode(self, on: bool) -> None:
         """On the List tab ◀ ▶ step through the list's rows one at a time, so the choice of what
@@ -142,14 +143,14 @@ class ReviewPanel(QGroupBox):
             self.level.setCurrentIndex(0)
             self.level.blockSignals(False)
             self.level.setEnabled(False)
-            self.level.setToolTip("the list steps one row at a time, in its order (the tree "
-                                  "steps by spectrum, time point or charge)")
+            self.level.setToolTip(tip("the list steps one row at a time, in its order (the tree "
+                                      "steps by spectrum, time point or charge)"))
         else:
             self.level.setEnabled(True)
             self.level.blockSignals(True)
             self.level.setCurrentIndex(getattr(self, "_tree_level", 0))
             self.level.blockSignals(False)
-            self.level.setToolTip("what ◀ and ▶ step through")
+            self.level.setToolTip(tip("what ◀ and ▶ step through"))
         self._level_tips()
 
     # --- what is shown ---------------------------------------------------------------------

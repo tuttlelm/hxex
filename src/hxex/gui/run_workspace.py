@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 from ..hooks import format_duration, format_percent
 from .logs import LOG_FOLDER, CommandLog, log_name, log_text, project_logs
 from .runner import CommandRun, shown_command
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -87,23 +88,23 @@ class RunWorkspace(QWidget):
         self.where.setWordWrap(True)
         self.buttons: dict[str, QPushButton] = {}
         row = QHBoxLayout()
-        for text, command, tip in COMMANDS:
+        for text, command, words in COMMANDS:
             button = QPushButton(text)
-            button.setToolTip(f"hxex {command}: {tip}")
+            button.setToolTip(tip(f"hxex {command}: {words}"))
             button.clicked.connect(lambda checked=False, c=command: self.run_command(c))
             row.addWidget(button)
             self.buttons[command] = button
         row.addStretch()
         self.device = QComboBox()
         self.device.addItems([DEVICE_SETTING, "cpu", "cuda"])
-        self.device.setToolTip("for Run and Resume: where the fits run. The first entry is the "
-                               "project file's setting ([run.fit.backend] device); cpu or cuda "
-                               "use that device for this command only (--device)")
+        self.device.setToolTip(tip("for Run and Resume: where the fits run. The first entry is the "
+                                   "project file's setting ([run.fit.backend] device); cpu or cuda "
+                                   "use that device for this command only (--device)"))
         change = QPushButton("Change…")
-        change.setToolTip("the project file's device setting, in the Project workspace")
+        change.setToolTip(tip("the project file's device setting, in the Project workspace"))
         change.clicked.connect(lambda checked=False: self.show_setting.emit("run.fit.backend"))
         self.figures = QCheckBox("Report draws the figures too")
-        self.figures.setToolTip("hxex report hxex.toml --figures: with the [figures] settings")
+        self.figures.setToolTip(tip("hxex report hxex.toml --figures: with the [figures] settings"))
         options = QHBoxLayout()
         options.addWidget(self.device)
         options.addWidget(change)
@@ -116,7 +117,7 @@ class RunWorkspace(QWidget):
         self.command.setPlaceholderText("the command, as you would type it in a terminal")
         self.command.setFont(QFont("monospace"))
         self.stop_button = QPushButton("Stop")
-        self.stop_button.setToolTip("stop after the current step (press again to abort now)")
+        self.stop_button.setToolTip(tip("stop after the current step (press again to abort now)"))
         self.stop_button.clicked.connect(self.stop)
         self.stop_button.setEnabled(False)
         line = QHBoxLayout()
@@ -129,7 +130,7 @@ class RunWorkspace(QWidget):
         # the command's total run time, counted while it runs and kept when it ends (owner,
         # 2026-11-05)
         self.elapsed = QLabel("")
-        self.elapsed.setToolTip("the total run time of the command")
+        self.elapsed.setToolTip(tip("the total run time of the command"))
         self._started_at: float | None = None
         self._clock = QTimer(self)
         self._clock.setInterval(1000)
@@ -139,22 +140,22 @@ class RunWorkspace(QWidget):
         self.console.setFont(QFont("monospace"))
         self.console.setMaximumBlockCount(20000)
         self.wrap = QCheckBox("Wrap lines")
-        self.wrap.setToolTip("long lines broken to the width of the console (off: one line "
-                             "each, scrolled sideways)")
+        self.wrap.setToolTip(tip("long lines broken to the width of the console (off: one line "
+                                 "each, scrolled sideways)"))
         self.wrap.toggled.connect(self._wrap)
         self.wrap.setChecked(True)
         # the project's earlier commands, from their logs (owner, 2026-11-08: reopening a project
         # showed nothing of how its last command went)
         self.history = QComboBox()
-        self.history.setToolTip("this project's earlier commands, newest first: choose one to "
-                                "show its output (from its log in hxex_logs, beside the project "
-                                "file)")
+        self.history.setToolTip(tip("this project's earlier commands, newest first: choose one to "
+                                    "show its output (from its log in hxex_logs, beside the "
+                                    "project file)"))
         self.history.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.history.activated.connect(self._history_chosen)
         self._logs: list[CommandLog] = []
         self._showing_log = False  # the console shows an earlier command's log
         clear = QPushButton("Clear")
-        clear.setToolTip("empty the console")
+        clear.setToolTip(tip("empty the console"))
         clear.clicked.connect(self.console.clear)
         progress = QHBoxLayout()  # the bar and its words together (owner)
         progress.addWidget(self.bar, 3)

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .tasks import Latest
+from .tips import tip
 
 log = logging.getLogger(__name__)
 
@@ -85,34 +86,34 @@ class WindowEditor(QObject):
         row.setContentsMargins(0, 0, 0, 0)
         self.edit = QCheckBox("Edit window")
         self.edit.setToolTip(
-            "change the scans this spectrum sums: drag across the trace (or the drift profile) "
-            "or type the times; the spectrum summed over the new window is drawn beside the "
-            "one the results hold")
+            tip("change the scans this spectrum sums: drag across the trace (or the drift profile) "
+                "or type the times; the spectrum summed over the new window is drawn beside the "
+                "one the results hold"))
         self.edit.toggled.connect(self._toggled)
         self.start, self.end = self._box("minutes"), self._box("minutes")
-        self.start.setToolTip("the window's start (min, the acquisition clock)")
-        self.end.setToolTip("the window's end (min)")
+        self.start.setToolTip(tip("the window's start (min, the acquisition clock)"))
+        self.end.setToolTip(tip("the window's end (min)"))
         self.drift_start, self.drift_end = self._box("ms"), self._box("ms")
-        self.drift_start.setToolTip("the drift range's start (ms)")
-        self.drift_end.setToolTip("the drift range's end (ms)")
+        self.drift_start.setToolTip(tip("the drift range's start (ms)"))
+        self.drift_end.setToolTip(tip("the drift range's end (ms)"))
         self.drift_label = QLabel("drift")
         self.each_k = QCheckBox("Fits at each K")
-        self.each_k.setToolTip("the new window's spectrum fitted at every K the run tried")
+        self.each_k.setToolTip(tip("the new window's spectrum fitted at every K the run tried"))
         self.each_k.toggled.connect(lambda _on: self.draw())
         self.scope = QComboBox()
         self.scope.addItem("all ions of this peptide, in this run", "peptide")
         self.scope.addItem("this ion only, in this run", "ion")
         self.scope.setToolTip(
-            "all ions of this peptide, in this run: its charge states (MS1) and, as a parent, "
-            "all its fragment ions (MS2, MS3) take the window, in this file only (the same "
-            "molecules elute together; Compare with: this peptide's other ions in this run "
-            "shows whether they do). This ion only, in this run: for interference at this "
-            "ion's own m/z")
+            tip("all ions of this peptide, in this run: its charge states (MS1) and, as a parent, "
+                "all its fragment ions (MS2, MS3) take the window, in this file only (the same "
+                "molecules elute together; Compare with: this peptide's other ions in this run "
+                "shows whether they do). This ion only, in this run: for interference at this "
+                "ion's own m/z"))
         self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
-        self.undo.setToolTip("put the elution-window table (and the project file, when the "
-                             "first save named the table there) back as before the last save")
+        self.undo.setToolTip(tip("put the elution-window table (and the project file, when the "
+                                 "first save named the table there) back as before the last save"))
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
         # two rows of their own under the figure's buttons (in the buttons' row they made the
@@ -385,16 +386,16 @@ class WindowEditor(QObject):
     def _save_state(self, ctx: TraceContext) -> None:
         if self._project(ctx) is None:
             self.save.setEnabled(False)
-            self.save.setToolTip("open the results from their project file (an mzML or Thermo "
-                                 "project) to save windows")
+            self.save.setToolTip(tip("open the results from their project file (an mzML or Thermo "
+                                     "project) to save windows"))
         else:
             self.save.setEnabled(True)
-            self.save.setToolTip("write the window for this file in the project's "
-                                 "elution-window table ([input] rt_elution_windows; made by the "
-                                 "first save), for all ions of this peptide or this ion only, "
-                                 "in this run (the choice beside); the peptide table is not "
-                                 "changed, and the "
-                                 "results change when the project is run again")
+            self.save.setToolTip(tip("write the window for this file in the project's "
+                                     "elution-window table ([input] rt_elution_windows; made by "
+                                     "the first save), for all ions of this peptide or this ion "
+                                     "only, in this run (the choice beside); the peptide table is "
+                                     "not changed, and the results change when the project is run "
+                                     "again"))
 
     def _save(self) -> None:
         from .window_edit import save_window
