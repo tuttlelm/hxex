@@ -75,7 +75,13 @@ from ..analysis import (
 from ..analysis.residues import NoPeptideAtTime, residue_level_states
 from ..analysis.residues import states as _states
 from ..analysis.runs import display_labels, label, resolve_sample
-from ..analysis.settings import ALL_REFERENCES, OVERLAY_VALUES, UNDEUTERATED, population_rule
+from ..analysis.settings import (
+    ALL_REFERENCES,
+    OVERLAY_VALUES,
+    UNDEUTERATED,
+    population_rule,
+    resolve_match,
+)
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
 from ..io.times import format_time
@@ -377,11 +383,19 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     # residue-level outputs only for a sample whose peptides make one protein (owner,
     # 2026-11-08: pooled unrelated peptides have no residues to resolve)
     level = residue_level_states(up, config.residue_level, sequences=sequences)
+    # a pooled sample with candidates is several proteins: its residue-level outputs are those
+    # of each form of the pool's minimum set (owner, 2026-11-09), never one map of the mixture
+    pools = (_pool_forms(results, up) if config.residue_level is not False else {})
+    pooled = {s for s in level if s[0] in pools}
     for state, why in level.items():
-        if why and config.residue_level == "auto":
+        if why and config.residue_level == "auto" and state not in pooled:
             log.info("%s: no residue-level outputs (%s); [analysis] residue_level = true makes "
                      "them", label(*state), why)
-    on = {state for state, why in level.items() if not why}
+    if pooled:
+        log.info("pooled samples (%s): residue-level outputs for each form of the pool "
+                 "(pooled_forms.csv), not for the mixture", ", ".join(label(*s) for s in
+                                                                         sorted(pooled)))
+    on = {state for state, why in level.items() if not why and state not in pooled}
     res_up = up.select(np.array([p in on for p in zip(
         up.run.astype(str), up.sample.astype(str), strict=True)], dtype=bool))
     # K=2 residue values from the peptides whose sets are best described by two populations,
@@ -459,6 +473,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             min_population=config.choice_limits.min_population, populations="best_set")
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
+    k1_raw = None
     pop_cmp = counts_d = None
     choices_cmp = shared_choices = k2_positions = reg_cmp = None
     k2_tested = False
@@ -472,6 +487,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
               # the averages of sets with two populations far apart (HISTORY 210)
               "k2_averages": k2_average_sets(up)}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
+        k1_raw = comparisons["K=1 fD"]
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,
                                                                     **kw)
@@ -617,6 +633,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         regions = region_summary(residues, ann)
         tables["regions"] = _columns(regions)
         regions = _display(regions, labels)
+    form_jobs = (_pooled_form_outputs(
+        pools, up, pooled, tables, config, labels=labels, styles=styles,
+        order=[s for s in in_order if any(labels[p] == s for p in pooled)], ref_state=ref_state,
+        k1=k1_raw, times=times, scale=scale) if pooled else [])
     up, residues, coverage, choice = up_d, residues_d, coverage_d, choice_d
     states = states_shown
 
@@ -786,8 +806,145 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             if (regions.time == t).any():
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
                     regions, t, samples=in_order, styles=styles, **when)))
+    jobs.extend(form_jobs)
 
     return tables, jobs
+
+
+def _pool_forms(results, up) -> dict:
+    """The minimum set of every pooled run with candidates (``[input] pooled_fasta``) whose
+    samples are in ``up``: run -> :class:`hxex.analysis.pooled.PooledForms`, from the peptides
+    of all its samples."""
+    from ..analysis.pooled import pooled_forms
+    from ..io.pooled import CANDIDATES_RECORD
+
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    out = {}
+    pep = up.kind == "peptide"
+    for name, r in runs.items():
+        settings = getattr(r, "settings", None)
+        record = ((settings.spectra_source or {}).get(CANDIDATES_RECORD)
+                  if settings is not None else None)
+        rows = np.flatnonzero(pep & (up.run.astype(str) == name))
+        if not record or not len(rows):
+            continue
+        keys = list(zip(up.peptide[rows].astype(str), up.start[rows].astype(int),
+                        up.end[rows].astype(int), up.modification[rows].astype(str),
+                        strict=True))
+        forms = pooled_forms(keys, record, run=name, registry=settings.registry)
+        if forms.alternatives:
+            log.warning("%s: the pool's minimum set is not unique (also: %s); the forms of the "
+                        "first are used", label(name, "") or "the run",
+                        "; ".join(", ".join(a) for a in forms.alternatives))
+        if not forms.exact:
+            log.warning("%s: too many candidates to search every minimum set; the set was "
+                        "found one form at a time and may not be the smallest",
+                        label(name, "") or "the run")
+        out[name] = (forms, record, settings.registry)
+    return out
+
+
+def _joined(first: dict | None, second: dict) -> dict:
+    """Two tables' columns one after the other (a column one lacks: empty there)."""
+    if not first:
+        return second
+    n1, n2 = len(next(iter(first.values()))), len(next(iter(second.values())))
+    out = {}
+    for name in dict.fromkeys([*first, *second]):
+        a = first.get(name, np.full(n1, np.nan, dtype=object))
+        b = second.get(name, np.full(n2, np.nan, dtype=object))
+        out[name] = np.concatenate([np.asarray(a, dtype=object) if a.dtype != b.dtype else a,
+                                    np.asarray(b, dtype=object) if a.dtype != b.dtype else b])
+    return out
+
+
+def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: AnalysisConfig, *,
+                         labels: dict, styles: dict, order: list, ref_state, k1, times,
+                         scale: str) -> list:
+    """The residue-level outputs of the pooled samples (owner, 2026-11-09): the forms of each
+    pool's minimum set (``pooled_forms`` table), each form's residue values (rows of the
+    ``residues`` table, the sample named ``'<sample> <form>'``), each form compared with the
+    same form of the reference (rows of ``compare_residues``: judged on the peptides both
+    measured, then gated by the peptide comparison of the form's peptides), and one figure
+    page per class of forms and time (:func:`hxex.report.pooled.plot_pooled_forms`). Adds
+    the tables to ``tables``; returns the figure jobs."""
+    from ..analysis.pooled import form_class, form_comparison, form_sequences, form_uptake
+    from .pooled import FORM_PANEL, plot_pooled_forms
+
+    forms = {run: f for run, (f, _, _) in pools.items()}
+    rows = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
+                                                                  strict=True)], dtype=bool)
+    fu, base = form_uptake(up.select(rows & (up.kind == "peptide")), forms)
+    sequences: dict[str, str] = {}
+    for f, record, registry in pools.values():
+        sequences.update(form_sequences(f, record, base, registry))
+    gate = config.populations in ("best_set", "population_test")
+    rm = residue_map(fu, sequences=sequences or None, weight_exponent=config.weight_exponent,
+                     modified="combined", two_population_peptides=gate and 2 in config.ks,
+                     population_test=config.populations == "population_test")
+    tables["pooled_forms"] = _joined(None, {})
+    for f, _, _ in pools.values():
+        tables["pooled_forms"] = _joined(tables["pooled_forms"], f.columns())
+    tables["residues"] = _joined(tables.get("residues"), rm.columns())
+    # the display label of each form state: its sample's, then the form
+    form_labels = {state: f"{labels.get((state[0], s), label(state[0], s))} "
+                          f"{state[1][len(s) + 1:]}" for state, s in base.items()}
+    if k1 is not None and ref_state in pooled:
+        crit = k1.delta_crit
+        k1_forms = form_comparison(k1, forms)
+        nterm = up.nterm_subtract
+        found = []
+        ref_forms = forms[ref_state[0]].forms
+        for f in ref_forms:
+            ref_f = (ref_state[0], f"{ref_state[1]} {f.name}")
+            mine = [s for s in base if s[1][len(base[s]) + 1:] == f.name]
+            if ref_f not in mine or len(mine) < 2:
+                continue
+            keep = np.array([(str(u), str(s)) in set(mine) for u, s in zip(fu.run, fu.sample,
+                                                                            strict=True)])
+            fu_f = fu.select(keep)
+            in_map = np.array([(str(u), str(s)) in set(mine) for u, s in zip(rm.run, rm.sample,
+                                                                              strict=True)])
+            rm_f = dataclasses.replace(rm, **{x.name: getattr(rm, x.name)[in_map]
+                                              for x in fields(rm)})
+            name = label(*ref_f)
+            pairs = paired_residue_maps(
+                fu_f, name, match="sequence", modified="combined", sequences=sequences or None,
+                weight_exponent=config.weight_exponent,
+                two_population_peptides=gate and 2 in config.ks,
+                population_test=config.populations == "population_test")
+            found.append(gated_by_peptides(judged_on_shared(
+                compare_residues(rm_f, name, alpha=config.alpha, delta_crit=crit),
+                concat_tables([compare_residues(m, name, alpha=config.alpha, delta_crit=crit)
+                               for m in pairs.values()])), k1_forms, nterm_subtract=nterm,
+                modified="combined"))
+        if found:
+            tables["compare_residues"] = _joined(tables.get("compare_residues"),
+                                                 concat_tables(found).columns())
+    # the figures: one page per class of forms (forms of no single class last) and time
+    shown = _display(rm, form_labels)
+    k1_rows = (shown.K == 1) & (shown.rank == 1) & np.isfinite(shown.fD)
+    top = (float(np.max(shown.fD[k1_rows] + np.nan_to_num(shown.fD_se[k1_rows])))
+           if k1_rows.any() else None)
+    first, record, registry = next(iter(pools.values()))
+    groups: dict[str, list] = {}
+    for f in first.forms:
+        groups.setdefault(form_class(f, record), []).append(f)
+    groups = dict(sorted(groups.items(), key=lambda g: (g[0] == "", g[0])))
+    per_page = max(1, int((config.page_size[1] - 0.7) // FORM_PANEL))
+    crit = k1.delta_crit if k1 is not None else None
+    jobs = []
+    for t in times:
+        when_ = _time_label(t, scale)
+        for cls, members in groups.items():
+            with_values = [f for f in members if any(
+                shown.where(sample=f"{s} {f.name}", time=t, K=1, rank=1).any() for s in order)]
+            for n, part in enumerate(_pages(with_values, per_page)):
+                stem = _page_stem(f"pooled_forms_{_stem(cls or 'other')}_{when_}", n)
+                jobs.append((stem, lambda t=t, part=part: plot_pooled_forms(
+                    shown, part, order, t, styles=styles, nterm_subtract=up.nterm_subtract,
+                    top=top, delta_crit=crit, time_scale=scale, registry=registry)))
+    return jobs
 
 
 @dataclasses.dataclass(frozen=True)
@@ -833,6 +990,12 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
         log.info("the number of populations: %s", "the population test of the sets"
                  if rule == "population_test" else "best_set_K (the run has no population test)")
     config = dataclasses.replace(config, populations=rule)
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    match = resolve_match(config.peptide_match, runs)
+    if config.peptide_match == "auto" and match == "sequence":
+        log.info("peptides compared by sequence: pooled data, where two sequences at one range "
+                 "are different proteins ([analysis] peptide_match)")
+    config = dataclasses.replace(config, peptide_match=match)
     frag_tables, frag_jobs = {}, []
     # fragment series (and precursor ions read with them) are not peptides: the peptide
     # branch leaves them out by series (a peptide read from MS1 too has the same sequence)
@@ -868,7 +1031,50 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                 population_test=config.populations == "population_test")
     tables.update(frag_tables)
     jobs += frag_jobs
-    return AnalysisOutputs(tables, jobs, config)
+    return AnalysisOutputs(_with_pooled_identities(tables, runs), jobs, config)
+
+
+def _with_pooled_identities(tables: dict, runs: Mapping) -> dict:
+    """The analysis tables of pooled results with candidates (``[input] pooled_fasta``), each
+    table naming peptides (``peptide`` and ``start``) gaining the identity columns after
+    ``end`` (:data:`hxex.report.tables.IDENTITY_COLUMNS`), from its run's candidates (a merged
+    row, with an empty run, from the first run that has them); other tables unchanged."""
+    from ..io.pooled import identities
+
+    records = {name: (r.settings.spectra_source or {}) for name, r in runs.items()
+               if getattr(r, "settings", None) is not None
+               and (r.settings.spectra_source or {}).get("pooled_candidates")}
+    if not records:
+        return tables
+    registry = next(iter(runs.values())).settings.registry
+    fallback = next(iter(records))
+    out = {}
+    for name, cols in tables.items():
+        if not ({"peptide", "start", "end"} <= set(cols)) or not len(cols["peptide"]):
+            out[name] = cols
+            continue
+        run = (cols["run"].astype(str) if "run" in cols
+               else np.full(len(cols["peptide"]), "", dtype=object))
+        keys = [(str(r) if str(r) in records else fallback, str(p), int(s))
+                for r, p, s in zip(run, cols["peptide"], cols["start"], strict=True)]
+        found = {name_: identities(records[name_], {(p, s) for n, p, s in keys if n == name_},
+                                   registry=registry) or {}
+                 for name_ in {k[0] for k in keys}}
+        rows = [found[n].get((p, s)) for n, p, s in keys]
+        new = {
+            "identity": [x.identity if x else "" for x in rows],
+            "identity_level": [x.level if x else "" for x in rows],
+            "candidates": [";".join(x.candidates) if x else "" for x in rows],
+            "classes": [";".join(x.classes) if x else "" for x in rows],
+            "position_offset": [x.offset_text if x else "" for x in rows],
+        }
+        table = {}
+        for col, values in cols.items():
+            table[col] = values
+            if col == "end":
+                table.update({n: np.array(v, dtype=str) for n, v in new.items()})
+        out[name] = table
+    return out
 
 
 def write_analysis(

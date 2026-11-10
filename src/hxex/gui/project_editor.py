@@ -230,9 +230,12 @@ ORDERED = ("analysis.samples",)
 # settings that are a value or a table of their own (one FASTA for every sample, or one per
 # sample: owner, 2026-11-05): the value's row stays on its table's page, the table has a page,
 # and writing one form takes the other out of the file (TOML holds one)
-BOTH_FORMS = ("analysis.fasta",)
+BOTH_FORMS = {"analysis.fasta": "one file per sample",
+              "input.pooled_classes": "each class's records named"}
 # tables whose values are files: shown and typed without quotes, with Browse
 PATH_TABLES = ("analysis.fasta",)
+# tables whose values are lists of names: shown and typed as names separated by commas
+NAME_LIST_TABLES = ("input.pooled_classes",)
 
 
 class OrderedList(QWidget):
@@ -643,7 +646,7 @@ class ProjectEditor(QWidget):
         if row.name in BOTH_FORMS and isinstance(row.editor, QLineEdit):
             entries = [k for k in self.values if k.startswith(row.name + ".")]
             row.editor.setPlaceholderText(
-                f"one file per sample ({len(entries)} set): the [{row.name}] page; a file "
+                f"{BOTH_FORMS[row.name]} ({len(entries)} set): the [{row.name}] page; a value "
                 "typed here replaces them" if entries else row.default)
         row.edited.connect(self._edit)
         self.rows[row.name] = row
@@ -958,10 +961,14 @@ class NamesEditor(QWidget):
         self.grid.cellChanged.connect(self._changed)
         self.grid.setMinimumHeight(160)
         self.paths = table.name in PATH_TABLES  # values are files: no quotes to type, Browse
+        self.lists = table.name in NAME_LIST_TABLES  # values are names, typed with commas
         self.name = QLineEdit()
-        self.name.setPlaceholderText("a sample" if self.paths else "a new name")
+        self.name.setPlaceholderText("a sample" if self.paths else
+                                     "a class" if self.lists else "a new name")
         self.value = QLineEdit()
-        self.value.setPlaceholderText("its FASTA file" if self.paths else "its value")
+        self.value.setPlaceholderText("its FASTA file" if self.paths else
+                                      "its records, separated by commas" if self.lists
+                                      else "its value")
         add = QPushButton("Add")
         add.clicked.connect(self.add)
         self.remove = QPushButton("Remove the selected name")
@@ -995,7 +1002,9 @@ class NamesEditor(QWidget):
             key = QTableWidgetItem(name)
             key.setFlags(key.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.grid.setItem(r, 0, key)
-            cell = QTableWidgetItem(str(value) if self.paths else _shown(value))
+            cell = QTableWidgetItem(str(value) if self.paths else
+                                    ", ".join(map(str, value)) if self.lists
+                                    and isinstance(value, list) else _shown(value))
             swatch = _swatch(value) if self.table.name == "analysis.colours" else None
             if swatch is not None:  # a colour shown as itself beside its name
                 cell.setData(Qt.ItemDataRole.DecorationRole, swatch)
@@ -1004,7 +1013,11 @@ class NamesEditor(QWidget):
         self.remove.setEnabled(bool(items))
 
     def _toml(self, raw: str) -> str:
-        """A value as written: a file in quotes (typed without them), else as typed."""
+        """A value as written: a file in quotes (typed without them), names separated by
+        commas as a list of text (typed without quotes or brackets), else as typed."""
+        if self.lists:
+            names = [n.strip().strip('"') for n in raw.strip("[]").split(",")]
+            return "[" + ", ".join(_quoted(n) for n in names if n) + "]"
         return _quoted(raw.strip('"')) if self.paths else raw
 
     def _changed(self, row: int, column: int) -> None:

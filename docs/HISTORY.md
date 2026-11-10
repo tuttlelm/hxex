@@ -8570,6 +8570,86 @@ CSVs or mzML if wanted.
     tests/test_quality.py (a dim injection allowed for and named, a lost spectrum still
     flagged, joint scales, injection keys, storage), tests/test_cli.py (the info line).
 
+337. **Pooled data read as state folders (2026-11-09; step 1 of the pooled design, docs/ANALYSIS.md
+    "Pooled samples: possible identities").** `format = "pooled"` reads `data_dir` in one of two
+    layouts, told apart by what it holds (`hxex.io.pooled.pooled_layout`): peptide folders (one
+    sample named by `[input] sample`, as before) or state folders holding peptide folders (each
+    a sample named by its folder; `samples` selects): HDExaminer's export of a pooled project's
+    states, and several pooled folders (one per condition) side by side. With state folders an
+    entry's `file` is `STATE/START-END-SEQUENCE`, so spectrum ids name the state as SpecExport's
+    do; a peptide table names the peptide folder and its state in `sample`, as for SpecExport
+    (`nest_table_entries`). `input.sample` is needed only for a folder of peptide folders (a
+    `sample` given with state folders is not used, with a warning). A folder holding both reads
+    its peptide folders, as before, and names the folders of peptide folders it leaves
+    (warning); a folder of neither says so. Previously a folder of sample folders given as
+    pooled read nothing, with a hint to use `specexport`; it is now read as states. Checked on
+    the private pooled dataset: its two pooled folders (without and with the binding partner)
+    under their parent give 318 entries each, and an HDExaminer state export 147 and 146.
+    Separate experiments entered as slightly different times (a workaround in HDExaminer) are
+    not handled by *hxex* (owner): a stand-alone script outside the package rearranges them
+    into state folders. Checks: tests/test_io.py (layouts, ids, samples, the warning, the
+    table, the sample requirement), tests/test_input_checks.py, tests/test_cli.py; ruff clean.
+
+338. **Pooled peptides' possible identities (2026-11-09; step 2 of the pooled design).**
+    `[input] pooled_fasta` (what may be in the sample) and `pooled_classes` (text found in the
+    record ids, or the table `[input.pooled_classes]` naming each class's records, owner: a
+    class's name in the ids is a coincidence of one FASTA; the read record keeps each class's
+    members, `class_members`; a named record not in the FASTA or a class naming none is
+    refused, a text class found in no id a warning), for pooled data only (also with stored pooled spectra); classes need the
+    FASTA. The read record keeps the candidates (`pooled_candidates`: the file's name, its
+    records, the classes); a FASTA without sequences, a record id given twice, or a class
+    named twice is refused. `hxex.io.pooled.identify` gives each peptide sequence
+    (modifications aside, residues tokenised) its candidates, the classes among them, its
+    identity (the one record; the one class every candidate falls in; else the classes) and
+    level (`isoform`, `class`, `ambiguous`, `none`), and per candidate where the peptide
+    starts minus its first residue number (`position_offset`, the occurrence nearest that
+    number). `series.csv`, `spectra.csv`, `components.csv`, and `uptake.csv` of pooled results
+    with candidates gain `identity`, `identity_level`, `candidates`, `classes`, and
+    `position_offset` after `charge` (worked out from the record when the tables are written,
+    `hxex.report.tables.series_identities`); other results' tables are unchanged. `hxex check`
+    counts the levels and lists peptides with no candidate or numbered differently. Checked on
+    the private pooled dataset (its pool FASTA, two classes): 263 sequences, 41 isoform, 222
+    class, 0 ambiguous, 0 none, no offsets; per series in one state 52 isoform and 266 class;
+    the candidate lists equal pyHXExpress's `sample_matches`. Checks: tests/test_io.py
+    (levels, offsets, refusals, settings, the read record, the table columns, `hxex check`).
+
+339. **Pooled data compared by sequence; identities in the analysis tables (2026-11-09; step
+    3 of the pooled design).** `[analysis] peptide_match` defaults to `"auto"`: `"sequence"`
+    when any run was read as pooled data (two sequences at one range are different proteins),
+    else `"range"` as before (`hxex.analysis.settings.resolve_match`; the settings used record
+    the value taken). The analysis tables that name peptides (`peptide`, `start`, `end`) gain
+    the identity columns after `end` for pooled results with candidates. Found on the way, also
+    on main with `peptide_match = "sequence"`: a modified form kept as a state of its own
+    shares no peptide with the unmodified reference when matched by sequence, its paired
+    residue map held only the controls' rows, and `hxex analyse` stopped ("no reference
+    sample ... at K=1 rank 1"); `paired_residue_maps` now leaves such a state out, with a
+    line saying its residue differences are not judged. On the private pooled dataset (five
+    states, K = 1 only) range and sequence matching pair the same 982 peptide rows (every
+    sequence is in every state); only the acK40 forms' residue comparisons drop out. Checks:
+    tests/test_analysis.py (auto, the identity columns, the modified form by sequence).
+
+340. **The forms of a pool (2026-11-09; step 4 of the pooled design).** A pooled sample is
+    several proteins, so `hxex analyse` no longer makes one residue map of its peptides (a
+    mixture) but one per form of the pool's minimum set, the fewest candidates that explain
+    every peptide (owner, replacing the class averages first planned:
+    `hxex.analysis.pooled`): candidates holding a peptide no other holds are required, the
+    rest covered by the fewest more (exact up to 20 undecided groups, else one at a time,
+    warned), candidates no peptide tells apart one form (`A or B`), a set that is not the only
+    one of its size warned about. A modified peptide makes a form of its own on the form it
+    fits (base form's peptides not covering the site, plus the modified ones; the other
+    records it fits named). A form's own peptides are those no other form of the set may have
+    given; elsewhere its values are the mixture. Outputs: `pooled_forms.csv`, the forms'
+    rows in `residues.csv` (sample `SAMPLE FORM`), each form compared with the same form of
+    the reference in `compare_residues.csv` (on shared peptides, gated by the form's peptide
+    comparisons), figure `pooled_forms_<class>_<time>` (one page per class, one panel per form,
+    every sample's fDavg by residue; own residues marked by a grey strip outlined in black,
+    the owner's choice among a full-height band, a hatched strip, and a track of the own
+    peptides), and a `forms` line in `hxex check`. The per-sample residue figures (coverage,
+    profiles, Woods, significance maps) are not made for pooled samples. On the private
+    pooled dataset (five states, K = 1): seven forms (six isoforms and one acetylated form,
+    whose peptides also fit four other records), the same in every state, the set unique; own
+    peptides 2 to 24 per form; 9,090 residue comparison rows, 3,865 significant. Checks:
+    tests/test_pooled_forms.py, tests/test_io.py (the check line), tests/test_catalogue.py.
 341. **Tooltips wrap at 60 characters, one line per item (2026-11-09).** Qt shows a
     plain-text tooltip on one line until it is wider than the screen, so the window's longer
     tooltips ran across it (owner). `hxex.gui.tips.tip` lays the text out before Qt sees it:

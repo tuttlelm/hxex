@@ -381,6 +381,10 @@ class InputSettings:
     sample: str = ""
     record_paths: str = "path"
     time_scale: str = "seconds"
+    # pooled: what may be in the sample (a FASTA of candidates) and the class names found in
+    # its record ids (docs/ANALYSIS.md "Pooled samples: possible identities")
+    pooled_fasta: Path | None = None
+    pooled_classes: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
     # mzML and Thermo raw files
     peptides: Path | None = None
     runs: tuple[MzmlRun, ...] = ()
@@ -609,11 +613,12 @@ def _input_from(data: Mapping, base: Path) -> InputSettings:
         source = None
     reader = (source or {}).get("reader")
     record = {"format": reader if reader in FORMATS else "stored"}
-    if not (set(data) - {"retention_times", "time_scale", "exclude"}):
+    if not (set(data) - {"retention_times", "time_scale", "exclude", "pooled_fasta",
+                         "pooled_classes"}):
         return InputSettings(
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
             time_scale=_time_scale(data, source), spectra=stored, exclude=_exclude(data),
-            **record)
+            **_pooled_candidates(data, base, record["format"]), **record)
     inp = replace(_read_settings(data, base, stored=True), time_scale=_time_scale(data, source))
     if source is None:  # the file's own settings until the record can be read
         return replace(inp, spectra=stored)
@@ -715,8 +720,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         if _none(data.get("data_dir")) is None and not stored:
             raise ProjectError(f"input.data_dir is needed for {fmt}")
         if fmt == "pooled" and not str(_none(data.get("sample")) or "").strip() and not stored:
-            raise ProjectError("input.sample is needed for pooled (the label of every "
-                               "spectrum's sample; the template shows sample = \"pool\")")
+            _pooled_needs_sample(base, data.get("data_dir"))
         _record_paths(data, ("path", "name"), fmt)
         return InputSettings(
             format=fmt, data_dir=_path(base, data.get("data_dir"), "input.data_dir"),
@@ -729,8 +733,10 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
             peptides=_path(base, data.get("peptides"), "input.peptides"),
             retention_times=_path(base, data.get("retention_times"), "input.retention_times"),
             exclude=_exclude(data),
+            **_pooled_candidates(data, base, fmt),
         )
-    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "peptide_region", "sample"}
+    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "peptide_region", "sample",
+                         "pooled_fasta", "pooled_classes"}
     if extra:
         raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are not used by {fmt} "
                            "(the runs give the samples and times)")
@@ -1440,6 +1446,46 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
     return targets
 
 
+def _pooled_candidates(data: Mapping, base: Path, fmt: str) -> dict:
+    """``pooled_fasta`` and ``pooled_classes`` of ``[input]``: for pooled data only (spectra
+    stored from a pooled read count as pooled); classes need the FASTA they are found in."""
+    given = [k for k in ("pooled_fasta", "pooled_classes") if _none(data.get(k)) is not None]
+    if not given:
+        return {}
+    if fmt not in ("pooled", "stored"):
+        raise ProjectError(f"input key(s) {', '.join(given)} are for pooled data, not {fmt}")
+    fasta = _path(base, _none(data.get("pooled_fasta")), "input.pooled_fasta")
+    given_classes = _none(data.get("pooled_classes"))
+    if isinstance(given_classes, Mapping):  # each class's record ids, named
+        classes = {str(name): _strings(ids, f"input.pooled_classes.{name}") or ()
+                   for name, ids in given_classes.items()}
+    else:  # class names, each the text found in its records' ids
+        classes = _strings(given_classes, "input.pooled_classes")
+    if classes is not None and fasta is None:
+        raise ProjectError("input.pooled_classes needs input.pooled_fasta (the classes are "
+                           "made of its records)")
+    return {"pooled_fasta": fasta, "pooled_classes": classes}
+
+
+def _pooled_needs_sample(base, data_dir) -> None:
+    """``input.sample`` is needed for a pooled folder of peptide folders (the label of its one
+    sample), not for a folder of state folders (each named by its folder). Decided from the
+    folder when it can be read; a folder that cannot is left to the read to report."""
+    from .io import ReadError
+    from .io.pooled import pooled_layout
+
+    try:
+        folder = _path(base, data_dir, "input.data_dir")
+        layout = pooled_layout(folder) if folder is not None and folder.is_dir() else None
+    except (ReadError, OSError):
+        layout = None
+    if layout == "peptides":
+        raise ProjectError("input.sample is needed for pooled when data_dir holds peptide "
+                           "folders (the label of every spectrum's sample; the template shows "
+                           "sample = \"pool\"); a data_dir of state folders names each sample "
+                           "by its folder")
+
+
 def folder_entries(project: Project):
     """The entries of a folder-format project: those of the peptide table when it names one
     (pyHXExpress's metadf: file, sample, peptide, ...), else those found in ``data_dir`` by file
@@ -1448,7 +1494,11 @@ def folder_entries(project: Project):
 
     inp = project.input
     if inp.peptides is not None:
-        return read_peptide_table(inp.peptides)
+        entries = read_peptide_table(inp.peptides)
+        if inp.format == "pooled" and inp.data_dir is not None:
+            from .io.pooled import nest_table_entries
+            entries = nest_table_entries(entries, inp.data_dir)
+        return entries
     return scan(inp.data_dir, inp.format, samples=inp.samples,
                 peptide_ranges=inp.peptide_ranges, peptide_region=inp.peptide_region,
                 sample=inp.sample,
@@ -1550,7 +1600,25 @@ def read_input(
 
         spectra = apply_retention_times(spectra, read_retention_times(
             project.input.retention_times))
+    if inp.pooled_fasta is not None:
+        spectra = _with_candidates(spectra, inp)
     return spectra
+
+
+def _with_candidates(spectra: SpectrumSet, inp: InputSettings) -> SpectrumSet:
+    """The spectra with the candidates of ``pooled_fasta`` in their read record (the current
+    file's, also for stored spectra); refused for spectra not read as pooled."""
+    from .io import ReadError
+    from .io.pooled import with_candidates
+
+    reader = (spectra.source or {}).get("reader")
+    if reader != "pooled":
+        raise ProjectError(f"input.pooled_fasta: the spectra were read as {reader or 'unknown'}"
+                           ", not pooled")
+    try:
+        return with_candidates(spectra, inp.pooled_fasta, inp.pooled_classes or ())
+    except ReadError as exc:
+        raise ProjectError(str(exc)) from exc
 
 
 def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
@@ -2043,8 +2111,15 @@ time_scale = "seconds\"""",
 format = "pooled"
 # spectra = "old/results"        # take the raw spectra stored in a bundle (or a spectra
 #                                # file) instead of reading the files below
-data_dir = "pooled"              # a SpecExport folder with peptides of several proteins
-sample = "pool"                  # the sample name given to its entries
+data_dir = "pooled"              # a SpecExport folder with peptides of several proteins:
+#                                # peptide folders, or state folders holding them
+sample = "pool"                  # the sample name given to a folder of peptide folders
+#                                # (state folders are named by their folders)
+# samples = ["state 1"]          # with state folders: only these
+# pooled_fasta = "pool.fasta"    # what may be in the sample: each peptide's possible identities
+# pooled_classes = ["ALPHA", "BETA"]  # class names found in the FASTA's record ids, or
+#                                # each class's records: [input.pooled_classes]
+#                                # ALPHA = ["P00001", "P00002"]
 # peptide_ranges = ["1-10"]
 # peptide_region = [1, 50]
 record_paths = "path"
@@ -2233,8 +2308,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# alpha = 0.05                    # significance of the comparisons",
         '# overlay = ["low", "high", "avg"]  # by-residue comparisons: K=2 low, high; K=1 avg',
         "# overlay_two_only = true         # K=2 values only where two populations are chosen",
-        '# peptide_match = "range"         # compare peptides over the same residues ("range",',
-        '#                                 # mutated or not) or identical sequences ("sequence")',
+        '# peptide_match = "auto"          # compare peptides over the same residues ("range",',
+        '#                                 # mutated or not) or identical sequences ("sequence");',
+        '#                                 # auto: sequence for pooled data, else range',
         '# populations = "best_set"        # how many populations: "population_test" (the',
         '#                                 # default with [run.population_test]), "best_set"',
         '#                                 # (each peptide\'s spectra together; the default',

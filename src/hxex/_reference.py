@@ -48,7 +48,8 @@ _SCAN = "scan"
 # [input] keys by the formats they apply to (the rest apply to every format)
 _INPUT_FORMATS = {
     "data_dir": _FOLDER, "samples": _FOLDER, "peptide_ranges": _FOLDER,
-    "peptide_region": _FOLDER, "sample": "pooled",
+    "peptide_region": _FOLDER, "sample": "pooled", "pooled_fasta": "pooled",
+    "pooled_classes": "pooled",
     "runs": _SCAN, "parents": _SCAN, "target": _SCAN, "fragments": _SCAN, "scans": _SCAN,
     "data_root": _SCAN, "thermo_dir": "thermo",
 }
@@ -75,7 +76,17 @@ _DESCRIPTIONS: dict[str, str] = {
                             'from residue 1 to 10 ("0001-0010" is the same); unset: all',
     "input.peptide_region": "[first, last]: only peptides wholly within these residues; with "
                             "peptide_ranges too, a peptide that matches either; unset: all",
-    "input.sample": "the sample name given to the entries of a pooled folder",
+    "input.pooled_fasta": ("a FASTA of what may be in a pooled sample (isoforms, say): each "
+                           "peptide's possible identities are found in it (columns identity, "
+                           "identity_level, candidates, classes and position_offset in the "
+                           "tables); unset: none"),
+    "input.pooled_classes": ('class names found in the record ids of pooled_fasta, e.g. '
+                             '["ALPHA", "BETA"]; or, to name each class\'s records, the '
+                             "[input.pooled_classes] table (below) instead: a peptide whose "
+                             "candidates all fall in one class is identified to that class; "
+                             "unset: none"),
+    "input.sample": ("the sample name given to the entries of a pooled folder of peptide "
+                     "folders (state folders are named by their folders)"),
     "input.record_paths": 'how the files read are recorded in the bundle: "path" (as given), '
                           '"name" (file names only), or for the scan formats "relative" (to '
                           "data_root)",
@@ -236,7 +247,9 @@ _DESCRIPTIONS: dict[str, str] = {
                             "(the residue's K=2 positions "
                             'and their bootstrap errors, with [analysis.choice]\'s limits)',
     "analysis.peptide_match": 'which peptides are compared: "range" (the same residues, mutated '
-                              'or not) or "sequence" (identical sequences)',
+                              'or not) or "sequence" (identical sequences); "auto": sequence '
+                              'for pooled data (two sequences at one range are different '
+                              'proteins), else range',
     "analysis.modified_peptides": '"separate" (modified forms as states of their own) or '
                                   '"combined" (averaged with the sample)',
     "analysis.controls": "control settings to change for the analysis: [analysis.controls] "
@@ -394,6 +407,12 @@ _INTROS: dict[str, str] = {
                         "default, the same in every figure and against every reference: in "
                         "the order of [analysis] samples (the first black), from the colours "
                         "not chosen here.",
+    "input.pooled_classes": "Each class of the pooled FASTA's records, named: `class = "
+                            "[\"ID\", ...]`, the records by the first word of their > line "
+                            "(`ALPHA = [\"P00001\", \"P00002\"]`). Use it when a class's "
+                            "name is not in its records' ids; use either this table or "
+                            "[input] pooled_classes (class names found in the ids), not both. "
+                            "A record may be in no class.",
     "analysis.fasta": "One FASTA file per sample: `sample = \"file\"` (a run's samples under its "
                       "name, `[analysis.fasta.RUN]`). Use either this table or [analysis] fasta "
                       "(one file for every sample), not both. A file holds one sequence; a "
@@ -567,6 +586,7 @@ def tables() -> list[Table]:
     out.append(Table("input", False, _settings(
         InputSettings, "input", defaults={"data_root": Path(".")}, formats=_INPUT_FORMATS),
         _INTROS["input"]))
+    out.append(Table("input.pooled_classes", False, (), _INTROS["input.pooled_classes"]))
     out.append(Table("input.target", False, _settings(
         MzmlTarget, "input.target", keys=config._TARGET_KEYS), _INTROS["input.target"]))
     out.append(Table("input.runs", True, _settings(MzmlRun, "input.runs"),

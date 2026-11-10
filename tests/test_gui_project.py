@@ -265,6 +265,19 @@ def test_one_fasta_for_every_sample_or_one_per_sample(editor, project):
     assert _data(project)["analysis"]["fasta"] == "one.fasta"  # the table taken out
 
 
+def test_pooled_classes_by_name_text_or_by_their_records(editor, project):
+    """[input] pooled_classes is text in the record ids; [input.pooled_classes] names each
+    class's records, typed as names separated by commas (owner, 2026-11-09)."""
+    _page(editor, "input.pooled_classes")
+    per = editor.list_editor
+    assert per.value.placeholderText() == "its records, separated by commas"
+    per.name.setText("first")
+    per.value.setText("A1, A2")
+    per.add()
+    assert _data(project)["input"]["pooled_classes"] == {"first": ["A1", "A2"]}
+    assert per.grid.item(0, 1).text() == "A1, A2"  # shown as typed
+
+
 def test_the_samples_are_a_list_in_order(editor, project):
     editor.sample_names = lambda: ["S", "V", "WT"]  # the results' samples, as the window gives
     _page(editor, "analysis")

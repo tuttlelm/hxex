@@ -50,7 +50,13 @@ from .outputs import (
     prepare_output,
     replace_outputs,
 )
-from .pooled import CandidateMatch, match_candidates, scan_specexport_pooled
+from .pooled import (
+    CandidateMatch,
+    match_candidates,
+    pooled_layout,
+    scan_specexport_pooled,
+    state_folders,
+)
 from .read import (
     check_data_dir,
     folder_name_disagreements,
@@ -145,6 +151,8 @@ __all__ = [
     "scan_hxexpress",
     "scan_specexport",
     "scan_specexport_pooled",
+    "pooled_layout",
+    "state_folders",
     "sort_entries",
 ]
 

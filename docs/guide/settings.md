@@ -10,6 +10,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 
 - [Top level](#top-level)
 - [`[input]`](#input)
+- [`[input.pooled_classes]`](#inputpooled_classes)
 - [`[input.target]`](#inputtarget)
 - [`[[input.runs]]`](#inputruns)
 - [`[[input.fragments]]`](#inputfragments)
@@ -67,9 +68,11 @@ What to read. Which keys apply depends on the format (the Formats column): folde
 | `samples` | list | unset | folder | only these samples (unset: all) |
 | `peptide_ranges` | list | unset | folder | only these peptides, by their residues: "1-10" selects the peptide from residue 1 to 10 ("0001-0010" is the same); unset: all |
 | `peptide_region` | list | unset | folder | [first, last]: only peptides wholly within these residues; with peptide_ranges too, a peptide that matches either; unset: all |
-| `sample` | text | `""` | pooled | the sample name given to the entries of a pooled folder |
+| `sample` | text | `""` | pooled | the sample name given to the entries of a pooled folder of peptide folders (state folders are named by their folders) |
 | `record_paths` | text | `"path"` | all | how the files read are recorded in the bundle: "path" (as given), "name" (file names only), or for the scan formats "relative" (to data_root) |
 | `time_scale` | text | `"seconds"` | all | "seconds" (real times) or "order" (the times only order the points: uptake drawn by index, kinetics and protection analyses refuse) |
+| `pooled_fasta` | path | unset | pooled | a FASTA of what may be in a pooled sample (isoforms, say): each peptide's possible identities are found in it (columns identity, identity_level, candidates, classes and position_offset in the tables); unset: none |
+| `pooled_classes` | list or table | unset | pooled | class names found in the record ids of pooled_fasta, e.g. ["ALPHA", "BETA"]; or, to name each class's records, the [input.pooled_classes] table (below) instead: a peptide whose candidates all fall in one class is identified to that class; unset: none |
 | `peptides` | path | unset | all | scan formats: the peptide table (CSV), needed; each row is read from the runs of its sample (every run when it has none); folder formats: a table of the files instead of finding them by name |
 | `runs` | list | `[]` | scan | one [[input.runs]] table per file (below) |
 | `parents` | true/false | `true` | scan | read each peptide itself; false reads only its fragments (needs [[input.fragments]]) |
@@ -82,6 +85,11 @@ What to read. Which keys apply depends on the format (the Formats column): folde
 | `rt_elution_windows` | path | unset | all | scan formats: a table of retention windows edited by hand, per sample and file (columns sample, file, peptide, ion, rt_start, rt_end, and drift_start, drift_end for ion-mobility files; minutes and milliseconds). A row names a peptide (its range and sequence: every ion of it in that file, its charge states and fragments alike) or one ion (as the spectrum ids name it: that ion only, for interference at its m/z; with the peptide as well, that peptide's ion only); it replaces the window in that file only (no peak search). The window's elution tab writes it |
 | `spectra` | path | unset | all | take the raw spectra stored by an earlier run (a bundle or a spectra file) instead of reading the input |
 | `exclude` | list | `[]` | all | spectra left out before fitting: [[input.exclude]] rules (below) |
+
+## `[input.pooled_classes]`
+
+Each class of the pooled FASTA's records, named: `class = ["ID", ...]`, the records by the first word of their > line (`ALPHA = ["P00001", "P00002"]`). Use it when a class's name is not in its records' ids; use either this table or [input] pooled_classes (class names found in the ids), not both. A record may be in no class.
+
 
 ## `[input.target]`
 
@@ -437,7 +445,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `out` | text | unset | the output directory (unset: beside the bundle, named after it and the reference: results_analysis_WT, or results_analysis without a reference) |
 | `overlay` | list | `["low", "high", "avg"]` | the values of the by-residue comparisons: "low" and "high" (the K=2 populations' fD), "avg" (K=1), and/or "pop_low", "pop_high" (the populations' shares); by default "low", "high", and "avg" ("avg" alone when ks has no 2) |
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
-| `peptide_match` | text | `"range"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences) |
+| `peptide_match` | text | `"auto"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences); "auto": sequence for pooled data (two sequences at one range are different proteins), else range |
 | `populations` | text | unset | how the number of populations is decided: "population_test" (the population test of each peptide's spectra together, made by [run.population_test]; the default when the run has it), "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two; the default without the test) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
 | `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 (with populations = "population_test" the test's p-values decide instead: below significance / 10 on the side with more populations, above significance x 10 on the other) |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |

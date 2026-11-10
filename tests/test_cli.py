@@ -1137,8 +1137,8 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     assert {"analysis_settings_used.toml", "run_settings_used.toml"} <= set(listed)
     used = load_project(folder / "analysis_settings_used.toml", analysis_only=True)
     # the settings used name the rule the analysis took (no population test: best_set)
-    assert used.analysis == dataclasses.replace(load_project(path).analysis,
-                                                populations="best_set")
+    assert used.analysis == dataclasses.replace(load_project(path).analysis,  # as decided
+                                                populations="best_set", peptide_match="range")
     run_copy = (folder / "run_settings_used.toml").read_text()
     assert run_copy == (tmp_path / "out" / "run_settings_used.toml").read_text()
     # a figure an earlier analysis wrote and this one does not, and a file of the user's
@@ -1668,6 +1668,8 @@ def test_project_file_mistakes_are_named_with_the_fix(tmp_path):
     def project(text, full=False):
         return project_from(tomllib.loads(text if full else head + text), tmp_path)
 
+    (tmp_path / "d" / "0001-0003-MKV").mkdir(parents=True)  # pooled: a folder of peptide folders
+
     for text, message in [
         ("[run.contrls]\nd2o_fraction = 0.9\n",
          "unknown table [run.contrls] in [run] (did you mean [run.controls]?); the tables of "
@@ -1713,8 +1715,8 @@ def test_project_file_mistakes_are_named_with_the_fix(tmp_path):
         ('project = "p"\n[input]\nformat = "mzml"\npeptides = "p.csv"\n[[input.runs]]\n'
          'path = "a.mzML"\n', "input.runs #1 (a.mzML): needs sample"),
         ('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "d"\n',
-         "input.sample is needed for pooled (the label of every spectrum's sample; the "
-         'template shows sample = "pool")'),
+         "input.sample is needed for pooled when data_dir holds peptide folders (the label of "
+         'every spectrum\'s sample; the template shows sample = "pool")'),
         ('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "d"\nsample = " "\n',
          "input.sample is needed for pooled"),
         ('[analysis]\nreference = "WT"\n', "the project file needs an [input] table; a file "

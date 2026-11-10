@@ -669,6 +669,57 @@ def test_a_modified_form_is_paired_with_the_reference_as_a_state_of_its_own():
     assert set(pairs) == {("", "V"), ("", "R pS7")}
     assert set(pairs[("", "R pS7")].sample) == {"R", "R pS7"}
     assert "R pS7" not in set(pairs[("", "V")].sample)
+    # matched by sequence, the modified form shares no peptide with the reference: it is left
+    # out of the pairs (its residue differences are not judged) instead of an empty map
+    by_sequence = paired_residue_maps(up, "R", sequences=SEQUENCE, match="sequence")
+    assert set(by_sequence) == {("", "V")}
+
+
+def test_peptide_match_auto_compares_pooled_data_by_sequence():
+    """[analysis] peptide_match = "auto" (the default): by sequence for pooled data, where two
+    sequences at one range are different proteins, else by range; a setting given is kept."""
+    from types import SimpleNamespace
+
+    from hxex.analysis import AnalysisConfig
+    from hxex.analysis.settings import resolve_match
+
+    def run(reader):
+        return SimpleNamespace(settings=SimpleNamespace(spectra_source={"reader": reader}))
+
+    assert AnalysisConfig().peptide_match == "auto"
+    assert resolve_match("auto", {"": run("pooled")}) == "sequence"
+    assert resolve_match("auto", {"": run("specexport")}) == "range"
+    assert resolve_match("auto", {"a": run("specexport"), "b": run("pooled")}) == "sequence"
+    assert resolve_match("range", {"": run("pooled")}) == "range"
+    with pytest.raises(ValueError, match="peptide_match must be one of auto, range, sequence"):
+        AnalysisConfig(peptide_match="nearest")
+
+
+def test_pooled_analysis_tables_carry_each_peptide_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from hxex.chem import DEFAULT_MODIFICATIONS
+    from hxex.io.pooled import candidates_record
+    from hxex.report.analysis import _with_pooled_identities
+
+    (tmp_path / "pool.fasta").write_text(">A1\nMKVLGGG\n>A2\nMKVLSS\n")
+    record = candidates_record(tmp_path / "pool.fasta", ["A"])
+    runs = {"": SimpleNamespace(settings=SimpleNamespace(
+        spectra_source={"reader": "pooled", "pooled_candidates": record},
+        registry=DEFAULT_MODIFICATIONS))}
+    tables = {"species_uptake": {"run": np.array(["", ""]), "peptide": np.array(["MKVL", "GGG"]),
+                                 "start": np.array([1, 5]), "end": np.array([4, 7]),
+                                 "fD": np.array([0.3, 0.4])},
+              "coverage": {"residue": np.array([1, 2])}}
+    out = _with_pooled_identities(tables, runs)
+    assert list(out["species_uptake"]) == ["run", "peptide", "start", "end", "identity",
+                                           "identity_level", "candidates", "classes",
+                                           "position_offset", "fD"]
+    assert list(out["species_uptake"]["identity"]) == ["A", "A1"]
+    assert list(out["species_uptake"]["identity_level"]) == ["class", "isoform"]
+    assert out["coverage"] is tables["coverage"]
+    plain = {"": SimpleNamespace(settings=SimpleNamespace(spectra_source={"reader": "pooled"}))}
+    assert _with_pooled_identities(tables, plain) is tables
 
 
 def test_comparison_plots():

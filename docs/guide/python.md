@@ -107,8 +107,12 @@ The spectrum ids are in the `spectrum_id` column of `spectra.csv`. A later `hxex
 
 ## Pooled peptides and their proteins
 
-For a pooled SpecExport folder, `hxex.io.match_candidates(entries, "proteins.fasta")` lists the
-FASTA records each peptide could come from (every match, so ambiguous peptides show up):
+A run does this itself when the project file names `pooled_fasta` ([What each peptide may
+be](inputs.md#what-each-peptide-may-be)): the tables carry each peptide's identity, and
+`hxex.report.tables.series_identities(results)` gives them by series. Without a run,
+`hxex.io.match_candidates(entries, "proteins.fasta")` lists the FASTA records each peptide
+could come from (every match, so ambiguous peptides show up), and
+`hxex.io.pooled.identify(peptide, start, record)` gives one peptide's identity:
 
 ```python
 from hxex.io import match_candidates, scan

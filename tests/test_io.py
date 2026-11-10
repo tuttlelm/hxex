@@ -649,6 +649,83 @@ def test_a_pooled_project_reads_its_peptide_table(pooldir):
     assert len(s) == 1 and set(s.sample) == {"mix"} and set(s.charge) == {3}
 
 
+@pytest.fixture
+def statedir(tmp_path):
+    """Pooled data as state folders: two conditions of one pool, side by side."""
+    root = tmp_path / "states"
+    for state, folders in {"alone": ["0001-0004-MKVL", "0010-0012-GGG"],
+                           "with partner": ["0001-0004-MKVL"]}.items():
+        for name in folders:
+            (root / state / name).mkdir(parents=True)
+            for f in ("Non-D-1-z2.csv", "4m-1-z2.csv", "4m-2-z2.csv"):
+                write_spec(root / state / name / f, [(100.0, 1.0), (101.0, 2.0)])
+    (root / "notes").mkdir()  # holds no peptide folders: not a state
+    (root / "pool.fasta").write_text(">A1\nMKVLGGG\n")
+    return root
+
+
+def test_a_pooled_folder_of_state_folders_reads_each_state_as_a_sample(statedir, caplog):
+    assert hio.pooled_layout(statedir) == "states"
+    assert hio.state_folders(statedir) == ["alone", "with partner"]
+    with caplog.at_level("WARNING"):
+        entries = hio.scan(statedir, "pooled")
+    assert not caplog.text
+    assert sorted((e.sample, e.file, e.peptide) for e in entries) == [
+        ("alone", "alone/0001-0004-MKVL", "MKVL"),
+        ("alone", "alone/0010-0012-GGG", "GGG"),
+        ("with partner", "with partner/0001-0004-MKVL", "MKVL"),
+    ]
+    s = hio.read_spectra(entries, statedir, "pooled", project="proj")
+    assert len(s) == 9 and set(s.sample) == {"alone", "with partner"}
+    assert "proj:with partner/0001-0004-MKVL/4m-2-z2.csv" in set(s.spectrum_id)
+    index = hio.spectrum_index(entries, statedir, "pooled", project="proj")
+    assert sorted(index.spectrum_id) == sorted(s.spectrum_id)
+    only = hio.scan(statedir, "pooled", samples=["with partner"])
+    assert {e.sample for e in only} == {"with partner"}
+
+
+def test_a_pooled_sample_name_with_state_folders_is_not_used_and_says_so(statedir, caplog):
+    with caplog.at_level("WARNING"):
+        entries = hio.scan(statedir, "pooled", sample="pool")
+    assert {e.sample for e in entries} == {"alone", "with partner"}
+    assert "input.sample = 'pool' is not used" in caplog.text
+
+
+def test_a_pooled_folder_with_peptide_and_state_folders_reads_the_peptide_folders(statedir,
+                                                                                   caplog):
+    """Peptide folders decide the layout (as before state folders were read); the folders of
+    peptide folders left unread are named."""
+    (statedir / "0020-0022-AAA").mkdir()
+    write_spec(statedir / "0020-0022-AAA" / "4m-1-z2.csv", [(100.0, 1.0)])
+    with caplog.at_level("WARNING"):
+        entries = hio.scan(statedir, "pooled", sample="pool")
+    assert [(e.sample, e.file) for e in entries] == [("pool", "0020-0022-AAA")]
+    assert "not read (alone, with partner)" in caplog.text
+
+
+def test_a_pooled_project_of_state_folders_needs_no_sample(statedir):
+    """[input] sample is needed only for a folder of peptide folders; a peptide table names
+    the peptide folder and its state, as for SpecExport."""
+    from hxex.config import ProjectError, load_project, read_input
+
+    toml = statedir.parent / "hxex.toml"
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n')
+    s = read_input(load_project(toml))
+    assert set(s.sample) == {"alone", "with partner"}
+    (statedir.parent / "files.csv").write_text(
+        "file,sample,peptide,start_seq,end_seq,charge\n"
+        "0001-0004-MKVL,with partner,MKVL,1,4,2\n")
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n'
+                    'peptides = "files.csv"\n')
+    s = read_input(load_project(toml))
+    assert len(s) == 3 and set(s.sample) == {"with partner"}
+    one = statedir / "alone"
+    toml.write_text(f'project = "p"\n[input]\nformat = "pooled"\ndata_dir = "{one}"\n')
+    with pytest.raises(ProjectError, match="input.sample is needed for pooled when data_dir "
+                                           "holds peptide folders"):
+        load_project(toml)
+
+
 def test_match_candidates(pooldir):
     entries = hio.scan_specexport_pooled(pooldir)
     m = hio.match_candidates(entries, pooldir / "pooled.fasta", classes=["ALPHA", "BETA", "OTHER"])
@@ -1211,3 +1288,154 @@ def test_data_on_a_second_worksheet_are_pointed_out(tmp_path):
     Workbook().save(tmp_path / "e.xlsx")
     with pytest.raises(hio.ReadError, match="no time labels|file is empty"):
         hio.read_hxexpress_file(tmp_path / "e.xlsx", ENTRY)
+
+
+# --- pooled identities (docs/ANALYSIS.md "Pooled samples: possible identities") ------------
+
+CANDIDATES = ">ALPHA1 one\nMKVLGGGACK\n>ALPHA2\nMKVLSSGACK\n>BETA1\nWWMKVLPP\n>OTHER9\nQQQ\n"
+
+
+def test_a_pooled_peptide_is_identified_as_far_as_its_sequence_allows(tmp_path):
+    from hxex.io.pooled import candidates_record, identify
+
+    (tmp_path / "pool.fasta").write_text(CANDIDATES)
+    record = candidates_record(tmp_path / "pool.fasta", ["ALPHA", "BETA"])
+    one = identify("GGGA", 5, record)  # only ALPHA1
+    assert (one.identity, one.level, one.candidates, one.offsets) == (
+        "ALPHA1", "isoform", ("ALPHA1",), (0,))
+    both = identify("GACacK", 7, record)  # modX ignored; both ALPHA records
+    assert (both.identity, both.level, both.classes) == ("ALPHA", "class", ("ALPHA",))
+    mixed = identify("MKVL", 1, record)  # two ALPHA and one BETA: no one class
+    assert (mixed.identity, mixed.level, mixed.candidates) == (
+        "ALPHA;BETA", "ambiguous", ("ALPHA1", "ALPHA2", "BETA1"))
+    assert mixed.offsets == (0, 0, 2) and mixed.offset_text == "BETA1:+2"
+    assert identify("YYY", 1, record).level == "none"
+    unclassed = identify("QQQ", 1, record)  # one record, outside every class
+    assert (unclassed.identity, unclassed.level) == ("OTHER9", "isoform")
+    no_classes = identify("GACK", 7, candidates_record(tmp_path / "pool.fasta"))
+    assert (no_classes.identity, no_classes.level) == ("", "ambiguous")
+
+
+def test_a_class_can_name_its_records_when_its_name_is_not_in_their_ids(tmp_path, caplog):
+    """[input.pooled_classes] names each class's records (owner, 2026-11-09: a class's name in
+    the record ids is a coincidence of one FASTA, not a rule)."""
+    from hxex.io.pooled import candidates_record, identify, record_classes
+
+    (tmp_path / "pool.fasta").write_text(CANDIDATES)
+    record = candidates_record(tmp_path / "pool.fasta",
+                               {"first": ["ALPHA1", "ALPHA2"], "second": "BETA1"})
+    assert record["classes"] == ["first", "second"]
+    assert record["class_members"] == {"first": ["ALPHA1", "ALPHA2"], "second": ["BETA1"]}
+    both = identify("GACK", 7, record)
+    assert (both.identity, both.level, both.classes) == ("first", "class", ("first",))
+    mixed = identify("MKVL", 1, record)
+    assert (mixed.identity, mixed.level) == ("first;second", "ambiguous")
+    assert record_classes(record, "OTHER9") == set()  # a record may be in no class
+    # the list form keeps pyHXExpress's rule, text in the ids, and says when a name is in none
+    with caplog.at_level("WARNING"):
+        listed = candidates_record(tmp_path / "pool.fasta", ["ALPHA", "GAMMA"])
+    assert listed["class_members"] == {"ALPHA": ["ALPHA1", "ALPHA2"], "GAMMA": []}
+    assert "'GAMMA' is in no record id of pool.fasta" in caplog.text
+    # a record kept before the members were stored: its classes from the text in the ids
+    old = {k: v for k, v in listed.items() if k != "class_members"}
+    assert record_classes(old, "ALPHA2") == {"ALPHA"}
+    with pytest.raises(hio.ReadError, match="names record.s. ALPHA3 that pool.fasta does not"):
+        candidates_record(tmp_path / "pool.fasta", {"first": ["ALPHA1", "ALPHA3"]})
+    with pytest.raises(hio.ReadError, match="class.es. empty name no record"):
+        candidates_record(tmp_path / "pool.fasta", {"empty": []})
+
+
+def test_pooled_candidates_are_refused_when_they_cannot_name_one_record(tmp_path):
+    from hxex.io.pooled import candidates_record
+
+    (tmp_path / "twice.fasta").write_text(">A1\nMKV\n>A1 again\nMKL\n")
+    with pytest.raises(hio.ReadError, match="record id.s. given twice: A1"):
+        candidates_record(tmp_path / "twice.fasta")
+    (tmp_path / "pool.fasta").write_text(CANDIDATES)
+    with pytest.raises(hio.ReadError, match="each class name must be given once"):
+        candidates_record(tmp_path / "pool.fasta", ["ALPHA", "ALPHA"])
+
+
+def test_pooled_fasta_is_a_pooled_setting_and_lands_in_the_read_record(statedir):
+    from hxex.config import ProjectError, load_project, read_input
+
+    (statedir / "pool.fasta").write_text(">A1\nMKVLGGG\n>B1\nMKVLAA\n")
+    toml = statedir.parent / "hxex.toml"
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n'
+                    'pooled_fasta = "states/pool.fasta"\npooled_classes = ["A", "B"]\n')
+    s = read_input(load_project(toml))
+    record = s.source["pooled_candidates"]
+    assert record["file"] == "pool.fasta" and record["classes"] == ["A", "B"]
+    assert record["records"] == [["A1", "MKVLGGG"], ["B1", "MKVLAA"]]
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n'
+                    'pooled_fasta = "states/pool.fasta"\n'
+                    '[input.pooled_classes]\nfirst = ["A1"]\nsecond = ["B1"]\n')
+    project = load_project(toml)
+    assert project.input.pooled_classes == {"first": ("A1",), "second": ("B1",)}
+    record = read_input(project).source["pooled_candidates"]
+    assert record["class_members"] == {"first": ["A1"], "second": ["B1"]}
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n'
+                    'pooled_classes = ["A"]\n')
+    with pytest.raises(ProjectError, match="pooled_classes needs input.pooled_fasta"):
+        load_project(toml)
+    toml.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "states"\n'
+                    'pooled_fasta = "states/pool.fasta"\n')
+    with pytest.raises(ProjectError, match="pooled_fasta are for pooled data, not specexport"):
+        load_project(toml)
+
+
+def test_pooled_tables_carry_each_series_identity(statedir):
+    """series_identities and the identity columns, from the read record's candidates; other
+    results get no such columns."""
+    from types import SimpleNamespace
+
+    from hxex.io.pooled import candidates_record
+    from hxex.report.tables import _with_identities, series_identities
+
+    (statedir / "pool.fasta").write_text(">A1\nMKVLGGG\n>A2\nMKVLSS\n>B1\nPPGGG\n")
+    record = candidates_record(statedir / "pool.fasta", ["A", "B"])
+    binned = SimpleNamespace(spectrum_id=np.array(["s1", "s2", "s3"]),
+                             peptide=np.array(["MKVL", "MKVL", "GGG"]),
+                             start_seq=np.array([1, 1, 5]))
+    fit = SimpleNamespace(spectrum_id=np.array(["s1", "s2", "s3"]),
+                          data_id=np.array([0, 0, 1]))
+    settings = SimpleNamespace(spectra_source={"reader": "pooled",
+                                               "pooled_candidates": record},
+                               registry=hio_registry())
+    results = SimpleNamespace(binned=binned, fit=fit, settings=settings)
+    known = series_identities(results)
+    assert known[0].identity == "A" and known[1].level == "ambiguous"
+    cols = _with_identities({"data_id": np.array([0, 1]), "charge": np.array([2, 2]),
+                             "mean": np.array([1.0, 2.0])}, results, [0, 1], after="charge")
+    assert list(cols) == ["data_id", "charge", "identity", "identity_level", "candidates",
+                          "classes", "position_offset", "mean"]
+    assert list(cols["candidates"]) == ["A1;A2", "A1;B1"]
+    assert list(cols["position_offset"]) == ["", "B1:-2"]
+    plain = SimpleNamespace(binned=binned, fit=fit,
+                            settings=SimpleNamespace(spectra_source={"reader": "pooled"}))
+    assert series_identities(plain) is None
+    assert list(_with_identities({"charge": np.array([2])}, plain, [0], after="charge")) == [
+        "charge"]
+
+
+def hio_registry():
+    from hxex.chem import DEFAULT_MODIFICATIONS
+
+    return DEFAULT_MODIFICATIONS
+
+
+def test_hxex_check_counts_pooled_identities(statedir, capsys):
+    from hxex import cli
+
+    (statedir / "pool.fasta").write_text(">A1\nMKVLGGG\n>B1\nWWW\n")
+    toml = statedir.parent / "hxex.toml"
+    toml.write_text('project = "p"\n[input]\nformat = "pooled"\ndata_dir = "states"\n'
+                    'pooled_fasta = "states/pool.fasta"\npooled_classes = ["A", "B"]\n')
+    assert cli.main(["check", str(toml)]) == 0
+    out = capsys.readouterr().out
+    assert ("identities     2 peptide sequences against pool.fasta (2 records; classes A, B): "
+            "2 isoform, 0 class, 0 ambiguous, 0 none") in out
+    assert "numbered differently in a candidate: 1: GGG (10)" in out
+    # both peptides fit A1 only: one form, holding both as its own
+    assert ("forms          1, the fewest candidates that explain every peptide (own peptides "
+            "in brackets): A1 (2)") in out

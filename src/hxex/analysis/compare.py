@@ -970,8 +970,16 @@ def paired_residue_maps(
                            only=only, **residue_kw)
         keep = np.array([(str(u), str(s)) in (reference, state)
                          for u, s in zip(both.run, both.sample, strict=True)], dtype=bool)
-        out[state] = replace(both, **{f.name: getattr(both, f.name)[keep] for f in fields(both)
-                                      if getattr(both, f.name) is not None})
+        paired = replace(both, **{f.name: getattr(both, f.name)[keep] for f in fields(both)
+                                  if getattr(both, f.name) is not None})
+        if not len(paired.time_points()):  # no peptide in common at any labelled time (a
+            # modified form against the unmodified reference when matched by sequence)
+            log.info("no peptide of %s is paired with the reference %s at a labelled time "
+                     "(peptide_match = %r): its residue differences are not judged",
+                     ":".join(x for x in state if x), ":".join(x for x in reference if x),
+                     match)
+            continue
+        out[state] = paired
     return out
 
 

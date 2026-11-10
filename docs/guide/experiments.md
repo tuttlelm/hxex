@@ -58,7 +58,8 @@ summed. See [Input formats](inputs.md).
   populations are shown but the choice is only between one and two.
 - Comparisons with a `reference` sample: per peptide (Welch t-test together with a critical
   difference), per residue, per population, with Woods and butterfly plots. `peptide_match =
-  "range"` pairs a mutant's peptide with the reference's over the same residues.
+  "range"` pairs a mutant's peptide with the reference's over the same residues (the default,
+  except for pooled data, which is compared by sequence).
 - Regions and sites (`[[analysis.regions]]`, `[[analysis.sites]]`) are drawn and summarised;
   *hxex* derives none itself.
 - Separate runs compared or pooled: see [Comparing separate runs](comparing-runs.md).
@@ -72,7 +73,9 @@ while keeping their fits. Peptides with a modification written in the sequence (
 or `acK`) are states of their own (`"WT pS12"`) unless `modified_peptides = "combined"`. A
 point mutation is not a modification: the mutant is a sample of its own, and `peptide_match`
 decides whether its peptides are compared with the reference's over the same residues
-(`"range"`, the default) or only where the sequences are identical (`"sequence"`).
+(`"range"`) or only where the sequences are identical (`"sequence"`). The default, `"auto"`,
+is `"range"`, except for pooled data, where it is `"sequence"`: there two sequences at one
+range are different proteins.
 
 ---
 

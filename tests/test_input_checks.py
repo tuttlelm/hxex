@@ -216,8 +216,9 @@ def test_a_fasta_suffix_in_capitals_is_found(tmp_path):
 
 
 def test_pooled_folders_that_will_not_be_read_are_named(tmp_path, caplog):
-    """A pooled folder's peptide folders without SpecExport files are named, and a SpecExport
-    folder of samples given as a pooled one is pointed out."""
+    """A pooled folder's peptide folders without SpecExport files are named, a SpecExport
+    folder of samples given as a pooled one is read as state folders, and a folder of neither
+    is pointed out."""
     pool = tmp_path / "pool"
     (pool / "0001-0003-MKV").mkdir(parents=True)
     (pool / "0001-0003-MKV" / "Non-1-z2.csv").write_text("300.1,5\n300.2,4\n")
@@ -232,14 +233,15 @@ def test_pooled_folders_that_will_not_be_read_are_named(tmp_path, caplog):
     (tmp_path / "specexport").mkdir()
     sample(tmp_path / "specexport", "WT", "MKVLA", ["0001-0003-MKV"])
     with caplog.at_level(logging.WARNING):
-        assert hio.scan(tmp_path / "specexport", "pooled", sample="pool") == []
-    assert ("holds sample folders (WT), not peptide folders: this looks like a SpecExport "
-            'folder: format = "specexport"') in caplog.text
+        states = hio.scan(tmp_path / "specexport", "pooled", sample="pool")
+    assert [(e.sample, e.file) for e in states] == [("WT", "WT/0001-0003-MKV")]
+    assert "holds state folders (WT)" in caplog.text and "'pool' is not used" in caplog.text
     caplog.clear()
     (tmp_path / "nothing").mkdir()
     with caplog.at_level(logging.WARNING):
         assert hio.scan(tmp_path / "nothing", "pooled", sample="pool") == []
-    assert "holds no peptide folders (START-END-SEQUENCE): nothing is read" in caplog.text
+    assert ("holds no peptide folders (START-END-SEQUENCE), and no state folders holding "
+            "them: nothing is read") in caplog.text
 
 
 # --- empty reads ------------------------------------------------------------------------------

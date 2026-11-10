@@ -808,6 +808,109 @@ Every stand-in is checked against the series' time course as stand-ins are now (
 `fd_other_sample` does not count as measured for the protection fit's start (owner, 2026-10-30:
 only expand that pool if needed; may be revisited).
 
+### Pooled samples: possible identities (design, owner 2026-11-09; steps 1-4 built)
+
+**The use case.** A pooled sample holds what *may* be there, not a known list of proteins: a
+pooled FASTA lists every candidate (isoforms, say), and *hxex* gives each peptide the identities
+its sequence allows, "to the extent possible". Often a class can be named (a protein family) but
+not the isoform. Components are not always separable at the peptide or spectrum level: a
+sequence shared by several isoforms is one spectrum, their sum, and its fits describe that
+mixture (a second population may come from isoforms that exchange differently as well as from
+conformations). So a peptide is never assigned to one protein, and nothing is split by protein.
+
+**Residue numbers.** The `START-END` of a pooled peptide folder comes from HDExaminer, numbered
+against an assumed sequence. When the candidates differ by point mutations or modifications
+(the usual case) the numbering is shared and accurate; insertions or deletions break it. The
+numbering is checked per candidate rather than assumed (below).
+
+**Data shapes (both).**
+1. Pooled folders, one per condition: `DATA/START-END-SEQUENCE/TIME-REP-zN.csv`, today's
+   `pooled` format. Several conditions are sibling folders under one parent.
+2. HDExaminer's state exports: `SpecExport/STATE/START-END-SEQUENCE/...` with a FASTA of many
+   records.
+
+Both are one layout seen from the parent: a folder of state (sample) folders, each a folder of
+peptide folders. `format = "pooled"` reads `data_dir` either as peptide folders (one sample,
+named by `sample`, as now) or as state folders (each a sample, as SpecExport; `samples`
+selects), told apart by what the folders hold. Sequences come from the folder names (or a
+peptide table), never cut from the FASTA. Dummy delays (separate experiments entered as
+slightly different times, a workaround in HDExaminer) are not handled by *hxex*: a stand-alone
+script outside *hxex* rearranges such data into state folders (owner, 2026-11-09), and `hxex
+check` gets no warning for close times.
+
+**Identities (in the run).** `[input] pooled_fasta` (the candidates) and `pooled_classes` (the
+class names, text found in the record names, as in pyHXExpress; or the table
+`[input.pooled_classes]` naming each class's records, since a class's name need not be in the
+record names: owner, 2026-11-09). Each peptide sequence
+(modifications ignored; residues tokenised) is matched against every record:
+- `candidates`: the records holding it; `classes`: the classes among them;
+- `identity`: the record when there is one, the class when all candidates share one,
+  otherwise the classes joined (`ambiguous`), or empty (`none`, a warning);
+- `identity_level`: `isoform`, `class`, `ambiguous`, or `none`;
+- `position_offset`: per candidate, its position in the record minus `START` (0 = the folder's
+  numbering holds; otherwise an insertion, a deletion, or another numbering: flagged
+  `position_offset`, the candidate kept).
+
+Stored in the bundle and written in `series.csv`, `spectra.csv`, `uptake.csv`, and the analysis
+tables; `hxex check` gives the counts per level and lists `none` and offset peptides. Measured on
+the private pooled dataset with `match_candidates` (2026-11-09): 263 sequences, 41 isoform, 222
+class, 0 ambiguous, 0 none, no offsets; 21 of 238 ranges hold more than one sequence.
+
+**Comparisons.** Strict by default: pooled data compare peptides by sequence
+(`peptide_match = "sequence"` becomes the default for pooled samples), so two sequences at one
+range are never paired silently. Pooled averages (a class's sequences at one range combined)
+may be useful for trends (owner: "may need revision as we explore the data"); they are a
+separate, labelled comparison, each row naming the sequences on each side, their identity
+levels, and whether both sides hold the same set.
+
+**Figures.**
+- *The forms of the pool* (replaces the class trends first planned; owner, 2026-11-09): a
+  pooled sample is several proteins, so its residue map is made per form of the pool's
+  *minimum set*, the fewest candidates that explain every peptide measured (parsimony, as in
+  proteomics protein inference). Candidates holding a peptide no other holds are required;
+  the rest of the peptides are covered by the fewest further candidates (searched exactly up
+  to 20 undecided groups, else one at a time, warned); candidates holding the same peptides
+  are one form (`A or B`); a set that is not the only one of its size is warned about and the
+  first used. Every peptide, modified or not, is evidence for its candidates. A modified form
+  (`acK40`) is a form of its own on the form it fits (`ALPHA1 acK40` style), its map from the
+  modified peptides and the base form's peptides not covering the site; the other records its
+  peptides fit are kept (`candidates`) and named in the figure title. The set is worked out
+  per run over every sample (the same pool under different conditions), from the peptides the
+  analysis keeps. A form's map uses every peptide it may have given; a peptide only it may
+  have given is its *own*, and only residues covered by own peptides are that form's alone
+  (elsewhere the value is the mixture of the forms sharing the peptides). Each form is
+  compared with the same form of the reference (like with like: an acetylated form with the
+  reference's acetylated form), judged on the shared peptides and gated by the form's peptide
+  comparisons, as other residue comparisons are. Figure: one page per class, one panel per
+  form, every sample's fDavg by residue (as `residues_all`), the own residues marked by a grey
+  strip outlined in black along the bottom (owner chose it over a full-height band, a hatched
+  strip, and a track of the own peptides). The mixture map and the per-sample residue
+  figures are not made for pooled samples. Measured on the private pooled dataset
+  (2026-11-09): seven forms (six isoforms and an acetylated form), the same set in every state
+  and over all of them, the set unique. The effect of a modification or a mutation within one
+  condition (acetylated against unacetylated, one isoform against another) belongs to the
+  head-to-head figures (below).
+- *Head to head, by peptide* (owner open to designs; to show as drafts side by side before
+  settling): pages of panels, one per residue range, for (a) one sequence across conditions
+  and (b) several sequences of one range against each other within a condition. In a panel the
+  x axis is the condition (or time, log, when there are several), one marker shape per
+  sequence and one colour per sample (`[analysis.colours]`), replicates as small points, ±1 se
+  bars; the panel title aligns the sequences with differing residues marked and gives each
+  one's identity. Significance by Welch's test per pair (crosses for not significant, as on the
+  Woods plots); (b) gets a table of its own (`compare_sequences.csv`). Which panels:
+  `[analysis.pooled] head_to_head = "auto"` (every range with several sequences, and every
+  isoform-level sequence) or a list of ranges or sequences.
+
+Built in step 2: the candidates (the FASTA's records and the class names) are kept in the read
+record (`pooled_candidates`), and the identities are worked out from it when tables are written
+(`hxex.report.tables.series_identities`), so the bundle carries what they come from. Changing
+the FASTA or the classes means running again.
+
+**Order.** 1 reader (state folders for pooled), 2 identities in the run + tables + `hxex
+check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-head figures and
+table, 6 the window (identity columns, filter by class and level). Check data: the private
+pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
+
 ## Later parts
 
 - **Comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons

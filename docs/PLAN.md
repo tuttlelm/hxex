@@ -1375,6 +1375,16 @@ Planned, not built:
    peptides overlap and whose peptides agree on the residue at every number they share; `true`
    every sample, `false` none. Not built: telling apart several proteins drawn together on one
    residue axis (samples that are different proteins); no dataset at hand needs it yet.
+30. **Pooled samples: possible identities** (owner, 2026-11-09: prioritised). A pooled FASTA
+   lists what may be in the sample; each peptide gets the identities its sequence allows
+   (isoform, class, or ambiguous), checked against its residue numbers; comparisons by
+   sequence; residue figures per form of the pool and head-to-head figures by peptide; both data shapes (pooled folders and HDExaminer state exports). Design in
+   `docs/ANALYSIS.md` "Pooled samples: possible identities". Built: step 1 (state folders),
+   step 2 (identities in the tables and `hxex check`), step 3 (`peptide_match = "auto"`: by
+   sequence for pooled data; identities in the analysis tables), step 4 (the forms of the pool:
+   a residue map per form of the minimum set of candidates, own residues marked, each form
+   compared with the reference's same form; replaces the class trend figures). Not built:
+   steps 5-6.
 
 ## Risks and open decisions
 

@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | `hxexpress` | folder | HX-Express spreadsheets (`.xlsx`, `.csv`) | the file names, or [a peptide table (CSV)](#listing-the-files-in-a-table) | the column labels of each sheet |
 | `specexport` | folder | an HDExaminer SpecExport folder, one sub-folder per sample | the folder names, cut from each sample's FASTA, or [a peptide table (CSV)](#listing-the-files-in-a-table) | the spectrum file names |
-| `pooled` | folder | a SpecExport folder holding the peptides of several proteins, without samples | the folder names (the sequence is written in them), or [a peptide table (CSV)](#listing-the-files-in-a-table) | the spectrum file names |
+| `pooled` | folder | a SpecExport folder holding the peptides of several proteins, as one sample or one folder per state | the folder names (the sequence is written in them), or [a peptide table (CSV)](#listing-the-files-in-a-table) | the spectrum file names |
 | `mzml` | scan | mzML files from the instrument | [a peptide table (CSV)](#the-peptide-table) | `[[input.runs]]` in the project file, or each scan's own time |
 | `thermo` | scan | Thermo `.raw` files, read directly | [a peptide table (CSV)](#the-peptide-table) | as `mzml` |
 
@@ -264,8 +264,12 @@ charge are refused, naming both.
 
 ## Pooled SpecExport (`pooled`)
 
-For a SpecExport folder that holds the peptides of several proteins (a digest of a mixture,
-for example), without the sample level.
+For SpecExport data that holds the peptides of several proteins, where you know what may be in
+the sample but not for certain (isoforms of a protein, for example). The folder can be laid out
+in two ways, and *hxex* tells them apart by what it holds.
+
+**One sample**: the peptide folders are directly in `data_dir`, and every peptide gets the
+sample name `sample`.
 
 ```toml
 [input]
@@ -282,15 +286,146 @@ pooled/
     ...
 ```
 
-- There is no sample folder and no FASTA. Every peptide gets the sample name `sample`.
+**One folder per state**: `data_dir` holds a folder for each state (sample), and each of those
+holds peptide folders. This is how HDExaminer exports the states of a pooled project, and it is
+also how to read several pooled folders together, one per condition (with and without a binding
+partner, say): put them side by side in one folder and give that folder as `data_dir`. Each
+state is a sample named by its folder; `samples` reads only some of them, and `sample` is not
+used (*hxex* warns if it is set).
+
+```toml
+[input]
+format = "pooled"
+data_dir = "SpecExport"
+# samples = ["alone", "with partner"]   # only these states
+```
+
+```
+SpecExport/
+  alone/
+    0012-0020-ACacKDEFG/
+      Non-D-1-z2.csv
+      60s-1-z2.csv
+  with partner/
+    0012-0020-ACacKDEFG/
+      ...
+```
+
+A folder that holds both peptide folders and state folders is refused: give the folder of one
+or the other.
+
+- There is no FASTA to cut sequences from: *hxex* takes the sequence from the folder name.
 - The sequence is the one in the folder name, `START-END-SEQUENCE`. It may carry modX labels
   (`acK`, or any label of `[[run.registry.residues]]`) and terminal groups (`Ac-...`,
   `...-NH2`). A folder whose sequence cannot be read is
   skipped with a warning; one whose residue count differs from its range is kept, with a warning.
 - The spectrum files, the time tokens and the controls are as in SpecExport.
 
-*hxex* does not work out which protein each pooled peptide comes from: the command line has no
-such step (programmers can use `match_candidates`, [Using *hxex* from Python](python.md)).
+### What each peptide may be
+
+A pooled sample often holds proteins you know may be there but cannot be sure of: isoforms of a
+protein, say. List them all in a FASTA file and name it with `pooled_fasta`; *hxex* then gives
+each peptide the identities its sequence allows, as far as the sequence allows and no further.
+When you can group the candidates into classes (protein families, for example), name the
+classes with `pooled_classes`, in one of two ways. A record is named by the first word of its
+`>` line.
+
+- **By text in the record names**, when each class's name is part of its records' names:
+
+  ```toml
+  [input]
+  format = "pooled"
+  data_dir = "SpecExport"
+  pooled_fasta = "pool.fasta"          # every protein that may be in the sample
+  pooled_classes = ["ALPHA", "BETA"]   # text in the record names: ALPHA1, ALPHA2, BETA1, ...
+  ```
+
+- **By naming each class's records**, when the names do not say (accession numbers, say):
+
+  ```toml
+  [input]
+  format = "pooled"
+  data_dir = "SpecExport"
+  pooled_fasta = "pool.fasta"
+
+  [input.pooled_classes]
+  ALPHA = ["P00001", "P00002"]
+  BETA = ["P00003", "P00004"]
+  ```
+
+  Every record you name must be in the FASTA. A record you name in no class is in no class.
+  In the window, the classes have a page of their own: type the records separated by commas.
+
+Use one form or the other, not both.
+
+For each peptide, *hxex* looks for its sequence in every record (modifications aside) and says:
+
+- **isoform**: one record holds it; the identity is that record.
+- **class**: several records hold it, all of one class; the identity is the class.
+- **ambiguous**: several records hold it, not all of one class (or no classes are named); the
+  identity lists the classes found.
+- **none**: no record holds it. Check the FASTA: a protein may be missing from it.
+
+A peptide is never given to one protein when its sequence fits several: a sequence shared by
+several isoforms is one spectrum, the sum of all of them, and its fits describe that mixture.
+
+*hxex* also checks the residue numbers. The folder names give each peptide's first residue
+(`START`); in each candidate, *hxex* finds where the peptide starts and notes any candidate
+where that differs (`position_offset`, such as `BETA1:+2`). Candidates that differ only by
+point mutations or modifications share one numbering, so the column stays empty; an
+insertion or a deletion, or a FASTA numbered another way, shows there.
+
+`hxex check` counts the peptides at each level and lists those with no candidate and those
+numbered differently. The tables of `hxex run` and `hxex report` (`series.csv`, `spectra.csv`,
+`components.csv`, and `uptake.csv`) gain the columns `identity`, `identity_level`,
+`candidates`, `classes`, and `position_offset`, after `charge`. To change the FASTA or the
+classes later, change them in the project file and run again with `--overwrite`.
+
+`hxex analyse` compares pooled peptides only where the sequences are identical (`[analysis]
+peptide_match`, whose default does this for pooled data), so two isoforms' peptides over the
+same residues are never compared with each other. Its tables that name peptides
+(`species_uptake.csv`, `compare_peptides.csv`, and the protection-factor tables) carry the
+same identity columns, after `end`.
+
+### The forms in a pool
+
+A pooled sample is several proteins, so one residue map of all its peptides would mix them.
+Instead, *hxex* works out the fewest candidates that explain every peptide measured (the
+*minimum set*) and makes a residue map for each:
+
+- A candidate that holds a peptide no other candidate holds must be in the sample.
+- If those do not explain every peptide, *hxex* adds the fewest other candidates that do.
+- Candidates that hold exactly the same peptides cannot be told apart: they are one form,
+  named `ALPHA1 or ALPHA2`.
+- A modified peptide (`acK40`, say) makes a form of its own on the form it fits:
+  `ALPHA1 acK40`. Its map takes the modified peptides, and the base form's other peptides
+  except those covering the modified residue. If the modified peptides also fit candidates
+  outside the set, the figure's title names them.
+
+Each form's map uses every peptide the form may have given. A peptide that another form may
+also have given measures the mixture of the two, and its value appears in both maps. A
+peptide only one form may have given is that form's *own* peptide: only where own peptides
+cover a residue does the value belong to that form alone.
+
+`hxex check` lists the forms, with the number of own peptides of each. It counts every peptide
+it would read; the analysis uses the peptides the filters keep, so its forms can differ when a
+filter removes the only peptide of a candidate. If the set is not the only one of its size,
+`hxex check` lists the others and the analysis warns and uses the first.
+
+`hxex analyse` then writes:
+
+- `pooled_forms.csv`: each form, its members, the candidates its peptides fit, its own and
+  shared peptides, and whether the minimum set is the only one.
+- `residues.csv`: each form's residue values, its sample named `SAMPLE FORM` (`fresh ALPHA1`).
+- `compare_residues.csv` (with a reference): each form against the same form of the
+  reference, judged as other residue comparisons are, on the form's own and shared peptides.
+- `pooled_forms_CLASS_TIME` figures: one page per class, one panel per form, every sample's
+  fD by residue. A grey strip along the bottom of a panel, outlined in black, marks the
+  residues the form's own peptides measure. Forms of no single class go on an `other` page.
+
+The other residue-level figures (coverage, residue profiles, Woods plots, and the
+significance maps) are not drawn for pooled samples: they place every peptide on one
+protein's residue numbers. `[analysis] residue_level = false` turns the forms off as well.
 
 ---
 
@@ -324,8 +459,8 @@ my_peptide.xlsx,WT,Ac-PEPacKTIDE-NH2,1,8,2
 
 | Column | Meaning |
 |---|---|
-| `file` | HX-Express: the spreadsheet's name, in `data_dir`. SpecExport: the peptide folder's name, inside the sample's folder (`0001-0008-PEPKTIDE`). Pooled: the peptide folder's name, in `data_dir` |
-| `sample` | the sample (pooled: used instead of `[input] sample`) |
+| `file` | HX-Express: the spreadsheet's name, in `data_dir`. SpecExport: the peptide folder's name, inside the sample's folder (`0001-0008-PEPKTIDE`). Pooled: the peptide folder's name, in `data_dir` (with state folders, in the folder its `sample` names, as for SpecExport) |
+| `sample` | the sample (pooled: used instead of `[input] sample`; with state folders, the state's folder) |
 | `peptide` | the full sequence: modified residues in modX (`acK`, `pS`) and terminal groups (`Ac-`, `-NH2`) |
 | `start_seq`, `end_seq` | the first and last residue numbers |
 | `charge` | the charge state |

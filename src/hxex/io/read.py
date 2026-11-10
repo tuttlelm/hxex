@@ -40,9 +40,11 @@ def scan(
 ) -> list[PeptideEntry]:
     """List the entries in a data directory of the given format.
 
-    ``fmt='pooled'`` is a SpecExport folder with peptides from several proteins; ``sample`` is
-    the label given to its entries (the other formats take sample names from the data), and
-    ``registry`` the modified residues its folder names may hold.
+    ``fmt='pooled'`` is a SpecExport folder with peptides from several proteins: a folder of
+    peptide folders, whose entries take the label ``sample`` (the other formats take sample
+    names from the data), or a folder of state folders, each a sample
+    (:mod:`hxex.io.pooled`); ``registry`` gives the modified residues its folder names may
+    hold.
     """
     if fmt not in ("hxexpress", "specexport", "pooled"):
         raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
@@ -54,7 +56,8 @@ def scan(
         return scan_specexport(data_dir, samples=samples, peptide_ranges=peptide_ranges,
                                peptide_region=peptide_region, registry=registry)
     if fmt == "pooled":
-        return scan_specexport_pooled(data_dir, sample=sample, peptide_ranges=peptide_ranges,
+        return scan_specexport_pooled(data_dir, sample=sample, samples=samples,
+                                      peptide_ranges=peptide_ranges,
                                       peptide_region=peptide_region,
                                       registry=registry)
     raise ValueError(f"unknown format {fmt!r}; use 'hxexpress', 'specexport' or 'pooled'")
@@ -206,12 +209,13 @@ def _input_path(fmt: str, entry: PeptideEntry) -> str:
 _WHAT = {
     "specexport": "samples (a SAMPLE.fasta beside a SAMPLE folder of START-END-SEQUENCE "
                   "folders)",
-    "pooled": "peptide folders (START-END-SEQUENCE)",
+    "pooled": "peptide folders (START-END-SEQUENCE), or state folders holding them",
     "hxexpress": "HX-Express files (SAMPLE_START-END-PEPTIDE-zCHARGE-text.xlsx or .csv)",
 }
 _SAMPLES_ARE = {
     "specexport": "the FASTA files with their folders",
-    "pooled": "the pooled folder's one sample label, [input] sample",
+    "pooled": "the state folders' names, or for a folder of peptide folders its one label, "
+              "[input] sample",
     "hxexpress": "the start of the file names",
 }
 
@@ -289,7 +293,7 @@ def folder_name_disagreements(entries: Sequence[PeptideEntry], fmt: str, *,
     seen = set()
     for e in entries:
         key = (e.sample, e.file, e.peptide, e.start_seq, e.end_seq)
-        m = _FOLDER_NAME.fullmatch(e.file)
+        m = _FOLDER_NAME.fullmatch(e.file.rsplit("/", 1)[-1])  # pooled: STATE/FOLDER
         if key in seen or m is None:
             continue
         seen.add(key)

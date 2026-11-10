@@ -481,6 +481,52 @@ def _project(args, *, analysis_only: bool = False):
                         spectra=getattr(args, "spectra", None) or None)
 
 
+def _pooled_identity_lines(project, entries) -> list[str]:
+    """``hxex check``'s lines on a pooled project's possible identities: how many peptide
+    sequences are isoform, class, ambiguous or none against ``[input] pooled_fasta``, with the
+    unmatched ones and those numbered differently in a candidate named. Returns the problems
+    (a FASTA that cannot be read); unmatched peptides are only listed."""
+    from .io import ReadError
+    from .io.pooled import LEVELS, candidates_record, identities
+
+    inp = project.input
+    if inp.pooled_fasta is None:
+        _say(f"{'identities':14s} none: [input] pooled_fasta names what may be in the sample")
+        return []
+    try:
+        record = candidates_record(inp.pooled_fasta, inp.pooled_classes or ())
+    except ReadError as exc:
+        return [str(exc)]
+    found = identities({"pooled_candidates": record},
+                       {(e.peptide, e.start_seq) for e in entries},
+                       registry=project.run.registry) or {}
+    counts = Counter(x.level for x in found.values())
+    classes = record["classes"]
+    _say(f"{'identities':14s} {len(found)} peptide sequences against {record['file']} "
+         f"({len(record['records'])} records"
+         + (f"; classes {', '.join(classes)}" if classes else "; no classes named") + "): "
+         + ", ".join(f"{counts.get(level, 0)} {level}" for level in LEVELS))
+    for title, keys in (
+            ("no candidate", sorted(k for k, x in found.items() if x.level == "none")),
+            ("numbered differently in a candidate",
+             sorted(k for k, x in found.items() if x.offset_text))):
+        if keys:
+            shown = ", ".join(f"{pep} ({start})" for pep, start in keys[:5])
+            _say(f"  {title}: {len(keys)}: {shown}" + (", ..." if len(keys) > 5 else ""))
+    from .analysis.pooled import pooled_forms
+
+    forms = pooled_forms([(e.peptide, e.start_seq, e.end_seq, e.modification) for e in entries],
+                         record, registry=project.run.registry)
+    _say(f"{'forms':14s} {len(forms.forms)}, the fewest candidates that explain every peptide "
+         "(own peptides in brackets): "
+         + ", ".join(f"{f.name} ({len(f.own)})" for f in forms.forms))
+    for alternative in forms.alternatives:
+        _say(f"  also a minimum set: {', '.join(alternative)}")
+    if not forms.exact:
+        _say("  found one form at a time (too many candidates to search every set)")
+    return []
+
+
 def cmd_check(args) -> int:
     """Print what the project would read, then every problem found (each a line; the exit
     status says whether there were any)."""
@@ -554,6 +600,8 @@ def cmd_check(args) -> int:
                 _say(f"{'sequences':14s} "
                      + _fasta_note(inp.data_dir, ({"file": p.name}
                                                   for p in _fasta_files(inp.data_dir))))
+            if inp.format == "pooled":
+                problems += _pooled_identity_lines(project, entries)
             problems += _check_peptides(project, entries)
             problems += _check_folder_files(project, entries)
             problems += _check_controls_present(project, roles)

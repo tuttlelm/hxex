@@ -30,6 +30,54 @@ from . import hover
 from .results import Results
 from .series import _control_row, _reps, _time_text
 
+IDENTITY_COLUMNS = ("identity", "identity_level", "candidates", "classes", "position_offset")
+
+
+def series_identities(results: Results) -> dict[int, object] | None:
+    """Each series' possible identity (``data_id`` -> :class:`hxex.io.pooled.PeptideIdentity`)
+    from the candidates of pooled results (``[input] pooled_fasta``); None for other results."""
+    from ..io.pooled import identities
+
+    b, settings = results.binned, results.settings
+    source = settings.spectra_source if settings is not None else None
+    if b is None or not (source or {}).get("pooled_candidates"):
+        return None
+    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    peptide_of: dict[int, tuple[str, int]] = {}
+    for sid, d in zip(results.fit.spectrum_id, results.fit.data_id, strict=True):
+        j = index.get(str(sid))
+        if j is not None and int(d) not in peptide_of:
+            peptide_of[int(d)] = (str(b.peptide[j]), int(b.start_seq[j]))
+    found = identities(source, peptide_of.values(), registry=settings.registry) or {}
+    return {d: found[key] for d, key in peptide_of.items() if key in found}
+
+
+def _with_identities(cols: dict, results: Results, data_ids, *, after: str) -> dict:
+    """``cols`` with the identity columns (:data:`IDENTITY_COLUMNS`) after ``after``, for
+    pooled results with candidates; unchanged otherwise. ``identity``: the record, the class,
+    or the classes (``;``); ``identity_level``: isoform, class, ambiguous or none;
+    ``candidates`` and ``classes`` joined by ``;``; ``position_offset``: the candidates whose
+    numbering differs from the peptide's (``id:+n``)."""
+    known = series_identities(results)
+    if known is None:
+        return cols
+    rows = [known.get(int(d)) for d in data_ids]
+    new = {
+        "identity": [x.identity if x else "" for x in rows],
+        "identity_level": [x.level if x else "" for x in rows],
+        "candidates": [";".join(x.candidates) if x else "" for x in rows],
+        "classes": [";".join(x.classes) if x else "" for x in rows],
+        "position_offset": [x.offset_text if x else "" for x in rows],
+    }
+    out = {}
+    for name, values in cols.items():
+        out[name] = values
+        if name == after:
+            out.update({n: np.array(v, dtype=str) for n, v in new.items()})
+    if after not in cols:
+        out.update({n: np.array(v, dtype=str) for n, v in new.items()})
+    return out
+
 
 def _index_columns(results: Results) -> dict[str, np.ndarray]:
     fit = results.fit
@@ -60,6 +108,7 @@ def _index_columns(results: Results) -> dict[str, np.ndarray]:
     for name in ("drift_start", "drift_end", "mz_calibration_ppm"):
         if name in cols and not np.isfinite(cols[name]).any():
             del cols[name]
+    cols = _with_identities(cols, results, fit.data_id, after="charge")
     cols.update(_target_columns(results))
     cols["review_status"] = np.asarray(results.review_status).astype(str)
     cols["review_K"] = _review_k(results)
@@ -394,7 +443,7 @@ def uptake_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
         out[name] = out[name].astype(str)
     out["data_id"] = out["data_id"].astype(np.int64)
     out["n_replicates"] = out["n_replicates"].astype(np.int64)
-    return out
+    return _with_identities(out, results, out["data_id"], after="charge")
 
 
 def _description(k: int, rank: int) -> str:
@@ -477,7 +526,7 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     out = {name: np.array(values) for name, values in cols.items()}
     for name in ("sample", "peptide_range", "peptide", "controls", "noise_reference"):
         out[name] = out[name].astype(str)
-    return out
+    return _with_identities(out, results, out["data_id"], after="charge")
 
 
 def _range_of(label) -> tuple[int, int] | None:

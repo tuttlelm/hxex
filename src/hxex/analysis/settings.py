@@ -158,7 +158,9 @@ class AnalysisConfig:
       above 0 (HISTORY 137, 144).
     - ``peptide_match``: which peptides the peptide comparisons pair, ``'range'`` (the same
       residues, mutated or not) or ``'sequence'`` (identical sequences only;
-      :func:`compare_peptides`).
+      :func:`compare_peptides`); ``'auto'`` (the default): ``'sequence'`` for pooled data,
+      where two sequences at one range are different proteins, else ``'range'``
+      (:func:`resolve_match`).
     - ``modified_peptides``: ``'separate'`` (modified forms as states of their own at the
       residue level, ``'WT pS12'``) or ``'combined'`` (averaged with the sample's other
       peptides; :func:`residue_map`).
@@ -206,7 +208,7 @@ class AnalysisConfig:
     runs: Mapping[str, str] | None = None
     overlay: tuple[str, ...] = DEFAULT_OVERLAY
     overlay_two_only: bool = True
-    peptide_match: str = "range"
+    peptide_match: str = "auto"
     populations: str | None = None
     borderline_evidence: float = 10.0
     modified_peptides: str = "separate"
@@ -309,8 +311,8 @@ class AnalysisConfig:
             ControlConfig(**self.controls)  # the values must be valid on their own
         if self.modified_peptides not in MODIFIED:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
-        if self.peptide_match not in MATCHES:
-            raise ValueError(f"peptide_match must be one of {', '.join(MATCHES)}")
+        if self.peptide_match not in ("auto", *MATCHES):
+            raise ValueError(f"peptide_match must be one of auto, {', '.join(MATCHES)}")
         if self.populations is not None and self.populations not in POPULATION_RULES:
             raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
@@ -423,3 +425,15 @@ class AnalysisConfig:
                 FragmentAnalysis() if f is True else FragmentAnalysis.from_dict(f))
         return cls(**values)
 
+
+
+def resolve_match(match: str, runs) -> str:
+    """The peptide matching an analysis uses: ``match`` itself unless ``'auto'``, which is
+    ``'sequence'`` when any of ``runs`` (Results, by run name) was read as pooled data (two
+    sequences at one range are then different proteins, never to be paired silently; docs/
+    ANALYSIS.md "Pooled samples: possible identities"), else ``'range'``."""
+    if match != "auto":
+        return match
+    pooled = any(((getattr(r.settings, "spectra_source", None) or {}).get("reader") == "pooled")
+                 for r in runs.values() if getattr(r, "settings", None) is not None)
+    return "sequence" if pooled else "range"

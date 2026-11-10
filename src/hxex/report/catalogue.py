@@ -210,6 +210,18 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] samples", "[analysis.colours]", "[analysis] weight_exponent",
                     "[analysis] times")),
     FigureKind(
+        "pooled_forms", "Residue fD, each form of a pool", ANALYSE,
+        ("pooled_forms_{class}_{time}",),
+        "for pooled samples with candidates ([input] pooled_fasta): one panel per form of the "
+        "pool's minimum set (the fewest candidates that explain every peptide), every sample's "
+        "fDavg by residue from the peptides the form may have given; a grey strip marks the "
+        "residues its own peptides measure (elsewhere the value is a mixture of forms); one "
+        "page per class", "inputs.md#the-forms-in-a-pool",
+        data="for pooled samples whose project names [input] pooled_fasta",
+        changed_by=("[input] pooled_fasta", "[input] pooled_classes", "[analysis] samples",
+                    "[analysis.colours]", "[analysis] weight_exponent", "[analysis] times",
+                    "[analysis] page_size")),
+    FigureKind(
         "choice", "Residue profile with the population choice", ANALYSE,
         ("choice_{sample}_{time}",),
         "the residue profile: K=1, the K=2 ranks, the chosen description and the population",
@@ -332,6 +344,10 @@ KINDS = tuple(dataclasses.replace(
     k, needs=(*k.needs, _RESIDUES), data=f"{k.data}; {_PROTEIN}" if k.data else _PROTEIN,
     changed_by=(*k.changed_by, "[analysis] residue_level"))
     if k.name in _ON_RESIDUES else k for k in KINDS)
+# a pool's forms are proteins of their own: residue_level = false turns them off too
+KINDS = tuple(dataclasses.replace(k, needs=(*k.needs, _RESIDUES),
+                                  changed_by=(*k.changed_by, "[analysis] residue_level"))
+              if k.name == "pooled_forms" else k for k in KINDS)
 
 
 def kind_named(name: str) -> FigureKind:
