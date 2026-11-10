@@ -173,6 +173,20 @@ def test_the_version_names_its_commit(monkeypatch, tmp_path, capsys):
     assert hxex.version_text() == f"hxex {hxex.__version__}" and "hxex_commit" not in _versions()
 
 
+def test_a_command_names_the_commit_it_started_with(monkeypatch, tmp_path):
+    """A checkout that moves during a long command (another branch merged) is not named in
+    what the command writes at its end: the commit is read when the command starts."""
+    from hxex.io.bundle import _versions
+
+    checkout = {"now": "aaaaaaa, 2026-11-10"}
+    monkeypatch.setattr(hxex, "_commit", None)
+    monkeypatch.setattr(hxex, "_commit_from", lambda text: None)
+    monkeypatch.setattr(hxex, "_commit_from_git", lambda package: checkout["now"])
+    cli.main(["info", str(tmp_path / "missing")])  # fails, but only after it started
+    checkout["now"] = "bbbbbbb, 2026-11-10"  # merged while the command ran
+    assert _versions()["hxex_commit"] == "aaaaaaa, 2026-11-10"
+
+
 @pytest.mark.parametrize("value, text", [
     (1800.0, "1800"), (0.4865089041514463, "0.486509"), (0.0036541559618291086, "0.00365416"),
     (523.276543, "523.2765"), (1234.567891, "1234.5679"), (12.3456789, "12.3457"),

@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from . import chem
+from . import chem, commit
 from .bootstrap import (
     BootstrapConfig,
     BootstrapResult,
@@ -1206,6 +1206,7 @@ def run(
     ``analysis`` (an :class:`hxex.analysis.AnalysisConfig`: its filters; None: the defaults).
     Raises ValueError if nothing is left.
     """
+    commit()  # the code this run starts with, not the checkout's state when it writes
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
     moved = None
@@ -1710,6 +1711,7 @@ def resume_bootstrap(
     project file (its ``run_settings_used.toml``)."""
     from .io.bundle import open_bundle
 
+    commit()  # the code this resume starts with, not the checkout's state when it writes
     path = Path(path)
     with open_bundle(path) as b:
         if chosen_k:  # a review table naming scans the bundle's run no longer sums

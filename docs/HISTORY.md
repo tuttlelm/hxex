@@ -8839,3 +8839,19 @@ CSVs or mzML if wanted.
     the test is step 3 of the build order. Checks: tests/test_population_test.py (the
     stepping and its flag, settings and the project file, a three-population spectrum with
     the test deciding two, a set at three flagged at two with its p-values).
+
+347. **A run names the commit it started with (owner, 2026-11-10).** A pooled run of
+    about an hour wrote a bundle whose manifest named a commit merged into the checkout while it
+    ran: `hxex.commit()` reads the commit once per process, at its first call, and the first
+    call came when the bundle was written. The command line (every command), `hxex.run` and
+    `hxex.resume_bootstrap` now read it when they start. This matters beyond the label: a
+    rerun reuses fits only when the recorded software matches (HISTORY 326), so a wrong commit
+    could let a rerun keep fits made by other code. Not covered: modules a run first imports
+    after the checkout moved come from the new code (an editable install reads the files);
+    merge into a checkout only between runs. Check: tests/test_session_f_cli.py.
+    Also: `hxex resume` named changed `[run.controls]` settings among the "[run] setting(s)
+    that differ from the bundle's and are not applied by resume (they need 'hxex run')", then
+    worked the controls out again with them (HISTORY 288): only the message was wrong. Seen
+    when the owner set the pooled dataset's D2O fraction to 0.85 (no fD moved there: every
+    series is measured against a fully deuterated control or a retention stand-in, which the
+    D2O fraction does not enter). Check: tests/test_cli.py (the resume of HISTORY 288).

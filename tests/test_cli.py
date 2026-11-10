@@ -1312,7 +1312,8 @@ def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_
     assert cli.main(["report", str(path), "--overwrite"]) == 0
     err = capsys.readouterr().err
     assert "hxex resume" in err and "[run.controls]" in err
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["resume", str(path)]) == 0
+    assert "not applied" not in capsys.readouterr().err  # resume applies [run.controls]
     with open_bundle(tmp_path / "out") as b:
         after = b.controls()
         assert after.config.d2o_fraction == 0.8

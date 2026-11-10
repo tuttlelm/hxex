@@ -1506,7 +1506,8 @@ def _test_to_resume(project, bundle):
     project's ``[run.population_test]`` when the bundle has no test or one with other settings
     (None: nothing to do), or an exit code when the bundle cannot take it (its fits differ from
     the project's ``[run.fit]``: run again). The other ``[run]`` settings that differ from the
-    bundle's are named in the log, and are not applied."""
+    bundle's are named in the log, and are not applied (the ``[run.controls]`` settings are,
+    by resume itself)."""
     from .io.bundle import bundle_manifest, settings_changed
     from .pipeline import RunConfig
 
@@ -1533,7 +1534,10 @@ def _test_to_resume(project, bundle):
                       "'hxex run --overwrite' (or --keep-previous) for the project's", bundle,
                       ", ".join(fits))
             return EXIT_ERROR
-    other = [c for c in changed if not c.startswith(("bootstrap", "population_test"))]
+    # resume applies these itself: the bootstrap, the test, and the controls (worked out again
+    # from the stored fits when [run.controls] changed, HISTORY 288)
+    other = [c for c in changed
+             if not c.startswith(("bootstrap", "population_test", "controls"))]
     if other:
         log.info("%s: %d [run] setting(s) differ from the bundle's and are not applied by "
                  "resume (they need 'hxex run'): %s", bundle, len(other),
@@ -2384,10 +2388,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _dispatch(args) -> int:
+    from . import commit
     from .hooks import Cancelled
     from .io import OutputError, ReadError
     from .io.bundle import BundleError
 
+    # read the commit now: a checkout that changes during a long command (another branch
+    # merged) would otherwise be named in what the command writes at its end
+    commit()
     try:
         return COMMANDS[args.command](args)
     except Cancelled:

@@ -78,7 +78,9 @@ def _commit_from_git(package: Path) -> str | None:
 def commit() -> str:
     """The commit hxex was installed from and its date (``'3ed39ac, 2026-11-02'``), or empty
     when it is not known: from a download made by git archive (GitHub's zip), or from the git
-    checkout of an editable install."""
+    checkout of an editable install. Read once per process, at the first call: the command
+    line, :func:`hxex.run` and :func:`hxex.resume_bootstrap` call it when they start, so a
+    checkout that moves during a long run is not named in what the run writes."""
     global _commit
     if _commit is None:
         package = Path(__file__).parent
