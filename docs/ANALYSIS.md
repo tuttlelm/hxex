@@ -940,7 +940,7 @@ the FASTA or the classes means running again.
 
 **Order.** 1 reader (state folders for pooled), 2 identities in the run + tables + `hxex
 check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-head figures and
-table, 6 the window (identity columns, filter by class and level). Check data: the private
+table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
 ## Later parts

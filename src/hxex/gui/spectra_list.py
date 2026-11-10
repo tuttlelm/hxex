@@ -265,7 +265,9 @@ class SpectraList(QWidget):
         text = self.search.text().strip()
         if text and not search_matches(text, str(row.get("sample", "")),
                                        str(row.get("peptide_range", "")),
-                                       str(row.get("peptide", "")), str(row.get("spectrum_id"))):
+                                       str(row.get("peptide", "")),
+                                       f"{row.get('spectrum_id')} {row.get('identity', '')} "
+                                       f"{row.get('candidates', '')}"):
             return False
         return all(_passes(row.get(column), rule) for column, rule in self.column_filters.items())
 

@@ -8855,3 +8855,17 @@ CSVs or mzML if wanted.
     when the owner set the pooled dataset's D2O fraction to 0.85 (no fD moved there: every
     series is measured against a fully deuterated control or a retention stand-in, which the
     D2O fraction does not enter). Check: tests/test_cli.py (the resume of HISTORY 288).
+
+348. **Pooled identities in the window (owner, 2026-11-10; step 6 of the pooled design).**
+    The Results tree's peptides carry what they may be (`results_tree.Peptide` identity,
+    identity_level, classes, candidates; from `hxex.report.tables.series_identities`, as the
+    tables give them): a new **identity** column after the sample (its tooltip: the level and
+    every candidate), and two lists beside the filter, the identity level (isoform, class,
+    ambiguous, none; only the levels present) and the class (an ambiguous peptide is in each
+    of its classes). Column and lists are hidden for results without a pooled FASTA, as the
+    fragment columns are for results without fragments. **Find** in the tree and in the list
+    also reads the identity and the candidates (the list already had the identity columns of
+    `spectra.csv` and their column filters, HISTORY 338). Guide gui.md "Results"; PLAN 30.
+    Check: tests/test_gui_results.py (a pooled copy of the module's run results: column,
+    tooltip, the two lists, filtering, a selection clearing them, the list's search; plain
+    results show none of it).

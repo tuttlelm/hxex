@@ -553,6 +553,68 @@ def test_the_fragment_columns_and_filters_show_only_for_fragment_runs(page):
     assert not page.tree.isColumnHidden(COLUMN["spectra"])
 
 
+def _pooled(results, tmp_path, fasta: str, classes: list[str]):
+    """``results`` as if read from pooled data with ``fasta`` as [input] pooled_fasta."""
+    import dataclasses
+
+    from hxex.io.pooled import candidates_record
+
+    (tmp_path / "pool.fasta").write_text(fasta)
+    record = candidates_record(tmp_path / "pool.fasta", classes)
+    source = {"reader": "pooled", "pooled_candidates": record}
+    configs = {**results.settings.configs, "spectra_source": source}
+    return dataclasses.replace(results, settings=dataclasses.replace(results.settings,
+                                                                     configs=configs))
+
+
+def test_pooled_peptides_show_their_identity_and_filter_by_level_and_class(qtbot, results,
+                                                                           tmp_path):
+    """Pooled step 6 (owner, 2026-11-10): the tree names what each pooled peptide may be, and
+    narrows by identity level and class; the list's search finds a peptide by its candidates.
+    Results without a pooled FASTA show neither."""
+    pooled = _pooled(results, tmp_path, ">A1\nRDKVQKEYALGG\n>A2\nRDKVQKEYALSS\n>B1\nMMMMM\n",
+                     ["A", "B"])
+    pep = peptides(pooled)[0]
+    assert (pep.identity, pep.identity_level, pep.classes, pep.candidates) == (
+        "A", "class", "A", "A1;A2")
+    series = pep.series[0]
+    assert shown(pep, series, identity_level="class") and shown(pep, series, pool_class="A")
+    assert not shown(pep, series, identity_level="isoform")
+    assert not shown(pep, series, pool_class="B")
+    assert shown(pep, series, text="a2") and not shown(pep, series, text="b1")
+
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(pooled, None)
+    assert not w.tree.isColumnHidden(COLUMN["identity"])
+    top = w.tree.topLevelItem(0)
+    assert top.text(COLUMN["identity"]) == "A"
+    assert "class level" in top.toolTip(COLUMN["identity"])
+    assert "A1, A2" in top.toolTip(COLUMN["identity"])
+    assert [w.level_filter.itemData(i) for i in range(w.level_filter.count())] == [None, "class"]
+    assert [w.class_filter.itemText(i) for i in range(w.class_filter.count())] == [
+        "every class", "A"]
+    assert w.level_filter.isVisibleTo(w) and w.class_filter.isVisibleTo(w)
+    w.level_filter.setCurrentIndex(1)
+    assert w.tree.topLevelItemCount() == 1
+    w.search.setText("b1")
+    assert w.tree.topLevelItemCount() == 0
+    assert w.select({"sample": pep.sample, "peptide_range": pep.peptide_range})
+    assert w.level_filter.currentIndex() == 0 and not w.search.text()  # cleared to find it
+    qtbot.waitUntil(lambda: bool(w.list.rows), timeout=30000)
+    assert w.list.rows[0]["identity"] == "A"
+    w.list.search.setText("A2")
+    assert w.list.model.rowCount() == len(pooled.fit)
+    w.list.search.setText("B1")
+    assert w.list.model.rowCount() == 0
+
+    plain = ResultsWorkspace()
+    qtbot.addWidget(plain)
+    plain.show_results(results, None)
+    assert plain.tree.isColumnHidden(COLUMN["identity"])
+    assert plain.level_filter.isHidden() and plain.class_filter.isHidden()
+
+
 def test_ranges_sort_by_their_numbers():
     """Residue ranges (and other text with numbers) sort as a person reads them in the list's
     columns, its filter ticks and the fragment figures: 2-12 before 13-30 before 108-127."""

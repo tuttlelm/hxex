@@ -1406,8 +1406,9 @@ Planned, not built:
    sequence for pooled data; identities in the analysis tables), step 4 (the forms of the pool:
    a residue map per form of the minimum set of candidates, own residues marked, each form
    compared with the reference's same form; replaces the class trend figures), step 5 (head to
-   head: sequences of one class at one range side by side, `compare_sequences.csv`). Not
-   built: step 6 (the window).
+   head: sequences of one class at one range side by side, `compare_sequences.csv`), step 6
+   (the window: an identity column in the Results tree, lists for the identity level and the
+   class, identities found by **Find** in the tree and the list).
 
 ## Risks and open decisions
 

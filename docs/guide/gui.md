@@ -180,6 +180,14 @@ example `z=1  c-1:3  ETD, MS2`; one fragment taken from two parent peptides adds
 same, and two lists beside the filter show only one MS level or one ion type (**peptides**: the
 peptides read at MS1). **Find** also finds a fragment (`c-1:3`), a condition, or a parent.
 
+For pooled results with a pooled FASTA (`[input] pooled_fasta`), the **identity** column says
+what each peptide may be: the one record whose sequence holds it, else the class all its
+records fall in, else its classes (rest the pointer on it to see the level and every
+candidate). Two lists beside the filter show only one identity level (**isoform**, **class**,
+**ambiguous**, or **none**) or one class (`[input] pooled_classes`; an ambiguous peptide is in
+each of its classes), and **Find** also finds a peptide by its identity or a candidate's name.
+In **List**, the same columns come from `spectra.csv`, and **Find** finds them too.
+
 - **rejected** counts the spectra the review rejected: your review table, your
   `[[review.exclude]]` rules, and the bundle's own review. Nothing else rejects a spectrum.
 - **left out** gives the spectra `hxex analyse` leaves out with the project file's

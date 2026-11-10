@@ -86,6 +86,14 @@ class Peptide:
     peptide_range: str
     peptide: str
     series: list[Series] = field(default_factory=list)
+    # what a pooled peptide may be ([input] pooled_fasta; empty otherwise), as the tables give
+    # it (:func:`hxex.report.tables.series_identities`): the record, the class or the classes
+    # (";"); its level (isoform, class, ambiguous or none); the classes and the candidate
+    # records, ";"-joined
+    identity: str = ""
+    identity_level: str = ""
+    classes: str = ""
+    candidates: str = ""
 
     def counts(self) -> dict[str, int]:
         return {name: sum(getattr(s, name) for s in self.series)
@@ -96,9 +104,10 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
     """Every peptide of every sample with its series, in the order of the samples and then of
     the residues and charges; ``left``: :func:`left_out` of the results (none left out when
     not given)."""
-    from ..report.tables import series_table
+    from ..report.tables import series_identities, series_table
 
     rows = series_table(results)
+    known = series_identities(results) or {}
     reviewed = _reviewed(results)
     n_left = left_out_counts(results, left)
     targets = series_targets(results)
@@ -107,6 +116,10 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
         key = (str(rows["sample"][r]), str(rows["peptide_range"][r]), str(rows["peptide"][r]))
         pep = out.setdefault(key, Peptide(*key))
         data_id = int(rows["data_id"][r])
+        found = known.get(data_id)
+        if found is not None and not pep.identity_level:
+            pep.identity, pep.identity_level = found.identity, found.level
+            pep.classes, pep.candidates = ";".join(found.classes), ";".join(found.candidates)
         pep.series.append(Series(
             data_id, int(rows["charge"][r] or 0), int(rows["n_spectra"][r]),
             int(rows["n_flagged"][r]), int(rows["n_rejected"][r]), int(rows["n_multi"][r]),
@@ -286,18 +299,26 @@ def _span(peptide_range: str) -> tuple[int, int] | None:
 
 
 def shown(pep: Peptide, series: Series, how: str = "all", text: str = "",
-          ms_level: int | None = None, ion_type: str | None = None) -> bool:
+          ms_level: int | None = None, ion_type: str | None = None,
+          identity_level: str | None = None, pool_class: str | None = None) -> bool:
     """Whether a series is shown under the filter ``how`` (:data:`FILTERS`), the search
     ``text`` (:func:`search_matches`: residues by number, else the sample, residues, peptide,
-    charge, fragment or condition as text), the MS level ``ms_level`` and the ion type
-    ``ion_type`` (None: any; ``''``: peptides, not fragments)."""
+    charge, fragment, condition, or a pooled peptide's identity and candidates as text), the
+    MS level ``ms_level`` and the ion type ``ion_type`` (None: any; ``''``: peptides, not
+    fragments), and for pooled peptides the identity level ``identity_level`` (isoform,
+    class, ambiguous or none) and the class ``pool_class`` (one of the peptide's classes;
+    None: any)."""
     if text and not search_matches(text, pep.sample, pep.peptide_range, pep.peptide,
                                    f"z{series.charge} {series.fragment} {series.condition} "
-                                   f"{series.parent}"):
+                                   f"{series.parent} {pep.identity} {pep.candidates}"):
         return False
     if ms_level is not None and series.ms_level != ms_level:
         return False
     if ion_type is not None and series.ion_type != ion_type:
+        return False
+    if identity_level is not None and pep.identity_level != identity_level:
+        return False
+    if pool_class is not None and pool_class not in pep.classes.split(";"):
         return False
     if how == "flagged":
         return series.n_flagged > 0

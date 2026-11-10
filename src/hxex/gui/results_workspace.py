@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .data_table import DataPanel, cell_text
 from .figure_view import FigurePanel
+from .order import natural_key
 from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
 from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
@@ -48,13 +49,22 @@ log = logging.getLogger(__name__)
 
 TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
              "index": "time points evenly spaced"}
-COLUMNS = ("peptide, charge, time, replicate", "sample", "ion", "MS level", "condition",
-           "parent", "spectra", "flagged", "rejected", "left out", "K > 1", "K", "review", "flags")
+COLUMNS = ("peptide, charge, time, replicate", "sample", "identity", "ion", "MS level",
+           "condition", "parent", "spectra", "flagged", "rejected", "left out", "K > 1", "K",
+           "review", "flags")
 # the columns of fragment series, shown only for results read from mzML or Thermo files
 TARGET_COLUMNS = ("ion", "MS level", "condition", "parent")
 COLUMN = {name: i for i, name in enumerate(COLUMNS)}
+# the identity levels of pooled peptides, in the order the filter lists them
+IDENTITY_LEVELS = {"isoform": "peptides only one record of the pooled FASTA holds",
+                   "class": "peptides several records of one class hold",
+                   "ambiguous": "peptides records of several classes hold",
+                   "none": "peptides no record holds"}
 # what each column holds, as its header's tooltip
 COLUMN_TIPS = {
+    "identity": "what a pooled peptide may be ([input] pooled_fasta): the one record whose "
+                "sequence holds it, else the class all its records fall in, else the classes; "
+                "its level and every candidate in the tooltip",
     "ion": "the fragment ion (c-1:4: ion type and length; M: the precursor), empty for a "
            "peptide read at MS1",
     "MS level": "the MS level of the series' scans (1 for peptides, 2 or 3 for fragments)",
@@ -145,6 +155,19 @@ class ResultsWorkspace(QWidget):
         self.ion_filter.setToolTip(tip("the ion type of the series the tree shows (peptides: the "
                                        "peptides read at MS1)"))
         self.ion_filter.currentIndexChanged.connect(self._fill)
+        # identity level and class: shown for pooled results with candidates
+        self.level_filter = QComboBox()
+        self.level_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.level_filter.setToolTip(tip("what the pooled peptides the tree shows may be: one "
+                                         "isoform, one class, several classes (ambiguous), or "
+                                         "nothing in the pooled FASTA"))
+        self.level_filter.currentIndexChanged.connect(self._fill)
+        self.class_filter = QComboBox()
+        self.class_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.class_filter.setToolTip(tip("the class of the pooled peptides the tree shows ([input] "
+                                         "pooled_classes; an ambiguous peptide is in each of its "
+                                         "classes)"))
+        self.class_filter.currentIndexChanged.connect(self._fill)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find a peptide, residues, sample, or fragment")
         self.search.setClearButtonEnabled(True)
@@ -159,6 +182,8 @@ class ResultsWorkspace(QWidget):
         filters.addWidget(self.filter)
         filters.addWidget(self.ms_filter)
         filters.addWidget(self.ion_filter)
+        filters.addWidget(self.level_filter)
+        filters.addWidget(self.class_filter)
         self.search.setMinimumWidth(200)
         filters.add_filling(self.search)
 
@@ -906,11 +931,35 @@ class ResultsWorkspace(QWidget):
             box.setVisible(targeted)
         for name in TARGET_COLUMNS:
             self.tree.setColumnHidden(COLUMN[name], not targeted)
+        self._fill_pool_filters()
+
+    def _fill_pool_filters(self) -> None:
+        """The identity level and class lists, from the pooled peptides of the results
+        (hidden, with the tree's identity column, when no peptide has an identity)."""
+        levels = {p.identity_level for p in self.tree_data if p.identity_level}
+        classes = sorted({c for p in self.tree_data for c in p.classes.split(";") if c},
+                         key=natural_key)
+        pooled = bool(levels)
+        for box, items, meanings in (
+                (self.level_filter, [("every identity", None)]
+                 + [(f"{x} level", x) for x in IDENTITY_LEVELS if x in levels], IDENTITY_LEVELS),
+                (self.class_filter, [("every class", None)] + [(c, c) for c in classes], {})):
+            box.blockSignals(True)
+            box.clear()
+            for i, (text, value) in enumerate(items):
+                box.addItem(text, value)
+                if value in meanings:
+                    box.setItemData(i, tip(meanings[value]), Qt.ItemDataRole.ToolTipRole)
+            box.blockSignals(False)
+        self.level_filter.setVisible(pooled)
+        self.class_filter.setVisible(pooled and bool(classes))
+        self.tree.setColumnHidden(COLUMN["identity"], not pooled)
 
     def _shown(self, pep: Peptide, s) -> bool:
         """Whether the tree shows the series ``s`` of ``pep`` under the filters and search."""
         return shown(pep, s, self.filter.currentData() or "all", self.search.text(),
-                     self.ms_filter.currentData(), self.ion_filter.currentData())
+                     self.ms_filter.currentData(), self.ion_filter.currentData(),
+                     self.level_filter.currentData(), self.class_filter.currentData())
 
     def _fill(self, *_) -> None:
         self.tree.blockSignals(True)
@@ -923,14 +972,19 @@ class ResultsWorkspace(QWidget):
                 continue
             counts = {n: sum(getattr(s, n) for s in series)
                       for n in ("n_spectra", "n_flagged", "n_rejected", "n_left_out", "n_multi")}
-            top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample, "", "", "",
-                                   "", *_counts(counts), "", "", ""])
+            top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample,
+                                   pep.identity, "", "", "", "", *_counts(counts), "", "", ""])
+            if pep.identity_level:
+                top.setToolTip(COLUMN["identity"], tip(
+                    f"{pep.identity_level} level; candidates: "
+                    + (pep.candidates.replace(";", ", ") or "none")))
             top.setData(0, KIND, "peptide")
             top.setData(0, PAYLOAD, pep)
             top.setToolTip(0, tip(f"{pep.sample} {pep.peptide_range} {pep.peptide}"))
             for s, name in zip(series, _series_names(series), strict=True):
-                child = QTreeWidgetItem([name, "", s.fragment, str(s.ms_level or ""), s.condition,
-                                         s.parent, *_counts(dataclasses.asdict(s)), "", "", ""])
+                child = QTreeWidgetItem([name, "", "", s.fragment, str(s.ms_level or ""),
+                                         s.condition, s.parent, *_counts(dataclasses.asdict(s)),
+                                         "", "", ""])
                 child.setData(0, KIND, "series")
                 child.setData(0, PAYLOAD, (pep, s))
                 child.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
@@ -1347,9 +1401,10 @@ class ResultsWorkspace(QWidget):
         results do not have it (the filter and search are cleared to find it)."""
         if not selection:
             return False
-        if (self.filter.currentIndex() or self.search.text() or self.ms_filter.currentIndex() > 0
-                or self.ion_filter.currentIndex() > 0):
-            for box in (self.filter, self.ms_filter, self.ion_filter):
+        boxes = (self.filter, self.ms_filter, self.ion_filter, self.level_filter,
+                 self.class_filter)
+        if self.search.text() or any(box.currentIndex() > 0 for box in boxes):
+            for box in boxes:
                 box.setCurrentIndex(0 if box.count() else -1)
             self.search.clear()
         for i in range(self.tree.topLevelItemCount()):
