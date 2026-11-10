@@ -1308,15 +1308,29 @@ Planned, not built:
        others; spectra 144 of 171 plus 7. Good enough for a flag. Needs a population-test setting for the last simulated step (today the steps
        follow `k_max`).
      - *complete multimodal*: K = 1 to a `k_max` the user sets (default 3), the simulated test
-       at every step, bootstrap at each spectrum's chosen K. Proposed (not yet confirmed):
-       also `ks = [1, 2]` for every spectrum, because the analysis takes its K = 1 and K = 2
-       errors, and so the comparisons between samples, from the fixed-K bootstraps (HISTORY
-       204; the population tiers and the choice of K need no bootstrap); the chosen K adds a
-       bootstrap only
-       where it is above 2 (a new `ks` form; few spectra: 171 of 26,189 on the benchmark).
-       K above 2 reaches the spectrum and set level and the residue tiers (up to three);
-       the choice, comparisons, and residue values stop at K = 2 (a set of three is compared
-       at K = 2 with a reason).
+       at every step. What it offers above K = 2 (owner, 2026-11-09): each spectrum's fit at
+       its selected K (positions and shares) with errors; each set's average (fDavg) at the
+       set's K with its error (HISTORY 344); the population tiers, up to "three or more" (no
+       "four" unless data need it); between samples, the K = 1 comparison per residue, the
+       peptide comparison of the set averages, and "K differs"
+       (`compare_population_counts`). No residue values or residue comparisons above K = 2:
+       the lever rule (one K = 1 mean between K - 1 shares) and the matching of ranks across
+       peptides do not extend, and no general method is known. Rank-by-rank tests of
+       positions at three were measured and rejected (no power on the benchmark's pairs, rank
+       3 position errors 2.4-3.6 times too small). A test of whether two samples' K >= 3
+       descriptions differ is on hold; the leading candidate (owner's idea) is a distance
+       between the samples' deuteration-population points (earth mover's distance, null by
+       permuting whole replicates), to evaluate on a three-population noise simulation.
+       K belongs to the set wherever spectra are combined (owner): results from K < 3 never
+       decide anything at K >= 3.
+       Bootstrap: each spectrum at its selected K (every run), `ks = [1, 2]` for every
+       spectrum (the analysis takes its K = 1 and K = 2 errors from the fixed-K bootstraps,
+       HISTORY 204), and `[run.bootstrap] set_k` (built, on by default in every run, HISTORY
+       344): the spectra of sets at K >= 3 not selected at the set's K are bootstrapped there,
+       a few (30 spectra on the tutorial). Checked at K = 4 on simulated four-population sets
+       (k_max 4): the test put them at four and their averages matched the truth within
+       0.001. `ks = "all"` rejected (owner: K = 3 for 26,189 spectra to serve about a
+       hundred). Bootstrap errors never choose K.
 
      Measured (timing study, lack_of_fit): the 2-against-3 step is 37-44 % of a complete run
      and put 4 (tutorial) and 16 (benchmark) sets at three, with no residue in a "three" tier.
@@ -1368,8 +1382,12 @@ Planned, not built:
    2-against-3 step alone 37-44 %); 100 bootstrap resamples take 3x the time of 20 on the GPU.
    A benchmark-sized dataset on a CPU: roughly 6 h complete, 8-10 h maximum quality.
 
-   To settle before building: the multimodal bootstrap (`[1, 2]` plus the chosen K);
-   the names.
+   No new `ks` form is needed: every run bootstraps each spectrum at its selected K, and `ks`
+   adds fixed-K bootstraps beside it, so `ks = [1, 2]` already gives a spectrum selected above
+   K = 2 its own errors. To settle before building: the names. Build order: the population
+   test's last simulated step (a setting; today the steps follow `k_max`) with the chi-square
+   2-against-3 flag; the preset key, its expansion, `hxex check`, and the project editor;
+   moving up through `hxex resume`.
 
 29. **Residue-level outputs only for samples that are one protein** (owner, 2026-11-08: coverage,
    redundancy and resolution, and most of `hxex analyse` say nothing for pooled unrelated
