@@ -523,6 +523,8 @@ class MainWindow(QMainWindow):
         project = session.project if session.project and session.project.exists() else None
         results = session.results if session.results and session.results.exists() else None
         self._pending_selection = dict(session.selection)
+        self.project_page.sequence.set_per_line(
+            self._pending_selection.pop("residues_per_line", None))
         self.results_path = None
         self.results_page.show_results(None, None)
         self._show_coverage()
@@ -736,7 +738,8 @@ class MainWindow(QMainWindow):
         return GuiSession(
             project=self.project, results=results,
             workspace=WORKSPACES[self.tabs.currentIndex()],
-            selection={**self.results_page.selection(), **self.results_page.view_settings()},
+            selection={**self.results_page.selection(), **self.results_page.view_settings(),
+                       **self.project_page.sequence.view_settings()},
             layout={"geometry": bytes(self.saveGeometry().toBase64()).decode(),
                     "state": bytes(self.saveState().toBase64()).decode()})
 

@@ -742,3 +742,19 @@ def test_no_page_divider_drags_a_panel_out_of_sight(window):
     splits = window.findChildren(QSplitter)
     assert len(splits) >= 4  # Results, Analysis, the project editor and Tables
     assert not any(s.childrenCollapsible() for s in splits)
+
+
+def test_the_sequence_views_residues_a_line_go_into_the_session(window):
+    """The sequence view's residues a line (owner, 2026-11-10) are kept in the session file
+    when not the default, and a session restores them (without asking the results for a
+    series of that name)."""
+    from hxex.gui.sequence_view import PER_LINE
+    from hxex.gui.session import GuiSession
+
+    view = window.project_page.sequence
+    assert "residues_per_line" not in window.session().selection
+    view.set_per_line(70)
+    assert window.session().selection["residues_per_line"] == 70
+    view.set_per_line(PER_LINE)
+    window._apply(GuiSession(selection={"residues_per_line": 90}))
+    assert view.per_line == 90 and "residues_per_line" not in window._pending_selection

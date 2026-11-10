@@ -146,7 +146,9 @@ the user review table. Choose one on the left to edit it as a grid.
 **Sequence** shows the protein sequence of each sample as the analysis numbers it: from the
 files `[analysis] fasta` names, or, for SpecExport data, the `SAMPLE.fasta` file beside each
 sample's folder; a FASTA numbered by its header (`>NAME/START-END`) starts at START. The
-residues run in blocks of ten, fifty to a line, with their numbers above. Each distinct sequence
+residues run in blocks of ten, fifty to a line, with their numbers above; the list under the
+view gives 30 to 100 residues a line instead (the window's session file keeps your choice).
+Each distinct sequence
 has a row, named by its samples (samples with the same sequence share one), the reference first;
 a residue that differs from the reference's is highlighted, so a mutation stands out, and
 prolines (which have no amide hydrogen to exchange) are in grey. The regions of
@@ -161,6 +163,15 @@ FASTA files again after you change one. A run of SpecExport data keeps each samp
 its results, so the view still shows them when the FASTA files have moved (it says so), and it
 says when a FASTA no longer matches the copy the run kept (the file is shown; run again to read
 the peptides against it).
+
+For pooled data, **Sequence** shows each record of `[input] pooled_fasta` instead, grouped by
+class (`[input] pooled_classes`), with a line between the classes. A residue that differs from
+the first record of its class is highlighted, and clicking a residue lists only the records of
+its class that differ there. When the results are open, each record's coverage runs under it:
+the peptides that record may hold, from every sample, in the record's own numbering (a record
+whose numbering differs from the peptide's has its coverage moved to its own residues). A
+residue covered by a peptide that only this record may hold is drawn in black, so you can see
+where the data tell that record apart from the others.
 
 ## Results
 

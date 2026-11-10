@@ -125,3 +125,96 @@ def test_coverage_runs_under_each_samples_sequence(tmp_path):
     assert "WT: 2 peptide(s), 3-7, 5-8" in said
     assert "WT: not covered" in describe(rows, annotations, 0, 10, coverage)
     assert "covering" not in sequence_html(rows, annotations)  # without results: none
+
+
+def _pooled_project(tmp_path, fasta: str | None) -> object:
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / "pool").mkdir()
+    lines = ['project = "pool"', "", "[input]", 'format = "pooled"', 'data_dir = "pool"',
+             'sample = "S"']
+    if fasta is not None:
+        (tmp_path / "pool.fasta").write_text(fasta, encoding="utf-8")
+        lines += ['pooled_fasta = "pool.fasta"', 'pooled_classes = ["A", "B"]']
+    path = tmp_path / "hxex.toml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+POOL = ">A1\nMKVLGGGPEK\n>B1\nQQMKVLGGG\n>A2\nMKVLSSGPEK\n>A3\nMKVLGGGPEK\n"
+
+
+def test_a_pooled_project_shows_its_records_by_class(tmp_path):
+    """Pooled data (owner, 2026-11-10): the records of [input] pooled_fasta, grouped by class
+    in the order the classes are named, FASTA order within a class, a record identical to
+    another of its class on its row, differences counted from the first of its class."""
+    rows, annotations, message = project_sequences(_pooled_project(tmp_path, POOL))
+    assert [(r.samples, r.group) for r in rows] == [(["A1", "A3"], "A"), (["A2"], "A"),
+                                                   (["B1"], "B")]
+    assert rows[1].differs == {5, 6} and rows[2].differs == set()  # B1 against no other B
+    assert "pool.fasta, in 2 class(es)" in message
+    said = describe(rows, annotations, 1, 5)
+    assert said == "A2 (class A): residue 5, S; differs: A1, A3 G"  # B1 not compared
+    text = sequence_html(rows, annotations)
+    assert "A2" in text and "\n\nB1" in text  # a line between the classes
+    rows, _, message = project_sequences(_pooled_project(tmp_path / "bare", None))
+    assert rows == [] and "[input] pooled_fasta" in message
+
+
+def test_pooled_coverage_is_each_records_in_its_own_numbering(tmp_path):
+    """With pooled results open, each record's coverage is that of the peptides it may hold,
+    moved to its own numbering, a peptide only that record may hold drawn in black."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from hxex.chem import DEFAULT_MODIFICATIONS
+    from hxex.gui.sequence_view import OWN, coverage_of, pooled_coverage_of
+    from hxex.io.pooled import candidates_record
+
+    (tmp_path / "pool.fasta").write_text(POOL, encoding="utf-8")
+    record = candidates_record(tmp_path / "pool.fasta", ["A", "B"])
+    binned = SimpleNamespace(
+        spectrum_id=np.array(["a", "b", "c"]), sample=np.array(["S", "S", "S"]),
+        peptide=np.array(["MKVL", "SSGPEK", "MKVL"]), start_seq=np.array([1, 5, 1]),
+        end_seq=np.array([4, 10, 4]),
+        peptide_range=np.array(["0001-0004", "0005-0010", "0001-0004"]))
+    results = SimpleNamespace(
+        binned=binned, fit=SimpleNamespace(spectrum_id=binned.spectrum_id,
+                                           data_id=np.array([0, 1, 0])),
+        review_status=np.array(["", "", "rejected"]),
+        settings=SimpleNamespace(spectra_source={"reader": "pooled",
+                                                 "pooled_candidates": record},
+                                 registry=DEFAULT_MODIFICATIONS))
+    coverage = coverage_of(results)
+    assert coverage == pooled_coverage_of(results)
+    assert coverage["B1"] == [(3, 6, "0001-0004", False)]  # MKVL starts at B1's residue 3
+    assert coverage["A2"] == [(1, 4, "0001-0004", False), (5, 10, "0005-0010", True)]
+    assert coverage["A1"] == coverage["A3"] == [(1, 4, "0001-0004", False)]
+    rows, annotations, _ = project_sequences(_pooled_project(tmp_path / "project", POOL))
+    text = sequence_html(rows, annotations, coverage=coverage)
+    assert f"color:{OWN};" in text and "only this record may hold" in text
+    assert "(only this record)" in describe(rows, annotations, 1, 6, coverage)
+
+
+def test_the_residues_a_line_are_chosen_in_the_view(qtbot, tmp_path):
+    """Owner, 2026-11-10: how many residues a line holds is a choice of the view (blocks of
+    ten), kept by the window's session only when it is not the default."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from hxex.gui.sequence_view import PER_LINE, SequenceView
+
+    view = SequenceView()
+    qtbot.addWidget(view)
+    view.show_project(_project(tmp_path, ""))
+    assert view.per_line == PER_LINE and view.view_settings() == {}
+    view.set_per_line(80)
+    assert view.view_settings() == {"residues_per_line": 80}
+    long_rows = [type(r)(r.samples, r.residues * 20, r.first) for r in view.rows]
+    lines = [line for line in sequence_html(long_rows, None, per_line=80).splitlines()
+             if line.startswith("WT, M2")]
+    assert len(lines) == 3  # 200 residues at 80 a line
+    view.set_per_line(33)  # not a choice: the default
+    assert view.per_line == PER_LINE
+    view.set_per_line(None)
+    assert view.per_line == PER_LINE
+

@@ -13,6 +13,12 @@ else, for SpecExport, the ``SAMPLE.fasta`` files beside the sample folders; a FA
 its header (``>NAME/START-END``) starts at START. The files come first; a SpecExport run also
 keeps each sample's sequence in its bundle (the read record's ``sequences``), shown when the
 files are not found, and a file that no longer matches it is said (owner, 2026-11-04).
+
+Pooled data (owner, 2026-11-10) show the records of ``[input] pooled_fasta`` instead, grouped
+by class (``[input] pooled_classes``), each record's differences from the first of its class
+highlighted; with results open, each record's coverage is that of the peptides it may hold, in
+its own numbering, the residues only that record's peptides cover in black. How many residues
+a line holds is chosen in the view (:data:`PER_LINE_CHOICES`).
 """
 
 from __future__ import annotations
@@ -30,9 +36,11 @@ from .tips import tip
 log = logging.getLogger(__name__)
 
 PER_LINE = 50  # residues a line: five blocks of ten
+PER_LINE_CHOICES = (30, 40, 50, 60, 70, 80, 90, 100)  # the view's choice: blocks of ten
 REGION_COLOURS = ("#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#76b7b2", "#edc948", "#9c755f")
 DIFFERS, PROLINE, SITE = "#ffd54f", "#9e9e9e", "#c62828"
 COVER, UNCOVERED = "#546e7a", "#e57373"  # coverage blocks, and the dot of a residue not covered
+OWN = "#000000"  # pooled: a residue covered by a peptide only that record may hold
 BLOCKS = "▁▂▃▄▅▆▇█"
 
 
@@ -45,6 +53,9 @@ class SequenceRow:
     residues: tuple[str, ...]
     first: int = 1
     differs: set[int] = field(default_factory=set)  # residue numbers unlike the first row's
+    # pooled: the record's class ('' for a record of no class, and for other data); a row's
+    # differences are counted against the first row of its group
+    group: str = ""
 
     @property
     def last(self) -> int:
@@ -100,6 +111,15 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
         return [], Annotations(), f"The project file does not read: {exc}"
     stored = stored_sequences(loaded.output.bundle)
     annotations = config.annotations if config is not None else Annotations()
+    inputs = loaded.input
+    if (inputs is not None and inputs.format == "pooled"
+            and (config is None or config.fasta is None)):
+        if inputs.pooled_fasta is None:
+            return [], annotations, ("No sequence: name the FASTA of what the pool may hold in "
+                                     "[input] pooled_fasta (and its classes in [input] "
+                                     "pooled_classes).")
+        rows, message = _pooled_rows(inputs)
+        return rows, annotations, message
     found: dict[str, tuple[tuple[str, ...], int]] = {}
     if config is not None and config.fasta is not None:
         try:
@@ -156,20 +176,67 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
             same.samples.append(name)
         else:
             rows.append(SequenceRow([name], residues, first))
-    base = rows[0]
-    for row in rows[1:]:
-        row.differs = {n for n in range(row.first, row.last + 1)
-                       if base.at(n) and row.at(n) and row.at(n) != base.at(n)}
+    _mark_differences(rows)
     return rows, annotations, " ".join(notes)
 
 
-def coverage_of(results) -> dict[str, list[tuple[int, int, str]]]:
+def _pooled_rows(inputs) -> tuple[list[SequenceRow], str]:
+    """The rows of a pooled project: each record of ``[input] pooled_fasta``, grouped by class
+    in the order ``[input] pooled_classes`` names them (records of no class last; a record of
+    several classes in its first), each in FASTA order and numbered from 1; records with one
+    sequence in one class share a row. A message when the file does not read."""
+    from ..io.pooled import candidates_record
+
+    try:
+        record = candidates_record(inputs.pooled_fasta, inputs.pooled_classes or ())
+    except Exception as exc:  # noqa: BLE001 - said in the view
+        return [], f"[input] pooled_fasta does not read: {exc}"
+    members = record.get("class_members") or {}
+    group_of: dict[str, str] = {}
+    for name in record.get("classes") or []:
+        for rid in members.get(name, ()):
+            group_of.setdefault(str(rid), str(name))
+    order = [str(c) for c in record.get("classes") or []]
+    records = sorted(((str(rid), str(seq)) for rid, seq in record["records"]),
+                     key=lambda r: order.index(group_of[r[0]]) if r[0] in group_of
+                     else len(order))  # sorted() is stable: FASTA order within a class
+    rows: list[SequenceRow] = []
+    for rid, seq in records:
+        residues, group = residues_of(seq), group_of.get(rid, "")
+        same = next((r for r in rows if r.residues == residues and r.group == group), None)
+        if same is not None:
+            same.samples.append(rid)
+        else:
+            rows.append(SequenceRow([rid], residues, 1, group=group))
+    _mark_differences(rows)
+    classes = len({r.group for r in rows if r.group})
+    return rows, (f"The records of {Path(inputs.pooled_fasta).name}"
+                  + (f", in {classes} class(es); each differs from the first of its class"
+                     if classes else "") + ".")
+
+
+def _mark_differences(rows: list[SequenceRow]) -> None:
+    """Each row's residues unlike those of the first row of its group (all rows one group for
+    data other than pooled)."""
+    first: dict[str, SequenceRow] = {}
+    for row in rows:
+        base = first.setdefault(row.group, row)
+        if base is not row:
+            row.differs = {n for n in range(row.first, row.last + 1)
+                           if base.at(n) and row.at(n) and row.at(n) != base.at(n)}
+
+
+def coverage_of(results) -> dict[str, list[tuple]]:
     """Each sample's peptides in ``results`` (:class:`hxex.report.Results`) with at least one
     spectrum the review did not reject: ``(first residue, last residue, peptide_range)``,
-    each peptide once whatever its charges, in residue order."""
+    each peptide once whatever its charges, in residue order. For pooled results with a
+    pooled FASTA: each record's peptides instead (:func:`pooled_coverage_of`)."""
     fit, b = results.fit, results.binned
     if b is None:
         return {}
+    pooled = pooled_coverage_of(results)
+    if pooled is not None:
+        return pooled
     index = {str(s): j for j, s in enumerate(b.spectrum_id)}
     status = np.asarray(results.review_status).astype(str)
     sample = np.asarray(b.sample).astype(str)
@@ -182,6 +249,34 @@ def coverage_of(results) -> dict[str, list[tuple[int, int, str]]]:
             continue
         out.setdefault(sample[j], set()).add((int(start[j]), int(end[j]), ranges[j]))
     return {s: sorted(v) for s, v in sorted(out.items())}
+
+
+def pooled_coverage_of(results) -> dict[str, list[tuple]] | None:
+    """Each record of the pooled FASTA with the peptides of ``results`` it may hold (every
+    sample together; a peptide with a spectrum the review did not reject): ``(first residue,
+    last residue, peptide_range, own)`` in the record's own numbering (the peptide's residues
+    moved by the record's offset), ``own`` when no other record holds it. None for results
+    without a pooled FASTA."""
+    from ..report.tables import series_identities
+
+    known = series_identities(results) if getattr(results, "settings", None) else None
+    if known is None:
+        return None
+    fit, b = results.fit, results.binned
+    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    status = np.asarray(results.review_status).astype(str)
+    start, end = np.asarray(b.start_seq), np.asarray(b.end_seq)
+    ranges = np.asarray(b.peptide_range).astype(str)
+    out: dict[str, set[tuple]] = {}
+    for i, (sid, d) in enumerate(zip(map(str, fit.spectrum_id), fit.data_id, strict=True)):
+        j, found = index.get(sid), known.get(int(d))
+        if j is None or found is None or status[i] == "rejected":
+            continue
+        own = len(found.candidates) == 1
+        for record, offset in zip(found.candidates, found.offsets, strict=True):
+            out.setdefault(record, set()).add((int(start[j]) + offset, int(end[j]) + offset,
+                                               ranges[j], own))
+    return {r: sorted(v) for r, v in sorted(out.items())}
 
 
 def _coverage_samples(row: SequenceRow, coverage) -> list[str]:
@@ -201,7 +296,12 @@ def _coverage_samples(row: SequenceRow, coverage) -> list[str]:
 
 def depth(peptides, number: int) -> int:
     """How many of ``peptides`` (:func:`coverage_of`) cover residue ``number``."""
-    return sum(1 for a, b, _ in peptides if a <= number <= b)
+    return sum(1 for p in peptides if p[0] <= number <= p[1])
+
+
+def _own(peptides, number: int) -> bool:
+    """Whether a peptide only this record may hold covers residue ``number`` (pooled)."""
+    return any(len(p) > 3 and p[3] and p[0] <= number <= p[1] for p in peptides)
 
 
 def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE,
@@ -232,6 +332,9 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
             keys.append(f'<span style="color:{COVER};">{BLOCKS[0]}…{BLOCKS[-1]}</span> '
                         f'peptides covering a residue (1 to {top}), '
                         f'<span style="color:{UNCOVERED};">·</span> none')
+            if any(len(p) > 3 and p[3] for v in coverage.values() for p in v):
+                keys.append(f'<span style="color:{OWN};">{BLOCKS[-1]}</span> covered by a '
+                            "peptide only this record may hold")
         out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
                    + "    ".join(keys) + "</span>\n\n")
     start = first - ((first - 1) % per_line)  # lines begin at 1, 51, 101, ...
@@ -239,6 +342,8 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
         numbers = range(line_start, min(line_start + per_line, last + 1))  # not past the end
         out.append(_ruler(numbers, label) + "\n")
         for k, row in enumerate(rows):
+            if k and row.group != rows[k - 1].group:
+                out.append("\n")  # pooled: a line between the classes
             name = ", ".join(row.samples)
             name = name if len(name) <= label else name[:label - 1] + "…"
             cells = []
@@ -297,7 +402,8 @@ def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: 
             d = depth(peptides, n)
             if d:
                 level = BLOCKS[min(len(BLOCKS) - 1, max(0, -(-d * len(BLOCKS) // top) - 1))]
-                cells.append(f'<span style="color:{COVER};">{level}</span>')
+                cells.append(f'<span style="color:{OWN if _own(peptides, n) else COVER};">'
+                             f'{level}</span>')
             else:
                 cells.append(f'<span style="color:{UNCOVERED};">·</span>')
         if (n - start + 1) % 10 == 0:
@@ -322,11 +428,12 @@ def describe(rows: list[SequenceRow], annotations, row: int, number: int,
     there, the regions and site it belongs to, and (``coverage``) the peptides covering it in
     each sample of its row."""
     here = rows[row]
-    parts = [f"{', '.join(here.samples)}: residue {number}, {here.at(number)}"]
+    parts = [f"{', '.join(here.samples)}" + (f" (class {here.group})" if here.group else "")
+             + f": residue {number}, {here.at(number)}"]
     if here.at(number).endswith("P"):
         parts.append("a proline (no amide hydrogen to exchange)")
     others = [f"{', '.join(r.samples)} {r.at(number) or '(none)'}" for i, r in enumerate(rows)
-              if i != row and r.at(number) != here.at(number)]
+              if i != row and r.group == here.group and r.at(number) != here.at(number)]
     if others:
         parts.append("differs: " + "; ".join(others))
     regions = [f"{r.name} ({r.start}–{r.end})" for r in getattr(annotations, "regions", ())
@@ -337,7 +444,8 @@ def describe(rows: list[SequenceRow], annotations, row: int, number: int,
     if site is not None:
         parts.append(f"site {site.label}".rstrip())
     for sample in _coverage_samples(here, coverage):
-        over = [f"{a}-{b}" for a, b, _ in coverage[sample] if a <= number <= b]
+        over = [f"{p[0]}-{p[1]}" + (" (only this record)" if len(p) > 3 and p[3] else "")
+                for p in coverage[sample] if p[0] <= number <= p[1]]
         parts.append(f"{sample}: " + (f"{len(over)} peptide(s), " + ", ".join(over[:8])
                                        + (", ..." if len(over) > 8 else "")
                                        if over else "not covered"))
@@ -346,7 +454,15 @@ def describe(rows: list[SequenceRow], annotations, row: int, number: int,
 
 try:  # the widget (the module's functions above import without Qt)
     from PySide6.QtCore import QUrl
-    from PySide6.QtWidgets import QLabel, QPushButton, QTextBrowser, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import (
+        QComboBox,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QTextBrowser,
+        QVBoxLayout,
+        QWidget,
+    )
 except ImportError:  # pragma: no cover - the gui extra is not installed
     QWidget = object  # type: ignore[assignment,misc]
 
@@ -361,6 +477,14 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.project: Path | None = None
         self.coverage: dict | None = None  # the open results' peptides (coverage_of)
         self._message = ""
+        self.per_line_box = QComboBox()  # residues a line (owner, 2026-11-10)
+        for n in PER_LINE_CHOICES:
+            self.per_line_box.addItem(f"{n} residues a line", n)
+        self.per_line_box.setCurrentIndex(PER_LINE_CHOICES.index(PER_LINE))
+        self.per_line_box.setToolTip(tip("how many residues each line holds (in blocks of "
+                                         "ten); kept in the window's session file"))
+        self.per_line_box.currentIndexChanged.connect(lambda _: self._draw()
+                                                      if self.rows else None)
         self.text = QTextBrowser()
         self.text.setOpenLinks(False)
         self.text.anchorClicked.connect(self._clicked)
@@ -373,7 +497,31 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.text, 1)
         layout.addWidget(self.about)
-        layout.addWidget(refresh)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.per_line_box)
+        buttons.addStretch(1)
+        buttons.addWidget(refresh)
+        layout.addLayout(buttons)
+
+    @property
+    def per_line(self) -> int:
+        """The residues a line the view shows."""
+        return int(self.per_line_box.currentData() or PER_LINE)
+
+    def set_per_line(self, n) -> None:
+        """Show ``n`` residues a line (one of :data:`PER_LINE_CHOICES`; others, and None, the
+        default), as a session file restores it."""
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            n = PER_LINE
+        self.per_line_box.setCurrentIndex(PER_LINE_CHOICES.index(
+            n if n in PER_LINE_CHOICES else PER_LINE))
+
+    def view_settings(self) -> dict:
+        """How the view shows the sequences, for the session (only what differs from the
+        default)."""
+        return {} if self.per_line == PER_LINE else {"residues_per_line": self.per_line}
 
     def show_project(self, project: Path | None) -> None:
         self.project = project
@@ -397,10 +545,12 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
 
     def _draw(self) -> None:
         bar = self.text.verticalScrollBar().value()
-        self.text.setHtml(sequence_html(self.rows, self.annotations, coverage=self.coverage))
+        self.text.setHtml(sequence_html(self.rows, self.annotations, per_line=self.per_line,
+                                        coverage=self.coverage))
         self.text.verticalScrollBar().setValue(bar)
         n = sum(len(r.samples) for r in self.rows)
-        self.about.setText(f"{n} sample(s), {len(self.rows)} distinct sequence(s). "
+        what = "record(s)" if any(r.group for r in self.rows) else "sample(s)"
+        self.about.setText(f"{n} {what}, {len(self.rows)} distinct sequence(s). "
                            + (f"{self._message} " if self._message else "")
                            + ("Coverage from the open results (rejected spectra left out). "
                               if self.coverage else "")
@@ -415,5 +565,6 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
                                     self.coverage))
 
 
-__all__ = ["SequenceRow", "SequenceView", "coverage_of", "depth", "describe",
-           "project_sequences", "residues_of", "sequence_html", "stored_sequences"]
+__all__ = ["PER_LINE_CHOICES", "SequenceRow", "SequenceView", "coverage_of", "depth",
+           "describe", "pooled_coverage_of", "project_sequences", "residues_of",
+           "sequence_html", "stored_sequences"]

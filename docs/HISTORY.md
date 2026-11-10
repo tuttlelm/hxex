@@ -8869,3 +8869,21 @@ CSVs or mzML if wanted.
     Check: tests/test_gui_results.py (a pooled copy of the module's run results: column,
     tooltip, the two lists, filtering, a selection clearing them, the list's search; plain
     results show none of it).
+
+349. **The pooled FASTA in the sequence view; residues a line (owner, 2026-11-10).** The
+    Project page's sequence view showed nothing for pooled projects ("name the FASTA in
+    [analysis] fasta", wrong advice there). Pooled projects without `[analysis] fasta` now show
+    the records of `[input] pooled_fasta` (`sequence_view._pooled_rows`): grouped by class in
+    the order `[input] pooled_classes` names them (records of no class last; FASTA order
+    within a class; identical records of one class on one row), a line between the classes,
+    differences counted from the first record of the class (`SequenceRow.group`), and a
+    clicked residue compared with its class only. With pooled results open, each record's
+    coverage is that of the peptides it may hold, from every sample, moved to its own
+    numbering by the identity's offsets (`pooled_coverage_of`; `coverage_of` returns it for
+    pooled results), and residues covered by a peptide only that record may hold are drawn in
+    black (as the own residues of the forms pages, HISTORY 340). On the private pooled dataset:
+    14 records in two classes, every record covered (44-130 peptides), own peptides on six
+    records. Also (owner): the view's residues a line, a list of 30 to 100 in steps of ten
+    (default 50), kept in the window's session file (`residues_per_line`, only when not the
+    default). Guide gui.md "Project"; checks: tests/test_gui_sequence.py (pooled rows and
+    coverage, residues a line), tests/test_gui.py (the session).
