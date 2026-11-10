@@ -745,7 +745,10 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
 - Back-exchange correction from the controls (control means from K = 1 fits, per-control
   fallbacks with flags); `hxex_updating.py` has no back-exchange correction (item 27). Uptake
   plots are corrected by default (item 31). The fully deuterated retention is combined over a
-  peptide's charge states (`combine_charges`, item 140).
+  peptide's charge states (`combine_charges`, item 140). Without `[run] controls` the data
+  decide whether the correction runs (on when the spectra hold undeuterated and fully
+  deuterated controls; `controls = false` turns it off; HISTORY pending item "The data decide
+  the back-exchange correction").
 - The post-fitting analysis (`hxex_utils.py` and the owner's notebooks): the hybrid rule's
   `delta_crit` uses a robust typical replicate standard deviation (the median of the
   chi-square-scaled variances), not the plain pool of Hageman and Weis, which a few broken

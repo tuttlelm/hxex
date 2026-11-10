@@ -48,6 +48,9 @@ class Settings:
     peak_measure: str = "height"
     # the manifest's ``peak_measure`` record in full ({}: not recorded): :attr:`measure`
     measure_record: dict[str, Any] = field(default_factory=dict)
+    # the manifest's ``controls_choice``: whether the back-exchange correction is on and why,
+    # chosen automatically or set (:class:`hxex.controls.ControlsChoice`; {}: not recorded)
+    controls_choice: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_manifest(cls, manifest: dict[str, Any]) -> Settings:
@@ -58,6 +61,7 @@ class Settings:
             excluded=dict(manifest.get("excluded") or {}),
             peak_measure=str((manifest.get("peak_measure") or {}).get("measure", "height")),
             measure_record=dict(manifest.get("peak_measure") or {}),
+            controls_choice=dict(manifest.get("controls_choice") or {}),
         )
 
     @classmethod
@@ -75,6 +79,7 @@ class Settings:
                           else "height"),
             measure_record=(run.peak_measure.to_dict() if run.peak_measure is not None
                             else {}),
+            controls_choice=dict(getattr(run, "controls_choice", None) or {}),
         )
 
     @property

@@ -50,6 +50,7 @@ from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from .controls import AUTO as AUTO_CONTROLS
 from .hooks import CancelHook, ProgressHook
 from .io.errors import ReadError
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget, _run_file_name, number_replicates
@@ -277,8 +278,18 @@ def run_config_from(data: Mapping) -> RunConfig:
     if isinstance(registry, Mapping) and isinstance(registry.get("residues"), Mapping):
         data = {**data, "registry": {**registry, "residues": _items(registry["residues"])}}
     given = _false_to_none(data, RunConfig)
+    # the back-exchange correction left out (or "auto"): the spectra decide when they are read
+    # (hxex.pipeline.resolve_controls; owner, 2026-11-09)
+    merged["controls"] = AUTO_CONTROLS
     for key, value in given.items():
-        if key in _OPTIONAL_SECTIONS:
+        if key == "controls" and isinstance(value, str):
+            if value != AUTO_CONTROLS:
+                raise ProjectError(f"[run] controls = {_toml_value(value)}: expected "
+                                   f"{_toml_value(AUTO_CONTROLS)} (the default: on when the "
+                                   "data hold undeuterated and fully deuterated controls), "
+                                   "true, false, or a [run.controls] table")
+            merged[key] = AUTO_CONTROLS
+        elif key in _OPTIONAL_SECTIONS:
             if value is None:
                 merged[key] = None
             elif value is True:
@@ -293,7 +304,8 @@ def run_config_from(data: Mapping) -> RunConfig:
         else:
             merged[key] = value
     _check_types({k: v for k, v in given.items() if not (k in _OPTIONAL_SECTIONS
-                                                          and v is True)}, RunConfig, "run")
+                                                          and (v is True or v == AUTO_CONTROLS))},
+                 RunConfig, "run")
     for key, value in merged.items():  # each table's own errors name it
         if isinstance(value, Mapping) and (cls := _section_class(key)) is not None:
             try:
@@ -1846,6 +1858,10 @@ _COMMENTS: dict[str, str] = {
     "run.population_test.seed": "seed of the simulations",
     "run.bootstrap.ks": '"selected" (each measurement at its own K), "all" fitted K, or a '
                         "list of K (fixed-K bootstraps for the analysis)",
+    "run.controls": '"auto" (the default, the key left out): the back-exchange correction is '
+                    "on, with the [run.controls] defaults, when the data hold undeuterated and "
+                    "fully deuterated controls of the peptides, off otherwise (the run's log and "
+                    "hxex check say which); false: off; true or a [run.controls] table: on",
     "run.controls.m0_max": "largest mean (D) of a good undeuterated control, and of each "
                            "undeuterated spectrum (undeut_high)",
     "run.controls.retention_min": "a fixed smallest deuterium retention of a good fully "
@@ -1979,10 +1995,11 @@ _COMMENTS: dict[str, str] = {
 
 # comment lines written before a table's header
 _SECTION_COMMENTS: dict[str, str] = {
-    "run": "Run settings; times are in s, as the measurement times. The back-exchange "
-           "correction, the bootstrap, and the population test are stages that their own "
-           "tables turn on (run.controls, run.bootstrap, and run.population_test, with the "
-           "settings a project changes first); a stage's \"name = false\" here turns it off.",
+    "run": "Run settings; times are in s, as the measurement times. The bootstrap and the "
+           "population test are stages that their own tables turn on (run.bootstrap and "
+           "run.population_test, with the settings a project changes first); the back-exchange "
+           "correction (run.controls) is on by itself when the data hold undeuterated and fully "
+           "deuterated controls. A stage's \"name = false\" here turns it off.",
     "run.picker": "Peak picking: the spectra become sticks at the predicted isotope positions "
                   "(guide: picking-window.md).",
     "run.picker.amide_rules": "Per fragment ion type, whether it keeps the amide N-H at its "
@@ -2002,8 +2019,11 @@ _SECTION_COMMENTS: dict[str, str] = {
                            "(guide: population-test.md). Each spectrum's K is then the test's; "
                            "needs k_min = 1. Slow: ten to twenty times the fit per step.",
     "run.controls": "Back-exchange correction from the undeuterated and fully deuterated "
-                    "controls, fitted at K=1 (guide: back-exchange-correction.md). Deuterium "
-                    "retention here is the fraction of deuterium kept, not a retention time.",
+                    "controls, fitted at K=1 (guide: back-exchange-correction.md). Without "
+                    "this table it is automatic: on, with these defaults, when the data hold "
+                    "undeuterated and fully deuterated controls of the peptides, off otherwise; "
+                    "[run] controls = false turns it off. Deuterium retention here is the "
+                    "fraction of deuterium kept, not a retention time.",
     "run.quality": "Quality flags on every spectrum (guide: outputs.md): poor_fit, "
                    "low_intensity, noise_outlier, mz_shift, off_mz (thresholds in "
                    "[run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is "
@@ -2262,9 +2282,12 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# time = "30 s"',
         "# rep = 2",
         "",
-        "# The three stages below (the back-exchange correction, the bootstrap, and the",
-        "# population test) are off until their heading is switched on: delete the \"# \" in",
-        "# front of the heading, and in front of each setting you change.",
+        "# The back-exchange correction below is automatic: on, with these settings, when the",
+        "# data hold undeuterated and fully deuterated controls of the peptides (hxex check and",
+        "# the run's log say which). Switch its heading on to change a setting (it is then always",
+        "# on); write controls = false under [run] to turn it off. The bootstrap and the",
+        "# population test below are off until their heading is switched on: delete the \"# \"",
+        "# in front of the heading, and in front of each setting you change.",
     ]
     control_times = {
         "undeut_at": ('"5 min"', "the spectra at this time also serve as the undeuterated "
@@ -2604,6 +2627,15 @@ def run_settings_text(manifest: Mapping) -> str:
             "Run settings (hxex.pipeline.RunConfig); times are in s. A stage written \"name = "
             "false\" (bootstrap, population_test, controls, quality) was off.", _LINE_WIDTH,
             initial_indent="# ", subsequent_indent="# ")
+        choice = manifest.get("controls_choice") or {}
+        if choice.get("setting") == AUTO_CONTROLS:  # the spectra decided ([run] controls unset)
+            from .controls import ControlsChoice
+
+            intro += textwrap.wrap(
+                "The project file left [run] controls out, so the spectra decided the "
+                "back-exchange correction: " + ControlsChoice.from_dict(choice).describe()
+                + ". The settings below are those the run used.", _LINE_WIDTH,
+                initial_indent="# ", subsequent_indent="# ")
         lines += [""] + intro + table[len(_section_comment("run")):]
     return "\n".join(lines) + "\n"
 
@@ -2724,8 +2756,12 @@ def describe(project: Project) -> dict[str, Any]:
                             else f"on, {run.population_test.null} null"
                             + (f", {run.population_test.simulations} simulations"
                                if run.population_test.null == "simulated" else "")),
-        "controls": ("off: no back-exchange correction, means in deuterons measured (a "
-                     "[run.controls] table turns it on)" if run.controls is None
+        "controls": ("automatic: the back-exchange correction is on when the data hold "
+                     "undeuterated and fully deuterated controls of the peptides, off otherwise "
+                     "(below; [run] controls = false: always off, a [run.controls] table: "
+                     "always on)" if run.controls == AUTO_CONTROLS
+                     else "off ([run] controls = false): no back-exchange correction, means in "
+                     "measured deuterons" if run.controls is None
                      else "on" + _promotions(run.controls)),
         "quality flags": "off (quality = false)" if run.quality is None else "on",
         "times": ("seconds" if inp.time_scale == "seconds"

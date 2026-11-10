@@ -628,6 +628,11 @@ def set_settings(path: str | Path, changes, unfinished: bool = False) -> list[Ch
     new_text, done = text, []
     for setting, value in changes:
         table, key = _split(setting)
+        if value is not None and setting in SWITCHABLE and setting in live_settings(new_text)[1]:
+            # a value and a table of one name ([run] controls and [run.controls]): TOML holds one
+            raise ProjectError(f"{setting} was not set: the table [{setting}] is switched on; "
+                               f"switch it off first (a # in front of [{setting}] and its "
+                               "settings) to give it a value instead")
         new_text, change = _edited(new_text, table, key,
                                    None if value is None else value_text(value))
         done.append(change)

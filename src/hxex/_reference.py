@@ -605,8 +605,11 @@ def tables() -> list[Table]:
     run = RunConfig().to_dict()
     scalars = [k for k, v in run.items()
                if not isinstance(v, Mapping) and k not in config._OPTIONAL_SECTIONS]
-    out.append(Table("run", False, _settings(RunConfig, "run", keys=scalars, defaults=run),
-                     _SECTION_COMMENTS["run"]))
+    # [run] controls: a value ("auto", false, true) or the [run.controls] table
+    controls = Setting("controls", '"auto", true/false, or table', '`"auto"`',
+                       _COMMENTS["run.controls"])
+    out.append(Table("run", False, (*_settings(RunConfig, "run", keys=scalars, defaults=run),
+                                    controls), _SECTION_COMMENTS["run"]))
     for key, value in run.items():
         if key in scalars:
             continue

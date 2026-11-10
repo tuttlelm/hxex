@@ -302,3 +302,20 @@ def test_a_refused_replacement_is_tried_again_and_written_in_place_at_last(proje
     set_setting(project, "run.bootstrap.n_boot", "30")
     assert "n_boot = 30" in project.read_text()  # in place
     assert not list(project.parent.glob("*.hxex-set"))
+
+
+def test_the_correction_is_turned_off_by_a_run_setting_not_a_missing_table(project):
+    """[run] controls (owner, 2026-11-09): false turns the back-exchange correction off,
+    --default makes it automatic again; while [run.controls] is on, the value is refused with
+    the fix (TOML holds a value or a table of one name, not both)."""
+    assert load_project(project).run.controls == "auto"
+    set_setting(project, "run.controls", "false")
+    assert tomllib.loads(project.read_text())["run"]["controls"] is False
+    assert load_project(project).run.controls is None
+    set_setting(project, "run.controls", None)
+    assert load_project(project).run.controls == "auto"
+    set_setting(project, "run.controls.d2o_fraction", "0.85")
+    before = project.read_text()
+    with pytest.raises(ProjectError, match=r"the table \[run.controls\] is switched on"):
+        set_setting(project, "run.controls", "false")
+    assert project.read_text() == before

@@ -232,6 +232,8 @@ ORDERED = ("analysis.samples",)
 # and writing one form takes the other out of the file (TOML holds one)
 BOTH_FORMS = {"analysis.fasta": "one file per sample",
               "input.pooled_classes": "each class's records named"}
+# a value or a table, as TOML holds one: [run] controls ("auto", false) or [run.controls]
+VALUE_OR_TABLE = (*BOTH_FORMS, "run.controls")
 # tables whose values are files: shown and typed without quotes, with Browse
 PATH_TABLES = ("analysis.fasta",)
 # tables whose values are lists of names: shown and typed as names separated by commas
@@ -369,6 +371,9 @@ class ProjectEditor(QWidget):
         self.on: set[str] = set()
         self.rows: dict[str, SettingRow] = {}
         self.switch: QCheckBox | None = None  # the shown table's on/off switch
+        # [run.controls]'s page: "[run] controls = false" and the state in words
+        self.controls_off: QCheckBox | None = None
+        self.controls_state: QLabel | None = None
         self.list_editor: ListEditor | NamesEditor | None = None
         self._shown_format: str | None = None
         self.watcher = QFileSystemWatcher(self)
@@ -495,6 +500,7 @@ class ProjectEditor(QWidget):
             self.switch.blockSignals(True)
             self.switch.setChecked(self.switch.property("table") in self.on)
             self.switch.blockSignals(False)
+        self._show_controls_state()
 
     @contextlib.contextmanager
     def own_write(self, record: bool = True):
@@ -585,6 +591,7 @@ class ProjectEditor(QWidget):
         if old is not None:
             old.deleteLater()
         self.rows, self.switch, self.list_editor = {}, None, None
+        self.controls_off = self.controls_state = None
         self._shown_format = self.format
         self.page = QWidget()
         form = QVBoxLayout(self.page)
@@ -611,13 +618,25 @@ class ProjectEditor(QWidget):
         form.addWidget(_heading(table.heading))
         if table.intro:
             form.addWidget(_note(plain(table.intro)))
+        if name == "run.controls":  # on by itself when the data hold the controls
+            self.controls_state = _note("")
+            form.addWidget(self.controls_state)
         if name in SWITCHABLE:
-            switch = QCheckBox(f"Use {table.heading} (setting any of its settings switches it on)")
+            words = (f"Use {table.heading} (setting any of its settings switches it on)"
+                     if name != "run.controls" else
+                     "Always on, with these settings (setting any of them switches this on)")
+            switch = QCheckBox(words)
             switch.setChecked(name in self.on)
             switch.setProperty("table", name)
             switch.toggled.connect(lambda on, n=name: self._switch(n, on))
             form.addWidget(switch)
             self.switch = switch
+        if name == "run.controls":
+            off = QCheckBox("Off, whatever the data hold ([run] controls = false)")
+            off.toggled.connect(lambda on: self._edit("run.controls", "false" if on else None))
+            form.addWidget(off)
+            self.controls_off = off
+            self._show_controls_state()
         if table.array:
             self.list_editor = ListEditor(self, table)
             form.addWidget(self.list_editor)
@@ -681,9 +700,9 @@ class ProjectEditor(QWidget):
             return
         changes = [(setting, value)]
         table_off = None  # a table form switched off before the value is written
-        for both in BOTH_FORMS:  # one form replaces the other (said in the log)
+        for both in VALUE_OR_TABLE:  # one form replaces the other (said in the log)
             entries = [k for k in self.values if k.startswith(both + ".")]
-            if setting == both and value is not None and entries:
+            if setting == both and value is not None and (entries or both in self.on):
                 table_off = both
             elif (setting.startswith(both + ".") and value is not None
                   and self.values.get(both) is not None):
@@ -714,6 +733,7 @@ class ProjectEditor(QWidget):
             row = self.rows.get(setting)
             if row is not None:
                 row.show_value(self.values.get(setting))  # as the file still has it
+            self._show_controls_state()
             return
         for change in done:
             log.info("%s", change.describe())
@@ -750,7 +770,7 @@ class ProjectEditor(QWidget):
 
         try:
             with self.own_write() as step:
-                if on and table in BOTH_FORMS and self.values.get(table) is not None:
+                if on and table in VALUE_OR_TABLE and self.values.get(table) is not None:
                     set_settings(self.path, [(table, None)], unfinished=True)  # one form
                 said = switch_table(self.path, table, on)
                 step.what = str(said)
@@ -758,6 +778,28 @@ class ProjectEditor(QWidget):
         except ProjectError as exc:
             log.warning("%s", exc)
         self._after_change()
+
+    def _show_controls_state(self) -> None:
+        """On [run.controls]'s page: whether the correction is automatic, always on or off, from
+        the file, and the "off" box to match."""
+        if self.controls_state is None:
+            return
+        value = self.values.get("run.controls")
+        if value is False:
+            text = "Now: off ([run] controls = false): the values stay in measured deuterons."
+        elif "run.controls" in self.on or value is True:
+            text = "Now: always on, with the settings below."
+        else:
+            text = ("Now: automatic. With this table off, the back-exchange correction is on, "
+                    "with the settings below at their defaults, when the data hold "
+                    "undeuterated and fully deuterated controls of the peptides, and off "
+                    "otherwise; hxex check and the run's log say which. Check d2o_fraction: "
+                    "the default is 0.9.")
+        self.controls_state.setText(text)
+        if self.controls_off is not None:
+            self.controls_off.blockSignals(True)
+            self.controls_off.setChecked(value is False)
+            self.controls_off.blockSignals(False)
 
     def _after_change(self) -> None:
         # the watcher reports the change too, but not at once: show it now

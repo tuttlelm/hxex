@@ -6,10 +6,35 @@ controls. A value at the level of the undeuterated control becomes 0, a value at
 the fully deuterated control becomes the number of exchangeable amides, and everything in
 between is scaled in proportion.
 
-The correction runs only when the project file has a `[run.controls]` table; without one, the
-values stay in deuterons, as measured. Fragment ions are never corrected, with or without the
-table (see [Experiment types](experiments.md)). Where the controls come from, and how to use a
-time point as one, is in [Controls and times](controls.md).
+**When the correction runs.** Without a `[run.controls]` table, the data decide: the correction
+runs, with the default settings, when the spectra read hold undeuterated and fully deuterated
+controls (the `Non-D` and `Full-D` files of a SpecExport or pooled folder, the control labels of
+HX-Express sheets, or `role` in `[[input.runs]]`), and it does not when they do not; the values
+then stay in deuterons, as measured. `hxex check` and the log of `hxex run` say which applies
+and why, for example:
+
+```text
+back-exchange correction: on, automatically: fully deuterated controls found for 52 of 60
+peptides (counted per sample); the others take stand-ins. d2o_fraction is the default 0.9: set
+[run.controls] d2o_fraction if the labelling buffer's D fraction differs; [run] controls = false
+turns the correction off
+```
+
+When the correction switched on by itself, check the D₂O fraction of your labelling buffer: the
+default is 0.9, and series without a good fully deuterated control of their own use it. To set
+it, or any other control setting, switch on the `[run.controls]` table: the correction then
+always runs. To turn the correction off whatever the data hold, write `controls = false` under
+`[run]`:
+
+```toml
+[run]
+controls = false
+```
+
+Fragment ions are never corrected, whatever the setting (see [Experiment types](experiments.md)).
+Where the controls come from, and how to use a time point as one, is in
+[Controls and times](controls.md). A results bundle records whether its correction was chosen
+automatically: `hxex info` shows it, and so does the bundle's `run_settings_used.toml`.
 
 ## How *hxex* judges the controls
 
@@ -206,6 +231,13 @@ the tables again; nothing is refitted, so it takes seconds, not the time of a ru
 fraction changes the corrected values only of peptides without a measured fully deuterated
 control (and the `narrow_component` flag of the [population test](population-test.md); add
 `[run.population_test]` to the resume to make the test again).
+
+Results made without a correction take one the same way: `hxex resume hxex.toml` works the
+controls out when the project now asks for them, either with a `[run.controls]` table or, without
+one, because the results' spectra hold both kinds of control. This is how results made before
+*hxex* chose the correction by itself get it. (A setting that makes a time point serve as a
+control, `undeut_at` or `fulldeut_at`, changes the fits: such results need `hxex run` again.)
+`[run] controls = false` never takes a correction away from existing results: run again.
 
 ## Deamidated fully deuterated controls
 

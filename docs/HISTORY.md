@@ -8692,3 +8692,50 @@ CSVs or mzML if wanted.
     species table (sequence and modification apart), and a form's map cannot hold two
     sequences at one range. Coverage bars' gid gains the sequence
     (`peptide:<start>-<end>:<sequence>`).
+
+343. **The data decide the back-exchange correction (owner, 2026-11-09).** The readers
+    already marked `Non-D`/`Full-D` files (and `role` in `[[input.runs]]`) as controls, but the
+    correction ran only when the project file had a `[run.controls]` table: a project written
+    without it silently left data with fully deuterated controls uncorrected. Now `[run]` without
+    a `controls` key (or `controls = "auto"`) is automatic: `hxex.pipeline.run` decides once the
+    spectra are read (after `[[input.exclude]]`), on with the `[run.controls]` defaults when they
+    hold an undeuterated and a fully deuterated control of a peptide (fragment ions never count:
+    they are never corrected), off otherwise (`hxex.controls.choose_controls`,
+    `pipeline.resolve_controls`). `controls = false` turns it off, a table or `controls = true`
+    turns it on, as before. Said, not silent: the run's log and `hxex check` (a `correction`
+    line) give the state and why, e.g. "on, automatically: fully deuterated controls found for N
+    of M peptides (counted per sample); the others take stand-ins. d2o_fraction is the default
+    0.9: set [run.controls] d2o_fraction if the labelling buffer's D fraction differs; [run]
+    controls = false turns the correction off" or "off, automatically: no fully deuterated
+    controls in the data, ...". Peptides are counted per sample (charge states together),
+    from the spectra in a run and from the control file names in `hxex check` for SpecExport and
+    pooled folders; scan formats are counted by run in `hxex check` (which peptides a run holds
+    is known only when it is read), and HX-Express sheets and stored spectra are left to the
+    run's log. Every path follows one rule: a run, a rerun from stored spectra and the window's
+    run decide in `run`; `hxex resume hxex.toml` decides from the bundle's picked spectra
+    (`pipeline.bundle_controls`) and works the controls out from the stored K = 1 fits when the
+    project's choice differs from the bundle's, including a bundle made without a correction
+    (before this change, or with `controls = false`; a bundle made with time points promoted to
+    controls still needs a run, and `controls = false` never takes a bundle's controls away);
+    an analysis-only file keeps the run's choice. The bundle stores the resolved settings (its
+    `run_settings_used.toml` writes the `[run.controls]` table used, or `controls = false`, with
+    a comment when the spectra decided) and a manifest record `controls_choice` (setting, on,
+    counts, D fraction; absent in older bundles, which load as before), shown by `hxex info`.
+    `hxex.pipeline.RunConfig` keeps None as its default for Python callers; a project file read
+    into one gives `"auto"`. Owner confirmed both (2026-11-10): Python callers keep no
+    correction unless they ask for one (making automatic their default would change many
+    synthetic tests), and `hxex resume` adds the controls to a bundle made without them also when
+    the project gives an explicit `[run.controls]` table (before, it refused and asked for a
+    run). Settings: `[run] controls` is listed in the settings reference (so
+    `hxex set hxex.toml run.controls false` works); the template, the `[run]` and `[run.controls]`
+    comments, and the guide (back-exchange-correction.md, experiments.md, controls.md,
+    statistics.md, first-project.md, tutorial.md, gui.md) describe it. The window's
+    `[run.controls]` page says which state the file is in ("automatic", "always on", "off"),
+    its box reads "Always on, with these settings", and "Off, whatever the data hold" writes
+    `controls = false` (each form takes the other out of the file, as TOML holds one).
+    Results change for projects without `[run.controls]` whose data hold both kinds of control:
+    their values become corrected on the next run, or the next `hxex resume hxex.toml`. Checks:
+    tests/test_controls.py (the choice), tests/test_run.py (run decides and records; resume adds
+    the controls to a bundle made without them), tests/test_cli.py (the check lines; a run with
+    `controls = false` set by hxex set, report's warning, resume, info), tests/test_gui_project.py
+    (the page), and the existing tests updated where they assumed no table meant no correction.

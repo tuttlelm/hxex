@@ -127,7 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "K its [review] table chooses where that is missing, and the population "
                         "test with its [run.population_test] settings (made again only if they "
                         "changed), and its controls are worked out again when its "
-                        "[run.controls] changed; the fits kept. Quality flags made by an earlier "
+                        "[run.controls] changed (or, without the table, when the bundle's "
+                        "spectra hold the controls and it has none); the fits kept. Quality "
+                        "flags made by an earlier "
                         "version of hxex are assessed again either way")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
@@ -546,6 +548,7 @@ def cmd_check(args) -> int:
     for key, value in lines.items():
         _say(f"{key:14s} {value}")
     inp = project.input
+    peptide_roles: dict | None = None  # the control roles of each peptide (folder formats)
     if inp is None:
         _say(f"{'input':14s} none (a project file for hxex analyse)")
     elif inp.spectra is not None:
@@ -580,7 +583,10 @@ def cmd_check(args) -> int:
                                      peptide_region=inp.peptide_region)
             samples = Counter(e.sample for e in entries)
             _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
-            roles = _folder_control_files(inp, entries)
+            peptide_roles = {}
+            roles = _folder_control_files(inp, entries, peptide_roles)
+            if roles is None:
+                peptide_roles = None
             for s, n in sorted(samples.items()):
                 _say(f"  {s or '(no sample)'}: {n}" + _control_file_text(roles, s))
             if roles is None:
@@ -626,6 +632,8 @@ def cmd_check(args) -> int:
             from .exclusions import SpectrumIndex
 
             problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
+    if inp is not None:
+        _say(f"{'correction':14s} {_correction_text(project, peptide_roles)}")
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     if inp is not None and inp.rt_elution_windows is not None:
@@ -796,12 +804,12 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
     ``[[input.exclude]]`` rules leave."""
     import dataclasses
 
-    from .controls import apply_control_roles
+    from .controls import ControlConfig, apply_control_roles
     from .exclusions import matches, why_nothing
 
     controls = project.run.controls
-    if controls is not None and (controls.undeut_at is not None
-                                 or controls.fulldeut_at is not None):
+    if isinstance(controls, ControlConfig) and (controls.undeut_at is not None
+                                                or controls.fulldeut_at is not None):
         try:
             role = apply_control_roles(index.role, index.time, controls,
                                        where="[run.controls]")
@@ -929,9 +937,12 @@ def _check_controls_present(project, roles: dict | None) -> list[str]:
     with a role (mzML and Thermo), and neither ``undeut_at`` nor ``fulldeut_at`` set. The run
     would take 0 D and d2o_fraction as every series' ends: no correction worth the name.
     HX-Express sheets (their labels are inside) and stored spectra are not assessed."""
+    from .controls import ControlConfig
+
     controls, inp = project.run.controls, project.input
-    if controls is None or inp.spectra is not None or inp.format == "hxexpress":
-        return []
+    if (not isinstance(controls, ControlConfig) or inp.spectra is not None
+            or inp.format == "hxexpress"):
+        return []  # "auto" is off without controls, and says so
     if controls.undeut_at is not None or controls.fulldeut_at is not None:
         return []
     if roles is not None:
@@ -1117,9 +1128,12 @@ def _run_time_text(run) -> str:
     return ", ".join(parts) if parts else "scan times"
 
 
-def _folder_control_files(inp, entries) -> dict | None:
+def _folder_control_files(inp, entries, peptides: dict | None = None) -> dict | None:
     """The control files of a SpecExport or pooled folder by (sample, role), counted from the
-    file names (the data are not read); None for HX-Express sheets, whose labels are inside."""
+    file names (the data are not read); None for HX-Express sheets, whose labels are inside.
+    ``peptides``, when given, is filled with the control roles of each peptide (sample,
+    peptide, modification: its charge states together, as :func:`hxex.controls.choose_controls`
+    counts them), every peptide of ``entries`` a key."""
     if inp.format == "hxexpress":
         return None
     from .io.read import _input_path
@@ -1127,6 +1141,10 @@ def _folder_control_files(inp, entries) -> dict | None:
 
     counts: Counter = Counter()
     for entry in entries:
+        key = (entry.sample, entry.peptide, " ".join(
+            x for x in str(entry.modification).split() if not x.startswith("undeut_mz:")))
+        if peptides is not None:
+            peptides.setdefault(key, set())
         folder = inp.data_dir / _input_path(inp.format, entry)
         if not folder.is_dir():
             continue
@@ -1136,7 +1154,53 @@ def _folder_control_files(inp, entries) -> dict | None:
                 role = parse_specexport_token(parsed[0])[1]
                 if role:
                     counts[(entry.sample, role)] += 1
+                    if peptides is not None:
+                        peptides[key].add(role)
     return counts
+
+
+def _correction_text(project, peptides: dict | None = None) -> str:
+    """Whether the run will correct for back-exchange, and why, for ``hxex check``: counted by
+    peptide from the control files (``peptides``, from :func:`_folder_control_files`), by run
+    for the scan formats ([[input.runs]] role), and left to the read for HX-Express sheets and
+    stored spectra (whose roles are inside the data)."""
+    from .controls import AUTO, ControlConfig, ControlsChoice
+
+    controls, inp = project.run.controls, project.input
+    setting = AUTO if controls == AUTO else ("off" if controls is None else "on")
+    d2o = (controls.d2o_fraction if isinstance(controls, ControlConfig)
+           else ControlConfig.d2o_fraction)
+    if peptides is not None:
+        with_fd = sum("fulldeut" in r for r in peptides.values())
+        with_un = sum("undeut" in r for r in peptides.values())
+        on = setting == "on" or (setting == AUTO and with_fd > 0 and with_un > 0)
+        return ControlsChoice(setting, on, len(peptides), with_fd, with_un,
+                              d2o if on else None).describe()
+    if setting == "on":
+        return "on ([run.controls])"
+    if setting == "off":
+        return ControlsChoice(setting, False).describe()
+    note = (f" d2o_fraction is {'the default ' if d2o == ControlConfig.d2o_fraction else ''}"
+            f"{d2o:g}: set [run.controls] d2o_fraction if the labelling buffer's D fraction "
+            "differs; [run] controls = false turns the correction off")
+    if inp.spectra is None and inp.format not in ("hxexpress",) and inp.runs:
+        n_fd = sum(r.role == "fulldeut" for r in inp.runs)
+        n_un = sum(r.role == "undeut" for r in inp.runs)
+        runs = (f"{n_fd} run(s) marked fulldeut and {n_un} marked undeut in [[input.runs]]")
+        if inp.parents is False:
+            return ("off, automatically: only fragment ions are read (parents = false), and "
+                    "they are never corrected")
+        if n_fd and n_un:
+            return (f"on, automatically: {runs} (the run's log counts the peptides they "
+                    f"hold).{note}")
+        return (f"off, automatically: {runs}, so the values stay in measured deuterons; a "
+                "[run.controls] table turns the correction on")
+    where = ("stored spectra" if inp.spectra is not None
+             else "sheets (their labels mark the controls)" if inp.format == "hxexpress"
+             else "spectra")
+    return (f"automatic: decided when the {where} are read: on when they hold undeuterated "
+            "and fully deuterated controls of the peptides (the run's log says which; [run] "
+            "controls = false turns it off)")
 
 
 def _control_file_text(roles: dict | None, sample: str) -> str:
@@ -1279,19 +1343,38 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
 
 
 def _changed_controls(project, bundle):
-    """The project's ``[run.controls]`` when they differ from those the bundle's controls were
-    worked out with (``hxex resume`` works them out again; no refit), else None."""
-    from .controls import ControlConfig
-    from .io.bundle import bundle_manifest
+    """``(controls, choice)``: the project's control settings for the bundle when they differ
+    from those its controls were worked out with (``hxex resume`` works them out again; no
+    refit), with how they were chosen (:class:`hxex.controls.ControlsChoice`), else ``(None,
+    None)``. ``[run] controls`` left out (``"auto"``) is decided from the bundle's picked
+    spectra as a run decides from those it reads, so a bundle made without a correction takes
+    one when its spectra hold the controls (owner, 2026-11-09). A bundle without controls takes
+    them only when the settings promote no time point to a control (``undeut_at``,
+    ``fulldeut_at``: the roles, and so the fits, would differ: run again); ``controls = false``
+    never takes a bundle's away (run again)."""
+    from .controls import AUTO, ControlConfig
+    from .io.bundle import BundleError, bundle_manifest
+    from .pipeline import bundle_controls
 
-    if project.run.controls is None:
-        return None
-    stored = (((bundle_manifest(bundle) or {}).get("configs") or {}).get("run") or {}).get(
-        "controls")
+    manifest = bundle_manifest(bundle) if bundle is not None else None
+    if project.run.controls is None or manifest is None:
+        return None, None
+    if project.run.controls == AUTO and project.input is None:
+        return None, None  # a file for the analysis: the run's choice stays
+    stored = ((manifest.get("configs") or {}).get("run") or {}).get("controls")
+    try:
+        wanted, choice = bundle_controls(bundle, project.run.controls)
+    except (BundleError, ValueError) as exc:  # no picked spectra to decide from
+        log.warning("%s", exc)
+        return None, None
+    if wanted is None:
+        return None, None
     if not stored:
-        return None  # a run without controls: run again to have them
-    return None if ControlConfig.from_dict(stored) == project.run.controls else \
-        project.run.controls
+        if (wanted.undeut_at is not None or wanted.fulldeut_at is not None
+                or not (wanted.undeut_marked and wanted.fulldeut_marked)):
+            return None, None  # other roles, other fits: run again to have them
+        return wanted, choice
+    return (None, None) if ControlConfig.from_dict(stored) == wanted else (wanted, choice)
 
 
 def cmd_resume(args) -> int:
@@ -1320,11 +1403,12 @@ def cmd_resume(args) -> int:
         if problem := _choices_not_fitted(chosen, project.output.bundle):
             log.error("%s", problem)
             return EXIT_ERROR
-        changed = _changed_controls(project, project.output.bundle)
+        changed, choice = _changed_controls(project, project.output.bundle)
         if (project.run.bootstrap is None and project.run.population_test is None
                 and not chosen and changed is None):
             log.error("%s has no [run.bootstrap] or [run.population_test] table, and its "
-                      "[run.controls] are the bundle's: add one with its settings", bundle)
+                      "back-exchange correction is the bundle's: add one with its settings",
+                      bundle)
             return EXIT_ERROR
         bundle, review = project.output.bundle, project.review
         threads = threads if threads is not None else project.threads
@@ -1343,6 +1427,7 @@ def cmd_resume(args) -> int:
             extra["population_test"] = test
         if changed is not None:
             extra["run_controls"] = changed
+            extra["controls_choice"] = choice.to_dict()
         held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
         # the bootstrap there is kept when it has the project's settings: only what the
         # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
@@ -1494,11 +1579,12 @@ def cmd_report(args) -> int:
         if problem := _bundle_problem(bundle, "report"):  # the bundle itself, before its folders
             log.error("%s", problem)
             return EXIT_ERROR
-        if _changed_controls(project, bundle) is not None:
-            log.warning("%s: [run.controls] differ from the settings the bundle's controls were "
-                        "worked out with, so the corrected values follow the bundle's; 'hxex "
-                        "resume %s' works them out again with the project's (no refit)",
-                        args.bundle, args.bundle)
+        if _changed_controls(project, bundle)[0] is not None:
+            log.warning("%s: the project's back-exchange correction ([run.controls], or the "
+                        "automatic choice without it) differs from the one the bundle's "
+                        "controls were worked out with, so the corrected values follow the "
+                        "bundle's; 'hxex resume %s' works them out again with the project's "
+                        "(no refit)", args.bundle, args.bundle)
     figures = _beside(bundle, args.figures, "_figures")
     tables = _beside(bundle, args.tables if args.tables is not None
                      else None if own_tables is False else own_tables, "_tables")
@@ -1739,6 +1825,16 @@ def _promotion_text(controls: dict | None) -> str:
     return "; " + ", ".join(parts) if parts else ""
 
 
+def _choice_text(record: dict | None) -> str:
+    """``; the correction on, automatically: ...`` from a bundle's ``controls_choice`` (empty
+    for a bundle made before it was recorded)."""
+    from .controls import ControlsChoice
+
+    if not record:
+        return ""
+    return f"; the correction {ControlsChoice.from_dict(record).describe()}"
+
+
 def _bootstrap_text(bundle, m: int) -> str:
     """What the bundle's bootstraps cover (owner, 2026-11-04: "yes" did not say whether a K was
     bootstrapped for every spectrum, as the residue level's K = 2 comparisons need): the one
@@ -1822,7 +1918,8 @@ def cmd_info(args) -> int:
             ("selected K", ", ".join(f"{k}: {n}" for k, n in sorted(ks.items()))),
             ("bootstrap", _bootstrap_text(b, len(fit))),
             ("controls", ("yes" if b.has("controls") else "no")
-             + _promotion_text(run_config.get("controls"))),
+             + _promotion_text(run_config.get("controls"))
+             + _choice_text(b.manifest.get("controls_choice"))),
             ("roles", _role_counts_text(fit)),
             ("noise reference", _noise_reference_text(b.measurements(), fit)),
             ("noise", _noise_curve_text(fit)),

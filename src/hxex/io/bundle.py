@@ -821,12 +821,16 @@ def write_bundle(
     peak_measure: PeakMeasure | None = None,
     chunk_plan: Mapping | None = None,
     fitted_with: Mapping | None = None,
+    controls_choice: Mapping | None = None,
 ) -> Path:
     """Write a results bundle and return its path.
 
     ``fitted_with``: the software that made the fits, population test and bootstrap
     (:func:`_versions`; recorded as ``fitted_with``; default the software writing now), which
-    ``hxex resume`` carries over and :mod:`hxex.reuse` compares.
+    ``hxex resume`` carries over and :mod:`hxex.reuse` compares. ``controls_choice``: whether
+    the back-exchange correction is on and why, chosen automatically from the spectra or set
+    (:class:`hxex.controls.ControlsChoice`, as a dict; recorded as ``controls_choice``; absent
+    in bundles written before 2026-11-09).
 
     ``path`` ending in ``.zip`` gives a zip (read only); anything else a directory. The
     bundle is written next to its final place and moved there when complete, so a failed write
@@ -944,6 +948,7 @@ def write_bundle(
             # the chunks the fits were made in (hxex.pipeline.chunk_record), so that a resume
             # fits and tests in the same ones (audit 2026-11-01 Engine 28)
             **({} if chunk_plan is None else {"chunk_plan": dict(chunk_plan)}),
+            **({} if controls_choice is None else {"controls_choice": dict(controls_choice)}),
             **({} if fit.noise_curve is None else {"noise_curve": fit.noise_curve.to_dict()}),
             # the version of the checks that assessed the quality flags (a resume that keeps
             # them keeps it: hxex.quality.QUALITY_VERSION)

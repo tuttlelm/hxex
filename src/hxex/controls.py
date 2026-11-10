@@ -1060,6 +1060,109 @@ def charge_groups(sample, peptide, modification, charge, data_id,
     return out
 
 
+# ``[run] controls`` left out of a project file, or written "auto": the spectra decide
+AUTO = "auto"
+CONTROL_SETTINGS = (AUTO, "on", "off")
+
+
+@dataclass(frozen=True)
+class ControlsChoice:
+    """Whether a run corrects for back-exchange, and why (:func:`choose_controls`).
+
+    ``setting`` is what the project asked: ``"auto"`` (``[run] controls`` left out, the
+    default: the correction is on when the spectra hold undeuterated and fully deuterated
+    controls of the peptides, off otherwise; owner, 2026-11-09: a project written without
+    ``[run.controls]`` had left data with fully deuterated controls uncorrected), ``"on"`` (a
+    ``[run.controls]`` table, or ``controls = true``) or ``"off"`` (``controls = false``).
+    ``on`` is the outcome. ``peptides`` counts the peptides of the spectra, one per sample (a
+    peptide with its modification, its charge states together; fragment ions are left out:
+    they are never corrected), ``with_fulldeut`` and ``with_undeut`` those of them with a
+    spectrum of that control of their own (at any of their charge states), and
+    ``d2o_fraction`` the labelling D fraction the correction takes (None when off)."""
+
+    setting: str
+    on: bool
+    peptides: int = 0
+    with_fulldeut: int = 0
+    with_undeut: int = 0
+    d2o_fraction: float | None = None
+
+    def __post_init__(self):
+        if self.setting not in CONTROL_SETTINGS:
+            raise ValueError(f"controls setting must be one of {', '.join(CONTROL_SETTINGS)}")
+
+    @property
+    def automatic(self) -> bool:
+        """Whether the spectra decided (``[run] controls`` left out or ``"auto"``)."""
+        return self.setting == AUTO
+
+    def _found(self) -> str:
+        n, m = self.with_fulldeut, self.peptides
+        text = f"fully deuterated controls found for {n} of {m} peptides (counted per sample)"
+        if self.on and 0 < n < m:
+            text += "; the others take stand-ins"
+        return text
+
+    def describe(self) -> str:
+        """One line: on or off, and why (for the run's log, ``hxex check`` and ``hxex info``)."""
+        if self.setting == "off":
+            return ("off ([run] controls = false): the values stay in measured deuterons")
+        if self.setting == "on":
+            return f"on ([run.controls]): {self._found()}"
+        if self.on:
+            return (f"on, automatically: {self._found()}. d2o_fraction is "
+                    f"{'the default ' if self.d2o_fraction == ControlConfig.d2o_fraction else ''}"
+                    f"{self.d2o_fraction:g}: set [run.controls] d2o_fraction if the labelling "
+                    "buffer's D fraction differs; [run] controls = false turns the correction "
+                    "off")
+        if not self.peptides:
+            why = "no peptide in the data (fragment ions are never corrected)"
+        elif not self.with_fulldeut:
+            why = "no fully deuterated controls in the data"
+        else:
+            why = (f"{self._found()}, but no undeuterated controls in the data")
+        return (f"off, automatically: {why}, so the values stay in measured deuterons; a "
+                "[run.controls] table turns the correction on")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ControlsChoice:
+        return cls(**{f.name: data[f.name] for f in fields(cls) if f.name in data})
+
+
+def choose_controls(role, sample, peptide, modification, charge, data_id, *, fragments=(),
+                    setting: str = AUTO, d2o_fraction: float | None = None) -> ControlsChoice:
+    """Whether a run corrects for back-exchange (:class:`ControlsChoice`), from per-spectrum
+    arrays (a :class:`~hxex.spectra.SpectrumSet`'s or a picked set's, with their roles):
+    ``setting`` ``"on"`` and ``"off"`` decide by themselves (the peptides are counted for the
+    log); ``"auto"`` is on when a peptide has an undeuterated control and a peptide has a fully
+    deuterated one (fragment ions, the series of ``fragments`` and every ion type other than
+    ``M``, do not count: they are never corrected). ``d2o_fraction``: the correction's, for
+    the description (default: :class:`ControlConfig`'s)."""
+    if setting not in CONTROL_SETTINGS:
+        raise ValueError(f"controls setting must be one of {', '.join(CONTROL_SETTINGS)}")
+    data_id = np.asarray(data_id)
+    role = np.asarray(role).astype(str) if role is not None else np.full(len(data_id), "")
+    _, first = np.unique(data_id, return_index=True)  # one spectrum per series is enough
+    groups = charge_groups(np.asarray(sample)[first], np.asarray(peptide)[first],
+                           np.asarray(modification)[first], np.asarray(charge)[first],
+                           data_id[first], fragments)
+    peptides = {key for key, _ in groups.values()}
+
+    def having(name: str) -> int:
+        ids = {int(d) for d in np.unique(data_id[role == name])}
+        return len({groups[d][0] for d in ids if d in groups})
+
+    with_fd, with_un = having(FULLDEUT), having(UNDEUT)
+    on = setting == "on" or (setting == AUTO and with_fd > 0 and with_un > 0)
+    if on and d2o_fraction is None:
+        d2o_fraction = ControlConfig.d2o_fraction
+    return ControlsChoice(setting=setting, on=on, peptides=len(peptides), with_fulldeut=with_fd,
+                          with_undeut=with_un, d2o_fraction=float(d2o_fraction) if on else None)
+
+
 def series_residues(peptide, modification, start, data_id, *, nterm_subtract: int = 1,
                     rules=None, registry=None, fragments=()) -> dict[int, tuple]:
     """``data_id`` -> (residues, first position, amide positions) of each peptide series in its

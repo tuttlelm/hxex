@@ -283,7 +283,9 @@ Run `hxex check hxex.toml` first whenever you have changed the file.
   the settings unchanged it keeps the bootstrap and adds only what is missing, such as the
   spectra you gave another number of populations in the
   [review table](project-file.md#the-user-review-table).
-- Back-exchange correction from your controls: switch on `[run.controls]`. See
+- Back-exchange correction from your controls: it runs by itself when your data hold
+  undeuterated and fully deuterated controls (`hxex check` says whether it will); switch on
+  `[run.controls]` to set the D₂O fraction of your labelling buffer and the other settings. See
   [Back-exchange correction](back-exchange-correction.md).
 - Leaving out spectra that look bad, without deleting them: [Excluding spectra](excluding-spectra.md).
 - What every table and figure holds: [Outputs](outputs.md).

@@ -17,10 +17,10 @@ Whatever the experiment, every spectrum is fitted with each number of binomial p
 no choice to make. A population can sit anywhere from 0 up to the spectrum's highest bin,
 never beyond it: a population outside the bins would leave no trace in the spectrum. The controls are fitted over the same range, which shows up any problems
 with them, and always at K = 1 as well: the back-exchange correction uses their one-population
-fit, whatever `k_min` is. (The `screen` option needs `k_min = 1`.) A run without `[run.controls]`
-reports deuterons as measured; with it, means are corrected for back-exchange from the
-undeuterated and fully deuterated controls (see
-[Back-exchange correction](back-exchange-correction.md)).
+fit, whatever `k_min` is. (The `screen` option needs `k_min = 1`.) When the data hold
+undeuterated and fully deuterated controls, means are corrected for back-exchange from them;
+otherwise, or with `controls = false` under `[run]`, they are reported in deuterons as measured
+(see [Back-exchange correction](back-exchange-correction.md)).
 
 ---
 
@@ -37,10 +37,13 @@ summed. See [Input formats](inputs.md).
 
 **Settings that matter most.**
 
-- `[run.controls]`: turns on the back-exchange correction. `d2o_fraction` (default 0.9) is the
-  labelling buffer's D fraction. Series whose controls are missing or out of limits fall back
-  to the median retention of the run's accepted controls (or, with `quench` conditions, to a
-  theoretical value) and are flagged (`control_fallback`).
+- `[run.controls]`: the back-exchange correction. Without the table it runs by itself, with the
+  default settings, when the data hold undeuterated and fully deuterated controls (`hxex check`
+  and the run's log say whether it does); with the table it always runs; `controls = false`
+  under `[run]` turns it off. `d2o_fraction` (default 0.9) is the labelling buffer's D
+  fraction: set it when your buffer differs. Series whose controls are missing or out of
+  limits fall back to the median retention of the run's accepted controls (or, with `quench`
+  conditions, to a theoretical value) and are flagged (`control_fallback`).
 - `[run.bootstrap]`: standard errors and intervals. The analysis' choice between one and two
   populations needs the fixed-K bootstraps, `ks = "all"` or `ks = [1, 2]`: without them nearly
   every residue passes the choice, and the analysis warns. `hxex info` says which were made: its
@@ -245,5 +248,5 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
 
 Fragment series are kept out of the peptide analysis (coverage, residue maps); MS1 parents read
 alongside them stay in it. Fragment ions are not corrected for back-exchange, even when the
-project has a `[run.controls]` table: their values stay in deuterons, as measured. How to
+correction runs: their values stay in deuterons, as measured. How to
 correct them, probably through their parent peptide, is still to be designed.

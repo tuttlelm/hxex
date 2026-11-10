@@ -395,3 +395,29 @@ def test_the_mouse_wheel_does_not_change_a_list(editor, project):
     QApplication.sendEvent(fmt, wheel)
     assert fmt.currentText() == "specexport" and project.read_bytes() == before
     assert not wheel.isAccepted()  # passed on: the form scrolls
+
+
+def test_the_back_exchange_page_says_the_correction_is_automatic(editor, project):
+    """[run.controls] off does not mean no correction (owner, 2026-11-09: the data decide):
+    the page says which state the file is in, Always on switches the table on, and Off writes
+    [run] controls = false, each taking the other form out of the file (TOML holds one)."""
+    _page(editor, "run.controls")
+    assert editor.controls_state.text().startswith("Now: automatic")
+    assert "d2o_fraction" in editor.controls_state.text()
+    assert not editor.switch.isChecked() and not editor.controls_off.isChecked()
+    assert editor.switch.text().startswith("Always on")
+    editor.controls_off.setChecked(True)
+    assert _data(project)["run"]["controls"] is False
+    assert editor.controls_state.text().startswith("Now: off")
+    assert editor.controls_off.isChecked() and not editor.switch.isChecked()
+    editor.switch.setChecked(True)  # always on: the false goes, the table comes
+    assert isinstance(_data(project)["run"]["controls"], dict)
+    assert editor.controls_state.text().startswith("Now: always on")
+    assert not editor.controls_off.isChecked()
+    editor.controls_off.setChecked(True)  # off again: the table is switched off first
+    assert _data(project)["run"]["controls"] is False
+    editor.controls_off.setChecked(False)  # automatic again
+    assert "controls" not in _data(project)["run"]
+    assert editor.controls_state.text().startswith("Now: automatic")
+    _page(editor, "run.bootstrap")  # other stages keep their Use box
+    assert editor.controls_state is None and editor.switch.text().startswith("Use [run.bootstrap]")

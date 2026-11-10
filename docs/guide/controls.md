@@ -64,7 +64,9 @@ run D_5min_01.raw: sample WT, rep 1, time 5 min, 398 scans; 12 of 12 targets hav
 ```
 
 Its `controls` line repeats any `undeut_at`, `fulldeut_at` and `*_marked = false` setting in
-words. A `[run.controls]` table with no control in the data at all (no `Non-` or `Full-` file,
+words, and its `correction` line says whether the back-exchange correction will run, and why:
+without a `[run.controls]` table it runs when the data hold both kinds of control (see
+[Back-exchange correction](back-exchange-correction.md)). A `[run.controls]` table with no control in the data at all (no `Non-` or `Full-` file,
 no run with a `role`, and neither `undeut_at` nor `fulldeut_at`) is a problem: every series
 would take 0 D and `d2o_fraction` as its two ends. After the run, `hxex info` counts the control spectra of the bundle (and the times they
 also have, when they are time points too) and says whether the times are real:

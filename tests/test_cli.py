@@ -72,7 +72,8 @@ figures = false
 def test_every_template_reads_back_as_the_defaults(tmp_path, capsys):
     for fmt in FORMATS:
         p = project_from(tomllib.loads(template(fmt)), tmp_path)
-        assert p.run == RunConfig() and p.input.format == fmt
+        # a project file's back-exchange correction is "auto" (the data decide); Python's None
+        assert p.run == RunConfig(controls="auto") and p.input.format == fmt
         assert p.output.bundle == tmp_path / "results"
     assert cli.main(["init", "--format", "mzml", "-o", str(tmp_path / "a.toml")]) == 0
     assert load_project(tmp_path / "a.toml").input.runs[1].time == 60.0
@@ -150,7 +151,11 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
     assert "controls" not in out and "K " not in out and "analysis only" in out
     assert cli.main(["check", str(mzml_project(tmp_path))]) == 0
     out = capsys.readouterr().out
-    assert "controls       off: no back-exchange correction" in out and "[run.controls]" in out
+    assert "controls       automatic: the back-exchange correction is on when" in out
+    assert "[run.controls]" in out
+    # the project's run has no control runs: the correction stays off, and check says why
+    assert ("correction     off, automatically: 0 run(s) marked fulldeut and 0 marked undeut "
+            "in [[input.runs]]") in out
     assert "K              1\n" in out  # k_min = k_max
 
 
@@ -992,6 +997,87 @@ def test_check_counts_the_control_files_of_a_specexport_folder(tmp_path, capsys)
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
     assert "entries        1 in" in out and "MUT" not in out
+
+
+def test_check_says_whether_the_correction_runs_and_why(tmp_path, capsys):
+    """Without [run] controls the data decide the back-exchange correction (owner,
+    2026-11-09): hxex check says which applies and why, counting the peptides with a fully
+    deuterated control file; false and a table decide by themselves."""
+    folder = tmp_path / "d" / "WT" / f"0001-0010-{PEPTIDE}"
+    folder.mkdir(parents=True)
+    (tmp_path / "d" / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    for name in ("Non-D-1-z2.csv", "Full-D-1-z2.csv", "60s-1-z2.csv"):
+        (folder / name).write_text("")
+    path = tmp_path / "hxex.toml"
+    head = ('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+            '[output]\nbundle = "out"\n')
+
+    def check(extra=""):
+        path.write_text(head + extra)
+        assert cli.main(["check", str(path)]) == 0
+        return capsys.readouterr().out
+
+    out = check()
+    assert "controls       automatic: the back-exchange correction is on when the data" in out
+    assert ("correction     on, automatically: fully deuterated controls found for 1 of 1 "
+            "peptides (counted per sample). d2o_fraction is the default 0.9: set "
+            "[run.controls] d2o_fraction if the labelling buffer's D fraction differs; [run] "
+            "controls = false turns the correction off") in out
+    (folder / "Full-D-1-z2.csv").unlink()
+    assert ("correction     off, automatically: no fully deuterated controls in the data, so "
+            "the values stay in measured deuterons; a [run.controls] table turns the "
+            "correction on") in check()
+    out = check("[run]\ncontrols = false\n")
+    assert "controls       off ([run] controls = false)" in out
+    assert "correction     off ([run] controls = false)" in out
+    out = check("[run.controls]\nd2o_fraction = 0.85\n")
+    assert ("correction     on ([run.controls]): fully deuterated controls found for 0 of 1 "
+            "peptides") in out
+    assert "d2o_fraction is" not in out
+
+
+def test_the_data_decide_the_correction_in_a_run_and_a_resume(tmp_path, capsys):
+    """A scan-format project with control runs: hxex check says the correction will run; a
+    run with [run] controls = false (written by hxex set) has none; with the line gone again
+    hxex report says the bundle differs, and hxex resume works the controls out from the
+    stored fits (no refit), records that they were chosen automatically, and hxex info says
+    so."""
+    path = mzml_project(tmp_path)
+    for name in ("un.mzML", "fd.mzML"):
+        shutil.copy(tmp_path / "run1.mzML", tmp_path / name)
+    path.write_text(path.read_text()
+                    + '\n[[input.runs]]\npath = "un.mzML"\nsample = "WT"\nrole = "undeut"\n'
+                    '\n[[input.runs]]\npath = "fd.mzML"\nsample = "WT"\nrole = "fulldeut"\n')
+    assert cli.main(["check", str(path)]) == 0
+    assert ("correction     on, automatically: 1 run(s) marked fulldeut and 1 marked undeut "
+            "in [[input.runs]]") in capsys.readouterr().out
+    assert cli.main(["-q", "set", str(path), "run.controls", "false"]) == 0
+    assert tomllib.loads(path.read_text())["run"]["controls"] is False
+    assert cli.main(["run", str(path)]) == 0
+    assert "back-exchange correction: off ([run] controls = false)" in capsys.readouterr().err
+    with open_bundle(tmp_path / "out") as b:
+        assert not b.has("controls") and b.manifest["controls_choice"]["setting"] == "off"
+        fit = b.fit()
+    assert cli.main(["-q", "set", str(path), "run.controls", "--default"]) == 0
+    assert "controls" not in tomllib.loads(path.read_text())["run"]
+    capsys.readouterr()
+    assert cli.main(["report", str(path), "--overwrite"]) == 0
+    assert "automatic choice" in capsys.readouterr().err
+    assert cli.main(["resume", str(path)]) == 0
+    assert ("back-exchange correction: on, automatically: fully deuterated controls found for "
+            "1 of 1 peptides") in capsys.readouterr().err
+    with open_bundle(tmp_path / "out") as b:
+        assert b.has("controls") and b.controls().config.d2o_fraction == 0.9
+        assert b.manifest["controls_choice"]["setting"] == "auto"
+        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["controls"]
+        np.testing.assert_array_equal(b.fit().fits[1].n, fit.fits[1].n)  # no refit
+        assert "the spectra decided the" in (tmp_path / "out" / "run_settings_used.toml"
+                                             ).read_text()
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
+    assert "the correction on, automatically" in capsys.readouterr().out
+    # nothing left to do: the bundle's correction is the project's
+    assert cli.main(["resume", str(path)]) == 0
+    assert "nothing to add" in capsys.readouterr().out
 
 
 def test_record_paths_are_checked_for_the_format(tmp_path):

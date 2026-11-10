@@ -76,8 +76,12 @@ every setting at its default, as `hxex init` does.
 - Under `[input]`, only the settings of the chosen format are shown (tick **Show the input
   settings of every format** to see them all). Changing the format offers to switch off the
   settings the new format does not use.
-- A stage that its heading alone turns on (the bootstrap, the population test, the controls,
-  the analysis, the review) has a **Use** box. Setting any of its settings also switches it on.
+- A stage that its heading alone turns on (the bootstrap, the population test, the analysis,
+  the review) has a **Use** box. Setting any of its settings also switches it on. The
+  back-exchange correction (`[run.controls]`) is different: with its table off it runs by
+  itself when the data hold undeuterated and fully deuterated controls, and its page says
+  which state the file is in. **Always on** switches its table on; **Off, whatever the data
+  hold** writes `controls = false` under `[run]`.
 - A value that cannot be right (a word where a number belongs) is refused, and the Messages
   pane says why. A file you are still filling in can lack something (a peptide table, a run):
   the red line at the top says what is still needed, as `hxex check` would.

@@ -919,3 +919,48 @@ def test_each_undeuterated_spectrum_is_judged_against_m0_max():
     flag = undeut_high(fit, c)
     assert np.flatnonzero(flag).tolist() == [0, 2, 5]
     assert not undeut_high(fit, None).any()
+
+
+def test_the_spectra_decide_the_correction_without_a_setting():
+    """[run] controls left out ("auto"; owner, 2026-11-09): on when the spectra hold an
+    undeuterated and a fully deuterated control of a peptide, off otherwise; peptides are
+    counted per sample, charge states together, and fragment ions never count (they are never
+    corrected). A set "on" or "off" decides by itself."""
+    from hxex.controls import ControlsChoice, choose_controls
+
+    # series 0, 1: one peptide in S at charges 2 and 3; series 2: another; series 3: the first
+    # peptide in T; series 4: a fragment ion of it (ion type c)
+    rows = [(0, "S", "PEPA", "", 2, "undeut"), (0, "S", "PEPA", "", 2, ""),
+            (1, "S", "PEPA", "", 3, "fulldeut"), (2, "S", "PEPB", "", 2, "undeut"),
+            (2, "S", "PEPB", "", 2, ""), (3, "T", "PEPA", "", 2, ""),
+            (4, "T", "PEPA", "ion_type:c", 1, "fulldeut"),
+            (4, "T", "PEPA", "ion_type:c", 1, "undeut")]
+    d, s, p, mod, z, role = (np.array(c) for c in zip(*rows, strict=True))
+
+    def choose(keep, setting="auto"):
+        return choose_controls(role[keep], s[keep], p[keep], mod[keep], z[keep], d[keep],
+                               setting=setting)
+
+    every = np.ones(len(rows), dtype=bool)
+    on = choose(every)
+    assert on.on and on.automatic and on.d2o_fraction == 0.9
+    assert (on.peptides, on.with_fulldeut, on.with_undeut) == (3, 1, 2)
+    text = on.describe()
+    assert text.startswith("on, automatically: fully deuterated controls found for 1 of 3 "
+                           "peptides (counted per sample); the others take stand-ins")
+    assert "d2o_fraction is the default 0.9" in text and "controls = false" in text
+    assert ControlsChoice.from_dict(on.to_dict()) == on
+    no_fd = choose(role != "fulldeut")
+    assert not no_fd.on and no_fd.d2o_fraction is None
+    assert no_fd.describe().startswith("off, automatically: no fully deuterated controls in "
+                                       "the data, so the values stay in measured deuterons")
+    # the fragment's controls alone switch nothing on
+    fragment_only = choose(np.isin(d, [0, 2, 3, 4]))
+    assert not fragment_only.on and fragment_only.with_fulldeut == 0
+    no_un = choose(role != "undeut")
+    assert not no_un.on and "but no undeuterated controls" in no_un.describe()
+    assert choose(role != "fulldeut", "on").on  # set: on whatever the data
+    off = choose(every, "off")
+    assert not off.on and off.describe().startswith("off ([run] controls = false)")
+    with pytest.raises(ValueError, match="controls setting"):
+        choose(every, "maybe")

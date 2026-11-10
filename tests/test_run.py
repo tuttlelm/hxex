@@ -864,3 +864,68 @@ def test_the_controls_left_out_and_undeut_high_are_kept_in_the_bundle(tmp_path):
     with open_bundle(out) as b:  # the checksums are checked only by verify()
         assert b.controls().left_out is None
         assert b.quality().undeut_high.shape == (len(res.fit),)
+
+
+def test_the_spectra_decide_the_correction_and_the_bundle_says_so(tmp_path, caplog):
+    """controls = "auto" (a project file without [run] controls; owner, 2026-11-09): on, with
+    the default settings, when the spectra hold undeuterated and fully deuterated controls,
+    off when they hold no fully deuterated one; said in the log and recorded in the bundle,
+    whose run settings hold what was used. A set None stays off and says why."""
+    from hxex.config import run_settings_text
+    from hxex.io.bundle import bundle_manifest
+
+    raw = raw_spectra(n_series=2)
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
+        on = run(raw, config(controls="auto", bootstrap=None), out=tmp_path / "on")
+    assert on.config.controls == ControlConfig() and on.controls is not None
+    assert ("back-exchange correction: on, automatically: fully deuterated controls found for "
+            "1 of 1 peptides (counted per sample). d2o_fraction is the default 0.9") in caplog.text
+    manifest = bundle_manifest(tmp_path / "on")
+    assert manifest["controls_choice"]["setting"] == "auto" and manifest["controls_choice"]["on"]
+    assert RunConfig.from_dict(manifest["configs"]["run"]).controls == ControlConfig()
+    text = run_settings_text(manifest)
+    assert "the spectra decided the" in text and "\n[run.controls]\n" in text
+    caplog.clear()
+    without = raw.select(raw.role != "fulldeut")
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
+        off = run(without, config(controls="auto", bootstrap=None), out=tmp_path / "off")
+    assert off.config.controls is None and off.controls is None
+    assert ("back-exchange correction: off, automatically: no fully deuterated controls in the "
+            "data") in caplog.text
+    manifest = bundle_manifest(tmp_path / "off")
+    assert manifest["controls_choice"] == {"setting": "auto", "on": False, "peptides": 1,
+                                           "with_fulldeut": 0, "with_undeut": 1,
+                                           "d2o_fraction": None}
+    assert "controls = false" in run_settings_text(manifest)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
+        run(raw, config(controls=None, bootstrap=None))
+    assert "back-exchange correction: off ([run] controls = false)" in caplog.text
+    with pytest.raises(ValueError, match="controls = 'yes'"):
+        config(controls="yes")
+
+
+def test_a_resume_adds_the_controls_to_a_bundle_made_without_them(tmp_path, caplog):
+    """A bundle made without a correction takes one from its stored K = 1 fits (resume: no
+    refit), with the record of how it was chosen; the result is the one a run with the
+    correction gives."""
+    from hxex.controls import ControlsChoice
+    from hxex.io.bundle import bundle_manifest
+    from hxex.pipeline import bundle_controls
+
+    raw = raw_spectra(n_series=2)
+    path = tmp_path / "b"
+    run(raw, config(controls=None, bootstrap=None), out=path)
+    wanted, choice = bundle_controls(path, "auto")
+    assert wanted == ControlConfig() and choice.on and choice.automatic
+    assert bundle_controls(path, None) == (None, ControlsChoice("off", False, 1, 1, 1))
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
+        res = resume_bootstrap(path, run_controls=wanted, controls_choice=choice.to_dict())
+    assert "back-exchange correction: on, automatically" in caplog.text
+    assert "working out the controls" in caplog.text
+    direct = run(raw, config(bootstrap=None))
+    np.testing.assert_allclose(res.controls.m0, direct.controls.m0, rtol=1e-6)
+    np.testing.assert_allclose(res.controls.mfd, direct.controls.mfd, rtol=1e-6)
+    manifest = bundle_manifest(path)
+    assert manifest["controls_choice"]["setting"] == "auto"
+    assert manifest["configs"]["run"]["controls"] is not None

@@ -32,7 +32,8 @@ Without any bootstrap, *hxex* gives you:
   are built on. The optional [population test](population-test.md) makes this decision by a
   calibrated test instead, from spectrum to residue.
 - **The deuterium uptake** of every population of every spectrum, and the corrected values
-  when the project has a `[run.controls]` table. The correction uses the controls' fits only.
+  when the back-exchange correction runs (by itself when the data hold undeuterated and fully
+  deuterated controls). The correction uses the controls' fits only.
 - **Which peptides differ between samples**, the coloured bars of the Woods plot. This test
   uses the replicates, not the bootstrap (see [Replicates](#replicates) below).
 - **The quality flags and the spectrum quality screens** ([Outputs](outputs.md#quality-flags)).

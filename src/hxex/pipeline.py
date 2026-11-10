@@ -53,10 +53,13 @@ from .bootstrap import (
     selected_from,
 )
 from .controls import (
+    AUTO,
     ControlConfig,
+    ControlsChoice,
     ControlTable,
     apply_control_roles,
     charge_groups,
+    choose_controls,
     fit_controls,
     fragment_ids,
     series_groups,
@@ -121,8 +124,11 @@ class RunConfig:
       test's screen (:func:`hxex.fit.screen.can_exceed`).
     - ``controls``: the back-exchange correction from the undeuterated and fully deuterated
       controls (:class:`~hxex.controls.ControlConfig`); None: no correction, the means stay in
-      measured deuterons. The controls are the K=1 fits, made for the control spectra whatever
-      ``fit.k_min`` is (:func:`hxex.fit.fit_models`).
+      measured deuterons; ``"auto"`` (a project file's default, ``[run] controls`` left out):
+      :func:`run` decides from the spectra, the correction with the default settings when they
+      hold undeuterated and fully deuterated controls of the peptides, else none
+      (:func:`resolve_controls`). The controls are the K=1 fits, made for the control spectra
+      whatever ``fit.k_min`` is (:func:`hxex.fit.fit_models`).
     - ``quality``: the quality flags (:class:`~hxex.quality.QualityConfig`); None: none.
     - ``registry``: the modified residues a sequence may name, as modX labels
       (:class:`~hxex.chem.ModificationRegistry`).
@@ -143,7 +149,7 @@ class RunConfig:
     fit: FitConfig = FitConfig()  # noqa: RUF009
     bootstrap: BootstrapConfig | None = None
     population_test: PopulationTestConfig | None = None
-    controls: ControlConfig | None = None
+    controls: ControlConfig | str | None = None
     quality: QualityConfig | None = QualityConfig()  # noqa: RUF009
     registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS
     envelope: EnvelopeConfig = EnvelopeConfig()  # noqa: RUF009
@@ -160,6 +166,9 @@ class RunConfig:
             raise ValueError("memory_budget_bytes must be positive")
         if self.max_chunk is not None and self.max_chunk < 1:
             raise ValueError("max_chunk must be at least 1")
+        if isinstance(self.controls, str) and self.controls != AUTO:
+            raise ValueError(f"controls = {self.controls!r}: expected {AUTO!r}, the control "
+                             "settings, or None")
         if self.population_test is not None:
             check_fit_config(self.fit)
         if self.bootstrap is not None and not isinstance(self.bootstrap.ks, str):
@@ -192,7 +201,7 @@ class RunConfig:
             "registry": chem.ModificationRegistry, "envelope": EnvelopeConfig,
         }
         kwargs = {
-            k: (parts[k].from_dict(v) if k in parts and v is not None else v)
+            k: (parts[k].from_dict(v) if k in parts and v is not None and v != AUTO else v)
             for k, v in data.items() if k != "plots"
         }
         return cls(**kwargs)
@@ -237,6 +246,9 @@ class RunResult:
     # the software that made the fits, test and bootstrap (None: the one writing; a resume by
     # other software records {"mixed": True}); hxex.reuse compares it
     fitted_with: dict | None = None
+    # whether the back-exchange correction is on and why (hxex.controls.ControlsChoice
+    # .to_dict(): chosen automatically from the spectra, or set; None: not recorded)
+    controls_choice: dict | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -293,7 +305,7 @@ class RunResult:
             project=project, notes=notes, overwrite=overwrite, pending=pending, review=review,
             provenance=provenance, excluded=self.excluded, project_file=self.project_file,
             peak_measure=self.peak_measure, chunk_plan=self.chunk_plan,
-            fitted_with=self.fitted_with,
+            fitted_with=self.fitted_with, controls_choice=self.controls_choice,
         )
 
 
@@ -982,10 +994,49 @@ def with_control_roles(data, config: RunConfig):
     with the spectra at the controls' ``undeut_at`` and ``fulldeut_at`` given that role as well
     (:func:`hxex.controls.apply_control_roles`); unchanged when neither is set."""
     c = config.controls
-    if c is None or (c.undeut_at is None and c.fulldeut_at is None):
+    if not isinstance(c, ControlConfig) or (c.undeut_at is None and c.fulldeut_at is None):
         return data
     return dataclasses.replace(data, role=apply_control_roles(data.role, data.time, c,
                                                               where="[run.controls]"))
+
+
+def resolve_controls(config: RunConfig, data, source: Mapping | None = None
+                     ) -> tuple[RunConfig, ControlsChoice]:
+    """``config`` with its ``controls`` decided for ``data`` (a
+    :class:`~hxex.spectra.SpectrumSet` or a :class:`~hxex.picking.BinnedSet`, after
+    ``[[input.exclude]]``, with its control roles), and the choice
+    (:func:`hxex.controls.choose_controls`): ``"auto"`` becomes the default control settings
+    when the spectra hold undeuterated and fully deuterated controls of the peptides, else None
+    (no correction); set controls stay as they are. ``source`` (the read record) names the
+    fragment-scan series, which never count (default: ``data.source`` when it has one)."""
+    from .io.mzml import fragment_series
+
+    if source is None:
+        source = getattr(data, "source", None)
+    c = config.controls
+    setting = AUTO if c == AUTO else ("off" if c is None else "on")
+    choice = choose_controls(
+        data.role, data.sample, data.peptide, data.modification, data.charge, data.data_id,
+        fragments=fragment_series(source), setting=setting,
+        d2o_fraction=c.d2o_fraction if isinstance(c, ControlConfig) else None)
+    if setting == AUTO:
+        config = dataclasses.replace(config, controls=ControlConfig() if choice.on else None)
+    return config, choice
+
+
+def bundle_controls(path: str | Path, controls) -> tuple[ControlConfig | None, ControlsChoice]:
+    """The control settings ``controls`` (a run's: ``"auto"``, the settings, or None) give the
+    bundle at ``path``, decided from its picked spectra as :func:`run` decides from the spectra
+    it reads (:func:`resolve_controls`), and the choice. ValueError when the bundle has no
+    picked spectra."""
+    from .io.bundle import open_bundle
+
+    with open_bundle(path) as b:
+        binned, source = b.binned(), b.spectra_source()
+    if binned is None:
+        raise ValueError(f"{path}: the bundle has no picked spectra to decide its controls from")
+    config, choice = resolve_controls(RunConfig(controls=controls), binned, source)
+    return config.controls, choice
 
 
 def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunConfig,
@@ -1127,6 +1178,10 @@ def run(
             log.info("[[input.exclude]]: %d of %d spectra left out (stored, not fitted)",
                      int(mask.sum()), len(mask))
             data = data.select(~mask)
+    # the back-exchange correction: "auto" (a project file without [run] controls) is decided
+    # by the spectra read, and said either way (owner, 2026-11-09)
+    config, choice = resolve_controls(config, data)
+    log.info("back-exchange correction: %s", choice.describe())
     raw = data if isinstance(data, SpectrumSet) else None
     if raw is not None and raw.source and raw.source.get("stored_in"):
         _check_stored_windows(raw.source, config)
@@ -1275,6 +1330,7 @@ def run(
         excluded=excluded, view_exclude=tuple(view_exclude),
         project_file=None if project_file is None else dict(project_file),
         population_test=test, peak_measure=measure, chunk_plan=plan.record,
+        controls_choice=choice.to_dict(),
     )
     spectra = stored if keep_spectra else None
     review = _review_for(review, fit, result.spectra_source)
@@ -1522,6 +1578,7 @@ def resume_bootstrap(
     chosen_k: Mapping[str, int] | None = None,
     population_test: PopulationTestConfig | None = None,
     run_controls: ControlConfig | None = None,
+    controls_choice: Mapping | None = None,
     project_file: Mapping | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
@@ -1560,7 +1617,10 @@ def resume_bootstrap(
     worked out again from the stored K = 1 fits with them, as a run with them would (no refit:
     the fits do not depend on the controls), the quality flags that use them are assessed again,
     and the bundle's run settings record them (owner, 2026-11-05: a D2O fraction corrected
-    after the run).
+    after the run). A bundle without controls takes them too (``hxex resume`` gives it the
+    automatic choice when its spectra hold the controls, :func:`bundle_controls`).
+    ``controls_choice`` (:class:`hxex.controls.ControlsChoice`, as a dict) records how
+    ``run_controls`` were chosen; the bundle's own record is kept otherwise.
 
     Quality flags an earlier version of the checks assessed (:attr:`hxex.quality.QualityFlags
     .outdated`: a flag added since is empty) are assessed again with this version's, also on a
@@ -1637,6 +1697,7 @@ def resume_bootstrap(
         stored_boot = None if redo else b.bootstrap()
         test = b.population_test()
         chunk_plan = b.manifest.get("chunk_plan")  # the run's chunks (absent before 2026-11-02)
+        choice_record = b.manifest.get("controls_choice")  # absent before 2026-11-09
         from .reuse import resumed_fitted_with
 
         fitted_with = resumed_fitted_with(b.manifest)
@@ -1666,8 +1727,12 @@ def resume_bootstrap(
         if project_file is not None:
             project_record = dict(project_file)
     if new_controls:
-        log.info("%s: working the controls out again with the project's [run.controls] (the "
-                 "fits are kept)", path)
+        if controls_choice is not None:
+            choice_record = dict(controls_choice)
+            log.info("%s: back-exchange correction: %s", path,
+                     ControlsChoice.from_dict(controls_choice).describe())
+        log.info("%s: %s the controls with the project's settings (the fits are kept)", path,
+                 "working out" if stored_controls is None else "working out again")
         picked = binned.select(kept)
         inputs = _control_inputs(picked, measurements, config, source)
         controls_table = fit_controls(
@@ -1717,7 +1782,7 @@ def resume_bootstrap(
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_record,
         population_test=test, peak_measure=peak_measure,
         chunk_plan=chunk_plan or _plan(measurements, config, (0.0, 1.0)).record,
-        fitted_with=fitted_with,
+        fitted_with=fitted_with, controls_choice=choice_record,
     )
     return _finish(result, path, spectra=spectra, project=project, notes=notes, overwrite=True,
                    progress=progress, cancel=cancel, review=review, provenance=provenance)

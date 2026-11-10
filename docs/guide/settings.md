@@ -204,7 +204,7 @@ Where results go. The bundle and the folders named after it (<bundle>_tables, <b
 
 ## `[run]`
 
-Run settings; times are in s, as the measurement times. The back-exchange correction, the bootstrap, and the population test are stages that their own tables turn on (run.controls, run.bootstrap, and run.population_test, with the settings a project changes first); a stage's "name = false" here turns it off.
+Run settings; times are in s, as the measurement times. The bootstrap and the population test are stages that their own tables turn on (run.bootstrap and run.population_test, with the settings a project changes first); the back-exchange correction (run.controls) is on by itself when the data hold undeuterated and fully deuterated controls. A stage's "name = false" here turns it off.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -213,6 +213,7 @@ Run settings; times are in s, as the measurement times. The back-exchange correc
 | `drop_no_signal` | true/false | `true` | drop spectra the picker found no signal in (empty ones always are) |
 | `memory_budget_bytes` | integer | unset | memory of one chunk of the fit, bytes (false: automatic) |
 | `max_chunk` | integer | unset | most measurements in one chunk (false: no cap) |
+| `controls` | "auto", true/false, or table | `"auto"` | "auto" (the default, the key left out): the back-exchange correction is on, with the [run.controls] defaults, when the data hold undeuterated and fully deuterated controls of the peptides, off otherwise (the run's log and hxex check say which); false: off; true or a [run.controls] table: on |
 
 ## `[run.picker]`
 
@@ -327,7 +328,7 @@ Tests how many populations each spectrum, and each set of replicates and charge 
 
 ## `[run.controls]`
 
-Back-exchange correction from the undeuterated and fully deuterated controls, fitted at K=1 (guide: back-exchange-correction.md). Deuterium retention here is the fraction of deuterium kept, not a retention time.
+Back-exchange correction from the undeuterated and fully deuterated controls, fitted at K=1 (guide: back-exchange-correction.md). Without this table it is automatic: on, with these defaults, when the data hold undeuterated and fully deuterated controls of the peptides, off otherwise; [run] controls = false turns it off. Deuterium retention here is the fraction of deuterium kept, not a retention time.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

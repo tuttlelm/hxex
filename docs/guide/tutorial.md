@@ -144,14 +144,16 @@ hxex set hxex.toml project hspb5
 `hxex set` prints what it changed and where: `project: "my_project" -> "hspb5", line 8`. (In
 the text editor: change `project = "my_project"` at the top to `project = "hspb5"`.)
 
-**Turn on the back-exchange correction**, with the labelling buffer's 85 % D₂O:
+**Set the back-exchange correction** to the labelling buffer's 85 % D₂O:
 
 ```bash
 hxex set hxex.toml run.controls.d2o_fraction 0.85
 ```
 
 This sets `d2o_fraction` in the `[run.controls]` part, and says that it switched on the heading
-`[run.controls]`: that part was switched off, and switching it on turns on the correction. (In
+`[run.controls]`: that part was switched off. These data hold undeuterated and fully deuterated
+controls, so the correction would run without the heading too, but with the default D₂O
+fraction, 0.9; with the heading on, it always runs, with 0.85. (In
 the text editor: find the part that starts with `# [run.controls]`, delete the `# ` in front of
 `[run.controls]` and in front of the `d2o_fraction = 0.9` line in that part, and change 0.9 to
 0.85. The other lines of that part stay switched off. The file has other `d2o_fraction` lines,
