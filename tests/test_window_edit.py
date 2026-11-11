@@ -106,6 +106,24 @@ def test_the_preview_fit_starts_from_the_runs_fit(project):
                    for n in preview(results, same, start_from="p:nothing").notes)
 
 
+def test_the_preview_leaves_a_run_fit_that_no_longer_fits(project):
+    """A window moved off a co-eluting species: the run's fit, as a start, sits on peaks the new
+    spectrum lacks. Each K also starts from the new spectrum itself and keeps the better fit
+    (owner, 2026-11-11), so K = 1 is not left on the old peaks."""
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    sid = spectra.spectrum_id[0]
+    m = list(results.fit.spectrum_id).index(sid)
+    right = float(results.fit.fits[1].means[m, 0])
+    results.fit.fits[1].n_raw[m] = 5.0  # the run's K = 1 on an envelope at full deuteration
+    results.fit.fits[1].logit_p[m] = 6.0  # (from it alone: D 7.0 after the preview's steps)
+    same = reader.spectrum(sid, int(spectra.data_id[0]), (spectra.rt_start[0], spectra.rt_end[0]))
+    shown = preview(results, same, start_from=sid)
+    assert shown.results.fit.fits[1].means[0, 0] == pytest.approx(right, abs=0.05)
+    assert any("from the spectrum itself" in n for n in shown.notes)
+
+
 def _key(spectra, i):
     """The (sample, file, ion) of spectrum ``i``, as its id names them."""
     sample, file, ion, _scans = spectra.spectrum_id[i].split(":", 1)[1].split("/")

@@ -29,8 +29,11 @@ from .user_tables import read_table, table_problem, write_table
 # takes these few steps (measured on the intact-peptide benchmark, 2026-11-07: 0.6 s per
 # spectrum on one thread against 9 s for the run's 6 starts of 400 steps; the same K as the run
 # for all 32 spectra over their own windows, and as a full fit for 29 of 32 over windows two
-# scans narrower, one of the three a better fit than the full one's)
-PREVIEW_STEPS = {"n_restarts": 1, "kmeans_after_warm": False, "adam_steps": 50,
+# scans narrower, one of the three a better fit than the full one's). Each K also starts from
+# the new spectrum's own k-means start and keeps the better of the two (owner, 2026-11-11: a
+# window moved off a co-eluting species left K = 1 on that species' envelope, D 21.9 against
+# 0.2 from the spectrum's own start, nll 249 against 63; the two starts take 0.8 s)
+PREVIEW_STEPS = {"n_restarts": 1, "kmeans_after_warm": True, "adam_steps": 50,
                  "polish_steps": 10}
 
 # one preview fit at a time: the fit's polish uses PyTorch's forward-mode derivatives, whose
@@ -66,8 +69,9 @@ def preview(results, spectrum: Spectrum, *, fit: bool = True, threads: int | Non
     threads when given: one is faster for a single spectrum) and the run's noise curve. The
     population test, the bootstrap and the controls are not redone (a rerun does them).
     ``fit`` False: picked only (:func:`fit_preview` fits it). ``start_from`` (a spectrum id of
-    ``results``) starts the fit from that spectrum's fit, in a few steps
-    (:data:`PREVIEW_STEPS`); None: the run's own starts and steps."""
+    ``results``) starts the fit from that spectrum's fit and from the new spectrum's own start,
+    keeping the better, in a few steps (:data:`PREVIEW_STEPS`); None: the run's own starts and
+    steps."""
     picked = _picked(results, spectrum)
     return (fit_preview(results, picked, threads=threads, start_from=start_from) if fit
             else picked)
@@ -119,7 +123,8 @@ def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=
         warm = _warm(results, start_from, measurements)
         if warm:
             fit_config = replace(fit_config, **PREVIEW_STEPS)
-            notes.append("fitted from the run's fit of the spectrum, in a few steps")
+            notes.append("fitted from the run's fit of the spectrum and from the spectrum "
+                         "itself, in a few steps")
     curve = results.fit.noise_curve
     if curve is None:
         notes.append("noise scaled to the spectrum itself (the run had no noise curve)")

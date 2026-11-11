@@ -9120,3 +9120,14 @@ CSVs or mzML if wanted.
     tests/test_table_choice.py (the name, the other project files, the dialog's questions, a
     window saved to a chosen table).
 
+359. **The window's preview fit also starts from the new spectrum itself (owner,
+    2026-11-11).** An undeuterated control of the private pooled dataset (raw files, find_peak
+    windows) shares its isotope grid with a co-eluting species about 22 D heavier; the run's
+    window took mostly that species. A window moved in retention and drift time onto the
+    peptide's own peaks still showed K = 1 on the other species (D 21.9, nll 249): the preview
+    started every K only from the run's fit (HISTORY 317) and took 50 steps. Each K now also
+    starts from the new spectrum's own k-means start and keeps the better fit: K = 1 D 0.15,
+    nll 63, as the run's full starts give (D 0.20, nll 63; 11 s), in 0.8 s. The chosen K (two:
+    the peptide and 18 % of the other species) was the same either way; the fix matters for
+    the controls, which are fitted at K = 1. Check: tests/test_window_edit.py (a run fit on an
+    envelope at full deuteration: D 7.0 from it alone, the run's value with both starts).

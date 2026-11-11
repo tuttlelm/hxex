@@ -258,8 +258,10 @@ spectrum summed over the new window, each with its fit, its K, and its deuterati
 spectrum is made from the raw file (the results hold each spectrum only as summed over its own
 window), so the file has to be where the project's `data_root` says; the first time a file is
 opened this takes a few seconds, afterwards a fraction of one. The new spectrum shows as soon
-as it is read; its fit follows within a second (every K, started from the run's fit of the
-spectrum, so it takes only a few steps). The line under the figure says which of the two is
+as it is read; its fit follows within a second (every K is started both from the run's fit of
+the spectrum and from the new spectrum itself, and keeps the better of the two, so it takes only
+a few steps; a window moved away from another species therefore does not leave the fit on that
+species' peaks). The line under the figure says which of the two is
 under way. **Fits at each K** draws the new window's
 spectrum at every K the run tried. This is a preview: it uses the run's settings and noise
 curve, but not its bootstrap, population test, or controls, and nothing in the results
