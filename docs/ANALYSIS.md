@@ -902,7 +902,17 @@ levels, and whether both sides hold the same set.
   form, every sample's fDavg by residue (as `residues_all`), the own residues marked by a grey
   strip outlined in black along the bottom (owner chose it over a full-height band, a hatched
   strip, and a track of the own peptides). The mixture map and the per-sample residue
-  figures are not made for pooled samples. Measured on the private pooled dataset
+  figures are not made for pooled samples. With K = 2, each form also has a *provisional*
+  two-population analysis (owner, 2026-11-10): its population choice, profile and tiers, and
+  against the reference's same form the choice, share and position comparisons, the
+  population overlay and the K = 2 map, drawn by the samples' code (`_population_comparisons`
+  is shared), every page marked provisional with the form's own residues (a strip on the
+  profiles and overlays, numbers on the maps). Provisional because a mixture of forms can look
+  like two populations. Measured on the private pooled dataset (2026-11-10): residues of own
+  peptides 43 % and shared-only residues 41 % in a two- or three-population tier at the
+  labelling time, so mixing does not visibly inflate the tiers; but the controls test two in
+  13-15 % of their sets (single-isoform peptides as often as shared ones, so a property of the
+  spectra, not of the pool), against about 3 % on the Q-TOF benchmark. Measured on the private pooled dataset
   (2026-11-09): seven forms (six isoforms and an acetylated form), the same set in every state
   and over all of them, the set unique. The effect of a modification or a mutation within one
   condition (acetylated against unacetylated, one isoform against another) belongs to the

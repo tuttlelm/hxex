@@ -474,6 +474,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             min_population=config.choice_limits.min_population, populations="best_set")
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
+    raw_comparisons: dict = {}
     k1_raw = None
     pop_cmp = counts_d = None
     choices_cmp = shared_choices = k2_positions = reg_cmp = None
@@ -553,51 +554,23 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 # reproduce the bootstrapped ones (owner, 2026-10-31; HISTORY 204)
                 k2_tested = all(r.bootstraps_every_spectrum(2) for r in (
                     results.runs.values() if isinstance(results, RunSet) else [results]))
-                if k2_tested:  # the two positions, each with its own K=2 threshold
-                    k2_positions = {}
-                    for rank, title in ((1, "K=2 rank 1 (low D) fD"),
-                                        (2, "K=2 rank 2 (high D) fD")):
-                        k2_crit = comparisons[title].delta_crit
-                        k2_positions[rank] = gated_by_peptides(judged_on_shared(
-                            compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
-                                             delta_crit=k2_crit, choice=choice),
-                            concat_tables([compare_residues(m, ref, K=2, rank=rank,
-                                                            alpha=config.alpha,
-                                                            delta_crit=k2_crit,
-                                                            choice=pair_choice[s])
-                                           for s, m in pairs.items()])), comparisons[title],
-                            nterm_subtract=nterm, modified=config.modified_peptides)
+                k2_positions, pop_cmp, choices_cmp, shared_choices = _population_comparisons(
+                    residues, pairs, choice, pair_choice, ref, comparisons, config, crit=crit,
+                    k2_tested=k2_tested, nterm_subtract=nterm, modified=config.modified_peptides)
+                if k2_positions is not None:
                     tables["compare_residues_K2"] = _ranked(k2_positions)
-                # where the map shows no position difference the states are the same, and the
-                # populations are compared on positions shared by both samples (HISTORY 281)
-                shown = list(k2_positions.values()) if k2_positions is not None else None
-                pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
-                    compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit,
-                                        positions=shown),
-                    concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
-                                                       delta_crit=crit, positions=shown)
-                                   for s in pairs]))
-                if k2_tested:
-                    pop_cmp = gated_by_peptides(
-                        pop_cmp, comparisons["K=2 rank 1 (low D) population"],
-                        nterm_subtract=nterm, modified=config.modified_peptides)
-                pop_cols = pop_cmp.columns()
-                if not k2_tested:  # the same columns as the tested case, empty
-                    pop_cols["z"] = np.full(len(pop_cmp), np.nan)
-                    pop_cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
-                    pop_cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
-                    pop_cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
+                tables["compare_populations"] = _population_columns(pop_cmp, k2_tested)
+                if not k2_tested:
                     log.info("K=2 differences between samples (population share, positions) not "
                              "tested: no bootstrap of every spectrum at K=2 ([run.bootstrap] "
                              "ks = [2], then hxex resume hxex.toml adds it); "
                              "residue_significance_K2 shows where the number of populations "
                              "differs")
-                tables["compare_populations"] = pop_cols
-                choices_cmp = compare_choices(choice, ref)
                 tables["compare_choices"] = choices_cmp.columns()
-                # the K = 2 map decides one or two on the shared peptides too, as its test does
-                shared_choices = concat_tables([compare_choices(pair_choice[s], ref)
-                                                for s in pairs])
+        raw_comparisons = dict(comparisons)  # the forms take them by their own names
+        if pooled and 2 in config.ks and gate:  # the forms' K=2 tests need every spectrum
+            k2_tested = all(r.bootstraps_every_spectrum(2) for r in (
+                results.runs.values() if isinstance(results, RunSet) else [results]))
         comparisons = {title: _display(c, labels, reference) for title, c in comparisons.items()}
         if res_cmp is not None:
             res_cmp = _display(res_cmp, labels, reference)
@@ -636,6 +609,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         regions = region_summary(residues, ann)
         tables["regions"] = _columns(regions)
         regions = _display(regions, labels)
+    runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
+    booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
     pooled_order = [s for s in in_order if any(labels[p] == s for p in pooled)]
     # the forms pages and the head-to-head pages share one y axis (owner, 2026-11-09): up to
     # the highest residue or peptide fD with its error (errors of max_fD_se or more left out)
@@ -646,7 +621,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                    if pooled and config.head_to_head is not False else None)
     form_jobs, form_top = (_pooled_form_outputs(
         pools, up, pooled, tables, config, labels=labels, styles=styles, order=pooled_order,
-        ref_state=ref_state, k1=k1_raw, times=times, scale=scale, floor=peptide_top)
+        ref_state=ref_state, k1=k1_raw, times=times, scale=scale, floor=peptide_top,
+        comparisons=raw_comparisons, k2_tested=k2_tested, booted=booted, marks=marks)
         if pooled and forms_on else ([], peptide_top))
     if pooled:  # a coverage map per form of the pool: peptide-level, whatever residue_level
         form_jobs += _pooled_coverage_jobs(pools, up, pooled, config, labels=labels,
@@ -675,8 +651,6 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     if coverage is not None:
         jobs.append(("redundancy_resolution", lambda: plot_redundancy_resolution(
             coverage, samples=res_order, marks=marks, styles=styles)))
-    runs_read = results.runs.values() if isinstance(results, RunSet) else [results]
-    booted = all(r.bootstrap is not None or r.bootstrap_by_k for r in runs_read)
     for s in (res_order + states if residues is not None else []):
         for t in times:
             when_ = _time_label(t, scale)
@@ -833,6 +807,56 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     return tables, jobs
 
 
+def _population_comparisons(residues, pairs: dict, choice, pair_choice: dict, ref: str,
+                            comparisons: dict, config: AnalysisConfig, *, crit: float,
+                            k2_tested: bool, nterm_subtract: int, modified: str):
+    """The K = 2 comparisons of ``residues`` (with its population ``choice``) against the
+    sample ``ref``, judged on the peptides both measured (``pairs``, their maps;
+    ``pair_choice``, their choices) and gated by the peptide ``comparisons`` (title ->
+    :class:`hxex.analysis.PeptideComparison`, the K = 1 and K = 2 ones): the two positions
+    (rank -> comparison; None without a bootstrap of every spectrum at K = 2, ``k2_tested``),
+    the population share, the choices and the choices on the shared peptides. Returns
+    ``(positions, populations, choices, shared_choices)``."""
+    k2_positions = None
+    if k2_tested:  # the two positions, each with its own K=2 threshold
+        k2_positions = {}
+        for rank, title in ((1, "K=2 rank 1 (low D) fD"), (2, "K=2 rank 2 (high D) fD")):
+            k2_crit = comparisons[title].delta_crit
+            k2_positions[rank] = gated_by_peptides(judged_on_shared(
+                compare_residues(residues, ref, K=2, rank=rank, alpha=config.alpha,
+                                 delta_crit=k2_crit, choice=choice),
+                concat_tables([compare_residues(m, ref, K=2, rank=rank, alpha=config.alpha,
+                                                delta_crit=k2_crit, choice=pair_choice[s])
+                               for s, m in pairs.items()])), comparisons[title],
+                nterm_subtract=nterm_subtract, modified=modified)
+    # where the map shows no position difference the states are the same, and the
+    # populations are compared on positions shared by both samples (HISTORY 281)
+    shown = list(k2_positions.values()) if k2_positions is not None else None
+    pop_cmp = judged_on_shared(  # the K=1 threshold, divided by each separation
+        compare_populations(choice, ref, alpha=config.alpha, delta_crit=crit, positions=shown),
+        concat_tables([compare_populations(pair_choice[s], ref, alpha=config.alpha,
+                                           delta_crit=crit, positions=shown) for s in pairs]))
+    if k2_tested:
+        pop_cmp = gated_by_peptides(pop_cmp, comparisons["K=2 rank 1 (low D) population"],
+                                    nterm_subtract=nterm_subtract, modified=modified)
+    choices_cmp = compare_choices(choice, ref)
+    # the K = 2 map decides one or two on the shared peptides too, as its test does
+    shared_choices = concat_tables([compare_choices(pair_choice[s], ref) for s in pairs])
+    return k2_positions, pop_cmp, choices_cmp, shared_choices
+
+
+def _population_columns(pop_cmp, k2_tested: bool) -> dict:
+    """The ``compare_populations`` table of ``pop_cmp``: without a bootstrap of every
+    spectrum at K = 2 the same columns as the tested case, the test's empty (HISTORY 204)."""
+    cols = pop_cmp.columns()
+    if not k2_tested:
+        cols["z"] = np.full(len(pop_cmp), np.nan)
+        cols["significant"] = np.full(len(pop_cmp), np.nan, dtype=object)
+        cols["peptide_support"] = np.full(len(pop_cmp), np.nan)
+        cols["residue_test_only"] = np.full(len(pop_cmp), np.nan, dtype=object)
+    return cols
+
+
 def _pool_forms(results, up) -> dict:
     """The minimum set of every pooled run with candidates (``[input] pooled_fasta``) whose
     samples are in ``up``: run -> :class:`hxex.analysis.pooled.PooledForms`, from the peptides
@@ -895,17 +919,26 @@ def _highest(table, times, max_se: float) -> float | None:
 
 def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: AnalysisConfig, *,
                          labels: dict, styles: dict, order: list, ref_state, k1, times,
-                         scale: str, floor: float | None = None) -> tuple[list, float | None]:
+                         scale: str, floor: float | None = None, comparisons: dict | None = None,
+                         k2_tested: bool = False, booted: bool = False,
+                         marks=()) -> tuple[list, float | None]:
     """The residue-level outputs of the pooled samples (owner, 2026-11-09): the forms of each
     pool's minimum set (``pooled_forms`` table), each form's residue values (rows of the
     ``residues`` table, the sample named ``'<sample> <form>'``), each form compared with the
     same form of the reference (rows of ``compare_residues``: judged on the peptides both
     measured, then gated by the peptide comparison of the form's peptides), and one figure
-    page per class of forms and time (:func:`hxex.report.pooled.plot_pooled_forms`). Adds
-    the tables to ``tables``; returns the figure jobs and the top of their y axis (the
+    page per class of forms and time (:func:`hxex.report.pooled.plot_pooled_forms`). With
+    K = 2 (owner, 2026-11-10, provisional): each form's population choice (rows of
+    ``populations``), its residue profile with the choice per sample and time, the population
+    tiers per class, and against the same form of the reference the K = 2 comparisons
+    (``compare_choices``, ``compare_populations``, ``compare_residues_K2`` rows; the
+    population overlay and the K = 2 significance map), every page marked provisional and the
+    residues of the form's own peptides marked; ``comparisons``: the peptide comparisons by
+    title (K = 1 and K = 2), ``k2_tested``: whether every spectrum has a bootstrap at K = 2.
+    Adds the tables to ``tables``; returns the figure jobs and the top of their y axis (the
     head-to-head figure shares it)."""
     from ..analysis.pooled import form_class, form_comparison, form_sequences, form_uptake
-    from .pooled import FORM_PANEL, plot_pooled_forms
+    from .pooled import FORM_PANEL, own_spans, plot_pooled_forms
 
     forms = {run: f for run, (f, _, _) in pools.items()}
     rows = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
@@ -922,14 +955,25 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
     for f, _, _ in pools.values():
         tables["pooled_forms"] = _joined(tables["pooled_forms"], f.columns())
     tables["residues"] = _joined(tables.get("residues"), rm.columns())
+    tiers = config.populations == "population_test"
+    choice = (choose_populations(rm, config.choice_limits, tiers=tiers)
+              if 2 in config.ks and len(rm) else None)
+    if choice is not None:
+        tables["populations"] = _joined(tables.get("populations"), choice.columns())
     # the display label of each form state: its sample's, then the form
     form_labels = {state: f"{labels.get((state[0], s), label(state[0], s))} "
                           f"{state[1][len(s) + 1:]}" for state, s in base.items()}
+    k2_found = {}
     if k1 is not None and ref_state in pooled:
         crit = k1.delta_crit
         k1_forms = form_comparison(k1, forms)
         nterm = up.nterm_subtract
         found = []
+        # the K=2 peptide comparisons, each form's rows (only with the population choice)
+        k2_forms = ({title: form_comparison(c, forms) for title, c in (comparisons or {}).items()}
+                    if choice is not None and len(comparisons or {}) > 1 else {})
+        k2_found: dict = {}  # form -> (reference, K=1 comparison, positions, populations,
+        #                                choices, shared choices)
         ref_forms = forms[ref_state[0]].forms
         for f in ref_forms:
             ref_f = (ref_state[0], f"{ref_state[1]} {f.name}")
@@ -949,14 +993,36 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                 weight_exponent=config.weight_exponent,
                 two_population_peptides=gate and 2 in config.ks,
                 population_test=config.populations == "population_test")
-            found.append(gated_by_peptides(judged_on_shared(
-                compare_residues(rm_f, name, alpha=config.alpha, delta_crit=crit),
-                concat_tables([compare_residues(m, name, alpha=config.alpha, delta_crit=crit)
-                               for m in pairs.values()])), k1_forms, nterm_subtract=nterm,
-                modified="combined"))
+            choice_f = (choose_populations(rm_f, config.choice_limits, tiers=tiers)
+                        if choice is not None else None)
+            pair_choice = ({x: choose_populations(m, config.choice_limits, tiers=tiers)
+                            for x, m in pairs.items()} if choice is not None else {})
+            res_f = gated_by_peptides(judged_on_shared(
+                compare_residues(rm_f, name, alpha=config.alpha, delta_crit=crit,
+                                 choice=choice_f),
+                concat_tables([compare_residues(m, name, alpha=config.alpha, delta_crit=crit,
+                                                choice=pair_choice.get(x))
+                               for x, m in pairs.items()])), k1_forms, nterm_subtract=nterm,
+                modified="combined")
+            found.append(res_f)
+            if choice_f is not None and k2_forms:
+                k2_found[f.name] = (form_labels[ref_f], res_f, *_population_comparisons(
+                    rm_f, pairs, choice_f, pair_choice, name, k2_forms, config, crit=crit,
+                    k2_tested=k2_tested, nterm_subtract=nterm, modified="combined"))
         if found:
             tables["compare_residues"] = _joined(tables.get("compare_residues"),
                                                  concat_tables(found).columns())
+        k2_tables = list(k2_found.values())
+        if any(t[2] is not None for t in k2_tables):
+            tables["compare_residues_K2"] = _joined(tables.get("compare_residues_K2"), _ranked({
+                r: concat_tables([t[2][r] for t in k2_tables if t[2] is not None])
+                for r in (1, 2)}))
+        if k2_tables:
+            tables["compare_populations"] = _joined(
+                tables.get("compare_populations"),
+                _population_columns(concat_tables([t[3] for t in k2_tables]), k2_tested))
+            tables["compare_choices"] = _joined(tables.get("compare_choices"),
+                                                concat_tables([t[4] for t in k2_tables]).columns())
     # the figures: one page per class of forms (forms of no single class last) and time
     shown = _display(rm, form_labels)
     tops = [x for x in (_highest(shown, times, config.choice_limits.max_fD_se), floor)
@@ -980,7 +1046,93 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                 jobs.append((stem, lambda t=t, part=part: plot_pooled_forms(
                     shown, part, order, t, styles=styles, nterm_subtract=up.nterm_subtract,
                     top=top, delta_crit=crit, time_scale=scale, registry=registry)))
+    if choice is not None:
+        jobs += _pooled_population_jobs(
+            shown, _display(choice, form_labels), groups, k2_found, config, order=order,
+            times=times, scale=scale, booted=booted, marks=marks, form_labels=form_labels,
+            spans={f.name: own_spans(f, up.nterm_subtract, registry) for f in first.forms},
+            styles={f"{s} {f.name}": styles[s] for f in first.forms for s in order
+                    if s in styles})
     return jobs, top
+
+
+def _pooled_population_jobs(shown, choice, groups: dict, k2_found: dict, config, *,
+                            order: list, times, scale: str, booted: bool, marks,
+                            form_labels: dict, spans: dict, styles: dict) -> list:
+    """The provisional K = 2 figures of the forms of a pool (owner, 2026-11-10): each form's
+    residue profile with its population choice per sample and time, the population tiers
+    per class of forms, and, against the same form of the reference (``k2_found``: form ->
+    the reference's label and the comparisons), the population overlay and the K = 2
+    significance map. ``shown``, ``choice``: the forms' residue map and choice with display
+    labels; ``spans``: the residues of each form's own peptides, marked on the profiles."""
+    from .pooled import provisional
+
+    when = {"time_scale": scale}
+    jobs = []
+    for cls, members in groups.items():
+        for f in members:
+            states = [f"{s} {f.name}" for s in order]
+            for s in states:
+                for t in times:
+                    when_ = _time_label(t, scale)
+                    if choice.where(sample=s, time=t).any():
+                        jobs.append((f"choice_{s}_{when_}", lambda s=s, t=t, f=f: provisional(
+                            plot_population_choice(choice, s, t, marks=marks, bootstrap=booted,
+                                                   **when), spans[f.name])))
+                    elif shown.where(sample=s, time=t).any():
+                        jobs.append((f"profile_{s}_{when_}", lambda s=s, t=t, f=f: provisional(
+                            plot_residue_profile(shown, s, t, marks=marks, bootstrap=booted,
+                                                 **when), spans[f.name])))
+        rows = [f"{s} {f.name}" for f in members for s in order]
+        tiered = ((shown.K == 1) & (shown.population_tier != "")
+                  & np.isin(shown.sample, rows))
+        if config.populations == "population_test" and tiered.any():
+            rows = [r for r in rows if (tiered & (shown.sample == r)).any()]
+            points = [np.nan] + sorted({float(t) for t in shown.time[tiered]
+                                        if np.isfinite(t)})
+            for n, chunk in enumerate(_map_pages(config.page_size, points, len(rows), 2.6)):
+                jobs.append((_page_stem(f"population_tiers_{_stem(cls or 'other')}", n),
+                             lambda rows=rows, chunk=chunk: provisional(plot_population_tiers(
+                                 shown, rows, times=chunk, **when), strip=False)))
+    per_page = int(config.page_size[1] // OVERLAY_PANEL)
+    for form, (reference, res, positions, pop_cmp, choices_cmp, shared) in k2_found.items():
+        others = [f"{s} {form}" for s in order if f"{s} {form}" != reference]
+        # the share's test needs every spectrum at K = 2, as the positions' do (HISTORY 204)
+        pop_d = _display(pop_cmp, form_labels, reference) if positions is not None else None
+        pos_d = ({r: _display(c, form_labels, reference) for r, c in positions.items()}
+                 if positions is not None else {})
+        choices_d = _display(choices_cmp, form_labels, reference)
+        shared_d = _display(shared, form_labels, reference) if shared is not None else None
+        blocks = _display(res, form_labels, reference)
+        for t in times:
+            when_ = _time_label(t, scale)
+            ref_pop = _has_overlay(shown, reference, t, ("pop_high",), choice)
+            with_pop = [s for s in others
+                        if ref_pop or _has_overlay(shown, s, t, ("pop_high",), choice)]
+            for n, part in enumerate(_pages(with_pop, per_page) if with_pop else []):
+                jobs.append((_page_stem(f"overlay_populations_{_stem(form)}_{when_}", n),
+                             lambda t=t, part=part, reference=reference, form=form: provisional(
+                                 residue_overlay_figure(shown, reference, part, t,
+                                                        show=("pop_high",), choice=choice,
+                                                        styles=styles, **when), spans[form])))
+        if shared_d is None:
+            continue
+        sections = 1 + sum(len(pos_d.get(r, ())) > 0 for r in (1, 2))
+        for s in others:
+            if not shared_d.where(sample=s).any():
+                continue
+            k2_times = sorted({float(t) for t in shared_d.time[shared_d.where(sample=s)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, k2_times, sections,
+                                                 2.4 + MAP_ROW * sections)):
+                jobs.append((_page_stem(f"residue_significance_K2_{s}", n),
+                             lambda s=s, chunk=chunk, shared_d=shared_d, pop_d=pop_d,
+                             pos_d=pos_d, blocks=blocks, choices_d=choices_d,
+                             form=form: provisional(
+                                 plot_residue_significance_k2(
+                                     shared_d, pop_d, pos_d.get(1), pos_d.get(2), [s],
+                                     blocks=blocks, own_choices=choices_d, times=chunk,
+                                     **when), spans[form], strip=False)))
+    return jobs
 
 
 def _pooled_coverage_jobs(pools: dict, up, pooled: set, config: AnalysisConfig, *,

@@ -5,10 +5,12 @@ measured over one range side by side (head to head)."""
 
 from __future__ import annotations
 
+import textwrap
 from collections.abc import Collection, Mapping, Sequence
 
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
@@ -37,6 +39,55 @@ def own_spans(form: PooledForm, nterm_subtract: int,
         else:
             out.append([a, b])
     return [(a, b) for a, b in out]
+
+
+NOTE_HEIGHT = 0.32  # inches under a figure for the provisional note
+
+
+def _spans_text(spans: Sequence[tuple[float, float]]) -> str:
+    return ", ".join(f"{int(a + 0.5)}-{int(b - 0.5)}" for a, b in spans)
+
+
+def provisional(fig: Figure, spans: Sequence[tuple[float, float]] | None = None, *,
+                strip: bool = True) -> Figure:
+    """``fig``, a residue figure of a form of a pool (owner, 2026-11-10), marked provisional
+    by a note under the figure (the figure grows to hold it). ``spans``: the residues the
+    form's own peptides measure (:func:`own_spans`; None for a figure of several forms):
+    with ``strip``, drawn as on the forms pages, a grey strip along the bottom of every panel
+    with residues on its x axis; otherwise (maps of cells) named in the note."""
+    if spans is None:
+        where = ("outside the residues of each form's own peptides (the grey strip of the "
+                 "forms pages)")
+    elif not spans:
+        where = "the form has no peptides of its own, so everywhere"
+    elif strip:
+        where = "outside the grey strip (the residues of its own peptides)"
+        for ax in fig.axes:
+            if any("residue" in a.get_xlabel().lower()
+                   for a in ax.get_shared_x_axes().get_siblings(ax)):
+                for a, b in spans:
+                    ax.axvspan(a, b, ymin=0.0, ymax=0.04, facecolor=OWN_FILL,
+                               edgecolor=OWN_EDGE, lw=0.6, zorder=0.8)
+    else:
+        where = f"outside residues {_spans_text(spans)} (those of its own peptides)"
+    note = (f"Provisional, a form of a pool: {where} the values mix the forms that share "
+            "the peptides, and a mixture of forms can look like two populations.")
+    height = fig.get_figheight()
+    fig.set_figheight(height + NOTE_HEIGHT)
+    share = NOTE_HEIGHT / (height + NOTE_HEIGHT)
+    engine = fig.get_layout_engine()
+    if isinstance(engine, ConstrainedLayoutEngine):
+        engine.set(rect=(0.0, share, 1.0, 1.0 - share))
+    else:  # the axes keep their size in inches: the old fractions scaled to the new height
+        pars = fig.subplotpars
+        scale = height / (height + NOTE_HEIGHT)
+        fig.subplots_adjust(bottom=share + pars.bottom * scale, top=share + pars.top * scale)
+        for legend in fig.legends:  # a legend placed in the figure moves up with the axes
+            legend.set_bbox_to_anchor((0.0, share, 1.0, 1.0 - share), transform=fig.transFigure)
+    per_line = max(40, int(fig.get_figwidth() * 17))
+    fig.text(0.5, 0.004, "\n".join(textwrap.wrap(note, per_line)), ha="center", va="bottom",
+             fontsize=7, color="0.35", style="italic")
+    return fig
 
 
 def plot_pooled_forms(

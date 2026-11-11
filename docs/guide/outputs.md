@@ -525,7 +525,9 @@ differences are significant.
 draws the same thing for each form of the pool: one panel per form, one page per class. A grey
 strip along the bottom of a panel, outlined in black, marks the residues the form's own
 peptides measure; elsewhere the value is the mixture of the forms that share the peptides. See
-[The forms in a pool](inputs.md#the-forms-in-a-pool). `head_to_head_<time>` puts the pooled
+[The forms in a pool](inputs.md#the-forms-in-a-pool). With K = 2, each form also has its
+population choice, tiers, overlay, and K = 2 map, marked provisional on every page.
+`head_to_head_<time>` puts the pooled
 sequences measured over one range side by side, every sample along the x axis, on the same y
 axis ([Sequences head to head](inputs.md#sequences-head-to-head)).
 

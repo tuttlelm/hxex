@@ -390,6 +390,14 @@ KINDS = tuple(dataclasses.replace(
 KINDS = tuple(dataclasses.replace(k, pooled=True) if k.name in _POOLED
               else dataclasses.replace(k, pooled=False) if k.name == "coverage" else k
               for k in KINDS)
+# the population figures are also drawn for each form of a pool, provisional (owner,
+# 2026-11-10): one form's values mix the forms that share its peptides
+_FORMS_TOO = ("choice", "profile", "population_tiers", "overlay_populations",
+              "residue_significance_K2")
+_PROVISIONAL = ("for pooled samples with candidates, each form of the pool, marked "
+                "provisional")
+KINDS = tuple(dataclasses.replace(k, pooled=None, data=f"{k.data}; {_PROVISIONAL}")
+              if k.name in _FORMS_TOO else k for k in KINDS)
 # a pool's forms are proteins of their own: residue_level = false turns them off too
 KINDS = tuple(dataclasses.replace(k, needs=(*k.needs, _RESIDUES),
                                   changed_by=(*k.changed_by, "[analysis] residue_level"))

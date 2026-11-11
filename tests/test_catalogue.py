@@ -193,11 +193,13 @@ def test_pooled_results_rule_out_the_mixtures_residue_figures(two_sample_bundle,
         results.settings, configs={**results.settings.configs, "spectra_source": source}))
     situation = Situation.of(analysis=cfg, results=pooled)
     planned = {p.kind.name: p for p in plan(situation)}
-    for name in ("population_tiers", "residues_all", "woods", "residue_significance",
-                 "coverage", "choice", "profile"):
+    for name in ("residues_all", "woods", "residue_significance", "coverage"):
         assert planned[name].state == "off", name
         assert "only pooled samples" in planned[name].reason
     assert planned["pooled_forms"].state != "off"
+    # the population figures are drawn per form too, provisional (owner, 2026-11-10)
+    for name in ("choice", "profile", "overlay_populations", "residue_significance_K2"):
+        assert planned[name].state == "depends" and "provisional" in planned[name].reason
     write_analysis(pooled, cfg, tmp_path / "out")
     drawn = _drawn(tmp_path / "out", ANALYSE)
     assert "pooled_forms" in drawn

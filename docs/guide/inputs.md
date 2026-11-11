@@ -426,10 +426,29 @@ filter removes the only peptide of a candidate. If the set is not the only one o
   row, its own peptides outlined in black and white. Each sequence and each modified form is a bar of
   its own: nothing is combined across sequences.
 
-The other residue-level figures (residue profiles, Woods plots, and the significance maps) and
-the samples' own coverage maps are not drawn for pooled samples: they place every peptide on
-one protein's residue numbers. `[analysis] residue_level = false` turns the forms' residue
-values and pages off as well; the forms' coverage maps stay.
+With K = 2 (`[analysis] ks`, the default), each form also has a *provisional* two-population
+analysis, the same as a sample's:
+
+- `populations.csv`: each form's population choice by residue.
+- `choice_SAMPLE FORM_TIME` (or `profile_...`) figures: the form's residue profile with the
+  population choice, the grey strip of its own residues along the bottom.
+- `population_tiers_CLASS` figures: the population tiers of every form of a class, one row
+  per sample, form, and time (with the population test).
+- With a reference: `compare_choices.csv`, `compare_populations.csv`, and, with a bootstrap
+  of every spectrum at K = 2, `compare_residues_K2.csv`, each form against the same form of
+  the reference; `overlay_populations_FORM_TIME` and `residue_significance_K2_SAMPLE FORM`
+  figures.
+
+Every one of these pages says it is provisional, and why. Outside a form's own residues a
+value mixes the forms that share the peptides, and two forms that take up deuterium
+differently can look like two populations. Check the undeuterated and fully deuterated rows of
+the tier map: they should show no populations, and where they often do, the labelled rows'
+populations are less certain too.
+
+The other residue-level figures (the fD profiles of every sample, Woods plots, and the K = 1
+significance maps) and the samples' own coverage maps are not drawn for pooled samples: they
+place every peptide on one protein's residue numbers. `[analysis] residue_level = false` turns
+the forms' residue values and pages off as well; the forms' coverage maps stay.
 
 ### Sequences head to head
 

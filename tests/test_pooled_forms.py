@@ -5,6 +5,8 @@ residue values, its comparison with the same form of the reference, and its figu
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -181,7 +183,10 @@ def test_pooled_outputs_compare_each_form_with_the_same_form_of_the_reference(re
     # peptide and the other forms did not
     assert {r for s, r in called if s == "V X1"} == {14, 15, 16, 17, 18, 19}
     assert not {s for s, _ in called} - {"V X1"}
-    assert [stem for stem, _ in jobs] == ["pooled_forms_X_1min"]
+    assert [stem for stem, _ in jobs if stem.startswith("pooled_")] == ["pooled_forms_X_1min"]
+    # and each form's population choice per sample, provisional (owner, 2026-11-10)
+    assert {stem for stem, _ in jobs if stem.startswith("choice_")} == {
+        f"choice_{s} {f}_1min" for s in ("R", "V") for f in ("X1", "X2", "X1 acK17")}
     assert top == pytest.approx(0.6 + 0.01)  # the highest residue value with its error
     fig = jobs[0][1]()
     titles = [ax.get_title(loc="left") for ax in fig.axes]
@@ -319,3 +324,64 @@ def test_each_form_has_a_coverage_map_with_its_own_peptides_outlined(record):
     gids = sorted(p.get_gid() for p in both.axes[0].patches if p.get_gid())
     assert gids == ["peptide:13-19:WQAFKLT", "peptide:13-19:WQAFacKLT",
                     "peptide:13-19:WQAYKLT", "peptide:2-9:AKLPGSTV"]
+
+
+def test_each_form_has_its_population_choice_and_k2_comparison_marked_provisional(record):
+    """The provisional bimodal analysis of the forms (owner, 2026-11-10): each form's
+    population choice, its comparison with the same form of the reference at K = 2 (the
+    choices and the share), the profile, overlay and K = 2 map pages, every page marked
+    provisional, the profiles with the strip of the form's own residues."""
+    from hxex.report.analysis import _pooled_form_outputs
+    from hxex.report.coverage import sample_styles
+    from hxex.report.pooled import OWN_FILL
+
+    forms = pooled_forms(keys(SHARED, ONLY_X1, ONLY_X2), record)
+    base = uptake([(s, k, 60.0, 0.5) for s in ("R", "V") for k in (SHARED, ONLY_X1, ONLY_X2)])
+    # every peptide also at K = 2: two populations at 0.2 and 0.8, V's high-D share larger
+    k2 = []
+    for i in range(len(base)):
+        for rank, fd in ((1, 0.2), (2, 0.8)):
+            share = 0.5 + (0.2 if base.sample[i] == "V" else 0.0) * (1 if rank == 2 else -1)
+            k2.append((i, rank, fd, share))
+    cols = {f.name: getattr(base, f.name) for f in dataclasses.fields(base)
+            if isinstance(getattr(base, f.name), np.ndarray)}
+    idx = np.concatenate([np.arange(len(base)), [i for i, *_ in k2]])
+    cols = {name: values[idx] for name, values in cols.items()}
+    n1 = len(base)
+    cols["K"][n1:], cols["rank"][n1:] = 2, [r for _, r, _, _ in k2]
+    cols["fD"] = cols["fD"].astype(float)
+    cols["fD"][n1:] = [fd for _, _, fd, _ in k2]
+    cols["mean"] = cols["fD"] * 5
+    cols["population"] = cols["population"].astype(float)
+    cols["population"][n1:] = [p for *_, p in k2]
+    cols["population_se"] = np.full(len(idx), 0.02)
+    up = dataclasses.replace(base, **cols)
+    k1 = _comparison([(k, 0.0, False) for k in (SHARED, ONLY_X1, ONLY_X2)])
+    comparisons = {"K=1 fD": k1, "K=2 rank 1 (low D) fD": k1, "K=2 rank 2 (high D) fD": k1,
+                   "K=2 rank 1 (low D) population": k1}
+    tables: dict = {}
+    jobs, _ = _pooled_form_outputs(
+        {"": (forms, record, DEFAULT_MODIFICATIONS)}, up, {("", "R"), ("", "V")}, tables,
+        AnalysisConfig(populations="bootstrap"), labels={("", "R"): "R", ("", "V"): "V"},
+        styles=sample_styles(["R", "V"], "R"), order=["R", "V"], ref_state=("", "R"), k1=k1,
+        times=[60.0], scale="seconds", comparisons=comparisons)
+    assert set(tables["populations"]["sample"]) == {"R X1", "R X2", "V X1", "V X2"}
+    assert set(tables["compare_choices"]["sample"]) == {"V X1", "V X2"}
+    assert set(tables["compare_populations"]["sample"]) == {"V X1", "V X2"}
+    # no bootstrap of every spectrum at K = 2: the share's test is left empty (HISTORY 204)
+    assert np.isnan(np.asarray(tables["compare_populations"]["z"], dtype=float)).all()
+    stems = {stem: job for stem, job in jobs}
+    assert {"choice_R X1_1min", "choice_V X2_1min", "overlay_populations_X1_1min",
+            "residue_significance_K2_V X1"} <= set(stems)
+    for stem in ("choice_V X1_1min", "overlay_populations_X1_1min",
+                 "residue_significance_K2_V X1"):
+        fig = stems[stem]()
+        notes = [t.get_text() for t in fig.texts if t.get_text().startswith("Provisional")]
+        assert len(notes) == 1, stem
+        strips = [p for ax in fig.axes for p in ax.patches
+                  if p.get_facecolor()[:3] == pytest.approx((0.91, 0.91, 0.91))]
+        if stem.startswith("residue_significance"):  # a map: the residues in the note
+            assert not strips and "outside residues 14-19" in notes[0].replace("\n", " ")
+        else:
+            assert strips and "grey strip" in notes[0], stem
+    assert OWN_FILL == "0.91"

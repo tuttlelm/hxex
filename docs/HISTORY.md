@@ -8950,3 +8950,34 @@ CSVs or mzML if wanted.
     every other peptide figure off. Results mixing pools and other samples leave both groups
     "depends". Check: tests/test_catalogue.py (a pooled copy of the two-sample bundle: plan,
     reasons, and the figures drawn).
+
+352. **A provisional two-population analysis for each form of a pool (owner, 2026-11-10).**
+    The forms of a pool (HISTORY 340) had residue values at K = 2 and population tiers in
+    `residues.csv` (35 sample-and-form states on the private pooled dataset) but no figures
+    or comparisons of them. Now, with K = 2, each form has its population choice
+    (`populations.csv`), its residue profile with the choice per sample and time (`choice_` or
+    `profile_` pages), the population tiers per class of forms (`population_tiers_CLASS`), and,
+    against the reference's same form, the choice, share and position comparisons
+    (`compare_choices.csv`, `compare_populations.csv`, `compare_residues_K2.csv` rows), the
+    population overlay (`overlay_populations_FORM_TIME`) and the K = 2 map
+    (`residue_significance_K2_SAMPLE FORM`). The samples' K = 2 comparison code is one function
+    now (`report.analysis._population_comparisons`, `_population_columns`), used for samples
+    and forms alike; the share's test still needs every spectrum bootstrapped at K = 2
+    (HISTORY 204). Every form page carries a note under it (`report.pooled.provisional`): outside
+    the form's own residues the values mix the forms that share the peptides, and a mixture of
+    forms can look like two populations; the own residues are a grey strip on the profiles and
+    overlays (as on the forms pages) and numbers in the note on the maps. The figure list draws
+    these five kinds for any sample (`catalogue` `_FORMS_TOO`, "marked provisional").
+    Measured on the private pooled dataset (bundle `results_states_bimodal`, 89 figures in
+    87 s): at the labelling time 43 % of own-peptide residues and 41 % of shared-only residues
+    are in a two- or three-population tier, so mixing does not visibly inflate the tiers. The
+    controls are the warning: the population test calls two in 191 of 1,271 undeuterated sets
+    (15 %) and 79 of 618 fully deuterated sets (13 %), 21 % and 18 % of their residues in a two-
+    or three-population tier, against 50 % of labelled sets; single-isoform peptides' controls
+    test two as often as shared ones (undeuterated 20 % against 14 %), so the false rate is a
+    property of these spectra, not of the pool, and it applies to the mixture too. On the Q-TOF
+    benchmark the controls test two in about 3 % (HISTORY 169). Not decided: whether this
+    dataset's control rate should temper the labelled populations (the `undeuterated_two` flag
+    exists, HISTORY 175). Check: tests/test_pooled_forms.py (each form's choice and K = 2
+    comparison, the pages' notes and strips), test_catalogue.py; the refactor left the
+    analysis, report and population-test tests unchanged (219 passed).

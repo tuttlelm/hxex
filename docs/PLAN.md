@@ -1418,7 +1418,8 @@ Planned, not built:
    compared with the reference's same form; replaces the class trend figures), step 5 (head to
    head: sequences of one class at one range side by side, `compare_sequences.csv`), step 6
    (the window: an identity column in the Results tree, lists for the identity level and the
-   class, identities found by **Find** in the tree and the list).
+   class, identities found by **Find** in the tree and the list); a provisional
+   two-population analysis per form (choice, tiers, K = 2 comparisons and maps, 2026-11-10).
 
 ## Risks and open decisions
 
