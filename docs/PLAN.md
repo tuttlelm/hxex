@@ -1423,6 +1423,52 @@ Planned, not built:
    (the window: an identity column in the Results tree, lists for the identity level and the
    class, identities found by **Find** in the tree and the list); a provisional
    two-population analysis per form (choice, tiers, K = 2 comparisons and maps, 2026-11-10).
+31. **The picking window sized from the data, or stray peaks flagged** (owner, 2026-11-11: a
+   candidate to evaluate, nothing decided).
+   - *Today.*
+     - The window is the constant `[run.picker] resolution_ppm`: ± 50 ppm by default,
+       pyHXExpress's value, capped at half the isotope spacing (HISTORY 99-100).
+     - With `pick = "peak"` it only accepts or rejects an apex, so it is a mass tolerance and
+       not a peak width (HISTORY 198).
+     - Files are centred by `[input.scans] mz_calibration` (HISTORY 306). Series whose
+       undeuterated envelope is off the run's calibration are flagged `off_mz` and left out
+       (HISTORY 166, 200).
+   - *What was measured.*
+     - **Apex scatter** about each series' offset (HISTORY 198): robust sd for bright peaks
+       Orbitrap 2.3-2.8 ppm, Q-TOF 6-7 ppm (1.5-3 ppm within one envelope), flat in m/z; weak
+       peaks 8-20 ppm.
+     - **A tighter tolerance was tried and rejected (HISTORY 172).** Centred per series and
+       sized from undeuterated peaks (± 16 ppm on the Q-TOF), it cut real deuterated peaks.
+       On the Q-TOF those scatter ± 20-40 ppm about their predicted positions: deuterium and
+       13C isotopologues blend, and the data are sampled every ~23 ppm. Fully deuterated sets
+       reading two rose to 22 % and replicate outliers doubled.
+     - **Scratch check, 2026-11-11** (five peptides each; the m/z offset per file taken out):
+       - **Orbitrap, MSV000094510.** At ± 50 ppm, GVVPLAGTNGETTTQGLDGLSER z2 took in another
+         species' peaks 44-50 ppm below the grid in its upper bins: about 11 % of the
+         undeuterated envelope over bins 16-19, and 5 % of the 1200 s envelope over bins
+         23-29. No screen marked them: `screen_off_position` looks at the five lowest bins
+         only, and the other scores stayed below their thresholds.
+       - **Q-TOF, the intact-peptide benchmark.** At ± 10 ppm, hxex zeroed real bins, one
+         holding 18 % of a 20 h envelope. Bright bins' summed apexes sat +2 to +9 ppm from
+         prediction (each series' own offset) after the file calibration.
+       - **Scatter of the summed apexes** about each spectrum's own offset: robust sd 0.5 ppm
+         (Orbitrap) and 2.3 ppm (Q-TOF).
+     - So a fixed ± 10 is too tight for the Q-TOF, and ± 50 admits other species on both
+       instruments.
+   - *Options to evaluate.*
+     - (a) **A window sized from the run:** a multiple of the scatter of its bright
+       undeuterated apexes after `mz_calibration`. It would be wider for deuterated bins,
+       where the blend of isotopologues widens the apex position (the reason item 172
+       failed), and wider for weak peaks. Instrument-agnostic, from the data alone.
+     - (b) **Keep the window and flag the strays:** an off-position check over every bin. A
+       consistent offset across several bins, away from the series' own, means another
+       species. A flag first; leaving such bins or spectra out only after the evidence.
+     - (c) **Both.**
+   - *Yardsticks.* Undeuterated and fully deuterated sets reading two, replicate agreement,
+     known-answer K, the share of stray intensity taken in. Spectra with and without each
+     change shown side by side before any proposal.
+   - *Related:* the owner's open items (an off-position flag; contaminant flags), item 24
+     (merged peaks read as 0), HISTORY 156 (strays did not move the fits there).
 
 ## Risks and open decisions
 
