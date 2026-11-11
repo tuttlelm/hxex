@@ -1380,7 +1380,7 @@ def test_pooled_fasta_is_a_pooled_setting_and_lands_in_the_read_record(statedir)
         load_project(toml)
     toml.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "states"\n'
                     'pooled_fasta = "states/pool.fasta"\n')
-    with pytest.raises(ProjectError, match="pooled_fasta are for pooled data, not specexport"):
+    with pytest.raises(ProjectError, match=r"pooled_fasta are for pooled data .*, not specexport"):
         load_project(toml)
 
 

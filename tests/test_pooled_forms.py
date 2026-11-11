@@ -385,3 +385,33 @@ def test_each_form_has_its_population_choice_and_k2_comparison_marked_provisiona
         else:
             assert strips and "grey strip" in notes[0], stem
     assert OWN_FILL == "0.91"
+
+
+def test_a_pools_candidates_go_with_its_instrument_files(tmp_path):
+    """[input] pooled_fasta with the scan formats (owner, 2026-11-10): the instrument files
+    behind a pooled export carry the pool's candidates, so the identities, the forms and the
+    matching by sequence follow; the folder formats other than pooled still refuse it."""
+    from types import SimpleNamespace
+
+    from hxex.analysis.settings import resolve_match
+    from hxex.config import ProjectError, load_project, read_input
+    from hxex.io.pooled import CANDIDATES_RECORD
+    from test_elution_windows import PEPTIDE, _project
+
+    path = _project(tmp_path)
+    (tmp_path / "pool.fasta").write_text(f">A1\n{PEPTIDE}GG\n>A2\n{PEPTIDE}SS\n>B1\nMMMM\n")
+    text = path.read_text().replace('peptides = "peptides.csv"\n', 'peptides = "peptides.csv"\n'
+                                    'pooled_fasta = "pool.fasta"\npooled_classes = ["A", "B"]\n')
+    path.write_text(text)
+    spectra = read_input(load_project(path))
+    record = spectra.source[CANDIDATES_RECORD]
+    assert [name for name, _ in record["records"]] == ["A1", "A2", "B1"]
+    run = SimpleNamespace(settings=SimpleNamespace(spectra_source=spectra.source))
+    assert resolve_match("auto", {"": run}) == "sequence"
+    plain = SimpleNamespace(settings=SimpleNamespace(spectra_source={"reader": "mzml"}))
+    assert resolve_match("auto", {"": plain}) == "range"
+    folder = tmp_path / "folder.toml"
+    folder.write_text('project = "p"\n\n[input]\nformat = "specexport"\ndata_dir = "."\n'
+                      'pooled_fasta = "pool.fasta"\n')
+    with pytest.raises(ProjectError, match="for pooled data"):
+        load_project(folder)

@@ -48,8 +48,8 @@ _SCAN = "scan"
 # [input] keys by the formats they apply to (the rest apply to every format)
 _INPUT_FORMATS = {
     "data_dir": _FOLDER, "samples": _FOLDER, "peptide_ranges": _FOLDER,
-    "peptide_region": _FOLDER, "sample": "pooled", "pooled_fasta": "pooled",
-    "pooled_classes": "pooled",
+    "peptide_region": _FOLDER, "sample": "pooled", "pooled_fasta": "pooled, scan",
+    "pooled_classes": "pooled, scan",
     "runs": _SCAN, "parents": _SCAN, "target": _SCAN, "fragments": _SCAN, "scans": _SCAN,
     "data_root": _SCAN, "thermo_dir": "thermo",
 }
@@ -80,8 +80,9 @@ _DESCRIPTIONS: dict[str, str] = {
                             'from residue 1 to 10 ("0001-0010" is the same); unset: all',
     "input.peptide_region": "[first, last]: only peptides wholly within these residues; with "
                             "peptide_ranges too, a peptide that matches either; unset: all",
-    "input.pooled_fasta": ("a FASTA of what may be in a pooled sample (isoforms, say): each "
-                           "peptide's possible identities are found in it (columns identity, "
+    "input.pooled_fasta": ("a FASTA of what may be in a pooled sample (isoforms, say), read "
+                           "from a pooled folder or from its instrument files (mzml, thermo): "
+                           "each peptide's possible identities are found in it (columns identity, "
                            "identity_level, candidates, classes and position_offset in the "
                            "tables); unset: none"),
     "input.pooled_classes": ('class names found in the record ids of pooled_fasta, e.g. '

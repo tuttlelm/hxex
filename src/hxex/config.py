@@ -755,8 +755,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
             exclude=_exclude(data),
             **_pooled_candidates(data, base, fmt),
         )
-    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "peptide_region", "sample",
-                         "pooled_fasta", "pooled_classes"}
+    extra = set(data) & {"data_dir", "samples", "peptide_ranges", "peptide_region", "sample"}
     if extra:
         raise ProjectError(f"input key(s) {', '.join(sorted(extra))} are not used by {fmt} "
                            "(the runs give the samples and times)")
@@ -854,6 +853,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         rt_elution_windows=_path(base, data.get("rt_elution_windows"),
                                  "input.rt_elution_windows"),
         exclude=_exclude(data),
+        **_pooled_candidates(data, base, fmt),
     )
 
 
@@ -1473,14 +1473,22 @@ def scan_targets(project: Project) -> list[MzmlTarget]:
     return targets
 
 
+# the formats a pool's candidates ([input] pooled_fasta) may be given with: a pooled folder, the
+# scan files behind one, or spectra stored from either
+POOLED_FORMATS = ("pooled", "mzml", "thermo", "stored")
+
+
 def _pooled_candidates(data: Mapping, base: Path, fmt: str) -> dict:
-    """``pooled_fasta`` and ``pooled_classes`` of ``[input]``: for pooled data only (spectra
-    stored from a pooled read count as pooled); classes need the FASTA they are found in."""
+    """``pooled_fasta`` and ``pooled_classes`` of ``[input]``: for pooled data, read from a
+    pooled folder or from scan files (mzML, Thermo raw: the instrument files behind a pooled
+    export; owner, 2026-11-10), or stored from such a read; classes need the FASTA they are
+    found in."""
     given = [k for k in ("pooled_fasta", "pooled_classes") if _none(data.get(k)) is not None]
     if not given:
         return {}
-    if fmt not in ("pooled", "stored"):
-        raise ProjectError(f"input key(s) {', '.join(given)} are for pooled data, not {fmt}")
+    if fmt not in POOLED_FORMATS:
+        raise ProjectError(f"input key(s) {', '.join(given)} are for pooled data (formats "
+                           f"{', '.join(POOLED_FORMATS)}), not {fmt}")
     fasta = _path(base, _none(data.get("pooled_fasta")), "input.pooled_fasta")
     given_classes = _none(data.get("pooled_classes"))
     if isinstance(given_classes, Mapping):  # each class's record ids, named
@@ -1634,14 +1642,15 @@ def read_input(
 
 def _with_candidates(spectra: SpectrumSet, inp: InputSettings) -> SpectrumSet:
     """The spectra with the candidates of ``pooled_fasta`` in their read record (the current
-    file's, also for stored spectra); refused for spectra not read as pooled."""
+    file's, also for stored spectra); refused for spectra not read as pooled or from scan
+    files."""
     from .io import ReadError
     from .io.pooled import with_candidates
 
     reader = (spectra.source or {}).get("reader")
-    if reader != "pooled":
+    if reader not in POOLED_FORMATS:
         raise ProjectError(f"input.pooled_fasta: the spectra were read as {reader or 'unknown'}"
-                           ", not pooled")
+                           ", not as pooled data or from scan files")
     try:
         return with_candidates(spectra, inp.pooled_fasta, inp.pooled_classes or ())
     except ReadError as exc:

@@ -358,6 +358,11 @@ classes with `pooled_classes`, in one of two ways. A record is named by the firs
 
 Use one form or the other, not both.
 
+`pooled_fasta` and `pooled_classes` also work when you read the pool's instrument files
+(`format = "mzml"` or `"thermo"`) instead of a pooled export: put them in `[input]` beside
+`peptides` and the runs. The identities, the forms, and the head-to-head pages are then made
+from the peptide table's sequences, just as from a pooled folder.
+
 For each peptide, *hxex* looks for its sequence in every record (modifications aside) and says:
 
 - **isoform**: one record holds it; the identity is that record.

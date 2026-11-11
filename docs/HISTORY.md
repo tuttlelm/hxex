@@ -8976,9 +8976,10 @@ CSVs or mzML if wanted.
     or three-population tier, against 50 % of labelled sets; single-isoform peptides' controls
     test two as often as shared ones (undeuterated 20 % against 14 %), so the false rate is a
     property of these spectra, not of the pool, and it applies to the mixture too. On the Q-TOF
-    benchmark the controls test two in about 3 % (HISTORY 169). Not decided: whether this
-    dataset's control rate should temper the labelled populations (the `undeuterated_two` flag
-    exists, HISTORY 175). Check: tests/test_pooled_forms.py (each form's choice and K = 2
+    benchmark the controls test two in about 3 % (HISTORY 169). The owner (2026-11-10): the
+    control rate does temper the labelled populations, and the cause is the data (many spectra
+    need refining at the LC level, in the raw files or a new HDExaminer export), so no hxex rule
+    for it; see the pending item on reading the pool's raw files. Check: tests/test_pooled_forms.py (each form's choice and K = 2
     comparison, the pages' notes and strips), test_catalogue.py; the refactor left the
     analysis, report and population-test tests unchanged (219 passed).
 
@@ -9047,3 +9048,20 @@ CSVs or mzML if wanted.
     bootstraps; the 1-against-2 simulations kept; multimodal -> bimodal simulates nothing and
     flags on chi-square; quick refused; other fit settings refused). Guide: presets.md
     "Changing the preset of a finished run", population-test.md (k_max needs no new run).
+
+355. **A pool's candidates with its instrument files (owner, 2026-11-10).** `[input]
+    pooled_fasta` and `pooled_classes` were accepted only with the pooled format, so a pool read
+    from its raw files (to see whether fitting the raw data does better than HDExaminer's
+    export) had no identities, forms, or head-to-head pages. They are now accepted with the scan
+    formats too (`config.POOLED_FORMATS`: pooled, mzml, thermo, stored); the candidates are a
+    record attached to the spectra at read time, so everything that follows (identities in the
+    tables and the window, the forms, the head-to-head pages, the figure list) works unchanged.
+    `peptide_match = "auto"` matches by sequence when the spectra carry candidates, not only for
+    the pooled reader; `hxex check` prints the identities and forms lines for scan projects; the
+    sequence view shows the pool's records whenever `pooled_fasta` is set. Checked on the
+    private pooled dataset's Waters HDX runs (Synapt G2-S, converted to mzML; peptide table and
+    per-file windows from HDExaminer's All Results tables, `rt_elution_windows.csv`, since a
+    control file shared by the samples of a state has each state's own window there): 263
+    sequences, 41 single-isoform and 222 class-level, and the same seven forms as from the
+    pooled folders. Check: tests/test_pooled_forms.py (an mzML project with the candidates,
+    matching by sequence, the folder formats still refusing), test_io.py.

@@ -112,7 +112,7 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
     stored = stored_sequences(loaded.output.bundle)
     annotations = config.annotations if config is not None else Annotations()
     inputs = loaded.input
-    if (inputs is not None and inputs.format == "pooled"
+    if (inputs is not None and (inputs.format == "pooled" or inputs.pooled_fasta is not None)
             and (config is None or config.fasta is None)):
         if inputs.pooled_fasta is None:
             return [], annotations, ("No sequence: name the FASTA of what the pool may hold in "

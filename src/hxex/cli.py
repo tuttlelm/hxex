@@ -638,6 +638,12 @@ def cmd_check(args) -> int:
         rows: list[dict] = []
         before = len(problems)
         problems += _check_scan_files(project, rows)
+        if inp.pooled_fasta is not None and inp.peptides.is_file():  # raw files of a pool
+            from .io import read_peptide_table
+            from .io.entries import SCAN_REQUIRED
+
+            problems += _pooled_identity_lines(
+                project, read_peptide_table(inp.peptides, required=SCAN_REQUIRED))
         problems += _check_controls_present(project, None)
         if len(problems) == before and _has_rules(project):
             from .exclusions import SpectrumIndex

@@ -444,11 +444,15 @@ class AnalysisConfig:
 
 def resolve_match(match: str, runs) -> str:
     """The peptide matching an analysis uses: ``match`` itself unless ``'auto'``, which is
-    ``'sequence'`` when any of ``runs`` (Results, by run name) was read as pooled data (two
-    sequences at one range are then different proteins, never to be paired silently; docs/
-    ANALYSIS.md "Pooled samples: possible identities"), else ``'range'``."""
+    ``'sequence'`` when any of ``runs`` (Results, by run name) was read as pooled data or with a
+    pool's candidates (``[input] pooled_fasta``, also from scan files): two sequences at one
+    range are then different proteins, never to be paired silently (docs/ANALYSIS.md "Pooled
+    samples: possible identities"); else ``'range'``."""
+    from ..io.pooled import CANDIDATES_RECORD
+
     if match != "auto":
         return match
-    pooled = any(((getattr(r.settings, "spectra_source", None) or {}).get("reader") == "pooled")
-                 for r in runs.values() if getattr(r, "settings", None) is not None)
+    sources = [getattr(r.settings, "spectra_source", None) or {} for r in runs.values()
+               if getattr(r, "settings", None) is not None]
+    pooled = any(s.get("reader") == "pooled" or s.get(CANDIDATES_RECORD) for s in sources)
     return "sequence" if pooled else "range"
