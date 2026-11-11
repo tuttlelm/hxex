@@ -450,10 +450,20 @@ differently can look like two populations. Check the undeuterated and fully deut
 the tier map: they should show no populations, and where they often do, the labelled rows'
 populations are less certain too.
 
-The other residue-level figures (the fD profiles of every sample, Woods plots, and the K = 1
-significance maps) and the samples' own coverage maps are not drawn for pooled samples: they
-place every peptide on one protein's residue numbers. `[analysis] residue_level = false` turns
-the forms' residue values and pages off as well; the forms' coverage maps stay.
+With a reference, each form is also compared with the reference's same form as a sample is:
+the Woods plot (`woods_SAMPLE FORM_TIME`, at K = 1 with where the number of populations
+differs; `woods_K2_...` at K = 2), the butterfly plot (`butterfly_SAMPLE FORM`, the form's
+peptides in order of position), and the residue significance map (`residue_significance_FORM`,
+one per form, every sample a row). The form's own peptides are outlined in black on its Woods
+plots and marked by black triangles on its butterflies. Each form also has its redundancy and
+resolution figure (`redundancy_resolution_FORM`). Right-click a peptide in any form figure to
+go to its spectra.
+
+The figures that draw every sample's residue values on one axis (the fD profile of every
+sample, the residue overlay, the regions) and the samples' own
+coverage maps are not drawn for pooled samples: they place every peptide on one protein's
+residue numbers. `[analysis] residue_level = false` turns the forms' residue values and pages
+off as well; the forms' coverage maps stay.
 
 ### Sequences head to head
 

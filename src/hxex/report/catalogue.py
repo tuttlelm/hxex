@@ -228,7 +228,8 @@ KINDS: tuple[FigureKind, ...] = (
                     "[analysis] page_size")),
     FigureKind(
         "redundancy_resolution", "Redundancy and resolution", ANALYSE,
-        ("redundancy_resolution",), "redundancy and resolution per residue", _ANALYSIS_PAGE,
+        ("redundancy_resolution", "redundancy_resolution_{form}"),
+        "redundancy and resolution per residue", _ANALYSIS_PAGE,
         changed_by=("[analysis] redundancy", "[analysis] coverage_times",
                     "[analysis.colours]")),
     FigureKind(
@@ -330,7 +331,8 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] alpha", "[[analysis.regions]]", "[analysis] page_size")),
     FigureKind(
         "butterfly", "Butterfly plot", ANALYSE, ("butterfly_{sample}",),
-        "the reference above, the sample below, a line per time, the differences underneath",
+        "the reference above, the sample below, a line per time, the differences underneath "
+        "(for a pooled sample with candidates, one per form of the pool)",
         _ANALYSIS_PAGE, (_REFERENCE,),
         changed_by=("[analysis] alpha", "[analysis] peptide_match")),
     FigureKind(
@@ -398,6 +400,19 @@ _PROVISIONAL = ("for pooled samples with candidates, each form of the pool, mark
                 "provisional")
 KINDS = tuple(dataclasses.replace(k, pooled=None, data=f"{k.data}; {_PROVISIONAL}")
               if k.name in _FORMS_TOO else k for k in KINDS)
+# the comparisons with the reference are drawn for each form against the reference's same
+# form (owner, 2026-11-10); the butterfly of a pooled sample is drawn per form (its text)
+_FORMS_COMPARED = ("woods", "woods_K2", "residue_significance")
+_ONE_PER_FORM = ("redundancy_resolution",)
+_EACH_FORM = ("for pooled samples with candidates, each form of the pool against the "
+              "reference's same form")
+KINDS = tuple(dataclasses.replace(k, pooled=None,
+                                  data=f"{k.data}; {_EACH_FORM}" if k.data else _EACH_FORM)
+              if k.name in _FORMS_COMPARED else k for k in KINDS)
+KINDS = tuple(dataclasses.replace(k, pooled=None, data=f"{k.data}; for pooled samples with "
+                                  "candidates, one per form of the pool" if k.data else
+                                  "for pooled samples with candidates, one per form of the pool")
+              if k.name in _ONE_PER_FORM else k for k in KINDS)
 # a pool's forms are proteins of their own: residue_level = false turns them off too
 KINDS = tuple(dataclasses.replace(k, needs=(*k.needs, _RESIDUES),
                                   changed_by=(*k.changed_by, "[analysis] residue_level"))

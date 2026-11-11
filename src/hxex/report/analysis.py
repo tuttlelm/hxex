@@ -476,6 +476,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         tables["run_identity"] = check_identity(unmerged).columns()
     comparisons = {}
     raw_comparisons: dict = {}
+    counts_raw = None
     k1_raw = None
     pop_cmp = counts_d = None
     choices_cmp = shared_choices = k2_positions = reg_cmp = None
@@ -519,6 +520,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                evidence=config.borderline_evidence,
                                                **(test_p or {}))
             tables["compare_population_counts"] = counts.columns()
+            counts_raw = counts
             counts_d = _display(counts, labels, reference)
         res_cmp = None
         # the residues compared only where the reference has residue-level outputs
@@ -623,7 +625,8 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     form_jobs, form_top = (_pooled_form_outputs(
         pools, up, pooled, tables, config, labels=labels, styles=styles, order=pooled_order,
         ref_state=ref_state, k1=k1_raw, times=times, scale=scale, floor=peptide_top,
-        comparisons=raw_comparisons, k2_tested=k2_tested, booted=booted, marks=marks)
+        comparisons=raw_comparisons, k2_tested=k2_tested, booted=booted, marks=marks,
+        counts=counts_raw)
         if pooled and forms_on else ([], peptide_top))
     if pooled:  # a coverage map per form of the pool: peptide-level, whatever residue_level
         form_jobs += _pooled_coverage_jobs(pools, up, pooled, config, labels=labels,
@@ -783,7 +786,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                  times=chunk, **when)))
         k1 = comparisons["K=1 fD"]
         drawn = list(times)
-        for s in others:
+        for s in (o for o in others if o not in pooled_shown):  # a pool's: per form
             if drawn and k1.where(sample=s, time=drawn).any():
                 jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
                     k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
@@ -922,7 +925,7 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                          labels: dict, styles: dict, order: list, ref_state, k1, times,
                          scale: str, floor: float | None = None, comparisons: dict | None = None,
                          k2_tested: bool = False, booted: bool = False,
-                         marks=()) -> tuple[list, float | None]:
+                         marks=(), counts=None) -> tuple[list, float | None]:
     """The residue-level outputs of the pooled samples (owner, 2026-11-09): the forms of each
     pool's minimum set (``pooled_forms`` table), each form's residue values (rows of the
     ``residues`` table, the sample named ``'<sample> <form>'``), each form compared with the
@@ -939,7 +942,7 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
     Adds the tables to ``tables``; returns the figure jobs and the top of their y axis (the
     head-to-head figure shares it)."""
     from ..analysis.pooled import form_class, form_comparison, form_sequences, form_uptake
-    from .pooled import FORM_PANEL, own_spans, plot_pooled_forms
+    from .pooled import FORM_PANEL, name_forms, own_spans, plot_pooled_forms
 
     forms = {run: f for run, (f, _, _) in pools.items()}
     rows = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
@@ -965,6 +968,8 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
     form_labels = {state: f"{labels.get((state[0], s), label(state[0], s))} "
                           f"{state[1][len(s) + 1:]}" for state, s in base.items()}
     k2_found = {}
+    k1_found: dict = {}  # form -> (the reference form's label, its K=1 residue comparison)
+    k1_forms = k2_forms = None
     if k1 is not None and ref_state in pooled:
         crit = k1.delta_crit
         k1_forms = form_comparison(k1, forms)
@@ -973,8 +978,6 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
         # the K=2 peptide comparisons, each form's rows (only with the population choice)
         k2_forms = ({title: form_comparison(c, forms) for title, c in (comparisons or {}).items()}
                     if choice is not None and len(comparisons or {}) > 1 else {})
-        k2_found: dict = {}  # form -> (reference, K=1 comparison, positions, populations,
-        #                                choices, shared choices)
         ref_forms = forms[ref_state[0]].forms
         for f in ref_forms:
             ref_f = (ref_state[0], f"{ref_state[1]} {f.name}")
@@ -1006,6 +1009,7 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                                for x, m in pairs.items()])), k1_forms, nterm_subtract=nterm,
                 modified="combined")
             found.append(res_f)
+            k1_found[f.name] = (form_labels[ref_f], res_f)
             if choice_f is not None and k2_forms:
                 k2_found[f.name] = (form_labels[ref_f], res_f, *_population_comparisons(
                     rm_f, pairs, choice_f, pair_choice, name, k2_forms, config, crit=crit,
@@ -1047,6 +1051,27 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                 jobs.append((stem, lambda t=t, part=part: plot_pooled_forms(
                     shown, part, order, t, styles=styles, nterm_subtract=up.nterm_subtract,
                     top=top, delta_crit=crit, time_scale=scale, registry=registry)))
+    if k1_found:
+        jobs += _form_comparison_jobs(
+            k1_found, k1_forms, k2_forms or {}, counts, forms, form_labels, config,
+            order=order, times=times, scale=scale, gate=gate,
+            own={f.name: set(f.own) for f in first.forms})
+    # redundancy and resolution, one figure per form (every sample a row)
+    coverage_time = None if config.coverage_times == UNDEUTERATED else config.coverage_times
+    try:
+        form_coverage = coverage_table(fu, sequences=sequences or None, count=config.redundancy,
+                                       time=coverage_time)
+    except NoPeptideAtTime:
+        form_coverage = coverage_table(fu, sequences=sequences or None, count=config.redundancy,
+                                       time="all")
+    form_coverage_d = _display(form_coverage, form_labels)
+    for f in first.forms:
+        states_f = [f"{s} {f.name}" for s in order
+                    if (form_coverage_d.sample == f"{s} {f.name}").any()]
+        if states_f:
+            jobs.append((f"redundancy_resolution_{_stem(f.name)}",
+                         lambda states_f=states_f: plot_redundancy_resolution(
+                             form_coverage_d, samples=states_f, marks=marks)))
     if choice is not None:
         jobs += _pooled_population_jobs(
             shown, _display(choice, form_labels), groups, k2_found, config, order=order,
@@ -1054,7 +1079,81 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
             spans={f.name: own_spans(f, up.nterm_subtract, registry) for f in first.forms},
             styles={f"{s} {f.name}": styles[s] for f in first.forms for s in order
                     if s in styles})
-    return jobs, top
+    # every form figure's rows name the sample the results know and the form beside it, so a
+    # peptide clicked there leads to its spectra (owner, 2026-11-10)
+    states = {}
+    for state, sample in base.items():
+        form = state[1][len(sample) + 1:]  # the state is '<sample> <form>'
+        shown_as = form_labels[state]  # '<the sample's display label> <form>'
+        states[shown_as] = (shown_as[:len(shown_as) - len(form) - 1], form)
+    return [(stem, lambda draw=draw: name_forms(draw(), states)) for stem, draw in jobs], top
+
+
+def _form_comparison_jobs(k1_found: dict, k1_forms, k2_forms: dict, counts, forms: dict,
+                          form_labels: dict, config: AnalysisConfig, *, order: list, times,
+                          scale: str, gate: bool, own: Mapping[str, set] | None = None) -> list:
+    """The comparisons of each form of a pool with the reference's same form, drawn as a
+    sample's are (owner, 2026-11-10): the Woods plot (K = 1, and where the number of
+    populations differs), the Woods plot at K = 2, the butterfly plot, and the residue
+    significance map (K = 1), one map per form. ``k1_found``: form -> (the reference form's
+    label, the form's K = 1 residue comparison); ``k1_forms``, ``k2_forms``: the peptide
+    comparisons with each form's rows (:func:`hxex.analysis.pooled.form_comparison`);
+    ``counts``: the comparison of the numbers of populations (None without one); ``own``:
+    each form's own peptides ``(peptide, start, end)``, outlined on its Woods plots and
+    marked on its butterflies."""
+    from ..analysis.pooled import form_comparison
+    from .pooled import outline_own
+
+    when = {"time_scale": scale}
+    if counts is not None and counts.run is None:
+        counts = dataclasses.replace(counts, run=np.full(len(counts.sample), "", dtype=object))
+    counts_forms = form_comparison(counts, forms) if counts is not None else None
+    short = {"K=2 rank 1 (low D) fD": "K=2 low-D fD", "K=2 rank 2 (high D) fD":
+             "K=2 high-D fD", "K=2 rank 1 (low D) population": "K=2 high-D population"}
+    jobs = []
+    for form, (reference, res) in k1_found.items():
+        mine = set((own or {}).get(form, ()))
+        others = [f"{s} {form}" for s in order if f"{s} {form}" != reference]
+        k1_d = _display(k1_forms, form_labels, reference)
+        counts_d = (_display(counts_forms, form_labels, reference)
+                    if counts_forms is not None else None)
+        k2_stack = sorted(((short.get(t, t), _display(c, form_labels, reference)
+                            .scaled_by_separation().as_high_share())
+                           for t, c in k2_forms.items() if t != "K=1 fD"),
+                          key=lambda panel: not panel[0].endswith("population"))
+        for s in others:
+            drawn = [t for t in times if k1_d.where(sample=s, time=t).any()]
+            for t in drawn:
+                when_ = _time_label(t, scale)
+                if counts_d is not None:
+                    jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t, k1_d=k1_d,
+                                 counts_d=counts_d, mine=mine: outline_own(
+                                     woods_populations_figure(k1_d, counts_d, s, t, **when),
+                                     mine)))
+                else:
+                    jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t, k1_d=k1_d, mine=mine:
+                                 outline_own(woods_figure([("K=1 fD", k1_d)], s, t, **when),
+                                             mine)))
+                if k2_stack and all(c.where(sample=s, time=t).any() for _, c in k2_stack):
+                    jobs.append((f"woods_K2_{s}_{when_}", lambda s=s, t=t, k2_stack=k2_stack,
+                                 mine=mine: outline_own(woods_figure(
+                                     k2_stack, s, t, note=(
+                                         "compared where both samples have two populations"
+                                         if gate else "every K=2 description compared"),
+                                     **when), mine)))
+            if drawn:
+                jobs.append((f"butterfly_{s}", lambda s=s, k1_d=k1_d, drawn=drawn, mine=mine:
+                             plot_butterfly(k1_d, s, times=drawn, own=mine, **when)))
+        res_d = _display(res, form_labels, reference)
+        compared = [s for s in others if res_d.where(sample=s).any()]
+        if compared:
+            map_times = sorted({float(t) for t in res_d.time[res_d.where(sample=compared)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, map_times, len(compared),
+                                                 2.4)):
+                jobs.append((_page_stem(f"residue_significance_{_stem(form)}", n),
+                             lambda res_d=res_d, compared=compared, chunk=chunk:
+                             plot_residue_significance(res_d, compared, times=chunk, **when)))
+    return jobs
 
 
 def _pooled_population_jobs(shown, choice, groups: dict, k2_found: dict, config, *,
@@ -1144,6 +1243,7 @@ def _pooled_coverage_jobs(pools: dict, up, pooled: set, config: AnalysisConfig, 
     and white;
     file ``pooled_coverage_<form>``."""
     from ..analysis.pooled import form_uptake
+    from .pooled import name_forms
 
     forms = {run: f for run, (f, _, _) in pools.items()}
     rows = np.array([(str(u), str(s)) in pooled for u, s in zip(up.run, up.sample,
@@ -1167,12 +1267,13 @@ def _pooled_coverage_jobs(pools: dict, up, pooled: set, config: AnalysisConfig, 
         own = set(form.own)
         for n, chunk in enumerate(_pages(points, per_page)):
             jobs.append((_page_stem(f"pooled_coverage_{_stem(form.name)}", n),
-                         lambda samples=samples, chunk=chunk, own=own, form=form:
+                         lambda samples=samples, chunk=chunk, own=own, form=form: name_forms(
                          coverage_figure(
                              shown, samples=samples, times=[t for t in chunk if t != "UN"],
                              columns=per_row, undeuterated="UN" in chunk, cell=COVERAGE_CELL,
                              outlined=own, time_scale=scale,
-                             title=f"{form.name}: its own peptides outlined in black and white")))
+                             title=f"{form.name}: its own peptides outlined in black and white"),
+                         {f"{s} {form.name}": (s, form.name) for s in order})))
     return jobs
 
 

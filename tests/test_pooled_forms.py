@@ -319,6 +319,14 @@ def test_each_form_has_a_coverage_map_with_its_own_peptides_outlined(record):
     assert set(bars) == {"peptide:2-9:AKLPGSTV", "peptide:13-19:WQAFKLT"}
     assert bars["peptide:13-19:WQAFKLT"].get_linewidth() > bars[
         "peptide:2-9:AKLPGSTV"].get_linewidth()  # X1's own peptide, outlined
+    # each bar's row names the sample the results tree knows, and the form beside it (owner,
+    # 2026-11-10: going to the spectra from a form's map found no such peptide)
+    from hxex.report.hover import row_of
+
+    rows = [row_of(p) for ax in fig.axes for p in ax.patches
+            if p.get_gid() == "peptide:13-19:WQAFKLT"]
+    assert {(r["sample"], r["form"], r["start"], r["end"]) for r in rows} == {
+        ("R", "X1", 13, 19), ("V", "X1", 13, 19)}
     # two sequences over one range in one sample: two bars, each named by its sequence
     both = plot_coverage(up, "R", 60.0)
     gids = sorted(p.get_gid() for p in both.axes[0].patches if p.get_gid())
@@ -385,6 +393,31 @@ def test_each_form_has_its_population_choice_and_k2_comparison_marked_provisiona
         else:
             assert strips and "grey strip" in notes[0], stem
     assert OWN_FILL == "0.91"
+    # each form against the reference's same form, as a sample's comparisons are drawn (owner,
+    # 2026-11-10): Woods (K = 1; K = 2 needs the K = 2 peptide comparisons, given here), the
+    # butterfly, and the K = 1 residue significance map, one per form
+    assert {"woods_V X1_1min", "woods_K2_V X1_1min", "butterfly_V X1",
+            "residue_significance_X1", "residue_significance_X2"} <= set(stems)
+    from hxex.report.hover import rows_of
+
+    for stem in ("woods_V X1_1min", "butterfly_V X1"):
+        rows = [r for a in stems[stem]().findobj() for r in rows_of(a)]
+        assert rows and {(r["sample"], r.get("form")) for r in rows
+                         if "sample" in r} == {("V", "X1")}, stem
+    # the form's own peptides: outlined on its Woods plot, marked on its butterfly; and one
+    # redundancy and resolution figure per form
+    from hxex.report.pooled import OWN_NOTE
+
+    woods = stems["woods_V X1_1min"]()
+    assert OWN_NOTE in [t.get_text() for ax in woods.axes for t in ax.texts]
+    black = [line for ax in woods.axes for line in ax.get_lines()
+             if line.get_color() == "black" and line.get_linewidth() > 3]
+    assert len(black) == 1  # X1's own peptide, 13-19
+    assert black[0].get_xdata()[0] == pytest.approx(12.5)
+    legend = [t.get_text() for ax in stems["butterfly_V X1"]().axes if ax.get_legend()
+              for t in ax.get_legend().get_texts()]
+    assert "its own peptides" in legend
+    assert {"redundancy_resolution_X1", "redundancy_resolution_X2"} <= set(stems)
 
 
 def test_a_pools_candidates_go_with_its_instrument_files(tmp_path):

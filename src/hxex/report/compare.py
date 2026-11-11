@@ -9,7 +9,7 @@ reference first, in black). Functions return figures and never show them."""
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 import matplotlib
 import numpy as np
@@ -623,6 +623,12 @@ def _difference_hover(artist, comparison: PeptideComparison, i: int, sample: str
         "corrected_differently": bool(comparison.corrected_differently[i])})
 
 
+def _wrapped(text: str, width: int) -> str:
+    """``text`` broken at spaces into lines of at most ``width`` characters (a long sample
+    name, a pooled form's say, kept off the neighbouring labels)."""
+    return "\n".join(textwrap.wrap(text, width, break_long_words=False)) or text
+
+
 def plot_peptide_differences(
     comparison: PeptideComparison,
     sample: str,
@@ -680,7 +686,7 @@ def plot_peptide_differences(
     pop = "Δhigh-D share" if comparison.share == "high" else "Δpop"
     what = ("ΔfD" if comparison.quantity == "fD" else f"{pop} × sep"
             if comparison.scaled else pop if comparison.share == "high" else "Δpopulation")
-    ax.set_ylabel(f"{what} ({sample} − {comparison.reference})")
+    ax.set_ylabel(_wrapped(f"{what} ({sample} − {comparison.reference})", 40))
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
     n_compared = int(np.isfinite(comparison.delta[rows]).sum())  # a population may not be
@@ -778,7 +784,8 @@ def plot_population_counts(
     ax.set_ylim(base - COUNT_STEP * n_both - 0.04, COUNT_STEP * n_up + 0.04)
     ax.set_yticks([COUNT_STEP * n_up / 2, -COUNT_STEP * n_dn / 2,
                    base - COUNT_STEP * n_both / 2],
-                  [f"{sample} only", f"{counts.reference} only", "both"], fontsize=8)
+                  [_wrapped(f"{sample} only", 16), _wrapped(f"{counts.reference} only", 16),
+                   "both"], fontsize=8)
     ax.annotate("K=2", xy=(0, 1), xycoords="axes fraction", xytext=(-6, 3),
                 textcoords="offset points", ha="right", va="bottom", fontsize=9,
                 weight="bold")
@@ -891,6 +898,7 @@ def plot_butterfly(
     times: Sequence[float] | None = None,
     max_labels: int = 60,
     time_scale: str = "seconds",
+    own: Collection[tuple[str, int, int]] | None = None,
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
@@ -901,7 +909,8 @@ def plot_butterfly(
     default to every time point of the comparison (the controls are not times). Lines have the
     gids ``butterfly:<time>:reference``, ``butterfly:<time>:sample`` and
     ``difference:<time>``; each difference line carries its time's rows of the comparison
-    (``compare_peptides.csv``).
+    (``compare_peptides.csv``). ``own``: the ``(peptide, start, end)`` of a pooled form's own
+    peptides, each marked by a black triangle under the differences (named in their legend).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -979,6 +988,12 @@ def plot_butterfly(
                   markeredgewidth=1.0, label="not significant"),
            Line2D([], [], color="#555555", linestyle="--", linewidth=0.9,
                   label=THRESHOLD_LABEL)]
+    mine = [position[k] for k in keys if own is not None and (k[2], k[0], k[1]) in own]
+    if mine:  # a pooled form's own peptides, under the differences
+        bottom.scatter(mine, np.zeros(len(mine)), marker="^", s=18, color="black",
+                       transform=bottom.get_xaxis_transform(), clip_on=False, zorder=4)
+        key.append(Line2D([], [], linestyle="none", marker="^", markersize=4, color="black",
+                          label="its own peptides"))
     bottom.legend(handles=key, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=len(key),
                   frameon=False, fontsize=7, borderaxespad=0.2)
     what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"

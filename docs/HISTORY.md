@@ -9065,3 +9065,31 @@ CSVs or mzML if wanted.
     sequences, 41 single-isoform and 222 class-level, and the same seven forms as from the
     pooled folders. Check: tests/test_pooled_forms.py (an mzML project with the candidates,
     matching by sequence, the folder formats still refusing), test_io.py.
+
+356. **Each form of a pool compared as a sample is; its figures lead to the spectra (owner,
+    2026-11-10).** With a reference, each form of a pool (HISTORY 340) is now drawn against the
+    reference's same form as a sample is against the reference: the Woods plot (K = 1 with the
+    population counts panel, and K = 2), the butterfly plot, and the K = 1 residue significance
+    map, one map per form (`report.analysis._form_comparison_jobs`, from the peptide and
+    residue comparisons the forms already had, the population counts split by form with
+    `form_comparison`), and each form has its redundancy and resolution figure
+    (`redundancy_resolution_FORM`). The form's own peptides are outlined in black on its Woods
+    plots (`report.pooled.outline_own`, with a note in the panel) and marked by black
+    triangles under the differences of its butterflies (`plot_butterfly(own=)`), as on the
+    form coverage maps. Long sample names on the Woods plot (its y label and the population
+    lanes) wrap at spaces, so a form's name no longer runs into the neighbouring label. A pooled sample's own butterfly, which put both classes' peptides on
+    one axis, is replaced by the forms'. Not provisional: a Woods bar is a measured peptide
+    compared by sequence, and the K = 1 map is like the forms pages. Right-clicking a peptide in
+    a form figure said "not in the results tree": the form tables name their samples
+    `SAMPLE FORM`, and every figure's rows carried that name; `report.pooled.name_forms` now
+    renames each form figure's rows to the sample the results tree knows and a `form` column
+    (forms pages, coverage maps, choice pages, maps, Woods, butterfly; also in the window's data
+    tab). Still not drawn for pooled samples: the fD profile of every sample and the residue
+    overlay (the forms pages overlay every sample per form), and the regions
+    (`[[analysis.regions]]` are in one protein's numbering; a pool's would need to name their
+    form or class); protection factors (opt-in) would put a pool's classes on one axis. On the private pooled dataset's raw-file
+    bundle: 28 Woods pages, 28 at K = 2, 28 butterflies (the 4 mixed ones gone), 7 K = 1 maps
+    and 7 redundancy figures, 128 s for the whole analysis. Check: tests/test_pooled_forms.py
+    (the forms' Woods, K = 2 Woods, butterfly, maps and redundancy figures; own peptides
+    outlined and marked; their rows and the coverage bars' name the sample and the form),
+    test_catalogue.py.
