@@ -37,6 +37,10 @@ class Situation:
     populations: str | None  # the analysis's populations rule (None: not known without results)
     fragments: bool | None = None  # whether the results hold fragment series
     peptides: bool | None = None  # whether they hold peptide series (not only fragments)
+    # whether they hold pooled samples with candidates ([input] pooled_fasta), and samples that
+    # are not (whose peptides may make one protein)
+    pooled: bool | None = None
+    unpooled: bool | None = None
 
     @classmethod
     def of(cls, figures=None, analysis=None, results=None) -> Situation:
@@ -59,9 +63,22 @@ class Situation:
         runs = results.runs if isinstance(results, RunSet) else {"": results}
         fitted = _fitted_ks(analysis, runs)
         split = [_fragment_series(r) for r in runs.values()]
+        pools = [_pooled_run(r) for r, (_, only) in zip(runs.values(), split, strict=True)
+                 if not only]
         return cls(figures, analysis, tuple(fitted.ks),
                    population_rule(analysis.populations, results),
-                   any(series for series, _ in split), not all(only for _, only in split))
+                   any(series for series, _ in split), not all(only for _, only in split),
+                   any(pools), not all(pools))
+
+
+def _pooled_run(results) -> bool:
+    """Whether one run's results are a pool with candidates (``[input] pooled_fasta``): its
+    samples' residue figures are each form's, never the mixture's."""
+    from ..io.pooled import CANDIDATES_RECORD
+
+    settings = getattr(results, "settings", None)
+    return bool(settings is not None
+                and (settings.spectra_source or {}).get(CANDIDATES_RECORD))
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,9 @@ class FigureKind:
     data: str = ""
     changed_by: tuple[str, ...] = ()
     peptides: bool = False
+    # True: only for pooled samples with candidates; False: never for them (their forms have
+    # figures of their own); None: for any sample
+    pooled: bool | None = None
     _patterns: tuple[re.Pattern, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
@@ -350,6 +370,7 @@ KINDS: tuple[FigureKind, ...] = (
 
 KINDS = tuple(dataclasses.replace(k, peptides=True)
               if k.command == ANALYSE and _FRAGMENTS not in k.needs else k for k in KINDS)
+_POOLED = ("pooled_coverage", "pooled_forms", "head_to_head")
 
 # the figures on a protein's residue numbers: only for the samples whose peptides make one
 # protein ([analysis] residue_level; owner, 2026-11-08)
@@ -358,13 +379,17 @@ _ON_RESIDUES = ("redundancy_resolution", "residues_all", "choice", "profile",
                 "woods_K2", "residue_significance", "residue_significance_K2",
                 "region_significance", "regions")
 _PROTEIN = ("for the samples whose peptides make one protein (two of them overlap and they "
-            "agree on the residues they share; [analysis] residue_level)")
+            "agree on the residues they share; [analysis] residue_level), not for pooled "
+            "samples with candidates (their forms have figures of their own)")
 _RESIDUES = Need("[analysis] residue_level", "not false",
                  lambda s: s.analysis.residue_level is not False)
 KINDS = tuple(dataclasses.replace(
     k, needs=(*k.needs, _RESIDUES), data=f"{k.data}; {_PROTEIN}" if k.data else _PROTEIN,
-    changed_by=(*k.changed_by, "[analysis] residue_level"))
+    changed_by=(*k.changed_by, "[analysis] residue_level"), pooled=False)
     if k.name in _ON_RESIDUES else k for k in KINDS)
+KINDS = tuple(dataclasses.replace(k, pooled=True) if k.name in _POOLED
+              else dataclasses.replace(k, pooled=False) if k.name == "coverage" else k
+              for k in KINDS)
 # a pool's forms are proteins of their own: residue_level = false turns them off too
 KINDS = tuple(dataclasses.replace(k, needs=(*k.needs, _RESIDUES),
                                   changed_by=(*k.changed_by, "[analysis] residue_level"))
@@ -401,7 +426,15 @@ def plan(situation: Situation) -> list[Planned]:
         missing = tuple(need for need, met in results if met is False)
         unknown = [need for need, met in results if met is None]
         fragments = _FRAGMENTS in kind.needs
-        if missing:
+        # results that can never have it come first: no setting would draw it for them
+        if kind.pooled is True and situation.pooled is False:
+            out.append(Planned(kind, "off", reason="the results hold no pooled samples with "
+                                                   "candidates ([input] pooled_fasta)"))
+        elif kind.pooled is False and situation.unpooled is False:
+            out.append(Planned(kind, "off", reason=(
+                "the results hold only pooled samples with candidates: their figures are each "
+                "form's (Residue fD, each form of a pool; Coverage, each form of a pool)")))
+        elif missing:
             out.append(Planned(kind, "off", missing))
         elif kind.peptides and situation.peptides is False:
             out.append(Planned(kind, "off", reason="the results hold only fragment series"))

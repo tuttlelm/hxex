@@ -8934,3 +8934,19 @@ CSVs or mzML if wanted.
     test_population_test.py (the rule in a run, the gate, resume adding K = 2 alone and equal to
     a run with it, refusing a change of n_boot), test_bootstrap.py (`added_settings`,
     `fixed_ks`), test_cli.py (resume adding K = 1 alone, never dropping it, `hxex info`).
+
+351. **The figure list knows pooled results (owner, 2026-11-10).** The window's Analysis list
+    (and `hxex figures`, the guide's figures page) showed population tiers, Woods plots, residue
+    profiles, the residue significance maps, and the plain coverage for pooled results, as
+    "depends", although `hxex analyse` never draws them for a pool with candidates (`[input]
+    pooled_fasta`): their residue figures are each form's (HISTORY 340). The catalogue's
+    `Situation` now says whether the results hold pooled samples with candidates and samples
+    that are not (`pooled`, `unpooled`; a run is a pool when its read record has candidates),
+    and each kind whether it is only for pools (forms, pooled coverage, head to head), never for
+    them (the mixture's residue figures and the plain coverage), or for any sample. A kind the
+    results can never have is off with that reason before any missing setting (a "Change…" for
+    `[analysis] populations` would have drawn nothing). On the private pooled dataset the plan
+    now matches what analyse drew: forms, pooled coverage, head to head, and butterfly on,
+    every other peptide figure off. Results mixing pools and other samples leave both groups
+    "depends". Check: tests/test_catalogue.py (a pooled copy of the two-sample bundle: plan,
+    reasons, and the figures drawn).

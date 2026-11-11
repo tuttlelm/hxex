@@ -169,3 +169,36 @@ def test_every_entry_names_real_settings_and_guide_pages():
             table, key = match.groups()
             assert table in tables, f"{kind.name}: no table [{table}]"
             assert key is None or key in tables[table], f"{kind.name}: no setting {setting}"
+
+
+def test_pooled_results_rule_out_the_mixtures_residue_figures(two_sample_bundle, tmp_path):  # noqa: F811
+    """A pool with candidates ([input] pooled_fasta) has its residue figures per form, never of
+    the mixture: the plan says so (owner, 2026-11-10: population tiers were listed for pooled
+    results, though analyse never draws them there), and agrees with what is drawn."""
+    from hxex.io.pooled import candidates_record
+
+    cfg = AnalysisConfig(residue_level=True, reference="S", format="png")
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    plain = {p.kind.name: p for p in plan(Situation.of(analysis=cfg, results=results))}
+    assert all(plain[name].state != "off" for name in ("residues_all", "woods", "coverage"))
+    assert all(plain[name].state == "off" and "no pooled samples" in plain[name].reason
+               for name in ("pooled_forms", "pooled_coverage", "head_to_head"))
+    (span, peptide), *_ = results.peptides()
+    start = int(span.split("-")[0])  # the record holds the peptide at its own residues
+    (tmp_path / "pool.fasta").write_text(f">A1\n{'M' * (start - 1)}{peptide}GG\n")
+    record = candidates_record(tmp_path / "pool.fasta", ["A"])
+    source = {"reader": "pooled", "pooled_candidates": record}
+    pooled = dataclasses.replace(results, settings=dataclasses.replace(
+        results.settings, configs={**results.settings.configs, "spectra_source": source}))
+    situation = Situation.of(analysis=cfg, results=pooled)
+    planned = {p.kind.name: p for p in plan(situation)}
+    for name in ("population_tiers", "residues_all", "woods", "residue_significance",
+                 "coverage", "choice", "profile"):
+        assert planned[name].state == "off", name
+        assert "only pooled samples" in planned[name].reason
+    assert planned["pooled_forms"].state != "off"
+    write_analysis(pooled, cfg, tmp_path / "out")
+    drawn = _drawn(tmp_path / "out", ANALYSE)
+    assert "pooled_forms" in drawn
+    _agrees(situation, drawn, ANALYSE)
