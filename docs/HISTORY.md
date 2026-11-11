@@ -9212,3 +9212,35 @@ CSVs or mzML if wanted.
     build kept and recorded; another fingerprint fitted again; the old rule; the fingerprint's
     files), tests/test_bootstrap.py (`nan_percentiles` against NumPy), tests/test_analysis.py (a
     quiet recomputation's lines logged once, by the first caller not quiet).
+
+362. **A scan file listed by several samples is read once (owner, 2026-11-11).** In a pooled
+    project each sample lists the control files of its state, so one injection is a run of
+    several samples (the private pooled dataset's raw-file project: 54 runs on 22 files, 40 of
+    them on files shared by five samples). The mzML and Thermo readers opened, decoded and
+    searched a file once per run: the drift ranges decoded every undeuterated control once per
+    sample, the spectra decoded every shared file once per sample, and the retention search
+    read every MS1 scan of a control once per sample. Runs are now read file by file
+    (`_read_runs`): a file is opened once for all the runs that list it, its scans are decoded
+    once (`_SharedFile`: the scans of the read's target windows, kept while the file's runs
+    are read, then dropped, so memory stays at one file's scans), and what depends on the
+    scans alone is computed once (chromatograms for `find_peak`, drift profiles, summed
+    spectra, the m/z calibration's picks). The retention search reads a control's MS1 scans
+    once over the union of its runs' windows and cuts each run's own windows from them
+    (`RetentionSearch.search_file`). Series are still numbered run by run in the old order
+    (`_run_spectra` returns spectra before their series are numbered; `_number_series`), so the
+    spectra, their ids, series, flags and the read record are the same as before, bit for bit.
+    Log lines that name a file now come grouped by file rather than in run order. With
+    `find_retention_time = "suggest"` the search decides at the first run that is not an
+    undeuterated control; controls listed after it were still searched, but nothing used the
+    result: they are no longer searched, and their info lines are gone (the record is
+    unchanged). That order dependence is left as it was: a project that lists a labelled run
+    before its undeuterated controls (as the pooled project does) gets no retention search
+    record at all with "suggest" (owner to decide). Measured (reading only, the previous commit
+    against this one): a scratch project of two control files listed by five samples (10 runs)
+    read in 23 s instead of 93 s (30 s instead of 93 with the controls listed first, searched
+    with "suggest" or "automatic"); the whole 54-run project in 179 s instead of 541 s, peak
+    memory 2.1 GB instead of 2.7 GB. Check: tests/test_read_once.py (synthetic ion mobility,
+    retention-search and Thermo fragment files listed by several samples: identical to a
+    run-by-run read, with the shared files opened and their scans decoded as often as when one
+    sample lists them) and the scratch comparisons against the previous commit (every field of
+    the spectra, bit for bit, and the read record identical in all four).

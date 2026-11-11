@@ -41,7 +41,9 @@ import os
 import re
 import zlib
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, fields, replace
+from functools import partial
 from pathlib import Path, PureWindowsPath
 from xml.etree import ElementTree as ET
 
@@ -1340,11 +1342,14 @@ def read_mzml(
     empty sample from every run (:func:`target_applies`); its spectra take the run's sample.
 
     Each run is read once, keeping only the points inside the targets' m/z windows (the
-    predicted bins of ``picker`` plus ``config.mz_margin``). A series (``data_id``) is a sample and
-    a target; replicate runs of a sample share it. A target with no matching scan in a run is
-    skipped with a warning. ``spectrum_id`` is ``PROJECT:SAMPLE/FILE/TARGET/scan<i>`` (or
-    ``scans<first>-<last>`` for a sum), where ``TARGET`` names the entry and, when given, the
-    activation and the precursor (``@ETD-pz3``).
+    predicted bins of ``picker`` plus ``config.mz_margin``); a file several runs list (a
+    control file shared by the samples of a pooled project) is opened and its scans decoded
+    once for all of them, with the same spectra as reading it for each. A series
+    (``data_id``) is a sample and a target; replicate runs of a sample share it. A target with
+    no matching scan in a run is skipped with a warning. ``spectrum_id`` is
+    ``PROJECT:SAMPLE/FILE/TARGET/scan<i>`` (or ``scans<first>-<last>`` for a sum), where
+    ``TARGET`` names the entry and, when given, the activation and the precursor
+    (``@ETD-pz3``).
 
     The spectra's ``source`` records the arguments (runs, targets, ``config``, ``picker``,
     ``registry`` and ``project``), so that :func:`read_mzml_source` repeats the read, the target
@@ -1434,6 +1439,46 @@ class _ScanFormat:
 
 
 _MZML = _ScanFormat("mzml", "an mzML", MzmlFile, MzmlError)
+
+
+class _SharedFile:
+    """An open scan file read for several runs (a control file listed by several samples of a
+    pooled project): the scans read with the read's target windows are decoded once and kept
+    for the file's other runs (by position and ``drift``), and ``memo`` keeps what is computed
+    from the file's scans alone. Everything else is the file's own (``path``, ``scans()``,
+    ``scan()`` and the rest). The scans returned are those asked for, as the file returns them:
+    the same scan decoded twice is the same, so a run reads what it read on its own."""
+
+    def __init__(self, f, windows):
+        self._file = f
+        self._windows = windows
+        self._scans: dict[bool, dict[int, Scan]] = {}
+        self.memo: dict = {}
+
+    def __getattr__(self, name):
+        return getattr(self._file, name)
+
+    def read_scans(self, indices, mz_windows=None, drift: bool = False) -> dict[int, Scan]:
+        if mz_windows is not self._windows:  # another read (the retention search): its own
+            return self._file.read_scans(indices, mz_windows, drift=drift)
+        kept = self._scans.setdefault(bool(drift), {})
+        wanted = sorted({int(i) for i in indices})
+        missing = [i for i in wanted if i not in kept]
+        if missing:
+            kept.update(self._file.read_scans(missing, mz_windows, drift=drift))
+        return {i: kept[i] for i in wanted}
+
+
+def _same_file(numbers: Sequence[int], opened: Sequence[Path]) -> list[list[int]]:
+    """The run positions ``numbers`` grouped by the file they read (``opened``: the path of
+    each run), each group in the order of ``numbers`` and the groups in the order of their
+    first run."""
+    groups: dict[Path, list[int]] = {}
+    for n in numbers:
+        groups.setdefault(Path(opened[n]), []).append(n)
+    return list(groups.values())
+
+
 # the readers whose spectra carry runs, targets and series (:func:`read_mzml` and
 # :func:`hxex.io.read_thermo`)
 SCAN_READERS = ("mzml", "thermo")
@@ -1482,12 +1527,14 @@ def _read_runs(
     # when the files have ion mobility bins
     gates = None
     if config.drift_gate == "auto" and fmt.reader == "mzml" and any(
-            MzmlFile(p).ion_mobility for p in opened):
+            MzmlFile(p).ion_mobility for p in dict.fromkeys(opened)):
         gates = _drift_profiles(fmt, runs, opened, targets, windows, config=config, tie=tie,
                                 picker=picker, registry=registry, cancel=cancel)
     unclear: set[int] = set()
+    unclear_of = None  # the set the series without a clear drift range are added to
     if gates is not None:
-        common.update(gates=gates, unclear=unclear)
+        common.update(gates=gates)
+        unclear_of = unclear
     elution_cut: set[str] = set()
     if config.find_fragment_peak:
         common.update(elution_cut=elution_cut)
@@ -1502,7 +1549,6 @@ def _read_runs(
     if automatic:
         order.sort(key=lambda n: not search.reads(runs[n]))
     moved: dict[tuple[str, int], float] = {}
-    decided = search is None
     edited = by_key(elution_windows)  # (sample, file, peptide, ion) -> an ion's own window
     edited_peptides = by_peptide(elution_windows)  # (sample, file, peptide) -> all its ions'
     used: set[tuple] = set()
@@ -1532,51 +1578,103 @@ def _read_runs(
         undeut = [s for n, run in enumerate(runs) if search.reads(run) for s in per_run[n]]
         return search.decide(undeut, by_target())
 
+    def read(numbers, only=None, kept=None, files=None):
+        """Per run in ``numbers``: its spectra before their series are numbered, and its peak
+        width (:func:`_run_spectra`). Each file is opened once and its scans decoded once for
+        all of its runs (:class:`_SharedFile`: a control file listed by several samples). With
+        ``only`` (per run, the target positions read again) nothing else is taken; else each
+        file's record (instrument, profile scans, scan cut) is taken for each of its runs.
+        ``kept`` (an ExitStack): the files are left open in it (their scans not kept), each
+        in ``files`` under the position of every run that reads it."""
+        nonlocal extra, done
+        out = {}
+        for members in _same_file(numbers, opened):
+            with ExitStack() as group:
+                opened_file = (kept or group).enter_context(fmt.open(opened[members[0]]))
+                if files is not None:
+                    files.update(dict.fromkeys(members, opened_file))
+                f = _SharedFile(opened_file, windows)
+                if only is None:
+                    if fmt.extra is not None and not extra:
+                        extra = fmt.extra(f)
+                    instrument, profile = instrument_record(f), profile_record(f)
+                    cut, unrecorded = config.scan_cut is True, False
+                    if (config.scan_cut == "auto" and (profile or {}).get("reduced")
+                            and _has_fragments(targets)):
+                        cut = records_noise(f)
+                        unrecorded = not cut
+                for n in members:
+                    check_cancel(cancel)
+                    if only is None:
+                        instruments[n], profiles[n], cut_by_run[n] = instrument, profile, cut
+                        if unrecorded:
+                            no_noise_runs.add(n)
+                    out[n] = _run_spectra(f, runs[n], targets_of(runs[n]), windows,
+                                          only=None if only is None else only[n],
+                                          scan_cut=cut_by_run.get(n, config.scan_cut is True),
+                                          memo=f.memo, **common)
+                    if only is None:
+                        done += 1
+                        report(progress, done, len(runs))
+        return out
+
+    def number(numbers, made):
+        """Number the series of the runs ``numbers`` in this order (the order a run-by-run
+        read numbers them in)."""
+        for n in numbers:
+            _number_series(made[n][0], series, per_run[n], unclear_of)
+            if n in no_noise_runs:
+                no_noise.append(Path(recorded[n]).name)
+
+    def search_controls(numbers, made, files):
+        """The retention search over the undeuterated controls ``numbers`` (all searched; their
+        files still open, ``files``), each file's scans read once for all of its runs; what each
+        run found kept in run order."""
+        found = {}
+        for members in _same_file(numbers, opened):
+            found.update(zip(members, search.search_file(
+                files[members[0]], [(runs[n], per_run[n], made[n][1]) for n in members],
+                cancel), strict=True))
+        search.files.extend(found[n] for n in numbers if found[n] is not None)
+
     def reread(found):
         """Read the undeuterated controls' series in ``found`` again at their found time."""
         of_data = {d: key for key, d in series.items()}
+        mine_of = {}
         for n, run in enumerate(runs):
             mine = {i for (sample, i) in found if sample == run.sample
                     and target_applies(targets[i], run, tie)}
-            if not search.reads(run) or not mine:
-                continue
+            if search.reads(run) and mine:
+                mine_of[n] = mine
+        made = read(list(mine_of), only=mine_of)
+        for n, mine in mine_of.items():
+            run = runs[n]
             joined = {joins.get((run.sample, i), i) for i in mine}
-            with fmt.open(opened[n]) as f:
-                again: list[Spectrum] = []
-                _read_run(f, run, targets_of(run), windows, series, again, only=mine,
-                          scan_cut=cut_by_run.get(n, config.scan_cut is True), **common)
+            again: list[Spectrum] = []
+            _number_series(made[n][0], series, again, unclear_of)
             per_run[n] = [s for s in per_run[n]
                           if of_data.get(int(s.data_id), (None, -1))[1] not in joined
                           or of_data[int(s.data_id)][0] != run.sample] + again
 
-    for k, n_run in enumerate(order):
-        run = runs[n_run]
-        check_cancel(cancel)
-        if not decided and not search.reads(run):  # automatic: every control has been read
-            moved = decide()
-            decided = True
-            if moved:
-                reread(moved)
-        with fmt.open(opened[n_run]) as f:
-            if fmt.extra is not None and not extra:
-                extra = fmt.extra(f)
-            instruments[n_run] = instrument_record(f)
-            profiles[n_run] = profile_record(f)
-            cut_by_run[n_run] = config.scan_cut is True
-            if (config.scan_cut == "auto" and (profiles[n_run] or {}).get("reduced")
-                    and _has_fragments(targets)):
-                cut_by_run[n_run] = records_noise(f)
-                if not cut_by_run[n_run]:
-                    no_noise.append(Path(recorded[n_run]).name)
-            width = _read_run(f, run, targets_of(run), windows, series, per_run[n_run],
-                              scan_cut=cut_by_run[n_run], **common)
-            if search is not None and search.reads(run):
-                search.add_file(f, run, per_run[n_run], width, cancel)
-        report(progress, k + 1, len(runs))
-    if not decided:
+    # the runs read before the retention search decides (the undeuterated controls, first in
+    # "automatic"; with "suggest" the controls before the first other run), then the others:
+    # each part read file by file, its series numbered in run order
+    done = 0
+    no_noise_runs: set[int] = set()
+    first = 0 if search is None else next(
+        (k for k, n in enumerate(order) if not search.reads(runs[n])), len(order))
+    with ExitStack() as kept:
+        files: dict[int, object] = {}  # the searched controls' files, open until searched
+        made = read(order[:first], kept=kept, files=files)
+        number(order[:first], made)
+        if search is not None:
+            search_controls(order[:first], made, files)
+    if search is not None:
         moved = decide()
         if moved:
             reread(moved)
+    made = read(order[first:])
+    number(order[first:], made)
     table_rows = [*edited.values(), *edited_peptides.values()]
     unused = [w for w in table_rows if w.key not in used]
     if unused:
@@ -1941,7 +2039,7 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
                picker: PickerConfig = DEFAULT_PICKER_CONFIG,
                registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
                only: set[int] | None = None, drift: bool = False, quiet: bool = False,
-               cut: set[int] | None = None):
+               cut: set[int] | None = None, memo: dict | None = None):
     """The scans of every target of this run (:func:`target_applies`; with ``only``, of the
     targets at these positions) in the open file ``f``: the scan table, whether each target's
     peak is found (``find_peak``), the plans (:func:`_plans`, narrowed to the peaks found), the
@@ -1949,7 +2047,9 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     typical peak width (s; NaN when not measured); None when no scan matches. ``quiet``: no
     warnings or log lines (a second look at the same file). With ``find_fragment_peak`` the
     fragment channels' plans are narrowed to their peaks too, and ``cut`` (a set) collects the
-    targets whose peak the acquisition cut (:func:`find_fragment_peaks`)."""
+    targets whose peak the acquisition cut (:func:`find_fragment_peaks`). ``memo`` (a dict
+    kept while the file's runs are read): what is computed from the file's scans alone (the
+    peptides' chromatograms), for its other runs."""
     table = f.scans()
     # the targets whose peak is found (find_peak): planned over their search range first
     find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
@@ -1986,7 +2086,7 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     width = float("nan")
     if any(find):
         plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
-                                  registry, quiet=quiet)
+                                  registry, quiet=quiet, memo=memo)
     if any(frag):
         plans, edges = find_fragment_peaks(f, table, run, targets, plans, frag, by_index, config,
                                            picker, registry, quiet=quiet)
@@ -1995,76 +2095,70 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     return table, find, plans, by_index, width
 
 
-def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, config,
-              tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
-              registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
-              only: set[int] | None = None,
-              joins: Mapping[tuple[str, int], int] | None = None,
-              gates: Mapping[tuple, DriftRange] | None = None,
-              unclear: set[int] | None = None,
-              elution_cut: set[str] | None = None, scan_cut: bool = False) -> float:
-    """Add the spectra of every target of this run (:func:`target_applies`; with ``only``,
-    those of the targets at these positions) in the open file ``f`` to ``spectra``, each in the
-    series of its sample and target (or the target it joins, :func:`series_targets`). With
-    ``gates`` (the drift ranges found, :mod:`hxex.io.drift_gate`; None: drift_gate off), a
-    peptide's scans with ion mobility bins are summed over its drift range only, and the series
-    without a clear one are added to ``unclear``. The spectra whose found fragment peak the
-    acquisition cut (``find_fragment_peak``) are added to ``elution_cut`` (spectrum ids).
-    ``scan_cut``: record the fragment spectra's scans for the per-scan cut (decided per file,
-    ``[input.scans] scan_cut``). Returns the run's typical peak width (s) when find_peak
-    measured it, else NaN."""
+def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
+                 tie: bool = True, picker: PickerConfig = DEFAULT_PICKER_CONFIG,
+                 registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
+                 only: set[int] | None = None,
+                 joins: Mapping[tuple[str, int], int] | None = None,
+                 gates: Mapping[tuple, DriftRange] | None = None,
+                 elution_cut: set[str] | None = None, scan_cut: bool = False,
+                 memo: dict | None = None) -> tuple[list, float]:
+    """The spectra of every target of this run (:func:`target_applies`; with ``only``, those
+    of the targets at these positions) in the open file ``f``, before their series are numbered
+    (:func:`_number_series`): per target with spectra, ``(series key, unclear, spectra)``, the
+    series key being the sample and the target (or the target it joins,
+    :func:`series_targets`), ``unclear`` whether the series is to be flagged ``drift_unclear``,
+    and each spectrum made by calling it with its ``data_id``. With ``gates`` (the drift ranges
+    found, :mod:`hxex.io.drift_gate`; None: drift_gate off), a peptide's scans with ion
+    mobility bins are summed over its drift range only, and the series without a clear one are
+    to be flagged. The spectra whose found fragment peak the acquisition cut
+    (``find_fragment_peak``) are added to ``elution_cut`` (spectrum ids). ``scan_cut``: record
+    the fragment spectra's scans for the per-scan cut (decided per file, ``[input.scans]
+    scan_cut``). ``memo``: the file's results kept for its other runs (:func:`_run_scans`).
+    Also returns the run's typical peak width (s) when find_peak measured it, else NaN."""
     cut: set[int] = set()
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
-                         registry=registry, only=only, drift=gates is not None, cut=cut)
+                         registry=registry, only=only, drift=gates is not None, cut=cut,
+                         memo=memo)
     if scanned is None:
-        return float("nan")
+        return [], float("nan")
     table, find, plans, by_index, width = scanned
     traces = (_scan_records(f, table, targets, plans, by_index, windows, picker, registry)
               if scan_cut else {})
     noise_cache: dict[int, tuple] = {}
     parent_rt: dict[tuple, float] = {}  # a parent's retention time, for its fragments
     no_spectrum_type: set[Path] = set()  # files warned about scans without a spectrum type
+    made: list[tuple[tuple[str, int], bool, list]] = []
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if plan is None:
             continue
         lo, hi = windows[t_i]
         key = (run.sample, (joins or {}).get((run.sample, t_i), t_i))
-        data_id = series.setdefault(key, len(series))
+        mine: list = []
+        unclear = False
         entry = replace(target.entry, sample=run.sample)
         gate = None if gates is None else _drift_gate(target, gates)
         order, groups = plan
         for g in groups:
-            scans = [by_index[int(table.index[order[i]])] for i in g]
-            parts = []
-            gated = False
-            for s in scans:
-                if s.binned is not None and gate is not None:  # its drift range only
-                    m, y, d = s.binned
-                    d = drift_times(d)
-                    inside = (m >= lo) & (m <= hi) & (d >= gate[0]) & (d <= gate[1])
-                    parts.append(sum_mobility_bins(m[inside], y[inside]))
-                    gated = True
-                    continue
-                inside = (s.mz >= lo) & (s.mz <= hi)
-                parts.append((s.mz[inside], s.intensity[inside]))
-            if (gates is not None and unclear is not None and _gated_kind(target)
+            positions = tuple(int(table.index[order[i]]) for i in g)
+            scans = [by_index[i] for i in positions]
+            summed = (None if memo is None
+                      else memo.get(("spectrum", lo, hi, gate, positions)))
+            if summed is None:
+                summed = _summed(scans, lo, hi, gate, config)
+                if memo is not None:
+                    memo[("spectrum", lo, hi, gate, positions)] = summed
+            mz, y, weight, gated = summed
+            mz, y = mz.copy(), y.copy()  # each spectrum its own arrays
+            if (gates is not None and _gated_kind(target)
                     and any(s.binned is not None for s in scans)
                     and (gate is None or gate[2])):
-                unclear.add(data_id)
+                unclear = True
             if any(s.centroid is None for s in scans) and f.path not in no_spectrum_type:
                 no_spectrum_type.add(f.path)
                 log.warning("%s: its scans do not say whether they are centroided or profile "
                             "(no spectrum type); several scans are summed as profile data",
                             f.path)
-            centroid = all(s.centroid for s in scans)
-            if len(parts) == 1:
-                mz, y = parts[0]
-            elif centroid:
-                mz, y = sum_centroid(parts, config.sum_ppm)
-            else:
-                mz, y = sum_profile(parts, config.gap_factor)
-            order_mz = np.argsort(mz, kind="stable")
-            mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
             scan_text = _scan_text(table, order, g)
             time = (run.spectrum_time if run.fixed
                     else float(np.mean([s.time for s in scans])) + run.time_offset)
@@ -2083,7 +2177,6 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             if not np.isfinite(rt) and "fragment" in extra and parent_key in parent_rt:
                 rt = parent_rt[parent_key]
             elif not np.isfinite(rt) and run.fixed:
-                weight = np.array([float(np.sum(p[1])) for p in parts])
                 times = np.array([s.time for s in scans], dtype=float)
                 rt = float(np.average(times, weights=weight) if weight.sum() > 0
                            else times.mean()) / 60.0
@@ -2096,8 +2189,8 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
             scan_times = np.array([s.time for s in scans], dtype=float) / 60.0
             if t_i in cut and elution_cut is not None:
                 elution_cut.add(qualify_spectrum_id(project, local))
-            spectra.append(Spectrum(
-                mz, y, entry, time, run.rep, data_id=data_id,
+            mine.append(partial(
+                Spectrum, mz, y, entry, time, run.rep,
                 label=f"{f.path.name} {scan_text}",
                 spectrum_id=qualify_spectrum_id(project, local), rt=rt,
                 resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
@@ -2110,7 +2203,89 @@ def _read_run(f, run: MzmlRun, targets, windows, series, spectra, *, project, co
                 scans=(_scan_record(f, table, order, g, traces[t_i], windows[t_i], noise_cache,
                                     by_index) if t_i in traces else None),
             ))
-    return width
+        made.append((key, unclear, mine))
+    return made, width
+
+
+def _summed(scans, lo: float, hi: float, gate, config: MzmlConfig):
+    """One spectrum of :func:`_run_spectra`: the points of ``scans`` from ``lo`` to ``hi``
+    (m/z; a scan with ion mobility bins over the drift range ``gate`` only, when given) summed,
+    m/z sorted, with each scan's signal there (the weights of its retention time) and whether
+    a drift range was applied."""
+    parts = []
+    gated = False
+    for s in scans:
+        if s.binned is not None and gate is not None:  # its drift range only
+            m, y, d = s.binned
+            d = drift_times(d)
+            inside = (m >= lo) & (m <= hi) & (d >= gate[0]) & (d <= gate[1])
+            parts.append(sum_mobility_bins(m[inside], y[inside]))
+            gated = True
+            continue
+        inside = (s.mz >= lo) & (s.mz <= hi)
+        parts.append((s.mz[inside], s.intensity[inside]))
+    centroid = all(s.centroid for s in scans)
+    if len(parts) == 1:
+        mz, y = parts[0]
+    elif centroid:
+        mz, y = sum_centroid(parts, config.sum_ppm)
+    else:
+        mz, y = sum_profile(parts, config.gap_factor)
+    order_mz = np.argsort(mz, kind="stable")
+    mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
+    weight = np.array([float(np.sum(p[1])) for p in parts])
+    return mz, y, weight, gated
+
+
+def _number_series(made, series: dict[tuple[str, int], int], spectra: list,
+                   unclear: set[int] | None = None) -> None:
+    """Add a run's spectra (:func:`_run_spectra`) to ``spectra``, each in its series: a new
+    series takes the next ``data_id`` (``series``: series key -> data_id), so that the runs
+    numbered in reading order give the series the numbers of a run-by-run read; the series to
+    be flagged are added to ``unclear``."""
+    for key, flagged, mine in made:
+        data_id = series.setdefault(key, len(series))
+        spectra.extend(make(data_id=data_id) for make in mine)
+        if flagged and unclear is not None:
+            unclear.add(data_id)
+
+
+def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int], *, config,
+                 tie, picker, registry) -> list[tuple[tuple, tuple]]:
+    """The drift profiles of one undeuterated control (:func:`_drift_profiles`): per target
+    with scans with drift times and signal, its peptide ion and :func:`scan_profile`'s
+    profile (kept in ``f.memo`` for the file's other runs)."""
+    scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
+                         registry=registry, only=gated, drift=True, quiet=True, memo=f.memo)
+    if scanned is None:
+        return []
+    table, _, plans, by_index, _ = scanned
+    r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    out = []
+    for t_i, plan in enumerate(plans):
+        if plan is None:
+            continue
+        order, groups = plan
+        positions = [int(table.index[order[i]]) for g in groups for i in g]
+        scans = [by_index[i] for i in positions]
+        if not any(s.binned is not None for s in scans):
+            continue
+        e = targets[t_i].entry
+        bins = plan_bins(e.peptide, e.charge, modification=e.modification,
+                         config=picker, registry=registry)
+        peaks = isotope_peaks(bins)
+        recorded = np.array([s.resolution for s in scans], dtype=float)
+        recorded = recorded[np.isfinite(recorded)]
+        half = picker.half_width(
+            peaks, e.charge, resolving_power=float(np.median(recorded))
+            if len(recorded) else None, resolving_power_mz=r_mz)
+        known = ("drift profile", tuple(positions), np.asarray(peaks, dtype=float).tobytes(),
+                 np.asarray(half, dtype=float).tobytes())
+        if known not in f.memo:
+            f.memo[known] = scan_profile(scans, peaks, half)
+        if f.memo[known] is not None:
+            out.append((drift_key(e), f.memo[known]))
+    return out
 
 
 def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
@@ -2118,40 +2293,23 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
                     ) -> dict[tuple, DriftRange]:
     """The drift range of every peptide ion with an undeuterated control and signal
     (``drift_gate``, :mod:`hxex.io.drift_gate`): its scans in every undeuterated control (a run
-    with a fixed time), as its spectra would take them, read with their drift times."""
+    with a fixed time), as its spectra would take them, read with their drift times. A file
+    listed by several samples is read once for all of them (:class:`_SharedFile`), and the
+    profiles are added in the order of the runs."""
     gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
     profiles = DriftProfiles()
-    for run, path in zip(runs, opened, strict=True):
-        if run.role != UNDEUT or not run.fixed:
-            continue
-        check_cancel(cancel)
-        with fmt.open(path) as f:
-            scanned = _run_scans(f, run, targets, windows, config=config, tie=tie,
-                                 picker=picker, registry=registry, only=gated, drift=True,
-                                 quiet=True)
-            if scanned is None:
-                continue
-            table, _, plans, by_index, _ = scanned
-            r_mz = float(getattr(f, "resolving_power_mz", np.nan))
-            for t_i, plan in enumerate(plans):
-                if plan is None:
-                    continue
-                order, groups = plan
-                scans = [by_index[int(table.index[order[i]])] for g in groups for i in g]
-                if not any(s.binned is not None for s in scans):
-                    continue
-                e = targets[t_i].entry
-                bins = plan_bins(e.peptide, e.charge, modification=e.modification,
-                                 config=picker, registry=registry)
-                peaks = isotope_peaks(bins)
-                recorded = np.array([s.resolution for s in scans], dtype=float)
-                recorded = recorded[np.isfinite(recorded)]
-                half = picker.half_width(
-                    peaks, e.charge, resolving_power=float(np.median(recorded))
-                    if len(recorded) else None, resolving_power_mz=r_mz)
-                found = scan_profile(scans, peaks, half)
-                if found is not None:
-                    profiles.add(drift_key(e), *found, file=str(path))
+    controls = [n for n, run in enumerate(runs) if run.role == UNDEUT and run.fixed]
+    found_in: dict[int, list] = {}  # per run: (key, profile) in the order of its targets
+    for members in _same_file(controls, opened):
+        with fmt.open(opened[members[0]]) as opened_file:
+            f = _SharedFile(opened_file, windows)
+            for n in members:
+                check_cancel(cancel)
+                found_in[n] = _drift_found(f, runs[n], targets, windows, gated, config=config,
+                                           tie=tie, picker=picker, registry=registry)
+    for n in controls:
+        for key, found in found_in[n]:
+            profiles.add(key, *found, file=str(opened[n]))
     ranges = profiles.ranges()
     n_ions = len({drift_key(targets[i].entry) for i in gated})
     two = sum(r.unclear for r in ranges.values())
@@ -2186,6 +2344,7 @@ def file_offsets(per_run: list[list[Spectrum]], targets: Sequence[MzmlTarget],
     deuterated files."""
     of_data = {d: t_i for (_, t_i), d in series.items()}
     plans: dict[tuple, object] = {}
+    measured: dict[tuple, float | None] = {}  # a spectrum's offset (None: not measured)
     out = []
     for part in per_run:
         mine = [k for k, s in enumerate(part) if _gated_kind(targets[of_data[int(s.data_id)]])]
@@ -2197,12 +2356,18 @@ def file_offsets(per_run: list[list[Spectrum]], targets: Sequence[MzmlTarget],
             if key not in plans:
                 plans[key] = plan_bins(e.peptide, e.charge, modification=e.modification,
                                        config=picker, registry=registry)
-            picked = pick_spectrum(
-                s.mz, s.intensity, e.peptide, e.charge, modification=e.modification,
-                config=picker, registry=registry, plan=plans[key],
-                resolving_power=s.resolving_power, resolving_power_mz=s.resolving_power_mz)
-            if not picked.no_signal and np.isfinite(picked.mz_offset_ppm):
-                offsets.append(picked.mz_offset_ppm)
+            # the same spectrum read for several samples (a shared file) is picked once
+            same = (key, np.array([s.resolving_power, s.resolving_power_mz]).tobytes(),
+                    np.asarray(s.mz).tobytes(), np.asarray(s.intensity).tobytes())
+            if same not in measured:
+                picked = pick_spectrum(
+                    s.mz, s.intensity, e.peptide, e.charge, modification=e.modification,
+                    config=picker, registry=registry, plan=plans[key],
+                    resolving_power=s.resolving_power, resolving_power_mz=s.resolving_power_mz)
+                measured[same] = (None if picked.no_signal or not np.isfinite(
+                    picked.mz_offset_ppm) else picked.mz_offset_ppm)
+            if measured[same] is not None:
+                offsets.append(measured[same])
         if len(offsets) < MIN_CALIBRATION_SPECTRA:
             out.append((float("nan"), len(offsets)))
             continue
@@ -2353,14 +2518,17 @@ def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
 
 
 def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
-               config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False):
+               config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False,
+               memo: dict | None = None):
     """The plans of the ``find`` targets narrowed to their elution peak (``find_peak``): per
     peptide (its charge states share one chromatogram, the sum of theirs: retention belongs to
     the peptide), the scans of the window :func:`_peak` finds near its ``rt``, smoothed over
     ``peak_smoothing`` (or half the run's typical half-maximum width). A peptide without signal
     gets no spectrum in this run. Logs the run's peak width and smoothing (not ``quiet``).
     Returns the plans and
-    the run's typical width at half maximum (s; NaN when there is nothing to measure)."""
+    the run's typical width at half maximum (s; NaN when there is nothing to measure).
+    ``memo``: chromatograms already computed from the same scans of the file (by the scans,
+    the predicted m/z and the half-widths), shared by the file's runs."""
     plans = list(plans)
     chroms: dict[tuple, list] = {}  # peptide -> [(target position, order, chromatogram)]
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
@@ -2379,7 +2547,15 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
                                  resolving_power=float(np.median(recorded)) if len(recorded)
                                  else None, resolving_power_mz=r_mz)
         key = (e.peptide, e.modification, e.start_seq, e.end_seq)
-        chroms.setdefault(key, []).append((t_i, order, _chromatogram(scans, pred, half)))
+        if memo is None:
+            chrom = _chromatogram(scans, pred, half)
+        else:
+            known = ("chromatogram", np.asarray(order).tobytes(), pred.tobytes(),
+                     np.asarray(half, dtype=float).tobytes())
+            if known not in memo:
+                memo[known] = _chromatogram(scans, pred, half)
+            chrom = memo[known]
+        chroms.setdefault(key, []).append((t_i, order, chrom))
     if not chroms:
         return plans, float("nan")
     groups = []  # (target positions, order, summed chromatogram, given rt in s)

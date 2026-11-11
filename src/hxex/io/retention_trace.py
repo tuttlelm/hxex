@@ -421,7 +421,7 @@ class TraceReader:
         by_index = f.read_scans(table.index[rows], [(lo, hi)], drift=drift is not None)
         scans = [by_index[int(table.index[r])] for r in rows]
         parts, gated = [], False
-        for s in scans:  # as hxex.io.mzml._read_run sums them
+        for s in scans:  # as hxex.io.mzml._summed sums them
             if s.binned is not None and drift is not None:
                 m, y, d = s.binned
                 d = drift_times(d)

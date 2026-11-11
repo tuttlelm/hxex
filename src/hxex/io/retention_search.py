@@ -222,11 +222,60 @@ class RetentionSearch:
         """Search the open file ``f`` of the undeuterated control ``run``, whose spectra were
         just read (``run_spectra``) and whose typical peak width is ``width`` (s; NaN: not
         measured)."""
-        from ..hooks import check_cancel
+        found = self.search_file(f, [(run, run_spectra, width)], cancel)[0]
+        if found is not None:
+            self.files.append(found)
 
+    def search_file(self, f, controls: Sequence[tuple], cancel=None) -> list[_File | None]:
+        """Search the open file ``f`` for each of ``controls``, the undeuterated control runs
+        that read it (a control file listed by several samples), each ``(run, its spectra, its
+        typical peak width)`` as :meth:`add_file` takes them: the file's MS1 scans are read once
+        for all of them, over the union of their m/z windows, and each run's own windows are
+        cut from them (the same points as reading them alone). Returns what each found (None
+        when nothing of it is searched), for :attr:`files` in the order of the runs."""
+        from ..hooks import check_cancel
+        from .mzml import in_windows, merge_windows
+
+        table = f.scans()
+        ms1 = np.flatnonzero(np.asarray(table.ms_level) == 1)
+        times = np.asarray(table.time, dtype=float)[ms1]
+        jobs = [self._prepare(run, run_spectra, width, times)
+                for run, run_spectra, width in controls]
+        searched = [j for j in jobs if j is not None]
+        if not searched:
+            return [None] * len(jobs)
+        alone = len(searched) == 1
+        windows = searched[0]["windows"] if alone else [
+            w for j in searched for w in j["windows"]]
+        merged = [None if alone else merge_windows(j["windows"]) for j in searched]
+        for j in searched:
+            n_flat = j["flat"].size
+            j["heights"] = np.zeros((len(ms1), n_flat), dtype=np.float32)
+            j["offsets"] = np.full((len(ms1), n_flat), np.nan, dtype=np.float32)
+        for a in range(0, len(ms1), SCAN_CHUNK):
+            check_cancel(cancel)
+            chunk = ms1[a:a + SCAN_CHUNK]
+            scans = f.read_scans([int(table.index[k]) for k in chunk], windows)
+            for n, k in enumerate(chunk):
+                s = scans[int(table.index[k])]
+                for j, own in zip(searched, merged, strict=True):
+                    mz, y = s.mz, s.intensity
+                    if own is not None:  # this run's windows, cut from the union read
+                        keep = in_windows(mz, own)
+                        mz, y = mz[keep], y[keep]
+                    _tops_near(mz, y, s.centroid, j, a + n)
+        return [None if job is None else self._found(f, run, job, times)
+                for (run, _, _), job in zip(controls, jobs, strict=True)]
+
+    def _prepare(self, run, run_spectra: Sequence[Spectrum], width: float,
+                 times: np.ndarray) -> dict | None:
+        """What searching one control needs before its scans are read: the targets searched,
+        the injection's calibration line, tolerance and limit (ppm), its peak width, and the
+        predicted m/z (calibrated) with the windows to read; None when nothing of it is
+        searched."""
         wanted = self._applying(run)
         if not wanted:
-            return
+            return None
         mine = [s for s in run_spectra if _peptide_control(s)]
         intercept, slope, scatter = 0.0, 0.0, float("nan")
         if mine:
@@ -240,50 +289,34 @@ class RetentionSearch:
         limit = limit_ppm(scatter, self.off_mz_sd)
         tolerance = (float(self.config.rt_search_ppm) if self.config.rt_search_ppm is not None
                      else SCAN_TOLERANCE * limit)
-        table = f.scans()
-        ms1 = np.flatnonzero(np.asarray(table.ms_level) == 1)
-        times = np.asarray(table.time, dtype=float)[ms1]
         if not np.isfinite(width) or width <= 0:
             width = 3.0 * float(np.median(np.diff(times))) if len(times) > 1 else 1.0
         pred = np.stack([t.mz for t in wanted])  # (targets, 4)
         calibrated = pred * (1 + (intercept + slope * pred[:, 1:2]) * 1e-6)
         flat = calibrated.ravel()
         order = np.argsort(flat)
-        sorted_flat = flat[order]
-        heights = np.zeros((len(ms1), flat.size), dtype=np.float32)
-        offsets = np.full((len(ms1), flat.size), np.nan, dtype=np.float32)
         windows = [(float(p.min() * (1 - SEARCH_PPM * 1e-6)) - 0.05,
                     float(p.max() * (1 + SEARCH_PPM * 1e-6)) + 0.05) for p in calibrated]
-        for a in range(0, len(ms1), SCAN_CHUNK):
-            check_cancel(cancel)
-            chunk = ms1[a:a + SCAN_CHUNK]
-            scans = f.read_scans([int(table.index[k]) for k in chunk], windows)
-            for n, k in enumerate(chunk):
-                s = scans[int(table.index[k])]
-                x, h = scan_tops(s.mz, s.intensity, s.centroid)
-                if not len(x):
-                    continue
-                pos = np.searchsorted(x, sorted_flat)
-                lo = np.clip(pos - 1, 0, len(x) - 1)
-                hi = np.clip(pos, 0, len(x) - 1)
-                near = np.where(np.abs(x[lo] - sorted_flat) <= np.abs(x[hi] - sorted_flat),
-                                lo, hi)
-                ppm = (x[near] - sorted_flat) / sorted_flat * 1e6
-                ok = np.abs(ppm) <= SEARCH_PPM
-                offsets[a + n, order[ok]] = ppm[ok]
-                heights[a + n, order[ok]] = h[near][ok]
-        offsets = offsets.reshape(len(ms1), len(wanted), 4)
-        heights = heights.reshape(len(ms1), len(wanted), 4)
+        return {"wanted": wanted, "line": (intercept, slope, scatter), "limit": limit,
+                "tolerance": tolerance, "width": width, "flat": flat, "order": order,
+                "sorted_flat": flat[order], "windows": windows}
+
+    def _found(self, f, run, job: dict, times: np.ndarray) -> _File:
+        """One control's candidates from the tops found in its scans (:meth:`search_file`)."""
+        wanted, tolerance, width = job["wanted"], job["tolerance"], job["width"]
+        offsets = job["offsets"].reshape(len(times), len(wanted), 4)
+        heights = job["heights"].reshape(len(times), len(wanted), 4)
         exact = np.where(np.abs(np.nan_to_num(offsets, nan=np.inf)) <= tolerance, heights, 0.0)
         candidates, m_trace = {}, {}
         for j, t in enumerate(wanted):
             candidates[t.index] = _candidates(times, exact[:, j, :], offsets[:, j, 1], width)
             m_trace[t.index] = exact[:, j, 1].astype(np.float32)
-        self.files.append(_File(run, f.path.name, tolerance, limit, (intercept, slope, scatter),
-                                width, times, candidates, m_trace))
+        intercept, slope, scatter = job["line"]
         log.info("%s: retention search: %d series, tops within %.1f ppm of the calibrated m/z "
                  "(%+.2f ppm at m/z 0, %+.3f ppm per 100 m/z; scatter %.2f ppm)", f.path.name,
                  len(wanted), tolerance, intercept, 100 * slope, scatter)
+        return _File(run, f.path.name, tolerance, job["limit"], job["line"], width, times,
+                     candidates, m_trace)
 
     def decide(self, undeut: Sequence[Spectrum], series: Mapping[tuple[str, int], int]
                ) -> dict[tuple[str, int], float]:
@@ -406,6 +439,23 @@ class RetentionSearch:
                     there += float(f.m_trace[i][near].max()) / len(files)
         far = not np.isfinite(where) or abs(rt - 60.0 * where) > UNCERTAIN_TOLERANCES * tolerance
         return {**out, "verdict": "uncertain" if far and height < there else "elsewhere"}
+
+
+def _tops_near(mz: np.ndarray, y: np.ndarray, centroid, job: dict, row: int) -> None:
+    """Note in ``job`` (:meth:`RetentionSearch.search_file`), at scan ``row``, the height and
+    offset (ppm) of the scan's top nearest each predicted m/z, within :data:`SEARCH_PPM`."""
+    x, h = scan_tops(mz, y, centroid)
+    if not len(x):
+        return
+    sorted_flat, order = job["sorted_flat"], job["order"]
+    pos = np.searchsorted(x, sorted_flat)
+    lo = np.clip(pos - 1, 0, len(x) - 1)
+    hi = np.clip(pos, 0, len(x) - 1)
+    near = np.where(np.abs(x[lo] - sorted_flat) <= np.abs(x[hi] - sorted_flat), lo, hi)
+    ppm = (x[near] - sorted_flat) / sorted_flat * 1e6
+    ok = np.abs(ppm) <= SEARCH_PPM
+    job["offsets"][row, order[ok]] = ppm[ok]
+    job["heights"][row, order[ok]] = h[near][ok]
 
 
 def _peptide_control(s: Spectrum) -> bool:
