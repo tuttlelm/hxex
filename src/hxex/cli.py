@@ -1417,7 +1417,8 @@ def cmd_resume(args) -> int:
             return EXIT_ERROR
         changed, choice = _changed_controls(project, project.output.bundle)
         if (project.run.bootstrap is None and project.run.population_test is None
-                and not chosen and changed is None):
+                and not chosen and changed is None
+                and _k_max_to_resume(project, project.output.bundle) is None):
             log.error("%s has no [run.bootstrap] or [run.population_test] table, and its "
                       "back-exchange correction is the bundle's: add one with its settings",
                       bundle)
@@ -1427,7 +1428,10 @@ def cmd_resume(args) -> int:
         test = _test_to_resume(project, bundle)
         if isinstance(test, int):
             return test
-        if test is not None or changed is not None:
+        fit_settings = _k_max_to_resume(project, bundle)
+        if fit_settings is not None:
+            extra["fit_settings"] = fit_settings
+        if test is not None or changed is not None or fit_settings is not None:
             record = project_record(dataclasses.replace(project, threads=threads))
             if project.input is None:  # a file for the analysis: the bundle's input stays
                 held_file = ((bundle_manifest(bundle) or {}).get("configs") or {}).get(
@@ -1518,6 +1522,17 @@ def cmd_resume(args) -> int:
     return 0
 
 
+def _k_max_to_resume(project, bundle):
+    """The project's ``[run.fit]`` when its ``k_max`` differs from the bundle's (resume fits the
+    K the bundle lacks, or drops those above: moving between presets), else None."""
+    from .io.bundle import bundle_manifest
+
+    stored = (((bundle_manifest(bundle) or {}).get("configs") or {}).get("run") or {}).get("fit")
+    if not stored or stored.get("k_max") == project.run.fit.k_max:
+        return None
+    return project.run.fit
+
+
 def _test_to_resume(project, bundle):
     """The population test settings ``hxex resume`` gives the bundle of ``project``: the
     project's ``[run.population_test]`` when the bundle has no test or one with other settings
@@ -1544,17 +1559,27 @@ def _test_to_resume(project, bundle):
     elif held.get("population_test") == wanted["population_test"]:
         test = None
     else:
-        fits = [c for c in changed if c.startswith("fit.")]
-        if fits:
-            log.error("%s: the bundle's fits were made with other [run.fit] settings (%s): the "
-                      "population test is made from the bundle's fits; run again with "
-                      "'hxex run --overwrite' (or --keep-previous) for the project's", bundle,
-                      ", ".join(fits))
+        stored_test = held.get("population_test") or {}
+        if test.null == "chi_square" and stored_test.get("null") == "simulated":
+            log.error("%s: the bundle's population test was made with simulations, and the "
+                      "project's uses the chi-square reference (preset = \"quick\", or [run."
+                      "population_test] null): the results already hold more than that. Keep "
+                      "them (set the project back), or run again with 'hxex run --overwrite' "
+                      "(or --keep-previous)", bundle)
             return EXIT_ERROR
-    # resume applies these itself: the bootstrap, the test, and the controls (worked out again
-    # from the stored fits when [run.controls] changed, HISTORY 288)
+    # resume fits more or fewer K itself (k_max: moving between presets); any other change of
+    # the fit settings needs a new run
+    fits = [c for c in changed if c.startswith("fit.") and c != "fit.k_max"]
+    if fits and (test is not None or "fit.k_max" in changed):
+        log.error("%s: the bundle's fits were made with other [run.fit] settings (%s): resume "
+                  "keeps the bundle's fits (it can only fit more or fewer K, k_max); run again "
+                  "with 'hxex run --overwrite' (or --keep-previous) for the project's", bundle,
+                  ", ".join(fits))
+        return EXIT_ERROR
+    # resume applies these itself: the bootstrap, the test, k_max, and the controls (worked out
+    # again from the stored fits when [run.controls] changed, HISTORY 288)
     other = [c for c in changed
-             if not c.startswith(("bootstrap", "population_test", "controls"))]
+             if not c.startswith(("bootstrap", "population_test", "controls", "fit.k_max"))]
     if other:
         log.info("%s: %d [run] setting(s) differ from the bundle's and are not applied by "
                  "resume (they need 'hxex run'): %s", bundle, len(other),

@@ -116,7 +116,34 @@ changes what a preset means. `hxex info` shows the preset on its `preset` line.
 
 ## Changing the preset of a finished run
 
-After a `quick` run, set the preset you want (`hxex set hxex.toml preset bimodal`) and run
-again with `hxex run hxex.toml --overwrite`. `hxex resume hxex.toml` adds a bootstrap or the
-population test to a finished run, but it does not fit new numbers of populations: from `quick`
-(one and two) to a complete preset (up to three), it says so and changes nothing.
+Set the preset you want and resume:
+
+```bash
+hxex set hxex.toml preset bimodal
+hxex resume hxex.toml
+```
+
+`hxex resume` keeps everything the results already hold and adds only what the new preset
+needs, so the results are the same as those of a new run with that preset:
+
+- **From `quick` to `bimodal` or `multimodal`:** the fits with three populations are added
+  (those with one and two are kept), the population test is made with simulations, and the
+  bootstrap is made.
+- **From `bimodal` to `multimodal`:** only the step from two to three populations is
+  simulated; the simulations of the step from one to two are kept. Spectra that now have three
+  populations get their error bars at three.
+- **From `multimodal` to `bimodal`:** nothing is simulated. The step from two to three becomes
+  a flag again (`more_populations_possible`), the bootstrap at K = 2 is added for every
+  spectrum, and spectra that now have two populations get their error bars at two. The
+  error bars already made at three populations stay in the results.
+- **To `maximum`:** the bootstrap is made again with 100 resamples. The figures of every
+  peptide come with `hxex report hxex.toml --figures`.
+- **Raising `k_max`** (in `[run.fit]`): only the fits with more populations are added, and
+  only the new step of the test is simulated.
+
+Going down to `quick` from a complete preset is refused: the results already hold more than
+`quick` gives. Keep them, or make a new run with `hxex run hxex.toml --overwrite`. A change of
+other fitting settings (`[run.fit]` other than `k_max`) also needs a new run.
+
+After resuming, run `hxex report hxex.toml --figures --overwrite` and `hxex analyse
+hxex.toml --overwrite` to bring the figures and the analysis up to date.

@@ -137,11 +137,16 @@ run with the test. The test uses the results' own noise model, so results fitted
 earlier *hxex* stay consistent with themselves. Run `hxex resume hxex.toml` again after
 changing the test's settings, and the test is made again with them.
 
-Three things need a new run (`hxex run hxex.toml --overwrite`) instead:
+A different `k_max` needs no new run either: `resume` fits the numbers of populations the
+results lack (results fitted with `k_max = 1` get their two- and three-population fits) and
+leaves out those above, and keeps every other fit as it is. Simulations the earlier test made
+with the same settings are kept too, so only the new steps are simulated.
 
-- results fitted with `[run.fit]` settings other than the project file's (for example a
-  smaller `k_max`): the test is made from the fits, so they must be the ones you want;
-- results fitted with `k_max = 1`: there is no two-population fit to test;
+Two things need a new run (`hxex run hxex.toml --overwrite`) instead:
+
+- results fitted with `[run.fit]` settings other than the project file's, apart from
+  `k_max` (for example other `adam_steps`): the test is made from the fits, so they must be
+  the ones you want;
 - results fitted with `model = "poisson"` in `[run.fit.noise]`.
 
 Other `[run]` settings that differ from those of the results, such as the picking, are listed

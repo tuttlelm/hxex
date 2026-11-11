@@ -40,6 +40,7 @@ def fit_models(
     noise=None,
     required_k: np.ndarray | None = None,
     warm: dict[int, Start] | None = None,
+    previous: FitResult | None = None,
 ) -> FitResult:
     """Fit K = ``config.k_min`` to ``config.k_max`` populations to every measurement in parallel
     and select K per measurement by BIC or AIC.
@@ -86,6 +87,12 @@ def fit_models(
     ``warm`` (per K, a :class:`~hxex.fit.init.Start` for every measurement, its ``log_A`` the log
     of the amplitudes in the data's own units) starts that K there instead of from K - 1: an
     earlier fit of nearly the same spectra (the review's preview of a changed window).
+
+    ``previous`` (a fit of the same measurements with the same settings but another ``k_max``)
+    gives the K it holds: they are taken as they are, and only the K it lacks are fitted
+    (warmed from its K - 1 as usual). Each K is fitted the same whatever ``k_max`` is, so the
+    result is the one fitting every K gives (``hxex resume`` moving to a preset that tries
+    more, or fewer, K).
     """
     backend = config.backend
     m = len(data)
@@ -135,7 +142,17 @@ def fit_models(
                                prep.noise_kind, prep.weights)
     best = np.full(m, np.inf)  # best criterion so far (for the screen)
     fits: dict[int, KFit] = {}
+    held = _held_fits(previous, data, config)
     for k in k_values:
+        if k in held:  # fitted before with these settings: taken as it is
+            fits[k] = held[k]
+            for _ in range(config.n_restarts + (1 if k > 1 and (k - 1) in config.k_values
+                                                 and extra else 0)):
+                tick()
+            if k in config.k_values:
+                score_k = getattr(fits[k], config.criterion)
+                best = np.where(fits[k].passes_min_pop & (score_k < best), score_k, best)
+            continue
         rows = np.arange(m)
         if control_k1 and k == 1:
             rows = np.flatnonzero(controls)
@@ -235,6 +252,23 @@ def fit_models(
         sample_size=sizes, n_max=data.n_max, noise_kind=np.array(prep.noise_kind, dtype=str),
         noise_estimate=estimate, noise_curve=curve,
     )
+
+
+def _held_fits(previous: FitResult | None, data: Measurements, config: FitConfig
+               ) -> dict[int, KFit]:
+    """The K fits of ``previous`` that :func:`fit_models` takes as they are ({} without one):
+    it must be a fit of ``data`` with ``config``'s settings but for ``k_max`` (and the
+    device), else ValueError."""
+    if previous is None:
+        return {}
+    if not np.array_equal(np.asarray(previous.spectrum_id), np.asarray(data.spectrum_id)):
+        raise ValueError("previous must be a fit of the same measurements")
+    def settings(c: FitConfig) -> dict:
+        return {k: v for k, v in c.to_dict().items() if k not in ("k_max", "backend")}
+
+    if settings(previous.config) != settings(config):
+        raise ValueError("previous was fitted with other settings than k_max: fit again")
+    return dict(previous.fits)
 
 
 def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise | None,

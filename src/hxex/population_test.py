@@ -303,13 +303,21 @@ def population_test(
     test_screen: bool = False,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    previous: PopulationTest | None = None,
 ) -> PopulationTest:
     """Test every spectrum of ``fit`` (made from ``data``) at each step from K = 1 to
     ``k_max - 1`` (see the module docstring). A fit made with the screen must have been made
     with the test's screen (``fit_models(..., test_screen=True)``; say so with
     ``test_screen``): the criterion's screen skips fits whose small gains the sets add up.
     ``progress(done, total)`` counts simulations; ``cancel`` raises
-    :class:`~hxex.hooks.Cancelled`."""
+    :class:`~hxex.hooks.Cancelled`.
+
+    ``previous`` (an earlier test of the same spectra, :meth:`PopulationTest.select`ed to them)
+    gives the simulated nulls it holds: a step it simulated with the same ``simulations`` and
+    ``seed`` keeps them for every spectrum whose statistic there is unchanged (its K and K + 1
+    fits are the same), and only the others are simulated. Each null is seeded by the step and
+    the spectrum, so the result is the one simulating them all gives (``hxex resume`` moving to
+    a preset that decides more steps, or decides them with simulations)."""
     if len(data) != len(fit) or not np.array_equal(data.spectrum_id, fit.spectrum_id):
         raise ValueError("data must be the measurements the fit was made from")
     check_fit_config(fit.config)
@@ -353,6 +361,16 @@ def population_test(
                          config.decide_up_to)
             kind[both, s] = CHI_SQUARE
             null_mean[both, s], null_var[both, s] = chi_mean, chi_var
+    for j, (s, k, rows) in enumerate(plans):  # nulls simulated before: kept
+        kept = _kept_nulls(previous, config, k, rows, statistic[:, s])
+        if kept is None or not kept.any():
+            continue
+        at, ps = rows[kept], previous.column(k)
+        null_mean[at, s], null_var[at, s] = previous.null_mean[at, ps], previous.null_var[at, ps]
+        kind[at, s], draws[at, s] = previous.null_kind[at, ps], previous.null_draws[at, ps]
+        log.info("population test, %d against %d: the null simulations of %d spectra kept from "
+                 "the earlier test", k, k + 1, len(at))
+        plans[j] = (s, k, rows[~kept])
     total = sum(len(rows) for _, _, rows in plans) * n_sim
     done = 0
     for s, k, rows in plans:
@@ -411,6 +429,23 @@ def population_test(
         null_kind=kind.astype(str), null_draws=draws, added_population=added, narrow=narrow,
         p=p, selected_K=selected, criterion_K=criterion, d2o_fraction=float(d2o_fraction),
     )
+
+
+def _kept_nulls(previous: PopulationTest | None, config: PopulationTestConfig, k: int,
+                rows: np.ndarray, statistic: np.ndarray) -> np.ndarray | None:
+    """Which of ``rows`` keep ``previous``'s simulated null at step ``k`` (None: none can):
+    it simulated that step (it decided it, with the simulated null) with the same simulations
+    and seed, and the spectrum's statistic there is the same (the same fits)."""
+    if previous is None or previous.config.null != SIMULATED or k not in previous.steps:
+        return None
+    old = previous.config
+    if (old.simulations, old.seed) != (config.simulations, config.seed):
+        return None
+    ps = previous.column(k)
+    if ps >= decided_steps(old, previous.steps):  # a flag step: chi-square, nothing simulated
+        return None
+    same = previous.statistic[rows, ps] == statistic[rows]
+    return same & (previous.null_kind[rows, ps] != SCREENED)
 
 
 @contextlib.contextmanager

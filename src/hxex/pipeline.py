@@ -1028,12 +1028,50 @@ def _test_screened(data: Measurements, fit: FitResult, chosen: Mapping[str, int]
     return FitResult.merge([fit.select(others), refit], [others, rows])
 
 
+def _fit_moves(stored: FitConfig, wanted: FitConfig, path) -> bool:
+    """Whether ``hxex resume`` brings a bundle fitted with ``stored`` to ``wanted``'s
+    ``k_max`` (False: the same K; ValueError: other fit settings differ, run again)."""
+    def settings(c: FitConfig) -> dict:
+        return {k: v for k, v in c.to_dict().items() if k not in ("k_max", "backend")}
+
+    if settings(stored) != settings(wanted):
+        differ = sorted(k for k, v in settings(wanted).items() if settings(stored).get(k) != v)
+        raise ValueError(f"{path}: the bundle's fits were made with other [run.fit] settings "
+                         f"({', '.join(differ)}); resume can only fit more or fewer K (k_max): "
+                         "run again with 'hxex run --overwrite' (or --keep-previous)")
+    return stored.k_max != wanted.k_max
+
+
+def _extended_fit(data: Measurements, config: RunConfig, fit: FitResult, progress, cancel,
+                  progress_range: tuple[float, float]) -> tuple[FitResult, dict]:
+    """``fit`` brought to ``config.fit``'s ``k_max`` (fitted with the same settings but
+    another): the K it lacks fitted, in chunks planned for the new ``k_max``, those above
+    dropped (:func:`hxex.fit.fit_models` with ``previous``); each K is fitted the same whatever
+    ``k_max`` is, so the result is the one a run gives. ``(fit, chunk plan record)``."""
+    plan = _plan(data, config, progress_range)
+    start_stage(progress, "fit", plan.lo, plan.hi)
+    testing = config.population_test is not None
+    parts = []
+    for j, (rows, sub) in enumerate(zip(plan.chunks, plan.subs, strict=True)):
+        check_cancel(cancel)
+        span = _Span(progress, plan.lo + (plan.hi - plan.lo) * plan.edges[j],
+                     plan.lo + (plan.hi - plan.lo) * plan.edges[j + 1])
+        parts.append(fit_models(sub, config.fit, progress=span, cancel=cancel,
+                                test_screen=testing, noise_curve=fit.noise_curve,
+                                previous=fit.select(rows)))
+    merged = parts[0] if len(parts) == 1 else FitResult.merge(parts, plan.chunks)
+    return merged, plan.record
+
+
 def _test_part(data: Measurements, config: RunConfig, fit: FitResult, progress, cancel,
-               progress_range: tuple[float, float], record: Mapping | None = None
+               progress_range: tuple[float, float], record: Mapping | None = None,
+               previous: PopulationTest | None = None
                ) -> tuple[FitResult, PopulationTest]:
     """The population test of ``fit`` (made from ``data`` as a run with the test makes it),
     in the run's chunks (``record``, a bundle's chunk plan, when it covers the data):
-    ``(fit with the test's K selected, test)``."""
+    ``(fit with the test's K selected, test)``. ``previous`` (the bundle's test of the same
+    spectra) gives the null simulations it holds that the new test can keep
+    (:func:`hxex.population_test.population_test`)."""
     plan = _plan(data, config, progress_range, record)
     fit = dataclasses.replace(fit, selected_K=_criterion_K(fit))
     start_stage(progress, "population test", plan.lo, plan.hi)
@@ -1044,7 +1082,9 @@ def _test_part(data: Measurements, config: RunConfig, fit: FitResult, progress, 
                      plan.lo + (plan.hi - plan.lo) * plan.edges[j + 1])
         tests.append(population_test(sub, fit.select(rows), config.population_test,
                                      d2o_fraction=_d2o_fraction(config), test_screen=True,
-                                     progress=span, cancel=cancel))
+                                     progress=span, cancel=cancel,
+                                     previous=None if previous is None
+                                     else previous.select(rows)))
     test = tests[0] if len(tests) == 1 else PopulationTest.merge(tests, plan.chunks)
     return dataclasses.replace(fit, selected_K=test.selected_K.copy()), test
 
@@ -1083,7 +1123,7 @@ def _patched_bootstrap(config: RunConfig, data: Measurements, fit: FitResult,
                                         cancel=cancel)[k])
             where.append(rest)
             made += len(rest)
-    log.info("bootstrap: %d spectra changed K with the population test; %d took the fixed-K "
+    log.info("bootstrap: %d spectra changed K; %d took the fixed-K "
              "bootstrap at their new K, %d were bootstrapped at it", int(changed.sum()),
              int(changed.sum()) - made, made)
     return BootstrapResult.merge(parts, where)
@@ -1749,6 +1789,7 @@ def resume_bootstrap(
     controls_choice: Mapping | None = None,
     project_file: Mapping | None = None,
     analysis=None,
+    fit_settings: FitConfig | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
 ) -> RunResult:
@@ -1803,6 +1844,14 @@ def resume_bootstrap(
     (with the filters of ``analysis``, an :class:`hxex.analysis.AnalysisConfig`; None: the
     defaults) are bootstrapped at the K their set's values come from where they have none
     there, as a run does; also on a bundle with nothing else to do.
+    With ``fit_settings`` (``[run.fit]``) that differ from the bundle's in ``k_max`` alone
+    (a preset that tries more, or fewer, populations: ``quick`` to ``bimodal``) the K the
+    bundle lacks are fitted and those above dropped, the rest kept (each K is fitted the same
+    whatever ``k_max`` is, :func:`hxex.fit.fit_models` with ``previous``); the population test,
+    when there is one, is made again (keeping the null simulations of the steps it had, with
+    the same settings), the quality flags assessed again, and the spectra whose K changed take
+    the bootstrap at their new K: the result is the one a run with those settings gives. Other
+    differences of the fit settings are refused (ValueError: run again).
     The manifest's provenance records the resume (``resumed``), and ``project_file``
     (:func:`hxex.config.project_record`), when given, replaces the bundle's record of the
     project file (its ``run_settings_used.toml``)."""
@@ -1837,6 +1886,10 @@ def resume_bootstrap(
                               if k not in fixed_ks(stored_settings, fitted))
             bootstrap = merged
         unfitted = _unfitted_choices(b.fit(), merge_choices(chosen_k)).any()
+        stored_fit = b.fit().config
+        extending = fit_settings is not None and _fit_moves(stored_fit, fit_settings, path)
+        if extending and population_test is None and b.population_test() is not None:
+            population_test = b.population_test().config  # made again over the new steps
         testing = population_test is not None
         stored_run = b.manifest["configs"].get("run") or {}
         stored_controls = (ControlConfig.from_dict(stored_run["controls"])
@@ -1845,6 +1898,7 @@ def resume_bootstrap(
         # flags an earlier version of the checks assessed (a flag added since is empty)
         outdated = b.has("quality") and b.quality().outdated
         if not redo and not new_fixed and not unfitted and not testing and not new_controls and (
+                not extending) and (
                 not outdated) and (
                 b.bootstrap() is None or not _missing_choices(b.fit(), held, chosen)) and (
                 not _bundle_set_k_missing(b, bootstrap, held, analysis)):
@@ -1863,6 +1917,9 @@ def resume_bootstrap(
         if b.manifest["configs"].get("run") is None:
             raise ValueError(f"{path}: the bundle does not record its run settings")
         config = RunConfig.from_dict(b.manifest["configs"]["run"])
+        if extending:  # the project's k_max, on the bundle's device unless given
+            config = dataclasses.replace(config, fit=dataclasses.replace(
+                config.fit, k_max=fit_settings.k_max))
         if bootstrap is not None:
             config = dataclasses.replace(config, bootstrap=bootstrap)
         if testing:
@@ -1904,6 +1961,28 @@ def resume_bootstrap(
                  "making again" if test is not None else "adding", population_test.simulations)
     kept = np.isin(binned.spectrum_id, measurements.spectrum_id)
     reason = _drop_reasons(binned, kept)
+    ext_hi = 0.0
+    if extending:
+        log.info("%s: fitting K = %s (k_max %d -> %d); the fits at K = %s are kept", path,
+                 ", ".join(map(str, [k for k in config.fit.k_values if k not in fit.k_values]))
+                 or "none", stored_fit.k_max, config.fit.k_max,
+                 ", ".join(map(str, [k for k in fit.k_values if k in config.fit.k_values])))
+        ext_hi = float(UNITS - _FINISH) * (0.1 if testing else 0.5)
+        fit, chunk_plan = _extended_fit(measurements, config, fit, progress, cancel,
+                                        (0.0, ext_hi))
+        fit = dataclasses.replace(fit, config=config.fit)
+        if held:  # a fixed-K bootstrap at a K no longer fitted goes with its fits
+            held = {k: v for k, v in held.items() if k in fit.k_values}
+        provenance = _resumed(provenance, f"fits to K = {config.fit.k_max}",
+                              project_file is not None)
+        if project_file is not None:
+            project_record = dict(project_file)
+        if config.quality is not None and not testing:
+            quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
+                                  stored_controls_table)
+            outdated = False
+        if review is not None:
+            review = review.mark_stale(fit)
     refitted = _fit_chosen(config, measurements, fit, merge_choices(chosen_k), cancel)
     if refitted is not fit and review is not None:
         review = review.mark_stale(refitted)  # a chosen K now fitted is current again
@@ -1912,8 +1991,8 @@ def resume_bootstrap(
     if testing:
         tested = float(UNITS - _FINISH) * (0.6 if redo else 1.0)
         fit = _test_screened(measurements, fit, merge_choices(chosen_k), cancel)
-        fit, test = _test_part(measurements, config, fit, progress, cancel, (0.0, tested),
-                               record=chunk_plan)
+        fit, test = _test_part(measurements, config, fit, progress, cancel,
+                               (ext_hi, tested), record=chunk_plan, previous=test)
         if config.quality is not None:
             quality = _quality_of(measurements, fit, config, binned, kept, envelopes, source,
                                   stored_controls_table)

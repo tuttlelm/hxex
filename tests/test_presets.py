@@ -159,3 +159,126 @@ def test_the_provisional_note_gets_room_of_its_own_and_joins_one_already_there()
     mark_provisional(fig, "Provisional (B): another")  # a line more of the one note
     assert len(fig.texts) == 1 and fig.texts[0].get_text().endswith("\nProvisional (B): another")
     assert mark_provisional(fig, None) is fig
+
+
+# moving between presets with hxex resume (PLAN 28): the result is the one a new run gives
+FAST_PRESET = """
+[run.picker]
+zero_filling = 3
+noise = 100.0
+
+[run.fit]
+adam_steps = 60
+n_restarts = 1
+backend = { device = "cpu", dtype = "float64" }
+
+[run.population_test]
+simulations = 10
+"""
+FAST_BOOT = """
+[run.bootstrap]
+n_boot = 3
+n_restarts = 1
+adam_steps = 30
+polish_steps = 0
+"""
+
+
+def _preset_project(tmp_path, preset, bundle="out"):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = mzml_project(tmp_path)
+    head = path.read_text().split("[run.picker]")[0].replace('bundle = "out"',
+                                                              f'bundle = "{bundle}"')
+    path.write_text(f'preset = "{preset}"\n' + head + FAST_PRESET
+                    + ("" if preset == "quick" else FAST_BOOT))
+    return path
+
+
+def _switch(path, old, new):
+    """The project file at ``path`` moved from preset ``old`` to ``new`` (the fast bootstrap
+    settings with a preset that has a bootstrap)."""
+    text = path.read_text().replace(f'preset = "{old}"', f'preset = "{new}"')
+    if old == "quick":
+        text += FAST_BOOT
+    path.write_text(text)
+
+
+def _same_results(a, b):
+    import numpy as np
+
+    with open_bundle(a) as x, open_bundle(b) as y:
+        fa, fb = x.fit(), y.fit()
+        assert fa.k_values == fb.k_values
+        for k in fa.k_values:
+            for name in ("nll", "p", "n", "A"):
+                assert np.array_equal(getattr(fa.fits[k], name), getattr(fb.fits[k], name),
+                                      equal_nan=True), (k, name)
+        assert np.array_equal(fa.selected_K, fb.selected_K)
+        ta, tb = x.population_test(), y.population_test()
+        assert (ta is None) == (tb is None)
+        if ta is not None:
+            assert ta.config == tb.config and ta.steps == tb.steps
+            assert np.array_equal(ta.null_kind, tb.null_kind)
+            assert np.allclose(ta.p, tb.p, equal_nan=True, rtol=0, atol=1e-12)
+            assert np.array_equal(ta.selected_K, tb.selected_K)
+        # a resumed bundle may hold more: a fixed-K bootstrap is never dropped (HISTORY 350)
+        assert set(y.bootstrap_ks()) <= set(x.bootstrap_ks())
+        for k in [None, *y.bootstrap_ks()]:
+            ba, bb = x.bootstrap(k), y.bootstrap(k)
+            assert (ba is None) == (bb is None)
+            if ba is not None:
+                assert np.allclose(ba.mean_se, bb.mean_se, equal_nan=True, atol=1e-12)
+
+
+def test_resume_moves_a_quick_run_up_to_bimodal_as_a_new_run_would(tmp_path, capsys):
+    path = _preset_project(tmp_path / "a", "quick")
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "a" / "out") as b:
+        assert b.fit().k_values == (1, 2) and b.bootstrap() is None
+    _switch(path, "quick", "bimodal")
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 0
+    assert ("fitting K = 3 (k_max 2 -> 3); the fits at K = 1, 2 are kept"
+            in capsys.readouterr().err)
+    fresh = _preset_project(tmp_path / "b", "bimodal")
+    assert cli.main(["-q", "run", str(fresh)]) == 0
+    _same_results(tmp_path / "a" / "out", tmp_path / "b" / "out")
+    with open_bundle(tmp_path / "a" / "out") as b:
+        assert b.manifest["configs"]["project_file"]["preset"]["name"] == "bimodal"
+        assert any("fits to K = 3" in r.get("added", "")
+                   for r in b.manifest["provenance"]["resumed"])
+    # and across: bimodal to multimodal simulates the 2-against-3 step only
+    _switch(path, "bimodal", "multimodal")
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 0
+    err = capsys.readouterr().err
+    assert "1 against 2: the null simulations of 6 spectra kept from the earlier test" in err
+    assert "2 against 3: 10 null simulations of" in err
+    assert "1 against 2: 10 null simulations" not in err
+    _switch(fresh, "bimodal", "multimodal")
+    assert cli.main(["-q", "run", "--overwrite", str(fresh)]) == 0
+    _same_results(tmp_path / "a" / "out", tmp_path / "b" / "out")
+    # back to bimodal: nothing simulated, the 2-against-3 step a chi-square flag again
+    _switch(path, "multimodal", "bimodal")
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 0
+    assert " 10 null simulations of" not in capsys.readouterr().err
+    with open_bundle(tmp_path / "a" / "out") as b:
+        test = b.population_test()
+        assert test.config.decide_up_to == 2 and set(test.null_kind[:, 1]) <= {"chi_square", ""}
+    # down to quick: refused, the results hold more than it gives
+    path.write_text(path.read_text().replace('preset = "bimodal"', 'preset = "quick"'))
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 1
+    assert "the results already hold more than that" in capsys.readouterr().err
+
+
+def test_resume_refuses_other_fit_settings_beside_k_max(tmp_path, capsys):
+    path = _preset_project(tmp_path, "quick")
+    assert cli.main(["-q", "run", str(path)]) == 0
+    _switch(path, "quick", "bimodal")
+    path.write_text(path.read_text().replace("adam_steps = 60", "adam_steps = 70", 1))
+    capsys.readouterr()
+    assert cli.main(["resume", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "fit.adam_steps" in err and "hxex run --overwrite" in err

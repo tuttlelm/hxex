@@ -9020,3 +9020,30 @@ CSVs or mzML if wanted.
     regenerated. Checks: tests/test_presets.py (each level, the file winning and named, the
     analysis never switched on, unknown names refused, the template, hxex set, a quick run
     recorded and its figures marked), tests/test_gui_project.py (the preset list and its rows).
+
+354. **`hxex resume` moves a finished run between presets** (2026-11-10; owner agreed the
+    plan and its three recommendations: resume, not `hxex run --overwrite` with reuse; the
+    2-against-3 flag of a bimodal run back from multimodal on the chi-square reference, as a
+    new run gives; going down to `quick` refused). Measured first (tutorial bundle, 15 series,
+    298 spectra): the K = 1 and 2 fits are identical with `k_max` 2 and 3 (losses, positions,
+    amplitudes), and K = 3 fitted alone from the stored K = 2 fits equals fitting K 1-3 at once
+    (every array, the scores and the chosen K); dropping K = 3 again gives the `k_max` 2 fit.
+    Built: `fit_models(previous=)` takes the K fits a fit of the same measurements with the
+    same settings but another `k_max` holds (ValueError otherwise) and fits only the others;
+    `population_test(previous=)` keeps the simulated nulls of a step the earlier test
+    simulated with the same `simulations` and `seed` for every spectrum whose statistic there
+    is unchanged (each null is seeded by step and spectrum); `resume_bootstrap(fit_settings=)`
+    with a `[run.fit]` differing in `k_max` alone fits the missing K in chunks planned for the
+    new `k_max` (`pipeline._extended_fit`), drops those above (and fixed-K bootstraps at them),
+    makes the population test again over the new steps with the earlier test as `previous`
+    (also when only the test's settings change: its unchanged simulated steps are kept),
+    assesses the quality flags again, and patches the selected-K bootstrap of the spectra whose
+    K changed (`_patched_bootstrap`, now also without the test); provenance "fits to K = N".
+    `hxex resume hxex.toml` passes the project's `[run.fit]` when its `k_max` differs
+    (`cli._k_max_to_resume`), refuses other fit differences as before (k_max no longer among
+    them), and refuses a chi-square test over a simulated one (going down to `quick`: "the
+    results already hold more than that"). Checks: tests/test_presets.py (quick -> bimodal,
+    bimodal -> multimodal equal to new runs in every fit, the test's kinds, p and K, and the
+    bootstraps; the 1-against-2 simulations kept; multimodal -> bimodal simulates nothing and
+    flags on chi-square; quick refused; other fit settings refused). Guide: presets.md
+    "Changing the preset of a finished run", population-test.md (k_max needs no new run).

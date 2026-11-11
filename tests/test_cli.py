@@ -1377,9 +1377,11 @@ def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys)
     with open_bundle(tmp_path / "out") as b:
         assert b.population_test().config.simulations == 3
     # other [run.fit] settings are refused; other [run] settings are logged, not applied
-    path.write_text(plain.replace("k_max = 2", "k_max = 3") + test)
+    # fits made with other settings are refused (another k_max is not: it fits the K the
+    # bundle lacks, test_presets.py)
+    path.write_text(plain.replace("adam_steps = 60", "adam_steps = 70") + test)
     assert cli.main(["resume", str(path)]) == 1
-    assert "fit.k_max" in capsys.readouterr().err
+    assert "fit.adam_steps" in capsys.readouterr().err
     path.write_text(plain.replace("zero_filling = 3", "zero_filling = 4") + test)
     assert cli.main(["resume", str(path)]) == 0
     err = capsys.readouterr().err

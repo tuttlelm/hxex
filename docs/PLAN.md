@@ -1396,10 +1396,12 @@ Planned, not built:
    `hxex resume` adding a K newly listed in `ks` without making the rest again (built
    2026-11-10, HISTORY 350); the preset key, its expansion, `hxex check`, and the project
    editor (built 2026-11-10, HISTORY 353: `hxex.presets`; the template writes the settings
-   a preset sets commented out, so that its lines do not beat the preset); moving up (and across: multimodal to bimodal, owner's example of a trimer whose
-   data suit the bimodal analysis better) through `hxex resume`, with the population test
-   decided again from its stored steps when only `decide_up_to` changes (no new
-   simulations).
+   a preset sets commented out, so that its lines do not beat the preset); moving up (and
+   across: multimodal to bimodal, owner's example of a trimer whose data suit the bimodal
+   analysis better) through `hxex resume` (built 2026-11-10, HISTORY 354: it fits only the
+   K it lacks and simulates only the new steps, equal to a new run; multimodal to bimodal
+   simulates nothing, its 2-against-3 step a chi-square flag as in a new run; down to
+   `quick` refused).
 
 29. **Residue-level outputs only for samples that are one protein** (owner, 2026-11-08: coverage,
    redundancy and resolution, and most of `hxex analyse` say nothing for pooled unrelated
