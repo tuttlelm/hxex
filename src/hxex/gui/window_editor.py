@@ -398,7 +398,7 @@ class WindowEditor(QObject):
                                      "again"))
 
     def _save(self) -> None:
-        from .window_edit import save_window
+        from .window_edit import DEFAULT_NAME, save_window, table_path
 
         ctx = self.context()
         if ctx is None:
@@ -410,6 +410,15 @@ class WindowEditor(QObject):
         project, key = self._project(ctx), self._key(ctx)
         if project is None or key is None:
             return
+        chosen = None
+        if not table_path(project)[1]:  # the first save: where the table goes (owner)
+            from .table_choice import ask_table
+
+            chosen = ask_table(self, project, "input.rt_elution_windows", DEFAULT_NAME,
+                               "elution-window table")
+            if chosen is None:
+                self.message.emit("not saved: no table chosen for the windows")
+                return
         spectrum = self.preview.spectrum
         whole = self.scope.currentData() == "peptide"
         peptide, siblings, shared = self._peptide(ctx)
@@ -420,7 +429,7 @@ class WindowEditor(QObject):
         try:
             saved = save_window(project, key, (spectrum.rt_start, spectrum.rt_end), drift,
                                 peptide=peptide, whole=whole, siblings=siblings,
-                                shared=shared)
+                                shared=shared, table=chosen)
         except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
             self.message.emit(f"not saved: {exc}")
             return

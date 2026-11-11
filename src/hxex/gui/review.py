@@ -65,9 +65,11 @@ def table_stamp(project: Path | None) -> tuple | None:
     return (str(path), stat.st_mtime_ns, stat.st_size)
 
 
-def make_review_table(project: Path, results) -> Path:
-    """A user review table made from the results' spectra (a copy of ``spectra.csv``) beside the
-    project file, named in its ``[review] table``. A table already named is returned as it is."""
+def make_review_table(project: Path, results, table: Path | None = None) -> Path:
+    """A user review table made from the results' spectra (a copy of ``spectra.csv``), named in
+    the project file's ``[review] table``: the table named there when it exists (returned as it
+    is), else ``table`` (the window asks where, :func:`hxex.gui.table_choice.ask_table`; a
+    table that exists is used as it is) or the suggested name beside the project file."""
     from ..project_edit import set_settings
     from ..report.tables import spectra_table
     from .project_editor import _quoted, relative
@@ -75,7 +77,7 @@ def make_review_table(project: Path, results) -> Path:
     named = table_path(project)
     if named is not None and named.exists():
         return named
-    path = named or project.parent / SUGGESTED_NAME
+    path = named or (Path(table) if table is not None else project.parent / SUGGESTED_NAME)
     if not path.exists():
         cols = spectra_table(results)
         names = list(cols)

@@ -210,7 +210,7 @@ def table_path(project_path: str | Path) -> tuple[Path, bool]:
 def save_window(project_path: str | Path, key: tuple[str, str, str],
                 window: tuple[float, float], drift: tuple[float, float] | None = None, *,
                 peptide: str | None = None, whole: bool = False, siblings=(),
-                shared: bool = False) -> SavedWindow:
+                shared: bool = False, table: str | Path | None = None) -> SavedWindow:
     """Write ``window`` (minutes: the first and last scan of the spectrum summed again over it)
     to the project's ``[input] rt_elution_windows`` table for ``key`` (sample, file name, ion
     as the spectrum ids name it) of ``peptide`` (as :func:`hxex.io.elution_windows
@@ -226,12 +226,15 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
     the ion's own, naming its peptide too (two parents can give fragment ions of the same
     name), with ``drift``: an exception, such as interference at its own m/z.
 
-    The row is changed, or one is added. The first save makes the table
-    (:data:`DEFAULT_NAME`, beside the project file) and names it in the project file. The
+    The row is changed, or one is added. When the project file names no table, the first save
+    writes ``table`` (the window asks where, :func:`hxex.gui.table_choice.ask_table`; else
+    :data:`DEFAULT_NAME` beside the project file), making it or adding to it, and names it in
+    the project file. The
     times are written rounded outwards (4 decimals of a minute, 3 of a millisecond), so the run
     reads the same scans. The table is checked as the project reads it before anything is
     written (ValueError with the reader's words; nothing written). The peptide table is never
     changed."""
+    from ..config import _toml_value
     from ..io.elution_windows import COLUMNS
     from ..project_edit import set_settings
     from .user_tables import Table
@@ -240,6 +243,8 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
         raise ValueError("a window for the whole peptide needs the peptide")
     project_path = Path(project_path)
     path, named = table_path(project_path)
+    if not named and table is not None:
+        path = Path(table)
     before = path.read_bytes() if path.is_file() else None
     table = read_table(path) if before is not None else Table(list(COLUMNS))
     table = table.copy()
@@ -302,8 +307,12 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
     files = [(path, before, path.read_bytes())]
     if not named:
         try:
-            set_settings(project_path, [("input.rt_elution_windows",
-                                         f'"{DEFAULT_NAME}"')], unfinished=True)
+            try:  # relative to the project's folder when inside it (forward slashes)
+                shown = path.resolve().relative_to(project_path.parent.resolve()).as_posix()
+            except ValueError:
+                shown = str(path)
+            set_settings(project_path, [("input.rt_elution_windows", _toml_value(shown))],
+                         unfinished=True)
         except Exception:
             _restore(path, before)
             raise

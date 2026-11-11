@@ -266,8 +266,8 @@ curve, but not its bootstrap, population test, or controls, and nothing in the r
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did.
 
-**Save window** writes the window as a row of the project's elution-window table,
-`rt_elution_windows.csv`. The choice beside it says what the row is for:
+**Save window** writes the window as a row of the project's elution-window table. The choice
+beside it says what the row is for:
 
 - **all ions of this peptide, in this run** (the default): every ion of the peptide in this
   file takes the window: its charge states (MS1) and, when you read fragments, all its fragment
@@ -280,9 +280,13 @@ K than the preview did.
   for this peptide's ion only.
 
 On ion-mobility files a changed drift range is always kept for this ion only (drift times
-differ between charge states). The first save makes the table beside the project file and names
-it there (`[input] rt_elution_windows`); saving again for the same peptide or ion and file
-changes its row. Your peptide table is never changed. When you open a spectrum whose peptide
+differ between charge states). When the project file names no table yet, the first save asks
+where it goes, suggesting `rt_elution_windows.csv` beside the project file (with the project
+file's name in front when it is not `hxex.toml`, such as `hxex_findpeak_rt_elution_windows.csv`,
+so two project files in one folder keep their windows apart). If the file you choose exists
+already, the window says so, and which other project file uses it, and adds to it only if you
+say yes. The table is then named in the project file (`[input] rt_elution_windows`); saving
+again for the same peptide or ion and file changes its row. Your peptide table is never changed. When you open a spectrum whose peptide
 or ion already has a saved window in that file, the boxes show it and the choice is set to
 match. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save. Saving needs the results opened from their project file, and the table
@@ -395,8 +399,11 @@ or every spectrum of a time point or a charge.
 Each decision is written at once to your review table, the same file you could edit in a
 spreadsheet ([Excluding spectra](excluding-spectra.md)): its `review_status`, `review_K`, and
 `note` columns, in the spectrum's row; your other columns stay as they are. When the project
-has no review table yet, the first decision makes `user_review_table.csv` beside the project
-file (a copy of the results' spectra table) and names it under `[review]`. The tree, the counts,
+has no review table yet, the first decision asks where to put one, suggesting
+`user_review_table.csv` beside the project file (with the project file's name in front when it
+is not `hxex.toml`), makes it there (a copy of the results' spectra table) and names it under
+`[review]`; a file that exists already is used as it is, after the window has said so and you
+have said yes. The tree, the counts,
 and the figures show the decision at once, and `hxex report` and `hxex analyse` read it as they
 read a table you typed. When the review table is changed another way (saved in **Tables**, or
 in a spreadsheet), the window reads the results again with it, at the same place in the tree.

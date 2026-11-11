@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flow_layout import FlowLayout
-from .review import Decision, make_review_table, table_stamp, write_decisions
+from .review import Decision, make_review_table, table_path, table_stamp, write_decisions
 from .tips import tip
 from .user_tables import TableLocked
 
@@ -282,8 +282,17 @@ class ReviewPanel(QGroupBox):
                 entry = results.review.get(sid)
                 if entry and entry["k_override"]:
                     bundle_k[sid] = entry["k_override"]
+        chosen = None
+        if table_path(project) is None:  # the first decision: where the table goes (owner)
+            from ..review_table import SUGGESTED_NAME
+            from .table_choice import ask_table
+
+            chosen = ask_table(self, project, "review.table", SUGGESTED_NAME, "review table")
+            if chosen is None:
+                self.message.setText("Not saved: no review table chosen")
+                return False
         try:
-            path = make_review_table(project, results)
+            path = make_review_table(project, results, chosen)
             write_decisions(path, self.pending, bundle_k, results=results)
         except TableLocked as exc:
             self.message.setText(f"Not saved yet: {exc}")

@@ -17,3 +17,17 @@ def _drawings_finished():
     tasks = sys.modules.get("hxex.gui.tasks")  # never imports Qt for tests that do not
     if tasks is not None and tasks._DRAWING is not None:
         tasks._DRAWING.waitForDone(120000)
+
+
+@pytest.fixture(autouse=True)
+def _table_dialog_answered(monkeypatch):
+    """The window asks where a project's first elution-window or review table goes
+    (:func:`hxex.gui.table_choice.ask_table`, a dialog that would wait for a user): answered
+    with the name it suggests, as a user pressing Save would. tests/test_table_choice.py puts
+    the real dialog back to test it."""
+    from pathlib import Path
+
+    from hxex.gui import table_choice
+
+    monkeypatch.setattr(table_choice, "ask_table", lambda parent, project, setting, base, what:
+                        Path(project).parent / table_choice.suggested_name(project, base))

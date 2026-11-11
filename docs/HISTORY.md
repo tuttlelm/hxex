@@ -9103,3 +9103,20 @@ CSVs or mzML if wanted.
     drawn at its own size, was checked for contents beyond its edges: only the redundancy
     figure was (7 of 7 on the pooled data, up to 0.13 in), and none is now. Check:
     tests/test_analysis.py (five long names: the legend within the figure after the layout).
+
+358. **The window asks where a project's first elution-window or review table goes (owner,
+    2026-11-11).** The elution tab's Save wrote `rt_elution_windows.csv` beside the project file,
+    and the first review decision `user_review_table.csv`, without asking, whenever the project
+    file named no table; with two project files in one folder (two arms of the private pooled
+    dataset's raw-file project, one with HDExaminer's windows and one with `find_peak`), saving
+    a window in the second would have added its row to the first's table and named it in both,
+    where it would also have overridden the peak finder. Now the first write asks where, as the
+    Tables view's New does (`hxex.gui.table_choice.ask_table`): the name suggested carries the
+    project file's name unless it is `hxex.toml` (`hxex_findpeak_rt_elution_windows.csv`), and a
+    file that exists already is said to exist, with the project files that name it, and is added
+    to only on yes. `save_window(table=)` and `make_review_table(table=)` take the choice; the
+    project file names it relative to its folder. A project file that names a table already is
+    unchanged. Tests answer the dialog with the suggested name (tests/conftest.py). Check:
+    tests/test_table_choice.py (the name, the other project files, the dialog's questions, a
+    window saved to a chosen table).
+
