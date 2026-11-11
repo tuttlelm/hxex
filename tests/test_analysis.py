@@ -388,6 +388,18 @@ def test_redundancy_and_resolution_plot():
     assert np.isnan(y[4]) and y[7] == 2  # the proline is a gap; residue 8 has both peptides
     with pytest.raises(ValueError, match="no sample"):
         plot_redundancy_resolution(cov, samples=["X"])
+    # a legend of several rows (long names, a pool's forms) stays inside the figure as drawn,
+    # not only in a file cropped to its contents (owner, 2026-11-11)
+    import dataclasses
+
+    five = coverage_table(table([(f"S{i}", "AKLPGSTV", 2, 0.0, 0.0, 0.0) for i in range(5)]),
+                          sequences=SEQUENCE)
+    names = {f"S{i}": f"a_long_sample_name_{i} FORMNAME{i}" for i in range(5)}
+    long = dataclasses.replace(five, sample=np.array([names[s] for s in five.sample]))
+    fig = plot_redundancy_resolution(long, samples=list(names.values()))
+    fig.draw_without_rendering()  # the layout, as saving and the window run it
+    box = fig.axes[0].get_legend().get_window_extent()
+    assert box.y1 <= fig.bbox.y1 + 0.5 and box.x0 >= -0.5 and box.x1 <= fig.bbox.x1 + 0.5
 
 
 def test_residue_profile():

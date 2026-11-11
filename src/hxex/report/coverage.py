@@ -380,8 +380,8 @@ def plot_redundancy_resolution(
     dashed lines at those residues (sites, region boundaries). ``axes`` is a pair to draw
     into."""
     samples = list(samples) if samples is not None else list(dict.fromkeys(coverage.sample))
-    if axes is None:
-        fig = Figure(figsize=(8.0, 5.2))
+    if axes is None:  # constrained: room for a legend of several rows above the panels
+        fig = Figure(figsize=(8.0, 5.2), layout="constrained")
         top, bottom = fig.subplots(2, 1, sharex=True)
     else:
         top, bottom = axes

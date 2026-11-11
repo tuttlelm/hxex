@@ -9093,3 +9093,13 @@ CSVs or mzML if wanted.
     (the forms' Woods, K = 2 Woods, butterfly, maps and redundancy figures; own peptides
     outlined and marked; their rows and the coverage bars' name the sample and the form),
     test_catalogue.py.
+
+357. **The redundancy figure's legend inside the figure (owner, 2026-11-11).** With several
+    rows of sample names (five forms of a pool, "alone_incubated FORM" and so on; HISTORY 356) the
+    legend above the redundancy and resolution panels ran off the top of the figure in the
+    window: the figure had no layout engine, and saved files hid it because they are cropped to
+    their contents. `plot_redundancy_resolution` now lays out with constrained layout. Every
+    analysis figure of the private pooled dataset's raw-file bundle and of a tutorial bundle,
+    drawn at its own size, was checked for contents beyond its edges: only the redundancy
+    figure was (7 of 7 on the pooled data, up to 0.13 in), and none is now. Check:
+    tests/test_analysis.py (five long names: the legend within the figure after the layout).
