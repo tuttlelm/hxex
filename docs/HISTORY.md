@@ -8981,3 +8981,42 @@ CSVs or mzML if wanted.
     exists, HISTORY 175). Check: tests/test_pooled_forms.py (each form's choice and K = 2
     comparison, the pages' notes and strips), test_catalogue.py; the refactor left the
     analysis, report and population-test tests unchanged (219 passed).
+
+353. **Presets: `preset = "quick" | "bimodal" | "multimodal" | "maximum"`** (2026-11-10;
+    docs/PLAN.md Next steps 28, names and levels decided by the owner). One top-level key of the
+    project file sets how much work a run and its analysis do (new module `hxex.presets`):
+    `quick` = K 1-2, the population test with the chi-square null, no bootstrap, provisional;
+    `bimodal` = K 1-3, simulated test with `decide_up_to = 2` (item 346), bootstrap `ks = [2]`
+    with `set_k` (item 350); `multimodal` = K 1-3 (k_max the user's), simulated test at every
+    step, bootstrap at the selected K with `set_k`; `maximum` = multimodal with `n_boot = 100`
+    and `[figures] series = "all"`. The complete presets also set `[analysis.fragments]
+    fit_rates = true`, but only in a file with an `[analysis]` table (a preset never switches
+    the analysis on). The preset is laid under the file's data before anything is read
+    (`presets.expand`, called by `config.project_from`): a key written in the file wins, key by
+    key into tables; a table the file switches on or off wins over the preset's whole. The
+    `Expansion` names what the preset gave and every setting the file sets otherwise
+    (`overridden`); `hxex check` prints a `preset` line with both values, and `hxex run`,
+    `hxex resume` and `hxex analyse` warn about them (an older template's live `k_max = 3`
+    would otherwise beat `quick`'s 2 silently). The template now writes the settings any preset
+    sets (`[run.fit] k_min`, `k_max`, `[figures] series`) commented out with their defaults,
+    and a commented `preset` line with the four levels; every template still reads back as the
+    defaults. `hxex set` says what an unset setting falls back to (`not set (preset "bimodal":
+    3)`); in the window the preset is a list, a row the preset fills in shows its value as the
+    placeholder and its button reads Preset. Recorded: the manifest's `configs.project_file`
+    holds `preset` (name, provisional, overridden), `run_settings_used.toml` names it in a
+    comment above the settings written out (the record does not depend on what a preset means
+    in later versions), `hxex info` prints a `preset` line. Provisional (`quick`): `hxex info`
+    says so, `hxex analyse` warns, and every analysis, series and overview figure carries a
+    small grey note at its bottom left, in room added under the figure
+    (`report.results.provisional_note`, `mark_provisional`, `reserve_bottom`: the figure grows
+    and keeps everything at its distance from the top; a figure that already has a provisional
+    note, such as a pooled form page's, gets a further line of it; an analysis of several runs
+    names the provisional ones). `hxex check`'s bootstrap line now
+    names the K bootstrapped (`ks`, `set_k`) and its population-test line `decide_up_to`.
+    Not built (PLAN 28's next step): moving between presets with `hxex resume`; today it
+    refuses a change of the K values tried (quick to a complete preset) and names `hxex run
+    --overwrite`. Guide: new page presets.md (levels, timings, own settings win, what a preset
+    never changes, the record), links from README, project-file.md, statistics.md; settings.md
+    regenerated. Checks: tests/test_presets.py (each level, the file winning and named, the
+    analysis never switched on, unknown names refused, the template, hxex set, a quick run
+    recorded and its figures marked), tests/test_gui_project.py (the preset list and its rows).

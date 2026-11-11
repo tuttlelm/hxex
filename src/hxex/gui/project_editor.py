@@ -58,9 +58,14 @@ _FORMAT_GROUPS = {"folder": ("specexport", "hxexpress", "pooled"), "scan": ("mzm
 def _choices() -> dict[str, tuple[str, ...]]:
     """Settings with a fixed set of text values, shown as a list to choose from."""
     from ..config import FORMATS
+    from ..presets import names
     from ..report.figures import FORMATS as FIGURE_FORMATS
 
-    return {"input.format": FORMATS, "figures.format": FIGURE_FORMATS}
+    return {"input.format": FORMATS, "figures.format": FIGURE_FORMATS,
+            "preset": (NO_PRESET, *names())}
+
+
+NO_PRESET = "(none: the defaults)"  # the preset list's first item
 
 
 def _shown(value) -> str:
@@ -171,24 +176,36 @@ class SettingRow(QWidget):
         layout.addWidget(self.about)
         self._value = None
 
-    def show_value(self, value) -> None:
-        """Show the file's value (None: not set, so the default)."""
+    def show_value(self, value, preset=None) -> None:
+        """Show the file's value (None: not set, so the default, or the value of the file's
+        ``preset`` where it sets this setting)."""
+        from ..presets import NOT_SET, preset_value
+
         self._value = value
         is_set = value is not None
+        inherited = preset_value(preset, self.name)
+        if inherited is NOT_SET or isinstance(inherited, dict):
+            fallback, where = self.default, "the default"
+        else:
+            fallback, where = _shown(inherited), f'the preset "{preset}"'
         font = self.label.font()
         font.setBold(is_set)
         self.label.setFont(font)
         self.reset.setEnabled(is_set)
+        self.reset.setText("Default" if where == "the default" else "Preset")
+        self.reset.setToolTip(tip(f"back to {where} ({fallback}): the line gets a # in front"))
         self.editor.blockSignals(True)
         if isinstance(self.editor, OrderedList):
             self.editor.set_items([str(v) for v in value] if isinstance(value, list) else [])
         elif isinstance(self.editor, QCheckBox):
-            self.editor.setChecked(bool(value) if is_set else self.default == "true")
+            self.editor.setChecked(bool(value) if is_set else fallback == "true")
         elif isinstance(self.editor, QComboBox):
-            text = value if is_set else self.default
+            text = value if is_set else fallback
             index = self.editor.findText(str(text))
             self.editor.setCurrentIndex(max(index, 0))
         else:
+            self.editor.setPlaceholderText(
+                fallback if where == "the default" else f"{fallback} (preset {preset})")
             self.editor.setText("" if not is_set else _shown(value))
         self.editor.blockSignals(False)
 
@@ -201,7 +218,11 @@ class SettingRow(QWidget):
         self.edited.emit(self.name, "true" if checked else "false")
 
     def _chosen(self, index: int) -> None:
-        self.edited.emit(self.name, _quoted(self.editor.itemText(index)))
+        text = self.editor.itemText(index)
+        if text == NO_PRESET:  # the preset list's "none": the setting goes
+            self.edited.emit(self.name, None)
+            return
+        self.edited.emit(self.name, _quoted(text))
 
     def _typed(self) -> None:
         raw = self.editor.text().strip()
@@ -495,7 +516,7 @@ class ProjectEditor(QWidget):
             self._show_page()  # the format decides which input settings are shown
             return
         for name, row in self.rows.items():  # in place: the scroll position and focus stay
-            row.show_value(self.values.get(name))
+            row.show_value(self.values.get(name), self.values.get("preset"))
         if self.switch is not None:
             self.switch.blockSignals(True)
             self.switch.setChecked(self.switch.property("table") in self.on)
@@ -661,7 +682,7 @@ class ProjectEditor(QWidget):
     def _add_row(self, layout: QFormLayout, table, setting, prefix: bool = False) -> None:
         row = SettingRow(table.name, setting, self.path.parent if self.path else None,
                          names=self.sample_names)
-        row.show_value(self.values.get(row.name))
+        row.show_value(self.values.get(row.name), self.values.get("preset"))
         if row.name in BOTH_FORMS and isinstance(row.editor, QLineEdit):
             entries = [k for k in self.values if k.startswith(row.name + ".")]
             row.editor.setPlaceholderText(
@@ -712,7 +733,8 @@ class ProjectEditor(QWidget):
             others = self.other_format_settings(fmt)
             if others:
                 if not self.confirm_switch_off(fmt, others):
-                    self.rows[setting].show_value(self.values.get(setting))
+                    self.rows[setting].show_value(self.values.get(setting),
+                                                  self.values.get("preset"))
                     return
                 changes = [(name, None) for name in others] + changes
         try:
@@ -732,7 +754,8 @@ class ProjectEditor(QWidget):
             self.problem.show()
             row = self.rows.get(setting)
             if row is not None:
-                row.show_value(self.values.get(setting))  # as the file still has it
+                # as the file still has it
+                row.show_value(self.values.get(setting), self.values.get("preset"))
             self._show_controls_state()
             return
         for change in done:

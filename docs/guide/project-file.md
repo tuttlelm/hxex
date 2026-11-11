@@ -99,7 +99,9 @@ reference = "WT"
 ```
 
 - **A key left out keeps its default.** The [settings reference](settings.md) lists every key with
-  its default.
+  its default. With a `preset` line at the top (`preset = "bimodal"`), a key left out takes
+  the preset's value where the preset sets it; a key written in the file wins over the preset
+  (see [Presets](presets.md)).
 - **`false` means unset** where a setting can be unset (an optional stage, a limit, a scan
   condition): TOML has no null. A switch set to `false` is off. `bootstrap = false` in `[run]`
   turns the bootstrap off.
@@ -193,6 +195,9 @@ the fit. With the default `n_boot = 20`, the bootstrap takes about 3 times as lo
 fixed-K bootstrap at K = 1 and 2 (`ks = [1, 2]`, which the analysis' choice between one and two
 populations needs) about 7 times. Twenty resamples give usable standard errors; raise `n_boot`
 (to 100 or more) when the 95 % intervals themselves matter, for a published figure, say.
+
+A [preset](presets.md) sets the effort in one line: `quick` for a first look in minutes, a
+complete preset (`bimodal` or `multimodal`) for the results to report.
 
 To save time:
 

@@ -227,7 +227,7 @@ def test_template_puts_the_usual_settings_first_in_plain_words():
                                ("run.bootstrap", '# ks = "selected"'),
                                ("analysis", '# reference = "WT"'),
                                ("analysis", '# format = "pdf"'),
-                               ("figures", 'series = "flagged"'),
+                               ("figures", '# series = "flagged"'),  # a preset sets it
                                ("figures", 'scale = "linear"')):
             assert after(section, start), (section, start)
         assert after("run.controls", "# d2o_fraction = 0.9").count("labelling buffer, for")

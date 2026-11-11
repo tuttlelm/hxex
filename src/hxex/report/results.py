@@ -7,7 +7,7 @@ and a loaded bundle give the same plots. It adds nothing that is not in the bund
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import cached_property
@@ -114,6 +114,12 @@ class Settings:
         """The picker settings (from the stage entry, else from the run settings), or None."""
         data = self.configs.get("picker") or (self.configs.get("run") or {}).get("picker")
         return None if data is None else PickerConfig.from_dict(data)
+
+    @property
+    def preset(self) -> dict[str, Any]:
+        """The preset the run's project file chose (``name``, ``provisional``, ``overridden``;
+        hxex.presets), as recorded with the bundle; {}: none, or not recorded."""
+        return dict((self.configs.get("project_file") or {}).get("preset") or {})
 
     @property
     def registry(self) -> chem.ModificationRegistry:
@@ -373,6 +379,79 @@ class Results:
             return spectra.spectrum(spectra.find(spectrum_id))
         except KeyError:
             return None
+
+
+def provisional_note(results) -> str | None:
+    """The note a provisional result's figures carry (None: not provisional): the run, or a
+    run of a mapping or :class:`~hxex.analysis.RunSet` of runs, chose a provisional preset
+    (``preset = "quick"``, :data:`hxex.presets.PROVISIONAL`)."""
+    runs = getattr(results, "runs", results)
+    items = runs.items() if isinstance(runs, Mapping) else [("", runs)]
+    names = sorted(name or "this run" for name, r in items
+                   if (getattr(getattr(r, "settings", None), "preset", None) or {})
+                   .get("provisional"))
+    if not names:
+        return None
+    which = "" if names == ["this run"] else f" ({', '.join(names)})"
+    return (f'Provisional{which}: preset "quick" (population test without simulations, no '
+            "bootstrap); a complete preset gives the results to report")
+
+
+_NOTE_ROOM = 0.22  # inches added under a figure for one line of the provisional note
+
+
+def reserve_bottom(fig, inches: float) -> None:
+    """Make ``inches`` of room under everything drawn on ``fig``: the figure grows by that much
+    and keeps every axes, figure text and figure legend at its distance from the top (a layout
+    engine's rect, or the axes positions without one)."""
+    from matplotlib.transforms import Bbox
+
+    width, height = fig.get_size_inches()
+    total = height + inches
+    scale, shift = height / total, inches / total
+    engine = fig.get_layout_engine()
+    params = engine.get() if engine is not None else {}
+    anchors = []
+    for legend in fig.legends:  # where each figure legend is anchored, in inches
+        if "rect" in params and getattr(legend, "_outside_loc", None):
+            continue  # loc="outside ...": the layout engine places it
+        box = legend.get_bbox_to_anchor().transformed(fig.dpi_scale_trans.inverted())
+        anchors.append((legend, box))
+    fig.set_size_inches(width, total, forward=False)
+    if "rect" in params:
+        x0, y0, w, h = params["rect"] or (0, 0, 1, 1)
+        engine.set(rect=(x0, y0 * scale + shift, w, h * scale))
+    else:
+        for ax in fig.axes:
+            box = ax.get_position()
+            ax.set_position([box.x0, box.y0 * scale + shift, box.width, box.height * scale])
+    for text in fig.texts:
+        if text.get_transform() == fig.transFigure:
+            x, y = text.get_position()
+            text.set_y(y * scale + shift)
+    for legend, box in anchors:
+        legend.set_bbox_to_anchor(Bbox.from_bounds(box.x0, box.y0 + inches, box.width,
+                                                   box.height), transform=fig.dpi_scale_trans)
+
+
+def mark_provisional(fig, note: str | None):
+    """``fig`` with ``note`` in small grey type under everything at its bottom left, in room
+    added for it (nothing for None). A figure that already carries a provisional note (one
+    starting "Provisional", such as a pooled form's) gets ``note`` as a further line of it."""
+    if not note:
+        return fig
+    for text in fig.texts:
+        if text.get_text().startswith("Provisional"):
+            if note not in text.get_text():  # a line more, growing upwards from its foot
+                foot = text.get_position()[1] * fig.get_size_inches()[1]
+                reserve_bottom(fig, _NOTE_ROOM * 0.6)
+                text.set_y(foot / fig.get_size_inches()[1])
+                text.set_text(f"{text.get_text()}\n{note}")
+            return fig
+    reserve_bottom(fig, _NOTE_ROOM)
+    fig.text(0.005, 0.004, note, fontsize=6, color="0.4", ha="left", va="bottom",
+             style="italic")
+    return fig
 
 
 def _range_sort_key(pair: tuple[str, str]) -> tuple:

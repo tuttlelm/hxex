@@ -19,7 +19,7 @@ from matplotlib.figure import Figure
 
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..io.outputs import replace_outputs
-from .results import Results
+from .results import Results, mark_provisional, provisional_note
 from .series import (
     MAX_POINTS,
     PAGE_COLUMNS,
@@ -302,6 +302,7 @@ def write_figures(
                 names += ([f"{stem}_{kind}.{config.format}"] if pages == 1 else
                           [f"{stem}_{kind}_{n}.{config.format}" for n in range(1, pages + 1)])
     made = {"": results.settings.created if results.settings is not None else ""}
+    note = provisional_note(results)
     with replace_outputs(directory, names, made=made) as written:
         if config.overview:
             from .overview import write_overview
@@ -311,7 +312,8 @@ def write_figures(
         for n, data_id in enumerate(chosen):
             check_cancel(cancel)
             stem = stems[data_id]
-            figures = series_figures(results, data_id, config, reference)
+            figures = {kind: mark_provisional(fig, note) for kind, fig in
+                       series_figures(results, data_id, config, reference).items()}
             if config.format == "pdf":
                 path = directory / f"{stem}.pdf"
                 with PdfPages(path) as pdf:

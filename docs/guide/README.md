@@ -30,6 +30,8 @@ a short text file.
 
 ## Topics
 
+- [Presets](presets.md): how much work a run does, in one line (`quick`, `bimodal`,
+  `multimodal`, or `maximum`), and how your own settings combine with it.
 - [Statistics: fits, bootstrap, replicates, and controls](statistics.md): what the fits
   alone tell you, what the bootstrap adds, and the role of replicates and controls.
 - [The noise model](noise-model.md): one noise level per spectrum, or noise per bin measured

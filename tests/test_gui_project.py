@@ -421,3 +421,29 @@ def test_the_back_exchange_page_says_the_correction_is_automatic(editor, project
     assert editor.controls_state.text().startswith("Now: automatic")
     _page(editor, "run.bootstrap")  # other stages keep their Use box
     assert editor.controls_state is None and editor.switch.text().startswith("Use [run.bootstrap]")
+
+
+def test_a_preset_is_chosen_from_a_list_and_fills_in_its_settings(editor, project):
+    _page(editor, "")
+    preset = editor.rows["preset"]
+    assert preset.editor.currentText().startswith("(none")
+    preset.editor.setCurrentText("quick")
+    preset.editor.activated.emit(preset.editor.currentIndex())
+    assert _data(project)["preset"] == "quick"
+    _page(editor, "run.fit")
+    k_max = editor.rows["run.fit.k_max"]
+    assert k_max.editor.text() == "" and k_max.editor.placeholderText() == "2 (preset quick)"
+    assert k_max.reset.text() == "Preset" and not k_max.reset.isEnabled()
+    k_max.editor.setText("3")
+    k_max.editor.editingFinished.emit()
+    assert _data(project)["run"]["fit"]["k_max"] == 3
+    k_max.reset.click()  # back to the preset's value: the line goes
+    assert "k_max" not in _data(project)["run"]["fit"]
+    _page(editor, "")
+    preset = editor.rows["preset"]
+    preset.editor.setCurrentIndex(0)  # none: the line goes, the defaults return
+    preset.editor.activated.emit(0)
+    assert "preset" not in _data(project)
+    _page(editor, "run.fit")
+    assert editor.rows["run.fit.k_max"].editor.placeholderText() == "3"
+    assert editor.rows["run.fit.k_max"].reset.text() == "Default"

@@ -19,6 +19,7 @@ an edit that makes the file unusable is refused and the file is left as it was.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import os
 import re
@@ -26,6 +27,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import presets
 from .config import ProjectError
 
 # tables whose heading alone changes what hxex does (a stage switched on with every setting at
@@ -54,14 +56,16 @@ class Change:
     heading_on: str | None = None
     unchanged: bool = False
     bare_heading: str | None = None  # a heading left on with no setting under it
+    unset_before: str = "default"  # what not set meant before ('preset "quick": 2')
+    unset_after: str = "default"  # ... and after
 
     def describe(self) -> str:
         """One line for the terminal."""
         if self.unchanged:
-            state = self.after if self.after is not None else "at its default"
+            state = self.after if self.after is not None else f"at its {self.unset_after}"
             return f"{self.setting} is already {state} (line {self.line}): nothing changed"
-        before = self.before if self.before is not None else "not set (default)"
-        after = self.after if self.after is not None else "not set (default)"
+        before = self.before if self.before is not None else f"not set ({self.unset_before})"
+        after = self.after if self.after is not None else f"not set ({self.unset_after})"
         text = f"{self.setting}: {before} -> {after}, line {self.line}"
         if self.heading_on:
             text += f"; switched on the heading [{self.heading_on}]"
@@ -604,6 +608,19 @@ def remove_entry(path: str | Path, table: str, index: int, unfinished: bool = Fa
     return said
 
 
+def _unset_meaning(text: str, setting: str) -> str:
+    """What a setting left out of the project file ``text`` takes: its default, or its preset's
+    value (``preset "quick": 2``)."""
+    try:
+        name = tomllib.loads(text).get("preset")
+    except tomllib.TOMLDecodeError:
+        return "default"
+    value = presets.preset_value(name, setting)
+    if value is presets.NOT_SET:
+        return "default"
+    return f'preset "{name}": {presets.value_text(value)}'
+
+
 def set_setting(path: str | Path, setting: str, value: str | None) -> Change:
     """Set ``setting`` (``table.key``) of the project file at ``path`` to ``value``, as typed on
     the command line (:func:`value_text`), or with ``value=None`` switch it off so that it takes
@@ -636,6 +653,8 @@ def set_settings(path: str | Path, changes, unfinished: bool = False) -> list[Ch
         new_text, change = _edited(new_text, table, key,
                                    None if value is None else value_text(value))
         done.append(change)
+    done = [dataclasses.replace(c, unset_before=_unset_meaning(text, c.setting),
+                                unset_after=_unset_meaning(new_text, c.setting)) for c in done]
     if new_text == text:
         return done
     what = "; ".join(f"{c.setting} was not set to "

@@ -474,13 +474,24 @@ def cmd_set(args) -> int:
     return 0
 
 
-def _project(args, *, analysis_only: bool = False):
+def _project(args, *, analysis_only: bool = False, warn: bool = True):
     """The project of ``args.project_file``, with ``--spectra`` in place of input.spectra
     (``analysis_only``: a file with only an ``[analysis]`` table is accepted)."""
     from .config import load_project
 
-    return load_project(args.project_file, analysis_only=analysis_only,
-                        spectra=getattr(args, "spectra", None) or None)
+    project = load_project(args.project_file, analysis_only=analysis_only,
+                           spectra=getattr(args, "spectra", None) or None)
+    if warn:  # hxex check says it in its preset line
+        _preset_warning(project)
+    return project
+
+
+def _preset_warning(project) -> None:
+    """Log the settings the project file sets otherwise than its preset (they win)."""
+    from .config import preset_warning
+
+    if (text := preset_warning(project)) is not None:
+        log.warning(text)
 
 
 def _pooled_identity_lines(project, entries) -> list[str]:
@@ -542,7 +553,7 @@ def cmd_check(args) -> int:
         stored_spectra_source,
     )
 
-    project = _project(args, analysis_only=True)
+    project = _project(args, analysis_only=True, warn=False)
     lines = describe(project)
     problems: list[str] = _check_review_ids(project, lines)
     for key, value in lines.items():
@@ -1395,6 +1406,7 @@ def cmd_resume(args) -> int:
         from .review_table import table_choices
 
         project = load_project(bundle, analysis_only=True)
+        _preset_warning(project)
         if project.output.bundle is None:
             log.error("%s names no [output] bundle", bundle)
             return EXIT_ERROR
@@ -1901,6 +1913,7 @@ def cmd_info(args) -> int:
         from .config import load_project
 
         project = load_project(bundle, analysis_only=True)
+        _preset_warning(project)
         if project.output.bundle is None:
             log.error("%s names no [output] bundle", bundle)
             return EXIT_ERROR
@@ -1922,6 +1935,7 @@ def cmd_info(args) -> int:
             ("hxex", m.get("versions", {}).get("hxex", "")
              + (f" ({m['versions']['hxex_commit']})"
                 if m.get("versions", {}).get("hxex_commit") else "")),
+            *([("preset", _preset_info(m))] if _preset_info(m) else []),
             ("input", source.get("reader", source.get("format", "(not recorded)"))),
             *([("sequences", _sequences_text(source["sequences"]))]
               if source.get("sequences") else []),
@@ -1983,6 +1997,26 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _preset_info(manifest) -> str | None:
+    """``hxex info``'s preset line: the run's preset, provisional or not, and the settings the
+    file set otherwise (None: no preset)."""
+    from .presets import value_text
+
+    preset = ((manifest.get("configs") or {}).get("project_file") or {}).get("preset")
+    if not preset:
+        return None
+    text = str(preset.get("name"))
+    if preset.get("provisional"):
+        text += (" (provisional: a first look; a complete preset, bimodal or multimodal, "
+                 "gives the results to report)")
+    overridden = preset.get("overridden") or {}
+    if overridden:
+        text += "; the file set " + ", ".join(
+            f"{k} = {value_text(v[0])} (preset: {value_text(v[1])})"
+            for k, v in overridden.items())
+    return text
 
 
 def _mz_calibration_info(records) -> str:
@@ -2161,6 +2195,7 @@ def cmd_analyse(args) -> int:
         from .config import load_project
 
         project = load_project(first, analysis_only=True)
+        _preset_warning(project)
         config = project.analysis if project.analysis is not None else AnalysisConfig()
         base = first.resolve().parent
         threads = threads if threads is not None else project.threads

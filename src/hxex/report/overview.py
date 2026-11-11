@@ -600,7 +600,10 @@ def write_overview(results: Results, path, dpi: int = 200) -> list:
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    figures = overview_figures(results)
+    from .results import mark_provisional, provisional_note
+
+    note = provisional_note(results)
+    figures = {k: mark_provisional(f, note) for k, f in overview_figures(results).items()}
     if path.suffix == ".pdf":
         with PdfPages(path) as pdf:
             for fig in figures.values():

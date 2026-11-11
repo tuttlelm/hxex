@@ -101,6 +101,7 @@ from .protection import (
     protection_figure,
 )
 from .residues import plot_population_choice, plot_residue_profile
+from .results import mark_provisional, provisional_note
 from .significance import (
     plot_region_significance,
     plot_residue_significance,
@@ -1400,6 +1401,9 @@ def write_analysis(
             for name, r in (read.items() if isinstance(read, Mapping) else [("", read)])}
     if total and before_writing is not None:
         before_writing()
+    note = provisional_note(read)
+    if note and total:
+        log.warning("%s", note)
     with replace_outputs(directory, names, made=made) as written:
         for n, (name, cols) in enumerate(tables.items()):
             check_cancel(cancel)
@@ -1408,7 +1412,7 @@ def write_analysis(
         for n, (stem, draw) in enumerate(jobs):
             check_cancel(cancel)
             path = directory / f"{_stem(stem)}.{config.format}"
-            draw().savefig(path, dpi=150, bbox_inches="tight")
+            mark_provisional(draw(), note).savefig(path, dpi=150, bbox_inches="tight")
             written.append(path)
             report(progress, len(tables) + n + 1, total)
         for n, (name, text) in enumerate(records.items()):

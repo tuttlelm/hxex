@@ -273,7 +273,8 @@ themselves ([Outputs](outputs.md#tables-from-hxex-analyse)).
 | whether the balance between two populations shifted | no | yes, at K = 1 and 2 | yes | for corrected values |
 | which spectra look suspect (flags, screens) | yes | no | for `low_intensity` and replicate outliers | for the control checks |
 
-A typical project:
+A typical project (the [presets](presets.md) give the first two steps in one line each:
+`preset = "quick"`, then `bimodal` or `multimodal`):
 
 1. **A first look:** `hxex run` without `[run.bootstrap]`, then `hxex report --figures` and
    `hxex analyse`. Use it to check the controls, review suspect spectra, and see which peptides

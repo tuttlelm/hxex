@@ -1395,7 +1395,8 @@ Planned, not built:
    general, the K = 2 comparisons gated on a bootstrap of every spectrum at K = 2, and
    `hxex resume` adding a K newly listed in `ks` without making the rest again (built
    2026-11-10, HISTORY 350); the preset key, its expansion, `hxex check`, and the project
-   editor; moving up (and across: multimodal to bimodal, owner's example of a trimer whose
+   editor (built 2026-11-10, HISTORY 353: `hxex.presets`; the template writes the settings
+   a preset sets commented out, so that its lines do not beat the preset); moving up (and across: multimodal to bimodal, owner's example of a trimer whose
    data suit the bimodal analysis better) through `hxex resume`, with the population test
    decided again from its stored steps when only `decide_up_to` changes (no new
    simulations).

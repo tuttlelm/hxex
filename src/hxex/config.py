@@ -50,12 +50,15 @@ from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from . import presets
 from .controls import AUTO as AUTO_CONTROLS
 from .hooks import CancelHook, ProgressHook
 from .io.errors import ReadError
 from .io.mzml import MzmlConfig, MzmlRun, MzmlTarget, _run_file_name, number_replicates
 from .io.times import TIME_SCALES, parse_time
 from .pipeline import RunConfig
+from .presets import Expansion
+from .presets import expand as expand_preset
 from .spectra import SpectrumSet, check_role
 
 log = logging.getLogger(__name__)
@@ -466,6 +469,11 @@ class Project:
     analysis: object = None  # hxex.analysis.AnalysisConfig, or None without an [analysis]
     figures: object = None  # hxex.report.PlotConfig of the [figures] table (None: defaults)
     review: object = None  # hxex.review_table.ReviewSettings of the [review] table (None: none)
+    preset: Expansion | None = None  # the preset laid under the file (hxex.presets)
+
+    @property
+    def preset_name(self) -> str | None:
+        return None if self.preset is None else self.preset.name
 
 
 def _path(base: Path, value, where: str) -> Path | None:
@@ -895,7 +903,13 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
         data = {**data, "input": {**data.get("input", {}),
                                   "spectra": str(Path(spectra).resolve())}}
     tables = ("input", "run", "output", "analysis", "figures", "review")
-    _check_keys(data, {"project", "threads", *tables}, "the project file", tables=tables)
+    _check_keys(data, {"project", "threads", "preset", *tables}, "the project file",
+                tables=tables)
+    try:
+        expansion = expand_preset(data)
+    except ValueError as exc:
+        raise ProjectError(str(exc)) from None
+    data = expansion.data
     if isinstance(data.get("analysis"), list):
         raise ProjectError(
             "[[analysis]]: a project has one [analysis] table (single brackets). To compare "
@@ -943,7 +957,8 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
                            "names the results bundle itself ([output] bundle): the analysis "
                            "goes in a folder of its own (leave out unset for one beside "
                            "the bundle)")
-    return Project(name, inp, run, output, path, threads, analysis, figures, review)
+    return Project(name, inp, run, output, path, threads, analysis, figures, review,
+                   expansion)
 
 
 def _same_path(a, b) -> bool:
@@ -2084,12 +2099,15 @@ def _unset_line(key: str, hint, note: tuple[str, str] | None = None, table: str 
 
 
 def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | None = None,
-                notes: Mapping[str, tuple[str, str]] | None = None) -> list[str]:
+                notes: Mapping[str, tuple[str, str]] | None = None,
+                quiet: frozenset[str] = frozenset()) -> list[str]:
     """``[name]`` with ``data``: scalars first (None as a commented line, it is the default),
     then sub-tables and arrays of tables, each line with its comment from ``_COMMENTS`` and
     the table preceded by its ``_SECTION_COMMENTS`` entry. ``cls`` is the table's config class
     (its types say how a None is written; sub-tables take theirs from it) and ``notes`` gives
-    the value and comment written for the None settings it names."""
+    the value and comment written for the None settings it names. The settings ``quiet``
+    names (``table.key``) are written commented out with their default (the template's
+    settings that a preset sets: a line written out would win over the preset)."""
     c = "# " if comment else ""
     hints = _hints(cls) if cls is not None else {}
     notes = notes or {}
@@ -2098,7 +2116,10 @@ def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | Non
     for key, value in data.items():
         if isinstance(value, Mapping):
             later += [""] + _toml_table(f"{name}.{key}", value, comment,
-                                        _config_class(hints.get(key)))
+                                        _config_class(hints.get(key)), quiet=quiet)
+        elif f"{name}.{key}" in quiet and not comment and value is not None:
+            lines += _commented(f"# {key} = {_toml_value(value)}",
+                                _COMMENTS.get(f"{name}.{key}"), "# ")
         elif isinstance(value, list) and value and all(isinstance(v, Mapping) for v in value):
             for item in value:
                 later += ["", f"{c}[[{name}.{key}]]"]
@@ -2216,6 +2237,18 @@ rep = 1
 time = "60 s\""""
 
 
+def _preset_template_lines() -> list[str]:
+    """The template's commented ``preset`` line and what each preset does."""
+    lines = ['# preset = "quick"                # how much work run and analyse do, in one line:']
+    for name, text in presets.SUMMARIES.items():
+        wrapped = textwrap.wrap(f'"{name}": {text}', _LINE_WIDTH - _COMMENT_COLUMN - 2,
+                                break_on_hyphens=False)
+        lines += [f"#{' ' * (_COMMENT_COLUMN - 1)}# {w}" for w in wrapped]
+    lines += [f"#{' ' * (_COMMENT_COLUMN - 1)}# A setting written below wins over the preset's;",
+              f"#{' ' * (_COMMENT_COLUMN - 1)}# hxex check shows both (unset: the defaults)"]
+    return lines
+
+
 _ADVANCED = [
     "# " + "=" * 94,
     "# Advanced settings: most projects never change these. The defaults are the tested ones;",
@@ -2240,17 +2273,19 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
     else:
         input_text = _INPUT_TEMPLATES[fmt]
     run = RunConfig().to_dict()
+    quiet = presets.setting_names()
     lines = [
         "# hxex project file (TOML). A line starting with # is a comment: a setting or a",
         "# heading ([name]) with \"# \" in front is switched off. To switch one on, delete the",
         "# \"# \" in front of it, and in front of its heading: a setting belongs to the heading",
-        "# above it. A setting left out keeps its default; false stands for \"not set\" where a",
-        "# setting can be unset (a switch set to false is off). Relative paths are relative to",
-        "# this file.",
+        "# above it. A setting left out keeps its default (or the preset's, below); false stands",
+        "# for \"not set\" where a setting can be unset (a switch set to false is off). Relative",
+        "# paths are relative to this file.",
         "",
         f'project = "{project}"              # prefixes every spectrum id',
         "# threads = 4                     # CPU threads (unset: every core, right for most",
         "#                                 # computers; fewer leave cores free for other work)",
+        *_preset_template_lines(),
         "",
         input_text,
         "",
@@ -2361,7 +2396,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
 
     lines += _toml_table("figures", PlotConfig().to_dict(), cls=PlotConfig,
                          notes={"x": ('"time"', _COMMENTS["figures.x"]),
-                                "k": ("2", _COMMENTS["figures.k"])})
+                                "k": ("2", _COMMENTS["figures.k"])}, quiet=quiet)
     lines += [""] + _ADVANCED
     scalars = {k: v for k, v in run.items()
                if not isinstance(v, Mapping) and k not in _OPTIONAL_SECTIONS}
@@ -2373,7 +2408,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
             lines += [""] + _toml_table(f"run.{key}", _section_defaults(key), comment=True,
                                         cls=_section_class(key))
         elif isinstance(value, Mapping):
-            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key))
+            lines += [""] + _toml_table(f"run.{key}", value, cls=_section_class(key),
+                                        quiet=quiet)
     lines += [
         "",
         "# More of the analysis: each table below belongs to [analysis] (switched on as described",
@@ -2555,6 +2591,7 @@ def project_record(project: Project) -> dict[str, Any]:
 
     return {
         "project": project.project, "threads": project.threads,
+        "preset": None if project.preset is None else project.preset.record(),
         "input": None if inp is None else _input_record(inp, mode),
         "output": {"bundle": _recorded(out.bundle, mode), "overwrite": out.overwrite,
                    "keep_previous": out.keep_previous, "keep_spectra": out.keep_spectra,
@@ -2614,6 +2651,8 @@ def run_settings_text(manifest: Mapping) -> str:
         lines.append(f"project = {_toml_value(name)}")
     if record.get("threads") is not None:
         lines.append(f"threads = {record['threads']}")
+    if record.get("preset"):
+        lines += _preset_record_lines(record["preset"])
     if record.get("input"):
         lines += [""] + _toml_table("input", record["input"], cls=InputSettings)
     elif record:
@@ -2647,6 +2686,52 @@ def run_settings_text(manifest: Mapping) -> str:
                 initial_indent="# ", subsequent_indent="# ")
         lines += [""] + intro + table[len(_section_comment("run")):]
     return "\n".join(lines) + "\n"
+
+
+def _preset_record_lines(preset: Mapping) -> list[str]:
+    """The comment of ``run_settings_used.toml`` that names the run's preset: its settings are
+    written out below with the file's own (a preset may change between versions, so the record
+    holds what it set, not its name alone)."""
+    overridden = preset.get("overridden") or {}
+    text = (f'The project file chose preset = "{preset.get("name")}"; its settings are written '
+            "out below (the record does not depend on what the preset means in later "
+            "versions)")
+    if overridden:
+        text += "; the file set " + ", ".join(
+            f"{k} = {presets.value_text(v[0])} (preset: {presets.value_text(v[1])})"
+            for k, v in overridden.items())
+    if preset.get("provisional"):
+        text += ". Its results are provisional: a first look"
+    return textwrap.wrap(text + ".", _LINE_WIDTH, initial_indent="# ",
+                         subsequent_indent="# ")
+
+
+def preset_line(project: Project) -> str:
+    """The ``preset`` line of ``hxex check``: what the preset sets, and what the file sets
+    otherwise."""
+    expansion = project.preset
+    if expansion is None or expansion.name is None:
+        return ("none: every setting at its default (preset = "
+                + ", ".join(f'"{n}"' for n in presets.names()) + " sets the effort at once)")
+    text = f"{expansion.name}: {presets.SUMMARIES[expansion.name]}"
+    if expansion.overridden:
+        text += ("; the file's own settings win: " + ", ".join(
+            f"{k} = {presets.value_text(a)} (preset: {presets.value_text(b)})"
+            for k, (a, b) in expansion.overridden.items()))
+    return text
+
+
+def preset_warning(project: Project) -> str | None:
+    """A warning for the log when the file sets one of its preset's settings otherwise (often a
+    line an older template wrote, such as k_max = 3 under preset = "quick"); None: nothing to
+    say."""
+    expansion = project.preset
+    if expansion is None or not expansion.overridden:
+        return None
+    return (f'preset = "{expansion.name}", but the project file sets '
+            + ", ".join(f"{k} = {presets.value_text(a)} (the preset's: "
+                        f"{presets.value_text(b)})" for k, (a, b) in expansion.overridden.items())
+            + ": the file's settings are used. Delete those lines to take the preset's")
 
 
 def _analysis_record(config, mode: str) -> dict[str, Any]:
@@ -2753,18 +2838,22 @@ def describe(project: Project) -> dict[str, Any]:
         }
     return {
         "project": project.project,
+        "preset": preset_line(project),
         "format": inp.format + ("" if inp.spectra is None else f" (stored in {inp.spectra})"),
         "K": (f"{run.fit.k_min} to {run.fit.k_max}" if run.fit.k_max > run.fit.k_min
               else str(run.fit.k_min)),
         "device": run.fit.backend.device,
         "bootstrap": ("off: no standard errors or intervals (a [run.bootstrap] table turns "
-                      "it on)" if run.bootstrap is None
-                      else f"{run.bootstrap.n_boot} resamples"),
+                      "it on)" if run.bootstrap is None else _bootstrap_summary(run)),
         "population test": ("off: K by the fit's criterion (a [run.population_test] table "
                             "turns it on)" if run.population_test is None
                             else f"on, {run.population_test.null} null"
                             + (f", {run.population_test.simulations} simulations"
-                               if run.population_test.null == "simulated" else "")),
+                               if run.population_test.null == "simulated" else "")
+                            + ("" if run.population_test.decide_up_to is None
+                               or run.population_test.decide_up_to >= run.fit.k_max
+                               else f", deciding up to {run.population_test.decide_up_to} "
+                                    "(beyond: flagged only)")),
         "controls": ("automatic: the back-exchange correction is on when the data hold "
                      "undeuterated and fully deuterated controls of the peptides, off otherwise "
                      "(below; [run] controls = false: always off, a [run.controls] table: "
@@ -2784,6 +2873,20 @@ def describe(project: Project) -> dict[str, Any]:
                            "treated as rejected in the tables, figures and analysis"),
         **_review_table_line(project.review, project.run.fit.k_values),
     }
+
+
+def _bootstrap_summary(run) -> str:
+    """The ``bootstrap`` line of ``hxex check``: resamples, and at which K."""
+    boot = run.bootstrap
+    text = f"{boot.n_boot} resamples, at each spectrum's K"
+    ks = boot.ks
+    if ks == "all":
+        text += ", and at every K fitted for every spectrum"
+    elif isinstance(ks, tuple) and ks:
+        text += (f", and at K = {', '.join(map(str, ks))} for every spectrum")
+    if boot.set_k and run.population_test is not None:
+        text += ", and at each set's K (set_k)"
+    return text
 
 
 def _review_table_line(review, k_values) -> dict[str, str]:

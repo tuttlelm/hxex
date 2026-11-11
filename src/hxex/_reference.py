@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from pathlib import Path
 
-from . import config
+from . import config, presets
 from .analysis import AnalysisConfig, ChoiceConfig, FragmentAnalysis, SpeciesFilters
 from .analysis.compare import Region, Site
 from .config import (
@@ -64,6 +64,10 @@ _CONDITIONS = {
 }
 
 _DESCRIPTIONS: dict[str, str] = {
+    ".preset": "how much work hxex run and hxex analyse do, in one setting: "
+               + "; ".join(f'"{n}": {t}' for n, t in presets.SUMMARIES.items())
+               + " (unset: every setting at its default). A setting written in the file wins "
+               "over the preset's; hxex check lists both ([Presets](presets.md))",
     ".project": "the project's name (text without a colon, `:`); prefixes every spectrum id",
     ".threads": "CPU threads for the command (unset: every physical core, right for most "
                 "computers, a laptop included); fewer leave cores free for other work, and on "
@@ -589,7 +593,8 @@ def tables() -> list[Table]:
     """Every table a project file accepts, in the order of the reference."""
     out = [Table("", False, (
         Setting("project", "text", REQUIRED, _DESCRIPTIONS[".project"]),
-        Setting("threads", "integer", UNSET, _DESCRIPTIONS[".threads"])), _INTROS[""])]
+        Setting("threads", "integer", UNSET, _DESCRIPTIONS[".threads"]),
+        Setting("preset", "text", UNSET, _DESCRIPTIONS[".preset"])), _INTROS[""])]
     out.append(Table("input", False, _settings(
         InputSettings, "input", defaults={"data_root": Path(".")}, formats=_INPUT_FORMATS),
         _INTROS["input"]))
