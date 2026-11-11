@@ -13,7 +13,7 @@ jobs:
   test:
     name: py${{ matrix.python }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45  # a passing run takes 15-25 minutes; a hung test fails here, not at 6 h
+    timeout-minutes: 75  # a passing run takes 15-45 minutes (Windows slowest); a hung test fails here, not at 6 h
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +62,7 @@ jobs:
   min-versions:
     name: lowest supported dependency versions (py3.11)
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # a passing run takes 15-25 minutes; a hung test fails here, not at 6 h
+    timeout-minutes: 75  # a passing run takes 15-45 minutes (Windows slowest); a hung test fails here, not at 6 h
     steps:
       - uses: actions/checkout@v4
 
