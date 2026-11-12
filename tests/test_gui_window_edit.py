@@ -67,8 +67,11 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     assert panel._task is None and panel.status.full() == "" and panel.busy.isHidden()
     assert editor.preview.k is not None  # fitted (it was drawn picked first)
     # what the preview is: above the figure in the window's font, not inside the figure
-    assert editor.notes.text().startswith("Preview: nothing changes until you Save window")
-    assert "overwrite enabled" in editor.notes.text()
+    assert editor.notes.text() == ("Preview only: results will change upon rerun with "
+                                   "overwrite enabled.")  # one line, the same in every draw
+    assert "from the run's fit" not in editor.notes.toolTip()  # how it was fitted: not said
+    layout = panel.layout()  # the line above the figure's title (owner, 2026-11-12)
+    assert layout.indexOf(editor.notes) + 1 == layout.indexOf(panel.title)
     assert not any("preview" in t.get_text().lower() for t in panel.view.figure.texts)
     assert editor.preview.spectrum.spectrum_id != w._shown_traces[1]
     table = project.parent / "rt_elution_windows.csv"
@@ -218,6 +221,7 @@ def test_the_window_is_edited_again_after_the_results_are_read_again(qtbot, proj
                     timeout=60000)
     show_elution(second)
     qtbot.waitUntil(lambda: w.window_editor._previewed is not None
+                    and w.window_editor._target is not None  # None while the trace is read
                     and w.window_editor._target[0] is second and not panel.drawing,
                     timeout=60000)
     assert any(t.startswith("new window") for t in _titles(panel))
@@ -275,6 +279,15 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     editor._set_boxes((window[0] + 0.01, window[1]), None)
     editor.draw()
     assert editor._aligning is None
+    # a match made within another drift range (the boxes' range dragged since): drawn until
+    # the new one lands, so the files keep their places; a save waits for the new one
+    ctx = editor.context()
+    key = editor._aligned_key
+    editor._aligned_key = (*key[:2], (1.0, 2.0))
+    assert editor._aligned_now(ctx) is editor.alignment
+    editor._aligned_key = ("p:another spectrum", *key[1:])
+    assert editor._aligned_now(ctx) is None
+    editor._aligned_key = key
     # a drag across the first row sets the window; across another row it does not
     fig = panel.view.figure
     to_fig = fig.transFigure.inverted()
@@ -296,3 +309,118 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     qtbot.waitUntil(lambda: editor.failure is not None or (
         editor._previewed is not None and editor._previewed[1] == editor.window()),
         timeout=60000)
+
+
+def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch):  # noqa: F811
+    """Editing a window, then selecting another spectrum: the previous spectrum's preview
+    (still being read) is dropped, so the tab never draws the previous spectrum again after it
+    was cleared for the new one (owner, 2026-11-12: it went blank, then showed the previous
+    view, then the new one)."""
+    import threading
+
+    from hxex.gui import window_edit
+    from hxex.report import retention
+
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    first, second = series.child(0).child(1), series.child(0).child(0)  # UN rep 2, rep 1
+    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
+        w.tree.setCurrentItem(first)
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing
+                    and len(w._shown_traces[3].traces) == 2, timeout=30000)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor.preview is not None and editor.preview.results is not None
+                    and not editor._task.running and not panel.drawing, timeout=60000)
+    old = w._shown_traces[1]
+    # the next preview of this spectrum waits until released: it is still being read when
+    # the other spectrum is selected
+    gate, original = threading.Event(), window_edit.preview
+    monkeypatch.setattr(window_edit, "preview",
+                        lambda *a, **k: (gate.wait(30), original(*a, **k))[1])
+    plot = retention.plot_window_edit
+
+    def tagged(traces, res, sid, *a, **k):  # each figure knows its spectrum
+        fig = plot(traces, res, sid, *a, **k)
+        fig.hxex_spectrum = sid
+        return fig
+
+    monkeypatch.setattr(retention, "plot_window_edit", tagged)
+    drawn = []  # the spectra of the figures the tab showed (a figure drawn and dropped is not)
+    show = panel.show_figure
+    monkeypatch.setattr(panel, "show_figure", lambda fig, *a, **k: (
+        drawn.append(getattr(fig, "hxex_spectrum", None)), show(fig, *a, **k))[1])
+    start, end = editor.window()
+    editor.start.setValue(start + 0.01 * (end - start))  # a new window: read in the background
+    qtbot.waitUntil(lambda: editor._task.running, timeout=10000)
+    # the new spectrum's trace is read slowly (as from large scan files): the previous
+    # spectrum's preview is ready first
+    reader, slow = w._reader(), threading.Event()
+    read = reader.traces
+    monkeypatch.setattr(reader, "traces", lambda *a, **k: (slow.wait(30), read(*a, **k))[1])
+    w.tree.setCurrentItem(second)
+    drawn.clear()  # from here on, only the new spectrum may be drawn
+    gate.set()
+    qtbot.wait(1500)  # the previous preview read, fitted and (before the fix) drawn
+    qtbot.waitUntil(lambda: not panel.drawing, timeout=30000)
+    slow.set()
+    qtbot.waitUntil(lambda: w._shown_traces is not None and w._shown_traces[1] != old
+                    and editor.preview is not None and editor.preview.results is not None
+                    and not editor._task.running and not panel.drawing, timeout=60000)
+    new = w._shown_traces[1]
+    assert drawn and old not in drawn and set(drawn) - {None} == {new}
+
+
+def test_the_replicates_are_drawn_only_once_matched(qtbot, project, monkeypatch):  # noqa: F811
+    """While editing, the replicates' traces are left out until they are matched to this
+    file's trace: drawn where they are and then moved, the figure jumped (owner,
+    2026-11-12)."""
+    import threading
+
+    from hxex.gui import window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
+        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing
+                    and len(w._shown_traces[3].traces) == 2, timeout=30000)
+    other = w._shown_traces[3].traces[1].spectrum_id
+    gate, original = threading.Event(), window_edit.align_files
+    monkeypatch.setattr(window_edit, "align_files",
+                        lambda *a, **k: (gate.wait(30), original(*a, **k))[1])
+
+    def traces_drawn():
+        fig = panel.view.figure
+        return {line.get_gid() for ax in (fig.axes if fig else ()) for line in ax.lines
+                if (line.get_gid() or "").startswith("trace:")}
+
+    shown = []
+    show = panel.show_figure
+    monkeypatch.setattr(panel, "show_figure", lambda *a, **k: (
+        show(*a, **k), shown.append(traces_drawn()))[0])
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    # the preview read and fitted while the match waits: the replicate is not drawn
+    qtbot.waitUntil(lambda: editor.preview is not None and editor.preview.results is not None
+                    and not panel.drawing, timeout=60000)
+    assert shown and all(f"trace:{other}" not in s for s in shown)
+    gate.set()
+    qtbot.waitUntil(lambda: editor.alignment is not None and not panel.drawing, timeout=30000)
+    assert f"trace:{other}" in shown[-1]  # drawn once, matched

@@ -81,10 +81,11 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     while it is not ready; picked only while its fit runs), each at its K; with ``each_k``
     the new window's spectrum at every K the run tried instead. ``mz_range`` is the series'
     m/z axis; ``waiting`` says why there is no preview or fit (default: it is being made).
-    The preview's notes (``preview.notes``) are not drawn: the window shows them above the
-    figure (:func:`preview_text`). With ``aligned`` (:class:`hxex.gui.window_edit.Alignment`)
-    the trace panel draws the other files moved onto this file's clock by their match
-    (:func:`_aligned_panel`) instead of where they are."""
+    The preview's notes (``preview.notes``) are not drawn: the window shows a line above the
+    figure (:func:`preview_text`) with them as its tooltip (:func:`preview_notes`). With
+    ``aligned`` (:class:`hxex.gui.window_edit.Alignment`) the trace panel draws the other
+    files moved onto this file's clock by their match (:func:`_aligned_panel`) instead of
+    where they are."""
     from .spectrum import plot_spectrum
 
     with_drift = traces.drift is not None
@@ -109,6 +110,7 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     k_now = int(results.effective_K[i])
     plot_spectrum(spectrum_id, results, ax=axes[0], show=("raw", "picked", "fit"), k=k_now,
                   mz_range=mz_range, legend=False, title=False)
+    _data_height(axes[0])
     window = traces.traces[0].window if traces.traces else None
     axes[0].set_title(f"now\n{_panel_text(spectrum_id, window)}\n"
                       f"{_k_text(results.fit, i, k_now)}", fontsize="small")
@@ -126,12 +128,14 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
                 plot_spectrum(sid, spectra=preview.spectra, binned=preview.binned, ax=ax_k,
                               show=("raw", "picked"), mz_range=mz_range, legend=False,
                               title=False)
+                _data_height(ax_k)  # the same axis as when it is fitted
                 ax_k.set_title(f"new window\n{_panel_text(sid, new_window)}\n"
                                f"{waiting or 'fitting its spectrum…'}", fontsize="small")
                 continue
             k = preview.k if k is None else k
             plot_spectrum(sid, preview.results, ax=ax_k, show=("raw", "picked", "fit"), k=k,
                           mz_range=mz_range, legend=False, title=False)
+            _data_height(ax_k)
             head = ("new window" if not each_k else f"new window, K = {k}"
                     + (" (chosen)" if k == preview.k else ""))
             ax_k.set_title(f"{head}\n{_panel_text(sid, new_window)}\n"
@@ -146,13 +150,13 @@ def plot_each_file(traces: RetentionTraces, aligned, *, edit: tuple[float, float
                    title: str | None = None) -> Figure:
     """One row per file a window spread at ``aligned.level`` reaches
     (:class:`hxex.gui.window_edit.Alignment`), each on its own clock, this file first: the
-    file's trace of the charge state (within the drift range matched), the scans its spectrum
-    sums now (shaded) and the window being edited (``edit``, minutes) shifted into it
+    file's trace of the charge state (as the run summed it: :func:`_as_summed`), the scans its
+    spectrum sums now (shaded) and the window being edited (``edit``, minutes) shifted into it
     (hatched), with the shift, or why the file was not matched (no window). Every row's trace
     has the ``gid`` ``trace:<spectrum id>``; only the first row (this file, axes label
     ``this file``) takes a drag across it as the window."""
-    rows = [(aligned.reference, traces.traces[0].window if traces.traces else None, edit,
-             "this file")]
+    rows = [(_as_summed(traces, aligned.reference),
+             traces.traces[0].window if traces.traces else None, edit, "this file")]
     for p in aligned.for_window(edit):
         if p.trace is None:
             continue
@@ -161,7 +165,8 @@ def plot_each_file(traces: RetentionTraces, aligned, *, edit: tuple[float, float
         if aligned.level == "everywhere" and p.samples:  # whose file (a control: several)
             label += "; " + (p.samples[0] if len(p.samples) == 1
                              else f"{len(p.samples)} samples")
-        rows.append((p.trace, p.trace.window, p.window, label))
+        t = _as_summed(traces, p.trace)
+        rows.append((t, t.window, p.window, label))
     fig = Figure(figsize=(8.4, 0.62 * len(rows) + 1.1), layout="constrained")
     axes = np.atleast_1d(fig.subplots(len(rows), 1, sharex=True))
     for n, (ax, (t, summed, window, label)) in enumerate(zip(axes, rows, strict=True)):
@@ -189,12 +194,46 @@ def plot_each_file(traces: RetentionTraces, aligned, *, edit: tuple[float, float
     return fig
 
 
+PREVIEW_TEXT = "Preview only: results will change upon rerun with overwrite enabled."
+
+
 def preview_text(preview) -> str:
-    """What the window says about a preview, above its figure: that it is one, and its notes."""
+    """What the window says about a preview, above its figure: one fixed line, so that it does
+    not change length (and the figure's size) as the preview is read and fitted (owner,
+    2026-11-12); its notes go in :func:`preview_notes`."""
+    return PREVIEW_TEXT
+
+
+def preview_notes(preview) -> str:
+    """How the preview differs from a run (``preview.notes``), as one sentence, or empty:
+    the line's tooltip (:func:`preview_text`)."""
     notes = "; ".join(preview.notes) if preview is not None and preview.notes else ""
-    return ("Preview: nothing changes until you Save window and run the project again with "
-            "overwrite enabled"
-            + (f". {notes[0].upper()}{notes[1:]}." if notes else "."))
+    return f"{notes[0].upper()}{notes[1:]}." if notes else ""
+
+
+def _data_height(ax) -> None:
+    """A spectrum panel's y axis from its data alone (the raw profile within the m/z axis and
+    the picked values), from 0 with a tenth above, so that the fit, drawn when it is ready, does not
+    move it (owner, 2026-11-12: the new window's axis changed twice after each new drift
+    range, picked and then fitted)."""
+    from matplotlib.collections import PathCollection
+
+    lo, hi = ax.get_xlim()
+    top = 0.0
+    for a in ax.get_children():
+        gid = a.get_gid() or ""
+        if gid == "raw" and isinstance(a, Line2D):
+            x, y = (np.asarray(v, dtype=float) for v in a.get_data())
+            y = y[(x >= lo) & (x <= hi) & np.isfinite(y)]
+        elif gid == "picked" and isinstance(a, PathCollection):
+            y = np.asarray(a.get_offsets(), dtype=float).reshape(-1, 2)[:, 1]
+            y = y[np.isfinite(y)]
+        else:
+            continue
+        if len(y):
+            top = max(top, float(y.max()))
+    if top > 0:  # from 0, as the fitted spectrum's picking-window bars put it (the picked-only
+        ax.set_ylim(0.0, 1.1 * top)  # draw had matplotlib's margin below 0: y-min jumped)
 
 
 def _panel_text(spectrum_id: str, window: tuple[float, float] | None) -> str:
@@ -230,6 +269,24 @@ def _heading(fig, traces: RetentionTraces, title: str | None) -> None:
         fig.text(0.01, 0.01, traces.note, fontsize="x-small", color="#7a1f1f")
 
 
+def _own_range(ax, selected, edit: tuple[float, float] | None) -> None:
+    """The retention-time axis of this file's trace: its window and the reader's margin either
+    side (:data:`hxex.io.retention_trace.MARGIN`, or the window's width), widened only to show
+    the window being edited. Every draw of the spectrum keeps it, whatever other files are read
+    with it or matched to it (the reader reads every trace around all of their windows, and the
+    axis moved as they arrived; owner, 2026-11-12)."""
+    from ..io.retention_trace import MARGIN
+
+    a, b = (float(v) for v in selected.window)
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return
+    pad = max(MARGIN, b - a)
+    lo, hi = a - pad, b + pad
+    if edit is not None and np.all(np.isfinite(edit)):
+        lo, hi = min(lo, float(edit[0])), max(hi, float(edit[1]))
+    ax.set_xlim(lo, hi)
+
+
 def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) -> None:
     """The selected run's trace over its window (shaded), the others behind it (other runs, or
     the peptide's other ions in this run, each scaled to the selected trace's height), and the
@@ -254,6 +311,7 @@ def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) 
                    gid="edited_outline")
     ax.plot(selected.times, selected.intensity, color=RAW_DARK, lw=1.6, zorder=4,
             marker="o", ms=2.5, gid=f"trace:{selected.spectrum_id}")
+    _own_range(ax, selected, edit)
     ax.set_xlabel("retention time (min)")
     ax.set_ylabel("intensity at the ion's bins")
     ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4))
@@ -280,18 +338,30 @@ def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) 
         ax.set_ylim(top=top * room)  # room for the legends
 
 
+def _as_summed(traces: RetentionTraces, trace):
+    """``trace`` (one a match read, within the drift range being edited) as the run summed it:
+    the tab's own trace of that spectrum (its run's drift range), when the tab read one. A new
+    drift range then moves the other files by their new shifts but changes no trace (owner,
+    2026-11-12: the traces changed with every drift range dragged)."""
+    for t in traces.traces:
+        if t.spectrum_id == trace.spectrum_id:
+            return t
+    return trace
+
+
 def _aligned_panel(ax, traces: RetentionTraces, aligned,
                    edit: tuple[float, float] | None) -> None:
     """The other files a window spread reaches moved onto this file's clock by their match and
     scaled to this trace's height (those not matched dashed, where they are), this file's trace
     within the drift range matched, the scans it sums now (shaded), and the window being edited
     (hatched): whether the match lined the peaks up, at a glance."""
-    selected, ref = traces.traces[0], aligned.reference
+    selected = traces.traces[0]
+    ref = _as_summed(traces, aligned.reference)
     own_top = float(np.nanmax(ref.intensity)) if len(ref.intensity) else 0.0
     matched = [p for p in aligned.plans if p.trace is not None and p.shift is not None]
     unmatched = [p for p in aligned.plans if p.trace is not None and p.shift is None]
     for p, dashed in [(p, False) for p in matched] + [(p, True) for p in unmatched]:
-        t = p.trace
+        t = _as_summed(traces, p.trace)
         top = float(np.nanmax(t.intensity)) if len(t.intensity) else 0.0
         y = t.intensity * (own_top / top) if top > 0 and own_top > 0 else t.intensity
         ax.plot(t.times - (0.0 if dashed else p.shift), y, color=UNMATCHED if dashed else OTHER,
@@ -304,6 +374,7 @@ def _aligned_panel(ax, traces: RetentionTraces, aligned,
                    gid="edited_outline")
     ax.plot(ref.times, ref.intensity, color=RAW_DARK, lw=1.6, zorder=4, marker="o", ms=2.5,
             gid=f"trace:{ref.spectrum_id}")
+    _own_range(ax, selected, edit)
     ax.set_xlabel("retention time (min, this file's clock)")
     ax.set_ylabel("intensity at the ion's bins")
     ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4))
@@ -343,10 +414,18 @@ def _drift_panel(ax, traces: RetentionTraces,
     ax.set_ylabel("drift profile on the isotope peaks")
     ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4))
     if len(y) and y.max() > 0:
+        # the profile down to a small share of its apex and the range the run summed, with its
+        # own width either side (at least three drift bins): a narrow peak shows its baseline
+        # too (owner, 2026-11-12: a peak 3-4 bins wide was drawn cut off at its sides); a
+        # range being edited only widens it, so the axis stays put between draws
         shown = drift[y >= _SHOWN_SHARE * y.max()]
         lo, hi = float(shown.min()), float(shown.max())
-        for shown_range in (p.range, edit):
-            if shown_range is not None:
-                lo, hi = min(lo, shown_range[0]), max(hi, shown_range[1])
-        pad = 0.1 * max(hi - lo, 1e-3)
-        ax.set_xlim(lo - pad, hi + pad)
+        if p.range is not None:
+            lo, hi = min(lo, p.range[0]), max(hi, p.range[1])
+        steps = np.diff(drift)
+        step = float(np.median(steps[steps > 0])) if (steps > 0).any() else 0.0
+        pad = max(hi - lo, 3 * step, 1e-3)
+        lo, hi = lo - pad, hi + pad
+        if edit is not None:
+            lo, hi = min(lo, edit[0]), max(hi, edit[1])
+        ax.set_xlim(lo, hi)

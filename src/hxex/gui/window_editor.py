@@ -12,6 +12,7 @@ table is not changed) and
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -172,16 +173,16 @@ class WindowEditor(QObject):
         for w in (_group(self.save, QLabel("for"), self.scope), self.undo):
             save_row.addWidget(w)
         self._drift_widgets = [drift_group]
-        # what the preview is (and how it differs from a run), above the figure at the
-        # window's own font size (owner: not small print inside the figure)
+        # that the figure is a preview, above its title at the window's own font size (owner:
+        # not small print inside the figure); one fixed line, how it differs from a run on hover
         self.notes = QLabel()
         self.notes.setWordWrap(True)
         self.notes.hide()
-        layout = panel.layout()
-        layout.insertWidget(layout.indexOf(panel.title) + 1, self.notes)
         self._show_controls(False)
         panel.add_row(self.bar)
         panel.add_row(self.save_bar)
+        layout = panel.layout()  # after the editing rows: directly above the title
+        layout.insertWidget(layout.indexOf(panel.title), self.notes)
         panel.spanned.connect(self._spanned)
 
     def _box(self, unit: str) -> QDoubleSpinBox:
@@ -221,6 +222,17 @@ class WindowEditor(QObject):
             return
         self._target = None
         self.update()
+
+    def forget(self) -> None:
+        """Another spectrum is selected: what is still being read, fitted or matched for the
+        one before is dropped (done, it drew the previous spectrum's view over the cleared tab
+        before the new spectrum's trace was read; owner, 2026-11-12)."""
+        self._generation += 1  # a preview's fit stops
+        self._aligning = None  # and a match (its cancel hook asks for its key)
+        self._target = None
+        self._task.submit(lambda: None, lambda _r: None, lambda _m: None)
+        self._align_task.submit(lambda: None, lambda _r: None, lambda _m: None)
+        self.panel.set_task(None)
 
     def update(self) -> None:
         """The tab shows new traces (another spectrum, or its other runs read): the boxes set
@@ -263,6 +275,8 @@ class WindowEditor(QObject):
             self._save_state(ctx)
             self.refresh()
             return
+        if self._aligned_now(ctx) is None and self._matching(ctx):
+            return  # the other files arrived: drawn once matched (left out until then)
         self.draw()
 
     def _word_scope(self, ctx: TraceContext) -> None:
@@ -399,19 +413,40 @@ class WindowEditor(QObject):
             reader, results, sid, data_id, peptide=peptide, ion=key_[2], ions=siblings,
             level=level, drift=drift, cancel=lambda: self._aligning != key), done, failed)
 
-    def _aligned_now(self, ctx: TraceContext):
-        """The match for what the tab shows (None while it is being made, or without one)."""
+    def _matching(self, ctx: TraceContext) -> bool:
+        """Whether the files Compare with shows are still being matched to this one's trace
+        (started if not yet): they are drawn once matched, not first where they are and then
+        moved (owner, 2026-11-12: the figure jumped)."""
+        self._align(ctx)
         level = ctx.compare if ctx.compare in ("replicates", "everywhere") else None
-        if level is None or self._aligned_key != (ctx.spectrum_id, level, self.drift()):
+        return level is not None and self._aligning == (ctx.spectrum_id, level, self.drift())
+
+    def _aligned_now(self, ctx: TraceContext):
+        """The match the tab draws: the one for the drift range in the boxes, else, while that
+        one is being made, the previous match of this spectrum and level (another drift
+        range): the traces are those the run summed, so only the other files' shifts can
+        change when it lands (owner, 2026-11-12: option A). None before any match of this
+        spectrum (a save uses only the match for the boxes' drift range)."""
+        level = ctx.compare if ctx.compare in ("replicates", "everywhere") else None
+        a = self.alignment
+        if level is None or a is None or self._aligned_key is None:
             return None
-        return self.alignment
+        if self._aligned_key[:2] != (ctx.spectrum_id, level):
+            return None
+        return a
 
     def draw(self) -> None:
         """The trace with the window being edited, and the spectra now and over it; with
         Compare with on the replicates or every file, those files aligned on this file's clock
         by the trace match (owner's choice, 2026-11-11: draft A), or one row per file (Each
-        file's window: draft B)."""
-        from ..report.retention import plot_each_file, plot_window_edit, preview_text
+        file's window: draft B). The traces are always those the run summed (their own drift
+        ranges); the match, within the drift range in the boxes, gives only the shifts."""
+        from ..report.retention import (
+            plot_each_file,
+            plot_window_edit,
+            preview_notes,
+            preview_text,
+        )
 
         ctx = self.context()
         if not self.active or ctx is None:
@@ -422,13 +457,18 @@ class WindowEditor(QObject):
         aligned = self._aligned_now(ctx)
         shown, failure = self.preview, self.failure
         self.notes.setText(preview_text(shown))
+        notes = preview_notes(shown)  # how this preview differs from a run, on hover
+        self.notes.setToolTip(tip(notes) if notes else "")
         window, drift, each_k = self.window(), self.drift(), self.each_k.isChecked()
         if spread and self.each_file.isChecked() and aligned is not None:
             self.panel.draw(lambda: plot_each_file(ctx.traces, aligned, edit=window,
                                                    title=ctx.title))
             return
+        traces = ctx.traces
+        if spread and aligned is None and self._matching(ctx):  # this file's trace alone
+            traces = dataclasses.replace(traces, traces=traces.traces[:1])
         self.panel.draw(lambda: plot_window_edit(
-            ctx.traces, ctx.results, ctx.spectrum_id, shown, edit=window, drift_edit=drift,
+            traces, ctx.results, ctx.spectrum_id, shown, edit=window, drift_edit=drift,
             each_k=each_k, title=ctx.title, mz_range=ctx.mz_range, waiting=failure,
             aligned=aligned))
 

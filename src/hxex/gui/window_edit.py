@@ -52,14 +52,16 @@ class Preview:
     """A spectrum summed over another window: the ``spectrum``, its picked ``binned`` row, the
     one-spectrum ``results`` it was fitted into (with the run's settings;
     :func:`hxex.report.plot_spectrum` draws them; None until fitted), the ``k`` the run's
-    criterion chooses (None until fitted), and ``notes`` on what differs from a run (said under
-    the figure)."""
+    criterion chooses (None until fitted), ``notes`` on what differs from a run (the tooltip of
+    the line above the figure), and whether the fit started from the run's fit of the spectrum
+    as well as from the spectrum itself, in a few steps (``warm``)."""
 
     spectrum: Spectrum
     binned: object  # hxex.picking.BinnedSet, one row
     results: object = None  # hxex.report.Results
     k: int | None = None
     notes: tuple[str, ...] = ()
+    warm: bool = False
 
     @property
     def spectra(self) -> SpectrumSet:
@@ -126,10 +128,8 @@ def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=
     warm = None
     if start_from is not None:
         warm = _warm(results, start_from, measurements)
-        if warm:
+        if warm:  # how it was fitted, not how it differs from a run: no note (owner)
             fit_config = replace(fit_config, **PREVIEW_STEPS)
-            notes.append("fitted from the run's fit of the spectrum and from the spectrum "
-                         "itself, in a few steps")
     curve = results.fit.noise_curve
     if curve is None:
         notes.append("noise scaled to the spectrum itself (the run had no noise curve)")
@@ -148,7 +148,7 @@ def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=
                           spectra=picked.spectra, settings=settings, controls=results.controls,
                           figures=results.figures)
     return replace(picked, results=one_results, k=int(fitted.selected_K[0]),
-                   notes=tuple(notes))
+                   notes=tuple(notes), warm=bool(warm))
 
 
 def _warm(results, spectrum_id: str, measurements) -> dict:

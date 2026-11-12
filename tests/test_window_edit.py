@@ -114,10 +114,9 @@ def test_the_preview_fit_starts_from_the_runs_fit(project):
         for k in shown.results.fit.fits:
             assert np.sort(shown.results.fit.fits[k].means[0]) == pytest.approx(
                 np.sort(results.fit.fits[k].means[m]), abs=0.05)
-        assert any("from the run's fit" in n for n in shown.notes)
+        assert shown.warm and not any("from the run's fit" in n for n in shown.notes)
     # a spectrum the results do not hold: the run's own starts
-    assert not any("from the run's fit" in n
-                   for n in preview(results, same, start_from="p:nothing").notes)
+    assert not preview(results, same, start_from="p:nothing").warm
 
 
 def test_the_preview_leaves_a_run_fit_that_no_longer_fits(project):
@@ -135,7 +134,7 @@ def test_the_preview_leaves_a_run_fit_that_no_longer_fits(project):
     same = reader.spectrum(sid, int(spectra.data_id[0]), (spectra.rt_start[0], spectra.rt_end[0]))
     shown = preview(results, same, start_from=sid)
     assert shown.results.fit.fits[1].means[0, 0] == pytest.approx(right, abs=0.05)
-    assert any("from the spectrum itself" in n for n in shown.notes)
+    assert shown.warm
 
 
 def _key(spectra, i):
@@ -330,3 +329,29 @@ def test_a_window_saved_for_the_whole_peptide(project):
     assert saved_window(project, key, peptide)[2] == "ion"
     assert saved_window(project, key, "0002-0009-OTHER") is None
     undo_window(alone)
+
+
+def test_the_new_windows_axis_does_not_move_when_its_fit_arrives(project):
+    """The new window's spectrum is drawn picked, then fitted: its y axis comes from the data
+    (raw profile and picked values), so the fit does not move it (owner, 2026-11-12: it
+    changed twice after every new drift range)."""
+    from hxex.report.retention import plot_window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    sid, did = spectra.spectrum_id[0], int(spectra.data_id[0])
+    window = (spectra.rt_start[0], spectra.rt_end[0] - 0.01)
+    summed = reader.spectrum(sid, did, window)
+    picked = preview(results, summed, fit=False)
+    fitted = preview(results, summed, start_from=sid)
+    traces = reader.traces([sid], did)
+
+    def new_window_axis(shown):
+        fig = plot_window_edit(traces, results, sid, shown, edit=window)
+        ax = next(a for a in fig.axes if a.get_title().startswith("new window"))
+        return ax.get_ylim()
+
+    # from 0 in both (the picked-only draw had matplotlib's margin below 0: owner, the y-min)
+    assert new_window_axis(picked) == pytest.approx(new_window_axis(fitted))
+    assert new_window_axis(picked)[0] == 0.0

@@ -686,7 +686,7 @@ def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
 
     qtbot.waitUntil(lambda: drawn(2), timeout=30000)  # its replicate behind it
     fig = panel.view.figure
-    assert fig._suptitle.get_text() == "S 0001-0008 VDQIIMAK z=2"
+    assert fig._suptitle.get_text() == "S 0001-0008 VDQIIMAK z=2, UN rep 2"  # which file
     legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert legend[0] == "this spectrum: undeuterated, rep 2 (un2.mzML)"
     assert legend[-1] == "its replicates (1)"

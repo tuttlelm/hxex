@@ -9409,3 +9409,61 @@ CSVs or mzML if wanted.
     frame keeps its cap (half its width past the frame, under the spine). The raster view stays
     the default. Tests: tests/test_svg_trim.py (the cut, the restore, markers, Qt rendering
     offscreen).
+
+370. **The elution tab no longer shows the previous spectrum after another is selected
+    while a window is edited (owner's report, 2026-11-12).** With Edit window on, selecting
+    another spectrum cleared the tab, then showed the previous spectrum's view again before the
+    new one's: the editor's work for the previous spectrum (reading its new window's scans,
+    fitting them, matching the replicates' traces) was not dropped, and when it finished
+    before the new spectrum's trace was read (scan files that take tens of seconds to read: the
+    private pooled raw-file project), it drew with the traces still kept for the previous
+    spectrum. A panel's `clear` also left a figure still being drawn to show afterwards. Now
+    `ResultsWorkspace._draw_retention` forgets the previous spectrum's traces and calls
+    `WindowEditor.forget` (the preview's fit and the match stopped, their results dropped)
+    when the spectrum changes (another Compare with on the same spectrum keeps the window
+    being edited), and `FigurePanel.clear` and `RasterView.clear` drop a drawing in progress
+    (`tasks.Latest.drop`). Also (owner: most of the flashing): with Compare with on the
+    replicates or every file, the other files' traces were drawn where they are when read and
+    moved a moment later when matched to this file's trace; while the match is being made they
+    are now left out (`WindowEditor._matching`), and their arrival alone draws nothing, so they
+    appear once, matched (unmatched, dashed, as before when the match fails). After a switch
+    the editing figure is drawn as its parts arrive: the trace, the new window's spectrum
+    picked, fitted, and the files matched. And (owner) the trace panel's retention-time axis
+    no longer moves between those draws: the reader reads every trace around the windows of
+    all the files read together, so this file's trace alone, with its replicates, and matched
+    each had another span; the axis is now this file's window and the reader's margin
+    (`report.retention._own_range`), widened only by a window being edited beyond it (another
+    file's trace beyond it is cut at the frame). The line above the editing figure also
+    changed length as the preview's notes arrived (one line, then two, resizing the figure):
+    it is now one fixed sentence, "Preview only: results will change upon rerun with overwrite
+    enabled." (owner's wording), with how the preview differs from a run (the run's envelope
+    not used, no noise curve, K without the population test) as its tooltip; the note that it
+    was fitted from the run's fit is gone (how it was fitted, not a difference from a run;
+    `Preview.warm` records it). The line now sits directly above the figure's title row
+    (owner), and the elution tab's title names the file's time point and replicate
+    ("S 0001-0008 VDQIIMAK z=2, UN rep 2"; owner). The drift panel drew a narrow drift peak
+    cut off at its sides (owner's case, the private pooled raw-file project: an undeuterated
+    control's peak 3-4 drift bins wide, padded by a tenth of that, less than one bin, so no
+    baseline showed and the 4+ ion's side was cut at 62 % of its apex); the axis is now the
+    profile down to 2 % of its apex and the run's range, padded by its own width or three drift
+    bins either side, and a range being edited only widens it. A drift range dragged while
+    editing changed the traces (owner): the match re-reads every file within the drift range in
+    the boxes, and the matched view drew those traces. LC comes before the drift cell, but the
+    trace is the intensity at the ion's bins within a drift range, so another range counts
+    other ions. Owner's choice (option A): the traces drawn are always those the run summed
+    (`report.retention._as_summed`, in the matched view and Each file's window); the match,
+    still within the boxes' range (HISTORY 360), gives only the shifts, and while a new match
+    is made the previous one of the spectrum is drawn (`WindowEditor._aligned_now`; a save
+    still waits for the match of the boxes' range). The new window's y axis then changed
+    twice after each new drift range (owner: mostly its minimum): drawn picked, matplotlib
+    put a margin below 0; drawn fitted, the picking-window bars put it at 0, and the fit
+    moved the top a little. Every spectrum panel of the editing figure now takes its axis
+    from its data (the raw profile within the m/z axis and the picked values: 0 to a tenth
+    above the tallest; `report.retention._data_height`). Tests: tests/test_gui_window_edit.py (the new
+    spectrum's trace read slowly, as on large files: the previous spectrum is never shown
+    after the switch; the match held back: the replicate is not drawn until matched; both
+    fail without the fix), tests/test_retention_trace.py (the axis alone, with the other
+    files, and with a file far away; a three-bin drift peak with its baseline, an edited range
+    inside the axis or beyond it; the matched view and the rows drawing the run's traces
+    moved by the match's shifts), tests/test_window_edit.py (the new window's axis picked and
+    fitted).

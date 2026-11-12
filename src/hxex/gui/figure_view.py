@@ -362,6 +362,8 @@ class RasterView(FigureView):
         self._resize()
 
     def clear(self) -> None:
+        self._again.stop()
+        self._drawing.drop()  # a picture still being drawn would bring the figure back
         self.figure, self._marks, self._panels = None, [], []
         self._image, self._marks_known, self._size_pt = None, False, QSize(0, 0)
         self.setFixedSize(QSize(0, 0))
@@ -651,7 +653,10 @@ class FigurePanel(QWidget):
 
     def clear(self, message: str = "") -> None:
         """Show no figure, ``message`` on the status line under it (one that ends in "…" says
-        the panel is working: with the busy bar)."""
+        the panel is working: with the busy bar). A figure still being drawn is dropped: it
+        would show after the panel was cleared (the elution tab drew the previous spectrum
+        after it was cleared for the next; owner, 2026-11-12)."""
+        self._drawing.drop()
         self.view.clear()
         self.set_title("")
         self.save_button.setEnabled(False)

@@ -269,7 +269,8 @@ under way. **Fits at each K** draws the new window's
 spectrum at every K the run tried. This is a preview: it uses the run's settings and noise
 curve, but not its bootstrap, population test, or controls, and nothing in the results
 changes. Now and then the run's own fit, which tries more starting points, settles on another
-K than the preview did.
+K than the preview did. The line above the figure says it is a preview; hover over it to
+see how this preview differs from a run (for example, K chosen without the population test).
 
 While you edit with **Compare with** on the replicates or on every file of the peptide, the
 other files are drawn on this file's clock instead of where they are: each is moved by the
@@ -281,7 +282,10 @@ window shifted into it (hatched), and its shift; this file is the top row, and d
 that row sets the window. It shows, file by file, what saving at that level would write, and
 whether a file's present window sits on the peak at all. The files are matched once for the
 spectrum and the drift range (about half a second per file); moving the window does not match
-them again, and a save at that level uses the same match.
+them again, and a save at that level uses the same match. The traces drawn are always the ones
+the run summed, each at its own drift range: a new drift range in the boxes is matched again
+and may move the other files by their new shifts, but it does not change any trace, and the
+files keep their places until the new match is ready.
 
 **Save window** writes the window as a row of the project's elution-window table. The choice
 beside it says what the row is for:

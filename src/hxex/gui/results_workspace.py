@@ -561,6 +561,14 @@ class ResultsWorkspace(QWidget):
                 and self._trace_for[1] == sid:  # the results by identity, not by value
             return
         self._trace_for = (results, sid)
+        shown = self._shown_traces
+        if shown is None or shown[0] is not results or shown[1] != sid:
+            # another spectrum: the one before is forgotten, and the editor's work for it
+            # dropped, so nothing draws it again while this one's trace is read (the same
+            # spectrum read again, for another Compare with, keeps the window being edited)
+            self._shown_traces = None
+            if self.window_editor is not None:
+                self.window_editor.forget()
         panel = self.panel("elution")
         try:
             reader = self._reader()
@@ -592,7 +600,7 @@ class ResultsWorkspace(QWidget):
                     continue
                 drift[s] = (float(binned.drift_start[j]), float(binned.drift_end[j]))
         title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
-                f"{payload[1].name}"
+                f"{payload[1].name}, {payload[2].label} rep {payload[3].rep}"  # which file
 
         def failed(message: str) -> None:
             self._trace_for = None  # tried again when next in view

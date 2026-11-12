@@ -146,6 +146,13 @@ class Latest(QObject):
         self.running = True
         self.pool.start(_Job(self._ticket, work, self._signals))
 
+    def drop(self) -> None:
+        """Forget the request still running: neither of its callbacks is called (its work runs
+        to its end in the pool)."""
+        self._ticket += 1
+        self._callbacks = None
+        self.running = False
+
     def _done(self, ticket: int, result) -> None:
         if ticket == self._ticket and self._callbacks is not None:
             self.running = False

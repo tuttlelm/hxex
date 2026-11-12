@@ -115,6 +115,20 @@ def test_ion_mobility_traces_keep_the_drift_range(tmp_path):
     fig = plot_retention(gated)
     assert len(fig.axes) == 2 and "drift 5.2-5.4 ms" in fig._suptitle.get_text()
     assert {a.get_gid() for a in fig.axes[1].get_children()} >= {"drift_profile", "drift_range"}
+    # a peak a few drift bins wide shows its baseline either side (owner, 2026-11-12: it was
+    # drawn cut off), and a range being edited inside the axis does not move it
+    from hxex.io.retention_trace import DriftProfile
+
+    bins = np.round(np.arange(1.0, 12.0, 0.07), 3)
+    peak = np.where(np.abs(bins - 2.33) < 0.1, 1.0, 0.0)  # three bins
+    narrow = dataclasses.replace(gated, drift=DriftProfile(bins, peak, (2.26, 2.40)))
+    lo, hi = plot_retention(narrow).axes[1].get_xlim()
+    drawn = (bins >= lo) & (bins <= hi)
+    assert (peak[drawn] == 0).sum() >= 6 and peak[drawn][0] == 0 and peak[drawn][-1] == 0
+    inside = plot_retention(narrow, drift_edit=(2.30, 2.36)).axes[1].get_xlim()
+    assert inside == pytest.approx((lo, hi))
+    beyond = plot_retention(narrow, drift_edit=(2.30, 4.0)).axes[1].get_xlim()
+    assert beyond == pytest.approx((lo, 4.0))
 
 
 def test_the_figure_draws_every_run_or_says_why_not(lc):
@@ -234,3 +248,56 @@ def test_every_trace_reader_reads_one_at_a_time(lc):
         assert not done
     t.join(30)
     assert done and done[0].traces
+
+
+def test_the_time_axis_is_this_files_whatever_is_read_with_it(lc):
+    """The trace panel's retention-time axis is this file's window and margin: reading the
+    other files with it (which widens the span every trace is read over) or a file far away
+    does not move it (owner, 2026-11-12: it changed between the tab's draws); only a window
+    being edited beyond it widens it."""
+    from hxex.io.retention_trace import MARGIN
+
+    spectra, _ = lc
+    sid = _ids(spectra, "un2.mzML")[0]
+    reader = TraceReader(spectra.source)
+    alone = reader.traces([sid], 0)
+    together = reader.traces([sid, *_ids(spectra, "un1.mzML")], 0)
+    far = dataclasses.replace(together.traces[1], times=together.traces[1].times + 10.0)
+    distant = dataclasses.replace(together, traces=[together.traces[0], far])
+    limits = [plot_retention(t).axes[0].get_xlim() for t in (alone, together, distant)]
+    assert limits[0] == pytest.approx(limits[1]) and limits[0] == pytest.approx(limits[2])
+    a, b = alone.traces[0].window
+    pad = max(MARGIN, b - a)
+    assert limits[0] == pytest.approx((a - pad, b + pad))
+    wide = plot_retention(alone, edit=(a - 3 * pad, b)).axes[0].get_xlim()
+    assert wide == pytest.approx((a - 3 * pad, b + pad))
+
+
+def test_a_match_moves_the_runs_traces_and_changes_none(lc):
+    """While a window is edited, the files are matched within the drift range in the boxes,
+    but the traces drawn are those the run summed: a new drift range moves the other files by
+    their new shifts and changes no trace (owner, 2026-11-12: option A)."""
+    from matplotlib.figure import Figure
+
+    from hxex.gui.window_edit import Alignment, FilePlan
+    from hxex.report.retention import _aligned_panel, plot_each_file
+
+    spectra, _ = lc
+    sid = _ids(spectra, "un2.mzML")[0]
+    traces = TraceReader(spectra.source).traces([sid, *_ids(spectra, "un1.mzML")], 0)
+    mine, other = traces.traces
+    gated = [dataclasses.replace(t, intensity=0.3 * t.intensity) for t in (mine, other)]
+    shift = 0.05  # minutes
+    aligned = Alignment(sid, "replicates", (1.0, 2.0), gated[0], (
+        FilePlan(other.file, "", ("S",), shift, None, 0.99, trace=gated[1]),))
+    ax = Figure().add_subplot()
+    _aligned_panel(ax, traces, aligned, None)
+    lines = {line.get_gid(): line for line in ax.get_lines()}
+    assert lines[f"trace:{mine.spectrum_id}"].get_ydata() == pytest.approx(mine.intensity)
+    drawn = lines[f"trace:{other.spectrum_id}"]
+    assert drawn.get_xdata() == pytest.approx(other.times - shift)
+    top = mine.intensity.max() / other.intensity.max()  # scaled to this one's height
+    assert drawn.get_ydata() == pytest.approx(other.intensity * top)
+    rows = plot_each_file(traces, aligned, edit=mine.window).axes
+    assert rows[0].get_lines()[0].get_ydata() == pytest.approx(mine.intensity)
+    assert rows[1].get_lines()[0].get_ydata() == pytest.approx(other.intensity)
