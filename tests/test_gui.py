@@ -550,9 +550,10 @@ def _red_outside_the_frame(view, fig) -> bool:
                for x in range(2, int(left) - 4))
 
 
-def test_the_matplotlib_view_clips_what_qts_svg_renderer_does_not(qtbot):
-    """Qt's SVG renderer ignores SVG clip paths, so a line beyond the axis limits shows past
-    the frame (the owner's raw profiles, 2026-11-03); matplotlib's own drawing clips it."""
+def test_neither_view_draws_past_the_frame(qtbot):
+    """Qt's SVG renderer ignores SVG clip paths, so a line beyond the axis limits showed past
+    the frame (the owner's raw profiles, 2026-11-03); the window's SVG now has its data cut to
+    the panels (hxex.gui.svg_trim), and matplotlib's own drawing clips it."""
     fig = Figure(figsize=(4, 3), dpi=100)
     ax = fig.add_axes((0.3, 0.1, 0.6, 0.8))
     ax.plot([-10, 10], [0.5, 0.5], color="red", lw=4, gid="line")
@@ -563,7 +564,7 @@ def test_the_matplotlib_view_clips_what_qts_svg_renderer_does_not(qtbot):
     panel.resize(600, 500)
     panel.show()
     panel.show_figure(fig)
-    assert _red_outside_the_frame(panel.view, fig)  # Qt's SVG: not clipped
+    assert not _red_outside_the_frame(panel.view, fig)  # Qt's SVG: cut at the frame
     panel.set_render("matplotlib")
     view = panel.view
     qtbot.waitUntil(lambda: view._image is not None, timeout=10000)

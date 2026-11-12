@@ -40,9 +40,12 @@ def qt_ready(svg: bytes) -> bytes:
 
 
 def figure_svg(fig: Figure) -> bytes:
-    """``fig`` as SVG, ready for Qt's renderer (:func:`qt_ready`)."""
+    """``fig`` as SVG, ready for Qt's renderer (:func:`qt_ready`), its data cut to the panels
+    (Qt ignores SVG clip paths: :func:`hxex.gui.svg_trim.trimmed_to_axes`)."""
+    from .svg_trim import trimmed_to_axes
+
     buf = io.BytesIO()
-    with matplotlib.rc_context(_SVG_RC):
+    with matplotlib.rc_context(_SVG_RC), trimmed_to_axes(fig):
         fig.savefig(buf, format="svg", metadata={"Date": None})
     return qt_ready(buf.getvalue())
 

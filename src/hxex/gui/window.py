@@ -230,7 +230,8 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         # how figures are drawn: matplotlib (its raster renderer, as for PNG; the default, owner)
-        # or Qt's SVG renderer, which ignores clipping (HISTORY 237)
+        # or Qt's SVG renderer, which ignores clipping (HISTORY 237: the SVG's data is cut to
+        # the panels instead, hxex.gui.svg_trim)
         self.render = str(self.settings.value("render", "matplotlib"))
         if self.render not in ("svg", "matplotlib"):
             self.render = "matplotlib"

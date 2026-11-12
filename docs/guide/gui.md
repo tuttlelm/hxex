@@ -605,8 +605,10 @@ The figures are those `hxex report` draws, drawn by the same program (matplotlib
 same peptide gives the same figure in the window and in the figures folder. The window draws each figure as a picture at the size shown
 (**matplotlib (raster, as PNG)** in the View menu); nothing is saved unless you press **Save
 figure…**. (**View > Draw the figures with** can switch to Qt's SVG
-renderer, which zooms without redrawing but draws past the panels' frames anything that runs
-beyond the axis limits, such as a raw profile wider than the m/z range shown.) Changing a figure in the window (axis ranges, labels,
+renderer, which zooms without redrawing. Qt's renderer would draw past the panels' frames
+anything that runs beyond the axis limits, such as a raw profile wider than the m/z range shown,
+so the window cuts lines, bands, bars, and points at the frames before handing the figure to it;
+images, colour maps, and text are not cut. A saved figure is not cut: matplotlib clips it.) Changing a figure in the window (axis ranges, labels,
 colours) will come later.
 
 ## Sessions

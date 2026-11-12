@@ -336,8 +336,9 @@ class FigureView(QWidget):
 class RasterView(FigureView):
     """A figure drawn by matplotlib itself (its Agg renderer) at the size shown, sharp at every
     zoom: drawn again, in a worker thread, when the size changes (the picture drawn before is
-    scaled meanwhile). It shows exactly what a saved PNG shows, clipping included, which Qt's
-    SVG renderer does not draw (on trial against :class:`FigureView`; HISTORY 237)."""
+    scaled meanwhile). It shows exactly what a saved PNG shows, clipping included (Qt's SVG
+    renderer ignores clipping, so :class:`FigureView` is given data cut to the panels:
+    :mod:`hxex.gui.svg_trim`; HISTORY 237)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)

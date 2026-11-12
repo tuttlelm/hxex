@@ -9388,3 +9388,24 @@ CSVs or mzML if wanted.
     - Scratch scripts, runs, and tables:
       hxex_private/analysis_examples/envelope_positions (README steps 3-6c); prototype worktree
       position-mask-proto (not for merging).
+
+369. **The window's SVG view no longer draws past the panels' frames (2026-11-12; was tabled
+    in HISTORY 237).** Qt's SVG renderer ignores SVG clip paths, so in the SVG view anything
+    beyond an axis limit (a raw profile wider than the m/z range shown) was drawn past the
+    frame, and matplotlib's raster view became the default. `figure_svg` now cuts the figure's
+    data to its panels while the window's SVG is written and puts every artist back after
+    (`hxex.gui.svg_trim.trimmed_to_axes`): lines (Liang-Barsky, in each panel's own 0-1
+    coordinates, so no layout or extra draw is needed; markers kept on the line's own points
+    only), line collections (one segment per segment, so colours keep their place), filled
+    shapes (`Path.clip_to_bbox`), scatter points (outside ones set to NaN, not drawn),
+    rectangles and polygons. Images, meshes, texts and other patches are not cut. Saved files
+    and the raster view are untouched (matplotlib clips them). Measured on the tutorial bundle,
+    28 figures (three series' spectra, populations and uptake pages, two of every analysis
+    kind): writing the SVG took 8.3 s untrimmed and 8.1 s trimmed (the 22-panel spectra page
+    0.82 -> 0.85 s; the trim itself ~0.03 s there, the smaller SVG about pays for it). Qt's
+    renderings with and without the trim differ only outside the panels on the spectra pages
+    (the spill, 133-239 pixels a page) and on the frame lines (bar and line edges now ending
+    at the frame instead of under it); no pixel well inside a panel changed. A line cut at the
+    frame keeps its cap (half its width past the frame, under the spine). The raster view stays
+    the default. Tests: tests/test_svg_trim.py (the cut, the restore, markers, Qt rendering
+    offscreen).
