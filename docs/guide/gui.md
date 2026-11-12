@@ -584,7 +584,8 @@ Each figure has buttons above it, and its title on a line of its own under them 
 sample, and charge of a series), which stays readable however far you zoom:
 
 - **Fit page** shows the whole figure in the space there is (the figure follows the window's
-  size); **−**, **+**, and **100 %** zoom out, zoom in, and show the figure at its own size.
+  size); **−**, **+**, and **Actual size** zoom out, zoom in, and show the figure at its own size
+  (100 %).
 - The **mouse wheel** zooms in and out around the pointer; **dragging** with the left button
   moves a zoomed figure (the scroll bars work too).
 - **Double-click** a panel of a page (one spectrum of the spectra page, say) to magnify it to

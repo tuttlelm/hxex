@@ -529,7 +529,8 @@ class FigurePanel(QWidget):
                                  self.fit),
                                 ("−", "zoom out (Ctrl and the mouse wheel)", self.zoom_out),
                                 ("+", "zoom in (Ctrl and the mouse wheel)", self.zoom_in),
-                                ("100 %", "the figure's own size", self.actual_size),
+                                ("Actual size", "show the figure at its own size (100 %)",
+                                 self.actual_size),
                                 ("Save figure…", "save as SVG, PDF or PNG", self.save_dialog)):
             button = QPushButton(text)
             button.setToolTip(tip(words))
