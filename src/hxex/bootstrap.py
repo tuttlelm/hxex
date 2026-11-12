@@ -363,9 +363,8 @@ def _nan_stats(x: np.ndarray, ok: np.ndarray, ci: float):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         se = np.nanstd(masked, axis=1, ddof=1)
-        quant = np.nanpercentile(masked, [lo, hi], axis=1)  # (2, M, K)
+    interval = np.stack(nan_percentiles(np.moveaxis(masked, 1, 0), (lo, hi)), axis=-1)  # (M, K, 2)
     se[~enough] = np.nan
-    interval = np.moveaxis(quant, 0, -1)  # (M, K, 2)
     interval[~enough] = np.nan
     return se, interval
 
@@ -384,7 +383,8 @@ def bootstrap(
     the device come from the fit; with per-bin noise (:attr:`FitResult.noise_curve`) every bin is
     resampled with its own sd at the fitted curve (:class:`hxex.noise.BinNoise`) and refitted
     with the same noise as the fit.
-    ``progress(done, total)`` counts resamples; ``cancel`` raises
+    ``progress(done, total)`` counts resamples (the per-bin bands drawn after the last one
+    take a moment: :func:`nan_percentiles`); ``cancel`` raises
     :class:`~hxex.hooks.Cancelled`.
     """
     if len(data) != len(fit) or not np.array_equal(data.spectrum_id, fit.spectrum_id):
@@ -512,6 +512,28 @@ def bootstrap(
     )
 
 
+def nan_percentiles(x: np.ndarray, qs) -> list[np.ndarray]:
+    """``np.nanpercentile(x, q, axis=0)`` (method "linear") for each ``q`` of ``qs``, from one
+    sort: the same values, bit for bit, without NumPy's per-column loop, which it takes whenever
+    ``x`` holds a NaN (6 s per chunk of 400 spectra of the bands at K = 2; 2026-11-11). A column
+    with no value gives NaN."""
+    s = np.sort(x, axis=0)  # NaN sort last
+    n = (~np.isnan(x)).sum(axis=0)
+    last = np.maximum(n - 1, 0)
+    out = []
+    for q in qs:
+        index = (n - 1) * (np.float64(q) / 100)
+        below = np.floor(index)
+        gamma = index - below
+        i = np.clip(below.astype(np.int64), 0, last)
+        a = np.take_along_axis(s, i[None], axis=0)[0]
+        b = np.take_along_axis(s, np.minimum(i + 1, last)[None], axis=0)[0]
+        diff = b - a  # NumPy's interpolation, both halves
+        value = np.where(gamma >= 0.5, b - diff * (1 - gamma), a + diff * gamma)
+        out.append(np.where(n == 0, np.nan, value))
+    return out
+
+
 def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, backend, scale,
                 cut=None):
     """Per-bin percentiles over the resamples (intensity units) of the total curve and of each
@@ -561,12 +583,10 @@ def _curve_band(data, fit, ref, groups, draw_a, draw_n, draw_p, ok, config, back
                 curves[it][:, good] = parts.sum(axis=2)[:, good]
                 parts_all[it][:, good] = parts[:, good]
             enough = ok[members].sum(axis=1) >= 2
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                lo = np.nanpercentile(curves, lo_q, axis=0) * scale[members][None, :]
-                hi = np.nanpercentile(curves, hi_q, axis=0) * scale[members][None, :]
-                clo = np.nanpercentile(parts_all, lo_q, axis=0) * scale[members][None, :, None]
-                chi = np.nanpercentile(parts_all, hi_q, axis=0) * scale[members][None, :, None]
+            lo, hi = nan_percentiles(curves, (lo_q, hi_q))
+            lo, hi = lo * scale[members][None, :], hi * scale[members][None, :]
+            clo, chi = nan_percentiles(parts_all, (lo_q, hi_q))
+            clo, chi = clo * scale[members][None, :, None], chi * scale[members][None, :, None]
             for j, m in enumerate(members):
                 if enough[j]:
                     lo_all[offsets[m]:offsets[m + 1]] = lo[: sizes[m], j]
@@ -589,20 +609,19 @@ def bootstrap_by_k(
     """Bootstrap every measurement at each K of ``ks`` (all of them must have been fitted): the
     fixed-K analysis. Each result is a :class:`BootstrapResult` with ``selected_K`` equal to K
     everywhere. A measurement's resamples depend only on its id and the draw, so the result at
-    its selected K equals the one :func:`bootstrap` gives. ``progress`` counts resamples over all
-    the Ks."""
+    its selected K equals the one :func:`bootstrap` gives. ``progress`` counts resamples over
+    all the Ks."""
     missing = [k for k in ks if k not in fit.fits]
     if missing:
         raise ValueError(f"K = {missing} was not fitted (fitted: {list(fit.k_values)})")
     out: dict[int, BootstrapResult] = {}
-    total = config.n_boot * len(ks)
     for j, k in enumerate(ks):
         fixed = dataclasses.replace(
             fit, selected_K=np.full(len(fit), k, dtype=fit.selected_K.dtype)
         )
 
-        def inner(done: int, _total: int, j: int = j) -> None:
-            report(progress, j * config.n_boot + done, total)
+        def inner(done: int, each: int, j: int = j) -> None:  # each K's units, one after another
+            report(progress, j * each + done, each * len(ks))
 
         out[k] = bootstrap(data, fixed, config, progress=inner, cancel=cancel)
     return out

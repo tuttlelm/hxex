@@ -125,8 +125,15 @@ out again, so the results are those a full run would give. The run's log says ho
 kept their fits, and `hxex info results` repeats it (`fits reused`). Nothing is kept when the
 `[run.fit]`, `[run.population_test]`, or `[run.bootstrap]` settings changed, when the noise
 measured from the undeuterated controls changed (an undeuterated control edited, for example),
-or when another version of *hxex* made the earlier fits; the log says which. `hxex run
---overwrite --refit` fits everything again.
+or when *hxex*'s fitting code differs from the one that made the earlier fits; the log says
+which, and names the versions that differ. A newer *hxex* whose changes lie elsewhere (the
+window, the figures, the documentation) keeps them. So does another computer: fits made on a
+graphics card are kept when you run the project again on a laptop without one, and the other
+way round, as long as the device is the only difference (`[run.fit.backend] device` does not
+count as a changed setting). Their values then agree with a fresh fit to the last digits of
+the arithmetic, and `hxex info results` names the software they were made with. Results made
+before 11 November 2026 do not record their fitting code, so they are kept only by the very
+same software. `hxex run --overwrite --refit` fits everything again.
 
 Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
 few values (stand-in controls, outlier limits, the comparisons' critical difference) come from

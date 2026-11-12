@@ -9174,3 +9174,41 @@ CSVs or mzML if wanted.
     trace match; a spread to a replicate eluting 6 s later, its own window reported and
     replaced), tests/test_gui_window_edit.py (the four choices, a spread whose own window is
     kept), tests/test_table_choice.py.
+
+361. **Fits kept by a run when the fitting code is the same, whatever the package builds
+    (owner, 2026-11-11).** The owner ran `hxex run --overwrite` from the window after editing
+    one peptide's elution window, and all 17,113 spectra were fitted again: the bundle had been
+    made by hxex 9c660e4 with PyTorch 2.14.1+cu126 (the GPU environment), and the window ran
+    1d33325 (plus uncommitted changes) with 2.14.1+cpu, while reuse (HISTORY 326) required the
+    same commit and the same package builds, and the log said only "another version of hxex or
+    of its numerical packages". The owner: fitting on a GPU and touching up on a CPU-only laptop
+    must work. Now `fitted_with` records `engine`, a fingerprint of the source files that decide
+    a fit given its input (`hxex/fit`, `hxex/model`, `noise.py`, `bootstrap.py`,
+    `population_test.py`: `hxex._engine.engine_fingerprint`; uncommitted changes count), and
+    the fingerprint alone decides (`reuse.same_engine`); package versions and PyTorch's build do
+    not, nor the device and precision in `[run.fit.backend]` (`reuse._settings`). What differed
+    is logged and recorded (`provenance.fits_reused_made_with`, `hxex info` "fits reused"). A
+    fit made on a GPU agrees with a CPU fit to the rounding of the arithmetic (HISTORY 219), so a
+    bundle may hold both. A refusal names what differs (`reuse.differences`). Bundles made
+    before the fingerprint keep the old rule. A resume keeps its bundle's `fitted_with` when
+    the fingerprint is the same. And the run's progress after the bootstrap's resamples (owner:
+    "our message log becomes unreliable at that point"): the log stood at "bootstrap: 100 %"
+    for 5 of 20 minutes (12:08:46 to 12:14:04 on the private pooled dataset's raw-file bundle,
+    17,113 spectra, GPU), and at 31-32 % and 65-66 % for minutes before (the bands of the
+    earlier Ks): the per-bin bands drawn after the last resample. Their time was NumPy's
+    `nanpercentile`, which loops over the columns in Python whenever the array holds a NaN
+    (6 s per chunk of 400 spectra at K = 2; a failed resample leaves NaN). `bootstrap.nan_percentiles` gives the same values bit for bit
+    from one sort (also for the parameters' intervals): on 4,000 spectra of that bundle (K
+    selected 1-3, 20 resamples, GPU) the bands now take 0.5 of 394 s, so the count of
+    resamples is the bootstrap's progress again (a first fix weighted the bands in the count;
+    dropped). The run's controls summary was logged three times (the run's, then the
+    analysis's controls worked out after the bootstrap for the set-K spectra and again for the
+    run's closing warnings, on new results objects): a quiet recomputation now holds its lines
+    and the first caller that is not quiet logs them (`analysis.species._held`), so the
+    analysis's view is said once. The bootstraps added at
+    the end of a run or resume (set K: 30 spectra, 2.5 min; a review's chosen K; a fixed K
+    added by resume) said only "still working": they now report their units on
+    `pipeline._EXTRA`, so their percent and time left are said. Check: tests/test_reuse.py (a bundle made with another PyTorch
+    build kept and recorded; another fingerprint fitted again; the old rule; the fingerprint's
+    files), tests/test_bootstrap.py (`nan_percentiles` against NumPy), tests/test_analysis.py (a
+    quiet recomputation's lines logged once, by the first caller not quiet).

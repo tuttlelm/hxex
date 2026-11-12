@@ -6,6 +6,7 @@ HXEX_FULL_REGRESSION=1."""
 import dataclasses
 import json
 import os
+import warnings
 
 import numpy as np
 import pytest
@@ -318,3 +319,20 @@ def test_settings_that_only_add_keep_the_bootstrap_and_name_the_union():
     assert fixed_ks(held, (1, 2, 3)) == ()
     assert fixed_ks(dataclasses.replace(held, ks="all"), (3, 1, 2)) == (1, 2, 3)
     assert fixed_ks(dataclasses.replace(held, ks=(5, 2)), (1, 2, 3)) == (2,)
+
+
+def test_nan_percentiles_match_numpy_bit_for_bit():
+    from hxex.bootstrap import nan_percentiles
+
+    rng = np.random.default_rng(3)
+    for shape in [(20, 30, 40), (20, 30, 40, 3), (2, 5, 7), (1, 4, 4)]:
+        x = rng.random(shape) * 1e5
+        x[np.broadcast_to(rng.random((shape[0], 1) + shape[2:]) < 0.3, shape)] = np.nan
+        x[:, 0, 0] = np.nan  # a column with no value
+        x[1:, 1, 1] = np.nan  # a column with one value
+        qs = (2.5, 97.5, 50.0, 0.0, 100.0)
+        got = nan_percentiles(x, qs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for q, g in zip(qs, got, strict=True):
+                assert np.array_equal(np.nanpercentile(x, q, axis=0), g, equal_nan=True)

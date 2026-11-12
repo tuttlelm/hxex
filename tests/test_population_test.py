@@ -794,7 +794,25 @@ def test_set_k_bootstraps_each_spectrum_at_the_k_its_sets_values_come_from(monke
         return {key: dataclasses.replace(t, K=2) for key, t in real(results, **kw).items()}
 
     monkeypatch.setattr(st, "set_tests", all_two)
-    res = run(raw_spectra(n_series=2), config(population_test=PopulationTestConfig(simulations=4)))
+
+    class Stages:  # what a progress log is told: the stages and the units in each
+        def __init__(self):
+            self.stages, self.units = [], {}
+
+        def start_stage(self, name, start, end):
+            self.stages.append((name, start, end))
+
+        def __call__(self, done, total):
+            self.units.setdefault(self.stages[-1][0] if self.stages else "", []).append(done)
+
+    seen = Stages()
+    res = run(raw_spectra(n_series=2), config(population_test=PopulationTestConfig(simulations=4)),
+              progress=seen)
+    # the set-K bootstrap reports its units, so its percent and time left are said (owner,
+    # 2026-11-11: it said only "still working" for minutes)
+    span = next(s for s in seen.stages if s[0] == "bootstrap set K")
+    assert span[2] > span[1]
+    assert max(seen.units["bootstrap set K"]) > span[1]
     first, n_sets = st.set_k_spectra(Results.from_run(res), filters=SpeciesFilters())
     assert n_sets and set(first.values()) == {(2,)}
     averages = pipeline._set_averages(Results.from_run(res), None)

@@ -2158,9 +2158,12 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
                      f"{len(changed)} setting(s): " + ", ".join(changed[:8])
                      + (", ..." if len(changed) > 8 else "")))
         if "fits_reused" in prov:
+            other = prov.get("fits_reused_made_with") or []
             rows.append(("fits reused", f"{prov['fits_reused']} of {prov.get('spectra', '?')} "
                                         "spectra kept the replaced bundle's fits (the same "
-                                        "input)"))
+                                        "input)" + (f", made with other software ("
+                                                    f"{'; '.join(other)}; the same fitting "
+                                                    "code)" if other else "")))
         review = prov.get("review") or {}
         if review.get("carried"):
             rows.append(("carried", f"{review['carried']} review entries, "

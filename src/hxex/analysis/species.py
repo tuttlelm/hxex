@@ -27,8 +27,10 @@ states disagree systematically (see :func:`species_uptake`).
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
+import threading
 import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
@@ -354,7 +356,39 @@ def _combine(values: np.ndarray, ses: np.ndarray) -> tuple[float, float]:
 
 
 # recomputed controls by results (weakly held) and changes: analysis_controls computes them once
-_RECOMPUTED: dict[tuple, tuple[weakref.ref, Any]] = {}
+_RECOMPUTED: dict[tuple, tuple[weakref.ref, Any, list]] = {}
+
+
+@contextlib.contextmanager
+def _held(name: str, records: list | None):
+    """Hold the records this thread logs on logger ``name`` in ``records`` (other threads'
+    pass); None: nothing held. A quiet recomputation of the controls keeps its lines for the
+    first caller that is not quiet, so a run does not repeat the controls' summary each time it
+    works out the analysis's controls, and an analysis still shows it once (2026-11-11)."""
+    if records is None:
+        yield
+        return
+    me = threading.get_ident()
+
+    def hold(record: logging.LogRecord) -> bool:
+        if record.thread != me:
+            return True
+        records.append(record)
+        return False
+
+    logger = logging.getLogger(name)
+    logger.addFilter(hold)
+    try:
+        yield
+    finally:
+        logger.removeFilter(hold)
+
+
+def _replay(records: list) -> None:
+    """Log the held records (:func:`_held`) once, then forget them."""
+    for record in records:
+        logging.getLogger(record.name).handle(record)
+    records.clear()
 
 
 def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quiet: bool = False,
@@ -399,6 +433,8 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
            np.flatnonzero(screened).tobytes())
     hit = _RECOMPUTED.get(key)
     if hit is not None and hit[0]() is results:
+        if not quiet:
+            _replay(hit[2])
         return hit[1]
     usable = ~rejected
     if fit.noise_estimate is not None:
@@ -444,13 +480,15 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
                 results.binned, fit.spectrum_id, fit.role, usable & ~screened, charges,
                 residues, min_share=config.deamidation_min_share,
                 registry=results.settings.run.registry if run is not None else None)
-    out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates, rt=rt,
-                       groups=groups, charges=charges, uncorrected=fragments,
-                       screened=screened if n_screened else None, residues=residues,
-                       deamidation=deamidation)
-    for k in [k for k, (ref, _) in _RECOMPUTED.items() if ref() is None]:
+    held: list = []
+    with _held("hxex.controls", held if quiet else None):
+        out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates,
+                           rt=rt, groups=groups, charges=charges, uncorrected=fragments,
+                           screened=screened if n_screened else None, residues=residues,
+                           deamidation=deamidation)
+    for k in [k for k, (ref, *_) in _RECOMPUTED.items() if ref() is None]:
         del _RECOMPUTED[k]
-    _RECOMPUTED[key] = (weakref.ref(results), out)
+    _RECOMPUTED[key] = (weakref.ref(results), out, held)
     if not quiet:
         log.info("controls recomputed (%s): %d of %d series fall back%s",
                  "; ".join(x for x in (

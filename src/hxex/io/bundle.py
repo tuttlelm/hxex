@@ -494,9 +494,11 @@ def _components_table(
 
 
 def _versions() -> dict[str, str]:
-    """The versions of Python and the packages, and ``hxex_commit``, the commit hxex was
+    """The versions of Python and the packages, ``hxex_commit``, the commit hxex was
     installed from and its date (``'3ed39ac, 2026-11-02'``) when known (:func:`hxex.commit`;
-    bundles written before have no such key)."""
+    bundles written before have no such key), and ``engine``, the fingerprint of the code that
+    decides a fit (:func:`hxex._engine.engine_fingerprint`; bundles written before 2026-11-11
+    have none)."""
     from .. import commit
 
     out = {"python": platform.python_version()}
@@ -507,6 +509,9 @@ def _versions() -> dict[str, str]:
             out[pkg] = "unknown"
     if commit():
         out["hxex_commit"] = commit()
+    from .._engine import engine_fingerprint
+
+    out["engine"] = engine_fingerprint()  # what decides a fit (hxex.reuse; bundles before: none)
     return out
 
 

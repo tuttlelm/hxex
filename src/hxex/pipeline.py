@@ -102,6 +102,10 @@ log = logging.getLogger(__name__)
 
 UNITS = 1000  # the ``total`` of the progress hook
 _FINISH = 10  # the last units: controls, quality flags, writing
+# the units a bootstrap added at the end (set K, a review's chosen K, a fixed K added by resume)
+# reports its percent on, so that its progress and time left are said (owner, 2026-11-11: it
+# said only "still working")
+_EXTRA = (UNITS - _FINISH, UNITS - _FINISH // 2)
 CPU_BUDGET = 4 * 2**30  # bytes per chunk on the CPU unless set
 GPU_SHARE = 0.5  # share of the GPU's total memory used by one chunk unless set
 # memory of the fit (the bootstrap needs less) in units of one pmf array (shape points x bins x
@@ -769,21 +773,29 @@ def _chosen_part(config: RunConfig, data: Measurements, fit: FitResult,
         return by_k
     total = sum(len(r) for r in wanted.values())
     log.info("bootstrapping %d spectra at the K chosen for them in the review", total)
-    start_stage(progress, "bootstrap chosen K", UNITS - _FINISH, UNITS - _FINISH)
-    return _bootstrap_at(config, data, fit, by_k, wanted, cancel)
+    start_stage(progress, "bootstrap chosen K", *_EXTRA)
+    return _bootstrap_at(config, data, fit, by_k, wanted, cancel, progress=progress)
 
 
 def _bootstrap_at(config: RunConfig, data: Measurements, fit: FitResult,
                   by_k: dict[int, BootstrapResult] | None, wanted: Mapping[int, Sequence[int]],
-                  cancel) -> dict[int, BootstrapResult]:
+                  cancel, progress=None) -> dict[int, BootstrapResult]:
     """``by_k`` with the rows of ``wanted`` (K -> rows of ``fit``) bootstrapped at that K, as
-    partial fixed-K bootstraps (:func:`hxex.bootstrap.scatter`)."""
+    partial fixed-K bootstraps (:func:`hxex.bootstrap.scatter`); ``progress`` on the units
+    :data:`_EXTRA`, each K's share by its spectra times K."""
     by_k = dict(by_k or {})
+    weights = {k: len(r) * k for k, r in wanted.items()}
+    total = float(sum(weights.values())) or 1.0
+    at = 0.0
     for k, rows in sorted(wanted.items()):
         check_cancel(cancel)
         rows = np.sort(np.asarray(rows, dtype=np.int64))
+        a = _EXTRA[0] + (_EXTRA[1] - _EXTRA[0]) * at / total
+        at += weights[k]
+        b = _EXTRA[0] + (_EXTRA[1] - _EXTRA[0]) * at / total
         part = bootstrap_by_k(data.select(rows, drop_references=True), fit.select(rows), [k],
-                              config.bootstrap, cancel=cancel)[k]
+                              config.bootstrap, cancel=cancel,
+                              progress=None if progress is None else _Span(progress, a, b))[k]
         by_k[k] = scatter(part, rows, len(fit), k, base=by_k.get(k))
     return by_k
 
@@ -861,8 +873,8 @@ def _fixed_part(config: RunConfig, data: Measurements, fit: FitResult,
     log.info("adding the bootstrap of every spectrum at %s (%s spectra); the bootstrap there is "
              "kept", ", ".join(f"K = {k}" for k in sorted(wanted)),
              ", ".join(str(len(r)) for _, r in sorted(wanted.items())))
-    start_stage(progress, "bootstrap fixed K", UNITS - _FINISH, UNITS - _FINISH)
-    return _bootstrap_at(config, data, fit, by_k, wanted, cancel)
+    start_stage(progress, "bootstrap fixed K", *_EXTRA)
+    return _bootstrap_at(config, data, fit, by_k, wanted, cancel, progress=progress)
 
 
 def _set_k_missing(fit: FitResult, by_k, spectra: Mapping[str, Sequence[int]]
@@ -889,7 +901,7 @@ def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunRes
     if not n_sets:
         return result
     total = 0
-    start_stage(progress, "bootstrap set K", UNITS - _FINISH, UNITS - _FINISH)
+    start_stage(progress, "bootstrap set K", *_EXTRA)
     if wanted:
         total += sum(len(r) for r in wanted.values())
         log.info("bootstrapping %d spectra of the population test's %d sets at their set's "
@@ -898,7 +910,7 @@ def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunRes
                  total, n_sets, ", ".join(f"K={k}: {len(r)}" for k, r in sorted(wanted.items())))
         result = dataclasses.replace(result, bootstrap_by_k=_bootstrap_at(
             result.config, result.measurements, result.fit, result.bootstrap_by_k, wanted,
-            cancel))
+            cancel, progress=progress))
     averages = _set_averages(Results.from_run(result, review=review), analysis)
     second = _set_k_wanted(result, result.bootstrap_by_k, review, analysis, averages)[0]
     if second:
@@ -907,9 +919,10 @@ def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunRes
         log.info("bootstrapping %d spectra of sets at two populations at K = 1: their average "
                  "is the one-population mean (their two positions lie close), "
                  "([run.bootstrap] set_k)", n)
+        start_stage(progress, "bootstrap set K, at K = 1", *_EXTRA)
         result = dataclasses.replace(result, bootstrap_by_k=_bootstrap_at(
             result.config, result.measurements, result.fit, result.bootstrap_by_k, second,
-            cancel))
+            cancel, progress=progress))
     if not total:
         log.info("the %d spectra of the %d sets of the population test have a bootstrap at the "
                  "K their set's values come from", n_spectra, n_sets)
@@ -1528,6 +1541,8 @@ def run(
         # how many spectra kept the replaced bundle's fits (hxex.reuse)
         provenance["fits_reused"] = 0 if reused is None else len(reused)
         provenance["spectra"] = len(measurements)
+        if reused is not None and reused.made_with:  # kept from other software, same engine
+            provenance["fits_reused_made_with"] = list(reused.made_with)
     checkpoint = out is not None and config.bootstrap is not None
     if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)

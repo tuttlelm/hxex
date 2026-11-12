@@ -3201,3 +3201,23 @@ def test_head_to_head_leaves_stand_in_controls_untested(results):
     tested = compare_sequences(dataclasses.replace(results, binned=other), [panel]).columns()
     assert set(tested["reason"]) == {""} and np.isfinite(tested["p"]).any()
 
+
+
+def test_a_quiet_recomputation_keeps_the_controls_lines_for_the_first_caller_not_quiet(results,
+                                                                                    caplog):
+    from hxex.analysis import analysis_controls
+
+    changes = {"d2o_fraction": 0.81, "retention_min": 0.98}  # every control rejected: lines
+
+    def lines():
+        return [r.getMessage() for r in caplog.records if r.name == "hxex.controls"]
+
+    with caplog.at_level("INFO", logger="hxex.controls"):
+        quiet = analysis_controls(results, changes, quiet=True)
+        assert lines() == []
+        assert analysis_controls(results, changes) is quiet  # the same controls, once
+        shown = lines()
+        assert shown
+        caplog.clear()
+        analysis_controls(results, changes)
+        assert lines() == []  # shown once

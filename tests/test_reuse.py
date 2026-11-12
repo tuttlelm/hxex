@@ -256,3 +256,55 @@ def test_a_k_chosen_in_the_review_that_the_screen_skipped_refits_its_series(tmp_
     _same_fit(again.fit, first.fit, np.flatnonzero(~own))
     _same_fit(again.fit, fresh.fit, close=True)
     _same(again.bootstrap, fresh.bootstrap, close=True)
+
+
+def test_fits_are_kept_across_package_builds_with_the_same_fitting_code(first, tmp_path,
+                                                                        caplog, capsys):
+    """Fits made on a graphics card are kept on a laptop without one, and across a commit that
+    changed nothing of the fitting code: the engine's fingerprint decides, not the package
+    versions or the commit; what differed is logged and recorded (owner, 2026-11-11). Another
+    fingerprint, or a bundle made before the fingerprint was recorded by other software, is
+    fitted again, with the differences named."""
+    import json
+
+    from hxex.reuse import differences, same_engine
+
+    now = {"hxex_commit": "1d33325", "torch": "2.14.1+cpu", "numpy": "2.4.6", "engine": "abc"}
+    gpu = dict(now, hxex_commit="9c660e4", torch="2.14.1+cu126")
+    assert same_engine(gpu, now) == (True, None)
+    assert differences(gpu, now) == ["hxex_commit 9c660e4 -> 1d33325",
+                                     "torch 2.14.1+cu126 -> 2.14.1+cpu"]
+    ok, why = same_engine(dict(gpu, engine="xyz"), now)
+    assert not ok and "fitting code differs" in why and "torch 2.14.1+cu126" in why
+    old = {k: v for k, v in gpu.items() if k != "engine"}  # made before the fingerprint
+    ok, why = same_engine(old, now)
+    assert not ok and "before hxex recorded its fitting code" in why
+    assert same_engine({k: v for k, v in now.items() if k != "engine"}, now)[0]
+
+    raw = first[0]
+    target = tmp_path / "results"
+    run(raw, _config(), out=target)
+    manifest = json.loads((target / "manifest.json").read_text())
+    assert manifest["fitted_with"]["engine"]
+    manifest["fitted_with"]["torch"] = "0.0+gpu-build"  # made on another computer
+    (target / "manifest.json").write_text(json.dumps(manifest))
+    with caplog.at_level(logging.INFO):
+        run(raw, _config(), out=target, overwrite=True)
+    assert f"{len(raw)} of {len(raw)} spectra keep their fit" in caplog.text
+    assert "made with other software (torch 0.0+gpu-build ->" in caplog.text
+    prov = json.loads((target / "manifest.json").read_text())["provenance"]
+    assert prov["fits_reused_made_with"][0].startswith("torch 0.0+gpu-build")
+    manifest = json.loads((target / "manifest.json").read_text())
+    manifest["fitted_with"]["engine"] = "another"
+    (target / "manifest.json").write_text(json.dumps(manifest))
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        run(raw, _config(), out=target, overwrite=True)
+    assert "hxex's fitting code differs" in caplog.text and "keep their fit" not in caplog.text
+
+
+def test_the_fitting_code_fingerprint_follows_the_engine_files_only():
+    from hxex._engine import ENGINE, engine_fingerprint
+
+    assert len(engine_fingerprint()) == 16 and "fit" in ENGINE and "noise.py" in ENGINE
+    assert "gui" not in ENGINE and "report" not in ENGINE

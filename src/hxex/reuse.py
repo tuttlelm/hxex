@@ -36,13 +36,16 @@ class Reused:
     """What a run takes from the previous bundle: ``rows`` (positions in the run's
     measurements) and, in that order, the bundle's ``fit``, population ``test`` (None without
     the test) and bootstrap (``boot``, the selected K's, and ``by_k``, the fixed-K ones of the
-    run's ``[run.bootstrap] ks``; None without a bootstrap) of those spectra."""
+    run's ``[run.bootstrap] ks``; None without a bootstrap) of those spectra; ``made_with``:
+    how the software that made them differs from the run's (:func:`differences`; the fitting
+    code is the same), recorded in the provenance."""
 
     rows: np.ndarray
     fit: object
     test: object | None = None
     boot: object | None = None
     by_k: dict | None = None
+    made_with: tuple[str, ...] = ()
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -125,6 +128,45 @@ def _software(versions: Mapping | None) -> dict:
     return out
 
 
+def differences(made: Mapping | None, now: Mapping) -> list[str]:
+    """What differs between the software that made a bundle's fits (``made``) and the
+    software running (``now``), as ``torch 2.14.1+cu126 -> 2.14.1+cpu`` (the engine's
+    fingerprint and Python left out: the first decides, the second is said by the packages)."""
+    made = dict(made or {})
+    out = []
+    for key in sorted(set(made) | set(now)):
+        if key in ("engine", "python", "mixed"):
+            continue
+        a, b = made.get(key, "unknown"), now.get(key, "unknown")
+        if a != b:
+            out.append(f"{key} {a} -> {b}")
+    return out
+
+
+def same_engine(made: Mapping | None, now: Mapping) -> tuple[bool, str | None]:
+    """Whether fits made with ``made`` (a bundle's ``fitted_with``) can be kept by software
+    ``now`` (:func:`hxex.io.bundle._versions`), and why not. The engine's fingerprint decides
+    (:mod:`hxex._engine`): package versions and PyTorch's build (a graphics card's or the CPU's)
+    do not, as fits agree across them to the rounding of the arithmetic (owner, 2026-11-11:
+    fitted on a GPU, touched up on a laptop). A bundle made before the fingerprint was recorded
+    needs the same software throughout, as before."""
+    if made is None or made.get("mixed"):
+        return False, ("it is not known which version of hxex made them (a resume by another "
+                       "version)")
+    if made.get("engine") is not None:
+        if made["engine"] == now.get("engine"):
+            return True, None
+        return False, ("hxex's fitting code differs from the one that made them ("
+                       + "; ".join(differences(made, now) or ["engine " + str(made["engine"])
+                                                               + " -> " + str(now.get("engine"))])
+                       + ")")
+    if _software(made) == _software({k: v for k, v in now.items() if k != "engine"}):
+        return True, None
+    return False, ("another version of hxex or of its numerical packages made them, and they "
+                   "were made before hxex recorded its fitting code ("
+                   + "; ".join(differences(made, now)) + ")")
+
+
 def fitted_with(manifest: Mapping) -> dict | None:
     """The software that made a bundle's fits, population test and bootstrap: its
     ``fitted_with``; for a bundle written before that was recorded, its ``versions`` when no
@@ -138,14 +180,27 @@ def fitted_with(manifest: Mapping) -> dict | None:
 
 def resumed_fitted_with(manifest: Mapping) -> dict:
     """What a resume of the bundle with ``manifest`` records as ``fitted_with``: the bundle's,
-    when the software resuming is the same (what it adds is made alike), else ``{"mixed":
-    True}`` (fits of one version with additions of another, never reused)."""
+    when the software resuming has the same fitting code (:func:`same_engine`: what it adds is
+    made alike), else ``{"mixed": True}`` (fits of one version with additions of another, never
+    reused)."""
     from .io.bundle import _versions
 
     before = fitted_with(manifest)
-    if before is not None and _software(before) == _software(_versions()):
+    if before is not None and same_engine(before, _versions())[0]:
         return dict(before)
     return {"mixed": True}
+
+
+def _settings(config):
+    """A fit, population-test or bootstrap configuration without where it ran (``backend``:
+    the device and precision; a GPU's fits are kept on a CPU and the reverse, owner
+    2026-11-11)."""
+    import dataclasses
+
+    if config is not None and dataclasses.is_dataclass(config) and any(
+            f.name == "backend" for f in dataclasses.fields(config)):
+        return dataclasses.replace(config, backend=None)
+    return config
 
 
 CURVE_SHARE = 0.01  # a noise curve moved by less than this share of its standard error is kept
@@ -222,23 +277,21 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
                 if (b.manifest.get("configs") or {}).get("run") else None
             why = []
             made = fitted_with(b.manifest)
-            if made is None or _software(made) != _software(_versions()):
-                why.append("another version of hxex or of its numerical packages made them"
-                           if made is not None and not made.get("mixed") else
-                           "it is not known which version of hxex made them (a resume by "
-                           "another version)")
+            same, reason = same_engine(made, _versions())
+            if not same:
+                why.append(reason)
             if stored is None:
                 why.append("they do not record their run settings")
             else:
-                for name, label in (("fit", "[run.fit] (or --device)"),
+                for name, label in (("fit", "[run.fit]"),
                                     ("population_test", "[run.population_test]"),
                                     ("bootstrap", "[run.bootstrap]")):
-                    if getattr(stored, name) != getattr(config, name):
+                    if _settings(getattr(stored, name)) != _settings(getattr(config, name)):
                         why.append(f"{label} changed")
             if b.pending:
                 why.append(f"they wait for their {', '.join(b.pending)}")
             fit = b.fit()
-            if not why and fit.config != config.fit:
+            if not why and _settings(fit.config) != _settings(config.fit):
                 why.append("[run.fit] changed")
             if not why and fit.noise_curve != noise_curve:
                 why.append("the per-bin noise measured from the undeuterated controls changed")
@@ -268,7 +321,12 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
                 ks = _bootstrap_ks(config, fit)
                 if ks:
                     by_k = {k: b.bootstrap(k).select(old) for k in ks}
-            return Reused(rows=rows, fit=fit.select(old),
+            other = differences(made, _versions())
+            if other:
+                log.info("the previous results' fits are kept although made with other "
+                         "software (%s): the fitting code is the same, so they agree with a new "
+                         "fit to the rounding of the arithmetic", "; ".join(other))
+            return Reused(rows=rows, fit=fit.select(old), made_with=tuple(other),
                           test=None if test is None else test.select(old),
                           boot=boot, by_k=by_k)
     except (BundleError, KeyError, ValueError) as exc:
