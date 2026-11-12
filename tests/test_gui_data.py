@@ -95,8 +95,14 @@ def test_a_coverage_figures_rows_lead_to_the_spectra(qtbot, tmp_path, project):
              for i in range(page.list.topLevelItemCount())}
     coverage = kinds["coverage"]
     assert coverage.childCount() >= 1
-    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
-        page.list.setCurrentItem(coverage.child(0))
+    # the computed analysis may already show this figure (the first one in the list), and
+    # then choosing it draws nothing new: wait for the figure and its rows, not for a signal
+    # (macOS CI, 2026-11-12: the first drawing was done before the wait began)
+    stem = coverage.child(0).data(0, 257)
+    page.list.setCurrentItem(coverage.child(0))
+    qtbot.waitUntil(lambda: page.panel.save_name == stem and not page.panel.drawing
+                    and page.panel.view.figure is not None and bool(page.data.model.rows),
+                    timeout=60000)
     rows = page.data.model.rows
     assert rows and {"sample", "start", "end", "fD"} <= set(page.data.model.columns)
     assert page.views.tabText(1) == f"data ({len(rows)})"

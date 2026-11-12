@@ -9467,3 +9467,14 @@ CSVs or mzML if wanted.
     inside the axis or beyond it; the matched view and the rows drawing the run's traces
     moved by the match's shifts), tests/test_window_edit.py (the new window's axis picked and
     fitted).
+
+371. **An intermittent GUI test failure on macOS: a wait for a drawing that had already
+    happened (2026-11-12).** CI for e252668 (docs only) failed on py3.11 macOS in
+    tests/test_gui_data.py::test_a_coverage_figures_rows_lead_to_the_spectra: "Signal not
+    emitted after 60000 ms". When the Analysis page has computed, it selects and draws the
+    first figure of its list, which here is the coverage map's first figure; the test then
+    selected that same figure and waited for the panel's `drawn` signal, so it passed only when
+    the first drawing was still under way as the wait began (a slow runner finished it
+    before). Reproduced locally by letting the first drawing end before the wait (the same
+    timeout). The test now waits for the panel to show that figure with its data rows and to
+    be idle. No change to hxex itself.
