@@ -1424,7 +1424,8 @@ Planned, not built:
    class, identities found by **Find** in the tree and the list); a provisional
    two-population analysis per form (choice, tiers, K = 2 comparisons and maps, 2026-11-10).
 31. **The picking window sized from the data, or stray peaks flagged** (owner, 2026-11-11: a
-   candidate to evaluate, nothing decided).
+   candidate to evaluate; direction chosen the same day: a position-based mask, option (c)
+   below, since the noise model is pivotal).
    - *Today.*
      - The window is the constant `[run.picker] resolution_ppm`: ± 50 ppm by default,
        pyHXExpress's value, capped at half the isotope spacing (HISTORY 99-100).
@@ -1463,7 +1464,36 @@ Planned, not built:
      - (b) **Keep the window and flag the strays:** an off-position check over every bin. A
        consistent offset across several bins, away from the series' own, means another
        species. A flag first; leaving such bins or spectra out only after the evidence.
-     - (c) **Both.**
+     - (c) **Positions the envelope supports** (added 2026-11-11). Every envelope of the
+       peptide is a non-negative sum of the natural-abundance shape shifted along the
+       deuterium grid. That holds for every deuterium distribution and every number of
+       populations, so solving that sum on a spectrum shows which isotopologue positions
+       carry intensity. A second pick then accepts an apex only within a tolerance of those
+       positions. The tolerance would follow the positions' intensity-weighted spread within
+       each bin, so a bin where D and 13C isotopologues blend stays wide (the cause of item
+       172's failure). The public msengine preprint narrows its m/z bins this way
+       ("Dynamic ppm Recalibration", eq. 9-12: Patapoff, Patapoff and Walters, bioRxiv 2026,
+       doi:10.64898/2026.09.30.755802). It works per scan on Orbitrap data, so for hxex it
+       is an idea to test, not a method to copy.
+     - (d) **Combinations** of (a) to (c).
+   - *Why position and not intensity.* HISTORY 156 used the same shifted basis on the
+     binned sticks (one intensity per nominal isotope) to find intensity no envelope can
+     produce, and found that removing it barely changed the fits. That test cannot see a peak
+     at the wrong m/z inside a bin the envelope legitimately covers, which is where the
+     Orbitrap strays above sit (another species 44-50 ppm off in the upper bins of the
+     labelled envelope). (b) and (c) test position, so they complement item 156.
+   - *Direction (owner, 2026-11-11): mask by position, option (c).* A flag ((b)) alone is not
+     enough even where the fitted means do not move, because the noise model is pivotal: the
+     per-bin noise curve (HISTORY 191, 213, 287) and the K a spectrum takes are judged in the
+     weak bins, which is where strays sit and where a ± 50 ppm window reads Orbitrap bins high
+     (noise maxima plus strays). A mask that takes only supported positions should give the
+     noise curve and the population test cleaner weak bins.
+   - *First measurement.* Prototype (c) in scratch and compare it with today's window on the
+     yardsticks below, on the Orbitrap and the Q-TOF: the noise curve's terms (counting and
+     floor), K on undeuterated and fully deuterated controls, replicate calibration, the
+     weak-bin reading against the natural-abundance envelope, and whether the fits move
+     (item 156 measured that on the Q-TOF benchmark only). On the Q-TOF the mask must not
+     zero real deuterated bins (item 172).
    - *Yardsticks.* Undeuterated and fully deuterated sets reading two, replicate agreement,
      known-answer K, the share of stray intensity taken in. Spectra with and without each
      change shown side by side before any proposal.
