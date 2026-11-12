@@ -195,9 +195,10 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
   condition), with a page per kind. Each page has one legend, at the top or on the right, that
   names every symbol on it.
   - **spectra**: raw data, picked values and the fit, the picking window shaded. Each panel's
-    title gives the time, the replicate, the number of populations drawn, the review status
-    when there is one, and the quality flags, for example `30 min, rep 2 (K=1, rejected;
-    low_intensity)` or `4 s, rep 1 (K=2; bright)`. The marker on top of each picked value says
+    title gives the time, the replicate, the number of populations drawn, each population's
+    deuterium (D, not corrected for back-exchange, lowest first), the review status when there
+    is one, and the quality flags, for example `30 min, rep 2 (K=1, D 4.06, rejected;
+    low_intensity)` or `4 s, rep 1 (K=2, D 1.85 / 6.40; bright)`. The marker on top of each picked value says
     what the bins hold: a circle for peak heights, an up-pointing triangle for peak areas. An
     area is turned into a height-equivalent number (see [A peak's height or its
     area](picking-window.md#a-peaks-height-or-its-area)), so a triangle can sit below the top

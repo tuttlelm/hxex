@@ -1443,10 +1443,13 @@ def test_spectra_panels_keep_the_k_status_and_flags(results):
     fig = plot_series_spectra(marked, 0, show=("picked", "fit"))
     titles = [ax.get_title() for ax in fig.axes]
     k = int(marked.effective_K[i])
-    assert sum(f"(K={k}, rejected; poor_fit, bright)" in t for t in titles) == 1
-    assert all("(K=" in t for t in titles)  # every panel says its K
+    d = " / ".join(f"{m:.2f}" for m in np.sort(marked.fit.fits[k].means[i]))
+    assert sum(f"(K={k}, D {d}, rejected; poor_fit, bright)" in " ".join(t.split())
+               for t in titles) == 1
+    assert all("(K=" in t and ", D " in " ".join(t.split()) for t in titles)  # K and D
     pops = plot_populations(marked, 0)
     assert any("rejected; poor_fit, bright" in ax.get_title() for ax in pops.axes)
+    assert not any(", D " in " ".join(ax.get_title().split()) for ax in pops.axes)
 
 
 def test_the_picked_marker_and_the_legend_say_heights_or_areas(results):

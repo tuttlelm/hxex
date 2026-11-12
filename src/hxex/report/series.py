@@ -700,7 +700,8 @@ def plot_populations(
         ax.set_visible(True)
         rejected = results.review_status[i] == "rejected"
         when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
-        label = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
+        label = (f"{when}, rep {info['reps'][pos]} "  # the map's axis is D: not repeated
+                 f"({spectrum_notes(results, i, k, with_d=False)})")
         _draw_population_map(ax, d, "\n".join(textwrap.wrap(label, 58)))
         if reference is not None and d["n_amides"] is not None:
             known = reference.at(float(info["times"][pos]), d["n_amides"])

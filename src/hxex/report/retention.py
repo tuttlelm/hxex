@@ -209,8 +209,9 @@ def _panel_text(spectrum_id: str, window: tuple[float, float] | None) -> str:
 
 def _k_text(fit, i: int, k: int, with_k: bool = True) -> str:
     """K and the populations' deuteration (uncorrected, D) of measurement ``i``."""
-    means = np.sort(np.asarray(fit.fits[k].means[i], dtype=float))
-    return (f"K = {k}, " if with_k else "") + "D " + " / ".join(f"{m:.2f}" for m in means)
+    from .spectrum import d_values
+
+    return ", ".join(t for t in ((f"K = {k}" if with_k else ""), d_values(fit, i, k)) if t)
 
 
 def _nothing(ax, traces: RetentionTraces) -> None:

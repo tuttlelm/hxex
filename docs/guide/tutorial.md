@@ -312,7 +312,8 @@ hxex report hxex.toml --figures
 
 This writes `results_figures`, with one PDF per peptide (a page each of spectra, populations,
 and uptake) and `overview.pdf`, and writes the tables again. Each page has a legend naming its
-lines and marks, and each spectrum's title says its number of populations (`K=2`) and any flag.
+lines and marks, and each spectrum's title says its number of populations (`K=2`), their
+deuterium (`D 1.85 / 6.40`), and any flag.
 
 **One population.** In `WT_0087_0096_EELKVKVLGD_z_2.pdf` every spectrum is one smooth envelope.
 The black sticks are the measured isotope peaks, the line through them is the fit, and the

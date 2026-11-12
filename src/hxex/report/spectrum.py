@@ -201,12 +201,25 @@ def peak_measure(results: Results | None) -> str:
     return measure if measure in MEASURE_MARKERS else "height"
 
 
-def spectrum_notes(results: Results, i: int, k: int | None = None) -> str:
+def d_values(fit, i: int, k: int) -> str:
+    """The populations' deuteration (uncorrected, D, lowest first) of measurement ``i`` at K =
+    ``k``, as ``D 1.23 / 4.56``; empty when K = ``k`` has no fit for it (screened)."""
+    means = np.sort(np.asarray(fit.fits[k].means[i], dtype=float)) if k in fit.fits else []
+    if not len(means) or not np.all(np.isfinite(means)):
+        return ""
+    return "D " + " / ".join(f"{m:.2f}" for m in means)
+
+
+def spectrum_notes(results: Results, i: int, k: int | None = None, *,
+                   with_d: bool = True) -> str:
     """What a panel title says about measurement ``i`` beside its time: the K drawn (``k``, else
-    the K in effect), the review status when reviewed (``rejected``, ``accepted``) and the
-    quality flags, as ``K=1, rejected; poor_fit, bright``."""
+    the K in effect), the populations' D at that K (``with_d``, :func:`d_values`), the review
+    status when reviewed (``rejected``, ``accepted``) and the quality flags, as
+    ``K=2, D 1.23 / 4.56, rejected; poor_fit, bright``."""
     k = int(results.effective_K[i] if k is None else k)
     head = [f"K={k}"]
+    if with_d and (d := d_values(results.fit, i, k)):
+        head.append(d)
     status = str(results.review_status[i])
     if status != "unreviewed":
         head.append(status)
@@ -460,7 +473,8 @@ def plot_spectrum(
     way every picked bin has a marker on top that tells what the bins hold
     (:func:`peak_measure`): a circle for heights, an up-pointing triangle for areas
     (height-equivalent, so they sit off the raw profile's apexes by design); the legend names
-    it. The title gives the K, the review status and the flags (:func:`spectrum_notes`). The
+    it. The title gives the K, the populations' D, the review status and the flags
+    (:func:`spectrum_notes`). The
     fit line has its own colour, ``FIT_COLOR``, and the populations theirs (``COLORS``, then
     the same colours with another line style beyond ``len(COLORS)`` populations, see
     :func:`population_style`; the population map uses the same ones).
