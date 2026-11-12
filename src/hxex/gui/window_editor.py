@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .flow_layout import FlowLayout
 from .tasks import Latest
 from .tips import tip
 from .window_edit import APPLY, scope_words
@@ -69,6 +70,16 @@ class TraceContext:
     reader: object
 
 
+def _group(*widgets: QWidget) -> QWidget:
+    """Widgets kept on one line when their row wraps (a box and its label and unit)."""
+    group = QWidget()
+    line = QHBoxLayout(group)
+    line.setContentsMargins(0, 0, 0, 0)
+    for w in widgets:
+        line.addWidget(w)
+    return group
+
+
 class WindowEditor(QObject):
     """The editing controls of the elution ``panel`` (added to its bar). ``context()`` gives
     the tab's :class:`TraceContext` (None: nothing shown); ``plain()`` draws the tab without
@@ -100,8 +111,7 @@ class WindowEditor(QObject):
         self._timer.timeout.connect(self.refresh)
 
         self.bar = QWidget()
-        row = QHBoxLayout(self.bar)
-        row.setContentsMargins(0, 0, 0, 0)
+        row = FlowLayout(self.bar)
         self.edit = QCheckBox("Edit window")
         self.edit.setToolTip(
             tip("change the scans this spectrum sums: drag across the trace (or the drift profile) "
@@ -134,21 +144,20 @@ class WindowEditor(QObject):
         self.undo.setEnabled(False)
         # two rows of their own under the figure's buttons (in the buttons' row they made the
         # window wider than the screen: owner, 2026-11-08): the switch and the window, then
-        # saving
+        # saving; each wraps between its groups where the window is narrower (one row set the
+        # window's narrowest width: 1,102 px with Windows' fonts, 2026-11-11)
         self.save_bar = QWidget()
-        save_row = QHBoxLayout(self.save_bar)
-        save_row.setContentsMargins(0, 0, 0, 0)
-        self.controls = [QLabel("window"), self.start, QLabel("to"), self.end, QLabel("min"),
-                         self.drift_label, self.drift_start, QLabel("to"), self.drift_end,
-                         QLabel("ms"), self.each_k]
+        save_row = FlowLayout(self.save_bar)
+        drift_group = _group(self.drift_label, self.drift_start, QLabel("to"), self.drift_end,
+                             QLabel("ms"))
+        self.controls = [_group(QLabel("window"), self.start, QLabel("to"), self.end,
+                                QLabel("min")), drift_group, self.each_k]
         row.addWidget(self.edit)
         for w in self.controls:
             row.addWidget(w)
-        row.addStretch(1)
-        for w in (self.save, QLabel("for"), self.scope, self.undo):
+        for w in (_group(self.save, QLabel("for"), self.scope), self.undo):
             save_row.addWidget(w)
-        save_row.addStretch(1)
-        self._drift_widgets = self.controls[5:10]
+        self._drift_widgets = [drift_group]
         # what the preview is (and how it differs from a run), above the figure at the
         # window's own font size (owner: not small print inside the figure)
         self.notes = QLabel()

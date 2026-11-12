@@ -9257,3 +9257,18 @@ CSVs or mzML if wanted.
     "automatic" is unchanged. Check: tests/test_retention_search.py (a labelled run listed first:
     the same verdicts as with the controls first; spectrum ids, series, intensities and times
     those of a read without the search).
+
+364. **Windows CI after HISTORY 360: the editing rows wrap, and tests wait for the window's
+    background work (2026-11-11).** CI for 29333f2 failed on the three Windows jobs only, in two
+    tests (the owner pasted the summary). (1) The elution tab's editing rows (the window and
+    drift boxes; the save button and its level, whose longest choice HISTORY 360 made longer)
+    were one line each and set the panel's narrowest width: 1,102 px with Windows' fonts against
+    a fixed 1,000 in the test. The rows now wrap between groups (a box stays with its label and
+    unit; `gui.flow_layout.FlowLayout`), so the window can be narrower (525 px on Linux, from
+    the save row; one line of the editing row is 789), and the test compares the two widths
+    instead of a fixed number. (2) A preview fit one test left running in Qt's global pool (an
+    older request stopping at its next check) used PyTorch's forward-AD levels, which are
+    process-wide, while the next test fitted in the main thread: "Trying to access a forward AD
+    level with an invalid index". The window fits one at a time (`window_edit._FIT_LOCK`) and
+    runs hxex in child processes, so only the tests overlapped; tests/conftest.py now waits for
+    the global pool after every test, as it waits for the drawing thread (HISTORY 282).

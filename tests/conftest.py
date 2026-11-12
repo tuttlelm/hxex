@@ -17,6 +17,16 @@ def _drawings_finished():
     tasks = sys.modules.get("hxex.gui.tasks")  # never imports Qt for tests that do not
     if tasks is not None and tasks._DRAWING is not None:
         tasks._DRAWING.waitForDone(120000)
+    if tasks is not None:
+        # the window's background work too (hxex.gui.tasks.Latest, Qt's global pool): a
+        # preview fit a test left running (a newer one asked for, the old one stopping at its
+        # next check) used PyTorch's forward-AD levels, which are process-wide, while the
+        # next test fitted in the main thread ("Trying to access a forward AD level with an
+        # invalid index", Windows CI, 2026-11-11). The window fits one at a time
+        # (gui.window_edit._FIT_LOCK) and runs hxex in child processes.
+        from PySide6.QtCore import QThreadPool
+
+        QThreadPool.globalInstance().waitForDone(120000)
 
 
 @pytest.fixture(autouse=True)

@@ -38,8 +38,11 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     selected = w._shown_traces[3].traces[0]
     editor.edit.setChecked(True)
     # the editing controls are rows of their own: in the buttons' row they made the window
-    # wider than the screen (2,061 px; owner, 2026-11-08)
-    assert panel.minimumSizeHint().width() < 1000
+    # wider than the screen (2,061 px; owner, 2026-11-08); and each row wraps, so the panel is
+    # narrower than the editing row on one line (a fixed 1,000 px failed with Windows' fonts:
+    # 1,102; widths compared within the window)
+    one_line = sum(x.sizeHint().width() for x in (editor.edit, *editor.controls))
+    assert panel.minimumSizeHint().width() < one_line
     assert editor.window() == pytest.approx(selected.window, abs=1e-3)
     assert editor.drift() is None  # no ion mobility here
     qtbot.waitUntil(lambda: any(t.startswith("new window") for t in _titles(panel))
