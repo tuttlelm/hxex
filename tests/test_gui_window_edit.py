@@ -223,6 +223,13 @@ def test_the_window_is_edited_again_after_the_results_are_read_again(qtbot, proj
     assert any(t.startswith("new window") for t in _titles(panel))
 
 
+
+def _left_edge(ax, patch):
+    """A span's left edge in data units: axvspan gives a Polygon before matplotlib 3.9 and a
+    Rectangle after, so read the outline it draws."""
+    drawn = patch.get_transform().transform(patch.get_path().vertices)
+    return ax.transData.inverted().transform(drawn)[:, 0].min()
+
 def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, project):  # noqa: F811
     """Compare with on the replicates while editing: the replicate's trace is moved onto this
     file's clock by the trace match (owner's choice, 2026-11-11: draft A); Each file's window
@@ -263,7 +270,7 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     assert first.get_label() == "this file"
     hatched = [p for p in second.patches if p.get_gid() == "edited"]
     window = editor.window()
-    assert hatched[0].get_x() == pytest.approx(window[0] + plan.shift)
+    assert _left_edge(second, hatched[0]) == pytest.approx(window[0] + plan.shift)
     # matched once: the window moves, the match stays
     editor._set_boxes((window[0] + 0.01, window[1]), None)
     editor.draw()

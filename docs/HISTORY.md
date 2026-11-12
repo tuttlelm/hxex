@@ -9317,3 +9317,11 @@ CSVs or mzML if wanted.
     listed Compare with's choices from before HISTORY 360. Check:
     tests/test_gui_window_edit.py (a replicate moved by its shift; the rows; one match while
     the window moves; a drag on the top row only; the check box off for other ions).
+
+367. **The lowest-versions CI job after HISTORY 366: a test read a span the way only newer
+    matplotlib draws it (2026-11-12).** On matplotlib 3.8 (the lower bound) `axvspan` returns a
+    `Polygon`, from 3.9 a `Rectangle`; HISTORY 366's elution test read the edited window's span
+    with `Rectangle.get_x()` and failed in the lowest-versions job only (the one failure of 1,796
+    there). The test now reads the span's left edge from the outline it draws. hxex itself never
+    reads a span back. Check: tests/test_gui_window_edit.py passes at matplotlib 3.8.0 (the
+    job's versions, rebuilt locally) and 3.11.2.
