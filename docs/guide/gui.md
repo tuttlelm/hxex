@@ -232,10 +232,12 @@ ion's bins (the tallest point in the picking window of each bin, added up over t
 stretch of the run around the scans it summed (shaded). **Compare with** chooses what is drawn
 behind it:
 
-- **this charge state in the sample's other files** (the default; **this ion** when you read
-  fragments): the same charge state in the sample's other files (its other time points,
-  replicates, and controls), in grey. A file that eluted earlier or later, or a window that
-  caught another peak, stands out: that file needs a window of its own.
+- **this charge state in its replicates** (the default; **this ion** when you read
+  fragments): the same charge state in the sample's other files at the same time point (or
+  the same control), in grey. A file that eluted earlier or later, or a window that caught
+  another peak, stands out: that file needs a window of its own.
+- **this charge state in every file of the peptide**: the same, in every file of every sample
+  that reads the peptide (its time points, replicates, and controls).
 - **this peptide's other charge states in this file** (**other ions** when you read fragments):
   the peptide's other charge states and, when you read fragments, its fragment ions, one line
   per fragment channel (its ions added up), in colour, each scaled to the selected trace's
@@ -269,6 +271,18 @@ curve, but not its bootstrap, population test, or controls, and nothing in the r
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did.
 
+While you edit with **Compare with** on the replicates or on every file of the peptide, the
+other files are drawn on this file's clock instead of where they are: each is moved by the
+same trace match a save at that level uses (below; within the drift range in the boxes) and
+scaled to this trace's height, so the peaks line up under the new window when the match worked.
+A file whose trace did not match is drawn dashed, where it is. **Each file's window** draws one
+row per file instead, each on its own clock: the scans its spectrum sums now (shaded), the new
+window shifted into it (hatched), and its shift; this file is the top row, and dragging across
+that row sets the window. It shows, file by file, what saving at that level would write, and
+whether a file's present window sits on the peak at all. The files are matched once for the
+spectrum and the drift range (about half a second per file); moving the window does not match
+them again, and a save at that level uses the same match.
+
 **Save window** writes the window as a row of the project's elution-window table. The choice
 beside it says what the row is for:
 
@@ -296,7 +310,7 @@ edge of the 30 s, no signal, or traces that do not look alike) gets no window: t
 names it, so that you can set it by hand. If some of the files already have a window of this
 peptide that you (or an earlier save) set, *hxex* asks first: **Replace them** with the
 shifted window, **Keep them** as they are, or **Cancel**. Matching takes about half a second
-per file. Open any of the files' spectra afterwards to see the window it got.
+per file (none when the tab has already matched them, above). Open any of the files' spectra afterwards to see the window it got.
 
 When one file is read by several samples (controls shared by the samples of a state, say), the
 window is saved for every one of them, since it is one injection;

@@ -58,7 +58,8 @@ SCOPE_TIP = (
 class TraceContext:
     """What the elution tab shows: the ``results`` (from ``results_path``), the selected
     ``spectrum_id`` of series ``data_id``, its ``traces`` (the latest read), the figure's
-    ``title``, the series' ``mz_range`` and the trace ``reader``."""
+    ``title``, the series' ``mz_range``, the trace ``reader``, and what Compare with shows
+    (``compare``: ``replicates`` and ``everywhere`` are the files a spread reaches)."""
 
     results: object
     results_path: Path | None
@@ -68,6 +69,7 @@ class TraceContext:
     title: str
     mz_range: tuple[float, float] | None
     reader: object
+    compare: str | None = None
 
 
 def _group(*widgets: QWidget) -> QWidget:
@@ -104,6 +106,10 @@ class WindowEditor(QObject):
         self._previewed: tuple | None = None  # (spectrum id, window, drift) of a fitted preview
         self._summed: tuple | None = None  # the same, of the spectrum summed (fitted or not)
         self._task = Latest(self)
+        self._align_task = Latest(self)  # the other files matched against this one's trace
+        self.alignment = None  # hxex.gui.window_edit.Alignment (or None: no other file)
+        self._aligned_key: tuple | None = None  # (spectrum, level, drift) it was made for
+        self._aligning: tuple | None = None  # the same, of the match being made
         self._generation = 0  # a preview's fit stops when a newer one is asked for
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -128,6 +134,13 @@ class WindowEditor(QObject):
         self.each_k = QCheckBox("Fits at each K")
         self.each_k.setToolTip(tip("the new window's spectrum fitted at every K the run tried"))
         self.each_k.toggled.connect(lambda _on: self.draw())
+        self.each_file = QCheckBox("Each file's window")
+        self.each_file.setToolTip(tip(
+            "one row per file Compare with shows (its replicates, or every file of the "
+            "peptide), each on its own clock: the scans it sums now and the new window shifted "
+            "into it by the trace match, as saving at that level would write it; with Compare "
+            "with on the replicates or every file"))
+        self.each_file.toggled.connect(lambda _on: self.draw())
         self.scope = QComboBox()
         for data, text in scope_words("", False).items():
             self.scope.addItem(text, data)
@@ -151,7 +164,8 @@ class WindowEditor(QObject):
         drift_group = _group(self.drift_label, self.drift_start, QLabel("to"), self.drift_end,
                              QLabel("ms"))
         self.controls = [_group(QLabel("window"), self.start, QLabel("to"), self.end,
-                                QLabel("min")), drift_group, self.each_k]
+                                QLabel("min")), drift_group, self.each_k,
+                         self.each_file]
         row.addWidget(self.edit)
         for w in self.controls:
             row.addWidget(w)
@@ -186,6 +200,9 @@ class WindowEditor(QObject):
     def _show_controls(self, on: bool, drift: bool = False) -> None:
         self.notes.setVisible(on)
         self.save_bar.setVisible(on)
+        ctx = self.context() if on else None
+        spread = ctx is not None and ctx.compare in ("replicates", "everywhere")
+        self.each_file.setEnabled(spread)
         for w in self.controls:
             w.setVisible(on)
         for w in self._drift_widgets:
@@ -225,6 +242,7 @@ class WindowEditor(QObject):
                 and self._target[1] == target[1]):
             self._target = target
             self.preview, self.failure, self._previewed, self._summed = None, None, None, None
+            self.alignment, self._aligned_key, self._aligning = None, None, None
             window, drift_range = selected.window, drift
             self._word_scope(ctx)
             saved = self._saved_row(ctx)
@@ -286,7 +304,7 @@ class WindowEditor(QObject):
         for ax in fig.axes:
             if not ax.get_position().contains(x0, y0):
                 continue
-            label = ax.get_xlabel()
+            label = "retention time" if ax.get_label() == "this file" else ax.get_xlabel()
             to_data = ax.transData.inverted()
             a = to_data.transform(fig.transFigure.transform((x0, y0)))[0]
             b = to_data.transform(fig.transFigure.transform((x1, y1)))[0]
@@ -347,19 +365,72 @@ class WindowEditor(QObject):
         self.panel.set_task("Reading the new window's scans…")
         self._task.submit(work, done, failed)
 
+    def _align(self, ctx: TraceContext) -> None:
+        """Match the files Compare with shows (its replicates, or every file of the peptide)
+        against this one's trace within the drift range in the boxes, in the background, once
+        per spectrum, level and drift range (the window does not change the match); drawn
+        when ready (:meth:`draw`) and used by a save at that level."""
+        from .window_edit import align_files
+
+        level = ctx.compare if ctx.compare in ("replicates", "everywhere") else None
+        key = (ctx.spectrum_id, level, self.drift())
+        if level is None or key in (self._aligned_key, self._aligning):
+            return
+        key_ = self._key(ctx)
+        if key_ is None:
+            return
+        self._aligning = key
+        peptide, siblings, _shared = self._peptide(ctx)
+        reader, results, sid, data_id, drift = (ctx.reader, ctx.results, ctx.spectrum_id,
+                                                ctx.data_id, self.drift())
+
+        def done(aligned) -> None:
+            if self._aligning != key:
+                return
+            self.alignment, self._aligned_key, self._aligning = aligned, key, None
+            self.draw()
+
+        def failed(message: str) -> None:
+            if self._aligning == key:
+                self._aligning = None
+                self.message.emit(f"the other files' traces were not matched: {message}")
+
+        self._align_task.submit(lambda: align_files(
+            reader, results, sid, data_id, peptide=peptide, ion=key_[2], ions=siblings,
+            level=level, drift=drift, cancel=lambda: self._aligning != key), done, failed)
+
+    def _aligned_now(self, ctx: TraceContext):
+        """The match for what the tab shows (None while it is being made, or without one)."""
+        level = ctx.compare if ctx.compare in ("replicates", "everywhere") else None
+        if level is None or self._aligned_key != (ctx.spectrum_id, level, self.drift()):
+            return None
+        return self.alignment
+
     def draw(self) -> None:
-        """The trace with the window being edited, and the spectra now and over it."""
-        from ..report.retention import plot_window_edit, preview_text
+        """The trace with the window being edited, and the spectra now and over it; with
+        Compare with on the replicates or every file, those files aligned on this file's clock
+        by the trace match (owner's choice, 2026-11-11: draft A), or one row per file (Each
+        file's window: draft B)."""
+        from ..report.retention import plot_each_file, plot_window_edit, preview_text
 
         ctx = self.context()
         if not self.active or ctx is None:
             return
+        self._align(ctx)
+        spread = ctx.compare in ("replicates", "everywhere")
+        self.each_file.setEnabled(spread)
+        aligned = self._aligned_now(ctx)
         shown, failure = self.preview, self.failure
         self.notes.setText(preview_text(shown))
         window, drift, each_k = self.window(), self.drift(), self.each_k.isChecked()
+        if spread and self.each_file.isChecked() and aligned is not None:
+            self.panel.draw(lambda: plot_each_file(ctx.traces, aligned, edit=window,
+                                                   title=ctx.title))
+            return
         self.panel.draw(lambda: plot_window_edit(
             ctx.traces, ctx.results, ctx.spectrum_id, shown, edit=window, drift_edit=drift,
-            each_k=each_k, title=ctx.title, mz_range=ctx.mz_range, waiting=failure))
+            each_k=each_k, title=ctx.title, mz_range=ctx.mz_range, waiting=failure,
+            aligned=aligned))
 
     # --- the elution-window table -------------------------------------------------------------
 
@@ -504,8 +575,8 @@ class WindowEditor(QObject):
             write()
             return
         results = ctx.results
-        self.panel.set_task("Matching the other files' traces…")
-        self.save.setEnabled(False)
+        ready = self.alignment if self._aligned_key == (ctx.spectrum_id, level,
+                                                         self.drift()) else None
 
         def work():
             return plan_spread(ctx.reader, results, ctx.spectrum_id, ctx.data_id, window,
@@ -542,6 +613,11 @@ class WindowEditor(QObject):
             self.save.setEnabled(True)
             self.message.emit(f"not saved: {message}")
 
+        if ready is not None:  # the tab matched these files already: the same match
+            done(ready.for_window(window))
+            return
+        self.panel.set_task("Matching the other files' traces…")
+        self.save.setEnabled(False)
         self._spread_task.submit(work, done, failed)
 
     def _undo(self) -> None:

@@ -673,7 +673,7 @@ class ResultsWorkspace(QWidget):
         except (ValueError, KeyError):
             mz_range = None
         return TraceContext(results, getattr(self, "results_path", None), sid, data_id, traces,
-                            title, mz_range, self._reader())
+                            title, mz_range, self._reader(), compare=self.compare.currentData())
 
     # --- the data tab ----------------------------------------------------------------------------
 

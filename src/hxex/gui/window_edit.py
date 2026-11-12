@@ -18,7 +18,7 @@ import math
 import re
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -348,7 +348,9 @@ class FilePlan:
     """Where a window spread to another file goes: the ``file`` (its name) of run ``path``,
     the ``samples`` that read it, the ``shift`` (minutes; the file's elution against the edited
     file's, from their traces of the charge state) and the shifted ``window``; ``why`` (and no
-    window) when the match is not trusted. ``correlation`` is the match's."""
+    window) when the match is not trusted. ``correlation`` is the match's; ``trace`` the
+    file's trace of the charge state the match used (:class:`hxex.io.retention_trace.Trace`;
+    None when it could not be read)."""
 
     file: str
     path: str
@@ -357,6 +359,26 @@ class FilePlan:
     window: tuple[float, float] | None
     correlation: float | None = None
     why: str | None = None
+    trace: object = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class Alignment:
+    """The other files a window saved at ``level`` reaches, each matched against the edited
+    file's ``reference`` trace (within ``drift``, ms, when given) by :func:`align_files`:
+    ``plans`` hold each file's shift (their ``window`` is None until :meth:`for_window`).
+    ``spectrum_id`` is the edited spectrum's."""
+
+    spectrum_id: str
+    level: str
+    drift: tuple[float, float] | None
+    reference: object
+    plans: tuple[FilePlan, ...]
+
+    def for_window(self, window: tuple[float, float]) -> list[FilePlan]:
+        """The plans with ``window`` (minutes, the edited file's clock) shifted into each file."""
+        return [replace(p, window=None if p.shift is None
+                        else (window[0] + p.shift, window[1] + p.shift)) for p in self.plans]
 
 
 def trace_shift(ref_times, ref_intensity, times, intensity,
@@ -446,19 +468,31 @@ def plan_spread(reader, results, spectrum_id: str, data_id: int,
                 level: str, drift: tuple[float, float] | None = None,
                 cancel=None) -> list[FilePlan]:
     """Each other file a window saved at ``level`` reaches (:func:`spread_files`), with the
-    window shifted by that file's elution against the edited file's (:func:`trace_shift`, the
-    charge state's traces within ``drift`` (ms) when given: the species chosen in drift time,
-    not a brighter one at another drift time on the same m/z, which elutes with shifts of its
-    own; owner's case, 2026-11-11: fully deuterated files 4-8 s further than over all drift
-    times), or why not. ``ions``
-    (the peptide's, as spectrum ids name them) decide which samples read each file."""
+    window shifted by that file's elution against the edited file's (:func:`align_files`), or
+    why not."""
+    aligned = align_files(reader, results, spectrum_id, data_id, peptide=peptide, ion=ion,
+                          ions=ions, level=level, drift=drift, cancel=cancel)
+    return [] if aligned is None else aligned.for_window(window)
+
+
+def align_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str, ion: str,
+                ions: Sequence[str], level: str, drift: tuple[float, float] | None = None,
+                cancel=None) -> Alignment | None:
+    """Each other file a window saved at ``level`` reaches (:func:`spread_files`), matched
+    against the edited file's elution (:func:`trace_shift`, the charge state's traces within
+    ``drift`` (ms) when given: the species chosen in drift time, not a brighter one at another
+    drift time on the same m/z, which elutes with shifts of its own; owner's case, 2026-11-11:
+    fully deuterated files 4-8 s further than over all drift times); None when no other file
+    has a spectrum of it. ``ions`` (the peptide's, as spectrum ids name them) decide which
+    samples read each file. The elution tab draws it (the files aligned, or one row each) and
+    a save at that level uses it."""
     from ..hooks import Cancelled
     from ..io.mzml import run_name
 
     others = spread_files(reader, results, spectrum_id, data_id, peptide=peptide, ion=ion,
                           level=level)
     if not others:
-        return []
+        return None
     ranges = None if drift is None else {spectrum_id: drift}
     ref = reader.traces([spectrum_id], data_id, drift_ranges=ranges).traces
     if not ref:
@@ -477,10 +511,10 @@ def plan_spread(reader, results, spectrum_id: str, data_id: int,
             plans.append(FilePlan(file, str(run.path), samples, None, None,
                                   why="its trace could not be read"))
             continue
-        shift, r, why = trace_shift(ref.times, ref.intensity, got[0].times, got[0].intensity)
-        moved = None if shift is None else (window[0] + shift, window[1] + shift)
-        plans.append(FilePlan(file, str(run.path), samples, shift, moved, r, why))
-    return plans
+        trace = replace(got[0], selected=False)
+        shift, r, why = trace_shift(ref.times, ref.intensity, trace.times, trace.intensity)
+        plans.append(FilePlan(file, str(run.path), samples, shift, None, r, why, trace=trace))
+    return Alignment(spectrum_id, level, drift, ref, tuple(plans))
 
 
 def spread_words(plans: Sequence[FilePlan], kept: Sequence[str] = ()) -> str:

@@ -27,6 +27,7 @@ OTHER = "#b3b3b3"  # the other runs' traces
 SUMMED = "#d9d9d9"  # the scans (or drift times) the spectrum summed
 EDITED = "#4d4d4d"  # the outline of a window being edited
 HATCH = "#c4c4c4"  # its hatching: light, behind the traces (owner: dark, it hid the other runs)
+UNMATCHED = "#7f7f7f"  # a file whose trace did not match: dashed, where it is (not a sample colour)
 _SHOWN_SHARE = 0.02  # the drift panel shows the profile down to this share of its apex
 # the peptide's other ions in the run (not the samples' colours: one sample is drawn here)
 ION_COLOURS = ("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d")
@@ -73,7 +74,7 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
                      edit: tuple[float, float], drift_edit: tuple[float, float] | None = None,
                      each_k: bool = False, title: str | None = None,
                      mz_range: tuple[float, float] | None = None,
-                     waiting: str | None = None) -> Figure:
+                     waiting: str | None = None, aligned=None) -> Figure:
     """The retention trace with a window being edited (``edit``, minutes; ``drift_edit``, ms),
     and under it the spectrum as ``results`` hold it (``spectrum_id``) beside the spectrum
     summed over the new window (``preview``, :class:`hxex.gui.window_edit.Preview`, or None
@@ -81,7 +82,9 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     the new window's spectrum at every K the run tried instead. ``mz_range`` is the series'
     m/z axis; ``waiting`` says why there is no preview or fit (default: it is being made).
     The preview's notes (``preview.notes``) are not drawn: the window shows them above the
-    figure (:func:`preview_text`)."""
+    figure (:func:`preview_text`). With ``aligned`` (:class:`hxex.gui.window_edit.Alignment`)
+    the trace panel draws the other files moved onto this file's clock by their match
+    (:func:`_aligned_panel`) instead of where they are."""
     from .spectrum import plot_spectrum
 
     with_drift = traces.drift is not None
@@ -92,12 +95,14 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
     rows = fig.add_gridspec(2, 1, height_ratios=(1, 1.3))
     if not traces.traces:
         _nothing(fig.add_subplot(rows[0]), traces)
-    elif with_drift:
-        top = rows[0].subgridspec(1, 2, width_ratios=(2.2, 1))
-        _trace_panel(fig.add_subplot(top[0]), traces, edit)
-        _drift_panel(fig.add_subplot(top[1]), traces, drift_edit)
     else:
-        _trace_panel(fig.add_subplot(rows[0]), traces, edit)
+        top = rows[0].subgridspec(1, 2, width_ratios=(2.2, 1)) if with_drift else [rows[0]]
+        if aligned is not None:
+            _aligned_panel(fig.add_subplot(top[0]), traces, aligned, edit)
+        else:
+            _trace_panel(fig.add_subplot(top[0]), traces, edit)
+        if with_drift:
+            _drift_panel(fig.add_subplot(top[1]), traces, drift_edit)
     bottom = rows[1].subgridspec(1, columns)
     axes = [fig.add_subplot(bottom[c]) for c in range(columns)]
     i = list(results.fit.spectrum_id).index(spectrum_id)
@@ -134,6 +139,53 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
                            fontsize="small",
                            fontweight="bold" if each_k and k == preview.k else "normal")
     _heading(fig, traces, title)
+    return fig
+
+
+def plot_each_file(traces: RetentionTraces, aligned, *, edit: tuple[float, float],
+                   title: str | None = None) -> Figure:
+    """One row per file a window spread at ``aligned.level`` reaches
+    (:class:`hxex.gui.window_edit.Alignment`), each on its own clock, this file first: the
+    file's trace of the charge state (within the drift range matched), the scans its spectrum
+    sums now (shaded) and the window being edited (``edit``, minutes) shifted into it
+    (hatched), with the shift, or why the file was not matched (no window). Every row's trace
+    has the ``gid`` ``trace:<spectrum id>``; only the first row (this file, axes label
+    ``this file``) takes a drag across it as the window."""
+    rows = [(aligned.reference, traces.traces[0].window if traces.traces else None, edit,
+             "this file")]
+    for p in aligned.for_window(edit):
+        if p.trace is None:
+            continue
+        label = (f"{p.shift * 60:+.0f} s (r {p.correlation:.2f})" if p.shift is not None
+                 else f"not matched: {p.why}")
+        if aligned.level == "everywhere" and p.samples:  # whose file (a control: several)
+            label += "; " + (p.samples[0] if len(p.samples) == 1
+                             else f"{len(p.samples)} samples")
+        rows.append((p.trace, p.trace.window, p.window, label))
+    fig = Figure(figsize=(8.4, 0.62 * len(rows) + 1.1), layout="constrained")
+    axes = np.atleast_1d(fig.subplots(len(rows), 1, sharex=True))
+    for n, (ax, (t, summed, window, label)) in enumerate(zip(axes, rows, strict=True)):
+        if summed is not None:
+            ax.axvspan(*summed, color=SUMMED, lw=0, zorder=1, gid="summed")
+        if window is not None:
+            ax.axvspan(*window, facecolor="none", edgecolor=HATCH, hatch="///", lw=0,
+                       zorder=1.5, gid="edited")
+            ax.axvspan(*window, facecolor="none", edgecolor=EDITED, lw=0.6, zorder=1.6)
+        ax.plot(t.times, t.intensity, color=RAW_DARK if n == 0 else EDITED,
+                lw=1.3 if n == 0 else 0.9, zorder=3, gid=f"trace:{t.spectrum_id}")
+        ax.set_yticks([])
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.text(1.01, 0.5, f"{run_text(t)}\n{label}", transform=ax.transAxes,
+                fontsize="x-small", va="center", fontweight="bold" if n == 0 else "normal",
+                color="#000000" if window is not None else UNMATCHED)
+        if n == 0:
+            ax.set_label("this file")
+    axes[-1].set_xlabel("each file's own clock: retention time (min)")
+    fig.suptitle((title if title is not None else traces.label)
+                 + f"\neach file's window: the scans summed now (shaded) and the new window "
+                   f"shifted into it (hatched); {len(rows) - 1} other file(s)",
+                 fontsize="medium")
     return fig
 
 
@@ -225,6 +277,53 @@ def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) 
     if top > 0:
         room = max(1.45 if edit is not None else 1.35, 1.25 + 0.09 * (len(ion_handles) + 2))
         ax.set_ylim(top=top * room)  # room for the legends
+
+
+def _aligned_panel(ax, traces: RetentionTraces, aligned,
+                   edit: tuple[float, float] | None) -> None:
+    """The other files a window spread reaches moved onto this file's clock by their match and
+    scaled to this trace's height (those not matched dashed, where they are), this file's trace
+    within the drift range matched, the scans it sums now (shaded), and the window being edited
+    (hatched): whether the match lined the peaks up, at a glance."""
+    selected, ref = traces.traces[0], aligned.reference
+    own_top = float(np.nanmax(ref.intensity)) if len(ref.intensity) else 0.0
+    matched = [p for p in aligned.plans if p.trace is not None and p.shift is not None]
+    unmatched = [p for p in aligned.plans if p.trace is not None and p.shift is None]
+    for p, dashed in [(p, False) for p in matched] + [(p, True) for p in unmatched]:
+        t = p.trace
+        top = float(np.nanmax(t.intensity)) if len(t.intensity) else 0.0
+        y = t.intensity * (own_top / top) if top > 0 and own_top > 0 else t.intensity
+        ax.plot(t.times - (0.0 if dashed else p.shift), y, color=UNMATCHED if dashed else OTHER,
+                lw=0.9, ls="--" if dashed else "-", zorder=2, gid=f"trace:{t.spectrum_id}")
+    ax.axvspan(*selected.window, color=SUMMED, lw=0, zorder=1, gid="summed")
+    if edit is not None:
+        ax.axvspan(*edit, facecolor="none", edgecolor=HATCH, hatch="///", lw=0, zorder=1.5,
+                   gid="edited")
+        ax.axvspan(*edit, facecolor="none", edgecolor=EDITED, lw=0.8, zorder=1.6,
+                   gid="edited_outline")
+    ax.plot(ref.times, ref.intensity, color=RAW_DARK, lw=1.6, zorder=4, marker="o", ms=2.5,
+            gid=f"trace:{ref.spectrum_id}")
+    ax.set_xlabel("retention time (min, this file's clock)")
+    ax.set_ylabel("intensity at the ion's bins")
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4))
+    handles = [Line2D([], [], color=RAW_DARK, lw=1.6, marker="o", ms=2.5,
+                      label=f"this spectrum: {run_text(selected)}"),
+               Patch(color=SUMMED, lw=0, label=f"scans summed ({selected.window[0]:.2f}-"
+                                                f"{selected.window[1]:.2f} min)")]
+    if edit is not None:
+        handles.append(Patch(facecolor="none", edgecolor=HATCH, hatch="///", lw=0.8,
+                             label=f"new window ({edit[0]:.2f}-{edit[1]:.2f} min)"))
+    if matched:
+        shifts = [60 * p.shift for p in matched]
+        handles.append(Line2D([], [], color=OTHER, lw=0.9, label=(
+            f"{traces.others_label} ({len(matched)}), each moved by its match "
+            f"({min(shifts):+.0f} to {max(shifts):+.0f} s)\nand scaled to this one's height")))
+    if unmatched:
+        handles.append(Line2D([], [], color=UNMATCHED, lw=0.9, ls="--",
+                              label=f"not matched ({len(unmatched)}): where they are"))
+    ax.legend(handles=handles, loc="upper left", fontsize="small", frameon=False)
+    if own_top > 0:
+        ax.set_ylim(top=own_top * max(1.45, 1.25 + 0.09 * (len(handles) + 1)))
 
 
 def _drift_panel(ax, traces: RetentionTraces,

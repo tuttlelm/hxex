@@ -221,3 +221,71 @@ def test_the_window_is_edited_again_after_the_results_are_read_again(qtbot, proj
                     and w.window_editor._target[0] is second and not panel.drawing,
                     timeout=60000)
     assert any(t.startswith("new window") for t in _titles(panel))
+
+
+def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, project):  # noqa: F811
+    """Compare with on the replicates while editing: the replicate's trace is moved onto this
+    file's clock by the trace match (owner's choice, 2026-11-11: draft A); Each file's window
+    draws one row per file with the new window shifted into it (draft B); a save at that
+    level uses the same match."""
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
+        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    assert w.compare.currentData() == "replicates"
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing
+                    and len(w._shown_traces[3].traces) == 2, timeout=30000)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    assert editor.each_file.isEnabled() and not editor.each_file.isChecked()
+    qtbot.waitUntil(lambda: editor.alignment is not None and not panel.drawing, timeout=30000)
+    (plan,) = editor.alignment.plans
+    assert plan.file == "un1.mzML" and plan.shift is not None
+    other = plan.trace.spectrum_id
+    fig = panel.view.figure
+    ax = next(a for a in fig.axes if a.get_xlabel().startswith("retention time"))
+    line = next(x for x in ax.lines if x.get_gid() == f"trace:{other}")
+    assert line.get_xdata() == pytest.approx(plan.trace.times - plan.shift)
+    assert any("moved by its match" in t.get_text() for t in ax.get_legend().get_texts())
+    # one row per file, this file first; the window shifted into the other
+    editor.each_file.setChecked(True)
+    qtbot.waitUntil(lambda: not panel.drawing and len(panel.view.figure.axes) == 2,
+                    timeout=30000)
+    first, second = panel.view.figure.axes
+    assert first.get_label() == "this file"
+    hatched = [p for p in second.patches if p.get_gid() == "edited"]
+    window = editor.window()
+    assert hatched[0].get_x() == pytest.approx(window[0] + plan.shift)
+    # matched once: the window moves, the match stays
+    editor._set_boxes((window[0] + 0.01, window[1]), None)
+    editor.draw()
+    assert editor._aligning is None
+    # a drag across the first row sets the window; across another row it does not
+    fig = panel.view.figure
+    to_fig = fig.transFigure.inverted()
+    start, end = window[0] + 0.02, window[1] - 0.01
+    (x0, y0), (x1, y1) = (to_fig.transform(first.transData.transform((t, 0.0)))
+                          for t in (start, end))
+    panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
+    assert editor.window() == pytest.approx((start, end), abs=2e-3)
+    (x0, y0), (x1, y1) = (to_fig.transform(second.transData.transform((t, 0.0)))
+                          for t in (start - 0.01, end - 0.01))
+    panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
+    assert editor.window() == pytest.approx((start, end), abs=2e-3)
+    # Compare with on this peptide's other ions: no other file, so no rows
+    w.compare.setCurrentIndex(w.compare.findData("ions"))
+    qtbot.waitUntil(lambda: not panel.drawing and not editor.each_file.isEnabled(),
+                    timeout=30000)
+    # the preview's fit done before the next test fits (two fits at once share PyTorch's
+    # forward-AD levels: window_edit._FIT_LOCK)
+    qtbot.waitUntil(lambda: editor.failure is not None or (
+        editor._previewed is not None and editor._previewed[1] == editor.window()),
+        timeout=60000)

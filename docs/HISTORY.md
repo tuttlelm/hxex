@@ -9297,3 +9297,23 @@ CSVs or mzML if wanted.
     without a hang (84 tests, about 70 s a run; at the earlier rate, 50 clean runs by chance
     would be about 2.5 %); tests/test_gui.py (collection off while a window exists and during a drawing, a
     due collection in the window's thread at the oldest generation, given back on release).
+
+366. **The elution tab aligns the files a spread reaches while a window is edited, or draws
+    one row per file (owner, 2026-11-11).** HISTORY 360's Compare with drew the replicates or
+    every file of the peptide where they are, so a save at those levels showed its result only
+    in the message. Drafts on the owner's case (the private pooled dataset's raw-file project,
+    a peptide eluting just before a brighter species): A, every file moved onto this file's
+    clock by its trace match and scaled to this trace's height; B, one row per file on its own
+    clock with its present window and the new one shifted into it. Owner: A as the view, B
+    behind a check box. Built: while Edit window is on and Compare with shows the replicates or
+    every file, the trace panel draws A (`report.retention._aligned_panel`; a file not matched
+    dashed, where it is), and **Each file's window** draws B (`plot_each_file`; this file the
+    top row, the only one a drag sets the window on; the sample named per row for every
+    file). The match (`gui.window_edit.align_files`, `Alignment`; `plan_spread` now builds on
+    it) is made in the background once per spectrum, level, and drift range; moving the window
+    does not redo it, and a save at that level uses it instead of matching again. On the
+    owner's case B shows that the three fully deuterated files whose present windows miss the
+    peptide's peak are where the shifted window moves furthest (-12 to -15 s). Also: the guide
+    listed Compare with's choices from before HISTORY 360. Check:
+    tests/test_gui_window_edit.py (a replicate moved by its shift; the rows; one match while
+    the window moves; a drag on the top row only; the check box off for other ions).
