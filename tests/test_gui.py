@@ -758,3 +758,22 @@ def test_the_sequence_views_residues_a_line_go_into_the_session(window):
     view.set_per_line(PER_LINE)
     window._apply(GuiSession(selection={"residues_per_line": 90}))
     assert view.per_line == 90 and "residues_per_line" not in window._pending_selection
+
+
+def test_tooltips_are_padded_on_a_cream_background(qtbot):
+    """The tooltip box: more room and a neutral cream background on a light desktop (owner,
+    2026-11-11), a warm dark grey on a dark one; applied to the application's style sheet."""
+    from PySide6.QtWidgets import QApplication
+
+    from hxex.gui.tips import TIP_COLOURS, style_tooltips, tooltip_style
+
+    light, dark = tooltip_style(False), tooltip_style(True)
+    assert "padding: 2px 4px" in light and TIP_COLOURS[False][0] in light
+    assert TIP_COLOURS[True][0] in dark and "#ffffdc" not in light.lower()
+    app = QApplication.instance()
+    before = app.styleSheet()
+    try:
+        style_tooltips(app)
+        assert "QToolTip" in app.styleSheet() and "padding" in app.styleSheet()
+    finally:
+        app.setStyleSheet(before)

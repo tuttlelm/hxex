@@ -939,6 +939,14 @@ peptide or a single ion:
   milliseconds) is always given on an ion's row; such a row may leave `rt_start` and `rt_end`
   empty to keep the peptide's window.
 
+A row is for one sample. When one file is read by several samples (controls shared by the
+samples of a state, say), each of them needs its own row for the window to act there; the
+window's **Save window** writes one for every sample that reads the file, since one injection
+has one elution. A row never reaches another file: replicates are other injections, whose
+retention moves a little, so each has a row of its own. The window can write those rows for you,
+shifted by each file's elution (**Save window** for the replicates or for every file of the
+peptide; see [Results](gui.md#results)).
+
 `rt_start` and `rt_end` are minutes on the file's own clock. The spectra then sum the scans
 inside the window, in that file only: `find_peak` and `find_fragment_peak` leave them alone,
 the other files read as before, and every spectrum stays in its series with the same controls.
@@ -949,7 +957,8 @@ data we measured), while the undeuterated control has no such difference. A wind
 half of the peak would shift the labelled spectra but not their reference.
 
 You rarely type this table: the elution tab of the window's Results page writes it (**Edit
-window**, then **Save window**, for all ions of this peptide or for this ion only; see
+window**, then **Save window**, for one charge state (ion), the whole peptide in one file, its
+replicates, or every file of the peptide; see
 [Results](gui.md#results)), and the first save adds the setting to your project file. A table
 written before peptide rows existed has an `ion` column only; its rows keep their meaning (one
 ion each). `hxex check` says how many windows the table holds and names any row whose sample,

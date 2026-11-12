@@ -3,9 +3,9 @@
 tab's bar, the window's start and end (minutes) and, for an ion-mobility file, its drift range
 (ms) as boxes, a drag across the trace or the drift profile to set them, the spectrum summed
 over the new window drawn beside the one the results hold (:func:`hxex.gui.window_edit.preview`),
-**Save window** for all ions of this peptide, in this run (default: its charge states and
-fragments elute together) or for this ion only, in this run (interference at its m/z), as a
-row for that file in the project's
+**Save window** for the whole peptide in this file (default: its charge states and fragments
+elute together) or for this charge state (ion) only (interference at its m/z), as rows for that
+file, one for each sample that reads it, in the project's
 ``[input] rt_elution_windows`` table (:func:`hxex.gui.window_edit.save_window`; the peptide
 table is not changed) and
 **Undo** (the table as it was before the last save)."""
@@ -24,16 +24,33 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QWidget,
 )
 
 from .tasks import Latest
 from .tips import tip
+from .window_edit import APPLY, scope_words
 
 log = logging.getLogger(__name__)
 
 _WAIT_MS = 400  # a changed box is previewed once it has been left alone this long
+
+
+# what the save choices mean (worded for both kinds of project: the choices' own text follows
+# the project, hxex.gui.window_edit.scope_words)
+SCOPE_TIP = (
+    "What the saved window is for. This charge state (ion) only: for interference at its own "
+    "m/z, in this file. Every charge state, in this file: the whole peptide (and its fragment "
+    "ions, when they are read); the same molecules elute together (Compare with: this peptide's "
+    "other charge states shows whether they do). In this file and its replicates: also the "
+    "sample's other files at this time point (or control). In every file of the peptide: every "
+    "file of every sample that reads it. In other files the window is shifted by that file's "
+    "elution, matched on this charge state's trace; a file whose match is unclear is left for "
+    "you, and you are asked before windows set in a file before are replaced. A changed drift "
+    "range is saved for this charge state only (drift times differ between charge states). A "
+    "file that several samples read gets the window in each (one injection, one window)")
 
 
 @dataclass
@@ -59,6 +76,7 @@ class WindowEditor(QObject):
 
     message = Signal(str)
     saved = Signal(str)  # the elution-window table written (its path)
+    level_chosen = Signal(str)  # the user chose how to save (the tab shows its evidence)
 
     def __init__(self, panel, context: Callable[[], TraceContext | None],
                  plain: Callable[[], None], parent=None):
@@ -101,14 +119,12 @@ class WindowEditor(QObject):
         self.each_k.setToolTip(tip("the new window's spectrum fitted at every K the run tried"))
         self.each_k.toggled.connect(lambda _on: self.draw())
         self.scope = QComboBox()
-        self.scope.addItem("all ions of this peptide, in this run", "peptide")
-        self.scope.addItem("this ion only, in this run", "ion")
-        self.scope.setToolTip(
-            tip("all ions of this peptide, in this run: its charge states (MS1) and, as a parent, "
-                "all its fragment ions (MS2, MS3) take the window, in this file only (the same "
-                "molecules elute together; Compare with: this peptide's other ions in this run "
-                "shows whether they do). This ion only, in this run: for interference at this "
-                "ion's own m/z"))
+        for data, text in scope_words("", False).items():
+            self.scope.addItem(text, data)
+        self.scope.setToolTip(SCOPE_TIP)
+        # the user's own choice only (not the editor's, setting it to a saved window's kind)
+        self.scope.activated.connect(lambda _i: self.level_chosen.emit(self.scope.currentData()))
+        self._spread_task = Latest(self)  # the trace match of a window spread to other files
         self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
@@ -201,15 +217,16 @@ class WindowEditor(QObject):
             self._target = target
             self.preview, self.failure, self._previewed, self._summed = None, None, None, None
             window, drift_range = selected.window, drift
+            self._word_scope(ctx)
             saved = self._saved_row(ctx)
             if saved is not None:
                 window, drift_range = saved[0], saved[1] or drift
-                whose = ("this ion has a window of its own" if saved[2] == "ion" else
-                         "its peptide has a window")
+                whose = ("this charge state (ion) has a window of its own"
+                         if saved[2] == "ion" else "its peptide has a window")
                 self.scope.setCurrentIndex(self.scope.findData(saved[2]))
                 self.message.emit(f"{whose} in this file ({window[0]:.4g}-{window[1]:.4g} min, "
-                                  "the elution-window table): shown here; the results change "
-                                  "when the project is run again")
+                                  "the elution-window table), shown here; if the results do "
+                                  "not show it yet, " + APPLY.replace("to use it, ", ""))
             else:
                 self.scope.setCurrentIndex(self.scope.findData("peptide"))
             self._has_drift = drift is not None
@@ -220,6 +237,16 @@ class WindowEditor(QObject):
             self.refresh()
             return
         self.draw()
+
+    def _word_scope(self, ctx: TraceContext) -> None:
+        """The save choices worded for the project (fragment ions or charge states) and the
+        selected ion (its charge)."""
+        from .window_edit import has_fragments
+
+        key = self._key(ctx)
+        words = scope_words(key[2] if key else "", has_fragments(ctx.reader))
+        for i in range(self.scope.count()):
+            self.scope.setItemText(i, words[self.scope.itemData(i)])
 
     def _set_boxes(self, window, drift) -> None:
         boxes = [(self.start, window[0]), (self.end, window[1])]
@@ -392,13 +419,25 @@ class WindowEditor(QObject):
             self.save.setEnabled(True)
             self.save.setToolTip(tip("write the window for this file in the project's "
                                      "elution-window table ([input] rt_elution_windows; made by "
-                                     "the first save), for all ions of this peptide or this ion "
-                                     "only, in this run (the choice beside); the peptide table is "
-                                     "not changed, and the results change when the project is run "
-                                     "again"))
+                                     "the first save), for the whole peptide or this charge "
+                                     "state (ion) only (the choice beside), for every sample "
+                                     "that reads this file; the peptide table is not changed, "
+                                     "and the results change when the project is run again "
+                                     "with overwrite enabled (Run on the Run tab); only the "
+                                     "series whose spectra changed are fitted again"))
 
     def _save(self) -> None:
-        from .window_edit import DEFAULT_NAME, save_window, table_path
+        from .window_edit import (
+            DEFAULT_NAME,
+            has_fragments,
+            own_windows,
+            plan_spread,
+            samples_reading,
+            save_window,
+            saved_words,
+            spread_words,
+            table_path,
+        )
 
         ctx = self.context()
         if ctx is None:
@@ -414,39 +453,87 @@ class WindowEditor(QObject):
         if not table_path(project)[1]:  # the first save: where the table goes (owner)
             from .table_choice import ask_table
 
-            chosen = ask_table(self, project, "input.rt_elution_windows", DEFAULT_NAME,
+            chosen = ask_table(self.panel, project, "input.rt_elution_windows", DEFAULT_NAME,
                                "elution-window table")
             if chosen is None:
                 self.message.emit("not saved: no table chosen for the windows")
                 return
         spectrum = self.preview.spectrum
-        whole = self.scope.currentData() == "peptide"
+        level = self.scope.currentData()
+        whole = level != "ion"
         peptide, siblings, shared = self._peptide(ctx)
         drift = self.drift()
         if whole and drift is not None and self._drift_shown is not None and all(
                 abs(a - b) < 5e-4 for a, b in zip(drift, self._drift_shown, strict=True)):
             drift = None  # not changed: the ion's drift range stays as it is
-        try:
-            saved = save_window(project, key, (spectrum.rt_start, spectrum.rt_end), drift,
-                                peptide=peptide, whole=whole, siblings=siblings,
-                                shared=shared, table=chosen)
-        except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
-            self.message.emit(f"not saved: {exc}")
+        samples = samples_reading(ctx.reader, ctx.spectrum_id, ctx.data_id,
+                                  siblings if whole else (key[2],), peptide)
+        window = (spectrum.rt_start, spectrum.rt_end)
+
+        def write(plans=(), kept=()):
+            more = [(sample, p.file, p.window) for p in plans
+                    if p.window is not None and p.file not in kept for sample in p.samples]
+            try:
+                saved = save_window(project, key, window, drift, peptide=peptide, whole=whole,
+                                    siblings=siblings, shared=shared, table=chosen,
+                                    samples=samples, more=more)
+            except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
+                self.message.emit(f"not saved: {exc}")
+                return
+            self.history.append(saved)
+            self.undo.setEnabled(True)
+            text = saved_words(saved, peptide=peptide, ion=key[2], file=key[1], whole=whole,
+                               fragments=has_fragments(ctx.reader),
+                               drift_written=drift is not None)
+            if level in ("replicates", "everywhere"):
+                spread = spread_words(plans, kept) or "no other file of it to spread to"
+                text = text.replace(f"; {APPLY}", f"; {spread}; {APPLY}", 1)
+            self.message.emit(text)
+            self.saved.emit(str(saved.path))
+
+        if level not in ("replicates", "everywhere"):
+            write()
             return
-        self.history.append(saved)
-        self.undo.setEnabled(True)
-        what = "added" if saved.added else "changed"
-        named = (f"; named in {project.name} as [input] rt_elution_windows"
-                 if len(saved.files) > 1 else "")
-        name = (f"peptide {peptide} (all its ions, in this run)" if whole
-                else f"{key[2]} (this ion only, in this run)")
-        own = (f"; {len(saved.own)} other ion(s) of it keep a window of their own"
-               if saved.own else "")
-        self.message.emit(
-            f"{saved.path.name}: {name} in {key[1]} {what} ({saved.row.get('rt_start')}-"
-            f"{saved.row.get('rt_end')} min){own}{named}; run the project again (hxex run "
-            "--overwrite) to use it")
-        self.saved.emit(str(saved.path))
+        results = ctx.results
+        self.panel.set_task("Matching the other files' traces…")
+        self.save.setEnabled(False)
+
+        def work():
+            return plan_spread(ctx.reader, results, ctx.spectrum_id, ctx.data_id, window,
+                               peptide=peptide, ion=key[2], ions=siblings, level=level,
+                               drift=self.drift())  # the species chosen in drift time
+
+        def done(plans) -> None:
+            self.panel.set_task(None)
+            self.save.setEnabled(True)
+            places = [(sample, p.file) for p in plans if p.window is not None
+                      for sample in p.samples]
+            own = own_windows(project, peptide, siblings, places)
+            kept: list[str] = []
+            if own:
+                files = sorted({f for _s, f in own})
+                box = QMessageBox(QMessageBox.Icon.Question, "Windows set before",
+                                  f"{len(files)} of the files already have a window of this "
+                                  f"peptide set before: {', '.join(files)}. Replace them with "
+                                  "the shifted window, or keep them?", parent=self.panel)
+                replace_button = box.addButton("Replace them", QMessageBox.ButtonRole.AcceptRole)
+                keep_button = box.addButton("Keep them", QMessageBox.ButtonRole.RejectRole)
+                box.addButton(QMessageBox.StandardButton.Cancel)
+                box.exec()
+                clicked = box.clickedButton()
+                if clicked is keep_button:
+                    kept = files
+                elif clicked is not replace_button:
+                    self.message.emit("not saved")
+                    return
+            write(plans, kept)
+
+        def failed(message: str) -> None:
+            self.panel.set_task(None)
+            self.save.setEnabled(True)
+            self.message.emit(f"not saved: {message}")
+
+        self._spread_task.submit(work, done, failed)
 
     def _undo(self) -> None:
         from .window_edit import undo_window

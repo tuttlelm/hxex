@@ -240,7 +240,7 @@ def test_a_running_command_shows_outside_the_run_tab(qtbot, stand_in, tmp_path):
     w.tabs.setCurrentIndex(WORKSPACES.index("results"))
     page.run_command("run")
     qtbot.waitUntil(lambda: "fit: 50%" in w.running.text(), timeout=20000)
-    assert w.tabs.tabText(run_tab) == "Run (running)" and not w.running.isHidden()
+    assert w.tabs.tabText(run_tab) == "Running" and not w.running.isHidden()
     assert w.running.text().startswith("running: hxex run hxex.toml: fit: 50%")
     assert w.tabs.tabBar().tabTextColor(run_tab).isValid()
     w.running.click()  # opens the Run tab

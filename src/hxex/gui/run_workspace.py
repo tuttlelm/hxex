@@ -48,7 +48,12 @@ log = logging.getLogger(__name__)
 
 # (button, command, what it does): the commands a project runs, in the order of a project's life
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
-            ("Run", "run", "read, pick, fit and bootstrap: the results bundle"),
+            ("Run", "run",
+             "read, pick, fit and bootstrap: the results bundle. Run again after changing what "
+             "is read (the peptide table, elution windows saved in the elution tab, picking or "
+             "fit settings) with overwrite enabled ([output] overwrite = true, or Replace when "
+             "it asks; --overwrite): only the series whose spectra changed are fitted again, "
+             "and your review decisions are kept"),
             ("Resume", "resume",
              "add to the results without fitting again: finish a stopped bootstrap, add or "
              "redo one (its settings changed), bootstrap the K your review chose; add or redo "

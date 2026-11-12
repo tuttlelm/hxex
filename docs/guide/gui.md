@@ -232,15 +232,16 @@ ion's bins (the tallest point in the picking window of each bin, added up over t
 stretch of the run around the scans it summed (shaded). **Compare with** chooses what is drawn
 behind it:
 
-- **this ion in the other runs** (the default): the same ion in the sample's other runs (its
-  other time points, replicates, and controls), in grey. A run that eluted earlier or later, or
-  a window that caught another peak, stands out: that run needs a window of its own.
-- **this peptide's other ions in this run**: the peptide's other charge states (MS1) and, when
-  you read fragments, its fragment ions, one line per fragment channel (its ions added up), in
-  colour, each scaled to the selected trace's height so that the peaks compare. They come from
-  the same molecules and elute together; an ion whose peak sits apart from the others has
-  interference at its own m/z. This tells you which choice to make when you save a window
-  (below).
+- **this charge state in the sample's other files** (the default; **this ion** when you read
+  fragments): the same charge state in the sample's other files (its other time points,
+  replicates, and controls), in grey. A file that eluted earlier or later, or a window that
+  caught another peak, stands out: that file needs a window of its own.
+- **this peptide's other charge states in this file** (**other ions** when you read fragments):
+  the peptide's other charge states and, when you read fragments, its fragment ions, one line
+  per fragment channel (its ions added up), in colour, each scaled to the selected trace's
+  height so that the peaks compare. They come from the same molecules and elute together; one
+  whose peak sits apart from the others has interference at its own m/z. This tells you which
+  choice to make when you save a window (below).
 
 For ion-mobility files the trace keeps to the spectrum's drift
 range, and a second panel shows the drift profile of the scans summed, with that range shaded.
@@ -271,18 +272,40 @@ K than the preview did.
 **Save window** writes the window as a row of the project's elution-window table. The choice
 beside it says what the row is for:
 
-- **all ions of this peptide, in this run** (the default): every ion of the peptide in this
-  file takes the window: its charge states (MS1) and, when you read fragments, all its fragment
-  ions (MS2, MS3). Other runs keep their own windows. The ions are the same molecules and elute
-  together, so this is usually right.
-  If this ion had a window of its own, it now follows its peptide; the message names any other
-  ion of the peptide that keeps a window of its own.
-- **this ion only, in this run**: for interference at this ion's own m/z, when this one ion
-  needs a different window from the rest of its peptide. The row names the peptide as well, so it is
-  for this peptide's ion only.
+- **this charge state only (z = 3), in this file** (**this ion only** when you read fragments):
+  for interference at its own m/z, when this one needs a different window from the rest of its
+  peptide. The row names the peptide as well, so it is for this peptide's ion only.
+- **every charge state of this peptide, in this file** (the default; **this peptide, its
+  charge states and fragment ions** when you read fragments): every charge state of the
+  peptide in this file takes the window and, when you read fragments, all its fragment ions
+  (MS2, MS3). They are the same molecules and elute together, so this is usually right.
+  If this charge state (or ion) had a window of its own, it now follows its peptide; the
+  message names any other one of the peptide that keeps a window of its own.
+- **every charge state, in this file and its replicates (each shifted)**: as above, and in the
+  sample's other files at the same time point (or the same control).
+- **every charge state, in every file of the peptide (each shifted)**: as above, in every file
+  of every sample that reads the peptide: its time points, replicates, and controls.
 
-On ion-mobility files a changed drift range is always kept for this ion only (drift times
-differ between charge states). When the project file names no table yet, the first save asks
+Retention moves a little between injections (a few seconds), so the last two choices do not
+copy the minutes: *hxex* matches each file's trace of this charge state (within the drift
+range in the boxes, on ion-mobility files, so that a brighter species at another drift time on
+the same m/z does not decide it) against this file's trace, within 30 s either way, and shifts
+the window by the difference. The message lists the files and their shifts (with more than four files,
+their range; each file is in the log). A file whose match is unclear (the best match at the
+edge of the 30 s, no signal, or traces that do not look alike) gets no window: the message
+names it, so that you can set it by hand. If some of the files already have a window of this
+peptide that you (or an earlier save) set, *hxex* asks first: **Replace them** with the
+shifted window, **Keep them** as they are, or **Cancel**. Matching takes about half a second
+per file. Open any of the files' spectra afterwards to see the window it got.
+
+When one file is read by several samples (controls shared by the samples of a state, say), the
+window is saved for every one of them, since it is one injection;
+the message after saving names the samples. On ion-mobility files a changed drift range is
+always kept for this charge state (or ion) only, also when you save for the whole peptide
+(drift times differ between charge states), and is not shifted in other files (drift times
+hold between injections); the message says so.
+
+When the project file names no table yet, the first save asks
 where it goes, suggesting `rt_elution_windows.csv` beside the project file (with the project
 file's name in front when it is not `hxex.toml`, such as `hxex_findpeak_rt_elution_windows.csv`,
 so two project files in one folder keep their windows apart). If the file you choose exists
@@ -292,9 +315,10 @@ again for the same peptide or ion and file changes its row. Your peptide table i
 or ion already has a saved window in that file, the boxes show it and the choice is set to
 match. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save. Saving needs the results opened from their project file, and the table
-opens in **Tables** like the others. The saved windows are used when you run the project again
-(`hxex run --overwrite`, which fits
-again only the series whose spectra changed); each spectrum stays in its series (see [A peptide's own window in one
+opens in **Tables** like the others. The saved windows are used when you run the project again with overwrite enabled: **Run** on
+the Run tab with `overwrite = true` in the project file's `[output]` part, or **Replace** when
+it asks about the earlier results (on the command line, `hxex run --overwrite`). That run reads every file again but fits again only the series whose spectra
+changed, so it takes a fraction of the first run's time, and your review decisions are kept; each spectrum stays in its series (see [A peptide's own window in one
 file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the scans it summed,
 so a spectrum with a new window has a new id after the run; your review decisions for it follow
 it to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
@@ -505,6 +529,12 @@ would type it. One command runs at a time.
 - When a command finds results it would replace (a second **Run**, say), it changes nothing
   and the window asks: replace them, keep them under the next free name (`results.1`, ...),
   or cancel. These are the command's `--overwrite` and `--keep-previous`.
+- Run the project again after changing what is read: the peptide table, the elution windows
+  saved in the elution tab, or the picking or fit settings, with overwrite enabled:
+  `overwrite = true` in the project file's `[output]` part (then **Run** replaces the earlier
+  results without asking), or **Replace** when it asks. The run reads every file again but fits
+  again only the series whose spectra changed, so it takes a fraction of the first run's time,
+  and your review decisions are kept.
 - The list below the buttons chooses where **Run** and **Resume** fit. Its first entry is the
   project file's setting, `[run.fit.backend] device`, with its value (`auto`, the default, uses
   an NVIDIA graphics card when *hxex* can see one, else the CPU); **Change…** opens that
@@ -522,8 +552,8 @@ would type it. One command runs at a time.
   choose one to see its output. Only the project file's own commands are listed, also when
   several project files share a folder. The next command you run clears the console.
 - After **Run**, **Resume**, or **Report**, the Results part shows the new results.
-- While a command runs, the other parts of the window show it too: the tab reads **Run
-  (running)** in the highlight colour, and the right end of the status bar, at the bottom of
+- While a command runs, the other parts of the window show it too: the tab reads **Running**
+  in the highlight colour, and the right end of the status bar, at the bottom of
   the window, shows the command, its step, and its run time (click it to open **Run**). When
   the command ends while you are elsewhere, the tab says how it ended (**Run (done)**,
   **(stopped)**, or **(failed)**) until you open it.

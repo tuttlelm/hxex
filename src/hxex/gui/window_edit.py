@@ -13,8 +13,11 @@ never changed, and nothing in the results changes until the project is run again
 
 from __future__ import annotations
 
+import logging
 import math
+import re
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -24,6 +27,8 @@ from ..fit import Measurements, fit_models
 from ..picking import pick_spectra
 from ..spectra import Spectrum, SpectrumSet
 from .user_tables import read_table, table_problem, write_table
+
+log = logging.getLogger(__name__)
 
 # the preview's fit starts every K from the run's fit of the spectrum whose window changed and
 # takes these few steps (measured on the intact-peptide benchmark, 2026-11-07: 0.6 s per
@@ -187,6 +192,7 @@ class SavedWindow:
     row: dict[str, str]
     added: bool
     own: tuple[str, ...] = ()
+    samples: tuple[str, ...] = ()  # every sample a row was written for (the key's first)
 
     @property
     def path(self) -> Path:
@@ -212,10 +218,336 @@ def table_path(project_path: str | Path) -> tuple[Path, bool]:
                                                           False)
 
 
+# --- the words for what a window is saved for (owner, 2026-11-11: "run" and "ion" were the
+# fragment projects' words; for a peptide project "ion" means a charge state, and "run" is a
+# file, while hxex also says run for hxex run and for an analysis's separate projects)
+
+
+def has_fragments(source) -> bool:
+    """Whether a read record (or a :class:`~hxex.io.retention_trace.TraceReader`) reads fragment
+    ions (targets beyond MS1): the choices then name ions, else charge states."""
+    targets = getattr(source, "targets", None)
+    if targets is None:
+        targets = (source or {}).get("targets") or ()
+    return any(int((t.get("ms_level") if isinstance(t, dict) else t.ms_level) or 1) > 1
+               for t in targets)
+
+
+def charge_of(ion: str) -> int | None:
+    """The charge an MS1 ion label (``0129-0151-SEQUENCE-z3``) ends in; None for another."""
+    m = re.search(r"-z(\d+)$", ion)
+    return int(m.group(1)) if m else None
+
+
+def scope_words(ion: str, fragments: bool) -> dict[str, str]:
+    """The window editor's two choices (by their data: ``peptide`` and ``ion``) for the
+    selected ``ion`` (as spectrum ids name it), worded for a project with or without fragment
+    ions."""
+    if fragments:
+        return {"ion": "this ion only, in this file",
+                "peptide": "this peptide, its charge states and fragment ions, in this file",
+                "replicates": "this peptide and its ions, in this file and its replicates "
+                              "(each shifted)",
+                "everywhere": "this peptide and its ions, in every file of the peptide "
+                              "(each shifted)"}
+    z = charge_of(ion)
+    return {"ion": (f"this charge state only (z = {z}), in this file" if z
+                    else "this charge state only, in this file"),
+            "peptide": "every charge state of this peptide, in this file",
+            "replicates": "every charge state, in this file and its replicates (each shifted)",
+            "everywhere": "every charge state, in every file of the peptide (each shifted)"}
+
+
+def compare_words(fragments: bool) -> dict[str, str]:
+    """The elution tab's Compare with choices, one for each save level beyond this charge
+    state alone (``ions``: level 2, ``replicates``: 3, ``everywhere``: 4; owner, 2026-11-11),
+    worded as :func:`scope_words`."""
+    one, others = ("this ion", "other ions") if fragments else ("this charge state",
+                                                               "other charge states")
+    return {"ions": f"this peptide's {others} in this file",
+            "replicates": f"{one} in its replicates",
+            "everywhere": f"{one} in every file of the peptide"}
+
+
+# the save level each Compare with view shows the evidence for (and the reverse)
+COMPARE_FOR_LEVEL = {"peptide": "ions", "replicates": "replicates", "everywhere": "everywhere"}
+
+
+def saved_words(saved, *, peptide: str, ion: str, file: str, whole: bool, fragments: bool,
+                drift_written: bool) -> str:
+    """What a save wrote, for the status bar: the table, what the window is for, the file and
+    every sample it was written for, and the drift range's own row when it has one."""
+    if whole:
+        what = (f"peptide {peptide} (its charge states and fragment ions)" if fragments
+                else f"peptide {peptide} (every charge state)")
+    else:
+        z = None if fragments else charge_of(ion)
+        what = f"{peptide} z = {z} only" if z else f"{ion} only"
+    samples = saved.samples or ()
+    whose = (f"sample {samples[0]}" if len(samples) <= 1
+             else f"samples {', '.join(samples)} (the file is read in each)")
+    action = "added" if saved.added else "changed"
+    text = (f"{saved.path.name}: window for {what} in {file} {action} "
+            f"({saved.row.get('rt_start')}-{saved.row.get('rt_end')} min), for {whose}")
+    if whole and drift_written:
+        own = "this ion" if fragments else f"z = {charge_of(ion)}"
+        text += (f"; the drift range is saved for {own} only (drift times differ between "
+                 "charge states)")
+    if saved.own:
+        text += f"; {len(saved.own)} other ion(s) of it keep a window of their own"
+    if len(saved.files) > 1:
+        text += "; named in the project file as [input] rt_elution_windows"
+    return f"{text}; {APPLY}"
+
+
+def samples_reading(reader, spectrum_id: str, data_id: int, ions: Sequence[str],
+                    peptide: str | None = None) -> tuple[str, ...]:
+    """The samples that read the file of ``spectrum_id`` (series ``data_id``; the same recorded
+    path, :class:`hxex.io.retention_trace.TraceReader` ``reader``) and one of ``ions`` (as the
+    spectrum ids name them; of ``peptide`` when given) from it, the spectrum's own sample first:
+    the samples a window saved from it is written for. A file read in several samples (controls
+    shared by the samples of a state) is one injection, so one window. () when the id names no
+    run of the record."""
+    from ..io.elution_windows import peptide_label
+    from ..io.mzml import _target_label, target_applies
+
+    where = reader.locate(spectrum_id, data_id)
+    if where is None:
+        return ()
+    run = reader.runs[where[0]]
+    wanted = set(ions)
+    out = [run.sample]
+    for other in reader.runs:
+        if other.sample in out or not _same_path(other.path, run.path):
+            continue
+        if any(_target_label(t) in wanted and target_applies(t, other)
+               and (peptide is None or peptide_label(t.entry) == peptide)
+               for t in reader.targets):
+            out.append(other.sample)
+    return tuple(out)
+
+
+# how a saved window reaches the results, said wherever a window is saved or shown (owner,
+# 2026-11-11: "requires a new run" did not say how, nor that it must replace the results)
+APPLY = ("to use it, run the project again with overwrite enabled: Run on the Run tab with "
+         "[output] overwrite = true, or Replace when it asks (hxex run --overwrite); only the "
+         "series whose spectra changed are fitted again, and your review decisions are kept")
+
+
+# --- a window spread to other files (owner, 2026-11-11: four levels for MS1; this spectrum,
+# this file's charge states, the replicates at its time point or control, the whole peptide)
+
+SPREAD_LEVELS = ("ion", "peptide", "replicates", "everywhere")
+SHIFT_SEARCH = 0.5  # minutes either way the trace match looks (30 s)
+MATCH_FLOOR = 0.5  # the matched traces' correlation below which a shift is not trusted
+_GRID = 0.002  # minutes: the common time grid of a match
+
+
+@dataclass(frozen=True)
+class FilePlan:
+    """Where a window spread to another file goes: the ``file`` (its name) of run ``path``,
+    the ``samples`` that read it, the ``shift`` (minutes; the file's elution against the edited
+    file's, from their traces of the charge state) and the shifted ``window``; ``why`` (and no
+    window) when the match is not trusted. ``correlation`` is the match's."""
+
+    file: str
+    path: str
+    samples: tuple[str, ...]
+    shift: float | None
+    window: tuple[float, float] | None
+    correlation: float | None = None
+    why: str | None = None
+
+
+def trace_shift(ref_times, ref_intensity, times, intensity,
+                search: float = SHIFT_SEARCH) -> tuple[float | None, float | None, str | None]:
+    """How far (minutes) one trace's elution sits from a reference's: the lag of the largest
+    correlation of the two (each less its minimum) within ``search`` either way, as (shift,
+    correlation, None), or (None, correlation, why) when the match is not trusted: no signal,
+    a best lag at the search's edge, or a correlation below :data:`MATCH_FLOOR`."""
+    ref_t, ref_i = np.asarray(ref_times, float), np.asarray(ref_intensity, float)
+    t, i = np.asarray(times, float), np.asarray(intensity, float)
+    if len(ref_t) < 3 or len(t) < 3 or np.ptp(i) <= 0 or np.ptp(ref_i) <= 0:
+        return None, None, "no signal in its trace"
+    grid = np.arange(min(ref_t.min(), t.min()) - search, max(ref_t.max(), t.max()) + search,
+                     _GRID)
+    a = np.interp(grid, ref_t, ref_i - ref_i.min(), left=np.nan, right=np.nan)
+    b = np.interp(grid, t, i - i.min(), left=np.nan, right=np.nan)
+    steps = int(round(search / _GRID))
+    best = (-np.inf, 0)
+    for lag in range(-steps, steps + 1):  # b(t + lag) against a(t)
+        x = a[max(0, -lag):len(a) - max(0, lag)]
+        y = b[max(0, lag):len(b) - max(0, -lag)]
+        ok = np.isfinite(x) & np.isfinite(y)
+        if ok.sum() < 10 or np.ptp(x[ok]) <= 0 or np.ptp(y[ok]) <= 0:
+            continue
+        r = float(np.corrcoef(x[ok], y[ok])[0, 1])
+        if r > best[0]:
+            best = (r, lag)
+    r, lag = best
+    if not np.isfinite(r):
+        return None, None, "its trace does not overlap"
+    if abs(lag) >= steps - 1:
+        return None, r, f"the best match is at the search's edge ({search * 60:.0f} s)"
+    if r < MATCH_FLOOR:
+        return None, r, f"the traces do not match (correlation {r:.2f})"
+    return lag * _GRID, r, None
+
+
+def spread_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str, ion: str,
+                 level: str) -> list[tuple[str, int]]:
+    """The other files a window saved at ``level`` (``replicates``: the spectrum's sample's
+    files at its time point or control; ``everywhere``: every file of every sample that reads
+    the charge state ``ion`` of ``peptide``) reaches, as one spectrum (id, series) of ``ion``
+    per file: from the spectra ``results`` fitted (their ids and series), the edited file left
+    out. A file without a spectrum of this charge state is not listed."""
+    from ..io.elution_windows import peptide_label
+    from ..spectra import split_spectrum_id
+
+    if level not in ("replicates", "everywhere"):
+        return []
+    where = reader.locate(spectrum_id, data_id)
+    if where is None:
+        return []
+    here = reader.runs[where[0]]
+    out, seen = [], {Path(str(here.path)).as_posix()}
+    ids = np.asarray(results.fit.spectrum_id).astype(str)
+    series = np.asarray(results.measurements.data_id)
+    for sid, d in zip(ids, series, strict=True):
+        try:
+            local = split_spectrum_id(sid)[1]
+        except ValueError:
+            continue
+        parts = local.split("/")
+        if len(parts) < 3 or parts[2] != ion:
+            continue
+        d = int(d)
+        if d not in reader.of_series:
+            continue
+        if peptide_label(reader.targets[reader.of_series[d]].entry) != peptide:
+            continue
+        found = reader.locate(sid, d)
+        if found is None:
+            continue
+        run = reader.runs[found[0]]
+        key = Path(str(run.path)).as_posix()
+        if key in seen:
+            continue
+        if level == "replicates" and not (run.sample == here.sample and run.role == here.role
+                                          and run.time == here.time):
+            continue
+        seen.add(key)
+        out.append((sid, d))
+    return out
+
+
+def plan_spread(reader, results, spectrum_id: str, data_id: int,
+                window: tuple[float, float], *, peptide: str, ion: str, ions: Sequence[str],
+                level: str, drift: tuple[float, float] | None = None,
+                cancel=None) -> list[FilePlan]:
+    """Each other file a window saved at ``level`` reaches (:func:`spread_files`), with the
+    window shifted by that file's elution against the edited file's (:func:`trace_shift`, the
+    charge state's traces within ``drift`` (ms) when given: the species chosen in drift time,
+    not a brighter one at another drift time on the same m/z, which elutes with shifts of its
+    own; owner's case, 2026-11-11: fully deuterated files 4-8 s further than over all drift
+    times), or why not. ``ions``
+    (the peptide's, as spectrum ids name them) decide which samples read each file."""
+    from ..hooks import Cancelled
+    from ..io.mzml import run_name
+
+    others = spread_files(reader, results, spectrum_id, data_id, peptide=peptide, ion=ion,
+                          level=level)
+    if not others:
+        return []
+    ranges = None if drift is None else {spectrum_id: drift}
+    ref = reader.traces([spectrum_id], data_id, drift_ranges=ranges).traces
+    if not ref:
+        raise ValueError("the edited spectrum's trace could not be read")
+    ref = ref[0]
+    plans = []
+    for sid, d in others:
+        if cancel is not None and cancel():
+            raise Cancelled("the window's spread was not wanted any more")
+        found = reader.locate(sid, d)
+        run = reader.runs[found[0]]
+        file, samples = run_name(run), samples_reading(reader, sid, d, ions, peptide)
+        got = reader.traces([sid], d,
+                            drift_ranges=None if drift is None else {sid: drift}).traces
+        if not got:
+            plans.append(FilePlan(file, str(run.path), samples, None, None,
+                                  why="its trace could not be read"))
+            continue
+        shift, r, why = trace_shift(ref.times, ref.intensity, got[0].times, got[0].intensity)
+        moved = None if shift is None else (window[0] + shift, window[1] + shift)
+        plans.append(FilePlan(file, str(run.path), samples, shift, moved, r, why))
+    return plans
+
+
+def spread_words(plans: Sequence[FilePlan], kept: Sequence[str] = ()) -> str:
+    """The files a spread reached, each with its shift, those it did not (and why), and those
+    that kept a window of their own (``kept``, file names), for the status bar."""
+    done = [p for p in plans if p.window is not None and p.file not in kept]
+    out = []
+    if len(done) > 4:  # the files one by one in the log; their range here
+        shifts = [p.shift * 60 for p in done]
+        log.info("window spread: %s", ", ".join(f"{p.file} {p.shift * 60:+.1f} s" for p in done))
+        out.append(f"spread to {len(done)} files, shifted {min(shifts):+.0f} to "
+                   f"{max(shifts):+.0f} s (each in the log)")
+    elif done:
+        out.append(f"spread to {len(done)} file(s): " + ", ".join(
+            f"{p.file} {p.shift * 60:+.0f} s" for p in done))
+    missed = [p for p in plans if p.window is None]
+    if missed:
+        out.append(f"not spread to {len(missed)} (set them by hand): " + ", ".join(
+            f"{p.file} ({p.why})" for p in missed))
+    if kept:
+        out.append(f"kept their own window: {', '.join(kept)}")
+    return "; ".join(out)
+
+
+def own_windows(project_path, peptide: str, ions: Sequence[str],
+                places: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Which ``places`` (sample, file) already hold a window of the peptide's own in the
+    project's elution-window table: a row naming the peptide, or one of its ``ions``, with a
+    window or a drift range (set by hand or by an earlier save); a spread asks before replacing
+    them (owner, 2026-11-11)."""
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return []
+    table = read_table(path)
+    names = [c.strip().lower() for c in table.columns]
+    if not {"sample", "file"} <= set(names):
+        return []
+
+    def cell(r, column):
+        return r[names.index(column)].strip() if column in names else ""
+
+    wanted, out = set(places), []
+    mine = set(ions)
+    for r in table.rows:
+        place = (cell(r, "sample"), cell(r, "file"))
+        if place not in wanted or place in out:
+            continue
+        pep, ion = cell(r, "peptide"), cell(r, "ion")
+        if not (pep == peptide or (ion in mine and pep in ("", peptide))):
+            continue
+        if any(cell(r, c) for c in ("rt_start", "rt_end", "drift_start", "drift_end")):
+            out.append(place)
+    return out
+
+
+def _same_path(a, b) -> bool:
+    """Whether two recorded run paths name the same file (as recorded: a project records its
+    runs' paths one way)."""
+    return Path(str(a)).as_posix() == Path(str(b)).as_posix()
+
+
 def save_window(project_path: str | Path, key: tuple[str, str, str],
                 window: tuple[float, float], drift: tuple[float, float] | None = None, *,
                 peptide: str | None = None, whole: bool = False, siblings=(),
-                shared: bool = False, table: str | Path | None = None) -> SavedWindow:
+                shared: bool = False, table: str | Path | None = None,
+                samples: Sequence[str] = (),
+                more: Sequence[tuple[str, str, tuple[float, float]]] = ()) -> SavedWindow:
     """Write ``window`` (minutes: the first and last scan of the spectrum summed again over it)
     to the project's ``[input] rt_elution_windows`` table for ``key`` (sample, file name, ion
     as the spectrum ids name it) of ``peptide`` (as :func:`hxex.io.elution_windows
@@ -230,6 +562,13 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
     times differ between charge states): give it only when it was changed. Otherwise the row is
     the ion's own, naming its peptide too (two parents can give fragment ions of the same
     name), with ``drift``: an exception, such as interference at its own m/z.
+
+    ``samples``: the other samples that read the same file (:func:`samples_reading`; one
+    injection, so one window, owner 2026-11-11): the same rows are written for each of them, as
+    the table keys its rows by sample. ``more``: (sample, file, window) of other files the window
+    is spread to (:func:`plan_spread`, shifted by each file's elution), written as ``whole``
+    rows are (the peptide's row; ``drift`` on the ion's own row), and there every ion of the
+    peptide gives up a window of its own (the window asks first, :func:`own_windows`).
 
     The row is changed, or one is added. When the project file names no table, the first save
     writes ``table`` (the window asks where, :func:`hxex.gui.table_choice.ask_table`; else
@@ -261,49 +600,64 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
             for r in table.rows:
                 r.append("")
     at = {c: names.index(c) for c in COLUMNS}
-    sample, file, ion = key
+    first, file, ion = key
     pep = peptide or ""
+    written = tuple(dict.fromkeys([first, *samples]))
 
     def cell(r, column):
         return r[at[column]].strip()
-
-    def find(pep_value, ion_value):
-        return [r for r in table.rows if (cell(r, "sample"), cell(r, "file"), cell(r, "peptide"),
-                                          cell(r, "ion")) == (sample, file, pep_value, ion_value)]
-
-    def put(pep_value, ion_value):
-        own = find(pep_value, ion_value)
-        if own:
-            return own[0], False
-        row = [""] * len(table.columns)
-        row[at["sample"]], row[at["file"]] = sample, file
-        row[at["peptide"]], row[at["ion"]] = pep_value, ion_value
-        table.rows.append(row)
-        return row, True
 
     def span(row, values, places, start, end):
         row[at[start]] = "" if values is None else _text(values[0], places, up=False)
         row[at[end]] = "" if values is None else _text(values[1], places, up=True)
 
-    own_rows: tuple[str, ...] = ()
-    if whole:
-        row, added = put(pep, "")
-        span(row, window, 4, "rt_start", "rt_end")
-        mine = find(pep, ion) + ([] if shared else find("", ion))
-        for r in mine:  # the ion follows its peptide now
-            span(r, None, 4, "rt_start", "rt_end")
-        if drift is not None:
-            target, _ = (mine[0], False) if mine else put(pep, ion)
-            span(target, drift, 3, "drift_start", "drift_end")
-        table.rows = [r for r in table.rows if not cell(r, "ion") or any(
-            cell(r, c) for c in ("rt_start", "rt_end", "drift_start", "drift_end"))]
-        own_rows = tuple(sorted(
-            {cell(r, "ion") for s_ in siblings for r in find(pep, s_) + find("", s_)
-             if cell(r, "rt_start") and (s_ != ion or r not in mine)}))
-    else:
-        row, added = put(pep, ion)
-        span(row, window, 4, "rt_start", "rt_end")
-        span(row, drift, 3, "drift_start", "drift_end")
+    def write_for(sample, file=file, window=window, everyone=False):
+        def find(pep_value, ion_value):
+            return [r for r in table.rows if (cell(r, "sample"), cell(r, "file"),
+                                              cell(r, "peptide"), cell(r, "ion"))
+                    == (sample, file, pep_value, ion_value)]
+
+        def put(pep_value, ion_value):
+            own = find(pep_value, ion_value)
+            if own:
+                return own[0], False
+            row = [""] * len(table.columns)
+            row[at["sample"]], row[at["file"]] = sample, file
+            row[at["peptide"]], row[at["ion"]] = pep_value, ion_value
+            table.rows.append(row)
+            return row, True
+
+        own_rows: set[str] = set()
+        if whole:
+            row, added = put(pep, "")
+            span(row, window, 4, "rt_start", "rt_end")
+            mine = find(pep, ion) + ([] if shared else find("", ion))
+            followers = mine + ([r for s_ in siblings if s_ != ion
+                                 for r in find(pep, s_) + ([] if shared else find("", s_))]
+                                if everyone else [])
+            for r in followers:  # the ion (in a spread file, every ion) follows its peptide
+                span(r, None, 4, "rt_start", "rt_end")
+            if drift is not None:
+                target, _ = (mine[0], False) if mine else put(pep, ion)
+                span(target, drift, 3, "drift_start", "drift_end")
+            table.rows[:] = [r for r in table.rows if not cell(r, "ion") or any(
+                cell(r, c) for c in ("rt_start", "rt_end", "drift_start", "drift_end"))]
+            own_rows = {cell(r, "ion") for s_ in siblings for r in find(pep, s_) + find("", s_)
+                        if cell(r, "rt_start") and (s_ != ion or r not in mine)}
+        else:
+            row, added = put(pep, ion)
+            span(row, window, 4, "rt_start", "rt_end")
+            span(row, drift, 3, "drift_start", "drift_end")
+        return row, added, own_rows
+
+    row, added, own_set = write_for(first)
+    for sample in written[1:]:
+        own_set |= write_for(sample)[2]
+    if more and not (whole and peptide):
+        raise ValueError("a window spread to other files is the whole peptide's")
+    for sample, other_file, other_window in more:
+        write_for(sample, other_file, other_window, everyone=True)
+    own_rows = tuple(sorted(own_set))
     problem = table_problem("input.rt_elution_windows", table, project_path)
     if problem:
         raise ValueError(problem)
@@ -323,7 +677,7 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
             raise
         files.append((project_path, project_before, project_path.read_bytes()))
     return SavedWindow(tuple(files), {c: v for c, v in zip(table.columns, row, strict=True)},
-                       added, own_rows)
+                       added, own_rows, written)
 
 
 def _restore(path: Path, before: bytes | None) -> None:

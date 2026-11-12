@@ -61,6 +61,7 @@ def ask_table(parent, project: Path, setting: str, base: str, what: str) -> Path
     the user cancels."""
     from PySide6.QtWidgets import QFileDialog, QMessageBox
 
+    parent = dialog_parent(parent)
     project = Path(project)
     name, _ = QFileDialog.getSaveFileName(
         parent, f"Where should {project.name}'s {what} go?",
@@ -80,3 +81,14 @@ def ask_table(parent, project: Path, setting: str, base: str, what: str) -> Path
         if answer != QMessageBox.StandardButton.Yes:
             return None
     return path
+
+
+def dialog_parent(owner):
+    """The widget a dialog of ``owner`` belongs to: ``owner`` when it is a widget, else the first
+    widget among its parents (the window editor is a QObject over its panel), else None; Qt's
+    dialogs refuse any other parent (TypeError)."""
+    from PySide6.QtWidgets import QWidget
+
+    while owner is not None and not isinstance(owner, QWidget):
+        owner = owner.parent() if hasattr(owner, "parent") else None
+    return owner

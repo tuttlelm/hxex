@@ -140,7 +140,8 @@ def plot_window_edit(traces: RetentionTraces, results, spectrum_id: str, preview
 def preview_text(preview) -> str:
     """What the window says about a preview, above its figure: that it is one, and its notes."""
     notes = "; ".join(preview.notes) if preview is not None and preview.notes else ""
-    return ("Preview: the results change only when the project is run again"
+    return ("Preview: nothing changes until you Save window and run the project again with "
+            "overwrite enabled"
             + (f". {notes[0].upper()}{notes[1:]}." if notes else "."))
 
 
@@ -212,13 +213,13 @@ def _trace_panel(ax, traces: RetentionTraces, edit: tuple[float, float] | None) 
                              label=f"new window ({edit[0]:.2f}-{edit[1]:.2f} min)"))
     if others:
         handles.append(Line2D([], [], color=OTHER, lw=0.9,
-                              label=f"the sample's other runs ({len(others)})"))
+                              label=f"{traces.others_label} ({len(others)})"))
     first = ax.legend(handles=handles, loc="upper left", fontsize="small", frameon=False)
     if ion_handles:
         ax.add_artist(first)  # kept beside the ions' own legend
         ax.legend(handles=ion_handles, loc="upper right", fontsize="x-small", frameon=False,
-                  title="this peptide's other ions in this run\n(each scaled to this one's "
-                  "height)", title_fontsize="x-small")
+                  title=f"{traces.ions_label}\n(each scaled to this one's height)",
+                  title_fontsize="x-small")
     top = max(float(np.nanmax(t.intensity)) if len(t.intensity) else 0.0
               for t in traces.traces)
     if top > 0:

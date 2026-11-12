@@ -298,9 +298,11 @@ class MainWindow(QMainWindow):
     # --- a command running ------------------------------------------------------------------
 
     def _run_tab(self, note: str = "", colour: QColor | None = None) -> None:
-        """The Run tab's title (``Run (running)``) and its text colour (None: the usual)."""
+        """The Run tab's title (``Running`` while a command runs, owner 2026-11-11; ``Run
+        (stopped)`` after one ended unseen) and its text colour (None: the usual)."""
         i = WORKSPACES.index("run")
-        self.tabs.setTabText(i, "Run" + (f" ({note})" if note else ""))
+        title = "Running" if note == "running" else "Run" + (f" ({note})" if note else "")
+        self.tabs.setTabText(i, title)
         self.tabs.tabBar().setTabTextColor(i, colour if colour is not None else QColor())
 
     def _run_activity(self, text: str) -> None:

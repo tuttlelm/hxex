@@ -129,7 +129,7 @@ def test_the_figure_draws_every_run_or_says_why_not(lc):
     assert len(fig.axes) == 1 and fig._suptitle.get_text() == "S 1-8 z=2"
     labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert labels[0] == "this spectrum: undeuterated, rep 2 (un2.mzML)"
-    assert labels[-1] == "the sample's other runs (1)"
+    assert labels[-1] == "the sample's other files (1)"
     empty = plot_retention(dataclasses.replace(traces, traces=[], note="un2.mzML not found"))
     assert "No elution trace: un2.mzML not found" in empty.axes[0].texts[0].get_text()
 

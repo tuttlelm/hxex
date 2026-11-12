@@ -27,8 +27,10 @@ A row names either a **peptide** or an **ion**:
   peptide that has one of that name.
 
 A row takes the place of the window the peptide table or ``find_peak`` /
-``find_fragment_peak`` would give in that file only; the spectra stay in their series. A table
-without a ``peptide`` column (written before peptide rows existed) holds ion rows only.
+``find_fragment_peak`` would give in that file only; the spectra stay in their series. A row is
+for one sample: a file read by several samples (controls shared by the samples of a state) needs
+a row for each, which the window's Save writes (one injection, one window; owner, 2026-11-11).
+A table without a ``peptide`` column (written before peptide rows existed) holds ion rows only.
 """
 
 from __future__ import annotations

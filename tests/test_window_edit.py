@@ -8,7 +8,21 @@ import pytest
 
 from hxex.config import load_project, read_input
 from hxex.fit import FitConfig
-from hxex.gui.window_edit import preview, save_window, saved_window, undo_window
+from hxex.gui.window_edit import (
+    compare_words,
+    has_fragments,
+    own_windows,
+    plan_spread,
+    preview,
+    samples_reading,
+    save_window,
+    saved_window,
+    saved_words,
+    scope_words,
+    spread_words,
+    trace_shift,
+    undo_window,
+)
 from hxex.io.retention_trace import TraceReader
 from hxex.model import Backend
 from hxex.noise import NoiseConfig
@@ -168,6 +182,108 @@ def test_a_window_is_written_to_the_elution_window_table_and_read_back(project):
     assert not table.exists() and project.read_bytes() == original[project]
     with pytest.raises(ValueError, match="changed since"):
         undo_window(saved)  # the files are no longer what that save wrote
+
+
+def test_a_window_is_saved_for_every_sample_that_reads_the_file(project):
+    """One file read by two samples (controls shared by the samples of a state) is one
+    injection: a window saved from one sample is written for both (the table keys its rows by
+    sample), and both read it; the other file of the sample (a replicate) is not touched
+    (owner, 2026-11-11)."""
+    project.write_text(project.read_text() + """
+[[input.runs]]
+path = "un1.mzML"
+sample = "T"
+role = "undeut"
+""")
+    spectra = _read(project)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    i = [k for k, s in enumerate(spectra.spectrum_id) if ":S/un1.mzML/" in s][0]
+    sid, data_id = spectra.spectrum_id[i], int(spectra.data_id[i])
+    key = _key(spectra, i)
+    assert samples_reading(reader, sid, data_id, (key[2],)) == ("S", "T")
+    j = [k for k, s in enumerate(spectra.spectrum_id) if ":S/un2.mzML/" in s][0]
+    assert samples_reading(reader, spectra.spectrum_id[j], int(spectra.data_id[j]),
+                           (key[2],)) == ("S",)  # un2 is read by S alone
+    edited = reader.spectrum(sid, data_id, (spectra.rt_start[i] + 0.02, spectra.rt_end[i] - 0.01))
+    saved = save_window(project, key, (edited.rt_start, edited.rt_end),
+                        samples=samples_reading(reader, sid, data_id, (key[2],)))
+    assert saved.samples == ("S", "T")
+    lines = saved.path.read_text().splitlines()
+    assert len(lines) == 3 and {ln.split(",")[0] for ln in lines[1:]} == {"S", "T"}
+    assert "un2.mzML" not in saved.path.read_text()
+    words = saved_words(saved, peptide=f"0001-{N:04d}-{PEPTIDE}", ion=key[2], file=key[1],
+                        whole=False, fragments=False, drift_written=False)
+    assert "z = 2 only" in words and "samples S, T" in words
+    again = _read(project)
+    for sample in ("S", "T"):  # both samples sum the new scans of un1
+        ids = [s for s in again.spectrum_id if f":{sample}/un1.mzML/" in s]
+        assert ids and ids[0].endswith(edited.spectrum_id.rsplit("/", 1)[1])
+    undo_window(saved)
+    assert not saved.path.exists()
+
+
+def test_the_trace_match_finds_one_files_elution_against_another():
+    """The shift of a file's elution, from its trace against the edited file's; refused at the
+    search's edge, without signal, or when the traces do not match."""
+    t = np.arange(12.0, 14.0, 0.034)  # a scan every 2 s
+    peak = np.exp(-0.5 * ((t - 13.0) / 0.05) ** 2)
+    later = np.exp(-0.5 * ((t - 13.1) / 0.05) ** 2)
+    shift, r, why = trace_shift(t, peak, t, later)
+    assert why is None and shift == pytest.approx(0.1, abs=0.004) and r > 0.99
+    far = np.exp(-0.5 * ((t - 13.7) / 0.05) ** 2)  # 42 s away: beyond the search
+    assert trace_shift(t, peak, t, far)[0] is None
+    assert trace_shift(t, peak, t, np.zeros_like(t))[2] == "no signal in its trace"
+
+
+def test_a_window_spread_to_the_replicates_is_shifted_by_their_elution(project):
+    """Saved for the sample's replicates, the window goes to the other file shifted by its
+    elution (un2 elutes 6 s later), as the peptide's row; the replicate's own window set before
+    is reported (the window asks), and replaced by the spread (owner, 2026-11-11)."""
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    i = [k for k, s in enumerate(spectra.spectrum_id) if "/un1.mzML/" in s][0]
+    j = [k for k, s in enumerate(spectra.spectrum_id) if "/un2.mzML/" in s][0]
+    sid, data_id, key = spectra.spectrum_id[i], int(spectra.data_id[i]), _key(spectra, i)
+    peptide = f"0001-{N:04d}-{PEPTIDE}"
+    window = (spectra.rt_start[i] + 0.01, spectra.rt_end[i] - 0.01)
+    plans = plan_spread(reader, results, sid, data_id, window, peptide=peptide, ion=key[2],
+                        ions=(key[2],), level="replicates")
+    assert [(p.file, p.samples) for p in plans] == [("un2.mzML", ("S",))]
+    assert plans[0].shift * 60 == pytest.approx(6.0, abs=0.5)
+    assert plans[0].window[0] == pytest.approx(window[0] + plans[0].shift)
+    assert "un2.mzML +6 s" in spread_words(plans)
+    # un2 had a window of its own: reported, then replaced
+    save_window(project, _key(spectra, j), (spectra.rt_start[j], spectra.rt_end[j]))
+    assert own_windows(project, peptide, (key[2],), [("S", "un2.mzML")]) == [("S", "un2.mzML")]
+    assert own_windows(project, peptide, (key[2],), [("S", "un1.mzML")]) == []
+    saved = save_window(project, key, window, peptide=peptide, whole=True,
+                        siblings=(key[2],), more=[("S", "un2.mzML", plans[0].window)])
+    rows = [r.split(",") for r in saved.path.read_text().splitlines()[1:]]
+    assert sorted((r[1], r[2], r[3]) for r in rows) == [("un1.mzML", peptide, ""),
+                                                        ("un2.mzML", peptide, "")]
+    again = _read(project)
+    k = [n for n, s in enumerate(again.spectrum_id) if "/un2.mzML/" in s][0]
+    assert again.rt_start[k] >= plans[0].window[0] - 0.02  # un2 sums the shifted window
+    assert again.rt_end[k] <= plans[0].window[1] + 0.02
+    assert plan_spread(reader, results, sid, data_id, window, peptide=peptide, ion=key[2],
+                       ions=(key[2],), level="peptide") == []
+
+
+def test_the_save_choices_are_worded_for_the_project():
+    """Charge states for a peptide project, ions when fragments are read; files, not runs."""
+    words = scope_words("0001-0008-VDQIIMAK-z3", False)
+    assert list(words) == ["ion", "peptide", "replicates", "everywhere"]
+    assert words["ion"] == "this charge state only (z = 3), in this file"
+    assert words["peptide"] == "every charge state of this peptide, in this file"
+    assert "replicates (each shifted)" in words["replicates"]
+    assert scope_words("0001-0008-VDQIIMAK-c5-pz3-ETD", True)["ion"] == \
+        "this ion only, in this file"
+    assert compare_words(False)["replicates"] == "this charge state in its replicates"
+    assert compare_words(True)["ions"] == "this peptide's other ions in this file"
+    assert not has_fragments({"targets": [{"ms_level": 1}]})
+    assert has_fragments({"targets": [{"ms_level": 1}, {"ms_level": 2}]})
+    assert not has_fragments(None)
 
 
 def test_a_window_the_project_cannot_read_is_not_written(project):

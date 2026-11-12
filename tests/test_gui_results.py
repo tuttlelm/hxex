@@ -639,7 +639,7 @@ def test_ranges_sort_by_their_numbers():
 
 def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
     """Spectra read from scan files get an elution tab (PLAN Next steps 26): the selected
-    spectrum's run drawn first, then with the sample's other runs; results without scan files
+    spectrum's file drawn first, then with its replicates; results without scan files
     (the synthetic ones above) have no such tab."""
     from hxex.fit import FitConfig
     from hxex.io import MzmlRun, MzmlTarget, read_mzml
@@ -684,8 +684,9 @@ def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
         return fig is not None and sum(
             str(line.get_gid()).startswith("trace:") for line in fig.axes[0].get_lines()) == n
 
-    qtbot.waitUntil(lambda: drawn(2), timeout=30000)  # the sample's other run behind it
+    qtbot.waitUntil(lambda: drawn(2), timeout=30000)  # its replicate behind it
     fig = panel.view.figure
     assert fig._suptitle.get_text() == "S 0001-0008 VDQIIMAK z=2"
     legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert legend[0] == "this spectrum: undeuterated, rep 2 (un2.mzML)"
+    assert legend[-1] == "its replicates (1)"

@@ -9131,3 +9131,46 @@ CSVs or mzML if wanted.
     the peptide and 18 % of the other species) was the same either way; the fix matters for
     the controls, which are fitted at K = 1. Check: tests/test_window_edit.py (a run fit on an
     envelope at full deuteration: D 7.0 from it alone, the run's value with both starts).
+
+360. **What a saved elution window is for: four levels, worded for the project, saved for
+    every sample that reads a file, and spread to other files by trace match (owner,
+    2026-11-11).** The elution tab's words came from the fragment projects: "ion" (for a peptide
+    project, a charge state) and "in this run" (a file; hxex also says run for `hxex run` and
+    for an analysis's separate projects). The save choices are now the owner's four levels,
+    worded for charge states (ions when fragments are read) and files: this charge state only;
+    every charge state of the peptide, in this file; and in this file and its replicates (the
+    sample's files at the same time point or control); and in every file of the peptide (every
+    sample) (`hxex.gui.window_edit.scope_words`, `compare_words`, `has_fragments`). The table
+    keys a row by sample, so a window saved from one sample did not act where another sample
+    reads the same file: on the private pooled dataset's raw-file project 8 of 22 files are read
+    by several samples (each control file of a state by all five), and the owner's two windows
+    in one undeuterated file acted in one sample of five. Every save now writes the rows for
+    every sample that reads the file (`samples_reading`). The last two levels shift the window
+    in each other file by its elution: the charge state's trace within the drift range in the
+    boxes matched against the edited file's within 30 s (`trace_shift`, `plan_spread`; over
+    all drift times the brighter species at another drift time decided the match, and the
+    owner's peptide in three fully deuterated files fell before its shifted window: their
+    shifts were -4 to -9 s over all drift times, -12 to -16 s within the peptide's range); a match at the search's edge, without signal, or with a correlation below
+    0.5 is not trusted and that file is named for the user. The drift range is not shifted.
+    Files with a window of the peptide set before are named and the window asks: replace them,
+    keep them, or cancel (`own_windows`; owner). On the owner's case (a peptide eluting just
+    before a brighter species on its isotope grid, which find_peak's windows took in every
+    file) the 21 other files of the peptide matched with correlations 0.90-0.99 and shifts of
+    +1 to -16 s within the peptide's drift range; 10 s for all of them. Compare with now has one
+    view per save level (this peptide's other charge states in this file; this charge state in
+    its replicates; in every file of the peptide, every sample), and choosing how to save while
+    editing switches to that view (one way). The message after
+    saving names the samples and the files with their shifts. Also fixed: the first save's
+    table question (HISTORY 358) was given the window editor, a QObject, as its parent, which
+    Qt's dialogs refuse (TypeError, nothing saved; the tests answer the question themselves):
+    `table_choice.dialog_parent`. And the window's tooltips: more padding and a neutral cream
+    background instead of Qt's pale yellow (owner: it looked dated), a warm dark grey on a dark
+    desktop (`tips.style_tooltips`). While a command runs, the Run tab's title reads "Running"
+    in the highlight colour (was "Run (running)", HISTORY 327). The window says how a saved
+    window reaches the results: run the project again with overwrite enabled (`[output]
+    overwrite = true`, or Replace when asked); only the series whose spectra changed are fitted
+    again, and the review is kept (save message, preview note, Save and Run tooltips, guide).
+    Check: tests/test_window_edit.py (a file in two samples; the
+    trace match; a spread to a replicate eluting 6 s later, its own window reported and
+    replaced), tests/test_gui_window_edit.py (the four choices, a spread whose own window is
+    kept), tests/test_table_choice.py.

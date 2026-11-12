@@ -107,6 +107,8 @@ class RetentionTraces:
     drift: DriftProfile | None = None
     note: str | None = None
     ions: list[IonTrace] = field(default_factory=list)
+    others_label: str = "the sample's other files"  # the traces behind, as the legend names them
+    ions_label: str = "this peptide's other ions in this file"
 
 
 def readable(source: Mapping | None) -> bool:

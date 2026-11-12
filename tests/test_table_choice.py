@@ -94,3 +94,21 @@ def test_the_shared_fixture_answers_with_the_suggested_name(tmp_path, name):
     path = table_choice.ask_table(None, tmp_path / name, "review.table",
                                   "user_review_table.csv", "review table")
     assert path.name == suggested_name(tmp_path / name, "user_review_table.csv")
+
+
+def test_a_dialog_of_an_object_that_is_not_a_widget_belongs_to_its_widget(qtbot):
+    """The window editor (a QObject over its panel) asks where the first table goes: Qt's
+    dialogs take a widget or nothing as their parent, so the dialog belongs to the first widget
+    above it (a QObject parent raised TypeError and nothing was saved)."""
+    from PySide6.QtCore import QObject
+    from PySide6.QtWidgets import QWidget
+
+    from hxex.gui.table_choice import dialog_parent
+
+    widget = QWidget()
+    qtbot.addWidget(widget)
+    owner = QObject(widget)
+    assert dialog_parent(owner) is widget
+    assert dialog_parent(widget) is widget
+    assert dialog_parent(QObject()) is None
+    assert dialog_parent(None) is None

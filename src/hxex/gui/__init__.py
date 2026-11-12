@@ -70,6 +70,7 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
     from PySide6.QtWidgets import QApplication
 
     from .icon import follow_scheme
+    from .tips import style_tooltips
     from .window import MainWindow
 
     dotnet = QApplication.instance() is None and start_dotnet()  # before Qt (see there)
@@ -77,6 +78,7 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
     app.setApplicationName("hxex")
     app.setOrganizationName("hxex")
     follow_scheme(app.setWindowIcon)  # the logo for a light or dark desktop
+    style_tooltips(app)  # roomier, cream tooltip boxes
     window = MainWindow()
     window.show()
     if path is not None:

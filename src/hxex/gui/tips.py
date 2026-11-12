@@ -6,7 +6,9 @@ runs across the window. :func:`tip` wraps the text at :data:`TIP_WIDTH` characte
 words) and starts each item on its own line: the parts of the text separated by a semicolon
 outside brackets (a semicolon inside parentheses or square brackets belongs to the aside, so it
 stays on its line) and by line breaks already in the text. The result is still plain text, so
-the tooltip is not reflowed by Qt and no characters need escaping. Nothing here imports Qt.
+the tooltip is not reflowed by Qt and no characters need escaping. :func:`style_tooltips` gives
+the boxes more room and a neutral cream background (owner, 2026-11-11: Qt's pale yellow looked
+dated), a warm dark grey on a dark desktop; it alone imports Qt, when called.
 """
 
 from __future__ import annotations
@@ -48,3 +50,34 @@ def tip(text: str | None, width: int = TIP_WIDTH) -> str:
         lines.extend(textwrap.wrap(item, width, break_long_words=False, break_on_hyphens=False)
                      or [""])
     return "\n".join(lines)
+
+
+# the tooltip box: (background, text, border) for a light and a dark desktop
+TIP_COLOURS = {False: ("#f8f5ee", "#2a2723", "#cfc6b4"),
+               True: ("#2e2b27", "#ece6da", "#5a5348")}
+TIP_PADDING = "2px 4px"  # top and bottom, left and right (on Qt's own 2 px margin)
+
+
+def tooltip_style(dark: bool) -> str:
+    """The style sheet of the tooltip box on a light or ``dark`` desktop."""
+    background, text, border = TIP_COLOURS[bool(dark)]
+    return (f"QToolTip {{ background-color: {background}; color: {text}; "
+            f"border: 1px solid {border}; padding: {TIP_PADDING}; }}")
+
+
+def style_tooltips(app) -> None:
+    """Give ``app``'s tooltips :func:`tooltip_style`, now and whenever the desktop's colour
+    scheme changes (added to the application's own style sheet)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+
+    from .icon import dark_scheme
+
+    base = app.styleSheet()
+
+    def apply(dark: bool) -> None:
+        app.setStyleSheet((base + "\n" if base else "") + tooltip_style(dark))
+
+    apply(dark_scheme())
+    QGuiApplication.styleHints().colorSchemeChanged.connect(
+        lambda scheme: apply(scheme == Qt.ColorScheme.Dark))

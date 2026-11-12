@@ -18,7 +18,7 @@ def _titles(panel):
     return [] if fig is None else [ax.get_title() for ax in fig.axes]
 
 
-def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project):  # noqa: F811
+def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypatch):  # noqa: F811
     spectra = _read(project)
     results = _results(spectra)
     w = ResultsWorkspace()
@@ -64,7 +64,8 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project):  # noqa:
     assert panel._task is None and panel.status.full() == "" and panel.busy.isHidden()
     assert editor.preview.k is not None  # fitted (it was drawn picked first)
     # what the preview is: above the figure in the window's font, not inside the figure
-    assert editor.notes.text().startswith("Preview: the results change only")
+    assert editor.notes.text().startswith("Preview: nothing changes until you Save window")
+    assert "overwrite enabled" in editor.notes.text()
     assert not any("preview" in t.get_text().lower() for t in panel.view.figure.texts)
     assert editor.preview.spectrum.spectrum_id != w._shown_traces[1]
     table = project.parent / "rt_elution_windows.csv"
@@ -76,19 +77,66 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project):  # noqa:
     assert editor.scope.currentData() == "peptide"
     editor.save.click()
     assert "un2.mzML" in table.read_text() and "hxex run --overwrite" in messages[-1]
-    assert "(all its ions, in this run)" in messages[-1]
+    assert "with overwrite enabled" in messages[-1]
+    assert "(every charge state)" in messages[-1] and "for sample S" in messages[-1]
+    assert editor.scope.currentText() == "every charge state of this peptide, in this file"
     row = table.read_text().splitlines()[1].split(",")
     assert row[2] == "0001-0008-VDQIIMAK" and row[3] == ""  # the peptide's row
     assert "rt_elution_windows" in project.read_text()
     editor.scope.setCurrentIndex(editor.scope.findData("ion"))
     editor.save.click()
-    assert "(this ion only, in this run)" in messages[-1]
+    assert "z = 2 only" in messages[-1]
     assert "0001-0008-VDQIIMAK-z2" in table.read_text()
     assert editor.undo.isEnabled()
     editor.undo.click()
     editor.undo.click()
     assert not table.exists() and project.read_bytes() == before
     assert not editor.undo.isEnabled()
+    # spread to the replicates (the sample's other file, un1, shifted by its elution): un1 had
+    # a window set before, so the window asks; kept, un1 is left as it was (owner, 2026-11-11)
+    from hxex.gui import window_editor
+    from hxex.gui.window_edit import save_window
+
+    other = next(s for s in spectra.spectrum_id if "/un1.mzML/" in s)
+    k = list(spectra.spectrum_id).index(other)
+    own = save_window(project, ("S", "un1.mzML", other.split("/")[2]),
+                      (spectra.rt_start[k], spectra.rt_end[k]))
+    asked = []
+
+    class Box:  # the replace-or-keep question, answered "Keep them"
+        Icon = window_editor.QMessageBox.Icon
+        ButtonRole = window_editor.QMessageBox.ButtonRole
+        StandardButton = window_editor.QMessageBox.StandardButton
+
+        def __init__(self, _icon, _title, text, parent=None):
+            asked.append(text)
+            self.buttons = []
+
+        def addButton(self, label, _role=None):
+            self.buttons.append(label)
+            return label
+
+        def exec(self):
+            return 0
+
+        def clickedButton(self):
+            return next(b for b in self.buttons if b == "Keep them")
+
+    monkeypatch.setattr(window_editor, "QMessageBox", Box)
+    editor.scope.setCurrentIndex(editor.scope.findData("replicates"))
+    assert "replicates (each shifted)" in editor.scope.currentText()
+    unchanged = table.read_bytes()
+    editor.save.click()
+    qtbot.waitUntil(lambda: messages and "kept their own window" in messages[-1], timeout=30000)
+    assert asked and "un1.mzML" in asked[0]
+    assert "un1.mzML" in messages[-1] and editor.save.isEnabled()
+    rows = table.read_text().splitlines()
+    assert len(rows) == 3 and table.read_bytes() != unchanged  # un2's peptide row added only
+    editor.undo.click()
+    assert table.read_bytes() == unchanged
+    from hxex.gui.window_edit import undo_window
+
+    undo_window(own)
     # switched off: the plain trace again, dragging moves the figure
     editor.edit.setChecked(False)
     assert not panel.span_mode
@@ -96,9 +144,10 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project):  # noqa:
                     timeout=30000)
 
 
-def test_compare_with_the_peptides_other_ions_in_this_run(qtbot, tmp_path):
-    """Compare with: this peptide's other ions in this run draws its other charge state behind
-    the selected trace; switched back, the sample's other runs."""
+def test_compare_with_the_peptides_other_charge_states_in_this_file(qtbot, tmp_path):
+    """Compare with: this peptide's other charge states in this file draws its other charge
+    state behind the selected trace; switched back, its replicates. With Edit window on,
+    choosing how to save switches Compare with to that level's view (one way only)."""
     from test_elution_windows import _charges_project
 
     path = _charges_project(tmp_path / "charges")
@@ -122,9 +171,24 @@ def test_compare_with_the_peptides_other_ions_in_this_run(qtbot, tmp_path):
     assert len(shown.traces) == 1 and shown.ions[0].label.endswith("(MS1)")
     assert any(ln.get_gid() and ln.get_gid().startswith("ion:")
                for ln in panel.view.figure.axes[0].lines)
-    w.compare.setCurrentIndex(w.compare.findData("runs"))
+    assert w.compare.currentText() == "this peptide's other charge states in this file"
+    w.compare.setCurrentIndex(w.compare.findData("replicates"))
     qtbot.waitUntil(lambda: not panel.drawing and len(w._shown_traces[3].traces) == 2
                     and not w._shown_traces[3].ions, timeout=30000)
+    assert w._shown_traces[3].others_label == "its replicates"
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    for level, view in (("peptide", "ions"), ("everywhere", "everywhere"),
+                        ("replicates", "replicates")):
+        editor.scope.setCurrentIndex(editor.scope.findData(level))
+        editor.scope.activated.emit(editor.scope.currentIndex())  # as a user's choice
+        assert w.compare.currentData() == view
+    editor.scope.setCurrentIndex(editor.scope.findData("ion"))
+    editor.scope.activated.emit(editor.scope.currentIndex())
+    assert w.compare.currentData() == "replicates"  # this charge state alone: left as it was
+    w.compare.setCurrentIndex(w.compare.findData("everywhere"))
+    assert editor.scope.currentData() == "ion"  # browsing never changes how it is saved
+    editor.edit.setChecked(False)
 
 
 def test_the_window_is_edited_again_after_the_results_are_read_again(qtbot, project):  # noqa: F811
